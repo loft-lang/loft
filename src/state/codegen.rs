@@ -2420,12 +2420,18 @@ impl State {
             // GUARDED free — `nullable_local` below routes it there — and `free_displaced`
             // declines a free-protected store, so the caller's argument is never released here;
             // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
-            let owned_ref =
-                stack.function.owns_displaced_store(v, value, stack.data) && !is_hidden_buf_arg;
             // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
             // which no free below may release: every one of them is guarded by the entry
             // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
             let entry_w = stack.function.entry_witness(v);
+            // The hidden buffer argument is excluded only where no entry witness can tell the
+            // caller's store from one this frame minted.  With one, the buffer is freed like any
+            // owned local, guarded, as native's `owned_ref_reassign` does with `_rb_w_<name>`
+            // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
+            // null-handed buffer to nobody when a call that took the buffer answered another
+            // store: `none = rec(k - 1, none)` leaked one record per top-level call.
+            let owned_ref = stack.function.owns_displaced_store(v, value, stack.data)
+                && (!is_hidden_buf_arg || entry_w.is_some());
             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
             // container's backing store (a vector element / nested field), so
             // the new value can land in the SAME store as v's old value —
@@ -2982,12 +2988,7 @@ impl State {
                     // may have handed to a different var (probe 02-style
                     // corruption pinned in commit `a957a365`).
                     for av in &caller_hidden_args {
-                        let slot_offset = stack.var_pos(*av);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(slot_offset);
-                        stack.add_op("OpFreeRef", self);
-                        stack.add_op("OpInitRefSentinel", self);
-                        self.code_add(slot_offset);
+                        self.release_caller_hidden_arg(stack, *av);
                     }
                     if stash_old_for_post_free {
                         // #330 epilogue: free the stashed old store unless
@@ -4020,6 +4021,35 @@ impl State {
         self.code_add(tp_nr);
     }
 
+    /// The post-copy release of a caller-hidden work-ref that a call was handed as its
+    /// result buffer: free it and reset its slot to the sentinel, so the next pass's mint
+    /// cannot reclaim a store number the allocator has handed to someone else.
+    ///
+    /// `@FR-O-Buffer` — when that work-ref is this function's OWN hidden result parameter (a
+    /// one-buffer chain forwards it: `fn run_it() -> R { run_on(run_new(), …) }` hands the
+    /// buffer its caller supplied straight on), it holds the CALLER's store unless this frame
+    /// minted one for a null-handed buffer.  Freed unconditionally, it released the caller's
+    /// buffer on every call — the caller's next pass then minted into a freed store and read
+    /// its record back through a stale handle (loft#1706).  The entry witness tells the two
+    /// apart per run, as every other free of a promoted buffer does; without one the store is
+    /// the caller's and is left alone.
+    fn release_caller_hidden_arg(&mut self, stack: &mut Stack, av: u16) {
+        if stack.function.is_argument(av) {
+            let Some(witness) = stack.function.entry_witness(av) else {
+                return;
+            };
+            self.push_var_ref(stack, av);
+            self.push_var_ref(stack, witness);
+            stack.add_op("OpFreeRefIfDistinct", self);
+        } else {
+            self.push_var_ref(stack, av);
+            stack.add_op("OpFreeRef", self);
+        }
+        let slot_offset = stack.var_pos(av);
+        stack.add_op("OpInitRefSentinel", self);
+        self.code_add(slot_offset);
+    }
+
     /// First-assignment reference from a function call — deep copy to prevent aliasing.
     ///
     /// Sets the `0x8000` "free source" bit on `OpCopyRecord` so the
@@ -4124,12 +4154,7 @@ impl State {
         // @PLAN51 Cluster II Step 2 — post-wrap free + sentinel reset
         // (see the reassignment-path comment for rationale).
         for av in &caller_hidden_args {
-            let slot_offset = stack.var_pos(*av);
-            stack.add_op("OpVarRef", self);
-            self.code_add(slot_offset);
-            stack.add_op("OpFreeRef", self);
-            stack.add_op("OpInitRefSentinel", self);
-            self.code_add(slot_offset);
+            self.release_caller_hidden_arg(stack, *av);
         }
         // @PLN130 — the call-return deep copy that actually fires.  Its sibling
         // `gen_set_first_ref_copy` handles a `Call(OpCopyRecord, [Call(inner), …])` shape the

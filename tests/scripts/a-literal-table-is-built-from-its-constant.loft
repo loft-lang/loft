@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Const`, the BODY clause, and the constant tables native builds at start-up
+// (loft#1697).  A literal-bodied function — a table spelled as a function — has a pre-built
+// constant twin; its own body now builds the fresh vector it answers as ONE copy of that twin
+// (`OpAppendVector(v, OpConstRef(k), elem)`) instead of one push per literal, and native emits
+// every uniform constant table as one static array per field and one loop.  On a terrain
+// table of 115 000 elements the old forms were a 115 000-line function beside a 1.06 M-line
+// `init`, which rustc did not finish compiling in 20 minutes; the new ones compile in seconds.
+// No value changes: every cell answers the same with `LOFT_NO_CONST_VIEW=1` (the twin is not
+// made, so the body keeps its pushes), under LOFT_STRICT_STORES and the native leak check.
+// Values hand-computed in each cell's comment.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a
+//   SABOTAGE (2026-09-26), each in its own build: the body's copy naming the 1-byte
+//   `boolean` element type in place of the vector's own fails t1 on both backends
+//   (`[5,0,4294967202,0,…]`); native's static table looping one element short
+//   (`0..count-1`) fails t1 on native (`[5,-4,41,0]` — the body copies the short constant),
+//   the interpreter building its constants itself.
+//   CHANNEL: the VALUE channel (an assertion).  HOLDS: leak and strict-store clean.
+
+enum Col { Red, Green }
+
+struct R { a: integer, t: text }
+
+struct H { v: vector<integer>, r: vector<R> }
+
+BASE = 40;
+
+SQUARES = [1, 4, 9, 16, 25];
+NAMES = [R { a: 1, t: "one" }, R { a: 2, t: "two" }, R { a: 3, t: "" }];
+
+fn ints() -> vector<integer> { [5, -4, BASE + 1, 0, 9] }
+fn rows() -> vector<R> { [R { a: 7, t: "x" }, R { a: -8, t: "yy" }] }
+fn floats() -> vector<float> { [0.5, -750.0, -0.0, 2.25] }
+fn singles() -> vector<single> { [0.5f, -1.25f] }
+fn chars() -> vector<character> { ['a', 'é', '€'] }
+fn flags() -> vector<boolean> { [true, false, true] }
+fn cols() -> vector<Col> { [Col.Green, Col.Red] }
+fn bytes() -> vector<u8> { [0 as u8, 200 as u8, 255 as u8] }
+fn wides() -> vector<i32> { [-5 as i32, 70000 as i32] }
+fn nothing() -> vector<integer> { [] }
+fn big() -> vector<integer> { [for i in 0..1 { i }] }
+
+fn isum(v: vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+// t1: 5 - 4 + 41 + 0 + 9 = 51; written after: + 100 → 151, 6 elements
+fn t1() {
+  v = ints();
+  assert(len(v) == 5 && isum(v) == 51 && v[2] == 41, "t1 got {v}");
+  v += [100];
+  assert(len(v) == 6 && isum(v) == 151, "t1 written {v}");
+}
+
+// t2: the top-level tables — 1+4+9+16+25 = 55; names "one" "two" "" with a = 6
+fn t2() {
+  assert(len(SQUARES) == 5 && isum(SQUARES) == 55 && SQUARES[4] == 25, "t2 squares");
+  s = 0;
+  for n in NAMES { s += n.a; }
+  assert(len(NAMES) == 3 && s == 6 && NAMES[1].t == "two" && NAMES[2].t == "", "t2 names");
+}
+
+// t3: records with text, stored into a field and extended: 7 - 8 + 9 = 8, t "yy"
+fn t3() {
+  h = H { v: ints(), r: rows() };
+  h.r += [R { a: 9, t: "z" }];
+  s = 0;
+  for e in h.r { s += e.a; }
+  assert(len(h.r) == 3 && s == 8 && h.r[1].t == "yy" && isum(h.v) == 51, "t3 got {s}");
+}
+
+// t4: floats with negatives and a negative zero: 0.5 - 750 + 2.25 = -747.25
+fn t4() {
+  f = floats();
+  assert(len(f) == 4 && f[0] + f[1] + f[2] + f[3] == -747.25, "t4 got {f}");
+}
+
+// t5: the narrow and non-integer element kinds
+fn t5() {
+  s = singles();
+  assert(len(s) == 2 && s[0] + s[1] == -0.75f, "t5 singles");
+  c = chars();
+  assert(len(c) == 3 && c[1] == 'é' && c[2] == '€', "t5 chars");
+  b = flags();
+  assert(len(b) == 3 && b[0] && !b[1] && b[2], "t5 flags");
+  k = cols();
+  assert(len(k) == 2 && k[0] == Col.Green && k[1] == Col.Red, "t5 cols");
+  u = bytes();
+  assert(len(u) == 3 && (u[1] as integer) + (u[2] as integer) == 455, "t5 bytes");
+  w = wides();
+  assert(len(w) == 2 && (w[0] as integer) + (w[1] as integer) == 69995, "t5 wides");
+}
+
+// t6: two calls are two vectors: writing one leaves the other and the next call alone
+fn t6() {
+  a = ints();
+  b = ints();
+  a[0] = 1000;
+  c = ints();
+  assert(a[0] == 1000 && b[0] == 5 && c[0] == 5, "t6 got {a[0]} {b[0]} {c[0]}");
+}
+
+// t7: an empty literal, and a comprehension (not a literal: keeps its build)
+fn t7() {
+  e = nothing();
+  e += [3];
+  g = big();
+  assert(len(e) == 1 && e[0] == 3 && len(g) == 1 && g[0] == 0, "t7 got {e} {g}");
+}
+
+fn main() {
+  t1(); t2(); t3(); t4(); t5(); t6(); t7();
+}

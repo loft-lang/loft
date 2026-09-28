@@ -4402,23 +4402,7 @@ fn exec_native_binary(
     // test).  The same backstop a placed library's worker arms for itself
     // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
     // with a handler (the profiler's report) gets to run it.
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt as _;
-        // SAFETY: the closure runs in the forked child before `exec` and calls
-        // only async-signal-safe `prctl`/`getppid`; it touches no allocator or lock.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                // The driver may have died in the window before `prctl` armed; a
-                // child whose parent is already gone must not start.
-                if libc::getppid() == 1 {
-                    libc::_exit(0);
-                }
-                Ok(())
-            });
-        }
-    }
+    loft::platform::dies_with_driver(&mut cmd, true);
     // @PLN26 follow-up — run the native binary with cwd = source_dir so its
     // raw `std::fs` anchors where its loft `file()` does (the binary bakes
     // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
@@ -9974,6 +9958,7 @@ fn main() {
             }
         }
         let mut cmd = std::process::Command::new("rustc");
+        loft::platform::dies_with_driver(&mut cmd, false);
         cmd.arg("--edition=2024")
             .arg("--target")
             .arg("wasm32-wasip2")
@@ -10244,6 +10229,7 @@ fn main() {
         // threaded runtime + its atomics std come from nightly (only `-Z
         // build-std` can produce that std).  So the link runs on nightly too.
         let mut cmd = native_utils::wasm_rustc(atomics_sysroot.as_deref());
+        loft::platform::dies_with_driver(&mut cmd, false);
         cmd.arg("--edition=2024")
             .arg("--target")
             .arg("wasm32-unknown-unknown")
@@ -10356,6 +10342,7 @@ fn main() {
                 // the tool that knows) but means the cost is invisible from loft's side.  Name
                 // it in the report so a slow `--html` says which bridge is paying.
                 let mut dep_build = std::process::Command::new("cargo");
+                loft::platform::dies_with_driver(&mut dep_build, false);
                 dep_build
                     .arg("build")
                     .arg("--release")
@@ -10405,6 +10392,7 @@ fn main() {
             // gets the same compiler and the same std: an atomics rlib and a
             // non-atomics one do not link together.
             let mut build = native_utils::wasm_rustc(atomics_sysroot.as_deref());
+            loft::platform::dies_with_driver(&mut build, false);
             build
                 .arg("--edition=2024")
                 .arg("--target")
@@ -11443,6 +11431,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 .map(|src| src.contains("\nfn main(") || src.starts_with("fn main("))
                 .unwrap_or(true);
             let mut cmd = std::process::Command::new("rustc");
+            loft::platform::dies_with_driver(&mut cmd, false);
             cmd.env("TMPDIR", &scratch).arg("--edition=2024");
             if program_has_entry {
                 cmd.arg("-o").arg(&binary);
@@ -11574,7 +11563,9 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 }
                 cmd.arg("-Zsanitizer=address");
             }
+            loft::timeout::blocked_on("rustc compiling the program");
             let output = cmd.output();
+            loft::timeout::unblocked();
             let output = match output {
                 Ok(o) => o,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

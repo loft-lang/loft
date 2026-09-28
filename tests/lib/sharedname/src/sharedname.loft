@@ -1,0 +1,14 @@
+// A record type whose NAME a consumer may also use for a type of its own.  The consumer's
+// registers first and keeps the bare name, so this one is registered qualified
+// (`sharedname::Holder`) — and a call into the shared cdylib that has to mint the result
+// record must find it under that name, not under the bare one.
+pub struct Pair { p: integer, v: vector<integer> }
+pub struct Holder { tag: integer, pair: Pair, items: vector<integer> }
+
+pub fn holder_pair(p: integer) -> Pair { Pair { p: p, v: [p, p + 1] } }
+
+pub fn holder_new(n: integer, pr: Pair) -> Holder {
+  a: vector<integer> = [];
+  for i in 0..n { a += [i * 10]; }
+  Holder { tag: n, pair: pr, items: a }
+}

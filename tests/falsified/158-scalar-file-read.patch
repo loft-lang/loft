@@ -1,0 +1,15 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index cb47c1763..df0f7266e 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1464,6 +1464,10 @@ fn body_writes(
+                     return true;
+                 };
+                 set.own.insert(tp);
++            } else if scalar_file_read(data, name, args, Some(vars))
++                || scalar_stack_ref(name, args, Some(vars))
++            {
++                // the read and its operand typed as writing nothing
+             } else if matches!(def.code(), Value::Null) {
+                 if !native_op_is_store_free(def) {
+                     ok = false;

@@ -2220,10 +2220,31 @@ impl Function {
     }
 
     /// Return all variable names and their types for capture analysis.
+    /// `@FR-L-CapScalar` / `@FR-L-CapHeap` — every variable a lambda may capture, under the
+    /// SPELLING that reaches it.
+    ///
+    /// A name bound more than once — a second `for e` loop (`e#1`), a bind after its block
+    /// ended (loft#1700), a pattern's name — is several variables, and the spelling names
+    /// one of them at a time.  Offered under their own names, the first variable won the
+    /// spelling: a capture of `e` took the ENDED binding's type while the value came from
+    /// the live one, and the closure record read an integer slot as text (a panic on the
+    /// interpreter, a type error natively).  So a `#`-suffixed variable is offered as its
+    /// spelling when the spelling names it, and a plain one only when no other binding
+    /// has taken its spelling.  In variable order, so the answer is the same on every run.
     pub fn all_names_and_types(&self) -> Vec<(String, Type)> {
         self.variables
             .iter()
-            .map(|v| (v.name.clone(), v.type_def.clone()))
+            .enumerate()
+            .filter_map(|(i, v)| {
+                let spelling = v.name.split('#').next().unwrap_or(&v.name);
+                let current = self.names.get(spelling).map(|&n| n as usize);
+                let offered = if spelling.len() == v.name.len() {
+                    current.is_none_or(|n| n == i)
+                } else {
+                    current == Some(i)
+                };
+                offered.then(|| (spelling.to_string(), v.type_def.clone()))
+            })
             .collect()
     }
 
@@ -2334,6 +2355,13 @@ impl Function {
         v
     }
 
+    /// The per-PASS ordinal of the loop now being parsed (loft#1145), `None` outside any —
+    /// the loop's identity that both passes agree on, where the loop NUMBER is not.
+    #[must_use]
+    pub fn current_loop_ord(&self) -> Option<u16> {
+        self.loop_ord_of.get(&self.current_loop).copied()
+    }
+
     /// The loop now being parsed, or `u16::MAX` outside any.
     #[must_use]
     pub fn current_loop(&self) -> u16 {
@@ -2382,14 +2410,17 @@ impl Function {
         {
             return false;
         }
-        // Shapes other arms accept: element-wise tuples, the iterator→vector materialise,
-        // and the two spellings of one nullable struct.
-        if matches!(cur, Type::Tuple(_))
-            || matches!(type_def, Type::Tuple(_))
-            || matches!(cur, Type::Vector(_, _) | Type::Iterator(_, _))
-            || matches!(type_def, Type::Vector(_, _) | Type::Iterator(_, _))
-            || data.same_nullable_struct(cur, type_def).is_some()
-        {
+        // Shapes other arms accept: element-wise tuples, the iterator→vector materialise, a
+        // list literal clearing a keyed collection, and the two spellings of one nullable
+        // struct.  Each pairs a collection-shaped type with ANOTHER collection-shaped one, so
+        // a vector against a scalar, a text or a record is refused by every arm (loft#1700).
+        let shaped = |t: &Type| {
+            matches!(
+                t,
+                Type::Tuple(_) | Type::Vector(_, _) | Type::Iterator(_, _)
+            ) || crate::parser::vectors::is_collection(t)
+        };
+        if (shaped(cur) && shaped(type_def)) || data.same_nullable_struct(cur, type_def).is_some() {
             return false;
         }
         !cur.is_equal(type_def)
@@ -3766,6 +3797,10 @@ impl Function {
     /// caller handed the null sentinel.  No static bit tells the two apart; the snapshot
     /// does, per run, which is what native's `_rb_w_<buf>` prologue has always compared.
     /// Every free of `v` this frame emits declines when `v` still names the snapshot's store.
+    ///
+    /// It builds the witness's NAME on every call, so a per-assignment condition asks it last:
+    /// asked first in two scope-pass tests it cost the front end 5 063 allocations on the
+    /// medium corpus (`tests/frontend_counts.rs`).
     #[must_use]
     pub fn entry_witness(&self, v: u16) -> Option<u16> {
         if (v as usize) >= self.variables.len() {

@@ -194,18 +194,18 @@ impl State {
         self.code_pos += u32::from(size);
     }
 
+    /// Push a text constant — a `Str` over bytes that live in the bytecode — as
+    /// [`State::put_stack`] pushes every other value.  It used to write the slot in place,
+    /// and so skipped `put_stack`'s `ensure_stack`: a frame reserved up to the stack store's
+    /// capacity then wrote its first text constant past the end (`Store access out of
+    /// bounds … type=65535`, loft#1706 — reached by dryopea's reduce under per-site work
+    /// buffers, whose frames are larger).  The store census and the UAF shadow stamps
+    /// `put_stack` keeps in step were skipped the same way.
     pub(super) unsafe fn set_string(&mut self, size: i32, off: *const u8) {
-        #[cfg(feature = "stack_align_guard")]
-        self.check_stack_align::<Str>(self.stack_cur.pos + self.stack_pos);
-        let m = self
-            .database
-            .store_mut(&self.stack_cur)
-            .addr_mut::<Str>(self.stack_cur.rec, self.stack_cur.pos + self.stack_pos);
-        *m = Str {
+        self.put_stack(Str {
             ptr: off,
             len: size as u32,
-        };
-        self.stack_pos += size_of::<Str>() as u32;
+        });
     }
 
     /// # Panics

@@ -158,6 +158,12 @@ loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a
 grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
 `LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
 literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_RANGE_END_HEADER=1`** (`@FR-R-Base`'s bound clause, default-ON, generation time)
+makes a `for i in 0..len(v)` loop test its index against the prelude's end local again —
+with it off, inside a loop holding `v`'s element base, the test reads the held header's
+length, the same value, which lets rustc drop the element accesses' own bounds tests
+(stdlib `record_update` 19.7 → 12.1 µs) — and is the first bisect step for a wrong trip
+count out of such a loop.
 **`LOFT_NO_TWIN_BASE=1`** (`@FR-R-Base`'s twin clause, default-ON, generation time) makes
 a callee twin (`__inv`) take its header inputs alone again, every element read or write
 inside it resolving the store — with it off, the twin takes each header's element BASE

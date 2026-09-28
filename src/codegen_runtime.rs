@@ -2502,7 +2502,16 @@ pub fn OpReadFile<T: FileVal>(
         return;
     }
     let n = bytes.max(0) as usize;
-    let mut buf = vec![0u8; n];
+    // A scalar read is 1–8 bytes, and a heap buffer per read was a third of a binary
+    // read loop; the stack takes every read up to 16 bytes.
+    let mut small = [0u8; 16];
+    let mut large = Vec::new();
+    let buf: &mut [u8] = if n <= small.len() {
+        &mut small[..n]
+    } else {
+        large.resize(n, 0);
+        &mut large
+    };
     let is_text = stores.is_text_type(db_tp as u16);
     let nread = if let Some(f) = stores
         .files
@@ -2510,8 +2519,8 @@ pub fn OpReadFile<T: FileVal>(
         .and_then(|x| x.as_mut())
     {
         if is_text {
-            f.read(&mut buf).unwrap_or(0)
-        } else if f.read_exact(&mut buf).is_ok() {
+            f.read(buf).unwrap_or(0)
+        } else if f.read_exact(buf).is_ok() {
             n
         } else {
             0
@@ -2519,8 +2528,7 @@ pub fn OpReadFile<T: FileVal>(
     } else {
         0
     };
-    buf.truncate(nread);
-    val.file_from_bytes(stores, db_tp, little_endian, &buf);
+    val.file_from_bytes(stores, db_tp, little_endian, &buf[..nread]);
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 16, next_pos + nread as i64);

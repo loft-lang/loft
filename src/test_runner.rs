@@ -1640,6 +1640,7 @@ pub(crate) fn run_tests(
                         } else {
                             // Compile with rustc.
                             let mut cmd = std::process::Command::new("rustc");
+                            crate::platform::dies_with_driver(&mut cmd, false);
                             // Keep rustc's own intermediates in the loft
                             // scratch dir too, so the whole native compile
                             // stays off a small `/tmp` tmpfs.

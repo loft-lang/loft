@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_CALLEE_DISTURB — the switch stops a callee's growth from disturbing the caller's view, which is what this program checks.
 //
 // What a `&` parameter still refuses once it links a scalar field or element
 // (`167-a-ref-parameter-links-a-scalar-field-or-element.loft`):

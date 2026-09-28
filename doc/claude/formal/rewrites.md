@@ -47,7 +47,16 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  R-InPlaceLiteral, R-ValueRecord) its falsifier is the SWITCH A/B: the
                  script corpus and the consumer suites run with the switch off and
                  on, and any output difference is a defect.  Such a rewrite lands
-                 only with that A/B green (`.github/workflows/switch-ab.yml`).
+                 only with that A/B green (`.github/workflows/switch-ab.yml`).  The A/B
+                 compares SEMANTICS, per (R-Escape): an `advice[avoidable-copy]` and a
+                 store dump's `bc:` offset report a representation and are not compared.
+                 CURE CLAUSE: a switch whose off form is a DEFECT a cure removed (kept as
+                 the first bisect step for it — LOFT_NO_OWNER_WITNESS, LOFT_NO_CALLEE_DISTURB,
+                 LOFT_NO_APPEND_STAGING) cannot be A/B-clean.  Its falsifier is the
+                 reverse: each guard written to catch that defect declares it
+                 (`// @catches: LOFT_NO_<CURE>`) and MUST move with the switch, and a
+                 declared guard that stops moving is a defect of its own.  Every other
+                 program is compared under the cure's switch as under a rewrite's.
                  CENSUS CLAUSE: a rewrite counts each site it ADMITS
                  (`rewrite_census::fired("R-…", n)`, never at a decline), and the
                  counts over the benches are a committed baseline
@@ -227,6 +236,15 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  join.  The fallback is never a constant: a negative index addresses
                  from the end there, and an absent element answers its default
                  RECORD's field, which a declared field default makes non-zero.
+                 THE BOUND CLAUSE: a range end its prelude binds ONCE from the plain
+                 length of a vector path P (`for i in 0..len(P)`, `@FR-I-Range`)
+                 reads, inside a loop that holds P's element base, as the held
+                 header's length.  The header is the length at loop entry, and a
+                 loop holding a header admits no op that could shrink P and, holding
+                 the base, none that grows it — so it is the length the prelude took,
+                 on every round, and the bound the element accesses are tested
+                 against, which the compiler may then drop.  An end that is anything
+                 but the plain length keeps its local (`LOFT_NO_RANGE_END_HEADER`).
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -579,7 +597,11 @@ pins `tests/loop_record.rs`.
                  the list; (R-Scalar) reads it as a write of tp WHOLE, and
                  (R-RecPtr) reads a copy FROM a view as a read of it.  A copy of a
                  heap-owning type walks claims, and a flagged one frees its source
-                 or marks a fresh destination: both stay store writers.
+                 or marks a fresh destination: both stay store writers.  THE READ
+                 CLAUSE: f#read(n) as a SCALAR writes that local and the File
+                 record's cursor fields in place, and is on the list with the
+                 address of its local; the scalar tier still reads it as a write
+                 it cannot type.  A text, vector or record read stays a writer.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
@@ -659,6 +681,23 @@ while `c3b`, where the copy is the loop's ONLY whole-type write, answers `195 1 
 now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-place.loft`,
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
+
+**The read clause** (2026-09-27, @PLN158).  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
+scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the
+first read), each in place; nothing is claimed, grown or freed, so no header, base or record
+address can go stale across it.  `OpCreateStack(t)` of a scalar local is on the list with it:
+taking the address writes nothing, and whatever writes through it is judged on its own.  The
+scalar tier gets no exemption — `body_writes` still answers "untyped" for the read, because
+it advances `f#next`, which is a field a loop may hoist: typing it as writing nothing reads
+`[2,2,2,2]` for `[2,4,6,8]` in cell r3 (the patch receipt).  A text read builds a text and a
+vector or record read fills a value in a store; each stays a writer.  Measured on the
+crawler's `read_i16_vec` shape — `while i < n { out += [read_one_i16(bf)]; … }`, the read in a
+helper — together with two runtime costs of the read itself (a `SipHash` of the name `text`
+in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 → 2.87 ms**,
+32.8× → ~14×, hash `fa34c62d78`.  Switch `LOFT_NO_WRITE_HOIST` (the tier); cells
+`tests/scripts/158-scalar-file-read.loft`; pin `tests/scalar_file_read.rs`.  Sites:
+`hoist::scalar_file_read`, `hoist::scalar_stack_ref`, `hoist::blocks_header_hoist`,
+`hoist::in_place_only_writer`.
 
 ### A callee is admitted by what its body writes, one call deep
 
@@ -2752,6 +2791,24 @@ answered here rather than decided in the code.
                  exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
+
+**The body clause** (2026-09-26, loft#1697; cells
+`tests/scripts/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).
+A call `(R-Const)` must decline — the result stored into a field, returned, written — still
+ran the function, and the function built its vector one push per literal: a 115 000-element
+terrain table was a 115 000-line function.  The function's own body now builds its fresh
+vector as ONE copy of its constant twin (`OpAppendVector(v, OpConstRef(k), elem)`, what
+`v += K` lowers to, deep-copying a text element), because the twin is built from that very
+literal.  Admitted where the body's vector block is exactly the parser's literal — its
+declaration, an optional reservation, and statements that build its elements from constant
+arguments (no variable, no call but a built-in operator: what the twin's extractor folds);
+an element kind the constant store does not pre-build (an enum, a narrow integer) has no twin
+and keeps its pushes.  Beside it, native emits every constant table whose elements share one
+field layout as one static array per field and one loop (`write_const_columns`), the
+per-element form kept for a table of mixed shapes.  Measured on the crawler's
+`rivers_test` (a 115 200-, an 86 400- and two 14 878-element table): the emitted Rust 61.7 MB
+→ 4.9 MB, `init` 1.06 M lines → 17 k, and a cold `--native` run from more than 20 minutes
+(unfinished) to 16.4 s.
 
 **The own-buffer clause** (2026-09-26, `LOFT_NO_REBIND_OWN_BUFFER`; cells
 `tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft`, pin

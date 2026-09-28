@@ -165,10 +165,11 @@ pub(crate) fn rebuild_runtime(tree: &std::path::Path, reason: &str) -> bool {
          Set LOFT_NO_AUTO_REBUILD=1 to skip this and run on the interpreter instead."
     );
     let start = std::time::Instant::now();
-    let ran = std::process::Command::new("cargo")
-        .args(["build", "--release", "--lib", "--bin", "loft"])
-        .current_dir(tree)
-        .status();
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args(["build", "--release", "--lib", "--bin", "loft"])
+        .current_dir(tree);
+    crate::platform::dies_with_driver(&mut cmd, false);
+    let ran = cmd.status();
     match ran {
         Ok(s) if s.success() => {
             eprintln!(
@@ -442,6 +443,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     } else {
         std::process::Command::new("cargo")
     };
+    crate::platform::dies_with_driver(&mut cmd, false);
     cmd.args([
         "build",
         "--release",

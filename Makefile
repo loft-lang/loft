@@ -2178,10 +2178,13 @@ ci: ci-guard
 	#                       while the rest queue on the global build lock.  Measured: 25.6s for the wasm rlib,
 	#                       63s for the `random` cdylib on a loaded box,
 	#                       against a 60s per-test budget that blew twice.
-	#                       Run with the RELEASE binary on purpose: the cdylib
-	#                       key is profile-independent, but the wasm-rlib
-	#                       fingerprint is a content hash of the binary, and
-	#                       `html_asyncify` drives `target/release/loft`.
+	#                       Run with BOTH binaries: the cdylib key is
+	#                       profile-independent, but the wasm-rlib fingerprint
+	#                       is a content hash of the rlib beside the binary, and
+	#                       `html_asyncify` drives `target/release/loft` while
+	#                       every `CARGO_BIN_EXE_loft` test drives the dev one
+	#                       (`w1_1_html_export_produces_file` built its own for
+	#                       238-353 s in CI when only the release one was warm).
 	#                       0.3-0.5s once warm; never fails the gate.
 	#   4. Test       job → cargo build --all-targets,
 	#                       cargo build --release --target wasm32-wasip2/
@@ -2283,6 +2286,7 @@ ci: ci-guard
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
+	./target/debug/loft cache warm --from tests >> result.txt 2>&1 && \
 	python3 scripts/rewrite_census.py >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \

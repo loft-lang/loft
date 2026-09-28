@@ -220,9 +220,20 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
+
+- **D-clo-43** *(opened 2026-09-27, CLOSED 2026-09-27; found with loft#1700)* — `(L-CapScalar)` /
+  `(L-CapHeap)` capture "the variable", which is the binding the name spells where the closure
+  is formed.  A name several bindings spell — a second `for e` loop (`e#1`, loft#915), a bind
+  after the first one's block ended (D-bind-67), a pattern's name — was offered to the lambda
+  under each variable's OWN name, and the first one won: `for e in [1, 2] { … } for e in ["a"]
+  { f = fn(s: text) -> text { "{e}{s}" }; … }` captured the integer binding's type while the
+  value came from the text one, and the record read an integer slot as text — an interpreter
+  panic in the store, a native type error, on every tree.  **Fix.**  The capture context offers
+  each spelling at the binding it currently names (`Function::all_names_and_types`).  Guard
+  `tests/scripts/1700b-a-closure-captures-the-binding-its-name-spells-now.loft`.
 
 - **D-clo-42** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1659)* — `(F-Ret)` for a capture a
   closure hands back from any exit but a bare tail.  loft#1485 made `fn(i) -> S { cap }` return a
