@@ -26,12 +26,12 @@
 // The ELEMENT cells are `1720b-…`: an expectation is matched file-wide, and theirs
 // would be met by the field cells' warnings here.
 //
-// Not here: `b: Shape = if … { null } else { Shape::Circle {…} }` needs loft#1714's join change
-// (the branch is `Circle?` there, and this file's first gap then reports it).
+// `lj: Shape = if … { null } else { Shape::Circle {…} }` rests on loft#1714's join change as
+// well: the branch is `Circle?` there, and this file's first gap then reports it.
 //
-// @falsified-at: PLACEHOLDER
-//   CHANNEL: the EXPECTATIONS — the control emits none of the warnings pinned below; the
-//   `??` cells fail to compile there as well.
+// @falsified-at: dab9050bb — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the file fails on the control: the warnings pinned below are not
+//   emitted and the local and `??` cells do not compile there.
 //   WITNESS: `d: Shape = mc(0)` is refused as "cannot change type from Shape to Circle?" on
 //   the control; `h.t = mt(0)` compiles in silence and the field reads null.
 //   HOLDS: no leak and no panic on either tree; the nullable-field and pointer-field controls
@@ -59,6 +59,9 @@ fn test_local_variant_present() { lp: Shape = mc(4); assert(radius(lp) == 4, "lp
 
 // @EXPECT_WARNING: a nullable `Circle?` is stored into the local `lr` of the non-null type `Shape`
 fn test_local_variant_rewrite() { lr: Shape = Shape::Square { s: 2 }; assert(radius(lr) == -2, "lr2"); lr = mc(0); assert(lr == null, "lr null"); }
+
+// @EXPECT_WARNING: a nullable `Circle?` is stored into the local `lj` of the non-null type `Shape`
+fn test_local_join() { i = 0; lj: Shape = if i == 0 { null } else { Shape::Circle { r: 3 } }; assert(lj == null, "lj null"); }
 
 // The enum itself was already asked; kept so the pair is measured together.
 // @EXPECT_WARNING: a nullable `Shape?` is stored into the local `le` of the non-null type `Shape`

@@ -14031,7 +14031,12 @@ impl Parser {
     /// False for the same variant (nothing widened), and false for a `Void` / `Never` /
     /// `Null` else arm — a diverging or valueless arm states no type to join with, and an
     /// `else if` chain deliberately keeps its shape out of `false_type` (loft#936).
-    pub(super) fn joins_to_enum(&self, enum_tp: &Type, true_type: &Type, false_type: &Type) -> bool {
+    pub(super) fn joins_to_enum(
+        &self,
+        enum_tp: &Type,
+        true_type: &Type,
+        false_type: &Type,
+    ) -> bool {
         let Type::Enum(e, _, _) = enum_tp else {
             return false;
         };

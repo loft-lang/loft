@@ -8,8 +8,8 @@
 // A dense record element keeps the value it had; a text element holds null.  Values are
 // hand-computed.
 //
-// @falsified-at: PLACEHOLDER
-//   CHANNEL: the EXPECTATIONS — neither warning is emitted on the control.
+// @falsified-at: dab9050bb — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the file fails on the control, where neither warning is emitted.
 //   WITNESS: `v[i] = mp(0)` compiles in silence and `v[1].a` still reads 2.
 //   HOLDS: no leak and no panic on either tree; the values are the same on both.
 

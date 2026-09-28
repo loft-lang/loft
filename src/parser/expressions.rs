@@ -3412,7 +3412,7 @@ use a separate collection or add after the loop"
     fn slot_takes_base(&self, slot: &Type, base: &Type) -> bool {
         slot.is_equal(base)
             || matches!(
-                (self.variant_parent_enum(base), slot),
+                (self.variant_parent_enum(base), slot.base()),
                 (Some(Type::Enum(v, _, _)), Type::Enum(e, _, _)) if v == *e
             )
     }
@@ -5365,7 +5365,10 @@ use a separate collection or add after the loop"
             && !self.first_pass
             && !matches!(to.unspan(), Value::Var(_))
             && let Type::Optional(inner) = &s_type
-            && matches!(slot_tp, Type::Text(_) | Type::Enum(..) | Type::Reference(..))
+            && matches!(
+                slot_tp.base(),
+                Type::Text(_) | Type::Enum(..) | Type::Reference(..)
+            )
             && !self.data.is_nullable_wrapper(slot_tp)
             && self.slot_takes_base(slot_tp, inner)
         {
@@ -5374,7 +5377,7 @@ use a separate collection or add after the loop"
             // gone from the type by now.
             let pointer = matches!(to.unspan(),
                 Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef");
-            let kept = match slot_tp {
+            let kept = match slot_tp.base() {
                 Type::Reference(..) => !pointer,
                 Type::Enum(_, payload, _) => *payload,
                 _ => false,

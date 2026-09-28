@@ -686,6 +686,23 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-6** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1720)* — `(N-Store)` with
+  `(C-Var)`: a nullable value reached a non-null slot in silence in three shapes.  A declared
+  ENUM local written a nullable VARIANT (`d: Shape = mc(i)`, `mc -> Circle?`): the store face
+  asked only when the value's base EQUALLED the slot's type, and a variant does not.  A FIELD or
+  ELEMENT written a nullable `text`, enum or record: a scalar slot is asked at the typed store,
+  and these three leave the assignment before it (`assign_text`; `towards_set`'s copy) — a text
+  or plain-enum slot then held null, and a dense record, which has no null to hold, kept the
+  value it had (`h.p = q` with `q` null left `h.p` as it was).  And the cure the issue itself
+  named, `mc(i) ?? Shape::Square {…}`, was refused: the result took the value's VARIANT type,
+  and a sibling variant does not convert to it.  **Fix.**  `Parser::slot_takes_base` admits a
+  variant of the slot's enum wherever the store face asks; the assignment asks `(N-Store)` at a
+  place for the three kinds the typed store never sees, with the consequence the slot has — a
+  dense record or payload enum keeps its value (loft#1404's clause for a bare `null`), a
+  `reference<T>` pointer field repoints and holds null; and `??` joins a sibling variant (or the
+  enum) to the enum, as `if`/`else` does.  Guards
+  `tests/scripts/1720-a-nullable-written-to-an-enum-text-or-record-slot-is-reported.loft`,
+  `tests/scripts/1720b-a-nullable-written-to-an-element-is-reported.loft`.
 * **D-types-5** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1714)* — `(N-Join)`: a branch that
   joins `null` with a struct, a collection or an enum typed the result NON-optional — `a = if n ==
   0 { null } else { [n] }` gave `a: vector<integer>` while the integer twin gave `int?` — on the
