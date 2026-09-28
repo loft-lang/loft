@@ -13,8 +13,9 @@
 // Every collection is filled in REVERSE key order, so an answer in key order is the snapshot's
 // and not the insertion order's.  Expected values are hand-computed beside each cell.
 //
-// @falsified-at: PENDING
-// CHANNEL: assertions (hash cells: a store panic on the control).
+// @falsified-at: 49350ce2b — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-comprehension-over-a-keyed-collection-walks-its-snapshot.patch — the same channels.
+// CHANNEL: assertions on both backends, and a store panic on native.
 // HOLDS: every assertion passes on both backends on the cure tree.
 
 struct H { k: integer, v: text }
