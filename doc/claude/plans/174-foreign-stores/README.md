@@ -46,8 +46,16 @@ the native bridge answers `foreign_vector_from_owned`, the wasm bridge `Stores::
 The change waits on **loft-ffi 0.1.2 on crates.io** (the release workflow's `cargo publish`
 covers the `loft` crate only; loft-ffi is published by hand) — until then a library cannot
 pin it, so the branch carries a `[patch.crates-io]` to the in-tree crate for the testbed run,
-to be dropped at publish (the imaging fixture's precedent).  Measure the crypto bench's
-`base64_to_bytes` row on the testbed after the publish.
+to be dropped at publish (the imaging fixture's precedent).  The branch is
+`174-f5-crypto-foreign` in the `loft-libs-core` clone (local, unpushed — the owner's call).
+**Measured (2026-09-28, `--native-release`, the perf-branch bench, `--n 20`, two runs
+each):** the `base64_to_bytes` row answers hash `273f96a` with the copying library and
+with the foreign one, at 11.40–11.51 µs per 4 KiB decode either way — the row does NOT
+move.  The decode itself is the cost (~2.8 ns a byte); the 4 KiB copy it saved was never
+visible, which is what the portal's 1.03× already said.  The old cdylib, built against
+loft-ffi 0.1.1, ran unchanged on the new host: the trailing-field compatibility, live.
+The gain F0 priced is in the SHAPE pluginabi has — a text arm reading its span off the
+frame — not in a decoder's answer; F6 is where the row moves.
 
 **Side-finding, not F5's:** on `--native` a loop of 2 000 OWNED 1 MiB bridge answers
 (`ext_make_bytes`, the copying path) sits at 246 MB RSS where the interpreter sits at 21 MB
