@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1725, `@FR-L-CapHeap` / `@FR-O-Latest` — a closure that captures a local bound from a
+// JOIN (`c = f() ?? []`, a value branch) keeps the store it captured when the local is
+// ASSIGNED AGAIN after the build and the closure leaves the frame.
+//
+// loft#1721 releases each arm of a join capture by store identity against the capture LOCAL.
+// A local reassigned after the build names a different store, so that test reads "distinct"
+// for the very store the record holds; the route excluded the shape, and the frame then freed
+// every arm plainly — the escaped closure read a released store (`[2]` / `[2,2]` for
+// `[3,1,2]`, twenty strict-store reports per cell) — while the store the reassignment made was
+// never freed (`main_vector<integer>×2` at exit).  Now the arms are the ones the assignment
+// that reached the build made (`CaptureBuilds::join_arms_at_build`), each is released unless
+// the RECORD's capture slot holds it (`reassigned_join_capture_slot`), and the later store is
+// the frame's.
+//
+// Every value is hand-computed: `mk(n)` is `[n]`, or null for 0; `run` calls the closure with
+// 1 then 2 and answers the second call's text.  r2/r6 (a closure that stays in the frame),
+// r4 (loft#1721's own shape), r5 (no join) and r7 (a record join) are the controls; r8 builds
+// the closure on one path only.
+//
+// @falsified-at: 61bfd933a — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+// @falsified-by: tests/falsified/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.patch — the same channels.
+//   CHANNEL: the VALUE — the reassigned escaping-join cells answer the store the frame reused.
+//   WITNESS: r1 answers `[2]` (interpreter) and `[2,2]` (native) for `[3,1,2]`.
+//   HOLDS: the control cells answer the same on both trees, and every cell is clean under
+//   `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` on this one (measured per cell, both backends).
+
+fn mk(n: integer) -> vector<integer>? { if n == 0 { null } else { [n] } }
+struct P { a: integer }
+fn mp(n: integer) -> P? { if n == 0 { null } else { P { a: n } } }
+fn run(f: fn(integer) -> text) -> text { f(1); f(2) }
+
+fn r1(n: integer) -> fn(integer) -> text { c = mk(n) ?? []; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; h }
+fn r2(n: integer) -> text { c = mk(n) ?? []; h = fn(x: integer) -> text { c += [x]; "{c}" }; h(1); c = [9]; "{h(2)} {c}" }
+fn r3(n: integer) -> fn(integer) -> text { c = if n > 0 { [n] } else { [] }; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; h }
+fn r4(n: integer) -> fn(integer) -> text { c = mk(n) ?? []; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn r5(n: integer) -> fn(integer) -> text { c = [n]; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; h }
+fn r6(n: integer) -> text { c = mk(n) ?? []; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; k = fn(x: integer) -> text { c += [x]; "{c}" }; "{h(1)} {k(2)}" }
+fn r7(n: integer) -> fn(integer) -> text { p = mp(n) ?? P { a: 5 }; h = fn(x: integer) -> text { p.a += x; "{p.a}" }; p = P { a: 70 }; h }
+
+fn test_r1() { assert(run(r1(3)) == "[3,1,2]", "r1 {run(r1(3))}"); assert(run(r1(0)) == "[1,2]", "r1z {run(r1(0))}"); }
+fn test_r2() { assert(r2(3) == "[3,1,2] [9]", "r2 {r2(3)}"); assert(r2(0) == "[1,2] [9]", "r2z {r2(0)}"); }
+fn test_r3() { assert(run(r3(3)) == "[3,1,2]", "r3 {run(r3(3))}"); assert(run(r3(0)) == "[1,2]", "r3z {run(r3(0))}"); }
+fn test_r4() { assert(run(r4(3)) == "[3,1,2]", "r4 {run(r4(3))}"); assert(run(r4(0)) == "[1,2]", "r4z {run(r4(0))}"); }
+fn test_r5() { assert(run(r5(3)) == "[3,1,2]", "r5 {run(r5(3))}"); }
+fn test_r6() { assert(r6(3) == "[3,1] [9,2]", "r6 {r6(3)}"); assert(r6(0) == "[1] [9,2]", "r6z {r6(0)}"); }
+fn test_r7() { assert(run(r7(3)) == "6", "r7 {run(r7(3))}"); assert(run(r7(0)) == "8", "r7z {run(r7(0))}"); }
+fn none(x: integer) -> text { "none" }
+fn r8(n: integer, b: boolean) -> fn(integer) -> text { c = mk(n) ?? []; h: fn(integer) -> text = none; if b { h = fn(x: integer) -> text { c += [x]; "{c}" }; } c = [9]; h }
+fn r9(n: integer) -> fn(integer) -> text { c = mk(n) ?? []; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; c = [8]; h }
+fn r10(n: integer) -> fn(integer) -> text { c = if n > 1 { mk(n) ?? [] } else { [7] }; h = fn(x: integer) -> text { c += [x]; "{c}" }; c = [9]; h }
+fn test_r8() { assert(run(r8(3, true)) == "[3,1,2]", "r8 {run(r8(3, true))}"); assert(run(r8(3, false)) == "none", "r8f {run(r8(3, false))}"); }
+fn test_r9() { assert(run(r9(3)) == "[3,1,2]", "r9 {run(r9(3))}"); assert(run(r9(0)) == "[1,2]", "r9z {run(r9(0))}"); }
+fn test_r10() { assert(run(r10(3)) == "[3,1,2]", "r10 {run(r10(3))}"); assert(run(r10(1)) == "[7,1,2]", "r10s {run(r10(1))}"); }
