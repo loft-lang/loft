@@ -1283,6 +1283,11 @@ fn OpFinishRecord(data: reference, rec: reference, parent_tp: const u16, fld: co
 // Add all elements of another vector with the same type
 fn OpAppendVector(r: vector, other: vector, tp: const u16);
 #rust"s.database.vector_add(&@r, &@other, @tp);"
+// @PLN174 F4a — `r += src[lo..hi]` for a SCALAR element kind: the span copied in ONE
+// block.  The bounds arrive clamped by the slice prelude; a linked or heap-owning element
+// kind keeps the per-element loop (the parser never emits this for one).
+fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_slice(&@r, &@src, @lo, @hi, @tp);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
 // per element each resolving the store and re-reading the headers the previous one

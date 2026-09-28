@@ -5335,6 +5335,80 @@ impl Parser {
         }
     }
 
+    /// `(Slice-Value)` — an ITERATOR at a vector-typed position is the fresh vector a bind
+    /// would make of it: an argument, a return, a block tail, a struct field's value and a
+    /// literal's element take `v[a..b]` exactly as `s = v[a..b]` does, through the same
+    /// materialisation, bound to a hidden local and read as a block whose tail is that
+    /// local.  Answers the vector type when the pair is that shape — in the FIRST pass the
+    /// type alone (a bind's materialisation waits for the second pass the same way), in the
+    /// second the rewrite too — and `None` for anything else.  Only a vector slice has the
+    /// shape (`Value::Iter` whose step is a block); a keyed range slice is refused at its own
+    /// site (`(Slice-KeyedIter)`) and never reaches here.  ONE home: every site that meets an
+    /// iterator where it wants a vector asks this, so the coercion cannot differ by site.
+    pub(crate) fn iterator_as_vector(
+        &mut self,
+        code: &mut Value,
+        is_type: &Type,
+        should: &Type,
+    ) -> Option<Type> {
+        let (Type::Iterator(elm, _), Type::Vector(want, _)) = (is_type.base(), should.base())
+        else {
+            return None;
+        };
+        if !Self::slice_shaped(code) || !(elm.is_equal(want) || self.can_convert(elm, want)) {
+            return None;
+        }
+        let vec_tp = Type::Vector(elm.clone(), Deps::none());
+        if self.first_pass {
+            return Some(vec_tp);
+        }
+        self.materialise_slice_leaves(code, elm, &vec_tp);
+        Some(vec_tp)
+    }
+
+    /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
+    /// subscript builds (its step a block), reached through the arms of an `if` and the
+    /// tail of a block?  The shape [`Parser::iterator_as_vector`] materialises.
+    fn slice_shaped(code: &Value) -> bool {
+        match code.unspan() {
+            Value::Iter(_, _, n, _) => matches!(n.as_ref(), Value::Block(_)),
+            Value::If(_, a, b) => Self::slice_shaped(a) && Self::slice_shaped(b),
+            Value::Block(bl) => bl.operators.last().is_some_and(Self::slice_shaped),
+            _ => false,
+        }
+    }
+
+    /// Materialise each slice leaf of `code` (see [`Parser::slice_shaped`]) into a hidden
+    /// local read in its place, and retype the blocks and `if`s on the way as the vector.
+    fn materialise_slice_leaves(&mut self, code: &mut Value, elm: &Type, vec_tp: &Type) {
+        match code {
+            Value::Iter(..) => {
+                let tmp = self.create_unique("__iter_vec", vec_tp);
+                self.vars.defined(tmp);
+                let iter_tp = Type::Iterator(Box::new(elm.clone()), Box::new(Type::Null));
+                let mut mat = code.clone();
+                self.materialize_iterator(&mut mat, &iter_tp, &Value::Var(tmp), vec_tp, tmp, "=");
+                *code = v_block(vec![mat, Value::Var(tmp)], vec_tp.clone(), "iter_vec");
+            }
+            Value::If(_, a, b) => {
+                self.materialise_slice_leaves(a, elm, vec_tp);
+                self.materialise_slice_leaves(b, elm, vec_tp);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.materialise_slice_leaves(last, elm, vec_tp);
+                }
+                bl.result = vec_tp.clone();
+            }
+            other => {
+                // Only a span wrapper carries a leaf; anything else is not slice-shaped.
+                if matches!(other, Value::Span(..)) {
+                    self.materialise_slice_leaves(other.unspan_mut(), elm, vec_tp);
+                }
+            }
+        }
+    }
+
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
@@ -5445,6 +5519,26 @@ impl Parser {
         // Never (return/break/continue) is compatible with any type.
         if matches!(is_type, Type::Never) {
             return true;
+        }
+        // `(Slice-Value)` — an ITERATOR at a vector-typed position is the fresh vector a bind
+        // would make of it ([`Parser::iterator_as_vector`]).
+        if self.iterator_as_vector(code, is_type, should).is_some() {
+            return true;
+        }
+        // `LOFT_TRACE_ITERVEC=1` — name an iterator that meets a vector slot and is NOT
+        // materialised: the shape the arm above declined.
+        if !self.first_pass
+            && matches!(is_type.base(), Type::Iterator(_, _))
+            && matches!(should.base(), Type::Vector(_, _))
+            && crate::env_once!(std::env::var_os("LOFT_TRACE_ITERVEC").is_some())
+        {
+            let shown = format!("{:?}", code.unspan());
+            eprintln!(
+                "[itervec] declined: {} -> {} shape={}",
+                is_type.source_name(&self.data),
+                should.source_name(&self.data),
+                &shown[..shown.len().min(160)]
+            );
         }
         // @FR-L-Ref — a `reference<E>` over a STRUCT-enum is a record pointer, and a value of
         // that enum is a record (`Enum(E, true)`), so the value meets the slot as the pointer
@@ -6281,6 +6375,14 @@ impl Parser {
     /// Validate that two types are equal
     fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
         if *test_type != *should && !test_type.is_unknown() {
+            // `(Slice-Value)` — a vector slice is a value wherever a vector is expected
+            // (`Parser::convert` materialises it); a keyed slice is refused at its own site.
+            if let (Type::Iterator(elm, _), Type::Vector(want, _)) =
+                (test_type.base(), should.base())
+                && (elm.is_equal(want) || self.can_convert(elm, want))
+            {
+                return true;
+            }
             if let Type::RefVar(tp) = should
                 && tp.is_equal(test_type)
             {

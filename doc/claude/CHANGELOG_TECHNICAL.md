@@ -9,6 +9,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(Slice-Value)` at every vector-typed position, and a block copy for a scalar slice (@PLN174 F4a, 2026-09-28)
+
+`Parser::iterator_as_vector` is the ONE home: an iterator meeting a vector-typed position — the
+`convert` arm (arguments, returns, block tails), the struct field's parse (both the discovery
+and the in-place path), the vector literal's element parse — is materialised through the same
+`materialize_iterator` a bind uses, bound to a hidden local and read as a block whose tail is
+that local; `if` arms and block tails are descended (`slice_shaped` / `materialise_slice_leaves`).
+`can_convert` admits the pair for the report path.  Beside it, F4a: a SCALAR-element slice bound
+to a local emits `OpSliceVector` (`Stores::vector_slice`, the span through `Store::bytes_of`, so a
+foreign store's bytes copy too) in place of the per-element `OpNewRecord` loop; a heap, struct,
+type-variable or linked element keeps the loop, and so — a pinned gap — does a generic's
+instance (its monomorph re-lowers the template's triplets).  `LOFT_NO_SLICE_COPY=1` restores the
+loop, `LOFT_TRACE_ITERVEC=1` names an iterator left unmaterialised.  Cells
+`tests/scripts/174-slice-copy.loft`, `174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft`;
+pins `tests/slice_copy.rs`.  LOFT.md § slices and `formal/collections.md` `(Slice-Value)` say it.
+
 ### Foreign stores: a file mapped read-only is a `vector<u8>` with no copy (@PLN174 F1–F3, 2026-09-28)
 
 `Store` serves bytes the runtime does not own under ONE synthetic record id (`FOREIGN_REC`):

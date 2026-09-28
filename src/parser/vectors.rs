@@ -5280,6 +5280,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.expected = saved_expected;
             parsed
         };
+        // `(Slice-Value)` — a slice as an ELEMENT is the vector the slot wants.
+        if let Some(vt) = self.iterator_as_vector(&mut p, &t, &in_t.clone()) {
+            t = vt;
+        }
         let elem_capturing_lambda = self.last_closure_work_var != u16::MAX;
         if let Type::Rewritten(tp) = in_t {
             *in_t = *tp.clone();

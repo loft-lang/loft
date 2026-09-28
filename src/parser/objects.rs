@@ -4729,6 +4729,10 @@ impl Parser {
                     }
                     t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 }
+                // `(Slice-Value)` — a slice as the field's value is the vector the field wants.
+                if let Some(vt) = self.iterator_as_vector(&mut value, &t, &td) {
+                    t = vt;
+                }
                 // A name READ must resolve — the check `expression()` makes of its operand,
                 // which a value parsed straight through `parse_operators` never met: a bare
                 // unknown name reported "Cannot assign unknown(0)" for a scalar field and
@@ -5054,8 +5058,21 @@ impl Parser {
             };
             let outer = std::mem::replace(&mut self.expected, declared);
             let mut value = Value::Null;
-            let tp = self.expression(&mut value);
+            let mut tp = self.expression(&mut value);
             self.expected = outer;
+            // `(Slice-Value)` — a slice as a field's value is the vector the field wants.
+            if let Some(a_nr) = self
+                .data
+                .def(open)
+                .attributes()
+                .iter()
+                .position(|a| a.name == field)
+            {
+                let declared = self.data.attr_type(open, a_nr);
+                if let Some(vt) = self.iterator_as_vector(&mut value, &tp, &declared) {
+                    tp = vt;
+                }
+            }
             fields.push(v_block(
                 vec![Value::Text(field), value],
                 tp,

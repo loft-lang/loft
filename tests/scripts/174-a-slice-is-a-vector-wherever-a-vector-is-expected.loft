@@ -1,0 +1,61 @@
+// `(Slice-Value)` — a vector slice is a VALUE wherever a vector is expected, not only at a
+// bind: an argument (by value, `const`), a return (a tail and an explicit `return`), a
+// struct field's value, a literal's element, a nested call, an `if` arm, and a generic
+// instance all take `v[a..b]` as the fresh vector `s = v[a..b]` would make of it, through
+// ONE materialisation (`Parser::iterator_as_vector`).  Each site used to refuse with
+// "expected vector<T>, got iterator<T>" and send the author through a local or a
+// comprehension.  A KEYED range slice stays a `for`-only iterator: its value-position
+// refusal is `tests/parse_errors.rs` (`keyed_*_in_value_position`, `(Slice-KeyedIter)`).
+// Every value is hand-computed; both backends and `LOFT_NO_SLICE_COPY=1` must agree.
+//
+// @falsified-at: none — the coercion has no earlier build to catch: before it, every cell
+//   here was a compile error (measured on the probe that became this file, 2026-09-28).
+
+struct Bag { items: vector<integer>, tag: text }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn grow(v: vector<integer>) -> integer { v += [100]; len(v) }
+fn head3(v: vector<integer>) -> vector<integer> { v[0..3] }
+fn tail2(v: vector<integer>) -> vector<integer> { if len(v) > 2 { return v[-2..]; } v[..] }
+fn pick(v: vector<integer>, first: boolean) -> vector<integer> { if first { v[..2] } else { v[-2..] } }
+fn gsl<T>(v: vector<T>) -> vector<T> { v[1..3] }
+fn twice(v: vector<integer>) -> vector<integer> { w = v; w += v[..]; w }
+
+fn main() {
+  m: vector<integer> = [];
+  for i in 0..10 { m += [i * 2]; }
+
+  // s1: an argument to a `const` parameter — 4 + 6 + 8
+  assert(total(m[2..5]) == 18, "s1 {total(m[2..5])}");
+  // s2: a by-value parameter grows ITS copy; the source is untouched
+  assert(grow(m[..4]) == 5 && len(m) == 10, "s2 {grow(m[..4])} {len(m)}");
+  // s3: a tail return, and an explicit early return with a negative bound
+  h = head3(m);
+  assert(len(h) == 3 && h[2] == 4, "s3 head {len(h)} {h[2]}");
+  t = tail2(m);
+  assert(len(t) == 2 && t[0] == 16 && t[1] == 18, "s3 tail {len(t)} {t[0]}");
+  // s4: both arms of an `if` are slices
+  p1 = pick(m, true);
+  p2 = pick(m, false);
+  assert(p1[1] == 2 && p2[0] == 16 && len(p1) == 2, "s4 {p1[1]} {p2[0]}");
+  // s5: a struct field's value — 6, 8, 10
+  b = Bag { items: m[3..6], tag: "b" };
+  assert(len(b.items) == 3 && b.items[0] == 6 && b.items[2] == 10 && b.tag == "b", "s5 {len(b.items)} {b.items[0]}");
+  // s6: elements of a literal
+  vv: vector<vector<integer>> = [m[0..2], m[8..]];
+  assert(len(vv) == 2 && len(vv[0]) == 2 && vv[0][1] == 2 && vv[1][1] == 18, "s6 {len(vv)} {vv[1][1]}");
+  // s7: a nested call — head3 of the slice 4..: [8, 10, 12]
+  n3 = head3(m[4..]);
+  assert(len(n3) == 3 && n3[0] == 8 && n3[2] == 12, "s7 {n3[0]} {n3[2]}");
+  // s8: text from a slice of bytes without a local
+  bytes: vector<u8> = [104, 105, 33, 63];
+  assert(text_from_bytes(bytes[0..2]) == "hi" && text_from_bytes(bytes[2..]) == "!?", "s8");
+  // s9: a generic instance — m[1..3] = [2, 4]
+  gi = gsl(m);
+  assert(len(gi) == 2 && gi[1] == 4, "s9 {gi[1]}");
+  // s10: a slice appended to a parameter's copy inside the callee — 10 + 10 elements
+  tw = twice(m[..]);
+  assert(len(tw) == 20 && tw[10] == 0 && tw[19] == 18 && len(m) == 10, "s10 {len(tw)} {tw[19]}");
+  // s11: a clamped and an empty slice are values too
+  assert(total(m[8..99]) == 34 && total(m[5..2]) == 0, "s11 {total(m[8..99])}");
+  println("slice value ok");
+}

@@ -537,6 +537,30 @@ impl PartialEq for Store {
 /// must be inside a store of at most [`MAX_STORE_WORDS`]), so it collides with nothing.
 pub const FOREIGN_REC: u32 = 0x7FFF_FFF0;
 
+/// @PLN174 F4b — a VIEW of a foreign store's bytes: `(offset, len)` into the same base,
+/// registered by [`Store::add_view`] and served under two synthetic ids per view — a SLOT
+/// id, whose word at `+8` names the view's record (what a vector handle's collection slot
+/// holds), and a RECORD id, whose header is the view's own length and whose elements begin
+/// at `base + offset`.  A slice of a read-only store is such a view: observationally the
+/// fresh value `(Slice-Value)` demands, since neither side can ever be written.
+struct ForeignView {
+    offset: u64,
+    len: u32,
+    /// What the view's SLOT id answers at `+8`: the view's record id, in the store's own
+    /// byte order (the slot has no size word, so the other four bytes are zero).
+    slot: [u8; 8],
+    /// What the view's RECORD id answers at `+0` / `+4`: the size word and the length —
+    /// the header contract every vector read expects, kept here so a pointer into it lives
+    /// as long as the view does.
+    header: [u8; 8],
+}
+
+/// The first view id; view `k` has the slot id `VIEW_BASE + 2k` and the record id
+/// `VIEW_BASE + 2k + 1`.  Above [`FOREIGN_REC`], below `u32::MAX` minus the room a store's
+/// views need; a store serving more than ~500 000 views is refused by [`Store::add_view`].
+const VIEW_BASE: u32 = 0x7FFF_FFF8;
+const VIEW_LIMIT: u32 = 0x0007_FFFF;
+
 /// @PLN174 — what keeps a foreign store's bytes alive: dropped with the store, at the
 /// free of the handle that names it.  A host's token (a browser typed array, F7) joins
 /// here when it is served; every variant must stay `RefUnwindSafe`, because a `Store` is
@@ -560,6 +584,8 @@ struct Foreign {
     len: u32,
     elem_size: u32,
     header: [u8; 8],
+    /// The views registered on these bytes (F4b), by index.
+    views: Vec<ForeignView>,
     _owner: ForeignOwner,
 }
 
@@ -3337,8 +3363,8 @@ impl Store {
     /// used where the field is provably aligned — see its own note (loft#1481).
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
-        if rec == FOREIGN_REC {
-            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+        if Self::is_foreign_rec(rec) {
+            let at = self.foreign_addr(rec, fld, std::mem::size_of::<T>());
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
@@ -3349,22 +3375,88 @@ impl Store {
     /// header for `fld < 8`, the foreign base past it, each bounded exactly as
     /// [`Store::offset_in_bounds`] bounds an owned record.  A store with no foreign bytes
     /// answers the same out-of-bounds refusal a corrupt reference gets.
-    fn foreign_addr(&self, fld: u32, width: usize) -> *const u8 {
+    fn foreign_addr(&self, rec: u32, fld: u32, width: usize) -> *const u8 {
         let Some(f) = &self.foreign else {
-            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+            self.raise_out_of_bounds(rec, fld, width);
         };
+        // The whole: its header, then the owner's bytes.
+        if rec == FOREIGN_REC {
+            if fld < 8 {
+                if fld as usize + width > 8 {
+                    self.raise_out_of_bounds(rec, fld, width);
+                }
+                return unsafe { f.header.as_ptr().add(fld as usize) };
+            }
+            let off = u64::from(fld - 8);
+            if off + width as u64 > f.bytes() {
+                self.raise_out_of_bounds(rec, fld, width);
+            }
+            // SAFETY: the bound just proved `off + width` is inside the owner's live bytes.
+            return unsafe { f.base.add(off as usize) };
+        }
+        // A view: the SLOT id answers the view's record id at `+8` and nothing else; the
+        // RECORD id answers the view's header, then the bytes at `base + offset`.
+        let k = (rec - VIEW_BASE) / 2;
+        let Some(v) = f.views.get(k as usize) else {
+            self.raise_out_of_bounds(rec, fld, width);
+        };
+        if (rec - VIEW_BASE).is_multiple_of(2) {
+            if fld != 8 || width != 4 {
+                self.raise_out_of_bounds(rec, fld, width);
+            }
+            return v.slot.as_ptr();
+        }
         if fld < 8 {
             if fld as usize + width > 8 {
-                self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+                self.raise_out_of_bounds(rec, fld, width);
             }
-            return unsafe { f.header.as_ptr().add(fld as usize) };
+            return unsafe { v.header.as_ptr().add(fld as usize) };
         }
         let off = u64::from(fld - 8);
-        if off + width as u64 > f.bytes() {
-            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+        if off + width as u64 > u64::from(v.len) * u64::from(f.elem_size) {
+            self.raise_out_of_bounds(rec, fld, width);
         }
-        // SAFETY: the bound just proved `off + width` is inside the owner's live bytes.
-        unsafe { f.base.add(off as usize) }
+        // SAFETY: `offset + off + width` is inside the owner's live bytes by
+        // [`Store::add_view`]'s bound on the view.
+        unsafe { f.base.add((v.offset + off) as usize) }
+    }
+
+    /// Is `rec` one of the ids a foreign store serves — the whole, or a view's slot or
+    /// record?  ONE test for the four accessors, so an id never means two things.
+    #[inline]
+    fn is_foreign_rec(rec: u32) -> bool {
+        rec == FOREIGN_REC || rec >= VIEW_BASE
+    }
+
+    /// @PLN174 F4b — register a VIEW of this store's foreign bytes: elements `lo..hi` of
+    /// the whole, answered as a vector handle of its own (`DbRef { rec: <slot id>, pos: 8 }`
+    /// reads exactly as a minted vector's handle does).  The bounds are clamped to the
+    /// whole; an empty view is still a view (length 0).  Answers the SLOT id, or `None`
+    /// when the store serves no foreign bytes or has no room for another view.
+    pub fn add_view(&mut self, lo: u32, hi: u32) -> Option<u32> {
+        let f = self.foreign.as_mut()?;
+        let lo = lo.min(f.len);
+        let hi = hi.clamp(lo, f.len);
+        let k = u32::try_from(f.views.len()).ok()?;
+        if k >= VIEW_LIMIT {
+            return None;
+        }
+        let slot_id = VIEW_BASE + 2 * k;
+        let len = hi - lo;
+        let mut slot = [0u8; 8];
+        slot[..4].copy_from_slice(&(slot_id + 1).to_ne_bytes());
+        let bytes = u64::from(len) * u64::from(f.elem_size);
+        let words = u32::try_from(bytes.div_ceil(8) + 1).unwrap_or(u32::MAX);
+        let mut header = [0u8; 8];
+        header[..4].copy_from_slice(&words.to_ne_bytes());
+        header[4..].copy_from_slice(&len.to_ne_bytes());
+        f.views.push(ForeignView {
+            offset: u64::from(lo) * u64::from(f.elem_size),
+            len,
+            slot,
+            header,
+        });
+        Some(slot_id)
     }
 
     /// @PLN174 — does this store serve foreign bytes?
@@ -3403,6 +3495,7 @@ impl Store {
             len,
             elem_size,
             header,
+            views: Vec::new(),
             _owner: owner,
         });
         self.read_only = true;
@@ -3421,11 +3514,23 @@ impl Store {
     /// foreign store has no `&mut [u8]` to give.
     #[must_use]
     pub fn bytes_of(&self, rec: u32) -> &[u8] {
-        if rec == FOREIGN_REC {
+        if Self::is_foreign_rec(rec) {
             return self.foreign.as_ref().map_or(&[], |f| {
                 // SAFETY: the owner keeps `bytes()` bytes live at `base` for as long as
-                // the store holds it, and the borrow is tied to `self`.
-                unsafe { std::slice::from_raw_parts(f.base, f.bytes() as usize) }
+                // the store holds it, a view lies inside them, and the borrow is tied to
+                // `self`.
+                if rec == FOREIGN_REC {
+                    unsafe { std::slice::from_raw_parts(f.base, f.bytes() as usize) }
+                } else {
+                    f.views
+                        .get(((rec - VIEW_BASE) / 2) as usize)
+                        .map_or(&[], |v| unsafe {
+                            std::slice::from_raw_parts(
+                                f.base.add(v.offset as usize),
+                                v.len as usize * f.elem_size as usize,
+                            )
+                        })
+                }
             });
         }
         let size = (self.read::<u32>(rec, 0) as usize).saturating_sub(1) * 8;
@@ -3447,8 +3552,8 @@ impl Store {
     /// forbids was invisible for the life of this file, because `<*mut T>::as_mut()` derefs
     /// inside `core`, which is precompiled without `-C debug-assertions=on`.
     pub fn addr<T>(&self, rec: u32, fld: u32) -> &T {
-        if rec == FOREIGN_REC {
-            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+        if Self::is_foreign_rec(rec) {
+            let at = self.foreign_addr(rec, fld, std::mem::size_of::<T>());
             assert!(
                 (at as usize).is_multiple_of(std::mem::align_of::<T>()),
                 "Store::addr: foreign field {fld} is not aligned for {}",
@@ -3618,8 +3723,18 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn elem_base(&self, rec: u32) -> *const u8 {
-        if rec == FOREIGN_REC {
-            return self.foreign.as_ref().map_or(std::ptr::null(), |f| f.base);
+        if Self::is_foreign_rec(rec) {
+            return self.foreign.as_ref().map_or(std::ptr::null(), |f| {
+                if rec == FOREIGN_REC {
+                    f.base
+                } else {
+                    f.views
+                        .get(((rec - VIEW_BASE) / 2) as usize)
+                        .map_or(std::ptr::null(), |v| unsafe {
+                            f.base.add(v.offset as usize)
+                        })
+                }
+            });
         }
         // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
         // past) the allocation `ptr` was made for.
@@ -3716,7 +3831,7 @@ impl Store {
 
     pub fn buffer(&mut self, rec: u32) -> &mut [u8] {
         assert!(
-            rec != FOREIGN_REC,
+            !Self::is_foreign_rec(rec),
             "Write to read-only store: a foreign store's bytes have no mutable buffer \
              (read them with `Store::bytes_of`)"
         );
@@ -3802,11 +3917,21 @@ impl Store {
     #[inline]
     pub fn valid(&self, rec: u32, fld: u32) -> bool {
         // @PLN174 — the foreign record: its header, then exactly the owner's bytes.
-        if rec == FOREIGN_REC {
-            return self
-                .foreign
-                .as_ref()
-                .is_some_and(|f| fld >= 4 && u64::from(fld) < 8 + f.bytes());
+        if Self::is_foreign_rec(rec) {
+            return self.foreign.as_ref().is_some_and(|f| {
+                if rec == FOREIGN_REC {
+                    fld >= 4 && u64::from(fld) < 8 + f.bytes()
+                } else if (rec - VIEW_BASE).is_multiple_of(2) {
+                    fld == 8 && f.views.len() > ((rec - VIEW_BASE) / 2) as usize
+                } else {
+                    f.views
+                        .get(((rec - VIEW_BASE) / 2) as usize)
+                        .is_some_and(|v| {
+                            fld >= 4
+                                && u64::from(fld) < 8 + u64::from(v.len) * u64::from(f.elem_size)
+                        })
+                }
+            });
         }
         // S29/P1-R3: locked (worker) stores have empty claims by design — skip the
         // claims check.  Records in worker stores are valid copies of the originals.
@@ -5223,8 +5348,37 @@ mod tests {
             mutate.is_err(),
             "a mutable buffer of the foreign bytes must refuse"
         );
+        // A VIEW (F4b): elements 5..12 as a vector handle of its own, read through the
+        // same accessors — the header, every byte, the base — against the copied form.
+        let slot = foreign.add_view(5, 12).expect("a view");
+        let vrec = foreign.collection_rec(slot, 8);
+        assert_eq!(vrec, slot + 1);
+        assert_eq!(foreign.get_u32_raw(vrec, 4), 7);
+        for i in 0..7u32 {
+            assert_eq!(
+                foreign.get_byte(vrec, 8 + i, 0),
+                plain.get_byte(rec, 8 + 5 + i, 0),
+                "view byte {i}"
+            );
+        }
+        assert_eq!(foreign.read::<u32>(vrec, 8), plain.read::<u32>(rec, 8 + 5));
+        let seen = unsafe { std::slice::from_raw_parts(foreign.elem_base(vrec), 7) };
+        assert_eq!(seen, &data[5..12]);
+        assert_eq!(foreign.bytes_of(vrec), &data[5..12]);
+        assert!(foreign.valid(vrec, 8 + 6) && !foreign.valid(vrec, 8 + 7));
+        // Clamped and empty views are views too; a second view keeps the first.
+        let tail = foreign.add_view(30, 99).expect("a clamped view");
+        assert_eq!(foreign.get_u32_raw(foreign.collection_rec(tail, 8), 4), 7);
+        let empty = foreign.add_view(9, 3).expect("an empty view");
+        assert_eq!(foreign.get_u32_raw(foreign.collection_rec(empty, 8), 4), 0);
+        assert_eq!(foreign.get_u32_raw(vrec, 4), 7);
+        let past = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            foreign.read::<u8>(vrec, 8 + 7)
+        }));
+        assert!(past.is_err(), "a read past the view must refuse");
         // The release drops the bytes: the record is gone, the store itself is not.
         foreign.release_foreign();
+        assert!(foreign.add_view(0, 1).is_none());
         assert!(!foreign.is_foreign());
         assert!(foreign.elem_base(FOREIGN_REC).is_null());
         assert!(!foreign.valid(FOREIGN_REC, 8));

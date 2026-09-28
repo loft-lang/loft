@@ -317,6 +317,12 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  again for every element, so a subject with an EFFECT — a call, or a `??` / `?`
                  default arm that BUILDS a value — is named first and every read goes through
                  that name.
+                 The value is owed at EVERY vector-typed position, not only a bind: an
+                 argument, a return, a block tail, a struct field's value and a literal's
+                 element take the slice as the fresh vector a bind would make of it
+                 (`Parser::iterator_as_vector`, one home).  A scalar-element slice is
+                 copied in ONE block (`OpSliceVector`, `Stores::vector_slice`); any other
+                 element kind is copied element by element; both are the same fresh value.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
 negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
