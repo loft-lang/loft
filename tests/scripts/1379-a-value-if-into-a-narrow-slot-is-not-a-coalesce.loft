@@ -40,7 +40,7 @@
 //   in a different order; on the control the condition cell reads 10 for a true condition and
 //   the `limit` cell reads null.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
 //   measured by `scripts/falsify.sh --bulk` against 2b992851; falsify prints only the
 //   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The

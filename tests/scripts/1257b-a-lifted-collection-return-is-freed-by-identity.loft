@@ -41,7 +41,7 @@
 //   which makes them the control rather than the subject.  Each was measured on its own
 //   against the control, where it passes.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 
 struct Rk1257 { k: integer, v: integer }
 

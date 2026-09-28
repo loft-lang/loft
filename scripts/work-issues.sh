@@ -68,7 +68,7 @@ jq_prog='
 # ⚠ A query that FAILED must not read as "no work".  An unreachable tracker, a bad
 # `--repo`, or a label that does not exist would otherwise print the same reassuring
 # "none" as a genuinely clear board — the false clean this repo treats as a defect in
-# the instrument (TESTING.md § How a guard reads green while the defect stands).  So
+# the instrument (GUARDS.md § How a guard reads green while the defect stands).  So
 # the empty LIST is exit 0 and failing to ASK is exit 2.
 if ! out="$(gh "${args[@]}" --jq "$jq_prog" 2>&1)"; then
     echo "work-issues: cannot ask the tracker — $out" >&2

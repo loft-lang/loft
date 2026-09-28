@@ -24,7 +24,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column
 > showed the stdlib being re-parsed under memcheck in every one of 1 753 runs and a handful of
 > store-ceiling guards running into the per-run limit.  Parsing once (a warm bundle) and planning
-> the runs from a plain pre-pass took the work from 20 046 s to 11 913 s — TESTING.md § Recipe
+> the runs from a plain pre-pass took the work from 20 046 s to 11 913 s — TEST_ENVIRONMENTS.md § Recipe
 > (valgrind).  Profiling the slow files also found four defects, a quadratic interpreter path
 > among them, which a longer limit would have kept hidden.
 >
@@ -172,7 +172,7 @@ several ad-hoc lint checks and a dozen full-gate runs before anything reported i
 Run `cargo clippy --release --all-targets -- -D warnings` when you want the answer `make ci`
 will give.
 
-This is the gate-level twin of TESTING.md § How a guard reads green: a channel that reports
+This is the gate-level twin of GUARDS.md § How a guard reads green: a channel that reports
 success while measuring nothing. It cost nothing on the day it was noticed because the two lints
 were cosmetic — but nothing about the mechanism was limited to cosmetic lints, and for as long as
 it stood, a green `make ci` was evidence about the test suite and about nothing else.
@@ -420,7 +420,7 @@ main checkout stays free to iterate.
 
 **And ask `df -h /` before a gate.**  A full disk fails the NATIVE corpus with `FAIL
 unknown-mode` after `low space` lines, which reads as a code fault; `make sweep-scratch`
-reclaims loft's own scratch (TESTING.md § Scratch hygiene).
+reclaims loft's own scratch (RUN_BOUNDS.md § Scratch hygiene).
 
 **Run a 19-second triple FIRST when the change touches parser diagnostics, guards or docs.**
 `make ci` stops at its first failure, so each cycle surfaces exactly ONE new problem and costs
@@ -1233,6 +1233,6 @@ best ratio, because macOS duplicates ubuntu exactly and costs ~50 % more to do i
 
 ## See also
 
-- [TESTING.md](TESTING.md) — the test framework, `LOFT_LOG`, targeted-suite map
+- [TESTING.md](TESTING.md) — the test framework; [RUNNING_TESTS.md](RUNNING_TESTS.md) — `LOFT_LOG`, targeted-suite map
 - [DEVELOPMENT.md](DEVELOPMENT.md) — workflow and where changes land
 - [PERFORMANCE.md](PERFORMANCE.md) — runtime benchmarks (not CI cost)

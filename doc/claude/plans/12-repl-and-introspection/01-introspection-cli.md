@@ -355,5 +355,5 @@ effort is golden tests and the CLI argv parser.
 - `src/generation/mod.rs::output_native` — Rust emitter.
 - `src/log_config.rs` — `LOFT_LOG` presets that this CLI's
   sub-flags mirror.
-- `doc/claude/TESTING.md` § LogConfig — the user-facing reference
+- `doc/claude/RUNNING_TESTS.md` § LogConfig — the user-facing reference
   this introspection tool replaces for non-test users.

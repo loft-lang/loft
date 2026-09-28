@@ -29,7 +29,7 @@
 //   value), and 13/13 here as `Warning[const-to-plain-parameter]` with no error.
 //   CHANNEL: expectations — measured by hand with the frozen control binary (`--path` its own
 //   tree), because `make falsify` scores exit, asserts, leak, panic and refusals and does not read
-//   warning pins (TESTING.md § falsify, "A guard whose subject is a WARNING").
+//   warning pins (GUARDS.md § A guard that never failed is not a guard, "A guard whose subject is a WARNING").
 //   ARMED: nothing.
 //   WITNESS: the probe matrix these cells come from ran each one on the control's source: the
 //   reference spellings wrote 999 / 7 / 6, the joins 999, and the callbacks every element.

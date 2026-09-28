@@ -61,8 +61,8 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 36. Docs ship in the branch of the code they describe, in their own commit; a small edit gets no PR of its own. — rule 13, DEVELOPMENT § Documentation commit
 37. A formal register's `OPEN: n` is a claim to re-measure, and each open entry names its issue. — formal/README · gate: `register_entries_name_their_tracking_issue`
 38. A diagnostic code is frozen once shipped and lands with its DIAGNOSTICS.md row. — [DIAGNOSTICS](DIAGNOSTICS.md) · gate: `every_pinned_code_is_documented`
-39. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`. — [plans/README](plans/README.md)
-40. A new guard records `@falsified-at:` and how to score it again. — [TESTING](TESTING.md) · gate: `every_new_guard_records_its_control`
+39. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`, and its docs are its own agent's to keep under this contract — the report and `make file-sizes` leave `plans/` out. — [plans/README](plans/README.md), DOC_QUALITY § Maintainer docs rule 14
+40. A new guard records `@falsified-at:` and how to score it again. — [GUARDS](GUARDS.md) · gate: `every_new_guard_records_its_control`
 41. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
 
 ## Reviewer pass

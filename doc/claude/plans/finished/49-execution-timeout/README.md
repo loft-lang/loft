@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Status — DONE 2026-05-29.**  All phases (T1+T2+T3+T4 + native subprocess arming) shipped.
 
 Reference for the shipped feature moved to
-[`../../../TESTING.md` § Execution timeout](../../../TESTING.md#execution-timeout-loft_timeout----timeout).
+[`../../../RUN_BOUNDS.md` § Execution timeout](../../../RUN_BOUNDS.md#execution-timeout-loft_timeout----timeout).
 This file is a closure record only.
 
 ## What shipped
@@ -53,7 +53,7 @@ This file is a closure record only.
 
 ## See also
 
-- [`../../../TESTING.md` § Execution timeout](../../../TESTING.md#execution-timeout-loft_timeout----timeout) — user-facing reference for shipped flag + env var + auto-arming.
+- [`../../../RUN_BOUNDS.md` § Execution timeout](../../../RUN_BOUNDS.md#execution-timeout-loft_timeout----timeout) — user-facing reference for shipped flag + env var + auto-arming.
 - `src/timeout.rs` — watchdog, deadline atomics, breadcrumb store.
 - `src/state/mod.rs`, `src/codegen_runtime.rs`, `src/lexer.rs` — checkpoint call sites.
 - `src/generation/mod.rs::emit_main_bootstrap` — native subprocess arming injection.

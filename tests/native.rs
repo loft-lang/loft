@@ -3126,7 +3126,7 @@ fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()>
 ///
 /// CI reaches sqlite only. `LOFT_SQLDB_MODE` selects the other three, and the
 /// local four-backend run is written into the plan where it was measured
-/// (doc/claude/TESTING.md § Database backends).
+/// (doc/claude/TEST_ENVIRONMENTS.md § Database backends).
 #[test]
 fn a_structure_written_is_immediately_readable_through_one_connection_string() -> std::io::Result<()>
 {

@@ -6,7 +6,7 @@
 // reclaim_dead_native_scratch`, called from `native_compile_space_ok` on every compile).
 // A run that ends normally removes its own binary; a run killed from outside cannot, and
 // with nothing else ever looking at the directory those accumulated one per killed process
-// — sixteen thousand of them, 151 GB, on one box (TESTING.md § Scratch hygiene).
+// — sixteen thousand of them, 151 GB, on one box (RUN_BOUNDS.md § Scratch hygiene).
 
 use std::process::Command;
 

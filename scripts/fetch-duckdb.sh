@@ -7,7 +7,7 @@
 # also means nothing installs it for you, and nothing tells you it went missing —
 # the duckdb cell simply stops running.  This script is how you get it back.
 #
-# It is NOT run by CI.  CI gates sqlite only (doc/claude/TESTING.md § Database
+# It is NOT run by CI.  CI gates sqlite only (doc/claude/TEST_ENVIRONMENTS.md § Database
 # backends); duckdb is part of the LOCAL four-backend bar.
 #
 # Usage:  scripts/fetch-duckdb.sh [--force]

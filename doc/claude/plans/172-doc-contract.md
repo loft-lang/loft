@@ -38,6 +38,29 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
   in `formal/` stays visible as new.
 
+**Phase 4 — TESTING.md split by question (2026-09-28).**
+- **4602 lines became six working docs, each under the ceiling, plus the record:**
+  - TESTING.md (705): where a test goes and how to write it — the harness, the suites, the gates;
+  - RUNNING_TESTS.md (662): running the suite and reading a failure, LogConfig included;
+  - GUARDS.md (586): does a guard catch its defect — `make falsify`, receipts, and the
+    ways a guard reads green, as rules grouped by kind (the 73 incidents are in the record);
+  - RUN_BOUNDS.md (260), TEST_ENVIRONMENTS.md (417), LOFT_TEST.md (252);
+  - the diagnostic tiers moved to DIAGNOSTICS.md, their subject's home;
+  - TESTING-history.md holds every moved incident verbatim.
+- **Stale facts corrected against the tree**, among them: six `tests/*.rs` entry points and the
+  `generated/` workspace that no longer exist; `wrap.rs` tolerating unclaimed warnings (it fails
+  them); a `pkill -f` recipe the shell rules forbid; `make test` and `make loft-test` doing
+  other than stated; the LOFT_LOG preset table missing six presets; two failure-kind causes
+  ("Undefined type" is not definition order; a range query is one interval, @FR-Slice-KeyedIter).
+- **Pointers:** every citation of a moved section names its new doc — 112 `tests/scripts`
+  headers, CLAUDE.md, skills, scripts and comments.
+
+**Plan docs are out of the burn-down (owner, 2026-09-28).**  A plan's docs are kept under the
+contract by that plan's own agent, so `make docs-lint`'s report, baseline and worklist and
+`make file-sizes` leave `plans/` and `lib_plans/` out; the edit hook and the PR gate still
+apply.  DOC_QUALITY § Maintainer docs rule 14 and DOC_CONTRACT rule 39 carry it.  This also
+settles the open `orphan` question for `plans/`.
+
 **Phase 4 — PERFORMANCE.md split by the same rule (2026-09-28).**
 - **5078 lines became three docs:**
   - PERFORMANCE.md (769 lines, working): how to measure, where the numbers are, open work;
@@ -350,8 +373,8 @@ bypass.
 
 - ~~The `size` ceiling~~ — **decided 2026-09-25: 1000 lines, hard**, with structure judged
   by the reviewer below it.
-- Whether `doc/claude/formal/` and `plans/` are exempt from `orphan` (proposed: `formal/`
-  exempt via its README, `plans/` reachable via `plans/README.md`, so no exemption needed).
+- Whether `doc/claude/formal/` is exempt from `orphan` (proposed: reachable via its README, so
+  no exemption needed).  `plans/` is settled: out of the report entirely (rule 14).
 - ~~Whether the PR gate lags the report~~ — it did not need to: the gate compares a change with
   its base, so no baseline is involved and inherited findings cannot block (Phase 2).
 

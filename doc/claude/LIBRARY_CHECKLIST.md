@@ -120,7 +120,7 @@ holding a bug fix (same rule as `lint_comments.sh` — advisory, never fails CI)
 - [ ] Every public function has a **production caller** — a real consumer, not the library's own tests or an example — or the docs label it *"built for consumers, none yet"* ([LIBRARY_AUTHORING.md § 2e](LIBRARY_AUTHORING.md)).
 - [ ] Tests cover the public surface — each `pub fn` / `pub struct` has a test or example path.
       *(`loft test` lists the functions a suite never entered — see
-      [TESTING.md § What a run did NOT check](TESTING.md#what-a-run-did-not-check--scope-admission-coverage).
+      [LOFT_TEST.md § What a run did NOT check](LOFT_TEST.md#what-a-run-did-not-check--scope-admission-coverage).
       It is a report for this review to read, never a gate: a library is written before
       its consumers exist, so a coverage bar would fail exactly the case the package
       system is meant to support.)*

@@ -448,7 +448,7 @@ branches for LNK1181 and "required to be available in rlib format" are removed;
 - `@P332` — `install::install_one` return on Windows (fixed 2026-05-26).
 - `@P333` — `/tmp/` hard-coded paths in two lib fixtures → CWD-relative
   (fixed 2026-05-26).
-- Heap-corruption-style failures: TESTING.md § (Windows `STATUS_HEAP_CORRUPTION`
+- Heap-corruption-style failures: TEST_ENVIRONMENTS.md § Occasional valgrind pass (Windows `STATUS_HEAP_CORRUPTION`
   caught real out-of-bounds that Linux's allocator slack hid — a case where
   Windows CI was *more* sensitive and *useful*).
 

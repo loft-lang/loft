@@ -1373,7 +1373,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "scripts/valgrind-sweep.sh   # interpreter + native, every script and document",
             "GREEN — no invalid access and nothing definitely lost on either backend.  A "
             "possibly-lost record is Rust's interior pointers, not a leak; a leaked STORE "
-            "fails the wrap suite itself (TESTING.md § Occasional valgrind pass).  Satisfied "
+            "fails the wrap suite itself (TEST_ENVIRONMENTS.md § Occasional valgrind pass).  Satisfied "
             "by the gate's own valgrind job on this commit",
             cadence="cand pre",
             derived=lambda: gate_leg_ok(["miri.yml / Valgrind memcheck sweep"], network),

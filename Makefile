@@ -95,7 +95,7 @@
 #
 #   make sweep-scratch   Reclaim loft's temp scratch: dead-process native artefacts,
 #                        aged test caches, agent sessions older than two weeks.
-#                        Run when `df` says so — TESTING.md § Scratch hygiene.
+#                        Run when `df` says so — RUN_BOUNDS.md § Scratch hygiene.
 #   make sweep-target    Drop cargo artefacts no build in two weeks has used.
 #
 # =========================================================================
@@ -548,7 +548,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 .PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
-	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
+	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
 	@# Safe by construction: only loft's own names, only dead pids or aged entries, and a
 	@# sibling checkout's gate scratch is never touched (each checkout has its own).
 	@scripts/sweep_scratch.sh --sessions $(TEST_SCRATCH) "$${TMPDIR:-$$HOME/.cache/tmp}" /tmp

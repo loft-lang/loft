@@ -727,6 +727,6 @@ and using the test framework for quick iteration.
 - [claude/PROBLEMS.md](claude/PROBLEMS.md) — Known bugs with severity, workarounds, and fix paths
 - [claude/COMPILER.md](claude/COMPILER.md) — Deep dive into the lexer, parser, IR, and bytecode pipeline
 - [claude/DESIGN.md](claude/DESIGN.md) — Algorithm analysis for every major subsystem
-- [claude/TESTING.md](claude/TESTING.md) — Test framework, running tests, debugging `.loft` script failures
+- [claude/TESTING.md](claude/TESTING.md) — Test framework; [claude/RUNNING_TESTS.md](claude/RUNNING_TESTS.md) — running tests, debugging `.loft` script failures
 - [claude/SLOTS.md](claude/SLOTS.md) — Variable scoping and slot assignment details
 - [claude/INCONSISTENCIES.md](claude/INCONSISTENCIES.md) — Language quirks and known semantic asymmetries

@@ -247,7 +247,7 @@ A survey that finds the siblings of the bug you are on:
 number of them.  Each is one coherent change:
 
 - a fix and its guard ship together; a guard records `@falsified-at:` — the run showing it
-  fails on the build it was written to catch ([TESTING.md](TESTING.md), `make falsify`);
+  fails on the build it was written to catch ([GUARDS.md](GUARDS.md), `make falsify`);
 - a test written before its implementation, in a separate commit, is marked
   `#[ignore = "<reason>"]` or `@EXPECT_FAIL` and enabled in the commit that makes it pass;
 - a behaviour-neutral refactor gets its own commit;
@@ -280,7 +280,7 @@ clearly does not affect:
 | `doc/claude/PLANNING.md`, `ROADMAP.md` | An item completed (remove it — completion history is git and the changelog) or a new one was found |
 | A GitHub issue | A bug found and NOT fixed ([ISSUE_TRACKING.md](ISSUE_TRACKING.md)); a fixed one gets `Fixes #N` in its commit |
 | `doc/claude/CAVEATS.md` | An edge case was fixed, or a workaround found (with its test) |
-| `doc/claude/TESTING.md` § Test Coverage Gaps | Coverage improved, or a gap was found |
+| `doc/claude/TESTING.md` § Open work | Coverage improved, or a gap was found |
 | `doc/claude/STDLIB.md` / `LOFT.md` | A stdlib function, or the language's syntax or semantics, changed |
 | `doc/claude/INTERNALS.md` / `INTERMEDIATE.md` | A new operator, runtime state or native function |
 | `doc/claude/INCONSISTENCIES.md` / `NATIVE.md` | A language quirk was found or resolved; a native design correction |
@@ -452,7 +452,7 @@ DESIGN_DECISIONS.md entry.
 - [CODE.md](CODE.md) — naming, function length, clippy policy, null sentinels
 - [JOINING.md](JOINING.md) — rebasing onto a squash, joining sibling checkouts
 - [REVALIDATE_LIBS.md](REVALIDATE_LIBS.md) — checking the shipped libraries against this loft
-- [TESTING.md](TESTING.md) — the test framework, guards and `@falsified-at:`
+- [TESTING.md](TESTING.md) — the test framework; [GUARDS.md](GUARDS.md) — guards and `@falsified-at:`
 - [ISSUE_TRACKING.md](ISSUE_TRACKING.md) — where open work lives
 - [RELEASE.md](RELEASE.md) — gate criteria and the release checklist
 - [DEVELOPMENT-history.md](DEVELOPMENT-history.md) — the incidents behind these rules

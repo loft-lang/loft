@@ -1826,7 +1826,7 @@ Measured 2026-09-06: `make ci` red in two runs of three on
 `alias_link_baseline::baseline_leak_clean_native`, whose two native cells compile one source
 concurrently.  Guarded deterministically by the destination's INODE changing across a
 publish (`native_utils::publish_cached_binary_tests`) — racing the race does not falsify,
-see TESTING.md § How a guard reads green while the defect stands.
+see GUARDS.md § How a guard reads green while the defect stands.
 
 ### Why the probe is skippable
 

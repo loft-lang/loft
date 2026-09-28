@@ -106,7 +106,7 @@ pub fn stride(store: &Store, claim: u32) -> u32 {
 /// entry was filed under a slot that means EMPTY.
 ///
 /// A record number is safe to tag: it indexes WORDS, so the high bit would need a
-/// 16 GB store, and the test-suite ceiling alone is 2 GB (`TESTING.md`
+/// 16 GB store, and the test-suite ceiling alone is 2 GB (`RUN_BOUNDS.md`
 /// § Store-memory ceiling).  An arena index is bounded by the same store.
 pub const SLOT_RECORD: u32 = 0x8000_0000;
 
