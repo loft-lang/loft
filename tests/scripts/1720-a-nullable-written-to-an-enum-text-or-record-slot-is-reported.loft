@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1720, `@FR-N-Store` / `@FR-C-Var` — a nullable value stored into a non-null slot is
+// reported wherever the slot is, and whatever spelling of its type the value arrives in.
+//
+// Three gaps, one rule:
+//
+//   * a declared ENUM local written a nullable VARIANT (`d: Shape = mc(i)`, `mc` answering
+//     `Circle?`): the store face asked only when the value's base EQUALLED the slot's type, and
+//     a variant does not — so the local held null in silence (or, before loft#1714's join
+//     change, was refused as a type change).  `Parser::slot_takes_base` admits a variant of
+//     the slot's enum, as `@FR-C-Var` licenses.
+//   * a FIELD or an ELEMENT written a nullable text, enum or record value was never asked: a
+//     scalar slot is asked at the typed store, and these three leave the assignment before it
+//     (text for `assign_text`, the others for `towards_set`'s copy).  A text or plain-enum
+//     slot then holds null; a dense record has no null to hold and keeps the value it had —
+//     the consequence loft#1404 wrote for a bare `null` there, now named in the warning.  A
+//     `reference<T>` POINTER field repoints and does hold null, so it says that instead.
+//   * `mc(i) ?? Shape::Square {…}` — the discharge the issue itself names as the cure — was
+//     refused: the result took the value's VARIANT type, and a sibling variant does not
+//     convert to it.  A sibling variant (or the enum) joins to the enum, as `if`/`else` joins.
+//
+// Every value is hand-computed.  `radius` answers a Circle's `r` and a Square's `-s`.
+//
+// The ELEMENT cells are `1720b-…`: an expectation is matched file-wide, and theirs
+// would be met by the field cells' warnings here.
+//
+// Not here: `b: Shape = if … { null } else { Shape::Circle {…} }` needs loft#1714's join change
+// (the branch is `Circle?` there, and this file's first gap then reports it).
+//
+// @falsified-at: PLACEHOLDER
+//   CHANNEL: the EXPECTATIONS — the control emits none of the warnings pinned below; the
+//   `??` cells fail to compile there as well.
+//   WITNESS: `d: Shape = mc(0)` is refused as "cannot change type from Shape to Circle?" on
+//   the control; `h.t = mt(0)` compiles in silence and the field reads null.
+//   HOLDS: no leak and no panic on either tree; the nullable-field and pointer-field controls
+//   answer the same on both.
+
+enum Shape { Circle { r: integer }, Square { s: integer } }
+enum Col { Red, Green }
+struct P { a: integer }
+struct H { p: P, t: text, s: Shape, c: Col }
+fn m(i: integer) -> Shape? { if i == 0 { null } else { Shape::Square { s: i } } }
+fn mc(i: integer) -> Circle? { if i == 0 { null } else { Shape::Circle { r: i } } }
+fn mp(i: integer) -> P? { if i == 0 { null } else { P { a: i } } }
+fn mt(i: integer) -> text? { if i == 0 { null } else { "x{i}" } }
+fn mcol(i: integer) -> Col? { if i == 0 { null } else { Col::Green } }
+fn fresh() -> H { H { p: P { a: 1 }, t: "a", s: Shape::Square { s: 1 }, c: Col::Red } }
+fn radius(s: Shape) -> integer { match s { Circle { r } => r, Square { s } => 0 - s } }
+
+// ── A declared enum LOCAL written a nullable VARIANT (the filed shape) ─────────
+
+// @EXPECT_WARNING: a nullable `Circle?` is stored into the local `ld` of the non-null type `Shape`
+fn test_local_variant() { ld: Shape = mc(0); assert(ld == null, "ld null"); }
+
+// @EXPECT_WARNING: a nullable `Circle?` is stored into the local `lp` of the non-null type `Shape`
+fn test_local_variant_present() { lp: Shape = mc(4); assert(radius(lp) == 4, "lp {radius(lp)}"); }
+
+// @EXPECT_WARNING: a nullable `Circle?` is stored into the local `lr` of the non-null type `Shape`
+fn test_local_variant_rewrite() { lr: Shape = Shape::Square { s: 2 }; assert(radius(lr) == -2, "lr2"); lr = mc(0); assert(lr == null, "lr null"); }
+
+// The enum itself was already asked; kept so the pair is measured together.
+// @EXPECT_WARNING: a nullable `Shape?` is stored into the local `le` of the non-null type `Shape`
+fn test_local_enum() { le: Shape = m(0); assert(le == null, "le null"); }
+
+// ── A FIELD written a nullable value ──────────────────────────────────────────
+
+// A dense record has no null to hold: the store does not happen.
+// @EXPECT_WARNING: a nullable `P?` is stored into the assignment target of the non-null type `P` — when it is null the store does not happen, so the slot keeps the value it had
+fn test_field_record() { h = fresh(); h.p = mp(0); assert(h.p.a == 1, "p {h.p.a}"); h.p = mp(4); assert(h.p.a == 4, "p4 {h.p.a}"); }
+
+// @EXPECT_WARNING: a nullable `text?` is stored into the assignment target of the non-null type `text` — it becomes null there
+fn test_field_text() { h = fresh(); h.t = mt(0); assert("{h.t}" == "null", "t {h.t}"); h.t = mt(2); assert(h.t == "x2", "t2 {h.t}"); }
+
+// @EXPECT_WARNING: a nullable `Col?` is stored into the assignment target of the non-null type `Col` — it becomes null there
+fn test_field_plain_enum() { h = fresh(); h.c = mcol(0); assert("{h.c}" == "null", "c {h.c}"); h.c = mcol(1); assert(h.c == Col::Green, "c green"); }
+
+// @EXPECT_WARNING: a nullable `Shape?` is stored into the assignment target of the non-null type `Shape` — when it is null the store does not happen
+fn test_field_enum() { h = fresh(); h.s = m(0); assert(radius(h.s) == -1, "s {radius(h.s)}"); }
+
+// @EXPECT_WARNING: a nullable `Circle?` is stored into the assignment target of the non-null type `Shape` — when it is null the store does not happen
+fn test_field_variant() { h = fresh(); h.s = mc(0); assert(radius(h.s) == -1, "sv {radius(h.s)}"); h.s = mc(3); assert(radius(h.s) == 3, "sv3 {radius(h.s)}"); }
+
+// A POINTER field repoints, so it does hold null.
+struct Nd { v: integer, next: reference<Nd> }
+fn mn(i: integer) -> Nd? { if i == 0 { null } else { Nd { v: i } } }
+// @EXPECT_WARNING: a nullable `Nd?` is stored into the assignment target of the non-null type `Nd` — it becomes null there
+fn test_field_pointer() { n = Nd { v: 1, next: Nd { v: 2 } }; n.next = mn(0); assert(n.next == null, "next null"); }
+
+// A NULLABLE field is the control: nothing to report, and it holds the null.
+struct Q { p: P?, t: text? }
+fn test_field_nullable_control() { q = Q { p: P { a: 1 }, t: "a" }; q.p = mp(0); q.t = mt(0); assert(q.p == null && !q.t, "q null"); }
+
+// ── `??` joins a sibling variant to the enum ─────────────────────────────────
+
+fn test_coalesce_sibling() { d: Shape = mc(0) ?? Shape::Square { s: 7 }; assert(radius(d) == -7, "c0 {radius(d)}"); e: Shape = mc(4) ?? Shape::Square { s: 7 }; assert(radius(e) == 4, "c4 {radius(e)}"); }
+fn test_coalesce_inferred() { e = mc(0) ?? Shape::Square { s: 8 }; assert(radius(e) == -8, "ci {radius(e)}"); }
+fn test_coalesce_chain() { assert(radius(mc(0) ?? m(9) ?? Shape::Square { s: 1 }) == -9, "chain"); assert(radius(mc(2) ?? m(9) ?? Shape::Square { s: 1 }) == 2, "chain2"); }
+// The same variant keeps the variant's own type: `.r` reads straight off it.
+fn test_coalesce_same_variant() { c = mc(0) ?? Shape::Circle { r: 5 }; assert(c.r == 5, "sv {c.r}"); }

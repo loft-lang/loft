@@ -5055,6 +5055,22 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
+        self.nstore_unwrap_report_as(inner, target_tp, what, at, never_error, None)
+    }
+
+    /// [`Parser::nstore_unwrap_report`] with the CONSEQUENCE clause supplied by the caller,
+    /// for the reason [`Parser::nstore_null_report_as`] gives: *"it becomes null there"* is
+    /// what a handle or a scalar slot does, and a dense record slot has no null to hold — the
+    /// store does not happen.  The position knows which; `None` keeps the pinned wording.
+    fn nstore_unwrap_report_as(
+        &mut self,
+        inner: &Type,
+        target_tp: &Type,
+        what: &str,
+        at: Option<&Position>,
+        never_error: bool,
+        consequence: Option<&str>,
+    ) -> bool {
         // `τ?` has a THIRD spelling, and this gate has to ask all three of one face.
         // A `&` parameter carries its nullability INSIDE the reference: `&integer?` is
         // `RefVar(Optional(Integer))`, so asking `Type::Optional` of the OUTER type answers
@@ -5100,8 +5116,9 @@ impl Parser {
             let msg = diagnostic_format(
                 Level::Warning,
                 format_args!(
-                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
-                    target_tp.source_name(&self.data)
+                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — {}; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
+                    target_tp.source_name(&self.data),
+                    consequence.unwrap_or("it becomes null there")
                 ),
             );
             self.nstore_diag(at, Level::Warning, &msg);

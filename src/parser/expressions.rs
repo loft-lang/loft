@@ -3404,6 +3404,18 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// Does a slot of type `slot` take a value whose non-null base is `base` — the same
+    /// type, or (`@FR-C-Var`) a VARIANT of the slot's enum?  The question `@FR-N-Store` asks
+    /// before it reports a nullable write: a `Circle?` stored into a `Shape` slot is the same
+    /// breach as a `Shape?` is, and reading only equality left it unreported (loft#1720).
+    fn slot_takes_base(&self, slot: &Type, base: &Type) -> bool {
+        slot.is_equal(base)
+            || matches!(
+                (self.variant_parent_enum(base), slot),
+                (Some(Type::Enum(v, _, _)), Type::Enum(e, _, _)) if v == *e
+            )
+    }
+
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_op_inner(
@@ -5318,7 +5330,7 @@ use a separate collection or add after the loop"
             && matches!(s_type, Type::Optional(_))
             && !matches!(slot_tp, Type::Optional(_) | Type::RefVar(_))
             && !slot_tp.is_unknown()
-            && slot_tp.is_equal(s_type.base());
+            && self.slot_takes_base(slot_tp, s_type.base());
         let mut s_type = if declared_nullable_write {
             let what = format!(
                 "{} `{}`",
@@ -5337,6 +5349,42 @@ use a separate collection or add after the loop"
         } else {
             s_type
         };
+        // @FR-N-Store at a PLACE — a field or an element written a nullable value.  A scalar
+        // slot is asked at the typed store further down; a `text`, an enum and a record slot
+        // never reach it (a text leaves for `assign_text`, the others for `towards_set`'s
+        // copy), so they were written in silence (loft#1720).  A text or plain-enum slot then
+        // holds null; a dense record, which has no null to hold, keeps the value it had —
+        // the consequence loft#1404 wrote for a bare `null` there.
+        if op == "="
+            && !self.first_pass
+            && !matches!(to.unspan(), Value::Var(_))
+            && let Type::Optional(inner) = &s_type
+            && matches!(slot_tp, Type::Text(_) | Type::Enum(..) | Type::Reference(..))
+            && !self.data.is_nullable_wrapper(slot_tp)
+            && self.slot_takes_base(slot_tp, inner)
+        {
+            // A `reference<T>` POINTER field repoints, so it does hold null; it is told apart by
+            // the lvalue's shape, as `towards_set`'s repoint arm tells it — the share marker is
+            // gone from the type by now.
+            let pointer = matches!(to.unspan(),
+                Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef");
+            let kept = match slot_tp {
+                Type::Reference(..) => !pointer,
+                Type::Enum(_, payload, _) => *payload,
+                _ => false,
+            };
+            let inner = (**inner).clone();
+            self.nstore_unwrap_report_as(
+                &inner,
+                slot_tp,
+                "the assignment target",
+                None,
+                false,
+                kept.then_some(
+                    "when it is null the store does not happen, so the slot keeps the value it had",
+                ),
+            );
+        }
         // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
         // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
         // about the shape the body will take; where the body MATERIALISES its answer
