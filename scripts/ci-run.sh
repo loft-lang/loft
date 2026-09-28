@@ -230,7 +230,21 @@ case "${1:-status}" in
       run "clippy all" cargo clippy --all-targets --all-features -- -D warnings
     fi
     if [ "$st" = FAILED ] && [ -s .ci-failed ]; then
-      expr=$(awk '{ printf "%s(binary_id(=%s) & test(=%s))", (NR > 1 ? " | " : ""), $1, $2 }' .ci-failed)
+      # A failed test whose function is gone since the gate (renamed or deleted) would make
+      # nextest answer "no tests to run", which read as a red recheck of a fix that renamed
+      # the pin it corrected.  Name it and run its whole binary instead, so a rename is
+      # measured and a deletion is visible rather than silently green.
+      expr=""
+      while read -r bin tst _; do
+        [ -n "$bin" ] || continue
+        if grep -rqw --include='*.rs' "fn ${tst##*::}" tests src 2>/dev/null; then
+          one="(binary_id(=$bin) & test(=$tst))"
+        else
+          echo "  gone  $bin $tst — no longer in the tree; running all of $bin" | tee -a .ci-recheck.log
+          one="binary_id(=$bin)"
+        fi
+        expr="${expr:+$expr | }$one"
+      done < .ci-failed
       run "failed tests" cargo nextest run --no-fail-fast -E "$expr"
     fi
     run "changed" scripts/find_problems.sh --changed "$base"
