@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I67 — Opcode implementations: the stdlib must declare the operators this binary's table carries
 
-//! A standard library that does not match the binary is refused at load.
+//! @I67 (opcode implementations) — a standard library that does not match the binary is
+//! refused at load.
 //!
 //! The interpreter dispatches an operator by POSITION: `Data::op_code` hands every operator
 //! declaration in `default/*.loft` the next ordinal in parse order, and

@@ -5320,7 +5320,7 @@ impl Parser {
         tp: &Type,
         at: Option<&Position>,
     ) -> bool {
-        if matches!(tp, Type::Void) {
+        if matches!(tp.base(), Type::Void) {
             if !self.first_pass {
                 let msg = "A condition needs a value, and this expression answers nothing \
                            — write `==` to compare, or move the store to its own line";

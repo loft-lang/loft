@@ -14,49 +14,90 @@
 // { e }]` compiled and answered `1 1`.  Both route through the same coercion now.
 //
 // The axes moved: the construct (`if`, `else if`, `while`, `assert`, a `for` filter, a
-// comprehension filter), the place (an element
-// in range, an element out of range, a local, a field), the store's spelling (plain and
-// compound).  Every cell is a pass-2 diagnostic, so one file holds them all and each
-// `@EXPECT_ERROR` line below must be matched by its own cell (an unmatched line fails the
-// file, loft#929).
+// comprehension filter), the place (an element in range, an element out of range, a local,
+// a field), the store's spelling (plain and compound).  Every cell is a pass-2 diagnostic,
+// so one file holds them all and each `@EXPECT_ERROR` line below must be matched by its own
+// cell (an unmatched line fails the file, loft#929).  One function per cell and no `main`,
+// so the harness can isolate each refusing cell and the `assert` cell is not an assertion
+// that can never run (`a_refusal_file_carries_no_runtime_assertions`).
 //
-// @falsified-at: ef4fd49 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches)
-// @falsified-by: tests/falsified/a-store-in-condition-position-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches)
+// @falsified-at: ef4fd49 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-store-in-condition-position-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
 // CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
 //   ten refusals are the only diagnostics.
 // WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
-// HOLDS: on the fixed tree each cell reports its own refusal and nothing else — an unmatched
-//   `@EXPECT_ERROR` and an unexpected error both fail the file — on both backends.
+// HOLDS: the asserts, leak and panic channels stay 0/none on both trees — the control
+//   COMPILES the file and runs it wrong, it does not crash on it; and every condition that
+//   answers a value keeps compiling — a heap handle (`if v`), `!v[i]`, a comparison in a
+//   `for` or comprehension filter — pinned by the corpus files that use those spellings.
 
 struct P { x: integer, y: integer }
 
-// The `assert` cell stands in a function of its own: a refusal file with a `main` may not
-// carry an `assert` outside an `@EXPECT_ERROR` function (`wrap::a_refusal_file_carries_no_runtime_assertions`).
 // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-fn assert_cell() { v = [1, 2, 3]; assert(v[1] = 2, "a store is not a test"); }
+fn cell_if_out_of_range() {
+  v = [1, 2, 3];
+  if v[9] = 2 { println("landed"); } else { println("missed"); }
+}
 
-fn main() {
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_in_range() {
+  v = [1, 2, 3];
+  if v[1] = 2 { println("landed"); }
+  println("{v[1]}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_local() {
+  x = 4;
+  if x = 5 { println("t"); } else { println("f"); }
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_compound() {
+  x = 4;
+  if x += 1 { println("t"); }
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_field() {
+  p = P { x: 1, y: 2 };
+  if p.x = 3 { println("t"); }
+  println("{p.x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_else_if() {
   v = [1, 2, 3];
   x = 4;
-  p = P { x: 1, y: 2 };
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  if v[9] = 2 { println("landed"); } else { println("missed"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  if v[1] = 2 { println("landed"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  if x = 5 { println("t"); } else { println("f"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  if x += 1 { println("t"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  if p.x = 3 { println("t"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
   if x == 9 { println("nine"); } else if v[2] = 7 { println("seven"); }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_while() {
+  v = [1, 2, 3];
   while v[1] = 2 { break; }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+  println("{v[1]}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_assert() {
+  v = [1, 2, 3];
+  assert(v[1] = 2, "a store is not a test");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_for_filter() {
+  x = 4;
   for e in 1..=9 if x = e { x += 1; }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_comprehension_filter() {
+  v = [1, 2, 3];
+  x = 4;
   w = [for e in v if x = e { e }];
   println("{w.len()}");
-  println("{x} {v[1]} {p.x}");
 }
