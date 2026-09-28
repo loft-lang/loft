@@ -2543,6 +2543,20 @@ the bare form bind only the namespace (this ruling, and a break for every progra
 current behaviour) or by superseding the ruling (loft#1094's position) is an owner call, and it is
 the one thing here that is still open. The reference now describes the language that runs.
 
+
+**Amended 2026-09-28 (owner): the code moves, with the rustc rule and `pub use`.**  Walking C98
+under @PLN175 measured the shipped language against this ruling with `loft --check` on every
+reachable `.loft` (this repo, the libraries, the consumer checkouts): making a bare `use lib;`
+bind only the qualifier broke 46 files here, 34 in the libraries and about 31 in consumers.
+Most broke through one pattern this ruling never addressed: a package entry that offers its
+modules (`graphics.loft`: `use math; use mesh; …`) relied on the wildcard ALSO passing every
+imported name on to its own importers.  The owner's call: follow rustc — a plain `use` (bare,
+`::*` or `::(…)`) binds for the importing file only, and `pub use lib::*;` / `pub use
+lib::(…);` passes names on; a bare `pub use lib;` is refused.  The cure for a program is
+mechanical: `use lib;` → `use lib::*;` keeps what it did, and a package entry writes
+`pub use`.  Unresolved names name their cure in the error.  A wildcard import against the
+program's own top-level definition stays refused (Rust shadows the glob); that edge is open.
+
 ## C99 — A keyed collection's subscript is uniformly KEY-addressed (lookup / range / removal), never positional
 
 **Catalogue:** @F8 (sorted) / @PLN102 arc-E lib-audit **H8** (INC#2). The freeze-time resolution of "the sorted key-range slice shares vector's positional-slice syntax."

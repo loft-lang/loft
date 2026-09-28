@@ -1,5 +1,5 @@
 // MO.2: tests for map_has_chunk / map_get_hex.
-use moros_map;
+use moros_map::*;
 
 fn test_has_chunk() {
   m = map_empty();

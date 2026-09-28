@@ -14,11 +14,11 @@
 //
 // Modes: `sqlite` (always), `postgres`, `maria`, `duckdb`.
 
-use sql;
-use sqlite;
-use postgres;
-use maria;
-use duckdb;
+use sql::*;
+use sqlite::*;
+use postgres::*;
+use maria::*;
+use duckdb::*;
 
 // The rows every backend is given, so their outputs are comparable:
 //   1 'ada'   an ordinary value

@@ -6,9 +6,9 @@
 // their own `Thing`. Every call below is bare, so each one is the question the
 // mangled key `t_5Thing_go` could not answer: which package's `go` accepts THIS
 // receiver? The swapped-order twin is `dupmethod_ba_main.loft`.
-use dupmethod_a;
-use dupmethod_b;
-use dupmethod_c;
+use dupmethod_a::*;
+use dupmethod_b::*;
+use dupmethod_c::*;
 
 fn main() {
   a = make_a(1);

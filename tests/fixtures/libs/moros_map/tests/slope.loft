@@ -1,5 +1,5 @@
 // Tests for hex geometry, wall direction resolution, and slope operations.
-use moros_map;
+use moros_map::*;
 
 // ── Hex distance ─────────────────────────────────────────────────
 

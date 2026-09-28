@@ -317,7 +317,11 @@ pub fn actual_types_deferred(
                 // `string` used to be special-cased here; it is now one row of the
                 // cross-language alias table `suggest_type_name` consults, so this
                 // site has one path and the table has one home (Goal E).
-                let msg = if let Some(s) = data.suggest_type_name(name) {
+                let msg = if let Some(msg) =
+                    data.import_cure("Undefined type", name, data.def(d).source)
+                {
+                    msg
+                } else if let Some(s) = data.suggest_type_name(name) {
                     format!("Undefined type {name} — did you mean '{s}'?")
                 } else {
                     format!("Undefined type {name}")

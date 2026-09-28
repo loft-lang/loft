@@ -21,7 +21,7 @@
 // ways this fails are opposite: a hook that never runs leaves it short, and one
 // that runs from a second mechanism leaves it long.
 
-use dropscope;
+use dropscope::*;
 
 fn check(what: text, got: text, want: text) {
   assert(got == want, "{what}: expected [{want}], got [{got}]");

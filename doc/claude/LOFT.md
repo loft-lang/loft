@@ -717,14 +717,15 @@ Catalogue: @F46; guard: `tests/scripts/78-type-aliases.loft`, `tests/scripts/167
 ### Library imports
 
 ```
-use arguments;                     // wildcard: every pub name bare + `arguments::` qualifier
-use arguments::*;                  // explicit wildcard (same as above)
+use arguments;                     // the `arguments::` qualifier only: `arguments::parse_args(…)`
+use arguments::*;                  // every public name, bare, for THIS file
 use arguments::parse_args;         // selective: one name, bare
 use arguments::(parse_args, Flag); // selective group — MULTIPLE names need parentheses
 use arguments::Flag as Opt;        // alias an imported name (bare `Opt`)
 use arguments::(Flag as Opt, parse_args);  // per-name aliases inside a group
-use arguments as args;             // library alias → `args::parse_args` (qualifier only;
-                                   //   does NOT bring names in bare)
+use arguments as args;             // library alias → `args::parse_args` (qualifier only)
+pub use arguments::*;              // import AND pass on: whoever imports this file gets them
+pub use arguments::(Flag);         // pass on some
 ```
 
 Searches for `arguments.loft` in `lib/`, the current directory, directories from the
@@ -736,32 +737,57 @@ qualified access.
 **Multiple names from one library must be parenthesised.** `use lib::a, b;` (a flat
 comma list) is a compile error; write `use lib::(a, b);`.
 
+#### What an import brings in, and what it passes on (@C98)
+
+The rules are Rust's:
+
+- **A bare `use lib;` brings in no name** — only the `lib::` qualifier.  A program that
+  only writes bare imports is immune to a library growing a name: every library name it
+  uses is spelled `lib::name`, so a new name in the library cannot collide with its own.
+- **`use lib::*;` and `use lib::(a, b);` bring names in bare, for this file only.**  A
+  file that imports this one does not receive them.
+- **`pub use lib::*;` and `pub use lib::(a, b);` also pass them on.**  This is how a
+  package's entry file offers the names of its modules:
+
+  ```
+  // graphics.loft — the package entry
+  pub use math::*;      // Vec3, …: a consumer's `use graphics::*;` receives them
+  pub use mesh::*;
+  use scene_internal;   // for this file only
+  ```
+
+  `pub use lib;` is refused: a qualifier is not a name an importer can receive.  So is a
+  bare `use self::module;`: a package's own module has no short qualifier (see below), so
+  that form would bind nothing — write `use self::module::*;` or `use self::module as m;`.
+
+A name that does not resolve because of how it was imported says so, and names both
+cures: `unknown type Pt — it is in geo, and a bare use geo; brings in only the geo::
+qualifier: write geo::Pt, or import the name with use geo::(Pt);`.  The same holds for a
+library in between that uses a name without passing it on.
+
 #### The import form decides whether your own name can clash (loft#1094)
 
-**A bare `use lib;` brings every public name into THIS SOURCE's namespace, so declaring
-one of them yourself is a redefinition and is refused.  A selective `use lib::(a, b);`
-brings in only what it names, so every OTHER name in that library stays free for you to
-declare** — and the two live side by side, reached unambiguously in each source that did
-not import the other (the module scoping of @PLN102 C97).
+**A wildcard `use lib::*;` brings every public name into THIS SOURCE's namespace, so
+declaring one of them yourself is a redefinition and is refused.  A selective
+`use lib::(a, b);` brings in only what it names, and a bare `use lib;` brings in none, so
+every OTHER name in that library stays free for you to declare** — and the two live side
+by side, reached unambiguously in each source that did not import the other (the module
+scoping of @PLN102 C97).
 
 ```
-use hex_body;                        struct Frame { … }   // refused: `Frame` came in bare
+use hex_body::*;                     struct Frame { … }   // refused: `Frame` came in bare
 use hex_body::(Rig, rig_world_seg);  struct Frame { … }   // fine: only those two came in
+use hex_body;                        struct Frame { … }   // fine: only `hex_body::` came in
 ```
 
-Both are deliberate, and the second is the stronger position: **a selective import makes
-you immune to the library GROWING a name.** A dependency adding a `Frame` in a later
-release cannot collide with yours, because you never asked for it. With a bare import it
-can, and that refusal is the point of the check.
+**A selective or bare import makes you immune to the library GROWING a name.** A
+dependency adding a `Frame` in a later release cannot collide with yours, because you
+never asked for it. With a wildcard import it can, and that refusal is the point of the
+check.
 
-It is worth knowing which form you wrote before relying on either. A consumer read the
-refusal as a property of their package — "a floor bump would break my build loudly" —
-when it is a property of the IMPORT, and their selective imports meant the two `Frame`s
-had been live in one graph for some time with nothing to say so.
-
-Where two same-named types do meet — one module imports the library bare while another
-declares its own — the mismatch names both DECLARATION sites rather than printing the one
-name twice.
+Where two same-named types do meet — one module imports the library with a wildcard while
+another declares its own — the mismatch names both DECLARATION sites rather than printing
+the one name twice.
 
 #### A package's own module wins its own `use` (loft#976)
 

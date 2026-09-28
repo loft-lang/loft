@@ -16,7 +16,7 @@
 // `#cwd` because this is a tool for the repository it is RUN in, not for the
 // directory it happens to live in.
 
-use git;
+use git::*;
 
 // Where the dumped git state lands, RELATIVE TO THE CWD being reviewed.
 //

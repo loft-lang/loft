@@ -131,7 +131,7 @@ fn placement_changes_nothing_observable() {
     let library = "pub fn add(a: integer, b: integer) -> integer {\n    a + b\n}\n\
                    pub fn tally(label: text, n: integer) -> integer {\n    len(label) + n\n}\n\
                    pub fn flag(on: boolean) -> boolean {\n    !on\n}\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"add   = {add(2, 3)}\");\n\
                     \x20   println(\"edge  = {add(-9007199254740993, 1)}\");\n\
@@ -161,7 +161,7 @@ fn a_call_in_a_loop_keeps_its_answer() {
     // accumulating loop is where a stale frame or a mismatched response would
     // show up as a wrong total rather than a crash.
     let library = "pub fn step(n: integer) -> integer {\n    n * 2 + 1\n}\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   acc = 0;\n\
                     \x20   for i in 0..50 {\n\
@@ -210,7 +210,7 @@ fn every_integer_width_crosses_with_its_sign() {
                    \x20   if b { r += 1000; }\n\
                    \x20   r\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"u8  {e_u8(255)} {e_u8(0)}\");\n\
                     \x20   println(\"i8  {e_i8(-128)} {e_i8(-1)} {e_i8(127)}\");\n\
@@ -255,7 +255,7 @@ fn single_and_text_returns_cross() {
                    pub fn mix(a: integer, b: boolean, c: text, d: single, e: integer) -> text {\n\
                    \x20   \"{a}|{b}|{c}|{d}|{e}\"\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"s1 {echo_single(0.5 as single)} {echo_single(-2.25 as single)}\");\n\
                     \x20   println(\"s2 {scale(1.5 as single, 4)}\");\n\
@@ -308,7 +308,7 @@ fn single_and_text_returns_cross() {
 fn a_text_return_with_no_work_buffer_still_behaves_identically() {
     let library = "pub fn version() -> text { \"1.0.0\" }\n\
                    pub fn add(a: integer, b: integer) -> integer { a + b }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"v = {version()}\");\n\
                     \x20   w = version();\n\
@@ -333,7 +333,7 @@ fn a_warning_in_the_library_does_not_decide_whether_it_can_be_placed() {
     // whether the program ran at all. Errors still stop the load; warnings and
     // advice never did gate anything else in loft, and now do not gate this.
     let library = "pub fn ok(a: integer, unused: integer) -> integer {\n    a * 2\n}\n";
-    let consumer = "use parity;\nfn main() {\n    println(\"ok = {ok(21, 5)}\");\n}\n";
+    let consumer = "use parity::*;\nfn main() {\n    println(\"ok = {ok(21, 5)}\");\n}\n";
     let (inproc, placed) = both_placements("warned", library, consumer);
     assert_eq!(
         inproc.code, 0,
@@ -396,7 +396,7 @@ fn placed_and_unplaceable_calls_interleave() {
                    pub fn make_point(x: integer, y: integer) -> Point { Point { x: x, y: y } }\n\
                    pub fn sum_point(p: Point) -> integer { p.x + p.y }\n\
                    pub fn placed_txt(s: text) -> text { \"<{s}>\" }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   p = make_point(3, 4);\n\
                     \x20   println(\"a {placed_add(1, 2)} {version()} {sum_point(p)} {placed_txt(\"z\")}\");\n\
@@ -494,7 +494,7 @@ fn compound_values_cross_in_both_directions() {
                    \x20   for row in v { for e in row { t += e; } }\n\
                    \x20   t\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   p = make_p(3, 4);\n\
                     \x20   println(\"struct {sum_p(p)} {p.x} {p.y}\");\n\
@@ -573,7 +573,7 @@ fn a_callee_writing_to_a_compound_parameter_is_seen_by_the_caller() {
                    \x20   for i in 0..n { out += [i]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   p = P { x: 11, label: \"a\" };\n\
                     \x20   r = bump(p);\n\
@@ -633,7 +633,7 @@ fn a_value_that_outgrows_the_arena_still_crosses() {
                    \x20   out\n\
                    }\n\
                    pub fn count(v: vector<N>) -> integer { len(v) }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   big = range_v(200000);\n\
                     \x20   println(\"big {len(big)} {big[199999]} {sum_v(big)}\");\n\
@@ -694,7 +694,7 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
                    \x20   for i in 0..n { out += [i]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   acc = 0;\n\
                     \x20   for i in 0..2000 {\n\
@@ -778,7 +778,7 @@ fn a_compound_the_arena_does_not_carry_still_behaves_identically() {
                    \x20   t\n\
                    }\n\
                    pub fn sum_p(p: P) -> integer { p.a + p.b }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   c = make_circle(4);\n\
                     \x20   println(\"enum {area(c)}\");\n\
@@ -806,7 +806,7 @@ fn native_does_not_place_and_says_so_when_asked_to_insist() {
     let consumer = root.join("consumer.loft");
     std::fs::write(
         &consumer,
-        "use parity;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
+        "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )
     .expect("write consumer");
     write_library(
@@ -856,7 +856,7 @@ fn a_placed_library_sees_the_same_working_directory() {
                    \x20   if !exists(f) { return \"MISSING\"; }\n\
                    \x20   f.content()\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"beside-me {read_here(\"marker.txt\")}\");\n\
                     }\n";
@@ -919,7 +919,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
                    \x20   for e in v { t += e.x; }\n\
                    \x20   t\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   v = make_v(5);\n\
                     \x20   p = make_p(3);\n\
@@ -987,7 +987,7 @@ fn a_return_that_borrows_its_argument_is_not_placed() {
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   v = make_v(4);\n\
                     \x20   acc = 0;\n\
@@ -1047,7 +1047,7 @@ fn a_const_parameter_crosses_without_a_copy_back() {
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   p = P { x: 7, label: \"abc\" };\n\
                     \x20   println(\"scalar {read_c(p)} {read_m(p)} {p.x} {p.label}\");\n\
@@ -1091,7 +1091,7 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   items = make_v(64);\n\
                     \x20   sum = 0;\n\
@@ -1163,7 +1163,7 @@ fn a_callee_rebinding_its_parameter_changes_nothing_either_way() {
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
                    \x20   out\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   v = make_v(4);\n\
                     \x20   println(\"replaced {replace_all(v)} {len(v)} {v[0].x} {v[3].label}\");\n\
@@ -1209,7 +1209,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     let consumer = root.join("consumer.loft");
     std::fs::write(
         &consumer,
-        "use parity;\n\
+        "use parity::*;\n\
          fn main() {\n\
          \x20   v = make_v(2000);\n\
          \x20   println(\"before {len(v)} {v[1999].x}\");\n\
@@ -1322,7 +1322,7 @@ fn the_gate_can_fail() {
     let consumer = root.join("consumer.loft");
     std::fs::write(
         &consumer,
-        "use parity;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
+        "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )
     .expect("write consumer");
 
@@ -1369,7 +1369,7 @@ fn a_text_answer_larger_than_the_frame_crosses_intact() {
                    \x20   for _ in 0..kib { s = s + b; }\n\
                    \x20   s\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   small = big(1);\n\
                     \x20   println(\"small = {size(small)} {small[0 .. 4]}\");\n\
@@ -1415,7 +1415,7 @@ fn a_fault_inside_the_library_reads_the_same_way() {
                    \x20   if n < 0 { panic(\"refusing {n}\"); }\n\
                    \x20   n * 2\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn main() {\n\
                     \x20   println(\"ok = {refuse(21)}\");\n\
                     \x20   println(\"bad = {refuse(-1)}\");\n\
@@ -1448,7 +1448,7 @@ fn a_fault_deep_in_a_placed_library_names_every_frame() {
                    pub fn refuse(n: integer) -> integer {\n\
                    \x20   deeper(n)\n\
                    }\n";
-    let consumer = "use parity;\n\
+    let consumer = "use parity::*;\n\
                     fn helper(n: integer) -> integer {\n\
                     \x20   refuse(n)\n\
                     }\n\

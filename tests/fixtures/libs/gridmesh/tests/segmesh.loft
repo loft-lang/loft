@@ -7,7 +7,7 @@
 // starts empty; `emit_segment` narrows int→u8 / float→single and keeps the
 // nine parallel arrays in lock-step; `seg_len` == every array's length.
 
-use gridmesh;
+use gridmesh::*;
 
 // A fresh mesh is empty across all nine arrays.
 fn test_seg_mesh_new_empty() {

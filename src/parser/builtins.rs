@@ -255,7 +255,7 @@ impl Parser {
         if !self.first_pass && matches!(self.data.def_type(d_nr), DefType::Generic) {
             let mut types = vec![elem_tp.clone()];
             types.extend(extra_types.iter().cloned());
-            let inst = self.try_generic_instantiation(first_id, &types);
+            let inst = self.try_generic_instantiation(u16::MAX, first_id, &types);
             if inst != u32::MAX {
                 d_nr = inst;
             }
@@ -450,7 +450,7 @@ impl Parser {
         let ret_type = if matches!(self.data.def_type(d_nr), DefType::Generic) {
             let mut types = vec![elem_tp.clone()];
             types.extend(extra_types.iter().cloned());
-            let predicted = self.predict_generic_return_type(first_id, &types);
+            let predicted = self.predict_generic_return_type(u16::MAX, first_id, &types);
             if predicted.is_unknown() {
                 self.data.def(d_nr).returned().clone()
             } else {

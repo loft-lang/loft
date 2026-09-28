@@ -143,7 +143,7 @@ fn assert_three_mode_parity(prog: &Path) -> String {
 /// factories `make_point`/`make_circle`), AND constructed by the INTERPRETER and
 /// passed into a native function (`Point {...}` / `Circle {...}`).  Both must
 /// round-trip byte-identically; vectors/text exercise the same both ways.
-const DATALIB_PROG: &str = "use datalib;\n\
+const DATALIB_PROG: &str = "use datalib::*;\n\
      fn main() {\n\
      \x20   a = vec_sum([10, 20, 30]);\n\
      \x20   println(\"{a}\");\n\
@@ -227,7 +227,7 @@ fn build_failure_with_rustc_present_hard_fails() {
     let prog = root.join("main.loft");
     std::fs::write(
         &prog,
-        "use fblib;\nfn main() {\n\
+        "use fblib::*;\nfn main() {\n\
          \x20   println(shout(\"hi\"));\n\
          \x20   println(\"{doubled([1, 2, 3])}\");\n}\n",
     )
@@ -257,7 +257,7 @@ fn build_failure_with_rustc_present_hard_fails() {
 /// A consumer of `plainlib` — a library that does **not** opt into
 /// `compile = "native"`.  Its API is store-touching (text + vector) in both
 /// directions, so a shared-store-ABI bug on the default-native path shows up.
-const PLAINLIB_PROG: &str = "use plainlib;\n\
+const PLAINLIB_PROG: &str = "use plainlib::*;\n\
      fn main() {\n\
      \x20   println(banner(\"hi\"));\n\
      \x20   println(\"{doubled([1, 2, 3])}\");\n\
@@ -380,7 +380,7 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
     // a function that actually reaches the cdylib.
     std::fs::write(&src, "pub fn greet() -> text { n = 1; return \"v{n}\"; }\n").unwrap();
     let prog = root.join("main.loft");
-    std::fs::write(&prog, "use edlib;\nfn main() { println(greet()); }\n").unwrap();
+    std::fs::write(&prog, "use edlib::*;\nfn main() { println(greet()); }\n").unwrap();
     let native_auto = pkg.join("native-auto");
 
     // Run the binary against this editable lib dir (no `tests/lib`).
@@ -474,7 +474,7 @@ fn interdependent_libraries_are_fully_native() {
         &libdir,
         "dtop",
         Some("dbase"),
-        "use dbase;\n\
+        "pub use dbase::*;\n\
          pub fn top_sum(v: vector<integer>) -> integer {\n\
          \x20   d = base_double(v);\n\
          \x20   t = 0;\n\
@@ -485,7 +485,7 @@ fn interdependent_libraries_are_fully_native() {
     // Diamond: consumer uses BOTH `dtop` and its dependency `dbase` directly.
     std::fs::write(
         &prog,
-        "use dtop;\nuse dbase;\nfn main() {\n\
+        "use dtop::*;\nuse dbase::*;\nfn main() {\n\
          \x20   println(\"{top_sum([1, 2, 3])}\");\n\
          \x20   println(\"{base_double([5, 6])}\");\n}\n",
     )
@@ -565,7 +565,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
     let prog = root.join("main.loft");
     std::fs::write(
         &prog,
-        "use arcf;\nfn main() {\n\
+        "use arcf::*;\nfn main() {\n\
          \x20   total = 0.0;\n\
          \x20   n = 0;\n\
          \x20   while n < 50 { c = wrap_v3(n); total = total + c.x; n = n + 1; }\n\
@@ -673,7 +673,7 @@ fn boolean_compare_of_lifted_ref_field_builds_in_cdylib_672() {
     let prog = root.join("main.loft");
     std::fs::write(
         &prog,
-        "use liftlib;\n\
+        "use liftlib::*;\n\
          fn main() {\n\
          \x20   println(\"{cmp_false()} {cmp_true()} {cmp_ne()} {cmp_lt()}\");\n\
          \x20   println(\"{bool_field()} {negated()} {narrow_widen()} {via_local()}\");\n\
@@ -801,13 +801,17 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
     write_pkg("base", &base_src(2));
     write_pkg(
         "dep",
-        "use base;\npub fn check(n: integer) -> integer { return deep(n); }\n",
+        "pub use base::*;\npub fn check(n: integer) -> integer { return deep(n); }\n",
     );
 
     // The consumer names ONLY `dep`, so `base` is reached transitively — and `dep`
     // is registered (and dlopened) first, which is what lets its copy shadow.
     let prog = root.join("main.loft");
-    std::fs::write(&prog, "use dep;\nfn main() { println(\"{check(3)}\"); }\n").unwrap();
+    std::fs::write(
+        &prog,
+        "use dep::*;\nfn main() { println(\"{check(3)}\"); }\n",
+    )
+    .unwrap();
 
     let run = || -> String {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
@@ -887,7 +891,11 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
     )
     .unwrap();
     let prog = root.join("main.loft");
-    std::fs::write(&prog, "use solo;\nfn main() { println(\"{seven()}\"); }\n").unwrap();
+    std::fs::write(
+        &prog,
+        "use solo::*;\nfn main() { println(\"{seven()}\"); }\n",
+    )
+    .unwrap();
 
     let run = |env: &[(&str, &str)]| -> (String, String) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));

@@ -30,7 +30,7 @@
 //
 // `png()` returns null when the file does not exist or cannot be decoded.
 // Always check `!img` or `img == null` before accessing fields.
-use imaging;
+use imaging::*;
 
 fn main() {
   // ## Loading an Image

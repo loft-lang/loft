@@ -1746,7 +1746,7 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
     let entry = root.join("main781.loft");
     std::fs::write(
         &entry,
-        "use copier781;\n// 2\n// 3\n// 4\n// 5\nconst UNRELATED = 0.75;\n// 7\n\
+        "use copier781::*;\n// 2\n// 3\n// 4\n// 5\nconst UNRELATED = 0.75;\n// 7\n\
          fn main() {\n  println(\"{make_it()}\");\n}\n",
     )
     .expect("write entry");

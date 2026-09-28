@@ -507,6 +507,7 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
             .map_or(("", ""), |(n, b)| (n.as_str(), b.as_str()));
         ir.set_field_str(stores, ds::IMPORT_NAME, name);
         ir.set_field_str(stores, ds::IMPORT_BIND, bind);
+        ir.set_field_bool(stores, ds::IMPORT_PUBLIC, imp.public);
     }
     let uses = r.field_recvec(ds::DATA_USE_NAMES, ds::USENAME_STRIDE);
     for (name, source) in data.use_name_pairs() {

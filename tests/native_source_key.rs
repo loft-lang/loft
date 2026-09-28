@@ -530,7 +530,7 @@ fn an_edited_library_is_never_served_from_the_source_key() {
     let script = root.join("prog.loft");
     std::fs::write(
         &script,
-        "use b3dep;\nfn main() { println(\"d={dep_value()}\"); }\n",
+        "use b3dep::*;\nfn main() { println(\"d={dep_value()}\"); }\n",
     )
     .expect("script");
     let libs = lib.to_string_lossy().into_owned();

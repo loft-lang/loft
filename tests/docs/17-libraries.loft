@@ -3,16 +3,18 @@
 // @NAME: Libraries
 // @TITLE: Library system — importing and using external loft modules.
 // A library is a `.loft` file you can share across projects. Place it in a
-// `lib/` directory and import it with `use name;` at the top of your file.
-// That one line does two things: it brings every `pub` name in the library into
-// your own namespace, so you can write them bare, and it gives you the `name::`
-// prefix, which reaches everything the library defines.
+// `lib/` directory and import it at the top of your file. `use name;` gives you
+// the `name::` prefix, which reaches everything the library defines. `use name::*;`
+// also brings every `pub` name into your own namespace, so you can write them bare;
+// `use name::(a, b);` brings in just those.
 // A definition without `pub` is reachable only through the prefix. So `pub` is
 // about the BARE spelling rather than about secrecy: leaving it off keeps a name
 // out of your namespace and out of any import, but `name::thing` still finds it.
+// A name you import is yours to use, not to hand on: a file that imports YOURS does
+// not receive it. Write `pub use name::*;` to pass the names on as well.
 // `use` statements must come before any `fn` or `struct` definition in your
 // file. Putting a `use` after a definition is a syntax error.
-use testlib;
+use testlib::*;
 // ## Constants and Enums
 // A library constant reads like one of your own, and so does an enum variant.
 // You can compare, order, and convert enum values exactly as you would with
@@ -37,7 +39,7 @@ fn shifted(self: testlib::Point, dx: float, dy: float) -> testlib::Point {
 
 fn main() {
   // A library constant, both ways: the prefix always works, and the bare name
-  // works because `use testlib;` brought every `pub` name into this file.
+  // works because `use testlib::*;` brought every `pub` name into this file.
   assert(testlib::MAX_SIZE == 100, "library constant MAX_SIZE");
   assert(MIN_SIZE == 1, "the same constant, written bare");
   // Library enum variants: comparison and ordering work as normal.

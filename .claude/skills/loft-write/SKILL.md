@@ -278,8 +278,8 @@ allowed inside a fn body.
 
 <!-- from library:arguments -->
 ```loft
-use arguments;                       // wildcard: all pub names bare + `arguments::` qualifier
-use arguments::*;                    // explicit wildcard (same as above)
+use arguments;                       // the `arguments::` qualifier only
+use arguments::*;                    // all pub names bare, for this file
 use arguments::parse_args;           // selective: just one name, bare
 use arguments::(parse_args, Flag);   // selective group — MULTIPLE names need parentheses
 use arguments::Flag as Opt;          // alias an imported name (bare `Opt`)
@@ -290,6 +290,9 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 
 - **Multiple names MUST be parenthesised** — `use lib::a, b;` (flat comma list) is a
   hard error; write `use lib::(a, b);`.  (@PLN22 Phase 4.)
+- `use lib;` gives the `lib::` qualifier only (C98); `use lib::*;` brings every `pub` name in
+  bare.  An import serves this file only; `pub use lib::*;` / `pub use lib::(a);` also passes
+  the names on to whoever imports this file (a package entry offering its modules).
 - `use lib as m;` gives a qualifier alias only (`m::fn`); it does not wildcard-import.
 - A qualified `lib::fn()` auto-loads the library — an explicit `use` is optional for
   qualified access.

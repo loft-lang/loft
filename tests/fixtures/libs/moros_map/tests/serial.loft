@@ -1,5 +1,5 @@
 // MO.2: tests for map_to_json / map_from_json.
-use moros_map;
+use moros_map::*;
 
 fn test_to_from_json_empty() {
   m = map_empty();

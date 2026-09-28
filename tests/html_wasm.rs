@@ -595,7 +595,7 @@ fn p137_html_vector_iteration_runs() {
 /// it before the browser build ships.
 #[test]
 fn moros_editor_html_smoke() {
-    let src = r#"use moros_editor;
+    let src = r#"use moros_editor::*;
 fn main() {
     m = map_empty();
     us = undo_empty();
@@ -1234,7 +1234,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
     // so a truncated or misordered store copy is visible rather than merely "non-empty".
     std::fs::write(
         &prog,
-        "use native_scalar_pkg;\nfn main() {\n  answer = native_answer();\n  \
+        "use native_scalar_pkg::*;\nfn main() {\n  answer = native_answer();\n  \
          print(\"native-answer={answer}\\n\");\n  v = native_span(4);\n  \
          print(\"native-span={len(v)}:{v[0]},{v[1]},{v[2]},{v[3]}\\n\");\n}\n",
     )
@@ -1531,7 +1531,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     // CALLED → the clean diagnostic, and none of the old cascade.
     let called = build(
         "issue623_called",
-        "use nobridge;\nfn main() {\n  h = hash_b64(\"abc\");\n  println(\"h={h}\");\n}\n",
+        "use nobridge::*;\nfn main() {\n  h = hash_b64(\"abc\");\n  println(\"h={h}\");\n}\n",
     );
     assert!(
         called.contains("has no [wasm.bridge].routes entry"),
@@ -1554,7 +1554,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     // an error (it emits no body, so nothing collides).
     let uncalled = build(
         "issue623_uncalled",
-        "use nobridge;\nfn main() {\n  println(\"no native call here\");\n}\n",
+        "use nobridge::*;\nfn main() {\n  println(\"no native call here\");\n}\n",
     );
     assert!(
         !uncalled.contains("has no [wasm.bridge].routes entry"),
@@ -1590,7 +1590,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     .expect("rewrite fixture lib source");
     let distinct = build(
         "issue623_distinct_symbol",
-        "use nobridge;\nfn main() {\n  n = scalar_op(2);\n  println(\"n={n}\");\n}\n",
+        "use nobridge::*;\nfn main() {\n  n = scalar_op(2);\n  println(\"n={n}\");\n}\n",
     );
     assert!(
         !distinct.contains("has no [wasm.bridge].routes entry"),

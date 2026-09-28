@@ -3,7 +3,7 @@
 //
 // What a pack can be ASKED: which sequence an action maps to, and which blobs a
 // scene is about to draw from.
-use assets;
+use assets::*;
 
 /// A room with two goblins drawn from one page, a potion from another, and a light
 /// that draws nothing — so every clause of `keys_near` has something to act on.

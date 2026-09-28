@@ -1,4 +1,4 @@
-use sql;
+pub use sql::*;
 
 fn my_init(h: integer) -> integer;      #c "mysql_init" "void*(void*)"
 fn my_close(h: integer);                #c "mysql_close" "void(void*)"

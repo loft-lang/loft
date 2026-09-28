@@ -120,7 +120,7 @@ fn run_loft(dir: &Path, program: &str, placement: &str) -> (String, String) {
     // source — which is what every tool in this tree wants, and what the viewer
     // driver does.
     let path = dir.join("probe.loft");
-    std::fs::write(&path, format!("#cwd\nuse git;\n{program}")).expect("write probe");
+    std::fs::write(&path, format!("#cwd\npub use git::*;\n{program}")).expect("write probe");
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")

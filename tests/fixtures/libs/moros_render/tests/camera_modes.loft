@@ -1,5 +1,5 @@
 // Step 6 — camera mode tests (Follow / Overview / unbounded zoom).
-use moros_render;
+use moros_render::*;
 use graphics;
 
 // ── Follow ────────────────────────────────────────────────────────

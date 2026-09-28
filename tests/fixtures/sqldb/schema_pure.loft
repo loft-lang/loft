@@ -10,8 +10,8 @@
 //
 // Driven by `tests/native.rs`, on both loft backends.
 
-use schema;
-use sql;
+use schema::*;
+use sql::*;
 
 // The motivating shape: a keyed collection of a record with one of each column
 // type. `flag` is a boolean and `initial` a character, which the DDL must spell

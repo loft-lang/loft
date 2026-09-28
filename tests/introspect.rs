@@ -380,7 +380,7 @@ fn resolution(args: &[&str]) -> String {
     let prog = std::env::temp_dir().join(format!("loft_res_{}_{n}.loft", std::process::id()));
     std::fs::write(
         &prog,
-        "use typeshift;\nfn main() { v = ts_touch(); assert(v == 7, \"lib\") }\n",
+        "use typeshift::*;\nfn main() { v = ts_touch(); assert(v == 7, \"lib\") }\n",
     )
     .expect("write temp program");
     let lib = workspace_root().join("tests/lib");

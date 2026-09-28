@@ -43,7 +43,10 @@ fn build_package(root: &Path, import: &str) {
         &root.join("repro/loft.toml"),
         "[package]\nname = \"repro\"\nversion = \"0.1.0\"\n[library]\nentry = \"src/repro.loft\"\n",
     );
-    write(&root.join("repro/src/repro.loft"), "use one;\nuse two;\n");
+    write(
+        &root.join("repro/src/repro.loft"),
+        "pub use one::*;\npub use two::*;\n",
+    );
     write(
         &root.join("repro/src/one.loft"),
         "pub const ONE_PER_SECOND: integer = 3000000;\n",
@@ -57,7 +60,7 @@ fn build_package(root: &Path, import: &str) {
     );
     write(
         &root.join("entry.loft"),
-        "use repro;\nfn main() { print(\"{two_use(2)}\\n\"); }\n",
+        "use repro::*;\nfn main() { print(\"{two_use(2)}\\n\"); }\n",
     );
 }
 
@@ -93,7 +96,7 @@ fn run_consumer(tag: &str, import: &str) -> (String, bool) {
 /// empty, a call-initialised one reading `null`) are exactly that.
 #[test]
 fn a_const_from_a_sibling_module_reaches_the_consumer() {
-    let (all, ok) = run_consumer("agg", "use repro;");
+    let (all, ok) = run_consumer("agg", "pub use repro::*;");
     assert!(
         all.contains("857142857142"),
         "the consumer must compute the constant, not panic on it.\n{all}"
@@ -110,7 +113,7 @@ fn a_const_from_a_sibling_module_reaches_the_consumer() {
 /// broke cross-module constants outright would still leave that assertion looking specific.
 #[test]
 fn the_direct_import_spelling_keeps_working() {
-    let (all, ok) = run_consumer("direct", "use one;");
+    let (all, ok) = run_consumer("direct", "pub use one::*;");
     assert!(
         all.contains("857142857142"),
         "importing the sibling directly must be unaffected.\n{all}"

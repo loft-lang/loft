@@ -4,7 +4,7 @@
 // loft#797 — the entry pulls in the module that USES these types before it
 // declares them, so `fwd797_inner` parses while this file is suspended and every
 // type named below is still a forward-reference stub there.
-use fwd797_inner;
+pub use fwd797_inner::*;
 
 pub struct F797Roofs { r_n: integer }
 pub struct F797Walls { w_m: integer }

@@ -4,7 +4,7 @@
 // The pack's layout IS its file format, so this suite is the format's regression
 // test: the struct definitions decide where every byte of a written pack lands, and
 // a field that moves reads a neighbour's value out of packs already in the wild.
-use assets;
+use assets::*;
 
 /// What the layout of `assets` 0.2.0 hashes to.
 ///

@@ -561,16 +561,20 @@ published, immutable library, which absolute compatibility forbids.
 
 ## C98 — `use lib;` binds only the `lib` namespace; unqualified access is an EXPLICIT `use lib::*` / `use lib::(…)`, where the imported name wins
 
-**Decision.** The ruling: `use lib;` binds only the name `lib`; `use lib::*;` and `use lib::(a, b)`
-bind names unqualified, an explicitly imported name wins over a same-spelled stdlib name, and `as`
-aliases (`use lib::(a as x)`, `use lib as el`) resolve any clash.  **Why.** A qualifying program
-cannot collide with stdlib growth, and an explicit import keeps its binding forever, so no program
-breaks and no ambiguity error is needed.  **Not what ships:** a bare `use lib;` still
-wildcard-imports every `pub` name ([LOFT.md](LOFT.md)); whether the code or the ruling moves is an
-open owner call.
+**Decision.** `use lib;` binds only the `lib::` qualifier; `use lib::*;` and `use lib::(a, b)`
+bind names unqualified for the importing file only; `pub use lib::*;` / `pub use lib::(a, b);`
+also pass them on to whoever imports that file (the rustc rule — a package entry offers its
+modules this way), and a bare `pub use lib;` is refused, as is a bare `use self::m;` (a package's own
+module has no qualifier to bind).  An explicitly imported name wins over a
+same-spelled stdlib name, and `as` aliases resolve any clash.  A name that does not resolve
+because of its import form says so and names both cures.  **Why.** A qualifying program cannot
+collide with stdlib or library growth, an explicit import keeps its binding forever, and a
+library's own imports do not leak into its consumers' namespace.
 
-**Revisit when.** That owner call is made; an imported name against the program's own top-level
-definition is also unruled.  Decided 2026-07-15 — [record](DESIGN_DECISIONS-history.md#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins).
+**Revisit when.** A wildcard import against the program's own top-level definition is refused
+today (Rust lets the local shadow a glob); relaxing it is open.  Decided 2026-07-15, `pub use`
+and the rustc rule 2026-09-28 (owner) — [record](DESIGN_DECISIONS-history.md#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins).
+**Holds at:** `@C98` — `./scripts/idx tag:@C98`.
 **Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
 
 ## C99 — A keyed collection's subscript is uniformly KEY-addressed (lookup / range / removal), never positional
@@ -752,8 +756,7 @@ that evicts, a cache of open handles).  Decided 2026-08-11, revised by C121 — 
 parameter, `for` variable, struct field — mints a local whatever function carries that name; the
 function stays callable in the same scope (`chr = 65` beside `chr(65)`): parentheses pick the
 namespace.  **Why.** Otherwise every short verb a library exports is a word its consumers may not
-use.  This does not reopen C95 (a local re-points no call site); C98's own half (a bare `use lib;`
-still imports every public name) remains open.
+use.  This does not reopen C95 (a local re-points no call site).
 
 **Revisit when.** No trigger recorded.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
 **Holds at:** `tests/scripts/852-local-shadows-a-function-name.loft`;

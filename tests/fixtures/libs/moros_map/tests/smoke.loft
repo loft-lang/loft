@@ -1,4 +1,4 @@
-use moros_map;
+use moros_map::*;
 fn test_hex() {
   h = Hex { h_height: 42, h_material: 5 };
   assert(h.h_height == 42, "height");

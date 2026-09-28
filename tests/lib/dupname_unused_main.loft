@@ -2,8 +2,8 @@
 // writes none of them bare. It is well-defined and compiles today, so it must
 // keep compiling: the ambiguity is reported where a bare name is USED, never at
 // the `use` line (COMPATIBILITY.md — no functioning program breaks).
-use dupname_a;
-use dupname_b;
+use dupname_a::*;
+use dupname_b::*;
 
 fn main() {
   print("{a_only()} {b_only()}")

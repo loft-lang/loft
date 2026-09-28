@@ -146,7 +146,7 @@ fn connector_auto_path_end_to_end() {
         &server_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 struct W {{ tick: integer not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -169,7 +169,7 @@ fn main() {{
         &client_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 struct C {{ done: boolean not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -272,7 +272,7 @@ fn keyframes_survive_total_datagram_loss() {
         &server_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 struct W {{ tick: integer not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -296,7 +296,7 @@ fn main() {{
         &client_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 fn main() {{
   engine_host::sync_class(2);
   engine_host::run_client("127.0.0.1", {port}, 100000,
@@ -558,7 +558,7 @@ fn s6_browser_swap_under_living_page() {
         &server_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 struct W {{ tick: integer not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -609,7 +609,7 @@ fn main() {{
     // the comment on both sides), marker v2.
     let v2_script = format!(
         r#"
-use engine_host;
+use engine_host::*;
 struct C {{ count: integer not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -803,7 +803,7 @@ fn browser_kernel_one_script_differential() {
         &server_prog,
         format!(
             r#"
-use engine_host;
+use engine_host::*;
 struct W {{ tick: integer not null }}
 fn main() {{
   engine_host::sync_class(2);
@@ -825,7 +825,7 @@ fn main() {{
     // same way) — the one-script invariant, asserted by construction.
     let client_src = format!(
         r#"
-use engine_host;
+use engine_host::*;
 
 struct C {{ saw_sync: boolean not null }}
 fn main() {{

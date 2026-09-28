@@ -1,2 +1,2 @@
-use inner;
+pub use inner::*;
 pub enum Colour { Red, Green }

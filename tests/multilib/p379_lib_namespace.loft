@@ -8,8 +8,8 @@
 // (moros_map's Chunk holds vector<Hex>; world's holds vector<Cell>).
 // Run by tests/issues.rs::p379_two_libs_same_struct_name (lib_dirs=["lib"]).
 
-use hex_world;
-use moros_map;
+use hex_world::*;
+use moros_map::*;
 
 fn main() {
   // moros_map side — its Chunk holds vector<Hex>

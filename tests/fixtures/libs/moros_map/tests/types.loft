@@ -1,5 +1,5 @@
 // MO.1a + MO.1b: tests for all moros_map types.
-use moros_map;
+use moros_map::*;
 
 // ── MO.1a: HexAddress ────────────────────────────────────────────────
 

@@ -22,8 +22,8 @@
 // @EXPECT_ERROR: Cannot redefine 'hit' (already defined at
 // @EXPECT_ERROR: `hit` is declared by more than one package here
 
-use overloadlib;
-use overloadlib2;
+use overloadlib::*;
+use overloadlib2::*;
 
 fn hit(f: Fire) -> text { "MINE {f.n}" }
 

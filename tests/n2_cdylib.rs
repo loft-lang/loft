@@ -1313,13 +1313,13 @@ fn auto_native_disambiguates_duplicate_fn_names() {
     .unwrap();
     std::fs::write(
         pkg_src.join("bundle.loft"),
-        "use ra;\nuse rb;\n\npub fn both() -> integer { ra::dup_name() * 10 + rb::dup_name() }\n",
+        "pub use ra::*;\npub use rb::*;\n\npub fn both() -> integer { ra::dup_name() * 10 + rb::dup_name() }\n",
     )
     .unwrap();
     let prog = root.join("prog.loft");
     std::fs::write(
         &prog,
-        "use bundle;\n\nfn main() {\n    print(\"both={both()}\\n\");\n}\n",
+        "use bundle::*;\n\nfn main() {\n    print(\"both={both()}\\n\");\n}\n",
     )
     .unwrap();
 
@@ -1382,7 +1382,7 @@ fn auto_native_vector_return_uses_caller_dest() {
     let prog = root.join("prog.loft");
     std::fs::write(
         &prog,
-        "use vlib;\n\nfn main() {\n    v = pair(\"ab\");\n    print(\"[{v[0]}|{v[1]}]\\n\");\n}\n",
+        "use vlib::*;\n\nfn main() {\n    v = pair(\"ab\");\n    print(\"[{v[0]}|{v[1]}]\\n\");\n}\n",
     )
     .unwrap();
 

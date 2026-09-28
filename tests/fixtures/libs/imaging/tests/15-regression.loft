@@ -14,7 +14,7 @@
 // gitignored.  Each test re-creates its tmp file, so leftover
 // artefacts from a previous run are harmless.
 
-use imaging;
+use imaging::*;
 
 // Construct a deterministic w×h image where pixel (x,y) carries a
 // known colour pattern.  Shared by the round-trip tests.
