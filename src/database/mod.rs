@@ -418,6 +418,17 @@ pub struct Stores {
     /// meaning is "reachable, genuinely no such key". A trie bound to a paged
     /// source then looked healthy and answered null forever.
     pub(crate) paged_refusal: Option<String>,
+    /// Every `on = 4` iteration scratch a loop is still walking, beside the collection it
+    /// snapshots: `(collection, scratch header)`.  Registered by the scratch builders and
+    /// dropped by [`Stores::free_iteration_scratch`].
+    ///
+    /// A snapshot walk holds record numbers, so a record removed from the collection ahead
+    /// of the cursor was still yielded — a freed record read as data (loft#1710).  The
+    /// removal consults this list and zeroes the record's entry in each scratch of that
+    /// collection, and `vector::step_ordered` steps over a zeroed entry, so the walk sees
+    /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
+    /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
+    pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -702,6 +713,7 @@ impl Clone for Stores {
             lazy_sources: HashMap::new(),
             lazy_errors: HashMap::new(),
             paged_refusal: None,
+            live_scratches: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -1459,6 +1471,7 @@ impl Stores {
             lazy_sources: HashMap::new(),
             lazy_errors: HashMap::new(),
             paged_refusal: None,
+            live_scratches: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,

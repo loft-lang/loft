@@ -1892,11 +1892,13 @@ impl Stores {
                 crate::vector::scratch_tag(4),
             );
         }
-        DbRef {
+        let scratch = DbRef {
             store_nr: scratch_store,
             rec: header_rec,
             pos: 4,
-        }
+        };
+        self.live_scratches.push((*hash_ref, scratch));
+        scratch
     }
 
     /// The `build_rec_scratch` sibling for elements that are `(record, offset)` pairs
@@ -1944,11 +1946,59 @@ impl Stores {
                 crate::vector::scratch_tag(8),
             );
         }
-        DbRef {
+        let scratch = DbRef {
             store_nr: scratch_store,
             rec: header_rec,
             pos: 4,
+        };
+        self.live_scratches.push((*hash_ref, scratch));
+        scratch
+    }
+
+    /// Take `elem`, just removed from the collection `coll`, out of every scratch a loop
+    /// over `coll` is still walking (loft#1710, `@FR-I-For`): its entry becomes 0, which
+    /// `vector::step_ordered` steps over.  A registered header is believed only while it
+    /// is still a scratch header over `coll`'s store, for the reason
+    /// [`Self::free_iteration_scratch`] gives; one that is not is forgotten.
+    pub(crate) fn forget_in_scratches(&mut self, coll: &DbRef, elem: &DbRef) {
+        if self.live_scratches.is_empty() {
+            return;
         }
+        let mut live = std::mem::take(&mut self.live_scratches);
+        live.retain(|(source, scratch)| {
+            if source != coll || scratch.store_nr as usize >= self.allocations.len() {
+                return source != coll;
+            }
+            let store = &mut self.allocations[scratch.store_nr as usize];
+            if store.free
+                || !store.is_claimed_record(scratch.rec)
+                || !crate::vector::is_scratch_header(store, scratch)
+                || store.get_u32_raw(scratch.rec, scratch.pos + 4) as u16 != coll.store_nr
+            {
+                return false;
+            }
+            let vec_rec = store.get_u32_raw(scratch.rec, scratch.pos);
+            if vec_rec == 0 || !store.is_claimed_record(vec_rec) {
+                return false;
+            }
+            let tag = store.get_u32_raw(
+                scratch.rec,
+                scratch.pos + crate::vector::SCRATCH_TAG_FLD - 4,
+            );
+            let wide = tag & 0xFFFF == 8;
+            let stride = if wide { 8 } else { 4 };
+            let len = store.get_u32_raw(vec_rec, 4);
+            for i in 0..len {
+                let at = 8 + i * stride;
+                if store.get_u32_raw(vec_rec, at) == elem.rec
+                    && (!wide || store.get_u32_raw(vec_rec, at + 4) == elem.pos)
+                {
+                    store.set_u32_raw(vec_rec, at, 0);
+                }
+            }
+            true
+        });
+        self.live_scratches = live;
     }
 
     /// Release an iteration scratch at loop exit — the counterpart of
@@ -1986,6 +2036,7 @@ impl Stores {
     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
     /// behaviour for those cases, never worse.
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
+        self.live_scratches.retain(|(_, live)| live != scratch);
         if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
             return;
         }
@@ -2281,6 +2332,7 @@ impl Stores {
             lazy_sources: std::collections::HashMap::new(),
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
+            live_scratches: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,
