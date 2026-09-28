@@ -45,7 +45,19 @@ copy F4 elides sits at the BIND, and it is dearer than a `memcpy` by two orders.
    bytes, on both backends; `make speed` on the slice-heavy corpus.  Goes red on any
    element kind the bulk copy cannot take (a text element, a linked vector): those keep
    the loop, and the cell says which.
-2. **F4b — on a read-only store the copy is a VIEW** (M): the same `slice_into` answers,
+2. **F4b — on a read-only store the copy is a VIEW** (M).  **Runtime half DONE 2026-09-28:**
+   `Store::add_view(lo, hi)` registers `(offset, len)` on the foreign bytes and answers a
+   SLOT id whose word at `+8` names the view's RECORD id; both ids go through the same four
+   accessors (`is_foreign_rec`, one test), so a `DbRef { rec: <slot>, pos: 8 }` reads exactly
+   as a minted vector's handle — the unit test reads a view beside the copied slice byte for
+   byte, clamped and empty views included.  **Left:** (i) the PARSER binds the slice's local
+   from the op — `s = OpSliceVector(s, src, lo, hi, tp)` answering a view's handle when the
+   source is foreign and the bind is fresh (`=` on an empty local), the copied `db` otherwise
+   (`+=`, a non-foreign source), with the native template the same expression; (ii) the
+   LIFETIME — the local's hidden store records `view_of: Some(store_nr)`, the foreign store
+   counts live views, a handle freed while views live orphans the owner until the count
+   reaches zero, and a view's hidden-store free decrements; (iii) `LOFT_NO_FOREIGN_VIEW=1`
+   and the cells below.  The design as first written follows.  The same `slice_into` answers,
    when `src`'s store is foreign, a DbRef into THAT store under a view id from a small
    `(offset, len)` table in `Foreign` (ids above `FOREIGN_REC`, the four accessors index the
    table; a slice of a view sums the offset).  Lifetime: the local's hidden store `__vdb_N`
