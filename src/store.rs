@@ -3669,7 +3669,12 @@ impl Store {
     /// build sees the parameter unused.
     #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     #[inline]
-    fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> Option<isize> {
+    fn begin_write_inner<T: 'static>(
+        &mut self,
+        rec: u32,
+        fld: u32,
+        in_record: bool,
+    ) -> Option<isize> {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
         //
@@ -3762,7 +3767,10 @@ impl Store {
             }
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
         }
-        panic!("{what} at rec={rec} fld={fld} (locked by: {})", self.lock_origin);
+        panic!(
+            "{what} at rec={rec} fld={fld} (locked by: {})",
+            self.lock_origin
+        );
     }
 
     /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the

@@ -2063,6 +2063,10 @@ impl Stores {
     /// delete: freed, or pinned read-only / free-protected inside the loop body
     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
     /// behaviour for those cases, never worse.
+    ///
+    /// # Panics
+    /// In a debug build or under the store instruments, when the handle names no claimed
+    /// record of a live store — a scratch released twice (see the body).
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
         self.live_scratches.retain(|(_, live)| live != scratch);
         if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {

@@ -98,8 +98,14 @@ m=[1,2,3]\ndone\n";
 
 fn production_discards_every_route(backend: &str) {
     let (stdout, stderr, code, log) = run("every_route", EVERY_ROUTE, backend, true);
-    assert_eq!(stdout, UNCHANGED, "{backend}: a locked store changed\nstderr:\n{stderr}");
-    assert_eq!(code, 0, "{backend}: a production run must finish; stderr:\n{stderr}");
+    assert_eq!(
+        stdout, UNCHANGED,
+        "{backend}: a locked store changed\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        code, 0,
+        "{backend}: a production run must finish; stderr:\n{stderr}"
+    );
     assert!(
         log.contains("[write_to_locked_store]"),
         "{backend}: the discarded writes are logged; log:\n{log}"
@@ -123,7 +129,11 @@ fn production_discards_every_locked_write_native() {
 const DEV_CELLS: [(&str, &str, &str); 4] = [
     ("scalar", "d.n = 99;", "write to a locked store"),
     ("text", "d.name = \"changed\";", "write to a locked store"),
-    ("loop", "for i in 0..len(d.xs) { d.xs[i] = i * 100; }", "write to a locked store"),
+    (
+        "loop",
+        "for i in 0..len(d.xs) { d.xs[i] = i * 100; }",
+        "write to a locked store",
+    ),
     ("constant", "NUMS += [3];", "write to a constant"),
 ];
 
@@ -139,13 +149,22 @@ const DEV_FOREIGN: &str = r#"fn main() {
 
 fn development_halts_with_the_report(backend: &str) {
     let (stdout, stderr, code, _) = run("foreign", DEV_FOREIGN, backend, false);
-    assert_ne!(code, 0, "{backend} foreign: a development run halts; stdout {stdout:?}");
-    assert!(!stdout.contains("reached"), "{backend} foreign: ran past the write");
+    assert_ne!(
+        code, 0,
+        "{backend} foreign: a development run halts; stdout {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("reached"),
+        "{backend} foreign: ran past the write"
+    );
     assert!(
         stderr.contains("write to bytes the program does not own"),
         "{backend} foreign: the report; stderr:\n{stderr}"
     );
-    assert!(!stderr.contains("panicked"), "{backend} foreign: a crash:\n{stderr}");
+    assert!(
+        !stderr.contains("panicked"),
+        "{backend} foreign: a crash:\n{stderr}"
+    );
     for (name, write, report) in DEV_CELLS {
         let source = format!(
             "struct D {{ n: integer, name: text, xs: vector<integer> }}\n\
@@ -154,10 +173,22 @@ fn development_halts_with_the_report(backend: &str) {
              {write}\n  println(\"reached {{d.n}} {{d.name}} {{d.xs}} {{NUMS}}\");\n}}\n"
         );
         let (stdout, stderr, code, _) = run(name, &source, backend, false);
-        assert_ne!(code, 0, "{backend} {name}: a development run halts; stdout {stdout:?}");
-        assert!(!stdout.contains("reached"), "{backend} {name}: ran past the write");
-        assert!(stderr.contains(report), "{backend} {name}: the report; stderr:\n{stderr}");
-        assert!(!stderr.contains("panicked"), "{backend} {name}: a crash, not the report:\n{stderr}");
+        assert_ne!(
+            code, 0,
+            "{backend} {name}: a development run halts; stdout {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("reached"),
+            "{backend} {name}: ran past the write"
+        );
+        assert!(
+            stderr.contains(report),
+            "{backend} {name}: the report; stderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "{backend} {name}: a crash, not the report:\n{stderr}"
+        );
     }
 }
 

@@ -242,7 +242,10 @@ fn the_tests_flag_keeps_its_target_after_any_flag() {
     ] {
         let (code, out) = run(&root, &args);
         assert_eq!(code, 0, "{args:?} must run only the named file:\n{out}");
-        assert!(out.contains("1 file"), "{args:?} must be scoped to it:\n{out}");
+        assert!(
+            out.contains("1 file"),
+            "{args:?} must be scoped to it:\n{out}"
+        );
         assert!(
             !out.contains("THIS TEST FAILS ON PURPOSE"),
             "{args:?} ran a file that was not named:\n{out}"
@@ -255,7 +258,13 @@ fn the_tests_flag_keeps_its_target_after_any_flag() {
         &root,
         &["--tests", "--lib", src.to_str().unwrap(), "tests/good.loft"],
     );
-    assert_eq!(code, 0, "a flag with a value must not eat the target:\n{out}");
-    assert!(out.contains("1 file"), "and the target after it scopes the run:\n{out}");
+    assert_eq!(
+        code, 0,
+        "a flag with a value must not eat the target:\n{out}"
+    );
+    assert!(
+        out.contains("1 file"),
+        "and the target after it scopes the run:\n{out}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

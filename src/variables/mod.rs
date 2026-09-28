@@ -3228,7 +3228,11 @@ impl Function {
                 && ((is_null_scalar(var_tp) && matches!(type_def, Type::Null))
                     || (matches!(var_tp, Type::Null) && is_null_scalar(type_def)));
             if heap_mix {
-                let heap = if is_null_heap(var_tp) { var_tp } else { type_def };
+                let heap = if is_null_heap(var_tp) {
+                    var_tp
+                } else {
+                    type_def
+                };
                 let heap_name = heap.source_name(data);
                 diagnostic!(
                     lexer,

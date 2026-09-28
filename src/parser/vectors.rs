@@ -3996,7 +3996,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     }
 
     /// Build the instruction list for a parsed vector literal; returns `(tp, ls)`.
-    #[allow(clippy::too_many_arguments)] // parser helper threading IR-construction params alongside &mut self; no sensible grouping reduces the count
+    #[allow(clippy::too_many_arguments)]
+    // parser helper threading IR-construction params alongside &mut self; no sensible grouping reduces the count
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the (Slice-Value) and absent-append arms, each landed on its own branch, meet here"
+    )]
     pub(crate) fn build_vector_list(
         &mut self,
         val: &mut Value,
