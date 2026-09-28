@@ -10182,7 +10182,7 @@ fn main() {
         // is needed.  Computed once and reused for both the main link and each wasm
         // bridge crate (they must link the SAME loft copy).
         //
-        // @PLN117 — a program that uses `par` gets the THREADED shape, whose
+        // @PLN117 (@C3) — a program that uses `par` gets the THREADED shape, whose
         // rlib is compiled together with an atomics std so `par` can run on Web
         // Workers.  `--threads` / `--no-threads` override the choice.  Threading
         // needs a nightly toolchain (only `-Z build-std` produces that std); when

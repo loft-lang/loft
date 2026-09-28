@@ -45,6 +45,13 @@ trace.
 
 ---
 
+
+**Changed by @PLN117 (2026-09-28 note, @PLN175).**  The browser runs `par` on Web Workers since
+@PLN117 ("Browser multi-threading", finished): `--html` builds the threaded runtime for a program
+that uses `par` and falls back to the sequential one — saying so — when the nightly toolchain its
+atomics std needs is missing.  The plan changed this decision without the register saying so; the
+walk found it and the entry now states the current rule.
+
 ## C38 — Closure capture is copy-at-definition
 
 **Catalogue:** @F22 (closures & lambdas).

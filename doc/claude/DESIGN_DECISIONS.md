@@ -38,14 +38,18 @@ decide.
 
 ## C3 — WASM `par()` runs sequentially
 
-**Decision.** In the browser, `par()` runs its body sequentially; the native target keeps real
-parallelism.  **Why.** A Web Worker pool costs bundle size, ~50 ms cold start per worker and a
-`SharedArrayBuffer` that needs COOP/COEP headers most loft hosts do not send — and no shipping
-loft program is CPU-bound in the browser.
+**Decision.** Reopened and changed by @PLN117 (owner, finished): in the browser a program that uses
+`par` gets the THREADED runtime — Web Workers over a `SharedArrayBuffer` — and runs its bodies in
+parallel; `--threads` / `--no-threads` override the choice.  It runs `par` sequentially, with the
+same answer, where the threaded runtime is not available: a host that does not send the COOP/COEP
+headers, or a build without the nightly toolchain its atomics std needs (the build says so).
+**Why.** The original reasons — bundle size, worker start-up, COOP/COEP — became costs paid only by
+a page that uses `par`, and a page without the headers still runs.
 
-**Revisit when.** A loft program shows a browser CPU bottleneck that algorithmic work cannot
-remove, AND its host sends COOP/COEP headers — bring the profile.  Decided 2026-04 —
-[record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Revisit when.** The threaded runtime no longer needs a nightly toolchain to build.  Decided
+2026-04, changed by @PLN117 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Holds at:** `@C3` — `tests/wasm/html-thread-proof.sh`, `tests/wasm/par-ui-responsive.sh` (the
+`browser-threads` workflow).
 **Catalogue:** @F33 (par), @F54 (WASM/browser target).
 
 ## C38 — Closure capture is copy-at-definition
