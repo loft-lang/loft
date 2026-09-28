@@ -19,7 +19,7 @@
 // `wide_line`, `smooth_pts`, `fronds`, `hair_brush`, `lock_layer` and `composite_layer`;
 // what it adds is src/scan.loft, `parse_scene`, `render`'s four draw paths and the
 // graphics package's Pillow-exact Lanczos resample.  Measured on the loft repo's quiet
-// x86-64 box: see doc/claude/plans/157-native-4x-drawing/README.md § Where to resume.
+// x86-64 box: see doc/claude/plans/157-native-4x-drawing/HISTORY.md § Where to resume.
 
 // ── The four rows measured without a reference: parse, render_lock, render_marks,
 // resize — a port of src/drawing.loft's `parse_scene` and `render`, src/scan.loft, and
