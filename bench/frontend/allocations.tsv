@@ -1,7 +1,7 @@
 # key	size	allocations — the front end's heap allocations on bench/frontend's corpus.
 # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.
-linux-debug	medium	1023712
-linux-debug	tiny	305626
-linux-release	medium	1023204
-linux-release	tiny	305118
+linux-debug	medium	1017509
+linux-debug	tiny	305140
+linux-release	medium	1017001
+linux-release	tiny	304632

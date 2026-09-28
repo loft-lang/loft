@@ -5436,7 +5436,7 @@ mod tests {
     fn a_foreign_store_answers_a_vector_read_through_the_same_accessors() {
         let data = sample_bytes();
         let len = data.len() as u32;
-        let (plain, rec, mut foreign, froot) = copied_and_foreign(&data);
+        let (plain, rec, foreign, froot) = copied_and_foreign(&data);
         assert!(foreign.is_foreign() && foreign.read_only);
         assert_eq!(foreign.collection_rec(froot, 8), FOREIGN_REC);
         assert_eq!(
