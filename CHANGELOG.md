@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A mistyped `=` in a condition is refused.**  `if v[9] = 2 { … }` — a store where a comparison
+was meant — used to compile and then behave differently on each backend.  It is now refused
+with the cure: write `==` to compare, or move the store to its own line.
+
+**loft refuses a standard library that does not match it.**  When the `default/` it loads was
+built for a different loft (two checkouts, an old install beside a new build), the run used to
+end in a corrupt-reference crash far from the cause.  It now stops before anything runs and
+says which operator sits where the binary expects another, and how to rebuild.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

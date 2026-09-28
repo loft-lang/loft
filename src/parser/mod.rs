@@ -3761,6 +3761,19 @@ impl Parser {
     /// # Errors
     /// With filesystem problems.
     pub fn parse_dir(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
+        self.parse_dir_inner(dir, default, debug)?;
+        // The stdlib is checked ONCE, here at the top-level call and never inside the
+        // recursion below, where the list is still being filled: its operator declarations
+        // must be, slot for slot, the ones this binary's dispatch table was generated from,
+        // or the refusal is the ONLY thing standing between the run and a corrupt
+        // reference (`stdlib_ops`).
+        if default && let Err(msg) = crate::stdlib_ops::verify(&self.data, dir) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        }
+        Ok(())
+    }
+
+    fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
         let paths = read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();
         for path in paths {
@@ -3780,7 +3793,7 @@ impl Parser {
             let from = self.data.definitions();
             let data = metadata(&f)?;
             if data.is_dir() {
-                self.parse_dir(&f, default, debug)?;
+                self.parse_dir_inner(&f, default, debug)?;
             } else {
                 self.parse(&f, default);
                 // Errors stop the load; warnings and advice do not.  `parse`

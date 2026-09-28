@@ -9220,6 +9220,14 @@ fn main() {
         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
         if !stdlib_warm {
             if let Err(e) = p.parse_dir(&default_str, true, false) {
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    // The library was found and read, and refused: a parse error in it,
+                    // or a `default/` that does not match this binary (`stdlib_ops`).
+                    // The message carries its own cure; the path hint below would
+                    // send the reader looking for a directory that is right there.
+                    eprintln!("loft: {e}");
+                    std::process::exit(1);
+                }
                 eprintln!(
                     "loft: cannot load standard library from `{}`: {e}",
                     default_dir.display()

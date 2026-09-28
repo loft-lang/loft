@@ -192,6 +192,23 @@ pub const OPERATORS: &[fn(&mut State)] = &["
         }
     }
     writeln!(into, "];")?;
+    // The loft name of every slot above, in the same order: what a stdlib parsed at run
+    // time is checked against (`stdlib_ops::verify`), because the table is POSITIONAL —
+    // one declaration more or fewer in `default/` moves every later body under the wrong
+    // opcode, and nothing but this list can tell.
+    writeln!(
+        into,
+        "\n/// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations\n\
+         /// of the `default/` this binary was generated from.\n\
+         pub const OPERATOR_NAMES: &[&str] = &["
+    )?;
+    for d_nr in 0..data.definitions() {
+        let n = &data.def(d_nr).name;
+        if data.def(d_nr).is_operator() {
+            writeln!(into, "    \"{n}\",")?;
+        }
+    }
+    writeln!(into, "];")?;
     for d_nr in 0..data.definitions() {
         let n = &data.def(d_nr).name;
         if !data.def(d_nr).is_operator() {
