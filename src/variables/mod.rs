@@ -3203,10 +3203,42 @@ impl Function {
                         | Type::Character
                 )
             };
+            // The same transition for a HEAP type — a struct, a vector, a keyed collection —
+            // whose `τ?` is as declarable as a scalar's (`(N-Opt)`, `data::has_null`).  It was
+            // refused as a TYPE CHANGE instead, *"cannot change type from P to null; use a new
+            // variable name or cast with 'as'"*, naming two cures that do not work and not the
+            // one that does.  Kept apart from the scalar sentence so that wording stays as it is.
+            let is_null_heap = |t: &Type| {
+                !is_null_scalar(t)
+                    && crate::data::has_null(t)
+                    && !matches!(
+                        t,
+                        Type::Null
+                            | Type::Void
+                            | Type::Never
+                            | Type::Unknown(_)
+                            | Type::Optional(_)
+                            | Type::RefVar(_)
+                    )
+            };
+            let heap_mix = crate::keys::pln25_dn1_enabled()
+                && ((is_null_heap(var_tp) && matches!(type_def, Type::Null))
+                    || (matches!(var_tp, Type::Null) && is_null_heap(type_def)));
             let nullable_mix = crate::keys::pln25_dn1_enabled()
                 && ((is_null_scalar(var_tp) && matches!(type_def, Type::Null))
                     || (matches!(var_tp, Type::Null) && is_null_scalar(type_def)));
-            if nullable_mix {
+            if heap_mix {
+                let heap = if is_null_heap(var_tp) { var_tp } else { type_def };
+                let heap_name = heap.source_name(data);
+                diagnostic!(
+                    lexer,
+                    Level::Error,
+                    "Variable '{}' cannot hold both `null` and the non-null type `{}` — declare it `{}?` to allow null",
+                    self.name(var_nr),
+                    heap_name,
+                    heap_name
+                );
+            } else if nullable_mix {
                 let scalar = if is_null_scalar(var_tp) {
                     var_tp
                 } else {
