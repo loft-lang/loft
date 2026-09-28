@@ -7291,6 +7291,8 @@ fn main() {
     // `tests/` directory; these two say which case a leftover positional is.
     let mut test_subcommand = false;
     let mut test_target_given = false;
+    // The `--tests` FLAG spelling of the same runner, for the leftover-positional rule below.
+    let mut tests_flag = false;
     // Plan-08 phase 01: --introspect mode collects per-section
     // selectors, output paths, and filters into one Options bundle.
     // The flag itself only toggles the mode; sub-flags accumulate
@@ -7632,7 +7634,9 @@ fn main() {
             if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
                 path.clone_from(&argv[i]);
                 i += 1;
+                test_target_given = true;
             }
+            tests_flag = true;
             tests_dir = Some(path);
             // The test runner defaults to the interpreter; an explicit --native
             // (anywhere on the line) opts into native compilation per file.
@@ -8824,7 +8828,12 @@ fn main() {
     // A leftover positional is therefore adopted as the target when none was given,
     // and refused when one was — the same either/or the leading-positional check
     // makes, so the two orderings cannot disagree about what two targets mean.
-    if test_subcommand && !file_name.is_empty() {
+    //
+    // The `--tests` FLAG had the same hole one flag earlier: it skips only the three flags
+    // it knows before its path, so `loft --tests --interpret t.loft` left the path to
+    // `file_name` and swept every `.loft` under the working directory — from the repo root,
+    // `target/` included, until the watchdog's SIGABRT read as the guard crashing.
+    if (test_subcommand || tests_flag) && !file_name.is_empty() {
         if test_target_given {
             eprintln!(
                 "loft test: one target per run, but two were given (`{}`, `{file_name}`).\n\
@@ -8833,7 +8842,13 @@ fn main() {
             );
             std::process::exit(1);
         }
-        tests_dir = Some(resolve_test_target(&file_name));
+        // The subcommand joins a bare test NAME onto `tests/`; the flag takes its path as
+        // written, which is what it does with a path it consumed itself.
+        tests_dir = Some(if test_subcommand {
+            resolve_test_target(&file_name)
+        } else {
+            file_name.clone()
+        });
         file_name.clear();
     }
 
