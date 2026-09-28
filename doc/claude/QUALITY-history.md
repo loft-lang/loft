@@ -1312,6 +1312,18 @@ answer "is this arm a null?" and to consolidate. They do not answer the same que
 its caller (@PLN85's slice materialisation) runs later in the pipeline. A repair predicate that
 learned the sentinel would re-repair its own output.
 
+**Closed by loft#1711 (2026-09-28), and the second reading above was the wrong one.**  The
+@PLN85 rewrite existed because a bare `_ => []` arm was parsed WITHOUT its siblings' type and
+lowered to an untyped placeholder; the block arm `{ [] }` was already typed and right.  Once
+the bare arm takes the same leaving-value hint, the rewrite's only remaining effect was to turn
+a genuine `null` arm into `[]` — the one chain whose null arm was not null.  Measured with the
+rewrite off, the bound-match context it was written for (`cap = match v { … }`, then `+=`)
+answers exactly as the `if` chain does on both backends, so `(H-RefNull)` holds and the rewrite
+is gone.  The promotion question got ONE home (`match_result_unsettled`, seven sites), and the
+typed-null repair too (`type_null_arms`, all four chain kinds — the enum path's inline copy
+included).  `arm_is_null` stays apart, for the reason given above; its callers are now the
+return-delivery selectors.  Guard: `tests/scripts/a-null-or-empty-match-arm-answers-alike-in-every-chain.loft`.
+
 Measured rather than argued: over the 858-program corpus the strong and weak predicates
 disagree **once**, and that case is a nested-block tail `arm_is_null` recurses into. The
 `arm_body_is_null` gap that looked worst — it does not peel its own top — takes **4323** spanned

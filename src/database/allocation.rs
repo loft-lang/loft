@@ -2069,7 +2069,7 @@ impl Stores {
             return;
         }
         let store = &self.allocations[scratch.store_nr as usize];
-        if store.free || !store.is_claimed_record(scratch.rec) {
+        if store.free {
             return;
         }
         // The record must still BE this scratch's header before a single one of its
@@ -2088,6 +2088,28 @@ impl Stores {
         // So the header is self-identifying, and a record that does not carry the tag
         // is left alone. Refusing costs at most the scratch's own two blocks, once;
         // acting on a foreign record costs the store.
+        //
+        // A LIVE store whose handle names no claimed record is a handle released before:
+        // every walk releases its scratch once and nulls the handle
+        // (`Parser::release_scratch`), so reaching here with one is a defect upstream.  It is
+        // declined in a plain run, for the reason above — but the store
+        // instruments and the debug build say so, because declining is exactly what kept a
+        // second release of EVERY keyed walk's scratch silent (the handle's null store was
+        // elided).
+        let stale = !store.claims_record(scratch.rec);
+        if stale {
+            assert!(
+                !(cfg!(debug_assertions)
+                    || crate::keys::strict_stores()
+                    || crate::keys::poison_enabled()),
+                "a walk's snapshot scratch {scratch:?} was released twice — its handle names \
+                 a record that is no longer the scratch"
+            );
+            return;
+        }
+        // A claimed record without the tag is not a scratch at all: a keyed FIELD walked in
+        // place hands its own record here (`pos` is the field's offset), and this release is a
+        // no-op for it by design.
         if !crate::vector::is_scratch_header(store, scratch) {
             return;
         }

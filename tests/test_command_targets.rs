@@ -224,3 +224,38 @@ fn two_targets_separated_by_a_flag_are_refused() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The `--tests` FLAG spelling of loft#925: it skips only the flags it knows
+/// (`--native`, `--no-warnings`, `--deny-warnings`) before its path, so
+/// `loft --tests --interpret tests/good.loft` left the path to the script-file slot
+/// and swept every `.loft` under the working directory.  From a repo root that walk
+/// reached `target/` and died at the watchdog, which reads as the named guard
+/// crashing.  The failing sibling is the oracle again: had the path been dropped,
+/// `alsogood.loft` would run and the exit would be non-zero.
+#[test]
+fn the_tests_flag_keeps_its_target_after_any_flag() {
+    let root = fixture("flag");
+    for args in [
+        vec!["--tests", "--interpret", "tests/good.loft"],
+        vec!["--interpret", "--tests", "tests/good.loft"],
+        vec!["--tests", "tests/good.loft", "--interpret"],
+    ] {
+        let (code, out) = run(&root, &args);
+        assert_eq!(code, 0, "{args:?} must run only the named file:\n{out}");
+        assert!(out.contains("1 file"), "{args:?} must be scoped to it:\n{out}");
+        assert!(
+            !out.contains("THIS TEST FAILS ON PURPOSE"),
+            "{args:?} ran a file that was not named:\n{out}"
+        );
+    }
+    // A flag that takes a VALUE between them: the value must not be taken as the target.
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).expect("mkdir src");
+    let (code, out) = run(
+        &root,
+        &["--tests", "--lib", src.to_str().unwrap(), "tests/good.loft"],
+    );
+    assert_eq!(code, 0, "a flag with a value must not eat the target:\n{out}");
+    assert!(out.contains("1 file"), "and the target after it scopes the run:\n{out}");
+    let _ = std::fs::remove_dir_all(&root);
+}
