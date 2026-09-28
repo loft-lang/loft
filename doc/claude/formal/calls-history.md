@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-23` opened AND CLOSED 2026-09-28 (loft#1719, an errored operand read as a missing argument, below); `D-call-21` opened AND CLOSED 2026-09-14 (the method spelling read the receiver alone when picking between `m(τ, …)` and `m(τ?, …)`, below); `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1719, an errored operand read as a missing argument; loft#1722, a block value's null arm answered a record; below); `D-call-21` opened AND CLOSED 2026-09-14 (the method spelling read the receiver alone when picking between `m(τ, …)` and `m(τ?, …)`, below); `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
@@ -26,6 +26,22 @@ said *"Unknown variable 'x'"*.  Measured over comparison, arithmetic, unary, `&&
 condition, `len`, method-receiver and format-string operands; ten of thirteen cascaded.
 Closed at `Parser::reported_call`: a reporting tail of `Parser::call` answers `never` and
 clears its code.  Guard `tests/scripts/1719-an-unknown-function-as-an-operand-reports-itself-once.loft`.
+
+### D-call-22 — OPENED AND CLOSED (2026-09-28, loft#1722): a block value whose branch yields null answered a record
+
+`(F-Block)`: a block yields its tail wherever it stands, and a branch with a `null` arm is
+`τ?` (`(N-Join)`), so on that path the block yields null.  A block whose tail views a record
+local declared inside it is copied out before that local is freed — `D-call-8`'s owned copy —
+and the copy wrapped the WHOLE branch in one `OpCopyRecord`, which on the null path filled the
+work-ref with a default record.  `D-call-8` had guarded one null source, a nullable LOCAL; a
+branch was the other.  Filed as a `-> S?` return with a nested `if` (`fn f() -> S? { if a { r
+= S {…}; if ok { r } else { null } } else { null } }` answered a record for `ok` false);
+measured, every consumer of such a block was wrong alike — a return, a bind, a call argument,
+a struct field — on both backends, while the local declared outside the arm, early returns,
+and a nullable-local tail were right.  Closed at `Parser::materialize_return_into`, the one
+copy every such path goes through: a tail that can yield null is copied arm by arm, into the
+one work-ref, and a null arm stays the sentinel it is.  Guard
+`tests/scripts/1722-a-block-value-keeps-the-null-its-branch-yields.loft` (13 cells).
 
 ### D-call-21 — OPENED AND CLOSED 2026-09-14: the method spelling picked between `m(τ, …)` and `m(τ?, …)` by the receiver alone
 

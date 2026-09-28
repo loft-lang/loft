@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1722, `@FR-F-Block` / `@FR-N-Join` — a block used as a VALUE yields its tail, and a tail
+// that is a branch with a `null` arm yields null on that path, wherever the block stands.
+//
+// A block value whose tail views a record local declared INSIDE it is copied out before the
+// local is freed (`materialize_view_value`).  The copy wrapped the WHOLE branch in one
+// `OpCopyRecord`, which on the null path filled the work-ref with a default record: `{ r = S {…};
+// if ok { r } else { null } }` answered a record where it held none.  Filed as a `-> S?` return
+// with a nested `if`; measured, it is every consumer of such a block — a return, a bind, a call
+// argument, a struct field.  Now the copy is made arm by arm and a null arm stays null
+// (`Parser::materialize_return_into`).
+//
+// Controls that were already right and must stay so: the local declared OUTSIDE the arm (no
+// copy is made), early returns in place of the nested `if` (imaging 0.4.0's `png()` shape), and
+// a nullable LOCAL as the tail (loft#1337's guard).  Every value is hand-computed: `n` is null,
+// a number is the `w` the arm's record was built with.
+//
+// @falsified-at: c4d968765 — interpret exit 1 -> 0, interpret 10 assertion failures -> 0, native exit 1 -> 0, native 20 assertion failures -> 0
+// @falsified-by: tests/falsified/1722-a-block-value-keeps-the-null-its-branch-yields.patch — the same channels.
+//   CHANNEL: the VALUE — an assertion per cell.
+//   WITNESS: `d2` answers `0 7 n` for `n 7 n`: the null path hands up a default record.
+//   HOLDS: no leak and no panic on either tree; `dout`, `dearly` and `dnl` pass on both.
+
+struct Im { w: integer, d: vector<integer> }
+struct Pl { w: integer }
+fn fill(ok: boolean, r: Im) -> boolean { if ok { r.w = 5; } ok }
+fn keep(p: Pl?) -> Pl? { p }
+struct Hold { p: Pl? }
+
+// depth 2 (the issue's c1), then/else null
+fn d2(a: boolean, ok: boolean) -> Pl? { if a { r = Pl { w: 7 }; if ok { r } else { null } } else { null } }
+fn d2f(a: boolean, ok: boolean) -> Pl? { if a { r = Pl { w: 7 }; if !ok { null } else { r } } else { null } }
+// with a call filling a vector-field struct (c0)
+fn d2c(a: boolean, ok: boolean) -> Im? { if a { r = Im { }; if fill(ok, r) { r } else { null } } else { null } }
+// depth 3
+fn d3(a: boolean, b: boolean, ok: boolean) -> Pl? { if a { if b { r = Pl { w: 8 }; if ok { r } else { null } } else { null } } else { null } }
+// else-if chain with a null in the middle
+fn d2e(a: boolean, n: integer) -> Pl? { if a { r = Pl { w: 9 }; if n == 0 { null } else if n == 1 { r } else { Pl { w: 10 } } } else { null } }
+// match inside the arm
+fn dm(a: boolean, n: integer) -> Pl? { if a { r = Pl { w: 11 }; match n { 0 => null, _ => r } } else { null } }
+// outer else is a value
+fn dv(a: boolean, ok: boolean) -> Pl? { if a { r = Pl { w: 12 }; if ok { r } else { null } } else { Pl { w: 13 } } }
+// the local defined OUTSIDE the arm (no block-value copy)
+fn dout(a: boolean, ok: boolean) -> Pl? { r = Pl { w: 14 }; if a { if ok { r } else { null } } else { null } }
+// block value bound to a local, then read
+fn dbind(a: boolean, ok: boolean) -> text { x = if a { r = Pl { w: 15 }; if ok { r } else { null } } else { null }; if x == null { "null" } else { "{x.w}" } }
+// block value as a call argument
+fn darg(ok: boolean) -> text { x = keep({ r = Pl { w: 16 }; if ok { r } else { null } }); if x == null { "null" } else { "{x.w}" } }
+// block value into a struct field
+fn dfld(ok: boolean) -> text { h = Hold { p: { r = Pl { w: 17 }; if ok { r } else { null } } }; if h.p == null { "null" } else { "{h.p.w}" } }
+// early-return workaround (imaging png shape) must keep working
+fn dearly(a: boolean, ok: boolean) -> Im? { if !a { return null; } r = Im { }; if !fill(ok, r) { return null; } r }
+// a nullable local as the whole tail of the inner arm (loft#1337 guard)
+fn dnl(a: boolean, ok: boolean) -> Pl? { if a { r: Pl? = if ok { Pl { w: 18 } } else { null }; r } else { null } }
+
+fn s(p: Pl?) -> text { if p == null { "n" } else { "{p.w}" } }
+fn si(p: Im?) -> text { if p == null { "n" } else { "{p.w}" } }
+
+fn test_d2() {
+  assert("{s(d2(true, false))} {s(d2(true, true))} {s(d2(false, true))}" == "n 7 n", "d2 {s(d2(true, false))} {s(d2(true, true))} {s(d2(false, true))}");
+}
+fn test_d2f() {
+  assert("{s(d2f(true, false))} {s(d2f(true, true))} {s(d2f(false, true))}" == "n 7 n", "d2f {s(d2f(true, false))} {s(d2f(true, true))}");
+}
+fn test_d2c() {
+  assert("{si(d2c(true, false))} {si(d2c(true, true))} {si(d2c(false, true))}" == "n 5 n", "d2c {si(d2c(true, false))} {si(d2c(true, true))}");
+}
+fn test_d3() {
+  assert("{s(d3(true, true, false))} {s(d3(true, true, true))} {s(d3(true, false, true))}" == "n 8 n", "d3 {s(d3(true, true, false))} {s(d3(true, true, true))}");
+}
+fn test_d2e() {
+  assert("{s(d2e(true, 0))} {s(d2e(true, 1))} {s(d2e(true, 2))} {s(d2e(false, 1))}" == "n 9 10 n", "d2e {s(d2e(true, 0))} {s(d2e(true, 1))} {s(d2e(true, 2))}");
+}
+fn test_dm() {
+  assert("{s(dm(true, 0))} {s(dm(true, 1))} {s(dm(false, 1))}" == "n 11 n", "dm {s(dm(true, 0))} {s(dm(true, 1))}");
+}
+fn test_dv() {
+  assert("{s(dv(true, false))} {s(dv(true, true))} {s(dv(false, true))}" == "n 12 13", "dv {s(dv(true, false))} {s(dv(true, true))} {s(dv(false, true))}");
+}
+fn test_dout() {
+  assert("{s(dout(true, false))} {s(dout(true, true))} {s(dout(false, true))}" == "n 14 n", "dout {s(dout(true, false))} {s(dout(true, true))}");
+}
+fn test_dbind() {
+  assert("{dbind(true, false)} {dbind(true, true)} {dbind(false, true)}" == "null 15 null", "dbind {dbind(true, false)} {dbind(true, true)}");
+}
+fn test_darg() {
+  assert("{darg(false)} {darg(true)}" == "null 16", "darg {darg(false)} {darg(true)}");
+}
+fn test_dfld() {
+  assert("{dfld(false)} {dfld(true)}" == "null 17", "dfld {dfld(false)} {dfld(true)}");
+}
+fn test_dearly() {
+  assert("{si(dearly(true, false))} {si(dearly(true, true))} {si(dearly(false, true))}" == "n 5 n", "dearly");
+}
+fn test_dnl() {
+  assert("{s(dnl(true, false))} {s(dnl(true, true))} {s(dnl(false, true))}" == "n 18 n", "dnl {s(dnl(true, false))} {s(dnl(true, true))}");
+}

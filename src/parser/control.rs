@@ -14630,6 +14630,37 @@ impl Parser {
         if let Value::Return(inner) = tail {
             return self.materialize_return_into(td, inner, w);
         }
+        // A branch that can yield null is copied ARM BY ARM, and a null arm is left as it
+        // is: `OpCopyRecord` of the whole branch filled `w` on the null path too, so
+        // `{ r = S {…}; if ok { r } else { null } }` answered a default record where it
+        // held none (@FR-F-Block, @FR-N-Join: the branch is `S?`, loft#1722).  Only one arm runs, so
+        // every copying arm shares the one `w`, as `materialize_view_arms`' do.
+        if self.arms_yield_null(tail) {
+            match tail {
+                Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
+                Value::If(_, t, f) => {
+                    self.materialize_return_into(td, t, w);
+                    self.materialize_return_into(td, f, w);
+                }
+                Value::Block(bl) => {
+                    if let Some(last) = bl.operators.last_mut() {
+                        self.materialize_return_into(td, last, w);
+                    }
+                    // The block now yields `w` or null, no longer a view of its local.
+                    if matches!(bl.result.base(), Type::Reference(_, _)) {
+                        bl.result = Type::Reference(td, Deps::frame1(w));
+                    }
+                }
+                Value::Insert(ops) => {
+                    if let Some(last) = ops.last_mut() {
+                        self.materialize_return_into(td, last, w);
+                    }
+                }
+                // A null leaf hands up the sentinel it already is.
+                _ => {}
+            }
+            return;
+        }
         let kt = self.data.def(td).known_type();
         let copy_d = self.data.def_nr("OpCopyRecord");
         let orig = std::mem::replace(tail, Value::Null);
@@ -14765,6 +14796,23 @@ impl Parser {
             Value::Insert(ops) => ops.last().map_or(0, |x| self.tail_nonnull_arm_count(x)),
             Value::If(_, t, f) => self.tail_nonnull_arm_count(t) + self.tail_nonnull_arm_count(f),
             _ => 1,
+        }
+    }
+
+    /// Can this LOWERED value's tail be a direct null — a null leaf reached through its
+    /// blocks and the arms of its branches?  The question `materialize_return_into` asks
+    /// before it copies.  [`Self::branch_yields_null`] asks it of a join's arms as they are
+    /// parsed and does not know the `OpNullRefSentinel` a record's null arm has lowered to
+    /// by now.  A nullable LOCAL is not counted: that copy guards it by itself.
+    fn arms_yield_null(&self, v: &Value) -> bool {
+        if self.arm_is_null(v) {
+            return true;
+        }
+        match v.unspan() {
+            Value::Block(bl) => bl.operators.last().is_some_and(|x| self.arms_yield_null(x)),
+            Value::Insert(ops) => ops.last().is_some_and(|x| self.arms_yield_null(x)),
+            Value::If(_, t, f) => self.arms_yield_null(t) || self.arms_yield_null(f),
+            _ => false,
         }
     }
 
