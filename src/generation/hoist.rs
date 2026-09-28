@@ -4140,7 +4140,7 @@ fn foreign_store_writer(
             let mut named = false;
             for (i, a) in args.iter().enumerate() {
                 let Some(at) = def.attributes().get(i) else {
-                    if name == "OpGetRecord" {
+                    if name == "OpGetRecord" || name == "OpSetKeyed" {
                         continue; // a trailing key value
                     }
                     why = Some("a writer with an untyped operand in its scope");
@@ -4233,7 +4233,7 @@ fn text_escapes_with(
                     // `OpGetRecord`'s keys trail its declared parameters, and each is read
                     // into a `Content` at the call: a text VALUE.
                     let value_position = name == "OpFreeText"
-                        || (name == "OpGetRecord" && i >= attrs.len())
+                        || (matches!(name, "OpGetRecord" | "OpSetKeyed") && i >= attrs.len())
                         || attrs.get(i).is_some_and(|at| {
                             !at.constant && matches!(at.typedef.base(), Type::Text(_))
                         });

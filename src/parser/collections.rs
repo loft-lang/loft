@@ -1550,7 +1550,11 @@ impl Parser {
                 }
                 _ => None,
             };
-            let set = self.cl("OpSetKeyed", &[coll, val.clone(), Value::Int(tp_val)]);
+            // loft#1716 (`@FR-Col-Assign`) — the subscript names the key: its values ride along
+            // exactly as the lookup's did, and the runtime places the copy under them.
+            let mut set_args = vec![coll, val.clone(), Value::Int(tp_val)];
+            set_args.extend(get_args.iter().skip(2).cloned());
+            let set = self.cl("OpSetKeyed", &set_args);
             return match materialise {
                 Some(guard) => Value::Insert(vec![guard, set]),
                 None => set,

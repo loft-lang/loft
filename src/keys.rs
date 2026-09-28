@@ -3330,6 +3330,56 @@ pub fn get_key(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Content> {
     result
 }
 
+/// Write `values` into `record`'s key fields — the inverse of [`get_key`], one width per arm
+/// it reads.  loft#1716 (`Col-Assign`): a keyed assignment places its copy under the
+/// SUBSCRIPT, so the copy's key fields must say what the subscript said before the record is
+/// linked.  A text key's previous string is released first: the copy owns it alone.
+pub fn set_key(record: &DbRef, stores: &mut [Store], keys: &[Key], values: &[Content]) {
+    let st = &mut stores[record.store_nr as usize];
+    for (k, v) in keys.iter().zip(values) {
+        let p = record.pos + u32::from(k.position);
+        let rec = record.rec;
+        match (k.type_nr.abs(), v) {
+            (1, Content::Long(l)) => {
+                st.set_int(rec, p, *l);
+            }
+            (2, Content::Long(l)) => {
+                st.set_long(rec, p, *l);
+            }
+            (3, Content::Single(f)) => {
+                st.set_single(rec, p, *f);
+            }
+            (4, Content::Float(f)) => {
+                st.set_float(rec, p, *f);
+            }
+            (6, Content::Str(s)) => {
+                let old = st.get_u32_raw(rec, p);
+                if old != 0 {
+                    st.delete(old);
+                }
+                let s_pos = st.set_str(s.str());
+                st.set_u32_raw(rec, p, s_pos);
+            }
+            (8, Content::Long(l)) => {
+                st.set_i32_raw(rec, p, *l as i32);
+            }
+            (12, Content::Long(l)) => {
+                st.set_u32_raw(rec, p, *l as u32);
+            }
+            (9, Content::Long(l)) => {
+                st.set_short(rec, p, k.start, *l as i32);
+            }
+            (11, Content::Long(l)) => {
+                st.write(rec, p, (*l as i32 - k.start) as u16);
+            }
+            (_, Content::Long(l)) => {
+                st.set_byte(rec, p, k.start, *l as i32);
+            }
+            _ => {}
+        }
+    }
+}
+
 #[must_use]
 pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple> {
     let mut result = Vec::new();

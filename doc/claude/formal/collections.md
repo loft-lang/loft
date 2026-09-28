@@ -147,6 +147,31 @@ Two source shapes the rule deliberately does NOT license, each with its own answ
     accepted where the dense `d.c += 9` is refused, which made the `?` spelling of a statement
     more permissive than the plain one (loft#1223).
 
+### 1.2a Keyed assignment — `Col-Assign` (the SUBSCRIPT names the key)
+
+```
+  (Col-Assign)  c: <keyed kind><T[k₁,…,kₙ]>,  c[s₁,…,sₙ] = v   (every key given)
+                ⟹  a COPY of v is placed under (s₁,…,sₙ): any record already there is
+                replaced, and the copy's key fields are written to s₁,…,sₙ before it is
+                linked.  Afterwards c[s₁,…,sₙ] reads the copy back; v itself is untouched.
+                v's own key fields do not choose the place — they are overwritten on the
+                copy.  So c[5] = c[30]; c[30] = null MOVES the record from 30 to 5.
+```
+*Anchor:* `database/search.rs::set_keyed` (`insert_keyed_copy_at`, `keys::set_key`), both
+backends — the subscript's keys ride the op exactly as `OpGetRecord`'s do.  Guard
+`tests/scripts/a-keyed-assignment-places-its-record-under-the-subscript.loft`.
+
+**Why the subscript, and not the record's own key field (owner ruling 2026-09-28,
+loft#1716).**  Until then the subscript was parsed and dropped: `c[5] = K { key: 9 }` landed
+under 9, left `c[5]` untouched, and the move spelling above DELETED the record — a write
+landing at a place other than the one it names, which no rule admits.  `(Col-Lookup)` makes
+`c[k]` the record whose key is `k`, and an assignment to a place must leave that place reading
+the value written, as `v[i] = x` does.  A refusal was not available: a mismatch depends on
+values, so it cannot be judged from the line, and C80 rules out a runtime error.  Re-keying
+the COPY re-keys nothing that exists, so this does not collide with `(B-Ref-Reshape)`, which
+refuses re-keying a LIVE element (`e = &c[30]; e.key = 5`).  A value that lives inside the
+collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves under it.
+
 ### 1.2b Removal — `Col-Remove` (a vector RENUMBERS; a keyed kind does not)
 
 ```

@@ -1252,11 +1252,18 @@ pub fn OpClearKeyed(cell: &std::cell::UnsafeCell<Stores>, dest: DbRef, tp: i32) 
 /// @P305 — `coll[key] = value` insert-or-replace into a keyed collection.
 /// Native twin of the `OpSetKeyed` interp op / `State::set_keyed`.  `tp`'s
 /// `0x8000` bit frees `value`'s store after the deep copy (caller temp).
-pub fn OpSetKeyed(cell: &std::cell::UnsafeCell<Stores>, collection: DbRef, value: DbRef, tp: i32) {
+/// loft#1716 — `key` is the subscript's key (`Col-Assign`), as `OpGetRecord` takes it.
+pub fn OpSetKeyed(
+    cell: &std::cell::UnsafeCell<Stores>,
+    collection: DbRef,
+    value: DbRef,
+    tp: i32,
+    key: &[crate::keys::Content],
+) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     let raw = tp as u16;
     let free_source = raw & 0x8000 != 0;
-    stores.set_keyed(&collection, &value, raw & 0x7FFF, free_source);
+    stores.set_keyed(&collection, &value, raw & 0x7FFF, key, free_source);
 }
 
 /// Sort a vector in-place using the element type's natural ordering.

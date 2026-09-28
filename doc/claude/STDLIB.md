@@ -430,7 +430,7 @@ coordinate key fields (@PLN48):
 | `for m in xs { … }` | Iterate in the tree's natural Morton/Z-order — no sort (unlike `hash`, which sorts via its internal ordered index). |
 | `xs.len()` | Element count — O(1), reads the tree's cached length word. |
 | `m = xs[x, y]` | Look up the record at exactly that point; `null` when nothing sits there. Note the coordinates are separate subscripts (`xs[3, 6]`), not the parenthesised pair the range forms use. |
-| `xs[x, y] = mob` | Insert-or-replace at that point (the key comes from `mob`'s own coordinate fields, as for `hash`/`sorted`/`index`). |
+| `xs[x, y] = mob` | Insert-or-replace a copy of `mob` at that point: the subscript names the place, and the copy's coordinate fields are set to it, as for `hash`/`sorted`/`index` (`Col-Assign`). |
 | `xs[x, y] = null` | Remove the record at that point; a no-op when the point is empty. |
 | `xs[(x,y)..]` | Walk OUTWARD from that point, nearest first; caller `break`s to stop. Approximate — ordered by Morton distance, so a truly-near point can arrive a little late. |
 | `xs[(x,y)..:n]` | Same, capped at `n` records. Answers `n` from any origin (guard `tests/scripts/48b-spatial-slice.loft`). |
