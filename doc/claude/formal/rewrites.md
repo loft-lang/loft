@@ -3188,8 +3188,20 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-21).
+**OPEN: 0** (2026-09-28).
 
+- **D-rw-6 — OPENED AND CLOSED 2026-09-28 (loft#1729).**  `(R-Const)` makes a constant's view
+  B-Copy's copy the moment it is "handed to a parameter the callee writes", and a top-level
+  vector constant handed there went through as the VIEW: the callee's first write reached the
+  write-locked constant store and a development run halted (*"write to a constant"*), on both
+  backends.  loft#1686 had covered the bind (`c = CODES` copies); the argument was the other
+  road.  **Fix.**  `Parser::constant_arg_needs_copy`: at a loft-defined callee's non-`const`,
+  non-`&` vector parameter, an `OpConstRef` argument travels as a copy
+  (`materialize_collection_value`) when the callee writes that parameter
+  (`callee_param_writes`) — read only for a callee parsed before the caller, since the copy
+  mints its temporaries on both parser passes and pass 1 has no later body; a forward or
+  recursive callee is assumed to write.  A callee that only reads still receives the view.
+  Guard `tests/scripts/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft`.
 - **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
   literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed
   before the store.  The re-init comes first, and #330 lifts an initialiser that reads the

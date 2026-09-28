@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1729, `@FR-R-Const` / `@FR-B-Copy` — a top-level vector constant handed to a parameter
+// the callee WRITES travels as a copy for that call; the constant is untouched, and a callee
+// that only reads still receives the constant's view.
+//
+// A constant's use site answers `OpConstRef`, a view of the write-locked constant store.  A
+// bind copied since loft#1686 (k8), but an argument went through as the view, so the
+// callee's first write reached the lock and a development run halted: *"write to a constant —
+// a constant is read-only"*, on both backends.  Now `Parser::constant_arg_needs_copy` places
+// B-Copy's copy at the argument when the callee writes that parameter — read off the callee
+// for one parsed before the caller, assumed for a forward or recursive one, since the copy
+// must be the same on both parser passes.
+//
+// Every value is hand-computed: `CODES` is `[32, 33, 35]` and must read 32 at index 0 after
+// every call.
+//
+// @falsified-at: 61bfd933a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.patch — the same channels.
+//   CHANNEL: the EXIT — the control halts at the first writing call.
+//   WITNESS: "write to a constant — a constant is read-only" from `writes_before(CODES)`.
+//   HOLDS: the read-only, `const` and bind cells answer the same on both trees; no leak and no
+//   panic, and every cell is clean under LOFT_STRICT_STORES on this one.
+
+CODES = [32, 33, 35];
+
+fn writes_before(v: vector<integer>) -> integer { v[0] = 9; v[0] ?? -1 }
+fn reads(v: vector<integer>) -> integer { v[0] ?? -1 }
+fn appends(v: vector<integer>) -> integer { v += [7]; len(v) }
+fn reads_const(v: const vector<integer>) -> integer { v[1] ?? -1 }
+fn forwards(v: vector<integer>) -> integer { writes_before(v) }
+fn rec_writes(v: vector<integer>, n: integer) -> integer { if n == 0 { v[0] = 9; v[0] ?? -1 } else { rec_writes(v, n - 1) } }
+
+fn test_k1() { assert(writes_before(CODES) == 9, "k1"); assert((CODES[0] ?? -1) == 32, "k1 const {CODES[0] ?? -1}"); }
+fn test_k2() { assert(writes_after(CODES) == 9, "k2"); assert((CODES[0] ?? -1) == 32, "k2 const"); }
+fn test_k3() { assert(reads(CODES) == 32, "k3"); }
+fn test_k4() { assert(appends(CODES) == 4, "k4 {appends(CODES)}"); assert(len(CODES) == 3, "k4 len {len(CODES)}"); }
+fn test_k5() { assert(reads_const(CODES) == 33, "k5"); }
+fn test_k7() { assert(forwards(CODES) == 9, "k7"); assert((CODES[0] ?? -1) == 32, "k7 const"); }
+fn test_k8() { c = CODES; c[0] = 5; assert("{c[0] ?? -1} {CODES[0] ?? -1}" == "5 32", "k8"); }
+fn test_k9() { assert(rec_writes(CODES, 2) == 9, "k9"); assert((CODES[0] ?? -1) == 32, "k9 const"); }
+
+fn writes_after(v: vector<integer>) -> integer { v[0] = 9; v[0] ?? -1 }
