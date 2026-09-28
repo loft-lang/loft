@@ -210,11 +210,13 @@ consumer.  Decided 2026-06-04 — [record](DESIGN_DECISIONS-history.md#c71--nati
 
 **Decision.** Resume restores stored values verbatim but not the random generator's state; the
 generator continues fresh, seeded from entropy as on any launch.  A reproducible stream is an
-explicit `random_seed`.  **Why.** A saved generator state would let anyone who reads the session
-file predict future `random()` output, and an explicit seed already covers determinism.
+explicit `rand_seed`.  **Why.** A saved generator state would let anyone who reads the session
+file predict future `rand()` output, and an explicit seed already covers determinism.
 
 **Revisit when.** A non-security use case needs byte-identical RNG continuation across resume
 that an explicit seed cannot give.  Decided 2026-06-08 — [record](DESIGN_DECISIONS-history.md#c72--repl-session-resume-does-not-persist-rng-generator-state).
+**Holds at:** the session records definitions and binding VALUES, never a statement
+(`src/repl.rs`, `record_input`); `tests/repl_session.rs::a_resumed_session_does_not_continue_the_random_stream`.
 **Catalogue:** @F49 (REPL), @F43 (random numbers).
 
 ## C73 — `boolean` is three-state (false / true / null); `==` is raw, truthiness coerces
