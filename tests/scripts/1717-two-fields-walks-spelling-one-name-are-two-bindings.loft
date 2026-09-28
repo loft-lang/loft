@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1717, `@FR-B-Scope` — a `for f in x#fields` walk binds a variable of its OWN, as every
+// `for` loop does (loft#915), so two walks spelling one name are two bindings on both passes.
+//
+// The walk is unrolled at compile time and created its variable by NAME (`create_var`); pass 1
+// leaves the name `f` naming the LAST walk's variable, so pass 2's first walk took the second
+// walk's slot.  The body's pass-1 deps (an `is` subject's) then named a binding pass 2 never
+// set; `--interpret` ran it, and `--native` declared that binding inside one field's block and
+// freed it outside (`error[E0425]: cannot find value var_f`).  Now the walk's variable comes
+// from `Parser::create_loop_var`, keyed per loop.
+//
+// Every value is hand-computed over `Row { id: 1, name: "a" }` and `Pt { x: 3, y: 4 }`: the
+// integer fields sum, the text fields concatenate, the names list in declaration order.
+//
+// @falsified-at: 61bfd933a — native exit 1 -> 0; interpret INERT (expected for a
+//   native-only defect — the interpreter ran it all along)
+// @falsified-by: tests/falsified/1717-two-fields-walks-spelling-one-name-are-two-bindings.patch — the same channels.
+//   CHANNEL: the EXIT — the native build of this file does not compile on the control.
+//   WITNESS: `error[E0425]: cannot find value var_f in this scope`.
+//   HOLDS: the interpreter answers every cell alike on both trees; no leak and no panic.
+
+struct Row { id: integer, name: text }
+struct Pt { x: integer, y: integer }
+
+fn test_f1() { m = Row { id: 1, name: "a" }; n = 0;
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  assert(n == 2, "f1 {n}"); }
+fn test_f2() { m = Row { id: 1, name: "a" }; n = 0;
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  assert(n == 3, "f2 {n}"); }
+fn test_f6() { m = Row { id: 1, name: "a" }; t = "";
+  for f in m#fields { if f.value is FvText { v } { t += v; } }
+  for f in m#fields { if f.value is FvText { v } { t += v; } }
+  assert(t == "aa", "f6 {t}"); }
+fn test_f7() { m = Row { id: 1, name: "a" }; t = "";
+  for f in m#fields { t += "{f.name},"; }
+  for f in m#fields { t += "{f.name},"; }
+  assert(t == "id,name,id,name,", "f7 {t}"); }
+fn test_f8() { m = Row { id: 1, name: "a" }; p = Pt { x: 3, y: 4 }; n = 0;
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  for f in p#fields { if f.value is FvInt { v } { n += v; } }
+  assert(n == 8, "f8 {n}"); }

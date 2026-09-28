@@ -6489,7 +6489,13 @@ use #count instead"
     ) {
         let field_def_nr = self.data.def_nr("StructField");
         let field_type = Type::Reference(field_def_nr, crate::data::Deps::none());
-        let loop_var = self.create_var(loop_var_name, &field_type);
+        // loft#1717, @FR-B-Scope — keyed per LOOP, as every other loop binding is
+        // (`create_loop_var`, loft#915).  `create_var` reuses by name, and pass 1 leaves `f` naming the LAST
+        // `for f in x#fields`, so pass 2's first walk took the second walk's slot: the body's
+        // pass-1 deps then named a binding pass 2 never set, and `--native` declared it in
+        // one field's block and freed it outside (`cannot find value var_f`).
+        let loop_var = self.create_loop_var(loop_var_name, &field_type);
+        self.vars.served_as_loop_var(loop_var);
         if loop_var_name != src_var_name {
             self.vars.set_name(src_var_name, loop_var);
         }

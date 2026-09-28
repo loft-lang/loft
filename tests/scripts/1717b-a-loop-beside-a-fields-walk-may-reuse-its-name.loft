@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1717, `@FR-B-Scope` — a `for f` loop may follow or precede a `for f in x#fields` walk,
+// as it may follow any `for f` (sequential same-name loops are legal, loft#915).
+//
+// The walk never registered its variable as a loop's — it ends its loop before the body parses,
+// since an unrolled walk has no run-time loop for a `break` to leave — so the shadow check read
+// the walk's `f` as a LOCAL and refused the next loop: *"loop variable 'f' shadows a local named
+// 'f'"*.  Now the walk records that its variable served as a loop variable
+// (`Variables::served_as_loop_var`) without making a loop current.
+//
+// Values are hand-computed: `id` is 1 and the ordinary loop adds 10 + 20.
+//
+// @falsified-at: 61bfd933a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1717b-a-loop-beside-a-fields-walk-may-reuse-its-name.patch — the same channels.
+//   CHANNEL: the EXIT — the control refuses the file.
+//   WITNESS: "loop variable 'f' shadows a local named 'f'" at the second loop, on both backends.
+//   HOLDS: no leak and no panic on either tree.
+
+struct Row { id: integer, name: text }
+struct Pt { x: integer, y: integer }
+
+fn test_f3() { m = Row { id: 1, name: "a" }; n = 0;
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  for f in [10, 20] { n += f; }
+  assert(n == 31, "f3 {n}"); }
+fn test_f4() { m = Row { id: 1, name: "a" }; n = 0;
+  for f in [10, 20] { n += f; }
+  for f in m#fields { if f.value is FvInt { v } { n += v; } }
+  assert(n == 31, "f4 {n}"); }

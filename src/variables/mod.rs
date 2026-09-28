@@ -1100,6 +1100,16 @@ impl Function {
         }
     }
 
+    /// Record that `variable` serves as a loop's variable WITHOUT making a loop current — the
+    /// compile-time `for f in x#fields` walk, which unrolls into one block per field and has no
+    /// run-time loop for a `break` to leave.  Unrecorded, a later `for f` over anything was
+    /// refused as shadowing "a local named 'f'" (loft#1717).
+    pub fn served_as_loop_var(&mut self, variable: u16) {
+        if (variable as usize) < self.variables.len() {
+            self.variables[variable as usize].was_loop_var = true;
+        }
+    }
+
     /// Has this variable served as a `for` loop's variable anywhere in this function?
     ///
     /// Read by `scopes.rs`'s dep-init prefix (loft#1135): a loop variable is assigned
