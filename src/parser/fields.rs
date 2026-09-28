@@ -9,6 +9,23 @@ use super::{
 // Field access, indexing, and iterator operations.
 
 impl Parser {
+    /// Is the member about to be read off a slice receiver a METHOD call that a vector
+    /// declares and no iterator does (loft#1728)?  Looked at, not consumed.
+    fn slice_receiver_method(&mut self) -> bool {
+        let link = self.lexer.link();
+        let name = self.lexer.has_identifier();
+        let is_call = self.lexer.peek_token("(");
+        self.lexer.revert(link);
+        let Some(name) = name else {
+            return false;
+        };
+        if !is_call {
+            return false;
+        }
+        let (receivers, _) = self.find_method_receivers(&name);
+        receivers.iter().any(|r| r == "vector") && !receivers.iter().any(|r| r == "iterator")
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn field(&mut self, code: &mut Value, tp: Type) -> Type {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
@@ -45,6 +62,20 @@ impl Parser {
             // own guard.  Two lists for one question, and the answer needs both.
             && !matches!(code, Value::Var(v) if self.narrowed_non_null.contains(v));
         let receiver_nullable = receiver_optional || self.reads_a_collection_element(code);
+        // loft#1728, @FR-Slice-Value — `v[a..b].len()`: a METHOD's receiver is a vector-typed
+        // position like any other, so a vector slice there is materialised as one
+        // (`iterator_as_vector`, the one home) when the method is a vector's and no iterator
+        // declares it.  Both passes take this branch alike: pass 1 answers the vector type,
+        // pass 2 the rewrite too.
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+            && self.slice_receiver_method()
+        {
+            let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(vec_tp) = self.iterator_as_vector(code, &tp, &want) {
+                return self.field(code, vec_tp);
+            }
+        }
         if let Type::Unknown(_) | Type::Never = tp {
             // @P376 — `Type::Never` is the poison an errored struct construction
             // (`p = Plyer { … }` with an unknown `Plyer`) assigns to its

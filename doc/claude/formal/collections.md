@@ -610,6 +610,16 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+- **`D-col-12`** — opened and CLOSED 2026-09-29 (loft#1728): **a slice at a method's RECEIVER was
+  not a vector.**  `(Slice-Value)` makes `v[a..b]` the fresh vector a bind would make at every
+  vector-typed position, and a receiver is one — but it is resolved by its TYPE before any
+  coercion sees it, so `len(v[a..b])` answered "Unknown function len" and `v[a..b].len()`
+  "Unknown field iterator<integer>.len", on both backends.  **Fix.**  Where resolution would
+  otherwise fail, the slice receiver goes through `iterator_as_vector`, the one home: the free
+  spelling in `Parser::call_with_slice_receiver`, the method spelling when the member is a
+  method a vector declares and no iterator does (`Parser::slice_receiver_method`).  A keyed
+  range slice stays `(Slice-KeyedIter)`'s refusal.  Guard
+  `tests/scripts/1728-a-slice-is-a-vector-as-a-methods-receiver.loft`.
 - **`D-col-11`** — opened and CLOSED 2026-09-28: **a comprehension over a keyed collection walked
   the collection, not its snapshot**, against `(Col-Order)`.  A `for` statement walks a `hash`,
   `spatial` or `trie` through the ordered snapshot `parse_for` built; a comprehension over the same

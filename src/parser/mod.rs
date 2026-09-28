@@ -7081,6 +7081,10 @@ impl Parser {
             }
         } else if self.first_pass && !self.default {
             Type::Unknown(0)
+        } else if let Some(tp) = self.call_with_slice_receiver(
+            code, source, name, list, types, named_args, arg_pos, name_pos,
+        ) {
+            tp
         } else if name == "len"
             && types.len() == 1
             && named_args.is_empty()
@@ -7461,6 +7465,37 @@ impl Parser {
             }
             self.reported_call(code)
         }
+    }
+
+    /// loft#1728, @FR-Slice-Value — a call whose RECEIVER is a vector slice (`len(v[a..b])`)
+    /// and which resolves for no definition at the iterator: the receiver is a vector-typed
+    /// position like any other, so it is materialised as one (`iterator_as_vector`, the one
+    /// home) and the call resolved again.  Asked only where resolution would otherwise report
+    /// an unknown function, so no call that resolved before resolves differently.
+    #[allow(clippy::too_many_arguments)]
+    fn call_with_slice_receiver(
+        &mut self,
+        code: &mut Value,
+        source: u16,
+        name: &str,
+        list: &[Value],
+        types: &[Type],
+        named_args: &[(String, Value, Type)],
+        arg_pos: &[Position],
+        name_pos: &Position,
+    ) -> Option<Type> {
+        let first = types.first()?;
+        let Type::Iterator(elm, _) = first.base() else {
+            return None;
+        };
+        let want = Type::Vector(elm.clone(), Deps::none());
+        let mut args = list.to_vec();
+        let vec_tp = self.iterator_as_vector(args.first_mut()?, &types[0], &want)?;
+        let mut arg_types = types.to_vec();
+        arg_types[0] = vec_tp;
+        Some(self.call(
+            code, source, name, &args, &arg_types, named_args, arg_pos, name_pos,
+        ))
     }
 
     /// Does argument `nr` of a call to `callee` hand a top-level constant's view to a
