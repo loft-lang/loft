@@ -647,6 +647,7 @@ not to install a toolchain, so "install Rust and rebuild" on a run that succeeds
 warning; gating on a per-user marker file was rejected because a fresh container has no `~/.loft`.
 
 **Revisit when.** No trigger recorded.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
+**Holds at:** `src/main.rs`'s fallback arms; `tests/exit_codes.rs::a_missing_rustc_falls_back_quietly_except_where_asked`.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 

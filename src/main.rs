@@ -11413,8 +11413,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // rustc and carry on natively — the fresh rlib is picked up by the
                 // `loft_lib_dir()` resolution below.  From a bundle there is no
                 // source to rebuild, so fall back (default) or error (`--native`).
-                let healed = native_utils::loft_source_tree()
-                    .is_some_and(|tree| native_utils::rebuild_runtime(&tree, reason));
+                // No rustc at all is not a stale runtime: there is nothing to rebuild WITH, and
+                // attempting it told a source checkout "rebuilding it with your rustc" and then
+                // that cargo could not be launched.
+                let no_rustc = reason == loft::cache::RUSTC_NOT_FOUND;
+                let in_checkout = native_utils::loft_source_tree();
+                let healed = !no_rustc
+                    && in_checkout
+                        .as_ref()
+                        .is_some_and(|tree| native_utils::rebuild_runtime(tree, reason));
                 // Whether it healed or not, the rebuild has been attempted — the
                 // post-compile heal (loft#706) must not run it a second time.
                 runtime_rebuilt = true;
@@ -11426,9 +11433,19 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     // The reason is still recorded below and surfaced to whoever DID
                     // ask (`--native`, or `LOFT_REQUIRE_NATIVE`, which hard-errors
                     // with it) — silence here costs no diagnosis.
-                    native_fallback_reason = Some(format!(
-                        "native compilation unavailable ({reason}); rebuild loft"
-                    ));
+                    // @C102 — the one exception to the silence: a SOURCE CHECKOUT, where the
+                    // toolchain is what the person running it is expected to have.
+                    if no_rustc && in_checkout.is_some() && !native_required {
+                        eprintln!(
+                            "loft: rustc not found — native runs need a Rust toolchain on PATH; \
+                             running interpreted instead."
+                        );
+                    }
+                    native_fallback_reason = Some(if no_rustc {
+                        reason.to_string()
+                    } else {
+                        format!("native compilation unavailable ({reason}); rebuild loft")
+                    });
                     let _ = std::fs::remove_file(&emit_path);
                     break 'native;
                 }
@@ -11929,11 +11946,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         let reason = native_fallback_reason
             .as_deref()
             .unwrap_or("native execution did not occur (reason not recorded)");
+        let cure = if reason == loft::cache::RUSTC_NOT_FOUND {
+            "Put a Rust toolchain on PATH"
+        } else {
+            "Fix the toolchain (e.g. `cargo build --release --lib --bin loft`)"
+        };
         eprintln!(
             "loft: LOFT_REQUIRE_NATIVE is set, but native execution was unavailable \
              ({reason}); refusing to fall back to the interpreter. \
-             Fix the toolchain (e.g. `cargo build --release --lib --bin loft`), \
-             or unset LOFT_REQUIRE_NATIVE to allow interpreter fallback."
+             {cure}, or unset LOFT_REQUIRE_NATIVE to allow interpreter fallback."
         );
         std::process::exit(1);
     }
