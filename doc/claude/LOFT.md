@@ -586,6 +586,8 @@ pub fn starts_with(self: text, value: text) -> boolean;
 #rust "@self.starts_with(@value)"
 ```
 
+Rules: [formal/calls.md](formal/calls.md) `(F-Call)`, `(F-Args)`, `(F-Arity)`, `(F-Return)`; a stub body answers the type's default (`(N-Default)`).
+
 ### References (`&`)
 
 A `&`-typed binding is a **live reference** to its source, not a copy. Every operation goes through
@@ -636,8 +638,11 @@ with `a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
 
 ### Constants
 
-```
-PI = 3.14159265358979;
+<!-- from tests/reference/skill-constants.loft -->
+```loft
+TAU      = 6.28318530717958;    // bare-name form
+const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
+pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
 
 Constants must be `UPPER_CASE` and are defined at file scope.
@@ -706,6 +711,8 @@ In library/default files, `size(n)` specifies the storage size in bytes:
 ```
 pub type u8 = integer limit(0, 255) size(1);
 ```
+
+Catalogue: @F46; guard: `tests/scripts/78-type-aliases.loft`, `tests/scripts/167-a-size-is-written-in-a-type-alias.loft`.
 
 ### Library imports
 
@@ -1134,14 +1141,17 @@ a typed tree covering all six RFC 8259 kinds (`JNull`, `JBool`, `JNumber`, `JStr
 intermediate failure produces `JNull`, never a trap.  Full surface reference in
 [STDLIB.md § JSON](STDLIB.md).
 
-```
+<!-- from tests/reference/json-values.loft -->
+```loft
 v = json_parse(`{{"users":[{{"name":"Alice"}}]}}`);
 name = v.field("users").item(0).field("name").as_text();   // "Alice"
-reply = json_object([
-  JsonField { name: "ok",    value: json_bool(true) },
-  JsonField { name: "count", value: json_number(3.0) }
-]);
-text = reply.to_json();   // {{"ok":true,"count":3}}
+// every intermediate failure produces JNull, never a trap
+
+match v {
+  JObject { fields } => { kind = "object with {len(fields)} field"; },
+  JArray { items }   => { kind = "array of {len(items)}"; },
+  _                  => { kind = "other"; }
+}
 ```
 
 **2. `Type.parse(text)` (legacy, transitional).**  Parses JSON or loft-native text
@@ -1401,6 +1411,8 @@ Single-line. Supports `\n`, `\t`, `\\`, `\"` escapes.
 "literal {{braces}}"     // escape { } by doubling
 ```
 
+Rules: [formal/formatting.md](formal/formatting.md) `(F-Interp)`, `(F-Escape)`.
+
 ### Backtick strings (`` `...` ``)
 
 **Multi-line.** Bare `"` is literal inside backtick strings (no escaping needed).
@@ -1619,6 +1631,8 @@ if condition {
 result = if x > 0 { x } else { -x }
 ```
 
+Rules: [formal/operational.md](formal/operational.md) `(E-IfT)`; the condition is a truthiness position, `(E-Truthy)`.
+
 ### For loops
 
 ```
@@ -1724,8 +1738,14 @@ Exceptions:
 
 ### While loops
 
-```
-while <condition> { }
+<!-- from tests/comparisons/loops.loft -->
+```loft
+while !done() { step(); }  // while works
+
+while true {           // infinite until a break
+    if should_exit() { break; }
+    step();
+}
 ```
 
 Repeats as long as the condition holds, and is the only unbounded loop loft has —
@@ -1792,6 +1812,8 @@ id = param(req, "id") ?? return bad_request("missing id");
 val = lookup(id)       ?? return;    // void function: return nothing
 ```
 
+Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return` is `(E-Coalesce)` with a return in the fallback.
+
 ### Custom iterators (I13)
 
 Any struct or struct-enum with a `fn next(self: T) -> Item?` method can be used in a `for`
@@ -1830,6 +1852,8 @@ The loop walks a COPY of the iterator value, as any bind of a struct copies: aft
 A program may also define `fn exhausted(self: T) -> boolean` for its own iterator type.  The
 built-in `exhausted(gen)` answers only for a generator (`iterator<T>`, nullable included); for
 any other type the call reaches the program's definition, or is refused when there is none.
+
+Rules: [formal/iteration.md](formal/iteration.md) `(I-Next)`, `(I-Done)` — `next` is asked once per step and `null` is the end.
 
 ### Parallel blocks (A15)
 
@@ -2173,6 +2197,8 @@ Variables may be explicitly initialized from expressions:
 ```
 data = configuration as Program
 ```
+
+Rules: [formal/binding.md](formal/binding.md) `(B-Copy)` (a plain bind copies), `(B-View)` (a struct-typed projection is a view).
 
 ---
 
@@ -2673,6 +2699,8 @@ un-upgraded candidates in the current libraries, highest-leverage first:
 - **`Version`** (registry semver — hand-rolled parse + compare), **`Angle`**, and
   a units family (`ByteSize`, `Money` / `Decimal`) round out the list.
 
+Guards: `tests/scripts/511-first-grade-operators.loft`, `tests/scripts/512-first-grade-format.loft`, `tests/scripts/513-first-grade-conversions.loft`.
+
 ---
 
 ## Methods and function calls
@@ -2796,6 +2824,8 @@ keeps every direct call working, but a fn-ref of type `fn(integer) -> integer` s
 matching the moment a second parameter arrives however optional it is — so growing the
 signature of something handed out as a VALUE is a breaking change ([INTERFACES.md](INTERFACES.md)).
 
+Catalogue: @F17.
+
 ---
 
 ## Assertions
@@ -2806,6 +2836,8 @@ assert(condition, "message")
 ```
 
 Panics at runtime if the condition is false.
+
+Catalogue: @F44; guard: `tests/scripts/1147-assert-eq-reports-both-sides-at-the-call-site.loft`.
 
 ---
 
@@ -2823,6 +2855,8 @@ sizeof(my_var)     // size of the variable's type
 field or vector element. For range-constrained integer types (`u8`, `u16`, etc.) this
 is the packed size (1 or 2 bytes), not the stack slot size. For polymorphic enums and
 references, the size is computed at runtime from the actual variant.
+
+Catalogue: @F45; guard: `tests/scripts/89-sizeof.loft`.
 
 ---
 
@@ -2886,6 +2920,8 @@ no-op: it emits no warnings, is callable at runtime (it answers its return type'
 
 Note: ordinary (non-enum) function overloading by argument type is **not** supported —
 two functions with the same name and different non-variant parameter types are a compile error.
+
+Catalogue: @F20 (variant-based dispatch), @F122 (one name, a definition per parameter combination).
 
 ---
 
@@ -2974,6 +3010,10 @@ twice(c)                          // one type: the inferred instance is the name
   its instances; the debugger shows a local's instance beside a literal that names the
   template (`g: Grid<integer> = Grid{cells:[1,2],w:1}`).
 
+Rules: [formal/interfaces.md](formal/interfaces.md) `(G-Gen)`, `(G-Mono)`, `(G-Check)`; catalogue: @F25.
+
+Rule: [formal/interfaces.md](formal/interfaces.md) `(G-Type)`.
+
 ---
 
 ## File structure
@@ -2986,18 +3026,18 @@ A loft file may contain (in any order):
 - Type aliases
 - Top-level constants
 
+Guard: `tests/scripts/88-imports.loft` (a `use` after a declaration is refused).
+
 ---
 
 ## External function annotations (`#rust`, `#iterator`)
 
 Used only in default/library files to bind loft declarations to Rust implementations:
 
-```
-pub fn len(self: text) -> integer;
-#rust "@self.len() as i32"
-
-pub fn env_variables() -> iterator<EnvVar, integer>;
-#iterator "stores.env_iter()" "stores.env_next(@0)"
+<!-- from default/03_text.loft -->
+```loft
+pub fn trim(self: text) -> text[self];
+#rust"@self.trim()"
 ```
 
 ---
@@ -3007,14 +3047,26 @@ pub fn env_variables() -> iterator<EnvVar, integer>;
 Operators are defined as functions named `OpXxx` in default files and linked to
 infix/prefix syntax by the parser. Examples: `OpAdd`, `OpEq`, `OpNot`, `OpConv`, `OpCast`.
 
+Their home is `default/01_code.loft`; the parser's dispatch table names each `OpXxx` it lowers to, and a misspelt one fails the stdlib to load, so `make ci` keeps this section.
+
 ---
 
 ## Shebang
 
 Loft scripts support a Unix shebang line for direct execution:
-```
-#!/path/to/loft-interpreter
-fn main() { ... }
+<!-- from tests/reference/shebang.loft -->
+```loft
+#!/usr/bin/env loft
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SCRIPT — run top to bottom, not through --tests
+// @PAGE: LOFT.md § Shebang — a Unix shebang on the first line is skipped by the lexer, so the
+// file runs both as `loft shebang.loft` and, once executable, as `./shebang.loft`.
+
+greeting = "hi from a script with a shebang";
+assert(greeting.starts_with("hi"), "the line after the shebang ran")
+println(greeting)
 ```
 
 ---
@@ -3522,6 +3574,8 @@ parameter names is refused at the declaration.
 **Without bounds:** only assign, return, and store are allowed on `T`.
 **With bounds (`<T: Interface>`):** method calls and operators declared
 in the interface are allowed on `T`.  See § Interfaces above.
+
+Rules: `(G-Gen)`, `(G-Check)`; catalogue: @F25, @F26.
 
 ### Text: comprehensive operations
 

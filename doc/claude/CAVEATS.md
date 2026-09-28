@@ -413,10 +413,13 @@ or pair the hash with a `vector<K>`.  This is *not* the earlier
 Mirror the other collection types — the loop variable is the
 **record**, not a tuple:
 
+<!-- from tests/reference/hash-order.loft -->
 ```loft
 struct Entry { name: text, count: integer }
 struct Bag   { data: hash<Entry[name]> }
-
+```
+<!-- from tests/reference/hash-order.loft -->
+```loft
 b = Bag { data: [
     Entry{name:"zebra", count:1},
     Entry{name:"apple", count:5},
@@ -424,7 +427,7 @@ b = Bag { data: [
 ] };
 
 for e in b.data {              // visits apple, mango, zebra (ascending name)
-    println("{e.name}={e.count}");
+    seen += "{e.name}={e.count} ";
 }
 ```
 

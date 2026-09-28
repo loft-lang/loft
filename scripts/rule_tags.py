@@ -49,6 +49,12 @@
 #                  a signature listing rather than a program is a ```grammar fence and is not
 #                  asked.  `--gate` fails a fence with no source or one that has drifted
 #                  (@PLN176 phase 2; the walk that gives every fence a home is the plan's)
+#   sections       every `##`/`###` section of LOFT.md and STDLIB.md, and what KEEPS it: a
+#                  sourced sample, an `@FR-`/`(Rule)` or `@F` citation, a signature table the
+#                  stdlib source resolves, a guard path or a `loft#N`; a section with none is
+#                  prose nothing in the repo would contradict.  Also names a signature row no
+#                  `default/*.loft` declaration matches.  `--gate` fails on either (@PLN176
+#                  phase 3)
 #   coverage       what share of the rules carry a code ANNOTATION and what share carry an
 #                  active GUARD, against the contract-1 FLOORS — the command a doc links to
 #                  INSTEAD of writing a position down.  A measured position is stale the
@@ -698,6 +704,165 @@ def fence_report(docs=None, pages=None):
     return rows
 
 
+# ---- sections: does every section of a reference page have something that keeps it? ----
+#
+# A fence is kept by the program it is cut from (`fences`) and a limitation sentence by its
+# issue (`claims`); a SECTION is the unit a reader trusts, and one can be all prose — a rule
+# restated from memory, a table of signatures typed by hand — with nothing in the repo that
+# would move when the language does.  A section is KEPT when its body carries at least one of:
+#   - a sourced ```loft fence (`<!-- from … -->`), a program `make ci` runs;
+#   - a formal-rule citation, `@FR-X` or the parenthesised `(X)` form, resolving to a DEFINED
+#     rule — the formal chapter and its guards then own the claim;
+#   - a feature citation `@F<n>` / `@I<n>` — the catalogue issue and its generated example;
+#   - a signature table: a `| \`name(...)\` |` row whose name a `default/*.loft` declaration
+#     resolves — the stdlib source is the one home, so a renamed or removed routine is a row
+#     that no longer resolves (reported by name);
+#   - a path under tests/ that exists (a guard named outright), or a `loft#N` citation (the
+#     `claims` check owns its truth).
+# A pure index (Contents, See also) is exempt by name.  Everything else with none of these is
+# UNKEPT: prose nothing in the repo would contradict when it goes stale.  The body of a
+# section runs to the next heading of the same or a higher level, so a `##` with `###`
+# children is kept by any child; each child is measured on its own.
+SECTION_DOCS = (os.environ["SECTION_DOCS"].split(":") if os.environ.get("SECTION_DOCS")
+                else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md"])
+# A pure index, and the two sections whose subject is not the language: STDLIB's note on how
+# the stdlib is implemented (a maintainer pointer) and its ledger of routines proposed and not
+# yet written, whose unresolved names are the content.
+SECTION_INDEX = {"Contents", "See also", "Implementation notes", "Open work",
+                 # an INFORMAL summary of the grammar: every production it lists is exercised
+                 # by the parser tests as a whole, and no one guard holds one line of it
+                 "Summary of grammar"}
+FEATURE_CITE = re.compile(r"@[FI]\d+\b")
+PAREN_RULE = re.compile(r"\(([A-Z][A-Za-z]*(?:-[A-Za-z0-9]+)+)\)")
+# A signature is a backticked `name(` — or `x.name(` — whose name is at least three letters:
+# the one-letter `f(x)`, the `fn(…)` type spelling and the field modifiers (`limit(0, 255)`,
+# `size(1)`) read like calls and are not routines.  `f#read(` is an operator form, skipped.
+SIG_NAME = re.compile(r"`(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]{2,})\(")
+SIG_PSEUDO = {"func", "method", "takes", "limit", "size", "default", "virtual", "computed",
+              "init", "check", "assert", "panic", "http"}
+# Names the PARSER lowers rather than the stdlib declaring them — each verified against its
+# site: `remove`/`clear` (src/parser/fields.rs), `type_of`/`field_value`
+# (src/parser/control.rs), `sizeof`/`type_name` (src/parser/objects.rs).
+PARSER_BUILTINS = {"remove", "clear", "type_of", "field_value", "sizeof", "type_name"}
+TYPE_NAME = re.compile(r"`([A-Z][A-Za-z0-9]*)(?:\.[A-Z][A-Za-z0-9]*)?`")
+CONST_NAME = re.compile(r"`([A-Z][A-Z0-9_]+)`")
+TEST_PATH = re.compile(r"\b((?:tests|default)/[A-Za-z0-9_./-]+\.(?:loft|rs|expect))\b")
+LIB_SECTION = re.compile(r"`use\s+([a-z_][a-z0-9_]*)\s*;`")
+
+
+def stdlib_names():
+    """Every function, struct, enum, interface and type name `default/*.loft` declares."""
+    names = set()
+    decl = re.compile(r"^\s*(?:pub\s+)?(?:fn|struct|enum|interface|type|value struct)\s+"
+                      r"([A-Za-z_][A-Za-z0-9_]*)", re.M)
+    const = re.compile(r"^\s*(?:pub\s+)?(?:const\s+)?([A-Z][A-Z0-9_]+)\s*=", re.M)
+    for path in glob.glob(os.path.join(ROOT, "default", "*.loft")):
+        text = open(path, encoding="utf-8").read()
+        names.update(decl.findall(text))
+        names.update(const.findall(text))
+    return names | PARSER_BUILTINS
+
+
+def doc_sections(text):
+    """[(line, level, title, [body lines])] — the body runs to the next heading of the same
+    or a higher level, fenced blocks included as text (a heading inside a fence is not one)."""
+    lines = text.split("\n")
+    heads = []
+    fence = False
+    for i, l in enumerate(lines):
+        if re.match(r"^\s*```", l):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        m = re.match(r"^(#{2,4})\s+(.*?)\s*$", l)
+        if m:
+            heads.append((i, len(m.group(1)), m.group(2)))
+    out = []
+    for k, (i, lvl, title) in enumerate(heads):
+        end = len(lines)
+        for j, l2, _ in heads[k + 1:]:
+            if l2 <= lvl:
+                end = j
+                break
+        out.append((i + 1, lvl, title, lines[i + 1:end]))
+    return out
+
+
+def section_report(docs=None, rules=None):
+    """[(file, line, level, title, keepers, unresolved)] — `keepers` is the list of what keeps
+    the section (empty = UNKEPT); `unresolved` the signature names no stdlib declaration has."""
+    rules = rules if rules is not None else defined_rules()
+    names = stdlib_names()
+    rows = []
+    for rel in (docs or SECTION_DOCS):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        rows.extend(_section_rows(open(path, encoding="utf-8").read(), rules, names, rel))
+    return rows
+
+
+def _section_rows(text, rules, names, rel):
+    """`section_report` over one doc's text — separate so a selftest can hand it a string."""
+    rows = []
+    if True:
+        for line, lvl, title, body in doc_sections(text):
+            plain = re.sub(r"\s*\(.*\)\s*$", "", re.sub(r"[`~*]", "", title)).strip()
+            if plain in SECTION_INDEX:
+                rows.append((rel, line, lvl, title, ["index"], []))
+                continue
+            joined = title + "\n" + "\n".join(body)
+            keepers, unresolved = [], []
+            lib = LIB_SECTION.search(title)
+            if lib:
+                # a library's section: its testbed keeps the signatures, not default/*.loft
+                rows.append((rel, line, lvl, title, [f"library {lib.group(1)}"], []))
+                continue
+            n_from = sum(1 for _, info, _, src in markdown_fences(joined)
+                         if info == "loft" and src)
+            if n_from:
+                keepers.append(f"{n_from} sourced sample(s)")
+            fr = {t for t in CITE.findall(joined) if t in rules}
+            fr |= {t for t in PAREN_RULE.findall(joined) if t in rules}
+            if fr:
+                keepers.append("rule " + ", ".join(sorted(fr)[:3]) + (" …" if len(fr) > 3 else ""))
+            feats = sorted(set(FEATURE_CITE.findall(joined)))
+            if feats:
+                keepers.append("feature " + ", ".join(feats[:3]))
+            sig_ok, sig_bad = set(), set()
+            own = True
+            for l in body:
+                if re.match(r"^#{2,4} ", l):
+                    own = False  # a child's rows are the child's to answer for
+                row = l.lstrip().startswith("|") and own
+                for n in SIG_NAME.findall(l.replace("#", "#!")):
+                    if n in SIG_PSEUDO:
+                        continue
+                    if n in names:
+                        sig_ok.add(n)
+                    elif row:
+                        sig_bad.add(n)
+                if not (l.lstrip().startswith("|")):
+                    continue
+                if row:
+                    # a table row naming a stdlib TYPE (`Format.TextFile`, `File`) or CONSTANT
+                    sig_ok.update(t for t in TYPE_NAME.findall(l) if t in names)
+                    sig_ok.update(c for c in CONST_NAME.findall(l) if c in names)
+            if sig_ok:
+                keepers.append(f"{len(sig_ok)} stdlib name(s)")
+            unresolved = sorted(sig_bad)
+            paths = sorted({p for p in TEST_PATH.findall(joined)
+                            if os.path.exists(os.path.join(ROOT, p))})
+            if paths:
+                keepers.append("guard " + paths[0] + (" …" if len(paths) > 1 else ""))
+            issues = sorted(set(re.findall(r"loft#(\d+)", joined)))
+            if issues:
+                keepers.append("issue loft#" + ", loft#".join(issues[:3]))
+            rows.append((rel, line, lvl, title, keepers, unresolved))
+    return rows
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     rules = defined_rules()
@@ -887,9 +1052,29 @@ def main():
             "loft#1662 split surviving.\n", REG_ENTRY_BULLET)
         if list(wired) != ["D-col-9"] or wired["D-col-9"][2] != ["1664"]:
             bad.append(f"  c7 `_register_entries` reads the attribution\n    got {wired}")
+        # The section keepers (g1–g3), each proven able to fail against the break it names:
+        # g1 against counting a child's signature rows for the parent (the File System parent
+        # was charged with Binary Files' rows), g2 against reading `fn(` / `f(` / `limit(` as
+        # routines, g3 against taking a library section's rows to the stdlib.
+        g_rules = {"F-Call": ["calls.md"]}
+        g_names = stdlib_names()
+        g_doc = ("## Parent\n\n| `fn(integer) -> text` | `limit(0, 255)` | `f(x)` |\n\n"
+                 "### Child\n\n| `no_such_routine(x)` | a row |\n\n"
+                 "### Kept\n\nRules: `(F-Call)`.\n\n"
+                 "### Lib — `use imaging;`\n\n| `png(self: File)` | a library row |\n")
+        g_rows = {}
+        for _, ln, lvl, title, keep, unres in _section_rows(g_doc, g_rules, g_names, "g.md"):
+            g_rows[title] = (keep, unres)
+        if g_rows["Parent"][1] != [] or g_rows["Child"][1] != ["no_such_routine"]:
+            bad.append(f"  g1 a child's unresolved rows are the child's alone\n    got {g_rows}")
+        if g_rows["Parent"][1] != [] or g_rows["Parent"][0] != ["rule F-Call"]:
+            bad.append(f"  g2 `fn(`, `f(` and a field modifier are not routines; a child's rule keeps "
+                       f"the parent\n    got {g_rows['Parent']}")
+        if g_rows["Lib — `use imaging;`"] != (["library imaging"], []) or not g_rows["Kept"][0]:
+            bad.append(f"  g3 a library section is its testbed's; a rule keeps a section\n    got {g_rows}")
         for line in bad:
             print(line)
-        print(f"{len(cells) + 1} cell(s), {len(bad)} failed")
+        print(f"{len(cells) + 4} cell(s), {len(bad)} failed")
         return 1 if bad else 0
 
     if cmd == "registers":
@@ -966,6 +1151,34 @@ def main():
                   "was, the issue, the guard) to the doc's `-history.md` companion.  One that "
                   "still holds cites the rule that makes it a decision (rule 23).")
         return 1 if (gate and (stale or unreachable)) else 0
+
+    if cmd == "sections":
+        gate = "--gate" in sys.argv
+        rows = section_report(rules=rules)
+        files = sorted({r[0] for r in rows})
+        unkept = [r for r in rows if not r[4]]
+        bad_sig = [r for r in rows if r[5]]
+        print(f"{len(files)} docs · {len(rows)} sections · {len(rows) - len(unkept)} kept · "
+              f"{len(unkept)} with nothing in the repo that would move · "
+              f"{len(bad_sig)} with a signature the stdlib does not declare")
+        for f in files:
+            mine = [r for r in rows if r[0] == f]
+            print(f"  {f}: {len(mine)} sections — {sum(1 for r in mine if r[4])} kept, "
+                  f"{sum(1 for r in mine if not r[4])} unkept")
+        if unkept:
+            print("\nunkept (no sourced sample, rule or feature citation, stdlib signature, "
+                  "guard path or issue):")
+            for f, line, lvl, title, _, _ in unkept:
+                print(f"  {f}:{line} {'#' * lvl} {title}")
+        if bad_sig:
+            print("\nsignature rows naming a routine no default/*.loft declares:")
+            for f, line, lvl, title, _, unres in bad_sig:
+                print(f"  {f}:{line} {'#' * lvl} {title} — {', '.join(unres)}")
+        if unkept or bad_sig:
+            print("\nA section is kept by what would MOVE when the language does: a sample cut "
+                  "from a program (rule 22), the `@FR-` rule or `@F` feature it restates, or a "
+                  "signature the stdlib source declares.  DOC_CONTRACT rule 28.")
+        return 1 if (gate and (unkept or bad_sig)) else 0
 
     if cmd == "fences":
         gate = "--gate" in sys.argv

@@ -71,10 +71,11 @@ discharges `T?` to `T` using **the type's own** default, so `?? 0` / `?? 0.0` /
 supplies *the default you give*; `?` supplies *the default the type gives* — that
 pairing is the mnemonic.
 
+<!-- from tests/reference/skill-null-and-casts.loft -->
 ```loft
-name  = row.label?          // text?   → ""      (was: ?? "")
-first = points[i]?          // Point?  → Point{} (every field defaulted)
-count = (a / b)?            // integer? → 0      (parens — see below)
+name  = row.label?;         // text?   → ""      (was: ?? "")
+first = points[i]?;         // Point?  → Point{} (every field defaulted)
+count = (a / b)?;           // integer? → 0      (parens — see below)
 ```
 
 Defaults: scalar → `0`/`0.0`/`false`/`'\0'`, `text` → `""`, collection → empty,
@@ -97,11 +98,18 @@ Three things to know before reaching for it:
 
 **At a text parse, put `?` after the CHECKED cast:**
 
+<!-- from tests/reference/skill-null-and-casts.loft -->
 ```loft
-n = (s as integer?)?     // integer — checked cast, then default ⇒ 0 on a bad parse
-n = s as integer ?? 0    // integer — the assert-or-default form
-n = s as integer?        // integer? — the nullable CAST (that `?` belongs to the type)
-n = (s as integer)?      // COMPILE ERROR — a bare `as` on text is an assertion
+n = (s as integer?)?;    // integer — checked cast, then default ⇒ 0 on a bad parse
+m = s as integer ?? 0;   // integer — the assert-or-default form
+o = s as integer?;       // integer? — the nullable CAST (that `?` belongs to the type)
+```
+
+and a bare `as` on text is an assertion, so the `?` on it is refused:
+
+<!-- from tests/reference/skill-casts-refused.loft -->
+```loft
+n = (s as integer)?;     // COMPILE ERROR — a bare `as` on text is an assertion
 ```
 
 A bare `text as integer` is an *assertion* the compiler refuses (a parse can't be
@@ -131,6 +139,7 @@ is a RETIRED accepted no-op** — it now means what the default already is, so d
 
 ## Field modifiers (struct fields only)
 
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 struct Point {
     const id: integer,           // binding-const PREFIX: write-once at construction
@@ -139,7 +148,7 @@ struct Point {
     x: float,                    // non-null by default (DN1) — no `not null` needed
     r: integer limit(0, 255),
     label: text = "default",
-    area: float virtual($.x * $.y),
+    area: float virtual($.x * 2.0),
     note: text?,                 // append `?` to ALLOW null
 }
 ```
@@ -176,6 +185,7 @@ you still append to; `v: const T` for true value/record fields; whole-value keys
 
 Variables declared by assignment — type is inferred from the initialiser.
 
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 x = 5;
 s = "hello";
@@ -183,6 +193,7 @@ f = 3.14;
 ```
 
 Explicit type annotations (sometimes required for empty collections):
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 v: vector<integer> = [];
 n: integer? = null;             // a null needs a NULLABLE type; `null as integer` is a
@@ -191,6 +202,7 @@ n: integer? = null;             // a null needs a NULLABLE type; `null as intege
 
 ### `const` variables
 
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 const x = 5;       // immutable local — reassignment is a compile error
 const t = "hello";  // works for any type
@@ -203,8 +215,9 @@ const t = "hello";  // works for any type
 The `const` keyword is accepted at file scope as well, alongside the
 bare-name form.  Both produce the same file-scope immutable constant:
 
+<!-- from tests/reference/skill-constants.loft -->
 ```loft
-PI       = 3.14159265358979;    // bare-name form
+TAU      = 6.28318530717958;    // bare-name form
 const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
 pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
@@ -224,7 +237,7 @@ is enforced by this check at every scope.
 
 ## Functions
 
-```loft
+```grammar
 fn name(param: Type) -> ReturnType { body }
 fn name(a: integer, b: integer = 0) -> integer { a + b }  // default param
 pub fn exported() { }   // pub = publicly visible
@@ -248,7 +261,7 @@ A function body ending in an expression (no `;`) returns that value. Functions w
 **Nested fn definitions are forbidden.**  `fn` declarations must be at file
 scope.  Code like
 
-```loft
+```grammar
 fn outer() {
     fn inner() { ... }   // PARSE ERROR
 }
@@ -263,6 +276,7 @@ allowed inside a fn body.
 
 ## Imports
 
+<!-- from library:arguments -->
 ```loft
 use arguments;                       // wildcard: all pub names bare + `arguments::` qualifier
 use arguments::*;                    // explicit wildcard (same as above)
@@ -336,8 +350,12 @@ implementation.
 
 ## Structs
 
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 struct Item { name: text, count: integer }
+```
+<!-- from tests/reference/skill-declarations.loft -->
+```loft
 item = Item { name: "foo", count: 0 };
 item.count += 1;
 ```
@@ -352,6 +370,7 @@ Anonymous, fixed-arity, stack-allocated compound values.  Use them to
 return multiple values without naming a struct.  Shipped in 0.8.3
 (T1.1–T1.11); see [doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
 
+<!-- from tests/reference/skill-tuples.loft -->
 ```loft
 // Type notation — two or more element types (single-element tuples
 // are not allowed; use the bare type instead).
@@ -370,7 +389,9 @@ pair.0 += 3;
 
 // Destructuring
 (lo, hi) = min_max(values);
-
+```
+<!-- from tests/reference/skill-tuples.loft -->
+```loft
 // Function return
 fn classify(t: (integer, text)) -> text {
     match t {
@@ -378,7 +399,9 @@ fn classify(t: (integer, text)) -> text {
         (n, msg) => "{n}: {msg}",
     }
 }
-
+```
+<!-- from tests/reference/skill-tuples.loft -->
+```loft
 // Nested tuples — chain the `.N` accessors.
 nested: ((integer, integer), boolean) = ((1, 2), true);
 inner_first  = nested.0.0;       // 1
@@ -406,8 +429,12 @@ no cast or destructure workaround is needed.
 ## Enums
 
 Simple enum (value type, no fields):
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 enum Color { Red, Green, Blue }
+```
+<!-- from tests/reference/skill-declarations.loft -->
+```loft
 c = Color.Red;                 // qualify when DEFINING a new variable
 // ordering follows declaration order: Red < Green < Blue
 ```
@@ -422,6 +449,7 @@ enums MAY share a variant name (`enum Color { Red }` + `enum Berry { Red }`); th
 bare `Red` resolves by its context enum.
 
 Struct-enum (each variant has fields; polymorphic dispatch via methods):
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 enum Shape {
     Circle { radius: float },
@@ -429,7 +457,9 @@ enum Shape {
 }
 fn area(self: Circle) -> float { 3.14159 * self.radius * self.radius }
 fn area(self: Rect)   -> float { self.w * self.h }
-
+```
+<!-- from tests/reference/skill-declarations.loft -->
+```loft
 s = Circle { radius: 2.0 };
 a = area(s);   // dispatches to correct variant
 ```
@@ -444,7 +474,7 @@ JSON round-trip: `"{shape:j}"` produces `{"Circle":{"radius":3.14}}`; `Shape.par
 
 ## Vectors
 
-```loft
+```grammar
 empty: vector<integer> = [];
 nums  = [for i in 0..10 { i * 2 }];    // comprehension
 items = [1, 2, 3];
@@ -469,18 +499,23 @@ v[i];                // index read
 
 A hash works as a struct field or as a plain local:
 
+<!-- from tests/reference/skill-declarations.loft -->
 ```loft
 struct Entry  { key: text, value: integer }
 struct Table  { data: hash<Entry[key]> }
-
+```
+<!-- from tests/reference/skill-declarations.loft -->
+```loft
 t = Table { data: [] };
 t.data += [Entry { key: "x", value: 1 }];
 e = t.data["x"];
-if e == null { /* not found */ }
+if e == null { seen = "not found"; }
 else { e.value += 1; }
+assert((t.data["x"].value ?? -1) == 2 and seen == "", "found, and written through the view");
 t.data["x"] = null;   // remove entry
-
-for e in t.data { … }  // iterates in key order (C60)
+t.data += [Entry { key: "b", value: 2 }, Entry { key: "a", value: 1 }];
+for row in t.data { seen += row.key; }  // iterates in key order (C60)
+assert(seen == "ab" and t.data["x"] == null, "removed, then walked in key order");
 ```
 
 (`key` as the key-field name is fine; a standalone `data: hash<Entry[k]> = [];`
@@ -490,7 +525,7 @@ local is fine too.)
 
 ## Interfaces and bounded generics
 
-```loft
+```grammar
 interface Comparable {
   fn less_than(self: Self, other: Self) -> boolean
 }
@@ -509,10 +544,20 @@ No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`
 Name the first parameter `self` and the function is callable as a method AND as a
 free function:
 
+<!-- from tests/reference/methods.loft -->
 ```loft
-pub fn exists(self: const File) -> boolean { self.format != Format.NotExists }
-// f.exists()  — method
-// exists(f)   — free function
+pub fn exists(self: Doc) -> boolean {
+  self.format != "missing"
+}
+```
+
+Both spellings call it:
+
+<!-- from tests/reference/methods.loft -->
+```loft
+// Can be called as:
+a = f.exists();      // method syntax
+b = exists(f);       // free function syntax
 ```
 
 **`both` is the retired spelling for this — do not write it.** It still resolves, and
@@ -539,7 +584,7 @@ package's own gate red (C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILI
 Unary: `!` (logical not / null check), `-` (negation), `~` (bitwise NOT, integer only)
 Assignment: `=`, `+=`, `-=`, `*=`, `/=`, `%=`
 
-```loft
+```grammar
 name = record.field ?? "default"   // null-coalescing
 name = record.field?               // …or the TYPE's default ("" for text)
 x as i32                           // cast to a 4-byte sized integer
@@ -552,8 +597,9 @@ oppositely on a binary result: `a / b ?? 0` discharges the division, `a / b?` is
 
 ### `is` variant check
 
+<!-- from tests/reference/skill-is-and-match.loft -->
 ```loft
-if d is North { ... }              // boolean check
+if d is North { hit = true; }      // boolean check
 assert(!(shape is Rect));          // negation
 
 // field capture — binds variant fields as locals scoped to the if-body
@@ -577,6 +623,7 @@ if shape is Rect { width, height } {
 
 Single-line. Supports `{expr}` interpolation and `\n`, `\t`, `\\`, `\"` escapes.
 
+<!-- from tests/reference/skill-strings.loft -->
 ```loft
 println("hello {name}");
 println("hex={n:#x}");            // hex with 0x prefix
@@ -602,13 +649,14 @@ with them.
 **Multi-line.** Supports `{expr}` interpolation. Bare `"` is literal.
 Auto-strips common leading indentation (based on closing backtick column).
 
+<!-- from tests/reference/skill-constants.loft -->
 ```loft
 SHADER = `
   #version 330 core
-  void main() {
+  void main() {{
       gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
-  }
-`;
+  }}
+`;   // a backtick string is a format string too: a literal brace is doubled
 ```
 
 Use `println()` for line-oriented output and `print()` for output without a newline.
@@ -617,7 +665,7 @@ Use `println()` for line-oriented output and `print()` for output without a newl
 
 ## Control flow
 
-```loft
+```grammar
 if cond { } else if cond { } else { }
 result = if x > 0 { x } else { -x }    // if as expression
 
@@ -635,7 +683,7 @@ break expr;          // break with value (requires non-void function)
 
 ## For loops
 
-```loft
+```grammar
 for i in 0..n { }         // exclusive: 0 to n-1
 for i in 0..=n { }        // inclusive: 0 to n
 for item in collection { }
@@ -646,7 +694,7 @@ for i in rev(0..n) { }    // reverse range
 
 ### Loop attributes
 
-```loft
+```grammar
 for v in collection {
     v#index    // 0-based position (vector/sorted); byte offset (text)
     v#count    // iterations completed so far (all types)
@@ -662,27 +710,37 @@ for v in collection {
 
 ## Match
 
+<!-- from tests/reference/skill-is-and-match.loft -->
 ```loft
 match color {
-    Red   => println("red"),
-    Green | Blue => println("cool"),
+    Red   => { said = "red"; },
+    Green | Blue => { said = "cool"; },
     _     => {},
 }
-
+```
+<!-- from tests/reference/skill-is-and-match.loft -->
+```loft
 match shape {
-    Circle { radius } => println("r={radius}"),
-    Rect { w, h } if w == h => println("square"),
+    Circle { radius } => { said = "r={radius}"; },
+    Rect { width, height } if width == height => { said = "square"; },
     _ => {},
 }
-
-// Tuple match — destructure into element patterns.
-match (3, 7) {
+```
+<!-- from tests/reference/skill-is-and-match.loft -->
+```loft
+said = match (3, 7) {
     (0, _)   => "zero",
     (n, m)   => "{n},{m}",
-}
-
+};
+```
+<!-- from tests/reference/skill-is-and-match.loft -->
+```loft
 // An enum element names a VARIANT — by tag, or with its payload bound.  A record payload
-// bound this way is a view of the matched value; a scalar payload is a copy.
+// bound this way is a view of the MATCHED VALUE; a scalar payload is a copy.  `a` and `b`
+// are PARAMETERS here, which keep aliasing the caller's values inside the tuple
+// (B-Ref-Alias), so `status.hp -= 3` reaches the caller's `b`.  A tuple of LOCALS copies
+// them in (T-Cons) and the write would stay in that copy — match a local alone to write
+// through to it.
 match (a, b) {
     (Fireball, IceWall { status }) => { status.hp -= 3; },
     (Arrow { id }, Crate)          => { world.removed += [id]; },
@@ -717,9 +775,12 @@ Two lambda syntaxes, each with a clear job:
   be inferred.  Omit `->` for void-returning lambdas (`-> void`
   is not valid syntax — there is no `void` type).
 
+<!-- from tests/reference/skill-hofs.loft -->
 ```loft
 fn double(x: integer) -> integer { x * 2 }
-
+```
+<!-- from tests/reference/skill-hofs.loft -->
+```loft
 doubled  = map(nums, double);             // named function ref — bare name, no `fn` prefix
 positive = filter(nums, |x| { x > 0 });  // inferred lambda
 total    = reduce(nums, 0, |a, b| { a + b });
@@ -816,10 +877,11 @@ compile error naming the reservation. Use `assert(cond, "message")`, and do not 
 
 **There is no `substr` / `substring`.** A part of a text is a slice:
 
+<!-- from tests/reference/text-slices.loft -->
 ```loft
 s = "abcdef";
-s[1..3]                 // "bc" — BYTE positions
-s.char_slice(1, 3)      // "bc" — CHARACTER positions
+a = s[1..3];                // "bc" — from byte 1 up to, not including, byte 3
+b = s.char_slice(1, 3);     // "bc" — the same, counting CHARACTERS instead of bytes
 ```
 
 **Pick by where the numbers came from**, and this is the commonest text bug in this stack:
@@ -860,20 +922,19 @@ overrides per-invocation.
 
 ### Text files (UTF-8)
 
+<!-- from tests/reference/skill-files.loft -->
 ```loft
-f = file("path/to/file.txt");
+out = file("{temp_dir()}/loft-reference-output.txt");
+out.write("one\ntwo\n");
+f = file("{temp_dir()}/loft-reference-output.txt");
 content = f.content();         // full text content (UTF-8)
 lines = f.lines();             // vector<text> of lines
-
-out = file("output.txt");
-out.write(content);
-
-dir = file("some/directory");
+dir = file(temp_dir());
+names = "";
 for ef in dir.files() {
   path = ef.path;
+  names += path;
 }
-
-if f.exists() { }
 size_bytes = f.size;            // integer (i64) — works for any file
 ```
 
@@ -890,28 +951,36 @@ absolute byte offset.  All file-handle operations should live
 inside a `{ ... }` scope block so the handle flushes/closes at
 block exit:
 
+<!-- from tests/reference/skill-files.loft -->
 ```loft
-// --- Read a 12-byte GLB header ---
-{
-  f = file("model.glb");
-  f#format = LittleEndian;
-  magic   = f#read as i32;            // 0x46546C67 = 'glTF'
-  version = f#read as i32;
-  total   = f#read as i32;            // declared file length
-  // Seek past the header + JSON data to a later chunk:
-  f#next = (20 + json_len) as integer;
-  bin_len = f#read as i32;
-}
-
+// `file()` opens WITHOUT truncating — `f += …` appends to what is there, so a rerun would
+// double the file; start from nothing.
+delete("{temp_dir()}/loft-reference-model.glb");
 // --- Write a binary chunk-structured file ---
 {
-  f = file("model.glb");
+  f = file("{temp_dir()}/loft-reference-model.glb");
   f#format = LittleEndian;
   f += (0x46546C67 as i32);   // 4 bytes: i32 magic
   f += (2 as i32);            // 4 bytes: i32 version
   f += (32 as u8);            // 1 byte (ASCII space)
   f += "chunk of text";       // raw UTF-8 bytes
   f += my_float_vector;       // vector<single> → 4 bytes per element
+}
+```
+<!-- from tests/reference/skill-files.loft -->
+```loft
+// --- Read the 12-byte GLB header ---
+{
+  f = file("{temp_dir()}/loft-reference-model.glb");
+  f#format = LittleEndian;
+  magic   = f#read as i32;            // 0x46546C67 = 'glTF'
+  version = f#read as i32;
+  space   = f#read as u8;
+  // Seek past the header + JSON data to a later chunk:
+  f#next = (9 + json_len) as integer;
+  text_len = 13;
+  assert(magic == 0x46546C67 and version == 2 and space == 32, "the header fields read back");
+  assert(f.size == 4 + 4 + 1 + text_len + 8, "and the file is exactly the bytes written");
 }
 ```
 
@@ -965,7 +1034,7 @@ whole-value bind COPIES the heap value (C86), so every write lands in the
 copy and is silently lost — indexed writes, whole-element assigns and
 appends alike:
 
-```loft
+```grammar
 // BAD — `results` is a COPY; all three writes are discarded:
 results = self.results;
 results[i] = "true";               // lost
@@ -1014,7 +1083,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 
 ## The entry point, and reading arguments
 
-```loft
+```grammar
 fn main() { println("hi"); }                 // the usual form
 fn main(args: vector<text>) {                // the invocation arguments
   for a in args { println(a); }              // `loft p.loft Ada Grace` → Ada, Grace

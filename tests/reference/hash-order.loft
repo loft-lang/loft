@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: CAVEATS.md § C60 — a hash walks in key order.
+
+struct Entry { name: text, count: integer }
+struct Bag   { data: hash<Entry[name]> }
+
+fn test_a_hash_walk_is_in_ascending_key_order() {
+  seen = "";
+  b = Bag { data: [
+      Entry{name:"zebra", count:1},
+      Entry{name:"apple", count:5},
+      Entry{name:"mango", count:3},
+  ] };
+
+  for e in b.data {              // visits apple, mango, zebra (ascending name)
+      seen += "{e.name}={e.count} ";
+  }
+  assert(seen == "apple=5 mango=3 zebra=1 ", "ascending by name");
+}

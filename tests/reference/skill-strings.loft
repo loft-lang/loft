@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Double-quoted strings — the format specs the cheat sheet lists.
+
+fn test_the_format_specs() {
+  name = "ada"; n = 42; f = 3.14159; o = json_parse(`{{"k":1}}`);
+  println("hello {name}");
+  println("hex={n:#x}");            // hex with 0x prefix
+  println("float={f:4.2}");         // width 4, 2 decimal places
+  println("json={o:j}");            // JSON format
+  println("pretty={o:#}");          // pretty-printed multi-line
+  println("padded={n:>5}");         // right-align width 5
+  println("zero={n:03}");           // zero-padded width 3
+  println("{{literal braces}}");    // escape { } by doubling — see the warning below
+  assert("hex={n:#x}" == "hex=0x2a" and "float={f:4.2}" == "float=3.14" and "zero={n:03}" == "zero=042", "hex, float, zero-padded");
+  assert("padded={n:>5}" == "padded=   42" and "{{literal braces}}" == "{{literal braces}}", "padding and literal braces");
+  assert("json={o:j}" == `json={{"k":1}}`, "json format");
+}
