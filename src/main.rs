@@ -53,7 +53,6 @@ use crate::test_runner::run_tests;
 use loft::diagnostics::Level;
 use loft::state::State;
 use std::env;
-use std::sync::{Arc, Mutex};
 
 /// loft#680 — print the per-target builtin surface: which stdlib builtins are NOT
 /// available on a target, and why that answer can be trusted.
@@ -7406,6 +7405,15 @@ fn main() {
             i += 1;
         } else if a == "--production" {
             production = true;
+            // A `--native` run spawns the compiled program, which builds its own logger:
+            // the environment is what carries production mode across to it, so a panic, an
+            // assert or a locked write logs there instead of halting, as it does here (C80).
+            //
+            // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
+            // before any thread or State exists, as the `--dev-soft-halt` arm below does.
+            unsafe {
+                std::env::set_var("LOFT_PRODUCTION", "1");
+            }
         } else if a == "--generate-log-config" {
             // Optional path: consume next arg only if it doesn't look like a flag or source file
             let path = if argv.get(i).is_some_and(|s| is_output_path(s)) {
@@ -11931,7 +11939,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     if production {
         lg.config.production = true;
     }
-    state.database.logger = Some(Arc::new(Mutex::new(lg)));
+    state.database.set_logger(lg);
 
     let main_nr = p.data.def_nr("n_main");
     // Plan-08 phase 01: --introspect short-circuits everything.

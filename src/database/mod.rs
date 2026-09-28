@@ -931,6 +931,15 @@ impl std::fmt::Debug for HeapSnapshot {
 }
 
 impl Stores {
+    /// Attach the run's logger — the ONE place a run does, so a production logger is also
+    /// recorded where a refusal inside a single `Store` can reach it
+    /// ([`crate::runtime_error::register_run_logger`]).
+    pub fn set_logger(&mut self, logger: crate::logger::Logger) {
+        let logger = Arc::new(Mutex::new(logger));
+        crate::runtime_error::register_run_logger(&logger);
+        self.logger = Some(logger);
+    }
+
     /// H8 — grow `allocations` to `high_water` slots (the `par` dispenser's
     /// one-past-last index) so every worker-allocated slot has a parent slot to
     /// swap into.  Paired with [`Self::swap_in_worker_slots`]; the two are the
@@ -1929,7 +1938,10 @@ impl Stores {
         fld: u32,
         val: T,
     ) {
-        if index >= 0 && index < i64::from(h.len) {
+        if index >= 0
+            && index < i64::from(h.len)
+            && self.allocations[h.store_nr as usize].write_allowed(h.rec, 8)
+        {
             if VERIFY {
                 assert_eq!(
                     *h,
@@ -2241,6 +2253,9 @@ impl Stores {
         size: u32,
         val: T,
     ) {
+        if !self.allocations[p.h.store_nr as usize].write_allowed(p.h.rec, 8) {
+            return;
+        }
         if w.len < w.cap {
             if VERIFY {
                 self.push_window_verify(p, *w, db, size);

@@ -330,8 +330,9 @@ local, with no unwinding or cleanup blocks to get wrong.
 
 **No runtime exceptions — ever (owner ruling 2026-09-28).**  Nothing a running program does stops
 it: no new runtime error kind, no check that halts, and any found is removed.  The only halts are
-`panic`/`assert` and the call-depth limit, and all three in development and test builds only,
-never in production; the depth limit reports the recursion fully ([@PLN177](plans/177-growable-stack.md),
+`panic`/`assert`, the call-depth limit and a write to a locked store (`@FR-H-WriteLocked`), and
+all four in development and test builds only, never in production — there the locked write is
+logged and discarded; the depth limit reports the recursion fully ([@PLN177](plans/177-growable-stack.md),
 [CAVEATS.md](CAVEATS.md#recursion-depth-is-capped-and-the-cap-halts-the-run) until it lands).  What a
 fix may use instead: a compile-time refusal, a compile-time warning that a construction needs
 inspecting, the programmer's OWN optional inspection of one specific expression (`?? fallback`, a

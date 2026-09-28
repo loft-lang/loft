@@ -57,7 +57,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
 > `26-coroutine-laziness.loft` (straight-line G-Call/G-Next). The full `--ignored` sweep passes.
 >
 > **Stage 3 — remaining rows, no new divergences.** Verified ✓ both backends: H-Alloc zero-init,
-> H-WriteLocked (a `#lock`ed write FAULTS on both — the intended tripwire), F-Rec (factorial),
+> H-WriteLocked (a `#lock`ed write halts a development run and is discarded by a production one, on both), F-Rec (factorial),
 > F-Return (implicit tail), T-Paren (`(e)` is grouping), L-Escape (a returned closure works on
 > native). Still ☐ / covered-elsewhere: **F-ParamRef** (`&` write-back — binding.md's domain, 0
 > deviations, PR#436), **C-Order hash-par** (a documented edge; probe syntax pending),
@@ -82,7 +82,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   continue, both backends. *Guard: oracle `18` (nullability).*
 - ✓ **H-Write / H-WriteNull / H-WriteOOB** — `v[9]=…` on a len-3 vector is a no-op, `len` stays 3,
   continues, both backends. *Guard.*
-- ✓ **H-WriteLocked** — a `#lock`ed write FAULTS on both (the intended tripwire; `18-locks.loft`).
+- ✓ **H-WriteLocked** — a `#lock`ed write halts a development run and is logged and discarded by a production one, on both (`18-locks.loft`, `tests/locked_writes.rs`).
 - ✓ **H-Free* + H-Sound** — the LIFO / no-stack / no-double-free discipline. *Standing guards:
   `LOFT_POISON` suite + the ownership fuzz gate + `LOFT_NATIVE_LEAK_CHECK` (read ownership.md's
   own `OPEN` line rather than a number restated here — it is `OPEN: 1` as of 2026-09-11,

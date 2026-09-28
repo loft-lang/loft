@@ -1075,7 +1075,7 @@ pub unsafe fn rec_set<T: Copy>(
     stores: &[Store],
     verify: bool,
 ) {
-    if ptr.is_null() {
+    if ptr.is_null() || !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld) {
         return;
     }
     if verify {

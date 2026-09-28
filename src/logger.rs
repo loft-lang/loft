@@ -360,12 +360,10 @@ impl Logger {
         let severity = match kind {
             // A relayed fault halted the library it fired in, whatever kind it
             // started as — only halting faults cross a placement boundary.
-            // A write to the author's own `#lock` halts the run like the two beside it.
-            Rk::UserPanic { .. }
-            | Rk::StackOverflow
-            | Rk::WriteToLockedStore { .. }
-            | Rk::Relayed { .. } => Severity::Fatal,
-            Rk::AssertionFailed { .. } => Severity::Error,
+            Rk::UserPanic { .. } | Rk::StackOverflow | Rk::Relayed { .. } => Severity::Fatal,
+            // A write to a locked store reaches the log only in production, where it is
+            // discarded and the run continues (@FR-H-WriteLocked, C80).
+            Rk::AssertionFailed { .. } | Rk::WriteToLockedStore { .. } => Severity::Error,
             Rk::DivideByZero
             | Rk::IndexOutOfBounds { .. }
             | Rk::NegativeIndex { .. }

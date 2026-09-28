@@ -2720,6 +2720,9 @@ impl Stores {
     }
 
     pub fn copy_block(&mut self, from: &DbRef, to: &DbRef, len: u32) {
+        if !self.store(to).write_allowed(to.rec, to.pos) {
+            return;
+        }
         unsafe {
             std::ptr::copy(
                 self.store(from)

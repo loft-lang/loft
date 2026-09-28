@@ -174,8 +174,10 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
   (H-WriteOOB)   ⟨write(r[i], v), σ⟩ → ⟨v, σ⟩                           when i out of bounds (no-op, CONTINUE)
                  A NEGATIVE i in [-len(r), -1) is NOT out of bounds — it names the element from
                  the END (H-Index), and the write LANDS there.
-  (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable, else a
-                   runtime lock fault — never a silent successful write.
+  (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable; else a
+                   DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
+                   write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
+                   successful write.
 ```
 
 **In words.** A write updates the byte(s) at the target and yields the written value. A write
@@ -188,8 +190,13 @@ value, length and the neighbouring records all unchanged; the standing guard is
 `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`, which also pins that a
 heap-owning literal written there is released and its source untouched, and that every
 native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
-fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store is refused (the `#lock` runtime guard / const store),
-never silently applied. Crucially, a write's target ROOT decides whose state it touches: a
+fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
+not own (`file_map`) — is refused, never silently applied: a development run halts with the
+report, a production run logs it and discards it, so the program continues on the old bytes.
+Discarding is a property of every write route, not of the op that started it: the value
+writes, the span writes, the allocator (a production claim hands out a fresh record nothing
+can reach, and never grows, moves or frees one the store holds) and the `--native` hoisted
+writers all consult the same lock (`tests/locked_writes.rs`). Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.

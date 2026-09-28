@@ -515,6 +515,44 @@ impl RuntimeError {
 /// Takes the position in pieces because the generated Rust must be able to call this and
 /// `crate::lexer` is not part of the public surface — and because building the `Position`
 /// here is one fewer thing for three call sites to spell the same way.
+/// The run's logger, when the run is a PRODUCTION one — recorded by
+/// [`crate::database::Stores::set_logger`] so a fault raised below `Stores`, inside one
+/// `Store`, can tell a production run from a development one and log there.
+static PRODUCTION_LOGGER: std::sync::RwLock<
+    Option<std::sync::Arc<std::sync::Mutex<crate::logger::Logger>>>,
+> = std::sync::RwLock::new(None);
+
+/// How many locked-store writes a production run has discarded.
+static LOCKED_WRITES_DISCARDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record the run's logger; only a production logger is kept.
+pub fn register_run_logger(logger: &std::sync::Arc<std::sync::Mutex<crate::logger::Logger>>) {
+    let production = logger.lock().is_ok_and(|l| l.config.production);
+    if let Ok(mut slot) = PRODUCTION_LOGGER.write() {
+        *slot = production.then(|| logger.clone());
+    }
+}
+
+/// `@FR-H-WriteLocked` in a PRODUCTION run: the write is discarded and logged, and the
+/// program continues on the store's old bytes (C80 — nothing stops a production program).
+/// Answers `false` outside production, where the caller halts with the report instead.
+///
+/// Logged at the first discard and then at every doubling of the count, so a loop that
+/// writes a locked vector a million times leaves twenty lines, not a million.
+pub fn discard_locked_write_in_production(rec: u32, fld: u32) -> bool {
+    let logger = PRODUCTION_LOGGER.read().ok().and_then(|slot| slot.clone());
+    let Some(logger) = logger else {
+        return false;
+    };
+    let n = LOCKED_WRITES_DISCARDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n.is_power_of_two()
+        && let Ok(mut lg) = logger.lock()
+    {
+        lg.log_runtime_kind(&RuntimeErrorKind::WriteToLockedStore { rec, fld }, None);
+    }
+    true
+}
+
 pub fn logged_in_production(
     stores: &mut crate::database::Stores,
     kind: &RuntimeErrorKind,

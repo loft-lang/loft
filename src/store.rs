@@ -672,6 +672,24 @@ fn host_image_bytes(path: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): per-thread scratch
+/// of at least `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next call
+/// on the same thread; every caller writes through it at once.
+fn discard_sink(len: usize) -> *mut u8 {
+    thread_local! {
+        static SINK: std::cell::UnsafeCell<Vec<u64>> = const { std::cell::UnsafeCell::new(Vec::new()) };
+    }
+    SINK.with(|sink| {
+        // SAFETY: the buffer is this thread's alone and no reference to it outlives the call.
+        let sink = unsafe { &mut *sink.get() };
+        let words = len.div_ceil(8).max(8);
+        if sink.len() < words {
+            sink.resize(words, 0);
+        }
+        sink.as_mut_ptr().cast::<u8>()
+    })
+}
+
 impl Store {
     /// True when this store's memory IS a memory-mapped file
     /// (`store_persist_bind`) — its bytes are DURABLE state.
@@ -1414,20 +1432,31 @@ impl Store {
         *FLAG.get_or_init(|| std::env::var("LOFT_POISON_CLAIM").is_ok_and(|v| v != "0"))
     }
 
+    /// [`Self::claim`] / [`Self::resize`] on a LOCKED store (`@FR-H-WriteLocked`).
+    /// Development halts in the refusal.  A production run gets a fresh, zeroed record: the
+    /// write that would link it into the store's data is itself discarded, so nothing can
+    /// reach it, and nothing already in the store is grown, moved or freed.  The allocator's
+    /// own bookkeeping is let through for the one claim, since a claim changes no value.
+    #[cold]
+    #[inline(never)]
+    fn claim_discarded(&mut self, size: u32) -> u32 {
+        self.refuse_locked("Claim on read-only store", 0, 0);
+        self.read_only = false;
+        let rec = self.claim(size.max(1));
+        let bytes = (self.read::<i32>(rec, 0).max(1) as usize - 1) * 8;
+        // SAFETY: `rec` was just claimed with `bytes` of payload after its size word.
+        unsafe { std::ptr::write_bytes(self.ptr.offset(rec as isize * 8 + 8), 0, bytes) };
+        self.read_only = true;
+        rec
+    }
+
     /// Claim the space of a record
     /// # Arguments
     /// * `size` - The requested record size in 8 byte words
     pub fn claim(&mut self, size: u32) -> u32 {
-        debug_assert!(
-            !self.read_only,
-            "Claim on read-only store (size={size}) (locked by: {})",
-            self.lock_origin
-        );
-        assert!(
-            !self.read_only,
-            "Claim on read-only store (size={size}) (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            return self.claim_discarded(size);
+        }
         assert!(size >= 1, "Incomplete record");
         // CO1.9/S28: increment generation so coroutine_next can detect store mutations
         // that may invalidate DbRef locals held by suspended generators.
@@ -1636,6 +1665,9 @@ impl Store {
 
     /// Mutate the claimed size of a record
     pub fn resize(&mut self, rec: u32, size: u32) -> u32 {
+        if self.read_only {
+            return self.claim_discarded(size);
+        }
         // CO1.9/S28: increment generation so coroutine_next can detect resize operations
         // that may invalidate DbRef locals (record relocation) held by suspended generators.
         self.generation = self.generation.wrapping_add(1);
@@ -1748,17 +1780,10 @@ impl Store {
         // Native never had this check and was always correct on the same source,
         // which is what made the `&`-redundancy advice right on one backend and
         // wrong on the other.
-        let frozen = self.read_only;
-        debug_assert!(
-            !frozen,
-            "Delete on locked store (rec={rec}) (locked by: {})",
-            self.lock_origin
-        );
-        assert!(
-            !frozen,
-            "Delete on locked store (rec={rec}) (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked("Delete on locked store", rec, 0);
+            return;
+        }
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
@@ -3621,7 +3646,7 @@ impl Store {
     /// same event and the shadow hook must see both — @PLN154 counted 32 of 33 stack writers
     /// arriving at that hook, and a second write path that skipped it would put the count
     /// back where it started.
-    fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+    fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> Option<isize> {
         self.begin_write_inner::<T>(rec, fld, true)
     }
 
@@ -3634,7 +3659,7 @@ impl Store {
     /// store any test builds.  Everything else a write owes is still owed and still happens
     /// here: the lock refusal, the bounds check and @PLN154's shadow hook.
     #[inline]
-    fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+    fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> Option<isize> {
         self.begin_write_inner::<T>(rec, fld, false)
     }
 
@@ -3644,7 +3669,7 @@ impl Store {
     /// build sees the parameter unused.
     #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     #[inline]
-    fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> isize {
+    fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> Option<isize> {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
         //
@@ -3666,6 +3691,7 @@ impl Store {
         // reference corrupt where the write is merely refused.
         if self.read_only {
             self.refuse_locked_write(rec, fld);
+            return None;
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         #[cfg(debug_assertions)]
@@ -3694,25 +3720,49 @@ impl Store {
                 crate::stack_verify::kind_of::<T>(),
             );
         }
-        at
+        Some(at)
     }
 
-    /// The refusal of [`Self::begin_write_inner`]: a write reached a locked store.
+    /// `@FR-H-WriteLocked` for a write that does not go through [`Self::write`]: `true`
+    /// when it may proceed.  On a locked store a development run halts in the refusal and a
+    /// production run answers `false` — the caller drops the write.  One flag test when the
+    /// store is unlocked, so a hoisted writer can afford it per element.
+    #[inline]
+    #[must_use]
+    pub fn write_allowed(&self, rec: u32, fld: u32) -> bool {
+        if self.read_only {
+            self.refuse_locked_write(rec, fld);
+            return false;
+        }
+        true
+    }
+
+    /// A write reached a locked store (`@FR-H-WriteLocked`).  RETURNS only in a production
+    /// run, which has logged the write and whose caller now DISCARDS it: the store keeps its
+    /// bytes and the program continues on them (C80 — nothing stops a production program).
+    /// A development run halts here with the report.
     /// Enforces `@FR-R-Cold`: the refusal is outlined so the write check inlines.
     #[cold]
     #[inline(never)]
-    fn refuse_locked_write(&self, rec: u32, fld: u32) -> ! {
+    fn refuse_locked_write(&self, rec: u32, fld: u32) {
+        self.refuse_locked("Write to read-only store", rec, fld);
+    }
+
+    /// [`Self::refuse_locked_write`] naming the operation, for the internal-lock panic.
+    #[cold]
+    #[inline(never)]
+    fn refuse_locked(&self, what: &str, rec: u32, fld: u32) {
         // The author's own `#lock` is a loft fault with the author's frames; an
         // internal lock reaching here is a compiler defect and stays an assert.
         // The author's lock and a FOREIGN store (@PLN174) are the program's own doing and
         // get the runtime error whose advice names the cure; every other lock is internal.
         if self.user_locked || self.is_foreign() {
+            if crate::runtime_error::discard_locked_write_in_production(rec, fld) {
+                return;
+            }
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
         }
-        panic!(
-            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
-            self.lock_origin
-        );
+        panic!("{what} at rec={rec} fld={fld} (locked by: {})", self.lock_origin);
     }
 
     /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the
@@ -3751,14 +3801,18 @@ impl Store {
     /// guarantees (loft#1481).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
-        let at = self.begin_write::<T>(rec, fld);
+        let Some(at) = self.begin_write::<T>(rec, fld) else {
+            return;
+        };
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
     /// [`Store::write`] for free-block bookkeeping — see [`Store::begin_write_block_meta`].
     #[inline]
     fn write_block_meta<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
-        let at = self.begin_write_block_meta::<T>(rec, fld);
+        let Some(at) = self.begin_write_block_meta::<T>(rec, fld) else {
+            return;
+        };
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -3771,8 +3825,12 @@ impl Store {
             return;
         }
         let width = std::mem::size_of::<T>() as u32;
-        let first = self.begin_write::<T>(rec, fld);
-        let _last = self.begin_write::<T>(rec, fld + (count - 1) * width);
+        let (Some(first), Some(_last)) = (
+            self.begin_write::<T>(rec, fld),
+            self.begin_write::<T>(rec, fld + (count - 1) * width),
+        ) else {
+            return;
+        };
         let base = unsafe { self.ptr.offset(first) };
         for k in 0..count as usize {
             unsafe {
@@ -3797,7 +3855,15 @@ impl Store {
             std::any::type_name::<T>(),
             std::mem::align_of::<T>(),
         );
-        let at = self.begin_write::<T>(rec, fld);
+        let Some(at) = self.begin_write::<T>(rec, fld) else {
+            assert!(
+                std::mem::size_of::<T>() <= 64 && std::mem::align_of::<T>() <= 8,
+                "a discarded write is wider than its sink"
+            );
+            // SAFETY: the sink is 8-aligned (a `u64` buffer), at least `size_of::<T>()`
+            // bytes long by the assert, and nothing reads it.
+            return unsafe { &mut *discard_sink(std::mem::size_of::<T>()).cast::<T>() };
+        };
         // Both preconditions of a reference are PROVED here rather than assumed:
         // `offset_in_bounds` for liveness, the assert above for alignment.
         unsafe { &mut *self.ptr.offset(at).cast::<T>() }
@@ -3817,11 +3883,10 @@ impl Store {
     /// The caller writes at most `len` bytes from the returned pointer.  The span is
     /// bounds-checked here.
     pub fn addr_span_mut(&mut self, rec: u32, fld: u32, len: usize) -> *mut u8 {
-        assert!(
-            !self.read_only,
-            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked_write(rec, fld);
+            return discard_sink(len);
+        }
         let at = self.offset_in_bounds(rec, fld, len);
         if !self.init_shadow.is_empty() {
             self.shadow_write(at as usize, len, crate::stack_verify::OPAQUE);
@@ -3830,6 +3895,12 @@ impl Store {
     }
 
     pub fn buffer(&mut self, rec: u32) -> &mut [u8] {
+        if self.read_only {
+            self.refuse_locked_write(rec, 8);
+            let len = self.bytes_of(rec).len();
+            // SAFETY: the sink holds at least `len` bytes and nothing reads it.
+            return unsafe { std::slice::from_raw_parts_mut(discard_sink(len), len) };
+        }
         assert!(
             !Self::is_foreign_rec(rec),
             "Write to read-only store: a foreign store's bytes have no mutable buffer \
@@ -3881,11 +3952,10 @@ impl Store {
     /// restore: no allocator interaction, so it never moves or resizes a record.
     /// Honors the hard `read_only` lock.
     pub fn write_span(&mut self, rec: u32, off: u32, bytes: &[u8]) {
-        assert!(
-            !self.read_only,
-            "write_span on read-only store at rec={rec} (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked_write(rec, off);
+            return;
+        }
         debug_assert!(
             Self::checked_offset(rec, off) + bytes.len() as isize <= self.size as isize * 8,
             "write_span out of bounds: rec={rec} off={off} len={} store_size={}",
@@ -4069,6 +4139,10 @@ impl Store {
         if len == 0 {
             return;
         }
+        if self.read_only {
+            self.refuse_locked_write(rec, pos);
+            return;
+        }
         let ptr: *mut u8 = self.addr_mut::<u8>(rec, pos);
         // SAFETY: callers pass a record/element's own `pos..pos+len`, which lies
         // within its claimed allocation.
@@ -4104,6 +4178,10 @@ impl Store {
         to_pos: isize,
         size: isize,
     ) {
+        if self.read_only {
+            self.refuse_locked_write(to_rec, to_pos as u32);
+            return;
+        }
         #[cfg(debug_assertions)]
         {
             let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
@@ -4145,6 +4223,10 @@ impl Store {
         to_pos: isize,
         len: isize,
     ) {
+        if to_store.read_only {
+            to_store.refuse_locked_write(to_rec, to_pos as u32);
+            return;
+        }
         #[cfg(debug_assertions)]
         {
             let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
