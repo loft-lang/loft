@@ -2372,8 +2372,8 @@ use #count instead"
             // (a field, a call result — nothing to name), the wording stays kind-neutral
             // rather than guessing, and the cure is right either way.
             if !self.first_pass {
-                let coll = self.vars.loop_coll_var(index_var);
-                if coll != u16::MAX && self.vars.name(coll).contains("hash_scratch") {
+                let coll = self.vars.loop_snapshot_var(index_var);
+                if coll != u16::MAX {
                     // NOT peeled through `.base()`, and the reason is reachability rather
                     // than taste: a NULLABLE collection cannot be iterated at all ("cannot
                     // iterate over `hash<Ent,["k"]>?`"), so a `τ?` never reaches this
@@ -3750,6 +3750,9 @@ use #count instead"
             ) {
                 if orig_coll_var != u16::MAX {
                     self.vars.set_coll_var(orig_coll_var);
+                }
+                if hash_scratch_var != u16::MAX {
+                    self.vars.set_snapshot_var(hash_scratch_var);
                 }
                 // Always restore the original collection expression so that
                 // is_iterated_value() can match field-access forms like `db.items`.
