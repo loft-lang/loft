@@ -9641,14 +9641,10 @@ fn pln102_all_unknown_deferral_still_reports_undefined_callee() {
 }"
     )
     .error("Unknown function nope_a at pln102_all_unknown_deferral_still_reports_undefined_callee:2:5")
-    .error("Unknown function nope_b at pln102_all_unknown_deferral_still_reports_undefined_callee:2:16")
-    // The two trailing errors are a CASCADE ARTIFACT of the deferral, not signal:
-    // with no operand type on either pass the operator is never resolved, so the
-    // half-applied `OpMinInt` also trips its arity check.  Pinned because the
-    // harness compares the whole set — if a future change makes the deferral tidy
-    // up after itself, drop these two rather than treating them as a contract.
-    .error("missing argument for parameter 'v1' of `OpMinInt` — the call supplies too few arguments (add it, or give the parameter a default `= …`) at pln102_all_unknown_deferral_still_reports_undefined_callee:2:24")
-    .error("missing argument for parameter 'v2' of `OpMinInt` — the call supplies too few arguments (add it, or give the parameter a default `= …`) at pln102_all_unknown_deferral_still_reports_undefined_callee:2:24");
+    .error("Unknown function nope_b at pln102_all_unknown_deferral_still_reports_undefined_callee:2:16");
+    // The half-applied `OpMinInt` no longer adds its own two arity errors behind these: a
+    // reported call is poisoned to `never`, and the operator skips a slot filled by one
+    // (loft#1719), the tidy-up this test anticipated.
 }
 
 /// @PLN102 — the deferral at the TOP of `call_op` is deliberately limited to the case
