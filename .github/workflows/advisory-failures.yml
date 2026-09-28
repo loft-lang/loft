@@ -12,10 +12,12 @@
 # Why `workflow_run`: the watched workflows run on pull requests, and a pull_request run
 # must not be able to write issues (`miri.yml`'s `notify` refuses PR events for exactly
 # that).  `workflow_run` runs THIS file from the default branch, with the default
-# branch's token, after the watched run has finished.  It never checks out or executes
-# the PR's code: it reads the run through the API, reads the head's HISTORY for
-# `git log` / `git blame` (fetched, never built), and treats every log line as data —
-# fenced, truncated, `@` mentions defused (see the script).
+# branch's token, after the watched run has finished.  It never fetches, checks out or
+# executes the PR's code: it reads the run through the API, reads the DEFAULT branch's
+# history for `git log` / `git blame` (a PR head is not fetched into a job holding write
+# tokens — CodeQL's untrusted-checkout rule — so a PR's issue names files without their
+# commits), and treats every log line as data — fenced, truncated, `@` mentions defused
+# (see the script).
 #
 # Which jobs count: on a PR, every job the PR's check list does not mark REQUIRED, asked
 # live through `isRequired` (a copied list is what `miri.yml` documents drifting three
@@ -55,16 +57,6 @@ jobs:
           # (blobs fetched lazily, only for the files an issue names).
           fetch-depth: 0
           filter: blob:none
-      - name: Fetch the run's head (history only — never built or run)
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          EVENT: ${{ github.event.workflow_run.event }}
-          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-        run: |
-          git fetch --no-tags --filter=blob:none origin "$HEAD_SHA" 2>/dev/null \
-            || { [ "$EVENT" = pull_request ] && [ -n "$PR" ] \
-                 && git fetch --no-tags --filter=blob:none origin "refs/pull/$PR/head"; } \
-            || echo "::notice::head $HEAD_SHA not fetchable; issues will name files without commits"
       - name: File, update or close the advisory-failure issues
         env:
           GH_TOKEN: ${{ github.token }}

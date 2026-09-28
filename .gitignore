@@ -185,3 +185,6 @@ target-*/
 # with one.  Each guard recreates its own on the next run; never commit.
 loft_*_trace.tmp
 tests/scripts/loft_*_trace.tmp
+
+# A feature example (@F123) writes its file where the doc test runs; the file is never source.
+tests/docs/features/*.bin

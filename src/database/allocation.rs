@@ -2137,7 +2137,7 @@ impl Stores {
         // A store's PRIMARY record is never a scratch — `build_rec_scratch` claims a fresh one —
         // while a keyed field walked IN PLACE of a store's root hands exactly that record here,
         // `pos` at the field.  Declined before a single word of it is read: the tag test below
-        // would read a field of the walked record that nothing wrote (Valgrind, 2026-09-28).
+        // would read a field of the walked record that nothing wrote (measured under Valgrind).
         if scratch.rec <= crate::store::PRIMARY
             || scratch.store_nr as usize >= self.allocations.len()
         {

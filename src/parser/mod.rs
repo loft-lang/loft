@@ -5311,8 +5311,8 @@ impl Parser {
     /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
     /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
     /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
-    /// ()`): one program, two drivers disagreeing whether it is a program (measured
-    /// 2026-09-28, both `if` and `while`).  A `Never` condition (a `return` in it) is not
+    /// ()`): one program, two drivers disagreeing whether it is a program (measured on
+    /// both `if` and `while`).  A `Never` condition (a `return` in it) is not
     /// this case and keeps its own path.
     pub(crate) fn convert_condition_at(
         &mut self,
@@ -7529,7 +7529,7 @@ impl Parser {
     }
 
     /// The type of a call whose failure was reported (or whose callee's binding failed):
-    /// poisoned to `never` (@P376), so the operator or call it is an operand of reads a
+    /// poisoned to `never`, as every reporting site leaves it, so the operator or call it is an operand of reads a
     /// value that is not there and does not report it again as a missing argument naming an
     /// internal opcode (loft#1719): the slot IS filled, by an expression that errored, and
     /// @FR-F-Arity refuses only an unfilled one.  Its code is cleared too: a failed call writes none, and
