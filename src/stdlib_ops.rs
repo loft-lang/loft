@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I67 — Opcode implementations: the stdlib must declare the operators this binary's table carries
 
 //! A standard library that does not match the binary is refused at load.
 //!
