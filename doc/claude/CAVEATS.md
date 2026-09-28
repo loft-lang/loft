@@ -611,7 +611,7 @@ another iterable collection.
 to emit 4-byte rec-nrs), two runtime arms (iterate + step at
 on=4), two parser edits (`fill_iter` and `parse_for_iter_setup`
 companion variable).  Every piece is bounded; each goes into its
-own commit following DEVELOPMENT.md's test-first sequence.
+own commit following DEVELOPMENT.md § Commits.
 
 **Piece 1 landed 2026-04-13 (commit `e50fffe`).**
 `Stores::build_hash_sorted_vec` now emits u32 rec-nrs at 4-byte

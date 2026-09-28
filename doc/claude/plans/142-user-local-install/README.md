@@ -13,7 +13,7 @@ freshly installed binary is the one the shell resolves; `make install-user-fast`
 does the same without the wasm/html-mt runtimes.
 
 **How to use it lives in [README § Getting started](../../../../README.md) (users) and
-[DEVELOPMENT.md § Development Phase](../../DEVELOPMENT.md#development-phase) (the
+[DEVELOPMENT.md § Local CI gate](../../DEVELOPMENT.md#local-ci-gate) (the
 after-merge reinstall loop); the mechanism lives in the `Makefile` targets
 themselves** (`install` / `install-artifacts` / `install-user` / `install-native` /
 `install-user-fast`, with the proc-macro rule commented at the copy site).  This

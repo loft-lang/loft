@@ -461,6 +461,39 @@ Operators are indexed by their position in the `OPERATORS` array. The array is g
 
 The index of each operator equals its `op_code` field in `Data::Definition` (a `u16`), and is the index into `fill::OPERATORS` at runtime. It reaches the bytecode stream through `emit_op` — one byte for ops below 255, two for the rest (see the budget below).
 
+### Adding an operator
+
+**Compose existing operators first.**  A new operator grows the dispatch table and the
+maintenance surface in `fill.rs`, codegen and `default/*.loft`.  `insert(v, idx, elem)`, for
+example, is `OpInsertVector` (makes room) followed by the matching `OpSet*` (writes the value).
+Add one only when no sequence can express the operation (a new runtime primitive such as
+`OpSortVector`), or when the sequence's overhead is measured and unacceptable — record the
+benchmark.
+
+When you do, bootstrap it in this order.  `regen_fill_rs` compiles the default library to
+discover the declared operators, so what their bodies call must exist first.
+
+1. **Add any new `Store` / `Stores` methods** the `#rust "…"` bodies will call
+   (`src/store.rs`, `src/database/`).
+2. **Declare the operator in `default/01_code.loft`** — `fn OpName(...) -> ret;` with its
+   `#rust "…"` body — at the END of the family it extends.  Operator numbers follow
+   declaration order, so reordering existing declarations renumbers every operator after it
+   and invalidates every pre-compiled package that embeds the old numbers.
+3. **Regenerate `src/fill.rs`:**
+   `cargo test --release --test issues regen_fill_rs -- --ignored --nocapture`.
+   `OPERATORS` is slice-typed, so the array grows in the same pass; `fill_rs_up_to_date` and
+   `n9_generated_fill_matches_src` fail on a stale `fill.rs`.
+4. **Native codegen:** regeneration does not touch `src/codegen_runtime.rs`.  An operator that
+   adds a `Parts` variant needs its arm in each `match` over `Parts` there; one that calls new
+   `stores` methods needs the same calls mirrored (compare the `OpGetInt4` / `OpSetInt4`
+   handling).
+5. **Re-derive the surface:** `make surface-gen` — a new operator renumbers
+   `index/target_surface.json`, and it reads a prebuilt wasm rlib, so rebuild that rlib first
+   (CLAUDE.md § Conventions).
+6. **Run `cargo test --release --test native native_dir`** before committing: it compiles the
+   script corpus natively and catches a native program that hangs while every unit test passes.
+   `make ci` rebuilds the wasm rlibs and the fixture cdylibs itself.
+
 ### Opcode budget — and why the count is never written down
 
 `op_code` is a **`u16`**, and the stream encodes it in one byte OR two

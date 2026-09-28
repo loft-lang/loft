@@ -9,6 +9,35 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **Active — Phases 1–3 done; Phase 4 (the burn-down, one doc per `[mid]`) is the standing work.**
 
+**Phase 4, the 2026-10 cycle's D-review — DEVELOPMENT.md (2026-09-28):**
+- **Size:** 1565 → 452 lines; lint findings 24 → 1 (a literal `FIXED` in quoted runner output).
+- **Split by question:**
+  - [JOINING.md](../JOINING.md) — rebasing onto a squash, joining sibling checkouts, resolving
+    and verifying a join; it now also holds the commit-classification ladder, which had lived
+    only in agent memory.
+  - [REVALIDATE_LIBS.md](../REVALIDATE_LIBS.md) — does a change break a shipped library.
+  - [INTERMEDIATE.md § Adding an operator](../INTERMEDIATE.md#adding-an-operator) — the
+    opcode bootstrap, with the `make surface-gen` step it lacked.
+- **History out:** the dated incidents went to
+  [DEVELOPMENT-history.md](../DEVELOPMENT-history.md).  Among them is the unbuilt auto-regen
+  idea for `fill_rs_up_to_date` (improvement B).
+- **Contradictions with CLAUDE.md resolved to CLAUDE.md:**
+  - "always branch from `main`" (rule 5 says: from the tip of in-flight work);
+  - open a PR before the local test run;
+  - bugs as PROBLEMS.md rows;
+  - sprint branches and `{id}-{name}` branch names;
+  - merging `origin/main` into a branch that is behind.
+- **Stale facts corrected against the tree:**
+  - the five-job CI table (`main` requires Test ×3, Clippy and Format; the rest is CI_BUDGET.md);
+  - the manual gate list (`make ci` now builds the wasm and no-default-features variants and the
+    fixture cdylibs);
+  - the commit-message style (the log states outcomes as present-tense sentences, not
+    `{scope}: {imperative}`);
+  - the Co-Authored-By model;
+  - the routing table (COMPILER.md has no § Open work; `lib_plans/future` became plan issues).
+- **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
+  in `formal/` stays visible as new.
+
 **Phase 3, as built (2026-09-25):** two rows in `scripts/release-checklist.py`.
 - **`A-docs-lint`** (automatic, `mid pre`) fails on growth since the baseline, and also on a
   burn-down left un-pinned, because headroom would hide the next regrowth.  It was falsified

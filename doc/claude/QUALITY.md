@@ -2904,7 +2904,7 @@ discriminating on a `Type` variant **976**, opaque **312**; shape tests **2498**
 314 / 1305, `tuxedo-1562-layout-gate` 313 / 1302 after its peel, `tuxedo-165-generics` 314 /
 1301 after its own rebase — and the join settles at 312 / 1300, BELOW all three.  That is not a
 tie-break between the inputs; the merged tree contains code none of them did.  This row is the
-one DEVELOPMENT.md says has carried a false figure on eight consecutive joins, and the reason
+one [JOINING.md § Resolving a conflict](JOINING.md#resolving-a-conflict) says has carried a false figure on eight consecutive joins, and the reason
 is visible here: every side's number is defensible, so taking one always looks reasonable.
 
 ⚠ **And this re-pin is the opposite act from the last one**, which is the distinction worth

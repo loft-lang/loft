@@ -783,8 +783,7 @@ Two measurements, both from `gh run list`, decided this:
   one join, all three were green on `main` the morning before it, and none is in the
   local gate's path.  **So a green `make ci` is not evidence about POISON, the
   debug-assertions gate, or any macOS leg** — the same shape as the shipped libraries,
-  which `make ci` also says nothing about ([DEVELOPMENT.md](DEVELOPMENT.md) §
-  `revalidate_libs_local.sh`).  Two of the three needed a
+  which `make ci` also says nothing about ([REVALIDATE_LIBS.md](REVALIDATE_LIBS.md)).  Two of the three needed a
   config the box cannot run at all (macOS) or does not build by default
   (`-C debug-assertions=on`, which `[profile.dev.package.loft]` strips), so the way to
   ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the

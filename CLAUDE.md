@@ -318,7 +318,7 @@ src/main.rs            CLI; loads default/ then user file
    join-only defects also existed only on that union, invisible from either side.
    ⚠ **Both directions serialise the stream — pick the cheaper one, and it is time-to-MERGE that
    decides.** GitHub has no stacked PRs, so a second PR branches off the first's tip and waits for
-   it ([DEVELOPMENT.md § Owner directive](doc/claude/DEVELOPMENT.md)); that is the cost of PRing
+   it ([DEVELOPMENT.md § Opening a PR is the owner's call](doc/claude/DEVELOPMENT.md#opening-a-pr-is-the-owners-call)); that is the cost of PRing
    too often. But NOT PRing serialises through joins, which is the cost above. So a PR is cheap
    exactly when it merges promptly and expensive when it sits — which makes "keep the PR
    mergeable and land it promptly" (rule 5) the load-bearing half, not an aside.
@@ -549,7 +549,9 @@ format/targets · [API_SURFACE.md](doc/claude/API_SURFACE.md) · [REGISTRY_SUBMI
 [REGISTRY_BOOTSTRAP.md](doc/claude/REGISTRY_BOOTSTRAP.md) / [REGISTRY_RECOVERY.md](doc/claude/REGISTRY_RECOVERY.md) ·
 [PKG_REGISTRY.md](doc/claude/PKG_REGISTRY.md) the registry's design record. REPL: [REPL.md](doc/claude/REPL.md).
 
-**Process / issues / release:** [DEVELOPMENT.md](doc/claude/DEVELOPMENT.md) workflow ·
+**Process / issues / release:** [DEVELOPMENT.md](doc/claude/DEVELOPMENT.md) workflow (start here) ·
+[JOINING.md](doc/claude/JOINING.md) rebasing onto a squash + joining sibling checkouts ·
+[REVALIDATE_LIBS.md](doc/claude/REVALIDATE_LIBS.md) does a change break a shipped library ·
 [ISSUE_TRACKING.md](doc/claude/ISSUE_TRACKING.md) (open→Issues, closed→[PROBLEMS.md](doc/claude/PROBLEMS.md)) ·
 [BUG_REVIEW.md](doc/claude/BUG_REVIEW.md) (the monthly bug review: `make bug-review` reports which
 mechanism classes are still producing bugs + whether last cycle's keystone actually moved its

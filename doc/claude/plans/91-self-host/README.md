@@ -191,6 +191,6 @@ host with a C compiler.** The Rust implementation degrades to the bootstrap comp
 - [BROADENING.md](../../BROADENING.md) — the **C54.F** decision (don't chase MCUs; 32-bit SBC floor) this plan challenges on the model-vs-profile axis.
 - [NATIVE.md](../../NATIVE.md) — the rustc backend strand 5 parallels; `loft-ffi` runtime.
 - [DATABASE.md](../../DATABASE.md) / `src/keys.rs` / `src/store.rs` — `DbRef`, `Stores`/`Store`, the growth path strand 7 bounds.
-- [DEVELOPMENT.md](../../DEVELOPMENT.md) — the `regen_fill_rs` opcode bootstrap (strand 4 generalizes it).
+- [INTERMEDIATE.md § Adding an operator](../../INTERMEDIATE.md#adding-an-operator) — the `regen_fill_rs` opcode bootstrap (strand 4 generalizes it).
 - `../../../../crawler/BUNDLE.md` — the working consumer-side bundle system strand 2 mirrors.
 - `@PLN91` — the tracker issue this plan realizes.
