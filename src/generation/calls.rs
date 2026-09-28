@@ -197,6 +197,7 @@ impl Output<'_> {
         } else {
             None
         };
+        crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
         // @PLN164 E-1 — a FORWARD (`hoist::forward_site`): the call's value is the buffer it
         // was handed, with the tuple written into it as the callee's record form would have.
         // Keyed by the argument list's address, which is the slice this call was handed.

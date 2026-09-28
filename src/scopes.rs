@@ -5711,6 +5711,7 @@ fn reuse_record_buffers(
         }
     }
     let frees = free_ops(data);
+    crate::rewrite_census::fired("R-Reuse", eager.len() + lazy.len());
     // A buffer minted at entry is live at every call, and the first release finds the
     // record the mint just prefilled: nothing to walk.  The releases go in before the mints
     // do, because a mint names the buffer and would itself take one.

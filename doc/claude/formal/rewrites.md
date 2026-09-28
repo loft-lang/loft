@@ -64,9 +64,12 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  condition shows as a DROP, named by rule and bench, in `make
                  rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
-                 own commit.  Counted today: every plan `start_fn` builds, the loop
-                 hoist frames, the push windows, the record pointers, the work
-                 buffer and its onward clause, and R-CopyView.
+                 own commit.  Counted: every rewrite but two — (R-Prefill) admits per
+                 TYPE at its first mint and (R-Cold) is the runtime's own shape,
+                 neither an emission-time fact.  A parser or scope-pass rewrite
+                 counts at its admission (the standard library's own admissions
+                 included, one constant per program); a generator rewrite counts
+                 where it emits.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -3028,7 +3031,7 @@ to bisect to.
   fixed here: a plain local bound from a TOP-LEVEL constant and then written (`c = NAMES;
   c[0] = 5`, `c += [7]`, `f(NAMES)` with `f` writing its parameter) has no copy road at all
   and PANICS on both backends with "Write to read-only store" — the use site emits the view
-  and nothing places the copy this rule says the bind owes (an issue to file: this box could not authenticate to GitHub for writes — its text waits in `plans/157-native-4x-drawing/to-file-const-bind-panic.md`).  Measured on the
+  and nothing places the copy this rule says the bind owes (deviation D-rw-6).  Measured on the
   portal's text2d lane, same box: `write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of
   Rust (the hand-price said ~3.3×; the rest of the row is `set_pixel`, the call class), the
   other four rows unmoved.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`
@@ -3188,7 +3191,16 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-21).
+**OPEN: 1** (2026-09-28).
+
+- **D-rw-6 — OPEN 2026-09-28 (loft#1729).**  `(R-Const)` says a plain bind of a constant's
+  view is `(B-Copy)`'s copy the moment the local is written or handed to a parameter the callee
+  writes.  For a TOP-LEVEL constant the use site emits the view (`ConstRef; PutRef`) and no copy
+  road exists, so `c = NAMES; c[0] = 5`, `c += [7]` and `f(NAMES)` with `f` writing its by-value
+  parameter panic on both backends with "Write to read-only store" — `(H-WriteLocked)` is the
+  backstop that fires.  A store into a field, a record literal's member and a `return` do copy.
+  Until closed, the literal-bodied function (`fn names() -> vector<integer> { [32, 33] }`) is the
+  form, and `(R-Const)` makes it free where the result is only read.
 
 - **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
   literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed

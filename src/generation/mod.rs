@@ -3296,6 +3296,8 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
+        crate::rewrite_census::fired("R-GuardedChain", 1);
+        crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {
             eprintln!(
                 "chain: {fn_name} loop {} admitted — {} operator(s) in {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
@@ -3382,6 +3384,7 @@ impl Output<'_> {
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
+        crate::rewrite_census::fired("R-Fill", 1);
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
         let lo = match f.next_var {
@@ -4212,6 +4215,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
         self.vec_bases.push(bases);
+        crate::rewrite_census::fired("R-View", 1);
         Ok(true)
     }
 
@@ -4262,6 +4266,7 @@ impl Output<'_> {
                 hoist::WrapperOperand::Const(c) => args.push(c.clone()),
             }
         }
+        crate::rewrite_census::fired("R-Wrapper", 1);
         Some((*op, args))
     }
 
@@ -4747,6 +4752,7 @@ impl Output<'_> {
         frame.insert(path, name);
         self.mint_push_headers.push(frame);
         self.group_ends.push((block, end));
+        crate::rewrite_census::fired("R-GroupPush", 1);
         Ok(())
     }
 
@@ -9478,11 +9484,15 @@ extern crate loft;"
                 // `@FR-R-LeafChain` widens that in the lean tier to a function whose whole
                 // call tree is frameless: there the frame carries no name, so the depth
                 // count is all it holds, and such a function cannot be re-entered.
-                let leaf = !self.leaf_elide_disabled
-                    && (self.is_elidable_leaf(def_nr)
-                        || (self.lean
-                            && !self.leaf_chain_disabled
-                            && self.is_frameless_chain(def_nr)));
+                let plain_leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let chain_leaf = !plain_leaf
+                    && !self.leaf_elide_disabled
+                    && self.lean
+                    && !self.leaf_chain_disabled
+                    && self.is_frameless_chain(def_nr);
+                let leaf = plain_leaf || chain_leaf;
+                crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
+                crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit
                 // between the frame that pushed one and the frame that releases it —
@@ -9496,6 +9506,7 @@ extern crate loft;"
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
                 let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()
                 } else {

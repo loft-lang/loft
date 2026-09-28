@@ -1050,6 +1050,7 @@ pub fn hoistable(
             });
         }
         out.vectors.retain(|(q, _)| !mover(q));
+        crate::rewrite_census::fired("R-Mint", mints.len());
         out.pushes = pushes;
         out.mint_pushes = mint_fused
             .into_iter()
@@ -1649,6 +1650,7 @@ fn callee_writes(
         inner.map(Rc::new)
     };
     // A `None` reached on a recursive edge is memoised too: it only ever withholds a hoist.
+    crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
     writes.insert(d_nr, answer.clone());
     answer
 }

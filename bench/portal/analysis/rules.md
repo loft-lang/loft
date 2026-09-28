@@ -21,29 +21,29 @@ pricing stays in the other files here; this one is read from the RULES' side.
 
 ## Change — the instruments and the register
 
-1. **The census counts 24 of the 51 rewrites.**  `bench/portal/rewrite_census.tsv` has
-   rows for the hoist frames, push windows, record pointers, the work buffer, the value
-   record family, the text rules and a few more.  No row exists for `(R-Range)`,
-   `(R-GuardedChain)`, `(R-Fill)`, `(R-Mint)`, `(R-GroupPush)`, `(R-Inputs)`,
-   `(R-Wrapper)`, `(R-FormatAppend)`, `(R-ByteCopy)`, `(R-VecCopy)`, `(R-TypedKeyed)`,
-   `(R-Place)`, `(R-Rebind)`, `(R-Compact)`, `(R-Const)`, `(R-Prefill)`, `(R-LitDiv)`,
-   `(R-GuardFree)`, `(R-Leaf)`, `(R-LeafChain)`, `(R-MoveLast)`, `(R-InPlaceLiteral)`,
-   `(R-Reuse)`, `(R-View)`, `(R-Counter)`, `(R-Callee)`, `(R-Cold)`.  A lost admission in
-   any of them is invisible until a consumer bench moves — the loft#1647 shape, six days on
-   main.  `(R-Switch)`'s census clause already says the list is partial.  Each admitted
-   site calls `rewrite_census::fired`; this is a day's work and it is what makes every
-   later step checkable.
-2. **`doc/claude/NATIVE_SWITCHES.md` documents 17 trace switches; `src/` reads 56.**
-   The undocumented ones include the traces of `(R-FormatAppend)`, `(R-WorkBuffer)`,
-   `(R-Place)`, `(R-Rebind)`, `(R-Compact)`, `(R-VecCopy)`, `(R-ByteCopy)`,
-   `(R-SplitTable)`, `(R-GuardFree)`, `(R-LitHoist)`, `(R-Prefill)`, `(R-CopyView)` and
-   `(R-Const)`.  A trace run from the documented list misses every decline of those rules
-   (it did, in this audit's first pass).
-3. **One known defect sits outside the deviation list.**  `(R-Const)`'s text records that
-   a local bound from a top-level const and then written (`c = NAMES; c[0] = 5`) panics
-   with "write to read-only store" on both backends, unfiled, its text waiting in
-   `plans/157-native-4x-drawing/to-file-const-bind-panic.md`.  File it, open its
-   deviation; `OPEN: 0` is not true while it stands.
+1. **The census counted 24 of the 51 rewrites — DONE 2026-09-28: it counts 49.**  A row
+   now exists for every rewrite but `(R-Prefill)` (admits per TYPE at its first mint, a
+   run-time fact) and `(R-Cold)` (the runtime's own shape); the generator's rules count
+   where they emit, the parser's and the scope pass's at their admission (the standard
+   library's included, one constant per program).  Over the 57 programs every new row is
+   non-zero somewhere — `(R-Place)`, `(R-MoveLast)` and `(R-Compact)` on ONE program each,
+   which is how thin the body is for the ownership family.  A lost admission in any of
+   them was invisible until a consumer bench moved — the loft#1647 shape, six days on
+   main; now it is a named drop in `make rewrite-census`.
+2. **The trace switches — MEASURED, smaller than it read.**  `src/` reads 56
+   `LOFT_TRACE_*` switches and `NATIVE_SWITCHES.md` named 17 of them; but 28 of the rest
+   live in their family's home (`BOTH_BACKEND_SWITCHES.md` for the parser and scope-pass
+   rewrites, `DEBUG.md`'s table for the runtime and lexer traces, `PLACEMENT.md`,
+   `PERFORMANCE.md`).  What was missing, now added: two native REWRITES with no entry at all
+   (`(R-SplitTable)` and `(R-GuardFree)`, each with its `LOFT_NO_*` switch), the traces of
+   `(R-LitHoist)` and the element fuse, and seven switches no document named
+   (`LOFT_TRACE_KEYS`, `_VADD`, `_RETFRESH`, `_PREAMBLE`, `_INSTANCE_KEY`, `_CLOSURE_KEEP`,
+   `_PAR_WORKERS` — `DEBUG.md` § Debugging store-ownership bugs).  A trace run should read
+   the rule's home doc, not this one file.
+3. **One known defect sat outside the deviation list — FILED loft#1729, deviation D-rw-6
+   (`rewrites.md` OPEN: 1).**  `(R-Const)`'s bind of a top-level constant that is then
+   written (`c = NAMES; c[0] = 5`) panics with "write to read-only store" on both backends;
+   the fix is the copy road the rule already names.
 4. **`(R-State)` is held by collector order alone** (`hoist::hoistable`: read candidates,
    then twin inputs, then push paths).  The one-holder-per-path rule has no construction
    enforcing it; the state-builder refactor ("one map, one insert path") is queued in
@@ -146,8 +146,8 @@ address" — not a regression to chase.
 
 ## Order
 
-1. Census rows for every rewrite; the trace switches documented; the `(R-Const)` panic
-   filed and its deviation opened.  Cheap, and every later step is then checkable.
+1. ~~Census rows for every rewrite; the trace switches documented; the `(R-Const)` panic
+   filed and its deviation opened.~~  Done 2026-09-28 (§ Change 1–3).
 2. `(R-RecPtr)` and `(R-Base)` under growth — the most frequent decline in real code.
 3. `(R-PushRec)`'s appended tuple; `(R-TypedKeyed)`'s append half; `(R-WorkBuffer)` for
    record elements and results — each priced in its class file.

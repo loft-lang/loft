@@ -3206,6 +3206,9 @@ impl Parser {
             let lit = self.cl(append, &[Value::Var(var_nr), Value::Text(prefix)]);
             parts.insert(0, lit);
         }
+        if !self.first_pass {
+            crate::rewrite_census::fired("R-FormatAppend", 1);
+        }
         if traced {
             eprintln!(
                 "[format-append] {}: {} part(s) written into `{}`",
@@ -5541,6 +5544,10 @@ impl Parser {
             list.push(v_set(w, Value::Null));
             list.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp)]));
             *code = Value::Var(w);
+        } else if !self.first_pass && in_place_var.is_none() {
+            // A field, a captured collection or an admitted element: the literal is written
+            // into the place it is assigned to (`@FR-R-InPlaceLiteral`).
+            crate::rewrite_census::fired("R-InPlaceLiteral", 1);
         }
         // @PLN93 (#511): a captured-collection append target (`h += K{…}` inside a closure,
         // where `code` is the `OpGetDbRef` of the closure-record field) is a DbRef lvalue like

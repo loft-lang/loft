@@ -14,13 +14,14 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 | `libraries-wide.md` | every class, from eleven libraries' own benches | **MEASURED 2026-09-24, NOT PRICED** — 32 rows, median 3.80×; text-build (the per-character append) and a constant vector literal rebuilt per call are the two class-wide gaps it found |
 | `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, `(R-WorkBuffer)` BUILT** (§ Built: scalar-element vector locals, pooled per frame, promotion transitive); left: record and text elements, result buffers, the 28 hand-offs, the allocator shave and the fn-ref result buffer, priced there |
 | `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **W1, W2, C1 (`(R-GuardFree)`) and P1 BUILT** (§ Built, § Order); the single-row harness attributed `mesh_aabb` and `enum_match`; `smooth`, `sort`, `grid`, `copy`, `catalog_churn` remain unpriced |
-| `rules.md` | every rule, from the RULES' side: the declines traced on the benches, the shapes with no rule, the instruments' gaps | **AUDITED 2026-09-28** — change: census rows for 27 uncounted rewrites, 39 undocumented trace switches, one defect outside the deviation list; optimise: the growth-blocked record pointer first, then the clauses each class file prices |
+| `rules.md` | every rule, from the RULES' side: the declines traced on the benches, the shapes with no rule, the instruments' gaps | **AUDITED 2026-09-28**; its § Change is DONE the same day (the census counts 49 of 51 rewrites, the two native rewrites with no switch entry documented, seven homeless traces given a home, the `(R-Const)` panic filed as loft#1729 / D-rw-6); what is left is its § Optimise: the growth-blocked record pointer first, then the clauses each class file prices |
 
 ## Where to resume (2026-09-28 evening, branch `157-native-4x`)
 
-**The rules are audited** (`rules.md`).  Start with its § Change — the census covers 24 of
-the 51 rewrites, the documented trace list is 17 of 56 switches, and one `(R-Const)` defect
-stands outside the deviation list — then its § Order.  The branch was A/B'd against
+**The rules are audited** (`rules.md`) and its § Change is done: the census counts 49 of
+the 51 rewrites (`make rewrite-census` names a drop in any of them), the switch docs are
+complete, and the `(R-Const)` panic is loft#1729 / D-rw-6 (open — fix it, the copy road the
+rule names, before the PR).  Next is its § Order 2: `(R-RecPtr)` and `(R-Base)` under growth.  The branch was A/B'd against
 `origin/main` on this box on the way (`rules.md` § Measured on the way): 71 of 79 routines
 within noise, the three movers explained, none a regression.
 
