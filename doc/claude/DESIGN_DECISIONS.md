@@ -74,6 +74,7 @@ suffixes would add lexer ambiguity and put the intent on the literal instead of 
 **Revisit when.** A real program needs a literal-size distinction `as <T>` cannot express
 reasonably ("Rust does it" is not evidence).  Decided 2026-04-13 —
 [record](DESIGN_DECISIONS-history.md#c54d--rust-style-numeric-literal-suffixes).
+**Holds at:** `@C54.D` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
 ## C62 — No type annotations in `|x|` shorthand lambdas
@@ -450,6 +451,7 @@ remove the need for it.
 
 **Revisit when.** Never for tuple variants.  The "reads like grammar" bar applies to each PEG
 syntax choice.  Decided 2026-07-10 — [record](DESIGN_DECISIONS-history.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
+**Holds at:** `@C89` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 
 ## C90 — Each nullable scalar reserves ONE bit-pattern for null (the in-band sentinel residual; accepted, frozen)
 
@@ -735,6 +737,7 @@ kinds; a generic `hole<T>` would drop the per-kind opt-in keeping non-literal va
 
 **Revisit when.** A multi-parameter keyed type has a use a record set cannot express.  Decided
 2026-08-11, revised 2026-09-21 by C126 — [record](DESIGN_DECISIONS-history.md#c110--a-generics-type-variable-stays-in-the-first-parameter-and-a-keyed-collection-stays-a-record-set).
+**Holds at:** `@C110` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
 ## C111 — a drop cascade reaches a container's death, not an element's removal
