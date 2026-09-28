@@ -754,6 +754,32 @@ store is read-only, its bytes are described by the header contract every vector 
   adds its offset.  An append, an argument, a field or a return copies (`vector_slice`):
   their store holds more than the one vector, and locking it would lock the rest.
   `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
+* **A library's bytes (F5).**  A cdylib bridge answers a `vector<u8>` with no copy through
+  `loft_ffi::LoftStore::foreign_vector_from_owned(Vec<u8>)`: the host adopts the block as a
+  foreign store (`ForeignOwner::Extern` — the `Vec`'s parts and the cdylib's own release,
+  called once with the last store serving the bytes, in the cdylib's allocator since the
+  host's may differ; a loaded library is never unloaded) and answers the bare `FOREIGN_REC`,
+  which the two consumers of a bridge's ref return (`extensions::bridge_push_ref`,
+  `codegen_runtime::from_loft_ref`) turn into the store's own handle
+  (`Store::foreign_handle`) instead of claiming a header in a store that is now locked.
+  The callback is `LoftStore::foreign_fn`, the LAST field of the handle (an older cdylib
+  reads a prefix; every host-to-cdylib crossing is the one fixed `LoftBridgeFn` shape, so a
+  longer struct shifts no other argument), and the helper copies where the host has none or
+  declined.  When the dispatcher minted an empty store for the answer, the context word says
+  so (`extensions::CTX_RETURN_STORE`, bit 16 above the store number) and the bytes are
+  adopted INTO it (`Stores::foreign_vector_in`), never beside an orphan.  At the BIND, the
+  local's own store views the answer whole — `OpAdoptVector` → `Stores::vector_adopt`, the
+  op the #410 direct bind and the #409 wrapper delivery now emit where they copied every
+  element; an owned answer is still copied, so its in-place `+=` holds — and the loop-buffer
+  reset (`vector_buffer_reset`) and a store re-init (`Stores::clear`) drop a view rather
+  than write its length.  A foreign vector handed to a bridge as an ARGUMENT is copied into
+  a record of the store the bridge is given (`Stores::bridge_args`, one set-up shared by the
+  interpreter's dispatcher and the generated `--native` call): a cdylib reads a vector by
+  pointer arithmetic on that one store, which cannot see foreign bytes (a mapped file handed
+  to any library bridge read sixteen gigabytes past the store before F5).  A foreign vector
+  never pins the store — the next argument does, or one is minted for the call — and after
+  the call the copies are deleted, or the minted store freed; a bridge that WROTE through a
+  copy meets the same refusal a direct write does.
 * **A copy OUT reads where the bytes are.**  `copy_block_between`, `Stores::copy_block` and
   the `par` workers' row readers take the source address from `Store::block_src`, which
   answers the foreign bytes for `FOREIGN_REC` (a bind `w = m` and a `par` over `m` both read

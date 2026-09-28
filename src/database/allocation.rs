@@ -1591,6 +1591,9 @@ impl Stores {
         // parameter in a prior function call within the same loop iteration.
         // never unlock a PINNED (const/global) store.
         if !self.allocations[slot as usize].pinned {
+            // @PLN174 — a store re-initialised while it serves a VIEW stops serving it: an
+            // unlocked store still answering foreign bytes is a shape nothing should see.
+            self.allocations[slot as usize].release_foreign();
             self.allocations[slot as usize].unlock();
         }
         // OpDatabase may adopt a store its variable freed at the end of the
@@ -1653,6 +1656,46 @@ impl Stores {
         owner: crate::store::ForeignOwner,
     ) -> DbRef {
         let db = self.vector_buffer(4);
+        self.adopt_foreign(db, base, len, elem_size, owner);
+        db
+    }
+
+    /// @PLN174 F5 — [`foreign_vector`](Self::foreign_vector) INTO an existing EMPTY store:
+    /// the one a bridge dispatcher minted for a vector return before the bridge ran
+    /// (`extensions::dispatch_via_bridge`, the generated `--native` call).  The bridge
+    /// then answered foreign bytes instead of claiming in it, and adopting them here
+    /// keeps that store as the handle's home — no second store minted, none orphaned.
+    /// The root is claimed exactly as [`vector_buffer`](Self::vector_buffer) claims it.
+    #[must_use]
+    pub fn foreign_vector_in(
+        &mut self,
+        store_nr: u16,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) -> DbRef {
+        let at = DbRef {
+            store_nr,
+            rec: 0,
+            pos: 0,
+        };
+        let db = self.claim(&at, 4);
+        self.store_mut(&db).set_u32_raw(db.rec, db.pos, 0);
+        self.adopt_foreign(db, base, len, elem_size, owner);
+        db
+    }
+
+    /// The one place a vector root's slot is turned foreign: the span over the bytes,
+    /// its owner shared from here on.
+    fn adopt_foreign(
+        &mut self,
+        db: DbRef,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) {
         self.store_mut(&db).make_foreign(
             db.rec,
             db.pos,
@@ -1663,7 +1706,6 @@ impl Stores {
                 owner: std::sync::Arc::new(owner),
             },
         );
-        db
     }
 
     /// A fresh store whose root's collection slot names the EMPTY vector — the shape a

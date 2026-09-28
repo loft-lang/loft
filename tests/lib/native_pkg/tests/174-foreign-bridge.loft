@@ -1,0 +1,71 @@
+// @PLN174 F5 — a LIBRARY's bytes served with no copy: the fixture cdylib answers
+// `ext_make_bytes_foreign(n)` through `LoftStore::foreign_vector_from_owned` (its own
+// `Vec<u8>`, adopted by the host as a read-only foreign store and released, in the
+// cdylib's allocator, with the last handle over it), and every read op — the length, an
+// index, an iteration, a hoisted loop, a slice (a view), `text_from_bytes`, an argument to
+// another bridge — answers exactly what the copying `ext_make_bytes(n)` answers.  The bind
+// `f = ext_make_bytes_foreign(n)` VIEWS the answer (`OpAdoptVector`), a wrapper's does too,
+// and a foreign vector handed to a bridge as an ARGUMENT is copied into the bridge's store
+// for the call (a cdylib reads a vector by pointer arithmetic on the one store it is given).
+// Both paths run in every cell and the values are hand-computed (byte i is i & 255).  The
+// write that must be refused is asserted on the spawned binary (`tests/foreign_bridge.rs`),
+// which also runs this file under the switch matrix and the copy A/B.
+//
+// @falsified-at: none — the receipt is this file's own history (2026-09-28): with the
+//   #410 element copy still at the bind, cell b7's write LANDED on both backends (the value
+//   was a copy, not the answer); with the copied argument in a store of its own, b5 answered
+//   an EMPTY vector on both (the cdylib read the argument through the other store); and with
+//   the loop buffer's length reset writing a view, b8 met the foreign refusal on `--native`
+//   only.  Each is one of the three mechanisms this cell file pins.
+use native_pkg;
+
+fn fb_sum(v: const vector<u8>) -> integer { s = 0; for b in v { s += b; } s }
+fn fb_indexed(v: const vector<u8>) -> integer { s = 0; for i in 0..len(v) { s += (v[i] ?? 0) * (i + 1); } s }
+fn fb_same(a: const vector<u8>, b: const vector<u8>) -> boolean {
+  if len(a) != len(b) { return false; }
+  for i in 0..len(a) { if a[i] != b[i] { return false; } }
+  true
+}
+fn fb_wrap(n: integer) -> vector<u8> { ext_make_bytes_foreign(n) }
+
+fn main() {
+  c = ext_make_bytes(300);
+  f = ext_make_bytes_foreign(300);
+  // b1: the length, every index, and hand values: byte i is i & 255
+  assert(len(f) == 300 && len(c) == 300, "b1 {len(f)} {len(c)}");
+  assert(fb_same(f, c), "b1 same");
+  assert(f[0] == 0 && f[255] == 255 && f[256] == 0 && f[299] == 43 && f[300] == null && f[-1] == 43, "b1 hand {f[0]} {f[255]} {f[256]} {f[299]} {f[-1]}");
+  // b2: an iteration — 0..255 sums to 32640, 0..43 to 946
+  assert(fb_sum(f) == 33586 && fb_sum(f) == fb_sum(c), "b2 {fb_sum(f)}");
+  // b3: a hoisted indexed loop (the header and base held across it)
+  assert(fb_indexed(f) == fb_indexed(c), "b3 {fb_indexed(f)} {fb_indexed(c)}");
+  // b4: a slice is a view of the answer, and text from one: bytes 72..75 are "HIJ"
+  v = f[10..14];
+  assert(len(v) == 4 && v[0] == 10 && v[3] == 13 && fb_same(v, c[10..14]), "b4 {len(v)} {v[0]} {v[3]}");
+  assert(text_from_bytes(f[72..75]) == "HIJ", "b4 text '{text_from_bytes(f[72..75])}'");
+  // b5: a foreign vector as a bridge ARGUMENT (copied for the call), the answer foreign
+  // again beside it; then the same with an owned argument, and an owned answer
+  r = ext_reverse_foreign(f);
+  assert(len(r) == 300 && r[0] == 43 && r[299] == 0 && r[44] == 255, "b5 {len(r)} {r[0]} {r[299]} {r[44]}");
+  r2 = ext_reverse_foreign(c);
+  assert(fb_same(r, r2), "b5 same");
+  r3 = ext_reverse_owned(f);
+  assert(fb_same(r, r3), "b5 owned {len(r3)}");
+  assert(len(f) == 300 && f[0] == 0 && f[299] == 43, "b5 the argument is untouched");
+  // b6: the wrapper shape — a loft fn answering the native's vector — views it too
+  w = fb_wrap(20);
+  assert(len(w) == 20 && w[19] == 19 && fb_sum(w) == 190, "b6 {len(w)} {w[19]}");
+  // b7: a bind copies (B-Copy) — the copy is writable and independent
+  k = f;
+  k[0] = 7;
+  k += [9];
+  assert(k[0] == 7 && f[0] == 0 && len(k) == 301 && len(f) == 300, "b7 {k[0]} {f[0]} {len(k)}");
+  // b8: a rebind in a loop releases each block; an empty answer; a rebind to a literal
+  for i in 0..2000 { f = ext_make_bytes_foreign(16); assert(f[15] == 15, "b8 {i}"); }
+  e = ext_make_bytes_foreign(0);
+  assert(len(e) == 0, "b8 empty {len(e)}");
+  f = [1, 2, 3];
+  f += [4];
+  assert(len(f) == 4 && f[3] == 4, "b8 literal {len(f)}");
+  println("foreign bridge ok");
+}

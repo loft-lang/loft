@@ -278,6 +278,17 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
         rec: 0,
         pos: 0,
     };
+    // @PLN174 F5 — a foreign answer already has its handle, and its store is locked
+    // (`extensions::bridge_push_ref`, the interpreter's twin of this).
+    if crate::store::Store::is_foreign_rec(r.rec)
+        && let Some((rec, pos)) = stores.store(&base).foreign_handle()
+    {
+        return DbRef {
+            store_nr: r.store_nr,
+            rec,
+            pos,
+        };
+    }
     let header = stores.claim(&base, 1);
     stores.store_mut(&base).set_u32_raw(header.rec, 4, r.rec);
     DbRef {
@@ -6021,5 +6032,32 @@ pub fn make_loft_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStor
         claim_fn: Some(_ffi_claim),
         reload_fn: Some(_ffi_reload),
         resize_fn: Some(_ffi_resize),
+        // A caller here names an existing store (an argument's), never one minted for a
+        // return; the generated cdylib call builds its handle through `native_call`.
+        foreign_fn: Some(_ffi_foreign),
     }
+}
+
+/// @PLN174 F5 — the foreign-vector callback over `CODEGEN_STORES`, the twin of
+/// `native_call::ffi_foreign_pub` for a handle built here.
+unsafe extern "C" fn _ffi_foreign(
+    ctx: loft_ffi::LoftStoreCtx,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    elem_size: u32,
+    release: unsafe extern "C" fn(*mut u8, usize, usize),
+) -> loft_ffi::LoftRef {
+    CODEGEN_STORES.with(|c| {
+        let stores = unsafe { &mut *c.get() };
+        crate::extensions::adopt_foreign_block(
+            stores,
+            ctx._opaque as usize,
+            ptr,
+            len,
+            cap,
+            elem_size,
+            release,
+        )
+    })
 }

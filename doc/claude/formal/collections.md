@@ -334,6 +334,13 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  foreign refusal, whose cure is the bind `w = view` (B-Copy).  An append, an
                  argument, a field value and a return keep the copy: their store holds more
                  than the one vector.  `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
+                 A `#native` bridge's whole vector answer bound to a local is the same
+                 view (`OpAdoptVector`, `Stores::vector_adopt`; the answer is a foreign
+                 store when the library handed its buffer over,
+                 `loft_ffi::LoftStore::foreign_vector_from_owned`), and a foreign vector
+                 HANDED to a bridge as an argument is copied for the call
+                 (`Stores::bridge_args`): a cdylib reads a vector by pointer arithmetic
+                 on the one store it is given.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
 negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.

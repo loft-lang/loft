@@ -548,7 +548,42 @@ pub enum ForeignOwner {
     /// A read-only mapping of a file (`file_map`).
     #[cfg(feature = "mmap")]
     Map(memmap::Mmap),
+    /// @PLN174 F5 — a block a cdylib handed over across the C ABI
+    /// (`loft_ffi::LoftStore::foreign_vector_from_owned`): the parts of its `Vec<u8>`
+    /// and the cdylib's own release, which frees the block in the allocator that made
+    /// it — the host's may differ, so the runtime never rebuilds the `Vec` itself.  A
+    /// loaded library is never unloaded (`extensions::LOADED_LIBS` only grows, and a
+    /// `--native` program links it), so the release stays callable for the process.
+    Extern {
+        ptr: *mut u8,
+        len: usize,
+        cap: usize,
+        release: unsafe extern "C" fn(*mut u8, usize, usize),
+    },
 }
+
+impl Drop for ForeignOwner {
+    fn drop(&mut self) {
+        if let ForeignOwner::Extern {
+            ptr,
+            len,
+            cap,
+            release,
+        } = *self
+        {
+            // SAFETY: the parts are the ones the cdylib handed over, released once —
+            // here, with the last `Arc` over them.
+            unsafe { release(ptr, len, cap) };
+        }
+    }
+}
+
+// SAFETY: the bytes an `Extern` owner names are read-only for its whole life (every
+// store over them is locked), and its release runs once, from whichever thread drops
+// the last `Arc` — a Rust allocator is thread-safe.  The other variants are `Send +
+// Sync` on their own; the raw pointer is what needs saying.
+unsafe impl Send for ForeignOwner {}
+unsafe impl Sync for ForeignOwner {}
 
 /// @PLN174 F4b — a SPAN of foreign bytes and what keeps them alive: `len` elements of
 /// `elem_size` bytes at `base`.  What a producer hands [`Store::make_foreign`]
@@ -3421,6 +3456,17 @@ impl Store {
         self.foreign.is_some()
     }
 
+    /// @PLN174 F5 — the `(rec, pos)` slot that names this store's foreign bytes: the
+    /// HANDLE a `DbRef` into the store points at.  A bridge answers a foreign vector as
+    /// the bare [`FOREIGN_REC`], and the two consumers of a bridge's ref return
+    /// (`extensions::bridge_push_ref`, `codegen_runtime::from_loft_ref`) push this handle
+    /// instead of claiming a header record in a store that is now locked.  `None` for an
+    /// ordinary store.
+    #[must_use]
+    pub fn foreign_handle(&self) -> Option<(u32, u32)> {
+        self.foreign.as_ref().map(|f| f.slot)
+    }
+
     /// @PLN174 — turn this store into a FOREIGN one: the collection slot at `(rec, pos)`
     /// names [`FOREIGN_REC`], the header presents the span's `len` elements of `elem_size`
     /// bytes starting at its `base`, the span's owner keeps those bytes alive, and the
@@ -3555,6 +3601,15 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn refuse_user_locked_write(rec: u32, fld: u32, origin: &str) -> ! {
+        // `LOFT_LOCK_BT=1` names the Rust site that wrote: the refusal carries the loft
+        // call chain, which cannot tell a runtime path that wrote (a marshal, an adoption)
+        // from the program's own statement.
+        if std::env::var_os("LOFT_LOCK_BT").is_some() {
+            crate::loft_eprintln!(
+                "[locks] REFUSED write rec={rec} fld={fld} origin={origin:?}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         crate::runtime_error::RuntimeError::locked_store_write(rec, fld, origin).report_and_exit()
     }
 
@@ -3653,6 +3708,9 @@ impl Store {
         // The author's lock and a FOREIGN store (@PLN174) are the program's own doing and
         // get the runtime error whose advice names the cure; every other lock is internal.
         if self.user_locked || self.is_foreign() {
+            if std::env::var_os("LOFT_LOCK_BT").is_some() {
+                crate::loft_eprintln!("[locks] REFUSED in store #{}", self.store_nr);
+            }
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
         }
         panic!(
@@ -5335,6 +5393,76 @@ mod tests {
     /// byte through the same accessors, a view of a view adds its offset, the bytes outlive
     /// the handle while the view is bound (the owner is shared), and the release makes the
     /// view's store an ordinary, writable, empty one again.
+    /// @PLN174 F5 — a block a cdylib handed over (`ForeignOwner::Extern`): read through
+    /// the same accessors as a copied store, and RELEASED exactly once — with the last
+    /// store serving it, whichever that is — through the release it came with.
+    #[test]
+    fn a_cdylib_block_is_read_in_place_and_released_once_with_the_last_store() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static RELEASED: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn release(ptr: *mut u8, len: usize, cap: usize) {
+            RELEASED.fetch_add(1, Ordering::SeqCst);
+            drop(unsafe { Vec::from_raw_parts(ptr, len, cap) });
+        }
+        let data: Vec<u8> = (0..40u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(3))
+            .collect();
+        let mut plain = Store::new(64);
+        let root = plain.claim(4);
+        let rec = crate::vector::alloc_vector_from_bytes(&mut plain, 1, 40, &data);
+        plain.set_u32_raw(root, 8, rec);
+        let mut block = std::mem::ManuallyDrop::new(data);
+        let (ptr, len, cap) = (block.as_mut_ptr(), block.len(), block.capacity());
+        let owner = std::sync::Arc::new(ForeignOwner::Extern {
+            ptr,
+            len,
+            cap,
+            release,
+        });
+        let span = ForeignSpan {
+            base: ptr,
+            len: 40,
+            elem_size: 1,
+            owner: std::sync::Arc::clone(&owner),
+        };
+        drop(owner);
+        let mut handle = Store::new(8);
+        let hroot = handle.claim(4);
+        handle.make_foreign(hroot, 8, span);
+        for i in 0..40 {
+            assert_eq!(
+                handle.get_byte(FOREIGN_REC, 8 + i, 0),
+                plain.get_byte(rec, 8 + i, 0),
+                "byte {i}"
+            );
+        }
+        assert_eq!(handle.get_u32_raw(FOREIGN_REC, 4), 40);
+        // A view cut from the handle shares the block; the handle goes first.
+        let mut view = Store::new(8);
+        let vroot = view.claim(4);
+        view.make_foreign(vroot, 8, handle.foreign_span(10, 20).expect("span"));
+        assert_eq!(view.bytes_of(FOREIGN_REC), &plain.bytes_of(rec)[10..20]);
+        assert_eq!(handle.foreign_handle(), Some((hroot, 8)));
+        handle.release_foreign();
+        assert_eq!(
+            RELEASED.load(Ordering::SeqCst),
+            0,
+            "the view still serves the block"
+        );
+        assert_eq!(handle.foreign_handle(), None);
+        assert!(!handle.read_only);
+        assert_eq!(
+            view.get_byte(FOREIGN_REC, 8 + 3, 0),
+            plain.get_byte(rec, 8 + 13, 0)
+        );
+        view.release_foreign();
+        assert_eq!(
+            RELEASED.load(Ordering::SeqCst),
+            1,
+            "released with the last store, once"
+        );
+    }
+
     #[test]
     fn a_view_of_a_foreign_store_reads_beside_the_copied_slice() {
         let data = sample_bytes();

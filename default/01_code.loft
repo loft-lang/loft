@@ -1292,6 +1292,11 @@ fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16
 // span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
 fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
 #rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
+// @PLN174 F5 — a local takes a `#native` call's vector answer as its own: a VIEW of the
+// whole when the answer is a foreign store (a library's buffer, no copy), the element copy
+// otherwise (the #409/#410 delivery, unchanged).
+fn OpAdoptVector(r: vector, src: vector, tp: const u16);
+#rust"s.database.vector_adopt(&@r, &@src, @tp);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
 // per element each resolving the store and re-reading the headers the previous one

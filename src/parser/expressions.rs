@@ -4560,8 +4560,9 @@ use a separate collection or add after the loop"
             // (destructive) `vector_db`.
             let mut ls = vec![set_fwd];
             ls.extend(self.vector_db(&elm_tp, var_nr));
+            // @PLN174 F5 — a foreign answer is VIEWED, an owned one copied as before.
             ls.push(self.cl(
-                "OpAppendVector",
+                "OpAdoptVector",
                 &[Value::Var(var_nr), Value::Var(fwd), Value::Int(rec_tp)],
             ));
             *code = Value::Insert(ls);

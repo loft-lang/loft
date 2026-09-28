@@ -423,6 +423,13 @@ pub fn vector_buffer_reset(db: &DbRef, stores: &mut [Store]) {
         return;
     }
     let store = keys::mut_store(db, stores);
+    // @PLN174 F5 — a buffer that VIEWS foreign bytes (bound from a bridge's answer or a
+    // slice of a mapping on the previous pass) has no length to reset: the reset drops
+    // the view, and the buffer is the ordinary empty one the next pass fills.
+    if store.is_foreign() {
+        store.release_foreign();
+        return;
+    }
     let vec_rec = store.collection_rec(db.rec, db.pos);
     if vec_rec != 0 {
         store.set_u32_raw(vec_rec, 4, 0);

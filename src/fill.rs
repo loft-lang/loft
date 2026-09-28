@@ -254,6 +254,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     append_vector,
     slice_vector,
     slice_view,
+    adopt_vector,
     push_int,
     push_int4,
     push_float,
@@ -2360,6 +2361,13 @@ fn slice_view(s: &mut State) {
     let v_src = s.get_stack::<DbRef>();
     let v_r = s.get_stack::<DbRef>();
     s.database.vector_slice_view(&v_r, &v_src, v_lo, v_hi, v_tp);
+}
+
+fn adopt_vector(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_src = s.get_stack::<DbRef>();
+    let v_r = s.get_stack::<DbRef>();
+    s.database.vector_adopt(&v_r, &v_src, v_tp);
 }
 
 fn push_int(s: &mut State) {

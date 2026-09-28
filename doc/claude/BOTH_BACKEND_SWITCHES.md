@@ -307,7 +307,10 @@ library's buffer) where a bind into the local's own store takes a VIEW of the by
 (`OpSliceView` → `Stores::vector_slice_view`; under the switch the same op copies) — the
 first bisect step for a wrong byte, a leak or a refused write out of a slice of `file_map`'s
 result, and the A/B `tests/foreign_store.rs` runs both cell files under.  The one observable
-difference between the forms is that the copy takes a write and the view refuses it.
+difference between the forms is that the copy takes a write and the view refuses it.  Since
+F5 the same switch covers a `#native` bridge's whole vector answer bound to a local
+(`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
+switch; `tests/foreign_bridge.rs` is its A/B).
 
 ## Lowering: `??` chains and nested literals
 

@@ -22,6 +22,7 @@ mod spans;
 pub mod sql_query;
 pub mod sql_source;
 mod structures;
+pub use structures::BridgeArgs;
 mod types;
 pub(crate) use types::DBREF_BORROW;
 

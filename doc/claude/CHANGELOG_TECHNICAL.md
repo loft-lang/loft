@@ -9,6 +9,39 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A library's bytes as a foreign store — the bridge (@PLN174 F5, 2026-09-28)
+
+`loft_ffi::LoftStore` gains `foreign_fn`, its LAST field, and
+`foreign_vector_from_owned(Vec<u8>)`: a cdylib hands its own buffer to the host, which adopts
+it as a read-only foreign store (`ForeignOwner::Extern`: the `Vec`'s parts plus the cdylib's
+`release_vec`, run once with the last store serving the bytes) and answers the bare
+`FOREIGN_REC`; `bridge_push_ref` / `from_loft_ref` turn that into the store's handle
+(`Store::foreign_handle`).  The helper copies where the host has no `foreign_fn` or declined
+(a length past `u32`, a misaligned element).  A trailing field is ABI-safe for every existing
+cdylib: the only host-to-cdylib crossing is the fixed `LoftBridgeFn` shape (the macro's
+`__loft_bridge`), so a longer struct shifts no other argument, and prebuilt cdylibs rekey on
+the loft-ffi fingerprint.  loft-ffi is 0.1.2.
+The dispatcher's return-store mint is announced in the context word
+(`extensions::CTX_RETURN_STORE`, bit 16; the cdylib reads only the low 16) so
+`Stores::foreign_vector_in` adopts the bytes into that store instead of minting a second one.
+`OpAdoptVector` (`Stores::vector_adopt`) replaces `OpAppendVector` at the #410 direct bind
+and the #409 wrapper delivery: a foreign answer is VIEWED whole by the local's own store, an
+owned one copied exactly as before.  `vector_buffer_reset` (the § V-al loop buffer) and
+`Stores::clear` release a view instead of writing its length.
+`Stores::bridge_args` / `bridge_args_done` set a bridge call's heap-typed arguments up ONCE
+for both backends (`dispatch_via_bridge`; `native_call::BridgeGuard` in generated code): a
+foreign vector argument is copied into a record of the store the bridge is handed — a cdylib
+reads a vector by pointer arithmetic on that one store, and `file_map`'s result handed to any
+library bridge crashed sixteen gigabytes past the store since F2 — a foreign vector never
+pins the store, the copies are deleted (or the minted store freed) after the call, and a
+bridge that wrote through a copy meets the foreign refusal.
+The fixture `tests/lib/native_pkg` gains `ext_make_bytes_foreign`, `ext_reverse_foreign`,
+`ext_reverse_owned` and a `[native] crate` line (so `--native` links it); cells
+`tests/lib/native_pkg/tests/174-foreign-bridge.loft` b1–b8 run on both backends under the
+switch matrix, the copy A/B and the two write refusals (`tests/foreign_bridge.rs`); the unit
+test `store::tests::a_cdylib_block_is_read_in_place_and_released_once_with_the_last_store`
+counts the release.  `LOFT_LOCK_BT=1` names the Rust writer at a refused write.
+
 ### A slice of a foreign store is a view (@PLN174 F4b, 2026-09-28)
 
 `OpSliceView` (`Stores::vector_slice_view`) is emitted for `s = v[lo..hi]` when `s` owns its

@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A library can hand you its bytes without copying them.**  A native library that
+decodes a payload used to copy it into a loft vector; with loft-ffi 0.1.2 its bridge can
+answer the buffer it already built (`foreign_vector_from_owned`), and your `v =
+lib::decode(x)` reads those bytes in place — length, index, iteration, a slice, `text_from_bytes`
+— exactly as before.  Such a result is read-only, like a mapped file: writing into it stops the
+program with the advice to copy first (`w = v`).  A mapped file or such a result handed to a
+native library function now works too (it used to crash).
+
 **A slice is a vector wherever a vector is expected.**  `v[lo..hi]` used to be accepted
 only in a `for` loop or on the right of a bind; handing it to a function
 (`f(v[2..5])`), returning it, putting it in a struct field or in a vector literal was
