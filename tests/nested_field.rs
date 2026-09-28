@@ -31,7 +31,10 @@ const EXPECTED: &[(&str, Row, Row)] = &[
     // The literal assignment is three in-place sets; the whole-record copy of a no-heap
     // `V3` is an in-place write too (`@FR-R-InPlace`'s copy clause), so both walks hold one.
     ("n_n11", (2, 6, 3), (0, 0, 0)),
-    ("n_n12", (1, 2, 1), (0, 0, 0)),
+    // Its callee's `const Vertex` parameter is a TUPLE since a nested record rides one
+    // (`(R-ValueLocal)`, 2026-09-28): the call reads the seven fields through the address —
+    // and those getters are flat reads of the view, which the clause OFF still serves.
+    ("n_n12", (1, 9, 1), (1, 7, 0)),
 ];
 
 const SWITCHES: [&str; 4] = [

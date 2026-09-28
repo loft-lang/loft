@@ -334,7 +334,12 @@ impl Output<'_> {
             }
             // A record VARIABLE is read field by field as the variable — so a `(R-RecPtr)`
             // view reads through its held address, as the callee's own reads would have.
-            if matches!(v.unspan(), Value::Var(_)) {
+            // A SUB-RECORD of a value local (`w.pos`) is the same: each getter folds to
+            // the tuple element at the summed offset (`FusedElementReadEmitter`).
+            if matches!(v.unspan(), Value::Var(_))
+                || super::hoist::sub_record(self.data, v)
+                    .is_some_and(|(root, _, _)| self.value_record_locals.contains_key(&root))
+            {
                 return self.output_record_tuple(w, tp, v);
             }
             write!(w, "{{ let __tp: DbRef = ")?;

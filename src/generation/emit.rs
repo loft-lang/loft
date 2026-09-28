@@ -2892,6 +2892,11 @@ impl Output<'_> {
                 // guard (an `if` around the `OpDatabase`), the `OpSet*` writes — IS the
                 // tuple; the yield and the return are the `return __obj` below.  Every
                 // other statement is a release the return owes, and runs.
+                // A place is the buffer's own when it is the buffer or a field path
+                // through its inline sub-records (`hoist::vector_path`).
+                let at_buffer = |place: &Value| {
+                    super::hoist::vector_path(self.data, place).is_some_and(|(r, _)| r == p)
+                };
                 let builds = |op: &Value| {
                     op.any_node(&mut |n| {
                         // @PLN164 C5 — the deep COPY into a view-leaf field is part of the
@@ -2900,11 +2905,15 @@ impl Output<'_> {
                         if let Value::Call(d, args) = n
                             && (*d as usize) < self.data.definitions.len()
                             && self.data.def(*d).name() == "OpAppendVector"
-                            && let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
-                            && (*g as usize) < self.data.definitions.len()
-                            && self.data.def(*g).name() == "OpGetField"
-                            && matches!(gargs.first().map(Value::unspan),
-                                Some(Value::Var(v)) if *v == p)
+                            && args.first().is_some_and(at_buffer)
+                        {
+                            return true;
+                        }
+                        // A sub-record copied INTO the buffer is a write of its scalars.
+                        if let Value::Call(d, args) = n
+                            && (*d as usize) < self.data.definitions.len()
+                            && self.data.def(*d).name() == "OpCopyRecord"
+                            && args.get(1).is_some_and(at_buffer)
                         {
                             return true;
                         }
@@ -2912,8 +2921,7 @@ impl Output<'_> {
                             if (*d as usize) < self.data.definitions.len()
                                 && (self.data.def(*d).name().starts_with("OpSet")
                                     || self.data.def(*d).name().starts_with("OpDatabase"))
-                                && matches!(args.first().map(Value::unspan),
-                                    Some(Value::Var(v)) if *v == p))
+                                && args.first().is_some_and(at_buffer))
                     })
                 };
                 for op in &bl.operators {

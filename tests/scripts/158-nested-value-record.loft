@@ -1,0 +1,162 @@
+// `(R-ValueRecord)` / `(R-ValueLocal)` — a NESTED record rides the tuple: a record whose
+// fields are scalars and INLINE sub-records of scalars (`Vtx { pos: V3, nrm: V3, uv: V2 }`,
+// eight floats two structs deep) is returned, bound and passed as the tuple of its scalars
+// in declaration order, a sub-record contributing its own at the SUMMED offset
+// (`hoist::type_layout`, one home).  A site's nested read `v.pos.x` folds its `OpGetField`
+// chain to that key (`hoist::view_field`), a builder's sub-record copy (`Vtx { pos: p, … }`
+// with `p` a tuple) becomes the sub-record's elements, and a nested literal writes in place
+// at the summed offset.  The interpreter keeps the record and is the values oracle;
+// `LOFT_NO_VALUE_RECORD=1` and `LOFT_NO_VALUE_LOCAL=1` are the A/B, and every cell answers
+// the same under both.  Every value is hand-computed.
+//
+// Cells: the sphere shape — three tuple builders into a builder into an append (n1, n2);
+// a nested field written after the bind (n3); a sub-record handed on to a tuple parameter
+// (n4); boolean and integer members two deep (n5); a text member (n6, declines: keeps the
+// record); an enum member (n7, declines); a null element read through the sub-record (n8);
+// nesting depth two (n9); the sub-record bound to a local and written through it — a
+// VIEW, so the record stays (n10); a builder whose sub-record source is a record in a store, not a tuple
+// (n11); the SOUNDNESS cell — a write through a parent's sub-record must decline the
+// nested parameter viewing that place (n12), and the same through a `&` link (n13); a value
+// local's sub-records copied into a pushed literal (n14).
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a
+//   SABOTAGE (2026-09-28): with `setter_target`'s parent chain struck (an `OpGetField`
+//   target answering its own type alone, as before), native fails n12 — `v.pos.x` read off
+//   the tuple answers the stale 1 where the write through the parent made it 7 (r12 3 for 9);
+//   restored, every cell passes.  LOFT_NO_VALUE_RECORD=1 and LOFT_NO_VALUE_LOCAL=1 are the
+//   A/B: every cell answers the same.
+
+struct V2 { x: float, y: float }
+struct V3 { x: float, y: float, z: float }
+struct Vtx { pos: V3, nrm: V3, uv: V2 }
+struct Mesh { name: text, vs: vector<Vtx> }
+
+fn v2(x: float, y: float) -> V2 { V2 { x: x, y: y } }
+fn v3(x: float, y: float, z: float) -> V3 { V3 { x: x, y: y, z: z } }
+fn vtx(p: V3, n: V3, t: V2) -> Vtx { Vtx { pos: p, nrm: n, uv: t } }
+
+fn add_vtx(self: Mesh, a: Vtx) -> integer {
+  idx = self.vs.len();
+  self.vs += [a];
+  idx
+}
+
+// n4 — the sub-record handed on to a tuple parameter of the sub-record's type
+fn len3(q: V3) -> float { q.x + q.y + q.z }
+fn plen(v: Vtx) -> float { len3(v.pos) + len3(v.nrm) * 10.0 + v.uv.y }
+
+// n5 — boolean and integer members two deep
+struct Flag { on: boolean, k: integer }
+struct Tag { f: Flag, w: float }
+fn tag(on: boolean, k: integer, w: float) -> Tag { Tag { f: Flag { on: on, k: k }, w: w } }
+fn tag_sum(t: Tag) -> integer { if t.f.on { t.f.k * 2 } else { t.f.k } }
+
+// n6 — a text member: owns heap, keeps the record
+struct Named { nm: text, at: V2 }
+fn named(nm: text, x: float) -> Named { Named { nm: nm, at: V2 { x: x, y: x * 2.0 } } }
+
+// n7 — an enum member: declines
+enum Kind { Small, Large }
+struct Sized { k: Kind, at: V2 }
+fn sized(big: boolean, x: float) -> Sized { Sized { k: if big { Kind::Large } else { Kind::Small }, at: v2(x, -x) } }
+
+// n9 — nesting depth two
+struct Pair { lo: V2, hi: V2 }
+struct Box2 { r: Pair, id: integer }
+fn box2(id: integer, x: float) -> Box2 { Box2 { r: Pair { lo: v2(x, x + 1.0), hi: v2(x + 2.0, x + 3.0) }, id: id } }
+fn box_span(b: Box2) -> float { b.r.hi.y - b.r.lo.x + (b.id as float) }
+
+// n11 — a builder whose sub-record sources are records in a store
+fn dup_first(m: Mesh) -> Vtx {
+  first = m.vs[0];
+  Vtx { pos: first.pos, nrm: first.nrm, uv: first.uv }
+}
+
+// n12 — a write through the PARENT's inline sub-record reaches the parameter's place
+struct Seg { a: Vtx, b: Vtx }
+fn tip(v: Vtx, s: Seg) -> float { s.a.pos.x = 7.0; v.pos.x + s.b.pos.x }
+
+// n13 — the same write through a `&` link to the sub-record
+fn tip_link(v: Vtx, s: Seg) -> float { l = &s.a.pos; l.x = 8.0; v.pos.x }
+
+fn main() {
+  // n1: every scalar of a builder built from three tuples reads back
+  w = vtx(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0), v2(7.0, 8.0));
+  assert(w.pos.x == 1.0 && w.pos.y == 2.0 && w.pos.z == 3.0, "n1 pos {w.pos.x} {w.pos.y} {w.pos.z}");
+  assert(w.nrm.x == 4.0 && w.nrm.y == 5.0 && w.nrm.z == 6.0, "n1 nrm {w.nrm.x} {w.nrm.y} {w.nrm.z}");
+  assert(w.uv.x == 7.0 && w.uv.y == 8.0, "n1 uv {w.uv.x} {w.uv.y}");
+
+  // n2: the sphere shape — five vertices appended through the builder; sum of pos.x + nrm.z + uv.y
+  //     i=0..4: pos.x = i, nrm.z = 0.75i, uv.y = i+1  →  Σi + 0.75Σi + Σ(i+1) = 10 + 7.5 + 15 = 32.5
+  m = Mesh { name: "s", vs: [] };
+  for i in 0..5 {
+    f = i as float;
+    p = v3(f, f * 2.0, f * 3.0);
+    n = v3(f * 0.5, f * 0.25, f * 0.75);
+    k = add_vtx(m, vtx(p, n, v2(f, f + 1.0)));
+    assert(k == i, "n2 idx {k} {i}");
+  }
+  s = 0.0;
+  for v in m.vs { s += v.pos.x + v.nrm.z + v.uv.y; }
+  assert(m.vs.len() == 5 && s == 32.5, "n2 {m.vs.len()} {s}");
+  assert(m.vs[3].pos.y == 6.0 && m.vs[4].nrm.x == 2.0 && m.vs[2].uv.x == 2.0, "n2 fields {m.vs[3].pos.y} {m.vs[4].nrm.x} {m.vs[2].uv.x}");
+
+  // n3: a nested field written after the bind: pos.x 1 → 11, nrm.z 6 → 42; the rest unmoved
+  w.nrm.z = 42.0;
+  w.pos.x = w.pos.x + 10.0;
+  assert(w.pos.x == 11.0 && w.nrm.z == 42.0 && w.pos.y == 2.0 && w.uv.y == 8.0, "n3 {w.pos.x} {w.nrm.z} {w.pos.y} {w.uv.y}");
+
+  // n4: w after n3 is pos (11,2,3), nrm (4,5,42), uv.y 8: 16 + 51*10 + 8 = 534; a fresh one 6 + 150 + 8 = 164
+  assert(plen(w) == 534.0, "n4 {plen(w)}");
+  assert(plen(vtx(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0), v2(7.0, 8.0))) == 164.0, "n4b");
+
+  // n5: on → k*2 = 14; off → 3
+  assert(tag_sum(tag(true, 7, 0.5)) == 14 && tag_sum(tag(false, 3, 0.5)) == 3, "n5");
+  t = tag(true, 9, 1.25);
+  assert(t.f.on && t.f.k == 9 && t.w == 1.25, "n5 fields {t.f.k} {t.w}");
+
+  // n6: the text member — values hold with the record kept
+  nd = named("abc", 1.5);
+  assert(nd.nm == "abc" && nd.at.x == 1.5 && nd.at.y == 3.0, "n6 {nd.nm} {nd.at.x} {nd.at.y}");
+
+  // n7: the enum member
+  sz = sized(true, 2.5);
+  assert(sz.k == Kind::Large && sz.at.x == 2.5 && sz.at.y == -2.5, "n7 {sz.at.x} {sz.at.y}");
+
+  // n8: an absent element is null; a present one reads through the sub-record
+  e99 = m.vs[99];
+  e1 = m.vs[1];
+  assert(e99 == null && e1 != null && e1.pos.x == 1.0 && e1.uv.y == 2.0, "n8");
+
+  // n9: depth two: hi.y = x+3 = 5, lo.x = 2, id 4 → 5 - 2 + 4 = 7
+  assert(box_span(box2(4, 2.0)) == 7.0, "n9 {box_span(box2(4, 2.0))}");
+  bx = box2(1, 0.0);
+  assert(bx.r.lo.y == 1.0 && bx.r.hi.x == 2.0 && bx.id == 1, "n9 fields {bx.r.lo.y} {bx.r.hi.x}");
+
+  // n10: a bind from a sub-record is a VIEW of it (the interpreter's answer): a write
+  //      through the view reaches the record, so a local whose sub-record is viewed keeps
+  //      its record — a tuple has no place to view
+  q = w.pos;
+  q.x = q.x + 100.0;
+  assert(q.x == 111.0 && w.pos.x == 111.0 && q.z == 3.0, "n10 {q.x} {w.pos.x} {q.z}");
+
+  // n11: a builder from store records: m.vs[0] is pos (0,0,0) nrm (0,0,0) uv (0,1)
+  d = dup_first(m);
+  assert(d.pos.x == 0.0 && d.uv.y == 1.0 && d.uv.x == 0.0, "n11 {d.pos.x} {d.uv.y}");
+
+  // n14: a value local's sub-records copied into a pushed literal: the tuple's ranges land
+  //      in the element; w is pos (111,2,3), nrm (4,5,42), uv (7,8)
+  m2 = Mesh { name: "t", vs: [] };
+  m2.vs += [Vtx { pos: w.pos, nrm: w.nrm, uv: w.uv }];
+  assert(m2.vs.len() == 1 && m2.vs[0].pos.x == 111.0 && m2.vs[0].nrm.z == 42.0 && m2.vs[0].uv.y == 8.0, "n14 {m2.vs[0].pos.x} {m2.vs[0].nrm.z} {m2.vs[0].uv.y}");
+
+  // n12: the write through the parent must be seen through the parameter: 7 + b.pos.x(2) = 9
+  sg = Seg { a: vtx(v3(1.0, 0.0, 0.0), v3(0.0, 0.0, 0.0), v2(0.0, 0.0)), b: vtx(v3(2.0, 0.0, 0.0), v3(0.0, 0.0, 0.0), v2(0.0, 0.0)) };
+  r12 = tip(sg.a, sg);
+  assert(r12 == 9.0 && sg.a.pos.x == 7.0, "n12 {r12} {sg.a.pos.x}");
+
+  // n13: through a link: 8
+  r13 = tip_link(sg.a, sg);
+  assert(r13 == 8.0 && sg.a.pos.x == 8.0, "n13 {r13} {sg.a.pos.x}");
+  println("ok");
+}

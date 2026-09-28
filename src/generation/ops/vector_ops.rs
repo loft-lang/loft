@@ -96,19 +96,16 @@ impl OpEmitter for FusedElementReadEmitter {
         // VALUE-RETURNED record is a tuple index: there is no record in a store to read.
         // Checked here rather than from a second registration, because this emitter owns
         // every scalar getter and a later insert would silently replace it.
+        // The field is the local's own or one reached through INLINE sub-records
+        // (`p.pos.x`), at the summed offset (`hoist::view_field`) — the key the layout
+        // indexed a nested record's scalar under.
         if let [base, fld, ..] = args
-            && let Value::Var(v) = base.unspan()
-            && let Some(tp) = ctx.output.value_record_locals.get(v).copied()
-            && let Value::Int(off) = fld.unspan()
-            && let Some(idx) = ctx
-                .output
-                .value_records
-                .index
-                .get(&(tp, i64::from(*off)))
-                .copied()
+            && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
+            && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
+            && let Some(idx) = ctx.output.value_records.index.get(&(tp, off)).copied()
         {
             let name =
-                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(*v));
+                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
             return write!(ctx.w, "var_{name}.{idx}");
         }
 
@@ -396,18 +393,12 @@ impl OpEmitter for FusedElementWriteEmitter {
         // `(R-ValueLocal)` — a field write on a local that holds a VALUE-RETURNED record is
         // the tuple element's assignment: there is no record in a store to write.
         if let [base, fld, val] = args
-            && let Value::Var(v) = base.unspan()
-            && let Some(tp) = ctx.output.value_record_locals.get(v).copied()
-            && let Value::Int(off) = fld.unspan()
-            && let Some(idx) = ctx
-                .output
-                .value_records
-                .index
-                .get(&(tp, i64::from(*off)))
-                .copied()
+            && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
+            && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
+            && let Some(idx) = ctx.output.value_records.index.get(&(tp, off)).copied()
         {
             let name =
-                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(*v));
+                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
             write!(ctx.w, "{{ var_{name}.{idx} = (")?;
             ctx.emit(val)?;
             return write!(ctx.w, "); }}");

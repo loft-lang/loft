@@ -220,9 +220,9 @@ element's append (the text set grows a store), and `(R-Alias)` for a parameter r
 another vector (a type-based alias rule would admit `sc.ops += […]` beside `src[i]`).
 
 
-## Next (2026-09-25) — R8: a nested record rides the tuple
+## R8: a nested record rides the tuple — priced 2026-09-25, BUILT 2026-09-28 (§ Built below)
 
-Priced, designed, NOT built.  The value-record family (`(R-ValueRecord)`, `(R-ValueLocal)`)
+Priced and designed here; built as `(R-ValueRecord)`'s nested clause.  The value-record family (`(R-ValueRecord)`, `(R-ValueLocal)`)
 stops at a record whose fields are scalars: `hoist::type_layout` declines any field that is
 itself a record, so mesh3d's `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }` — eight floats
 two structs deep — keeps its return buffer while `Vec3` rides the tuple.  A census of the 42
@@ -327,3 +327,27 @@ binaries interleaved twice on the idle arm64 box, `--n 10`, every hash equal):
 
 `resolve_move` and `emit_to_material` were not worked on: they call `map_get_hex` and the
 `vec3` / `vertex` builders, which the width and the discharge-return leaf reached.
+
+## Built (2026-09-28) — R8: a nested record rides the tuple
+
+Built as designed in § R8 (`formal/rewrites.md` `(R-ValueRecord)` § The nested clause): the
+layout recurses into an inline sub-record (one home, `hoist::type_layout`), the sites fold a
+nested read to the summed key, the builder's literal takes a tuple source's elements for a
+sub-record copy, and a sub-record of a value local crosses a call or a copy as a range of the
+tuple.  On the sphere-shaped probe (`p = vec3(…); n = vec3(…); add_vertex(m, vertex(p, n,
+vec2(…)))`, 2 000 000 vertices, this arm64 box idle): **0.27 → 0.17 s (−37 %)**, values equal
+on the interpreter; `LOFT_NO_VALUE_RECORD=1` 0.43 s.  The emitted `n_vertex` answers
+`(f64 × 8)` from its three tuple parameters with no store touched, and `add_vertex` takes the
+eight floats and writes them into the appended slot — the general record append (`OpNewRecord`,
+eight `set_float`s, `OpFinishRecord`) that the push-window form of `(R-PushRec)` is the clause
+after this one.  What the building found the design had not said: a write through a
+sub-record must count as a write into EVERY enclosing record, or a `Vertex` tuple parameter
+would not see `other.pos.x = …` (the classifier typed such a write by the sub-record alone,
+which the flat family never had to notice — cell n12 is the falsifier, and a `&` link to a
+sub-record reaches every type holding it inline); and a bind from a sub-record (`q = w.pos`)
+is a VIEW by the oracle, not a copy, so that local keeps its record (n10).  The rows it
+stands behind (`sphere`, `mesh_to_floats`, `save_glb`, stage `draw_list`, tween `value`,
+game_protocol `msg_ping`) are re-read on the x86-64 lane at the next portal re-measure;
+`msg_ping` returns a nested record PAIR by value, so it is the row to read first.  Cells
+`tests/scripts/158-nested-value-record.loft`; the `nested_field` pin's n12 row moved
+(2 → 9 reads through the address: the callee's parameter is a tuple now, filled at the site).

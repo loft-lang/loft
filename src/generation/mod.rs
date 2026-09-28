@@ -4948,23 +4948,31 @@ impl Output<'_> {
     /// writes, in field order, or `None` when the block is not the complete
     /// constant-offset write set the value path needs (then the buffer form stands).
     ///
+    /// A write is a scalar setter at a constant offset — on the buffer itself, or on an
+    /// INLINE sub-record of it through an `OpGetField` chain, at the summed offset
+    /// (`hoist::view_field`) — or a whole COPY into such a sub-record
+    /// (`OpCopyRecord(src, OpGetField(buf, P, S), S)`), which fills every slot of `S` at
+    /// `P + x` with the getter of `src`'s field `x`: a tuple source reads its element, a
+    /// record source its store, exactly as the caller's own field reads would.
+    ///
     /// A field slot answers `None` where the value form derives the part rather than
     /// reading it off a write: @PLN164 C5's VIEW LEAF, whose tuple element is the PLACE the
     /// field views (`hoist::leaf_source`) and whose record-form write is the deep copy the
     /// leaf removes.  Every other slot must be written, or the whole block declines.
     #[must_use]
-    pub fn value_record_parts<'b>(
+    pub fn value_record_parts(
         &self,
-        bl: &'b crate::data::Block,
+        bl: &crate::data::Block,
         tp: u16,
-    ) -> Option<Vec<Option<&'b Value>>> {
+    ) -> Option<Vec<Option<Value>>> {
         let n = self
             .value_records
             .index
             .keys()
             .filter(|(t, _)| *t == tp)
             .count();
-        let mut slots: Vec<Option<&Value>> = vec![None; n];
+        let mut slots: Vec<Option<Value>> = vec![None; n];
+        let copy_nr = self.data.def_nr("OpCopyRecord");
         for op in &bl.operators {
             let Value::Call(d, args) = op.unspan() else {
                 continue;
@@ -4972,18 +4980,43 @@ impl Output<'_> {
             if (*d as usize) >= self.data.definitions.len() {
                 return None;
             }
+            if *d == copy_nr
+                && let [src, dst, _] = args.as_slice()
+                && let Value::Call(g, gargs) = dst.unspan()
+                && (*g as usize) < self.data.definitions.len()
+                && self.data.def(*g).name() == "OpGetField"
+                && let [_, sub_off, sub_tp] = gargs.as_slice()
+                && let (Value::Int(sub_off), Value::Int(sub_tp)) =
+                    (sub_off.unspan(), sub_tp.unspan())
+                && let Ok(sub_tp) = u16::try_from(*sub_tp)
+                && self.stores.is_struct(sub_tp)
+            {
+                let base = i64::from(*sub_off);
+                let end = base + i64::from(self.stores.size(sub_tp));
+                let fields = self.value_records.types.get(&tp)?.fields.clone();
+                for (off, rt) in fields.iter().filter(|(o, _)| *o >= base && *o < end) {
+                    let idx = *self.value_records.index.get(&(tp, *off))?;
+                    if idx >= slots.len() || slots[idx].is_some() || hoist::is_view_part(rt) {
+                        return None;
+                    }
+                    let getter = self.data.def_nr(hoist::value_getter(rt));
+                    slots[idx] = Some(Value::Call(
+                        getter,
+                        vec![src.clone(), Value::Int(i32::try_from(*off - base).ok()?)],
+                    ));
+                }
+                continue;
+            }
             let name = self.data.def(*d).name();
             if !name.starts_with("OpSet") {
                 // The allocate-or-reuse guard and the trailing yield are what the value
                 // path replaces; anything ELSE in the block is work it would lose.
-                if matches!(op.unspan(), Value::Var(_)) {
-                    continue;
-                }
                 continue;
             }
-            let Some(Value::Int(off)) = args.get(1).map(Value::unspan) else {
+            let (Some(base), Some(fld)) = (args.first(), args.get(1)) else {
                 return None;
             };
+            let (_, off) = hoist::view_field(self.data, base, fld)?;
             // @PLN164 C5 — a VIEW-LEAF field's `OpSet*` is the collection slot's own
             // ZERO-INIT, not a value the tuple carries: a vector field is minted empty and
             // then appended into, so the write to skip is the one at a view offset.  The
@@ -4992,15 +5025,15 @@ impl Output<'_> {
                 .value_records
                 .view_offs
                 .get(&tp)
-                .is_some_and(|offs| offs.contains(&i64::from(*off)))
+                .is_some_and(|offs| offs.contains(&off))
             {
                 continue;
             }
-            let idx = *self.value_records.index.get(&(tp, i64::from(*off)))?;
+            let idx = *self.value_records.index.get(&(tp, off))?;
             if idx >= slots.len() || slots[idx].is_some() {
                 return None;
             }
-            slots[idx] = args.get(2);
+            slots[idx] = args.get(2).cloned();
         }
         // A VIEW-LEAF slot is derived, not written: its own `OpAppendVector` is the copy the
         // leaf replaces, and the emitter answers the place instead.

@@ -19,7 +19,7 @@
 // a loop in the callee over the parameter (c10), a link to the parameter (c11, must
 // decline), a copy from the parameter then written (c12), a one-field record (c13), boolean
 // and integer fields (c14), recursion through an admitted call (c15), a nested record (c16,
-// not a candidate), a fresh record of the same type written in the callee (c17) and the
+// carried since 2026-09-28), a fresh record of the same type written in the callee (c17) and the
 // parameter rebound in the body (c18, keeps the record).  Every value is hand-computed.
 //
 // @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a
@@ -95,7 +95,8 @@ fn tally2(f: Flag) -> integer { tally(f) * 2 }
 // c15 — recursion through an admitted call
 fn walk(p: V3, n: integer) -> float { if n == 0 { p.x } else { walk(v3(p.x + 1.0, p.y, p.z), n - 1) } }
 
-// c16 — a nested record is not a candidate
+// c16 — a nested record: a candidate since 2026-09-28 (its scalars at the summed offsets;
+//       tests/scripts/158-nested-value-record.loft is the matrix)
 fn vx(v: Vtx) -> float { v.pos.x + v.nrm.y }
 
 // c17 — a fresh record of the parameter's type written in the callee

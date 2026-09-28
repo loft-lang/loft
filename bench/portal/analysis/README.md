@@ -9,11 +9,23 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
-| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read |
+| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read; **2026-09-28:** R8 BUILT — a NESTED record rides the tuple (`sphere`-shaped probe −37 %; § Built 2026-09-28), the rows it stands behind wait for the x86-64 re-measure |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
 | `libraries-wide.md` | every class, from eleven libraries' own benches | **MEASURED 2026-09-24, NOT PRICED** — 32 rows, median 3.80×; text-build (the per-character append) and a constant vector literal rebuilt per call are the two class-wide gaps it found |
 | `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, DESIGNED, NOT BUILT** — 67 ns per mint+free itemised; the lever is `(R-WorkBuffer)`, a non-escaping local allocated once by the caller like the text and return buffers already are |
 | `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **PRICED, NOTHING BUILT** — W1 −65 %, W2 −75 %, C1+ −39 %, P1 −30 %; the single-row harness is the instrument this round lacked |
+
+## Where to resume (2026-09-28, branch `157-native-4x`)
+
+**R8 is built** (`records.md` § Built 2026-09-28; `formal/rewrites.md` `(R-ValueRecord)` § The
+nested clause): a record of scalars and inline sub-records of scalars — mesh3d's `Vertex`,
+game_protocol's nested message pair — is returned, bound and passed as its tuple.  Next in
+that line: re-measure the portal on the x86-64 lane and read `msg_ping` (11×, a nested pair
+returned by value, nothing else), `sphere` (14.5×) and `mesh_to_floats` (21×) first; then the
+push-window delivery of a tuple into an appended slot (`(R-PushRec)`'s clause after this
+one: `add_vertex` still mints, writes eight fields through `store_mut` and finishes).  Beside
+it, unchanged from below: `resolve_move`, `panel_build`'s per-frame free, `(R-WorkBuffer)`
+(`alloc-temp.md`).
 
 ## Where to resume (2026-09-27, branch `157-native-4x`)
 

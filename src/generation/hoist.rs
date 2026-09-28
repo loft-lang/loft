@@ -709,6 +709,52 @@ pub fn view_field(data: &Data, base: &Value, fld: &Value) -> Option<(u16, i64)> 
     Some((root, offs.iter().sum::<i64>() + i64::from(*fld)))
 }
 
+/// A SUB-RECORD of a record variable, as an `OpGetField` chain names one: the root
+/// variable, the summed byte offset the sub-record starts at, and its schema type (the
+/// last `OpGetField`'s content).  `v.pos` on a record carried as a tuple is this: the
+/// sub-record is a RANGE of the tuple, which is what a hand-off to a tuple parameter and a
+/// copy FROM it read (`(R-ValueLocal)`).  A bare variable is not a sub-record.
+#[must_use]
+pub fn sub_record(data: &Data, v: &Value) -> Option<(u16, i64, u16)> {
+    let Value::Call(d, args) = v.unspan() else {
+        return None;
+    };
+    if args.len() != 3
+        || (*d as usize) >= data.definitions.len()
+        || data.def(*d).name() != "OpGetField"
+    {
+        return None;
+    }
+    let Value::Int(content) = args[2].unspan() else {
+        return None;
+    };
+    let (root, offs) = vector_path(data, v)?;
+    Some((root, offs.iter().sum(), u16::try_from(*content).ok()?))
+}
+
+/// The type of the sub-record of variable `v` that `arg` names, when `arg` is an
+/// `OpGetField` chain rooted at `v` ([`sub_record`]); `None` for anything else.
+fn sub_record_of(data: &Data, arg: Option<&Value>, v: u16) -> Option<u16> {
+    let (root, _, sub) = sub_record(data, arg?)?;
+    (root == v).then_some(sub)
+}
+
+/// The record type an `OpCopyRecord`'s third operand names, under its flag mask.
+fn copy_type(arg: Option<&Value>) -> Option<u16> {
+    let Value::Int(k) = arg?.unspan() else {
+        return None;
+    };
+    u16::try_from(*k & i32::from(crate::keys::COPY_TP_MASK)).ok()
+}
+
+/// The field a scalar getter or setter with operands `args` addresses on `v`, at its
+/// SUMMED offset: `v.f` and `v.pos.x` are one notion ([`view_field`]), and a tuple carries
+/// a nested record's scalars at exactly that key.
+fn field_on(data: &Data, args: &[Value], v: u16) -> Option<i64> {
+    let (root, off) = view_field(data, args.first()?, args.get(1)?)?;
+    (root == v).then_some(off)
+}
+
 /// What a loop body writes in place, by RECORD TYPE (a schema type number) and offset
 /// (@PLN157 P4c).  A hoisted scalar `(v, fld)` of a record typed `tp` is stale after a
 /// write at `(tp, fld)` through ANY route — the variable itself, a `&`-bound alias, an
@@ -1160,8 +1206,13 @@ fn retbuf_var(data: &Data, def_nr: u32) -> Option<u16> {
 
 /// What an in-place setter's target reaches.
 enum Target {
-    /// A field of a record of this schema type.
-    Record(u16),
+    /// A field of a record of the FIRST type, and — because an inline sub-record is
+    /// flattened into its parent — of every enclosing record, each with the byte offset
+    /// the addressed record starts at inside it: `s.a.x = …` on `Seg { a: V3, b: V3 }`
+    /// writes `(V3, 0 + x)` and `(Seg, off(a) + x)`.  A target the chain cannot see the
+    /// parent of (a `&` link to a sub-record, a parameter's view) reaches every type that
+    /// holds its record inline ([`inline_parents`]), which only ever declines more.
+    Record(Vec<(u16, i64)>),
     /// An element of a scalar vector — no record field can alias it.
     NoRecord,
     /// A shape this analysis does not type.
@@ -1196,7 +1247,16 @@ fn setter_target(
 ) -> Target {
     match target.unspan() {
         Value::Var(u) => {
-            plain_record_type(data, vars.tp(*u)).map_or(Target::Unknown, Target::Record)
+            let Some(tp) = plain_record_type(data, vars.tp(*u)) else {
+                return Target::Unknown;
+            };
+            let mut chain = vec![(tp, 0)];
+            // A record this frame does not own — a parameter's view, a `&` link, an
+            // element view — may be a sub-record of a caller's record.
+            if !owned_local(vars, *u) {
+                chain.extend(inline_parents(stores, tp));
+            }
+            Target::Record(chain)
         }
         Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
             let name = data.def(*d).name();
@@ -1204,10 +1264,25 @@ fn setter_target(
                 let Value::Int(content) = args[2].unspan() else {
                     return Target::Unknown;
                 };
-                return match u16::try_from(*content) {
-                    Ok(tp) if stores.is_struct(tp) => Target::Record(tp),
-                    _ => Target::Unknown,
+                let Value::Int(off) = args[1].unspan() else {
+                    return Target::Unknown;
                 };
+                let Ok(tp) = u16::try_from(*content) else {
+                    return Target::Unknown;
+                };
+                if !stores.is_struct(tp) {
+                    return Target::Unknown;
+                }
+                let mut chain = vec![(tp, 0)];
+                match setter_target(&args[0], data, stores, vars) {
+                    Target::Record(parents) => {
+                        chain.extend(parents.into_iter().map(|(p, b)| (p, b + i64::from(*off))));
+                    }
+                    Target::NoRecord | Target::Unknown => {
+                        chain.extend(inline_parents(stores, tp));
+                    }
+                }
+                return Target::Record(chain);
             }
             if is_element_address(data, *d) && args.len() == 3 {
                 return element_target(&args[0], data, stores, vars);
@@ -1216,6 +1291,34 @@ fn setter_target(
         }
         _ => Target::Unknown,
     }
+}
+
+/// Every struct type that holds a record of type `tp` INLINE, transitively, each with the
+/// byte offset `tp` starts at inside it: the records a write through a sub-record view
+/// may be reaching when the view's parent is not in sight.
+fn inline_parents(stores: &Stores, tp: u16) -> Vec<(u16, i64)> {
+    let mut out: Vec<(u16, i64)> = Vec::new();
+    let mut todo: Vec<(u16, i64)> = vec![(tp, 0)];
+    while let Some((cur, base)) = todo.pop() {
+        for (p, t) in stores.types.iter().enumerate() {
+            let (crate::database::Parts::Struct(fields)
+            | crate::database::Parts::EnumValue(_, fields)) = &t.parts
+            else {
+                continue;
+            };
+            let Ok(p) = u16::try_from(p) else {
+                continue;
+            };
+            for f in fields.iter().filter(|f| f.content == cur) {
+                let at = base + i64::from(f.position);
+                if !out.contains(&(p, at)) {
+                    out.push((p, at));
+                    todo.push((p, at));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The element type of the vector operand of an element-address op, as a [`Target`].
@@ -1231,7 +1334,9 @@ fn element_target(
                 if is_scalar(elem) {
                     Target::NoRecord
                 } else {
-                    plain_record_type(data, elem).map_or(Target::Unknown, Target::Record)
+                    // An element is a whole record of its own, never a sub-record.
+                    plain_record_type(data, elem)
+                        .map_or(Target::Unknown, |t| Target::Record(vec![(t, 0)]))
                 }
             }
             _ => Target::Unknown,
@@ -1251,7 +1356,7 @@ fn element_target(
             if elem == u16::MAX {
                 Target::Unknown
             } else if stores.is_struct(elem) {
-                Target::Record(elem)
+                Target::Record(vec![(elem, 0)])
             } else if stores.is_base(elem) {
                 Target::NoRecord
             } else {
@@ -1357,8 +1462,10 @@ fn body_writes(
                     .first()
                     .map_or(Target::Unknown, |t| setter_target(t, data, stores, vars))
                 {
-                    Target::Record(tp) => {
-                        set.offsets.insert((tp, i64::from(*fld)));
+                    Target::Record(chain) => {
+                        for (tp, base) in chain {
+                            set.offsets.insert((tp, base + i64::from(*fld)));
+                        }
                     }
                     Target::NoRecord => {}
                     Target::Unknown => {
@@ -8878,12 +8985,15 @@ fn value_local_disabled() -> bool {
 }
 
 /// The register layout of record type `tp` (declared by definition `rd`), or `None` where
-/// some part of it cannot ride a tuple: no field, more than [`VALUE_RECORD_MAX_FIELDS`], a
-/// field with no declaration of its own, a narrow integer, or a heap field that is not a
-/// view leaf (`views_ok` false declines every heap field).  Fills `index` with the
-/// `(type, offset)` → tuple-index map the call sites read.  ONE home for the question
-/// "what does a tuple of this type carry": a result, a local and a parameter agree by
-/// construction.
+/// some part of it cannot ride a tuple: no field, more than [`VALUE_RECORD_MAX_FIELDS`]
+/// scalars, a field with no declaration of its own, a narrow integer, or a heap field that
+/// is not a view leaf (`views_ok` false declines every heap field).  An INLINE sub-record
+/// contributes its own scalars at the SUMMED offset (`Vertex { pos: Vec3, … }` is eight
+/// floats), so a tuple of a record is its scalar fields in declaration order however deep
+/// they sit.  Fills `index` with the `(type, offset)` → tuple-index map the call sites read,
+/// keyed by THIS type and the summed offset — the key a folded `OpGetField` chain reaches
+/// (`view_field`).  ONE home for the question "what does a tuple of this type carry": a
+/// result, a local and a parameter agree by construction.
 fn type_layout(
     data: &Data,
     stores: &Stores,
@@ -8892,50 +9002,14 @@ fn type_layout(
     views_ok: bool,
     index: &mut HashMap<(u16, i64), usize>,
 ) -> Option<ValueTuple> {
-    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
-        &stores.types.get(tp as usize)?.parts
-    else {
-        return None;
-    };
-    if fields.is_empty() || fields.len() > VALUE_RECORD_MAX_FIELDS {
-        return None;
-    }
     let mut parts: Vec<&'static str> = Vec::new();
     let mut order: Vec<(i64, &'static str)> = Vec::new();
     let mut idx: Vec<((u16, i64), usize)> = Vec::new();
-    for (i, f) in fields.iter().enumerate() {
-        // Pair the schema field with the DECLARATION that named it, by name.  The two
-        // lists are not the same list and need not be the same length: a runtime
-        // schema can carry a field the definition declares no attribute for, and
-        // indexing `attributes` by the schema's position then reads another field's
-        // type -- or panics, which is what it did (`882-keyed-element-read-borrows-
-        // its-container.loft` crashed the compiler: "len is 2 but the index is 2").
-        // No match means the record has a part this analysis cannot account for, so
-        // the function declines and keeps its return buffer; declining only ever costs
-        // the optimisation.
-        let a_nr = data
-            .def(rd)
-            .attributes
-            .iter()
-            .position(|a| a.name == f.name)?;
-        let ftp = data.attr_type(rd, a_nr);
-        // `integer` at its 8-byte width only: the tuple carries an `i64`, and the
-        // getter/setter the value path pairs it with (`OpGetInt`/`OpSetInt`, the live
-        // arm's `get_int`) read and write eight bytes.  A narrow field (a ranged or
-        // `size(1)` alias) declines the function rather than reading its neighbour.
-        if matches!(ftp.base(), Type::Integer(_)) && stores.size(f.content) != 8 {
-            return None;
-        }
-        if let Some(rt) = value_field_type(&ftp) {
-            parts.push(rt);
-            order.push((i64::from(f.position), rt));
-        } else if views_ok && view_leaf_type(&ftp) {
-            parts.push(VIEW_LEAF_PART);
-            order.push((i64::from(f.position), VIEW_LEAF_PART));
-        } else {
-            return None;
-        }
-        idx.push(((tp, i64::from(f.position)), i));
+    layout_into(
+        data, stores, rd, tp, tp, 0, views_ok, &mut parts, &mut order, &mut idx,
+    )?;
+    if parts.is_empty() || parts.len() > VALUE_RECORD_MAX_FIELDS {
+        return None;
     }
     index.extend(idx);
     // A ONE-FIELD record needs the trailing comma: `(bool)` is Rust for a
@@ -8953,6 +9027,80 @@ fn type_layout(
         tuple,
         fields: order,
     })
+}
+
+/// One level of [`type_layout`]: the fields of `tp` (declared by `rd`) laid `base` bytes
+/// into the TOP record `top`, an inline sub-record recursing with its own base.  A view
+/// leaf is admitted at the top level only: a sub-record's heap field would be a place
+/// two records deep, which no site gate proves.
+#[allow(clippy::too_many_arguments)]
+fn layout_into(
+    data: &Data,
+    stores: &Stores,
+    rd: u32,
+    tp: u16,
+    top: u16,
+    base: i64,
+    views_ok: bool,
+    parts: &mut Vec<&'static str>,
+    order: &mut Vec<(i64, &'static str)>,
+    idx: &mut Vec<((u16, i64), usize)>,
+) -> Option<()> {
+    let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
+        &stores.types.get(tp as usize)?.parts
+    else {
+        return None;
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    for f in fields {
+        // Pair the schema field with the DECLARATION that named it, by name.  The two
+        // lists are not the same list and need not be the same length: a runtime
+        // schema can carry a field the definition declares no attribute for, and
+        // indexing `attributes` by the schema's position then reads another field's
+        // type -- or panics, which is what it did (`882-keyed-element-read-borrows-
+        // its-container.loft` crashed the compiler: "len is 2 but the index is 2").
+        // No match means the record has a part this analysis cannot account for, so
+        // the function declines and keeps its return buffer; declining only ever costs
+        // the optimisation.
+        let a_nr = data
+            .def(rd)
+            .attributes
+            .iter()
+            .position(|a| a.name == f.name)?;
+        let ftp = data.attr_type(rd, a_nr);
+        let off = base + i64::from(f.position);
+        // `integer` at its 8-byte width only: the tuple carries an `i64`, and the
+        // getter/setter the value path pairs it with (`OpGetInt`/`OpSetInt`, the live
+        // arm's `get_int`) read and write eight bytes.  A narrow field (a ranged or
+        // `size(1)` alias) declines the function rather than reading its neighbour.
+        if matches!(ftp.base(), Type::Integer(_)) && stores.size(f.content) != 8 {
+            return None;
+        }
+        if let Some(rt) = value_field_type(&ftp) {
+            parts.push(rt);
+            order.push((off, rt));
+        } else if views_ok && base == 0 && view_leaf_type(&ftp) {
+            parts.push(VIEW_LEAF_PART);
+            order.push((off, VIEW_LEAF_PART));
+        } else if let Some(sub) = plain_record_type(data, &ftp)
+            && sub == f.content
+            && stores.is_struct(sub)
+            && let Type::Reference(sub_rd, _) = ftp.peel_link()
+        {
+            // An inline sub-record: the schema flattens it into the parent, so its scalars
+            // are the parent's at the summed offset.
+            layout_into(
+                data, stores, *sub_rd, sub, top, off, false, parts, order, idx,
+            )?;
+            continue;
+        } else {
+            return None;
+        }
+        idx.push(((top, off), parts.len() - 1));
+    }
+    Some(())
 }
 
 /// `(R-ValueLocal)`'s parameter gate, asked the narrower question the tuple form needs
@@ -9062,7 +9210,7 @@ fn native_writes_existing(
                 .first()
                 .map_or(Target::Unknown, |t| setter_target(t, data, stores, vars))
             {
-                Target::Record(t) => t == tp,
+                Target::Record(chain) => chain.iter().any(|(t, _)| *t == tp),
                 Target::NoRecord => false,
                 Target::Unknown => true,
             };
@@ -12148,9 +12296,11 @@ fn local_uses_ok(
                 }
                 // `(R-ValueLocal)` — handed to a TUPLE PARAMETER: the fields cross the call
                 // as the scalars they are, which is the hand-off the tuple serves.
+                // — or a SUB-RECORD of the local handed to a tuple parameter of the
+                // sub-record's type: a range of the tuple crosses the call.
                 if let Some(ps) = params.get(d) {
-                    for i in ps.keys() {
-                        if arg_is_v(*i) {
+                    for (i, ptp) in ps {
+                        if arg_is_v(*i) || sub_record_of(data, args.get(*i), v) == Some(*ptp) {
                             accounted += 1;
                         }
                     }
@@ -12158,10 +12308,7 @@ fn local_uses_ok(
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
-                if arg_is_v(0)
-                    && VALUE_RECORD_GETTERS.contains(&name)
-                    && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
-                {
+                if VALUE_RECORD_GETTERS.contains(&name) && field_on(data, args, v).is_some() {
                     accounted += 1;
                 }
                 // A SCALAR FIELD WRITE at a constant offset is the tuple element's
@@ -12169,9 +12316,8 @@ fn local_uses_ok(
                 // view-leaf offset, whose element is a place and not a value.  Only the
                 // setters `FusedElementWriteEmitter` owns are admitted, so every accounted
                 // write has the emitter arm that spells it.
-                if arg_is_v(0)
-                    && VALUE_RECORD_SETTERS.contains(&name)
-                    && matches!(args.get(1).map(Value::unspan), Some(Value::Int(off)) if !view_offs.contains(&i64::from(*off)))
+                if VALUE_RECORD_SETTERS.contains(&name)
+                    && field_on(data, args, v).is_some_and(|off| !view_offs.contains(&off))
                 {
                     accounted += 1;
                 }
@@ -12207,6 +12353,15 @@ fn local_uses_ok(
                     accounted += 1;
                 }
                 if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
+                    accounted += 1;
+                }
+                // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
+                // one): the tuple's range is materialised into the destination.  A bind
+                // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.
+                if name == "OpCopyRecord"
+                    && !copies
+                    && sub_record_of(data, args.first(), v).is_some_and(|sub| copy_type(args.get(2)) == Some(sub))
+                {
                     accounted += 1;
                 }
                 // `@FR-O-Buffer` — the phantom buffer's entry witness snapshots it; a phantom

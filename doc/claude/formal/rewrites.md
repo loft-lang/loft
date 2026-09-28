@@ -2463,7 +2463,8 @@ line in `Output::output_function`'s prelude.
                  temp-store build and is the oracle.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
-                 scalar fields (an `integer` only at its 8-byte width) returns those
+                 scalars (an `integer` only at its 8-byte width), an INLINE sub-record
+                 contributing its own scalars at the summed offset, returns those
                  fields BY VALUE — a Rust tuple, in registers — instead of writing them
                  into a return buffer the caller then reads back.  Admission is a
                  FIXPOINT over two gates, because a tail may forward another admitted
@@ -2785,11 +2786,14 @@ answered here rather than decided in the code.
                  tuple, where its copy already costs nothing and a view would need the
                  store the tuple removed; a struct-enum.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
-                 no-heap record of at most eight scalar fields — carries the record's
-                 fields as its TUPLE in the binding frame too, where every use of the
-                 local is a field read, a scalar field WRITE at a constant offset (the
-                 tuple element's assignment), a hand-off as a by-value or `const` argument to
-                 another admitted function (the fields cross the call as scalars), or a
+                 no-heap record of at most eight scalars, nested or flat — carries the
+                 record's fields as its TUPLE in the binding frame too, where every use
+                 of the local is a field read (`v.f`, or `v.pos.x` through inline
+                 sub-records at the summed offset), a scalar field WRITE at a constant
+                 offset (the tuple element's assignment), a hand-off of the local or of a
+                 SUB-RECORD of it as a by-value or `const` argument to another admitted
+                 function (the fields cross the call as scalars), a copy FROM such a
+                 sub-record, or a
                  rebind from such a call (`p = mat4_transform(m, p)`); and an exit that
                  answers a VIEW of such a record (`for c in self.cells { if … { return
                  c } }`, `return self.inner`) answers the tuple by one load per field —
@@ -2799,6 +2803,31 @@ answered here rather than decided in the code.
                  exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
+
+**The nested clause** (2026-09-28; cells `tests/scripts/158-nested-value-record.loft` n1–n14,
+the moved pin `tests/nested_field.rs` n12).  A record whose fields are scalars and inline
+sub-records of scalars — `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }`, eight floats two
+structs deep — rides the tuple like a flat one: `hoist::type_layout` recurses into an inline
+sub-record and keys its scalars by the PARENT type at the summed offset, the ONE home a
+result, a local and a parameter read.  A site's nested read folds its `OpGetField` chain to
+that key (`hoist::view_field`, the same fold `(R-RecPtr)`'s path clause uses); a builder's
+literal takes a sub-record COPY from a tuple source as that source's elements and a nested
+in-place write at its summed offset (`Output::value_record_parts`); a sub-record of a value
+local handed to a tuple parameter, or copied into a literal, is a RANGE of the tuple
+(`hoist::sub_record`).  A view leaf stays a top-level field: a sub-record's heap field would
+be a place two records deep no site gate proves.  What the nesting changed in the SOUNDNESS
+half: a write through a sub-record is a write into every enclosing record, so
+`hoist::setter_target` answers the chain — `s.a.pos.x = …` is `(Vec3, 0)`, `(Vertex, 0)` and
+`(Seg, 0)` — and a target whose parent is out of sight (a `&` link, a parameter's view)
+reaches every type that holds its record inline (`inline_parents`), which only ever declines
+more.  Sabotaged (the chain struck), cell n12 reads 1 where the write through the parent
+made it 7.  A bind FROM a sub-record (`q = w.pos`) is a VIEW by the oracle and keeps the
+local a record (n10).  Measured on the sphere shape (three tuple builders into a builder into
+an append, two million vertices, this box, idle): 0.27 → 0.17 s; `LOFT_NO_VALUE_RECORD=1`
+0.43 s.  Trade to know: a callee's nested tuple parameter is filled at the site by one read
+per scalar, so a store record handed to one costs eight loads where the callee may read two
+(`nested_field` n12's row moved 2 → 9 reads through the address) — the flat rule's trade at
+the new width.
 
 **The body clause** (2026-09-26, loft#1697; cells
 `tests/scripts/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).

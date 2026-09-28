@@ -9,6 +9,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A nested record rides the value tuple (@PLN158, 2026-09-28)
+
+`(R-ValueRecord)` § The nested clause, `(R-ValueLocal)`, `--native`, generation time, default
+ON (`LOFT_NO_VALUE_RECORD=1`, `LOFT_NO_VALUE_LOCAL=1`).  A record whose fields are scalars and
+INLINE sub-records of scalars (`Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }`) is returned,
+bound and passed as the tuple of its scalars, a sub-record's at the summed offset:
+`hoist::type_layout` recurses, a nested read folds through `hoist::view_field`, a builder's
+sub-record copy from a tuple source is that source's elements, and a sub-record of a value
+local crosses a call or a copy as a range of the tuple (`hoist::sub_record`).  The soundness
+half the nesting needed: a write through a sub-record is a write into every enclosing record
+(`hoist::setter_target` answers the chain; a `&` link or a parameter's view reaches every type
+holding its record inline).  Sphere-shaped probe, two million vertices: 0.27 → 0.17 s.  Cells
+`tests/scripts/158-nested-value-record.loft`.
+
 ### Function length is enforced; files split on the release beat (@PLN173, 2026-09-26)
 
 `clippy::too_many_lines` is no longer allowed crate-wide.  Every function over the bar carries
