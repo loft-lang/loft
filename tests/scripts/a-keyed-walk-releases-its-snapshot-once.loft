@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A walk over a keyed collection releases its snapshot scratch exactly ONCE (loft#1713).
+//
+// Every such walk — a `for` statement, a comprehension, the frame-release walk — releases its
+// scratch as the walk ends and then nulls the handle, so the scope-exit release (which exists
+// for a `return` out of the loop) finds nothing left.  The null was written `Set(s, Null)`,
+// and the scope pass elides that spelling on an in-scope local as a redundant re-init: the
+// null never ran, and every snapshot was released a second time at scope exit.  Once the
+// block had been reused — a second walk in the same function claims it — the stale handle
+// named the MIDDLE of somebody else's record.  A plain run survives by the release's own
+// tolerance checks, so no value is wrong and nothing prints; the debug build's store guard
+// reported `Unknown record`, and `LOFT_POISON=1` / `LOFT_STRICT_STORES=1` now report the
+// second release by name (`Stores::free_iteration_scratch`).
+//
+// CHANNEL: a panic, under `-C debug-assertions=on` (the corpus sweep in miri.yml and
+// gate-probe.yml) or `LOFT_POISON=1` (the nightly poison sweep).  A plain run of this file
+// passes on the broken tree too — its value cells are the control that the walks still
+// answer right once released once.
+//
+// Axes: walk form (`for` statement, comprehension) × source (whole collection, box slice,
+// capped outward walk) × how many walks share the function (one, two, three) × kind
+// (spatial, hash, trie), plus a `return` out of a walk, the path the scope-exit release is
+// for.
+//
+// @falsified-by: tests/falsified/a-keyed-walk-releases-its-snapshot-once.patch — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+//   WITH THE INSTRUMENT ARMED — `LOFT_POISON=1 scripts/falsify.sh <this> --patch <that>`.  Unarmed,
+//   both trees pass: the channel is the second-release check, which a plain run leaves silent.
+
+struct P { x: integer, y: integer }
+struct H { k: integer, v: text }
+struct T { k: text }
+
+fn diagonal() -> spatial<P[x, y]> {
+  xs: spatial<P[x, y]> = [];
+  for i in 0..4 { xs += [P { x: 3 - i, y: 3 - i }]; }
+  xs
+}
+
+fn four() -> hash<H[k]> {
+  h: hash<H[k]> = [];
+  for i in 0..4 { h += [H { k: i, v: "v{i}" }]; }
+  h
+}
+
+fn words() -> trie<T[k]> {
+  t: trie<T[k]> = [];
+  t += [T { k: "bb" }, T { k: "a" }, T { k: "ab" }];
+  t
+}
+
+// Two comprehensions, the second a CAPPED walk: the second claim reuses the first
+// scratch's block, which is what made the stale handle name a foreign record.
+fn two_comprehensions() -> text {
+  xs = diagonal();
+  all = [for p in xs { p.x }];
+  near = [for p in xs[(3, 3)..:2] { p.x }];
+  "{all} {near}"
+}
+
+fn three_comprehensions() -> text {
+  xs = diagonal();
+  all = [for p in xs { p.x }];
+  box = [for p in xs[(0, 0)..(2, 2)] { p.x }];
+  near = [for p in xs[(3, 3)..:2] { p.x }];
+  "{all} {box} {near}"
+}
+
+fn two_statements() -> integer {
+  xs = diagonal();
+  t = 0;
+  for p in xs { t += p.x; }
+  for p in xs[(3, 3)..:2] { t += p.x * 10; }
+  t
+}
+
+fn statement_then_comprehension() -> text {
+  h = four();
+  t = 0;
+  for e in h { t += e.k; }
+  ks = [for e in h { e.k * 10 }];
+  "{t} {ks}"
+}
+
+fn trie_twice() -> text {
+  t = words();
+  a = [for w in t { w.k }];
+  b = [for w in t { len(w.k) }];
+  "{a} {b}"
+}
+
+// A `return` out of the walk skips the epilogue: the scope-exit release is the only one.
+fn first_above(limit: integer) -> integer {
+  xs = diagonal();
+  seen = [for p in xs { p.x }];
+  for p in xs {
+    if p.x > limit { return p.x + len(seen) * 100; }
+  }
+  -1
+}
+
+fn test_two_comprehensions() {
+  assert(two_comprehensions() == "[0,1,2,3] [3,2]", "got {two_comprehensions()}");
+}
+
+fn test_three_comprehensions() {
+  assert(three_comprehensions() == "[0,1,2,3] [0,1,2] [3,2]", "got {three_comprehensions()}");
+}
+
+fn test_two_statements() {
+  // 0+1+2+3, then (3 + 2) * 10.
+  assert(two_statements() == 56, "got {two_statements()}");
+}
+
+fn test_statement_then_comprehension() {
+  assert(statement_then_comprehension() == "6 [0,10,20,30]", "got {statement_then_comprehension()}");
+}
+
+fn test_trie_twice() {
+  assert(trie_twice() == "[\"a\",\"ab\",\"bb\"] [1,2,2]", "got {trie_twice()}");
+}
+
+fn test_return_out_of_a_walk() {
+  // The first x above 1 in Morton order is 2; `seen` has four elements.
+  assert(first_above(1) == 402, "got {first_above(1)}");
+  assert(first_above(9) == -1, "got {first_above(9)}");
+}
+
+fn test_many_rounds() {
+  // Each round builds and releases five scratches; a second release per walk would reach a
+  // reused block within the first two rounds.
+  t = 0;
+  for i in 0..20 {
+    t += two_statements();
+    t += len(two_comprehensions());
+  }
+  assert(t == 20 * (56 + 15), "got {t}");
+}

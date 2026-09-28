@@ -3434,6 +3434,24 @@ use #count instead"
         None
     }
 
+    /// Release a walk's snapshot scratch as the walk ends, and NULL the handle so the
+    /// scope-exit release (`scopes.rs`, every `hash_scratch` local — it catches the `return`
+    /// out of the loop that skips this epilogue) finds nothing left to release.  The one home
+    /// for the epilogue: a `for` statement, a comprehension and the frame-release walk.
+    ///
+    /// The null is the TYPED sentinel, not `Value::Null`: the scope pass elides a
+    /// `Set(v, Null)` on an in-scope local as a redundant re-init, so the bare spelling was
+    /// deleted and every snapshot was released twice — the second time through a handle
+    /// whose block the next claim had reused, which the debug build's store guard reports as
+    /// `Unknown record` and the release build survived only by the tolerance checks in
+    /// `Stores::free_iteration_scratch`.
+    pub(crate) fn release_scratch(&mut self, scratch: u16) -> [Value; 2] {
+        [
+            self.cl("OpFreeScratch", &[Value::Var(scratch)]),
+            v_set(scratch, self.cl("OpNullRefSentinel", &[])),
+        ]
+    }
+
     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_for(&mut self, code: &mut Value) {
@@ -4257,11 +4275,7 @@ use #count instead"
             // no-op.  A `return` out of the loop still bypasses this — a bounded residual
             // (expose-iteration-scratch.md Open question A).
             if hash_scratch_var != u16::MAX {
-                for_steps.push(self.cl("OpFreeScratch", &[Value::Var(hash_scratch_var)]));
-                // Null the scratch var so the scope-exit OpFreeScratch (emitted by
-                // get_free_vars, which catches the `return`-out-of-loop path) is a no-op
-                // here — its rec==0 guard skips a nulled ref, so the two never double-free.
-                for_steps.push(v_set(hash_scratch_var, Value::Null));
+                for_steps.extend(self.release_scratch(hash_scratch_var));
             }
             *code = v_block(for_steps, Type::Void, "For block");
         } else {

@@ -3786,6 +3786,16 @@ impl Store {
         }
     }
 
+    /// Whether `rec` is the START of a record this store claimed — the membership `valid()`
+    /// asserts, asked as a question.  `is_claimed_record` reads only the header word, so a
+    /// handle into the middle of a block that a later claim reused passes it; this does not.
+    /// Answers `true` where `claims` is not kept (a locked or file-backed store), as `valid()`
+    /// tolerates.
+    #[must_use]
+    pub fn claims_record(&self, rec: u32) -> bool {
+        self.read_only || self.is_file_backed() || self.claims.contains(rec)
+    }
+
     /// Fast check whether a value looks like a valid live record.
     /// Used by `get_ref()` to detect inline data that was misinterpreted
     /// as a record pointer.  A range check and one memory read (the record

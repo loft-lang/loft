@@ -3730,8 +3730,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         for_steps.extend(super::collections::iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "For comprehension"));
         if let Some(s) = snapshot {
-            for_steps.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
-            for_steps.push(v_set(s, Value::Null));
+            for_steps.extend(self.release_scratch(s));
         }
         let mut ls: Vec<Value> = Vec::new();
         if block {

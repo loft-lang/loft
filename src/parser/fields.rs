@@ -1295,8 +1295,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             "release frames",
         ));
         if let Some(s) = scratch {
-            ops.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
-            ops.push(v_set(s, Value::Null));
+            ops.extend(self.release_scratch(s));
         }
         true
     }
