@@ -6,7 +6,7 @@ unsharded push/nightly matrix, and the two-way sharded PR path.  A filter
 duplicated across workflow steps drifts silently — a test excluded on one leg
 and not the other reads as a flake — so it is built here, once.
 
-Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b]
+Usage:  ci_test_filter.py <event_name> [heavy|corpus|rest|rest-a|rest-b|rest-c]
 
 The optional shard restricts the leg to the `heavy-serial` test group, or to
 its complement.  The group's membership is NOT repeated here: it is read out of
@@ -199,7 +199,7 @@ def main() -> None:
     elif shard == "corpus":
         clauses.append(f"({CORPUS})")
     elif shard in ("rest", "rest-a", "rest-b", "rest-c"):
-        # `rest-a/b/c` are ONE filterset, split by `nextest --partition hash:i/3` in the
+        # `rest-a/b/c` are ONE filterset, split by `nextest --partition slice:i/3` in the
         # workflow rather than by a named list here.  The list-based half (REST_HEAVY_HALF,
         # kept below for the record) could not hold: its light side is the COMPLEMENT, so
         # every binary added to the repo landed there and the balance decayed in one
@@ -212,12 +212,15 @@ def main() -> None:
         # now lives whole in `heavy`, so `rest` has none left to scatter — the same
         # argument that admitted the duration split, applied one step further.  And the
         # partition is over TESTS, not binaries, so a 765-second binary spreads across all
-        # three legs instead of pinning one.
+        # three legs instead of pinning one.  `slice:` rather than `hash:` because it deals
+        # the list round-robin, so a cluster of slow neighbours — one binary's cases — is
+        # dealt across the legs instead of landing wherever their names hash (ci.yml has the
+        # measurement).
         clauses.append(f"not ({serial_boundary()})")
         clauses.append(f"not ({CORPUS})")
     elif shard is not None:
         raise SystemExit(
-            f"unknown shard '{shard}' (expected 'heavy', 'corpus', 'rest', 'rest-a' or 'rest-b')"
+            f"unknown shard '{shard}' (expected 'heavy', 'corpus', 'rest', 'rest-a', 'rest-b' or 'rest-c')"
         )
 
     print(" and ".join(clauses))

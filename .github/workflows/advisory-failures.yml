@@ -1,5 +1,7 @@
 # Advisory failures — one issue per advisory CI job that went red, with what failed and
-# where to look (`scripts/ci_failure_digest.py`, whose docstring is the contract).
+# where to look (`scripts/ci_failure_digest.py`, whose docstring is the contract).  And,
+# for a PR's `CI` run, the timing report: where each test leg's time went
+# (`scripts/ci_timing.py`).
 #
 # Why this exists: a REQUIRED check blocks the merge, so it is fixed before anything
 # lands.  An advisory one does not — it goes red on a PR, the PR merges, and the finding
@@ -68,3 +70,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: python3 scripts/ci_failure_digest.py file "${{ github.event.workflow_run.id }}"
+
+  # The PR's timing report: every test leg's setup / test / after split, how many tests ran
+  # at once, its tail and last test, the slowest tests, and those slower than on the default
+  # branch's last run — one comment, updated in place.  Reads the junit artifacts `ci.yml`
+  # keeps; like the job above, it never checks out or runs the PR's code.
+  timing:
+    if: github.event.workflow_run.name == 'CI' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - name: Post or update the timing report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci_timing.py report "${{ github.event.workflow_run.id }}"

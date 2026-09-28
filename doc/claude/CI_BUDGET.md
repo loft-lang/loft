@@ -1048,8 +1048,13 @@ required check keeps its exact meaning with no settings change.
 
 ### B. Sharding by HASH — tried, measured not to work
 
-**Do not reach for `nextest --partition`.** It was implemented and reverted, and
-the reason is recorded in `ci.yml`'s matrix comment:
+**Do not partition a set that holds a single-slot test group.** Hash partitioning of the
+WHOLE suite was implemented and reverted, and the reason is recorded in `ci.yml`'s matrix
+comment.  The `rest` legs are the exception that proves it: every single-slot group lives
+whole in `heavy`, so `rest` has none to scatter, and it is split `--partition slice:i/3` —
+a ROUND-ROBIN deal of the list, because slow tests cluster (one binary's cases sit side by
+side) and a hash can land a cluster on one leg.  `scripts/ci_timing.py` reports each leg's
+balance on every PR.  The original finding:
 
 > *Hash-partitioning was measured to NOT help: it balances by test COUNT not
 > duration and can't split a single slow test, so the few slow integration tests
