@@ -2506,7 +2506,9 @@ fn fill_rs_up_to_date() {
 #[ignore = "maintenance: regenerates src/fill.rs — run manually when default/*.loft changes"]
 fn regen_fill_rs() {
     let mut p = Parser::new();
-    p.parse_dir("default", true, false).unwrap();
+    // Unchecked: the stdlib check compares `default/` against the table this run REGENERATES,
+    // so after an operator is added or removed it would refuse the repair it asks for.
+    p.parse_dir_unchecked("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
     loft::create::generate_code_to(&p.data, "src/fill.rs").expect("generate_code_to failed");
     println!("src/fill.rs regenerated");

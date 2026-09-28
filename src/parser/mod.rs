@@ -3808,6 +3808,22 @@ impl Parser {
         Ok(())
     }
 
+    /// [`Self::parse_dir`] WITHOUT the stdlib check, for the one caller that must read a
+    /// `default/` the dispatch table does not match yet: the `src/fill.rs` generator, whose
+    /// job is to repair exactly that mismatch.  Checked, it refused the parse and the cure
+    /// the refusal names (`make fill`) could not run — found joining two branches that each
+    /// changed the operator list.  Every program load goes through [`Self::parse_dir`].
+    /// # Errors
+    /// With filesystem problems.
+    pub fn parse_dir_unchecked(
+        &mut self,
+        dir: &str,
+        default: bool,
+        debug: bool,
+    ) -> std::io::Result<()> {
+        self.parse_dir_inner(dir, default, debug)
+    }
+
     fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
         let paths = read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();

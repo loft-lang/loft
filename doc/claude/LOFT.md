@@ -765,6 +765,10 @@ cures: `unknown type Pt — it is in geo, and a bare use geo; brings in only the
 qualifier: write geo::Pt, or import the name with use geo::(Pt);`.  The same holds for a
 library in between that uses a name without passing it on.
 
+Guards: `tests/scripts/c98-a-bare-use-brings-in-only-the-qualifier.loft`,
+`tests/scripts/c98-an-import-serves-its-file-and-pub-use-passes-it-on.loft`,
+`tests/scripts/c98-a-plain-use-in-a-library-passes-nothing-on.loft`.
+
 #### The import form decides whether your own name can clash (loft#1094)
 
 **A wildcard `use lib::*;` brings every public name into THIS SOURCE's namespace, so
