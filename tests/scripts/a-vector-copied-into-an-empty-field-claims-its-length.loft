@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A whole vector appended into an EMPTY destination (`Rec { xs: v }`, `r.xs += other`) claims
+// the source's length, as a deep copy does, instead of `vector_append`'s eleven-element first
+// claim.  The size half is `store_rebuild_b1` in tests/store_persist_loft.rs: a rebuild and
+// a fresh build now land on the same bytes.  This file locks the VALUES over the shapes the
+// new first claim meets, each hand-computed, value AND length:
+//
+//   c1  a copied short vector, then 100 pushes grow it past the exact claim
+//   c2  an empty source leaves the destination empty, and a push still works
+//   c3  a vector of text (heap-owning elements) copied into a fresh field
+//   c4  a vector of records carrying text copied into a fresh field
+//   c5  two fields of ONE record: `r.ys += r.xs` with ys empty (same store)
+//   c6  a self-append after a copy: `r.xs += r.xs`
+//   c7  300 records built from short vectors, summed back
+//
+// @falsified-at: none — the values are the same under `LOFT_NO_EXACT_COPY_CLAIM=1`; the
+// claim that moved is a size, and `store_rebuild_b1` is the guard that fails on it.
+struct Rec { id: integer, xs: vector<integer> }
+struct Two { xs: vector<integer>, ys: vector<integer> }
+struct Named { names: vector<text> }
+struct Tag { n: integer, s: text }
+struct Tags { tags: vector<Tag> }
+
+fn short(n: integer, base: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for j in 0..n { v += [base + j] }
+  v
+}
+
+fn total(v: vector<integer>) -> integer {
+  t = 0;
+  for x in v { t += x }
+  t
+}
+
+fn main() {
+  // c1: [7, 8, 9] then 100..199 pushed: sum 24 + 14950 = 14974, length 103.
+  r = Rec { id: 1, xs: short(3, 7) };
+  for k in 100..200 { r.xs += [k] }
+  assert(len(r.xs) == 103, "c1 len {len(r.xs)}");
+  assert(total(r.xs) == 14974, "c1 sum {total(r.xs)}");
+  assert(r.xs[2] == 9 && r.xs[3] == 100 && r.xs[102] == 199, "c1 elems");
+
+  // c2: empty source; then one push of 5.
+  e = Rec { id: 2, xs: short(0, 0) };
+  assert(len(e.xs) == 0, "c2 empty len {len(e.xs)}");
+  e.xs += [5];
+  assert(len(e.xs) == 1 && e.xs[0] == 5, "c2 push");
+
+  // c3: texts survive the copy and later pushes.
+  src: vector<text> = ["alpha", "beta"];
+  nm = Named { names: src };
+  nm.names += ["gamma"];
+  assert(len(nm.names) == 3, "c3 len {len(nm.names)}");
+  assert("{nm.names[0]}{nm.names[1]}{nm.names[2]}" == "alphabetagamma", "c3 text");
+  assert("{src[0]}{src[1]}" == "alphabeta", "c3 source untouched");
+
+  // c4: records with text: n 1+2 = 3, labels joined.
+  ts: vector<Tag> = [Tag { n: 1, s: "one" }, Tag { n: 2, s: "two" }];
+  tg = Tags { tags: ts };
+  tg.tags += [Tag { n: 3, s: "three" }];
+  n_sum = 0;
+  joined = "";
+  for t in tg.tags { n_sum += t.n; joined += t.s }
+  assert(n_sum == 6 && joined == "onetwothree", "c4 {n_sum} {joined}");
+
+  // c5: ys empty, filled from xs in the same record; xs then pushed, ys unchanged.
+  tw = Two { xs: short(4, 10), ys: [] };
+  tw.ys += tw.xs;
+  tw.xs += [99];
+  assert(len(tw.ys) == 4 && total(tw.ys) == 46, "c5 ys {len(tw.ys)} {total(tw.ys)}");
+  assert(len(tw.xs) == 5 && total(tw.xs) == 145, "c5 xs {len(tw.xs)} {total(tw.xs)}");
+
+  // c6: [1, 2] doubled to [1, 2, 1, 2].
+  d = Rec { id: 6, xs: short(2, 1) };
+  d.xs += d.xs;
+  assert(len(d.xs) == 4 && total(d.xs) == 6 && d.xs[2] == 1 && d.xs[3] == 2, "c6");
+
+  // c7: record i holds (i % 5 + 1) elements i, i+1, ...; the sum over i in 0..300 of
+  // n*i + n*(n-1)/2 with n = i % 5 + 1.
+  h: vector<Rec> = [];
+  for i in 0..300 { h += [Rec { id: i, xs: short(i % 5 + 1, i) }] }
+  got = 0;
+  count = 0;
+  for rr in h { got += total(rr.xs); count += len(rr.xs) }
+  want = 0;
+  want_count = 0;
+  for i in 0..300 {
+    n = i % 5 + 1;
+    want += n * i + n * (n - 1) / 2;
+    want_count += n;
+  }
+  assert(count == want_count && count == 900, "c7 count {count}");
+  assert(got == want, "c7 sum {got} vs {want}");
+  println("ok");
+}

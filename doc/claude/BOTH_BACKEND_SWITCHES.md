@@ -339,6 +339,13 @@ also what fixed the heap-owning case: the claims walk read the source through a 
 captured before the growth relocated it — a freed block).  The doubling fill a canvas is
 built with is this shape run to a ladder; `render_marks` −8 %.  First bisect step for a
 wrong element out of a self-append.
+**`LOFT_NO_EXACT_COPY_CLAIM=1`** (runtime, BOTH backends) gives a whole vector appended
+into an EMPTY destination (`Rec { xs: v }`, `r.ys += r.xs`) `vector_append`'s eleven-element
+first claim again — with it off, `Stores::vector_add` claims the source's length, as a deep
+copy does, so a short vector in a fresh field is not a flat block (a rebuilt store reaches
+the from-scratch size, @PLN123; a builder written in its element keeps the size the copy
+had).  First bisect step for a wrong element or a size change out of such an append;
+`store_rebuild_b1` / `store_compact_b3` are the falsifiers.
 
 ## Runtime: keyed collections
 

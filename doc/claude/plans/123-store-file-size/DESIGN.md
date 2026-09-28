@@ -399,6 +399,13 @@ by length. **B2 should claim each destination vector at its LENGTH.** `reserve`
 on the source side does not do it — measured, identical bytes with and without,
 because it sizes the local being copied FROM, not the block copied INTO.
 
+**Closed 2026-09-28.** `Stores::vector_add` claims an EMPTY destination at the source's
+length instead of `vector_append`'s eleven-element first block, so `store_rebuild_b1` reads
+rebuilt = fresh (37,256 bytes at 300 `full` records) and asserts it.  It surfaced when
+@PLN157 § V-d began writing a builder's record in its element: a fresh build then filled its
+vector field through the same claim and grew 28 % (34,920 → 44,616 bytes, `vec` shape), which
+`store_compact_b3` caught.  `LOFT_NO_EXACT_COPY_CLAIM=1` restores the flat block.
+
 Arc A composes on top: `store_reclaim` after a rebuild takes a further ~9%
 (48,760 → 44,568), because a fresh arena still carries its own 7/3 growth slack.
 

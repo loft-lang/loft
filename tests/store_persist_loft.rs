@@ -2483,15 +2483,17 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
              grows the file a little each time is worse than none:\n{stdout}"
         );
 
-        // Honest about the ceiling: a rebuild does not reach a from-scratch
-        // build, and if it ever does, this is the assertion that says so.
-        assert!(
-            rebuilt.4 > fresh.4,
-            "{backend}: a rebuild now MATCHES the from-scratch ceiling ({} vs \
-             {}) — the vector-claim gap B2 was told to close is gone, so update \
-             @PLN123 B1 rather than this test:\n{stdout}",
-            rebuilt.4,
-            fresh.4
+        // The ceiling: a rebuild lands on a from-scratch build's bytes.  The gap
+        // @PLN123 B1 measured was the vector field — a copy into an empty
+        // destination claimed `vector_append`'s eleven-element first block where a
+        // fresh build claimed by length; `vector_add` now claims the length.
+        // `LOFT_NO_EXACT_COPY_CLAIM=1` reopens it in the rebuild; this assertion
+        // fails on it together with `LOFT_NO_APPEND_IN_PLACE=1` (alone, the fresh
+        // build is written in its element through the same claim and lands on the
+        // same flat block — `store_compact_b3` is the guard that fails then).
+        assert_eq!(
+            rebuilt.4, fresh.4,
+            "{backend}: a rebuild must reach the from-scratch ceiling:\n{stdout}"
         );
         per_backend.push(rows);
     }
