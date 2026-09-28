@@ -9,7 +9,12 @@
 // byte's neighbours (a pointer-sized number printed where 5 was written), while `--native`
 // failed in rustc (`expected bool, found ()`; `while` failed as `() as u8`).
 //
-// The axes moved: the construct (`if`, `else if`, `while`, `assert`), the place (an element
+// The two FILTER forms took their condition raw, past that coercion: `for x in r if n = x`
+// read a corrupt stack reference and panicked the interpreter, and `[for e in v if y = e
+// { e }]` compiled and answered `1 1`.  Both route through the same coercion now.
+//
+// The axes moved: the construct (`if`, `else if`, `while`, `assert`, a `for` filter, a
+// comprehension filter), the place (an element
 // in range, an element out of range, a local, a field), the store's spelling (plain and
 // compound).  Every cell is a pass-2 diagnostic, so one file holds them all and each
 // `@EXPECT_ERROR` line below must be matched by its own cell (an unmatched line fails the
@@ -17,7 +22,7 @@
 //
 // @falsified-at: FILL
 // CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
-//   eight refusals are the only diagnostics.
+//   ten refusals are the only diagnostics.
 // WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
 
 struct P { x: integer, y: integer }
@@ -42,5 +47,10 @@ fn main() {
   while v[1] = 2 { break; }
   // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
   assert(v[1] = 2, "a store is not a test");
+  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+  for e in 1..=9 if x = e { x += 1; }
+  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+  w = [for e in v if x = e { e }];
+  println("{w.len()}");
   println("{x} {v[1]} {p.x}");
 }
