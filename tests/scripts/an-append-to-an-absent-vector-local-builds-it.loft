@@ -19,8 +19,8 @@
 // non-null) × position (straight-line, in a loop, re-nulled every round) × place (local,
 // field — the control that was right) × sharing (plain, captured by a closure) × kind (vector; hash as the keyed control).
 //
-// @falsified-at: cad24eb43 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
-// @falsified-by: tests/falsified/an-append-to-an-absent-vector-local-builds-it.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-at: cad24eb43 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/an-append-to-an-absent-vector-local-builds-it.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
 // HOLDS: the present-vector cells, the field and the keyed-local controls pass on both trees.
 
 struct K { k: integer }
