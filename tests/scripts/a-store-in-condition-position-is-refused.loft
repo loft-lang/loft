@@ -21,8 +21,8 @@
 // so the harness can isolate each refusing cell and the `assert` cell is not an assertion
 // that can never run (`a_refusal_file_carries_no_runtime_assertions`).
 //
-// @falsified-at: ef4fd49 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches)
-// @falsified-by: tests/falsified/a-store-in-condition-position-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 0/10 (the suite's verdict, not a count of matches)
+// @falsified-at: ef4fd49 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-store-in-condition-position-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
 // CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
 //   ten refusals are the only diagnostics.
 // WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
