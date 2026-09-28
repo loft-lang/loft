@@ -15860,6 +15860,29 @@ impl Parser {
         stmts.iter().any(|s| walk(s, buf))
     }
 
+    /// Rewrite a tail whose terminal is a bare local `v` — through spans and a `return` —
+    /// into `if OpVectorIsNull(v) { null } else { v }`, the branch
+    /// [`Self::materialize_vector_arms_into`] delivers one arm at a time.  `false` when the
+    /// terminal is not a bare local, and the tail is left as it was.
+    fn split_nullable_vector_tail(tail: &mut Value, is_null_nr: u32, sentinel_nr: u32) -> bool {
+        match tail {
+            Value::Span(b) => Self::split_nullable_vector_tail(&mut b.1, is_null_nr, sentinel_nr),
+            Value::Return(inner) => {
+                Self::split_nullable_vector_tail(inner, is_null_nr, sentinel_nr)
+            }
+            Value::Var(v) => {
+                let v = *v;
+                *tail = Value::If(
+                    Box::new(Value::Call(is_null_nr, vec![Value::Var(v)])),
+                    Box::new(Value::Call(sentinel_nr, Vec::new())),
+                    Box::new(Value::Var(v)),
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// @PLN85 cluster II — PER-ARM, native-safe vector NRVO delivery. Descends a
     /// `match`/`if` to each arm's terminal local-vector `Var` and rewrites it to
     /// `Insert([OpClearVector(w), OpAppendVector(w, <local>, rec_tp),
@@ -16863,7 +16886,18 @@ impl Parser {
         // release what they displace.  A work-ref's lifetime is the buffer pool's to decide,
         // so only a local the program declared is asked.
         let declared_in_loop = !is_work_ref && self.vars.created_in_loop(v) != u16::MAX;
+        // `@FR-N-Shape` — a NULLABLE vector local cannot BE the buffer.  Renamed, it is the
+        // caller's handle, so its `null` lowers to `OpNullRefSentinel()` over that handle and
+        // every write after it lands in no store: `v: vector<integer>? = null; v = [k]; v`
+        // answered null, on both backends.  Unrenamed it keeps a store of its own and the
+        // `Bind` rung below copies it — or its null — into the buffer at the exit.  A record
+        // return re-mints its destination on delivery and a text local has no handle to lose,
+        // so both were measured right and stay out of the rung.
+        let nullable_vector_local = !is_work_ref
+            && matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
+            && self.vars.tp(v).peel_optional().1;
         let allow_rename = !(bound_already
+            || nullable_vector_local
             || wrong_shape_for_buffer
             || reassigned
             || declared_in_loop
@@ -17380,6 +17414,25 @@ impl Parser {
                                 }
                                 Type::Vector(elm, _) => {
                                     self.materialize_vector_return_into(&elm, tail, buf_var);
+                                }
+                                // A NULLABLE vector local at the tail — the local the rename
+                                // rung declines for `@FR-N-Shape`.  Delivered by the same
+                                // per-arm leg as a branch with a null arm, on the branch its
+                                // own null test spells: the null path answers the sentinel,
+                                // the other copies the local into the buffer and frees its
+                                // backing.  Without it the local's store was the answer —
+                                // one store per call that no caller frees.
+                                Type::Optional(inner) => {
+                                    if let Type::Vector(elm, _) = inner.base()
+                                        && Self::split_nullable_vector_tail(
+                                            tail,
+                                            self.data.def_nr("OpVectorIsNull"),
+                                            null_sentinel_nr,
+                                        )
+                                    {
+                                        let elm = (**elm).clone();
+                                        self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    }
                                 }
                                 _ => {}
                             }
