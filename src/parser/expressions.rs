@@ -3308,19 +3308,51 @@ use a separate collection or add after the loop"
         // next append nowhere to land — `r = [x]; r = null; r += [y]` answered 0, directly,
         // through a capture and through a `&` parameter.  A first bind keeps the sentinel: a
         // local that starts null is given its slot where one is first needed.
+        //
+        // A `&`-LINKED vector local shares its slot with its partner (`amp_vector_locals`), so
+        // there the null is written INTO the shared slot, as `s.items = null` writes a field's:
+        // emptied and marked ABSENT in place.  A fresh backing would re-point one name and
+        // leave the other holding the old list (@FR-B-Ref-Alias).
+        //
+        // A KEYED local's store IS its collection, and a `&` link shares that store, so every
+        // keyed local takes the in-place route: a sentinel re-pointed only one name, and the
+        // store it let go of was released by nobody.
         if op == "="
             && let Value::Var(r) = *to.unspan()
-            && self.nulls_a_backed_vector_local(code, r)
+            && let Some(linked) = self.nulls_a_backed_collection_local(code, r)
         {
-            let elm = match self.vars.tp(r).base() {
-                Type::Vector(elm, _) => (**elm).clone(),
-                _ => unreachable!("checked by nulls_a_backed_vector_local"),
-            };
             #[allow(clippy::cast_possible_wrap)]
             let absent = crate::keys::DbRef::ABSENT_REC as i32;
-            let ls = self.vector_db_init(&elm, r, absent, false);
-            if !ls.is_empty() {
-                *code = Value::Insert(ls);
+            let keyed = crate::parser::vectors::is_keyed(self.vars.tp(r));
+            if keyed {
+                let kt = self.vars.tp(r).clone();
+                if let Some(kt) = self.keyed_known_type(&kt) {
+                    let clear =
+                        self.cl("OpClearKeyed", &[Value::Var(r), Value::Int(i32::from(kt))]);
+                    let mark = self.cl(
+                        "OpSetInt4",
+                        &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                    );
+                    let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                    *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+                }
+            } else if linked {
+                let clear = self.cl("OpClearVector", &[Value::Var(r)]);
+                let mark = self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                );
+                let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+            } else {
+                let elm = match self.vars.tp(r).base() {
+                    Type::Vector(elm, _) => (**elm).clone(),
+                    _ => unreachable!("checked by nulls_a_backed_collection_local"),
+                };
+                let ls = self.vector_db_init(&elm, r, absent, false);
+                if !ls.is_empty() {
+                    *code = Value::Insert(ls);
+                }
             }
         }
         // @C118 — the slot `parse_assign_op_inner` built for a `&` bind's source goes before
@@ -3334,30 +3366,33 @@ use a separate collection or add after the loop"
         tp
     }
 
-    /// Is `code` the bind `r = null` of a nullable VECTOR local that is not an argument, a
-    /// `&` link, or this variable's first bind — the shape the @C118 rewrite above replaces?
-    fn nulls_a_backed_vector_local(&self, code: &Value, r: u16) -> bool {
+    /// Is `code` the bind `r = null` of a nullable COLLECTION local that is not an argument
+    /// nor this variable's first bind — the shape the @C118 rewrite above replaces?
+    /// `Some(true)` when `r` is a `&`-linked vector, `Some(false)` otherwise, `None` when the
+    /// shape does not apply.
+    fn nulls_a_backed_collection_local(&self, code: &Value, r: u16) -> Option<bool> {
         if self.first_pass
             || r == u16::MAX
             || self.vars.is_argument(r)
             || !matches!(self.vars.tp(r), Type::Optional(_))
-            || !matches!(self.vars.tp(r).base(), Type::Vector(_, _))
+            || !crate::parser::vectors::is_collection(self.vars.tp(r))
         {
-            return false;
+            return None;
         }
         if !matches!(code.unspan(), Value::Set(s, rhs) if *s == r
             && matches!(rhs.unspan(), Value::Call(d, a)
                 if a.is_empty() && self.data.def(*d).name() == "OpNullRefSentinel"))
         {
-            return false;
+            return None;
         }
         let name = self.vars.name(r);
         if self.first_bind_targets.last().map(String::as_str) == Some(name) {
-            return false;
+            return None;
         }
-        !self
-            .amp_vector_locals
-            .contains(&(self.context, name.to_string()))
+        Some(
+            self.amp_vector_locals
+                .contains(&(self.context, name.to_string())),
+        )
     }
 
     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
@@ -6013,16 +6048,27 @@ use a separate collection or add after the loop"
                 *code = Value::Insert(ops);
                 return Type::Void;
             }
-            match code {
-                // A literal: run the clear FIRST, so the element-construction ops that
-                // follow build into an empty collection instead of appending to the old one.
-                Value::Insert(ls) => {
-                    for (i, op) in clear.into_iter().enumerate() {
-                        ls.insert(i, op);
-                    }
+            // A literal: run the clear FIRST, so the element-construction ops that follow
+            // build into an empty collection instead of appending to the old one.
+            if let Value::Insert(ls) = code {
+                for (i, op) in clear.into_iter().enumerate() {
+                    ls.insert(i, op);
                 }
-                // `= null`: the clear is the whole statement.
-                _ => *code = Value::Insert(clear),
+            } else {
+                // `= null`: the clear, and then — for a nullable field — the ABSENT mark in its
+                // slot, as `s.items = null` writes a vector field's.  The clear alone left
+                // `s.h == null` answering false after `s.h = null` (@C118, `(F-Render)` and
+                // `==` read absence from the slot).
+                let mut ops = clear;
+                if matches!(f_type, Type::Optional(_)) {
+                    #[allow(clippy::cast_possible_wrap)]
+                    let absent = crate::keys::DbRef::ABSENT_REC as i32;
+                    ops.push(self.cl(
+                        "OpSetInt4",
+                        &[to.clone(), Value::Int(0), Value::Int(absent)],
+                    ));
+                }
+                *code = Value::Insert(ops);
             }
             return Type::Void;
         }

@@ -2276,6 +2276,7 @@ or build a local and use that."
         let (base, nullable) = self.vars.tp(v_nr).peel_optional();
         // A dep means the local already owns a backing — a `= []` capture, or one an earlier
         // statement built.  Its slot is already there to share.
+        // @FR-O-Proxy asks alloc — whether to MINT a slot, never whether to release one.
         if !nullable || !Self::is_collection_type(base) || !self.vars.tp(v_nr).depend().is_empty() {
             return Vec::new();
         }

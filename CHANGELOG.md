@@ -22,6 +22,11 @@ without a word (a `hash` stopped with an internal error), and a list rebuilt ins
 could leave one store unreleased.  `c?` inside such a `&` parameter now gives the list's
 default like it does anywhere else, instead of being refused.
 
+**Setting a list to `null` reaches every name for it, and an absent list prints `null`.**
+With `c = &a`, `a = null` now makes `c` null too (and the other way round), for vectors and
+keyed collections alike; `s.h = null` on a `hash` field now leaves `s.h == null` true.  And
+`"{s.items}"` of an absent list prints `null`, not `[]`: an empty list still prints `[]`.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the
