@@ -253,6 +253,9 @@ fn dir() -> std::io::Result<()> {
 /// Same `run_test` as `dir()` and `loft_suite()`, so the entry-point rule and the
 /// `@EXPECT_WARNING` / `@EXPECT_ERROR` annotations behave identically.  There is deliberately
 /// no skip list: a comparison claim that cannot run is a claim to delete, not to except.
+/// A file headed `// @SCRIPT` holds the page's block as a top-level window (a struct beside
+/// the statements that use it, as the page shows them), which `run_test` does not model, so
+/// it runs as the binary runs it and its exit status is the verdict — as `reference()` does.
 ///
 /// The contract each file follows is `tests/comparisons/README.md`; the subject index and the
 /// links to every rationale are `doc/claude/SUBJECTS.md`.
@@ -273,6 +276,23 @@ fn comparisons() -> std::io::Result<()> {
          and an empty one passes while proving nothing"
     );
     for entry in files {
+        if std::fs::read_to_string(&entry)?
+            .lines()
+            .any(|l| l.starts_with("// @SCRIPT"))
+        {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--interpret")
+                .arg(&entry)
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped comparison program {} failed:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            continue;
+        }
         run_test(entry, false, true)?;
     }
     Ok(())

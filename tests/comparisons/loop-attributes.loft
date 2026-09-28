@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: loop-attributes
+// @CLAIM: a loop variable carries `#first` and `#count`, so a separator or a counter needs no variable of its own.
+// @SEEN-FROM: 00-vs-rust.html#loop-attributes
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#loop-attributes (a verbatim window: `rule_tags.py fences`) ---
+b = "";
+for x in 1..=5 {
+    if !x#first { b += ", "; }
+    b += "{x#count}:{x}";
+}
+assert(b == "0:1, 1:2, 2:3, 3:4, 4:5", "`x#first` skipped the first separator, `x#count` counts from 0");

@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: generics
+// @CLAIM: a generic function passes a `T` through unchanged; a bound (`<T: Ordered>`) admits the operations the interface names, and is satisfied structurally.
+// @SEEN-FROM: 00-vs-rust.html#generics · 00-vs-python.html#generics
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#generics (a verbatim window: `rule_tags.py fences`) ---
+// Pass-through generics work:
+fn identity<T>(x: T) -> T { x }
+identity(42);          // integer
+identity("hello");     // text
+
+// Interface bounds work, and are satisfied structurally:
+fn largest<T: Ordered>(a: T, b: T) -> T { if a > b { a } else { b } }
+largest(3, 9);         // 9
+largest("ada", "bob"); // "bob" — same function
+
+// A per-type version is still what you write when the bound does not fit:
+fn max_int(a: integer, b: integer) -> integer {
+    if a > b { a } else { b }
+}
+assert(identity(42) == 42 and identity("hello") == "hello", "pass-through");
+assert(largest(3, 9) == 9 and largest("ada", "bob") == "bob" and max_int(2, 1) == 2, "bounded and per-type");

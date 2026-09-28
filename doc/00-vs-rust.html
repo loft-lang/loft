@@ -16,9 +16,9 @@
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>x = <span class="nm">42</span>
-x += <span class="nm">1</span>
-<span class="kw">const</span> y = <span class="nm">42</span>   <span class="cm">// opt-in: locked in debug builds</span></code></pre>
+  <pre><code>x = <span class="nm">42</span>;
+x += <span class="nm">1</span>;
+<span class="kw">const</span> y = <span class="nm">42</span>;   <span class="cm">// opt-in: locked in debug builds</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -37,11 +37,11 @@ let y = 42;     // immutable by default; compiler-enforced</code></pre>
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="kw">struct</span> <span class="en">Point</span> {
-    label: <span class="ty"><a href="stdlib.html#types">text</a></span>?,         <span class="cm">// `?`: may be absent</span>
-    x: <span class="ty"><a href="stdlib.html#types">integer</a></span>,           <span class="cm">// never null — the default</span>
+    label: <span class="ty"><a href="stdlib-types.html">text</a></span>?,         <span class="cm">// `?`: may be absent</span>
+    x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,           <span class="cm">// never null — the default</span>
 }
 p = <span class="en">Point</span> { x: <span class="nm">1</span> };
-<span class="bi"><a href="stdlib.html#output-and-diagnostics">assert</a></span>(p.label == <span class="kw">null</span>, <span class="st">"absent"</span>);</code></pre>
+<span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p.label == <span class="kw">null</span>, <span class="st">"absent"</span>);</code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -67,7 +67,7 @@ assert!(p.label.is_none());</code></pre>
     v += [<span class="nm">1</span>, <span class="nm">2</span>];  <span class="cm">// caller sees the change</span>
 }
 <span class="cm">// const: read-only (locked in debug builds)</span>
-<span class="kw">fn</span> <span class="fn-call">count</span>(v: <span class="kw">const</span> <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+<span class="kw">fn</span> <span class="fn-call">count</span>(v: <span class="kw">const</span> <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
     <span class="bi"><a href="stdlib-collections.html">len</a></span>(v)
 }
 <span class="cm">// &amp;: explicit write-back for primitives</span>
@@ -98,11 +98,11 @@ fn add_to(n: &amp;mut i32, delta: i32) {
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>sq   = <span class="nm">2</span> ** <span class="nm">10</span>          <span class="cm">// ** exponentiation — integers: 1024</span>
-area = <span class="en"><a href="stdlib.html#math">PI</a></span> * r ** <span class="nm">2.0</span>   <span class="cm">// floats too; pow(r, 2.0) also works</span>
-bits = a | b              <span class="cm">// bitwise OR</span>
-mask = a &amp; b              <span class="cm">// bitwise AND</span>
-xor  = a ^ b              <span class="cm">// bitwise XOR</span></code></pre>
+  <pre><code>sq   = <span class="nm">2</span> ** <span class="nm">10</span>;          <span class="cm">// ** exponentiation — integers: 1024</span>
+area = <span class="en"><a href="stdlib-math.html">PI</a></span> * r ** <span class="nm">2.0</span>;    <span class="cm">// floats too; pow(r, 2.0) also works</span>
+bits = a | b;            <span class="cm">// bitwise OR</span>
+mask = a &amp; b;            <span class="cm">// bitwise AND</span>
+xor  = a ^ b;            <span class="cm">// bitwise XOR</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -168,7 +168,7 @@ loop {           // truly infinite — no bound needed
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">for</span> x <span class="kw">in</span> <span class="nm">1..</span>=<span class="nm">5</span> {
+  <pre><code><span class="kw">for</span> x <span class="kw">in</span> <span class="nm">1</span>..=<span class="nm">5</span> {
     <span class="kw">if</span> !x#first { b += <span class="st">", "</span>; }
     b += <span class="st">"{x#count}:{x}"</span>;
 }</code></pre>
@@ -190,9 +190,10 @@ loop {           // truly infinite — no bound needed
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">for</span> x <span class="kw">in</span> <span class="nm">1..5</span> {
-    <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">1..5</span> {
+  <pre><code><span class="kw">for</span> x <span class="kw">in</span> <span class="nm">1</span>..<span class="nm">5</span> {
+    <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">1</span>..<span class="nm">5</span> {
         <span class="kw">if</span> x * y &gt;= <span class="nm">6</span> { x#<span class="kw">break</span>; }
+        pairs += <span class="nm">1</span>;
     }
 }</code></pre>
 </div>
@@ -214,14 +215,14 @@ loop {           // truly infinite — no bound needed
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">fn</span> <span class="fn-call">greet</span>(self: <span class="en">Person</span>) -> <span class="ty"><a href="stdlib-types.html">text</a></span> {
+  <pre><code><span class="kw">fn</span> <span class="fn-call">greet</span>(self: <span class="en">Person</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
     <span class="st">"Hello, {self.name}!"</span>
 }
-<span class="kw">fn</span> <span class="fn-call">name_len</span>(self: <span class="kw">const</span> <span class="en">Person</span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> {
-    <span class="bi"><a href="stdlib-text.html">len</a></span>(self.name)  <span class="cm">// const: read-only access guaranteed</span>
+<span class="kw">fn</span> <span class="fn-call">name_len</span>(self: <span class="kw">const</span> <span class="en">Person</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+    <span class="bi"><a href="stdlib-collections.html">len</a></span>(self.name)  <span class="cm">// const: read-only access guaranteed</span>
 }
-p.<span class="fn-call">greet</span>()     <span class="cm">// dot syntax</span>
-<span class="fn-call">greet</span>(p)      <span class="cm">// free-function call — identical</span></code></pre>
+p.<span class="fn-call">greet</span>();     <span class="cm">// dot syntax</span>
+<span class="fn-call">greet</span>(p);      <span class="cm">// free-function call — identical</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -246,13 +247,13 @@ p.greet();     // only dot syntax</code></pre>
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="kw">enum</span> <span class="en">Shape</span> {
-    <span class="en">Circle</span> { r: <span class="ty"><a href="stdlib.html#types">float</a></span> },
-    <span class="en">Rect</span>   { w: <span class="ty"><a href="stdlib.html#types">float</a></span>, h: <span class="ty"><a href="stdlib.html#types">float</a></span> }
+    <span class="en">Circle</span> { r: <span class="ty"><a href="stdlib-types.html">float</a></span> },
+    <span class="en">Rect</span>   { w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span> }
 }
-<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Circle</span>) -> <span class="ty"><a href="stdlib.html#types">float</a></span> { <span class="en"><a href="stdlib.html#math">PI</a></span> * <span class="fn-call">pow</span>(self.r, <span class="nm">2.0</span>) }
-<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Rect</span>)   -> <span class="ty"><a href="stdlib.html#types">float</a></span> { self.w * self.h }
+<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { <span class="en"><a href="stdlib-math.html">PI</a></span> * <span class="bi"><a href="stdlib-math.html">pow</a></span>(self.r, <span class="nm">2.0</span>) }
+<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Rect</span>)   -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { self.w * self.h }
 
-s.<span class="fn-call">area</span>()    <span class="cm">// dispatches on the runtime variant</span></code></pre>
+s.<span class="fn-call">area</span>();   <span class="cm">// dispatches on the runtime variant</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -279,16 +280,16 @@ fn area(s: &amp;Shape) -&gt; f64 {
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// Capture works when called in the same scope:</span>
 offset = <span class="nm">10</span>;
-shift = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset };
-<span class="fn-call">assert</span>(<span class="fn-call">shift</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"shift"</span>);
+shift = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset };
+<span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">shift</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"shift"</span>);
 
 <span class="cm">// Capturing and non-capturing lambdas both work with map/filter/reduce:</span>
-shifted = <span class="fn-call">map</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], shift);   <span class="cm">// carries `offset` with it</span>
-evens   = <span class="fn-call">filter</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+shifted = <span class="bi"><a href="stdlib-collections.html">map</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], shift);   <span class="cm">// carries `offset` with it</span>
+evens   = <span class="bi"><a href="stdlib-collections.html">filter</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
 
 <span class="cm">// Cross-scope: returning a capturing lambda works:</span>
-<span class="kw">fn</span> <span class="fn-call">make_adder</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> {
-    <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + n }
+<span class="kw">fn</span> <span class="fn-call">make_adder</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+    <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + n }
 }</code></pre>
 </div>
 <div>
@@ -319,18 +320,18 @@ fn make_adder(n: i32) -&gt; impl Fn(i32) -&gt; i32 {
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// Pass-through generics work:</span>
-<span class="kw">fn</span> <span class="fn-call">identity</span>&lt;T&gt;(x: T) -> T { x }
-<span class="fn-call">identity</span>(<span class="nm">42</span>)        <span class="cm">// integer</span>
-<span class="fn-call">identity</span>(<span class="st">"hello"</span>)  <span class="cm">// text</span>
+<span class="kw">fn</span> identity&lt;<span class="en">T</span>&gt;(x: <span class="en">T</span>) -&gt; <span class="en">T</span> { x }
+<span class="fn-call">identity</span>(<span class="nm">42</span>);          <span class="cm">// integer</span>
+<span class="fn-call">identity</span>(<span class="st">"hello"</span>);     <span class="cm">// text</span>
 
 <span class="cm">// Interface bounds work, and are satisfied structurally:</span>
-<span class="kw">fn</span> <span class="fn-call">largest</span>&lt;T: <span class="ty">Ordered</span>&gt;(a: T, b: T) -&gt; T { <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b } }
-<span class="fn-call">largest</span>(<span class="nm">3</span>, <span class="nm">9</span>)        <span class="cm">// 9</span>
-<span class="fn-call">largest</span>(<span class="st">"ada"</span>, <span class="st">"bob"</span>)  <span class="cm">// "bob" — same function</span>
+<span class="kw">fn</span> largest&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(a: <span class="en">T</span>, b: <span class="en">T</span>) -&gt; <span class="en">T</span> { <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b } }
+<span class="fn-call">largest</span>(<span class="nm">3</span>, <span class="nm">9</span>);         <span class="cm">// 9</span>
+<span class="fn-call">largest</span>(<span class="st">"ada"</span>, <span class="st">"bob"</span>); <span class="cm">// "bob" — same function</span>
 
 <span class="cm">// A per-type version is still what you write when the bound does not fit:</span>
-<span class="kw">fn</span> <span class="fn-call">max_int</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> {
-    <span class="kw">if</span> a > b { a } <span class="kw">else</span> { b }
+<span class="kw">fn</span> <span class="fn-call">max_int</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+    <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b }
 }</code></pre>
 </div>
 <div>
@@ -352,12 +353,12 @@ fn max&lt;T: PartialOrd&gt;(a: T, b: T) -&gt; T {
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>msg  = <span class="st">"Hi {name}, score: {score:6.2}"</span>   <span class="cm">// width.precision</span>
-rank = <span class="st">"seed {n:+}"</span>                      <span class="cm">// sign shows on integers: "seed +42"</span>
-prec = <span class="st">"{value:.2}"</span>                      <span class="cm">// precision only</span>
-hex  = <span class="st">"{n:#x}"</span>
-list = <span class="st">"{for x in 1..4 {x*2}}"</span>          <span class="cm">// [2,4,6]</span>
-     = <span class="st">"{\"hello\":3}"</span>                    <span class="cm">// nested string literal — works</span></code></pre>
+  <pre><code>msg  = <span class="st">"Hi {name}, score: {score:6.2}"</span>;   <span class="cm">// width.precision</span>
+rank = <span class="st">"seed {n:+}"</span>;                      <span class="cm">// sign shows on integers: "seed +42"</span>
+prec = <span class="st">"{value:.2}"</span>;                      <span class="cm">// precision only</span>
+hex  = <span class="st">"{n:#x}"</span>;
+list = <span class="st">"{for x in 1..4 {x*2}}"</span>;          <span class="cm">// [2,4,6]</span>
+nest = <span class="st">"{\"hello\"}"</span>;                     <span class="cm">// nested string literal — works</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -378,7 +379,7 @@ let hex  = format!("{:#x}", n);
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">fn</span> <span class="fn-call">double</span>(r: <span class="kw">const</span> <span class="en">Score</span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { r.value * <span class="nm">2</span> }
+  <pre><code><span class="kw">fn</span> <span class="fn-call">double</span>(r: <span class="kw">const</span> <span class="en">Score</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { r.<span class="kw">value</span> * <span class="nm">2</span> }
 
 sum = <span class="nm">0</span>;
 <span class="kw">for</span> item <span class="kw">in</span> scores <span class="kw">par</span>(b=<span class="fn-call">double</span>(item), <span class="nm">4</span>) {
@@ -386,7 +387,7 @@ sum = <span class="nm">0</span>;
 }               <span class="cm">// results arrive in original order</span>
 
 <span class="cm">// Method form:</span>
-<span class="kw">for</span> item <span class="kw">in</span> scores <span class="kw">par</span>(b=item.<span class="fn-call">value</span>(), <span class="nm">4</span>) { ... }</code></pre>
+<span class="kw">for</span> item <span class="kw">in</span> scores <span class="kw">par</span>(b=item.<span class="fn-call">twice</span>(), <span class="nm">4</span>) { sum += b; }</code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>

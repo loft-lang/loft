@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: named-break
+// @CLAIM: `x#break` names the loop to leave by the variable it binds, so an inner loop can end an outer one.
+// @SEEN-FROM: 00-vs-rust.html#named-break
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#named-break (a verbatim window: `rule_tags.py fences`) ---
+pairs = 0;
+for x in 1..5 {
+    for y in 1..5 {
+        if x * y >= 6 { x#break; }
+        pairs += 1;
+    }
+}
+assert(pairs == 6, "`x#break` left the OUTER loop at x = 2, y = 3: 4 pairs for x = 1, then 2");

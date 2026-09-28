@@ -55,8 +55,8 @@ subject gets a **working loft program that asserts the claim**, run by `wrap::co
 `make ci` through the same `run_test` the reference pages use. The other language's snippet
 lives in a comment beside it, so the file reads as the documentation it is.
 
-Six subjects are covered so far (`null`, `variables`, `parameters`, `enum-dispatch`,
-`closures`, `formatting`, `parallel`); the rest still read `UNVERIFIED` below and are meant to.
+Every subject on the two pages has its program — twenty files, one per `<h2 id>`, each holding
+the page's block verbatim (`rule_tags.py fences` reads all 28 blocks against them).
 Writing one is cheap: the contract is [`tests/comparisons/README.md`](../../tests/comparisons/README.md).
 
 **And the code ON the page is checked against the code IN the file**: `rule_tags.py fences`

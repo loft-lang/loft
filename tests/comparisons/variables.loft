@@ -11,7 +11,23 @@
 //
 // Rust:  let mut x = 42; x += 1;      let y = 42;   // immutable unless you write `mut`
 // Python: x = 42; x += 1              # mutable, and the type is not checked at all
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-rust.html#variables (a verbatim window: `rule_tags.py fences`) ---
+fn page_rust_variables() {
+  x = 42;
+  x += 1;
+  const y = 42;   // opt-in: locked in debug builds
+  assert(x == 43 and y == 42, "the write landed; `const` is a value that does not change");
+}
+page_rust_variables();
+
+// --- as shown on 00-vs-python.html#variables (a verbatim window: `rule_tags.py fences`) ---
+x = 42;          // integer — fixed at first assignment
+x += 1;
+name = "Bob";    // text — a different variable, not a rebind
+// x = "oops";   // compile error: cannot assign text to integer
+assert(x == 43 and name == "Bob", "two variables, each fixed to its first value's type");
 fn takes_const(v: const vector<integer>) -> integer { len(v) }
 
 fn test_first_assignment_declares_and_infers() {
@@ -32,3 +48,7 @@ fn test_const_is_opt_in_and_reaches_a_const_parameter() {
   const v: vector<integer> = [1, 2, 3];
   assert(takes_const(v) == 3, "a const value reaches a const parameter (C124)");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_first_assignment_declares_and_infers();
+test_const_is_opt_in_and_reaches_a_const_parameter();

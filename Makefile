@@ -2569,7 +2569,7 @@ pdf-doc:
 test-native:
 	@cargo build --release -q
 	@failed=0; \
-	for f in tests/docs/*.loft tests/reference/*.loft; do \
+	for f in tests/docs/*.loft tests/reference/*.loft tests/comparisons/*.loft; do \
 		case "$$f" in tests/reference/*) grep -q '@EXPECT_ERROR' "$$f" && continue;; esac; \
 		printf "  %-45s" "$$f"; \
 		out=$$(./target/release/loft --native "$$f" 2>&1); \

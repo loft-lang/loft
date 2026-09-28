@@ -24,11 +24,26 @@
 // The difference the page claims, and the one asserted below: in loft the absence is IN THE
 // TYPE as it is in Rust, but reading it is not an error — where Rust's `Option` makes every
 // call site state what it does about `None`.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-rust.html#null (a verbatim window: `rule_tags.py fences`) ---
 struct Point {
-  label: text?,      // `?`: may be absent
-  x: integer,        // never null — the default
+    label: text?,         // `?`: may be absent
+    x: integer,           // never null — the default
 }
+p = Point { x: 1 };
+assert(p.label == null, "absent");
+assert(p.x == 1, "the non-null field beside the absent one");
+
+// --- as shown on 00-vs-python.html#null (a verbatim window: `rule_tags.py fences`) ---
+struct User {
+    email: text?,            // `?`: may be absent
+    age:   integer,          // never null — the default
+}
+u = User { age: 30 };
+if u.email == null { print("no email\n"); }
+u.age = null;  // warns: the slot holds null anyway
+assert(u.age == null and u.email == null, "both read straight, no discharge forced");
 
 fn test_absence_is_in_the_type_and_reads_straight() {
   p = Point { x: 1 };
@@ -52,3 +67,8 @@ fn test_a_non_null_field_is_the_default() {
   assert(p.x != null, "`x: integer` cannot be absent");
   assert(p.label == null, "`label: text?` can, and was");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_absence_is_in_the_type_and_reads_straight();
+test_the_discharge_is_offered_at_the_use_site();
+test_a_non_null_field_is_the_default();

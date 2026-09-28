@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: structs
+// @CLAIM: a struct's fields are declared once with their types; a wrong field or a wrong type is a compile error, and a `self` function is its method.
+// @SEEN-FROM: 00-vs-python.html#structs
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-python.html#structs (a verbatim window: `rule_tags.py fences`) ---
+struct Point { x: float, y: float }
+p = Point { x: 1.0, y: 2.0 };
+p.x += 0.5;
+// p.z;          // compile error: no field z on Point
+// p.x = "hi";   // compile error: cannot assign text to float
+
+fn distance(self: const Point) -> float {
+    sqrt(self.x * self.x + self.y * self.y) ?? 0.0
+}
+assert(p.x == 1.5, "the field write landed");
+assert(p.distance() > 2.49 and p.distance() < 2.51, "a method on the struct");

@@ -44,9 +44,14 @@ Rules, all of them the corpus's:
 2. **One subject per file.** The failure has to name the claim.
 3. **No `use` of a library.** This harness builds no packages — the same reason
    `tests/docs/` holds none.
-4. **Both backends where the claim is about behaviour.** `wrap::comparisons` runs the
-   interpreter; `make test-native` covers `tests/docs/` and this directory is added to it for
-   the same reason.
+4. **Both backends.** `wrap::comparisons` runs the interpreter, `native::native_comparisons`
+   and `make test-native` run `--native`.
+5. **The page's block is a top-level window, so the file is a script.** A block on the page
+   shows a struct beside the statements that use it, as a reader would write them; only a
+   script-shaped file (`// @SCRIPT`, top-level statements, definitions hoisted) can hold that
+   verbatim.  The block sits at the top, its context (a value it reads, a helper it calls)
+   above it and the assertion that proves the claim below it; the older cells are called at
+   the end, since a script runs nothing by itself.
 
 ## The page's code is the file's code
 
