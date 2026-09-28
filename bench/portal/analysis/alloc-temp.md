@@ -173,3 +173,25 @@ binary hand-patched: the text arm's span read off the frame's element base into 
 `set_str`, the `tb` store and its byte loop gone): `check_request` **10.87 → 9.39 ms/op
 (−13.6 %)**, hash equal, two interleaved runs within 0.1 %.  The bytes arm still copies in
 that probe; a view removes it too.
+
+**F6, measured 2026-09-28** (`--native-release`, `--n 20`, two interleaved runs each, hash
+equal on every lane).  cbor's two payload arms take their span in ONE block
+(`bytes[argpos..argpos + arg]`, `loft-libs-core` branch `174-f6-cbor-spans`), and the frame
+is either the bench's OWNED record field or a FOREIGN one — a view over a mapped image of
+every frame, bound to a local before the call (`scratch: pa_foreign.loft`):
+
+| cbor arms | owned frame | foreign frame |
+|---|---|---|
+| byte loops (0.1.7) | 12.0–12.5 ms/op | 12.3–12.6 |
+| block spans | 11.7–12.3 (**−4 %**) | 10.8–11.1 (**−11 %**) |
+
+So the views remove what F0 priced: on an owned frame a span is a block copy through a
+hidden local (`OpSliceView` over a store minted per call), on a foreign frame it is a view
+and the text arm's only copy is the `String`.  The same change on a 4 KiB payload
+(`req_state_b64`) is **41.9 → 17.3 ms/op (−59 %)**, and on cbor's own small-payload `decode`
+row it is neutral (144 → 146–151 ns/px): a block span pays by the byte it does not loop
+over.  What is left of the 51× is the record tree — `pa_decode`'s deep copy of `d.value`
+and the `CborEntry` copies — which is placement, as § above says.  A lever not taken:
+fusing `text_from_bytes(v[lo..hi])` into one `set_str` off the source's base (F0's exact
+shape) would also remove the hidden local's mint on an OWNED source; it needs the
+text-return plumbing and is filed against the bench row, not this plan.

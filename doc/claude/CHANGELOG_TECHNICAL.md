@@ -9,6 +9,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A package's loft floor holds on every path that adopts its manifest (2026-09-28)
+
+`use a; use b` refused `b`'s `loft = ">=…"` floor while `use b; use a` accepted it: `b` was
+adopted first as `a`'s sibling (`probe_sibling_package` → `register_native_manifest`, which
+never asked) and the direct `use` then deduplicated.  `Parser::loft_floor_holds` is the one
+home now, asked by `lib_path_manifest_resolve` and `register_native_manifest` alike — which
+also means a package's OWN floor is checked when its tests run (a floor-raised library's
+testbed needs a loft that satisfies it).  Guard
+`package_floor_holds_when_the_package_is_adopted_as_a_sibling_first` over the
+`testpkg_uses_future` fixture.
+
 ### A library's bytes as a foreign store — the bridge (@PLN174 F5, 2026-09-28)
 
 `loft_ffi::LoftStore` gains `foreign_fn`, its LAST field, and

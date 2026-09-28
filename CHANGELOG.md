@@ -22,6 +22,11 @@ lib::decode(x)` reads those bytes in place — length, index, iteration, a slice
 program with the advice to copy first (`w = v`).  A mapped file or such a result handed to a
 native library function now works too (it used to crash).
 
+**A package's required loft version holds no matter how the package is reached.**  A
+library that needs a newer loft was refused when you `use`d it directly, but accepted when
+another library you used first had already pulled it in.  Now it is refused either way,
+with the same message.
+
 **A slice is a vector wherever a vector is expected.**  `v[lo..hi]` used to be accepted
 only in a `for` loop or on the right of a bind; handing it to a function
 (`f(v[2..5])`), returning it, putting it in a struct field or in a vector literal was
