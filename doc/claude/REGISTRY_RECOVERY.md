@@ -323,7 +323,7 @@ new installs to malicious tarballs.
    ./target/release/loft-keygen generate
    ```
 
-   Storage hygiene per [REGISTRY_BOOTSTRAP.md § Step 1.5](REGISTRY_BOOTSTRAP.md#step-15--store-the-private-key-for-the-long-haul).
+   Storage hygiene per [REGISTRY_BOOTSTRAP.md § Step 1.5](REGISTRY_BOOTSTRAP.md#step-15--trust-root-topology-three-independent-keys-final-path).
 
 ### Checklist — same day
 

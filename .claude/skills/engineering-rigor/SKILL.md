@@ -436,8 +436,8 @@ flight on the branch — an open PR — coordinate before rebasing or force-push
 branches, or a branch left to diverge, poison the diff with merge noise AND make overlapping
 work un-mergeable later: a squash upstream vs your original commits is a guaranteed conflict,
 then a multi-commit rebase from hell. Do not create a branch unless the user explicitly asks;
-if the branch has drifted from main, rebase before continuing. (Full rationale + cautionary
-tale: `doc/claude/DEVELOPMENT.md` § "Stay close to main — rebase rigorously".)
+if the branch has drifted from main, rebase before continuing. (Full rationale: `doc/claude/DEVELOPMENT.md` § "Stay close to main — rebase rigorously"; the
+mechanics of a rebase onto a squash: `doc/claude/JOINING.md`.)
 
 ## Go deeper — route here, don't reinvent
 

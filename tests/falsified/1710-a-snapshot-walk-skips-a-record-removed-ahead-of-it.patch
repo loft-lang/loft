@@ -1,0 +1,476 @@
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index dbf3d9650..9afd4504a 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -1892,13 +1892,11 @@ impl Stores {
+                 crate::vector::scratch_tag(4),
+             );
+         }
+-        let scratch = DbRef {
++        DbRef {
+             store_nr: scratch_store,
+             rec: header_rec,
+             pos: 4,
+-        };
+-        self.live_scratches.push((*hash_ref, scratch));
+-        scratch
++        }
+     }
+ 
+     /// The `build_rec_scratch` sibling for elements that are `(record, offset)` pairs
+@@ -1946,59 +1944,11 @@ impl Stores {
+                 crate::vector::scratch_tag(8),
+             );
+         }
+-        let scratch = DbRef {
++        DbRef {
+             store_nr: scratch_store,
+             rec: header_rec,
+             pos: 4,
+-        };
+-        self.live_scratches.push((*hash_ref, scratch));
+-        scratch
+-    }
+-
+-    /// Take `elem`, just removed from the collection `coll`, out of every scratch a loop
+-    /// over `coll` is still walking (loft#1710, `@FR-I-For`): its entry becomes 0, which
+-    /// `vector::step_ordered` steps over.  A registered header is believed only while it
+-    /// is still a scratch header over `coll`'s store, for the reason
+-    /// [`Self::free_iteration_scratch`] gives; one that is not is forgotten.
+-    pub(crate) fn forget_in_scratches(&mut self, coll: &DbRef, elem: &DbRef) {
+-        if self.live_scratches.is_empty() {
+-            return;
+         }
+-        let mut live = std::mem::take(&mut self.live_scratches);
+-        live.retain(|(source, scratch)| {
+-            if source != coll || scratch.store_nr as usize >= self.allocations.len() {
+-                return source != coll;
+-            }
+-            let store = &mut self.allocations[scratch.store_nr as usize];
+-            if store.free
+-                || !store.is_claimed_record(scratch.rec)
+-                || !crate::vector::is_scratch_header(store, scratch)
+-                || store.get_u32_raw(scratch.rec, scratch.pos + 4) as u16 != coll.store_nr
+-            {
+-                return false;
+-            }
+-            let vec_rec = store.get_u32_raw(scratch.rec, scratch.pos);
+-            if vec_rec == 0 || !store.is_claimed_record(vec_rec) {
+-                return false;
+-            }
+-            let tag = store.get_u32_raw(
+-                scratch.rec,
+-                scratch.pos + crate::vector::SCRATCH_TAG_FLD - 4,
+-            );
+-            let wide = tag & 0xFFFF == 8;
+-            let stride = if wide { 8 } else { 4 };
+-            let len = store.get_u32_raw(vec_rec, 4);
+-            for i in 0..len {
+-                let at = 8 + i * stride;
+-                if store.get_u32_raw(vec_rec, at) == elem.rec
+-                    && (!wide || store.get_u32_raw(vec_rec, at + 4) == elem.pos)
+-                {
+-                    store.set_u32_raw(vec_rec, at, 0);
+-                }
+-            }
+-            true
+-        });
+-        self.live_scratches = live;
+     }
+ 
+     /// Release an iteration scratch at loop exit — the counterpart of
+@@ -2036,7 +1986,6 @@ impl Stores {
+     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
+     /// behaviour for those cases, never worse.
+     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
+-        self.live_scratches.retain(|(_, live)| live != scratch);
+         if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
+             return;
+         }
+@@ -2332,7 +2281,6 @@ impl Stores {
+             lazy_sources: std::collections::HashMap::new(),
+             lazy_errors: std::collections::HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: (self.allocations.len() + scratch_stores) as u16,
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index 5bec45531..c713a9f6b 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -418,17 +418,6 @@ pub struct Stores {
+     /// meaning is "reachable, genuinely no such key". A trie bound to a paged
+     /// source then looked healthy and answered null forever.
+     pub(crate) paged_refusal: Option<String>,
+-    /// Every `on = 4` iteration scratch a loop is still walking, beside the collection it
+-    /// snapshots: `(collection, scratch header)`.  Registered by the scratch builders and
+-    /// dropped by [`Stores::free_iteration_scratch`].
+-    ///
+-    /// A snapshot walk holds record numbers, so a record removed from the collection ahead
+-    /// of the cursor was still yielded — a freed record read as data (loft#1710).  The
+-    /// removal consults this list and zeroes the record's entry in each scratch of that
+-    /// collection, and `vector::step_ordered` steps over a zeroed entry, so the walk sees
+-    /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
+-    /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
+-    pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
+     /// `None` when none is.
+     ///
+@@ -713,7 +702,6 @@ impl Clone for Stores {
+             lazy_sources: HashMap::new(),
+             lazy_errors: HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: self.max,
+@@ -1471,7 +1459,6 @@ impl Stores {
+             lazy_sources: HashMap::new(),
+             lazy_errors: HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: 0,
+diff --git b/src/database/search.rs a/src/database/search.rs
+index b6bd91f87..57b4b825e 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -1139,13 +1139,6 @@ impl Stores {
+         {
+             return 0;
+         }
+-        // A loop over a snapshot kind may be walking this collection (loft#1710).
+-        if matches!(
+-            kind,
+-            RemoveKind::Hash | RemoveKind::Trie | RemoveKind::Radix
+-        ) {
+-            self.forget_in_scratches(data, rec);
+-        }
+         match kind {
+             // BY-VALUE: elements sit inline in the container, so the element's
+             // byte position IS its index.
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 0f58e945a..05cc34911 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3349,91 +3349,6 @@ use #count instead"
+         (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
+     }
+ 
+-    /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
+-    /// walked through an ordered scratch of its records, built here as `fill` into a fresh
+-    /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
+-    ///
+-    /// The one home for both walks that iterate a collection — a `for` statement and a
+-    /// comprehension.  Only the `for` had it, so `[for e in h { … }]` over a non-empty hash
+-    /// walked the HASH itself as if it were a scratch and read a record number out of its
+-    /// table header (a store panic on both backends).  The caller releases the scratch
+-    /// after its loop (`OpFreeScratch`).
+-    pub(crate) fn keyed_snapshot(
+-        &mut self,
+-        expr: &mut Value,
+-        in_type: &Type,
+-        is_par: bool,
+-    ) -> Option<(u16, Value)> {
+-        let mut fill = Value::Null;
+-        // `base()`: a nullable collection is refused before any walk, so the peel changes
+-        // no answer — it states that this reads the collection's shape, not its absence.
+-        if let Type::Hash(content, _, dep)
+-        | Type::Radix(content, _, dep)
+-        | Type::Trie(content, _, dep) = in_type.base().clone()
+-        {
+-            // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
+-            // order: the hash builder sorts, and the walk reads the sorted copy.  Only
+-            // the `par` walk skips the sort (@FR-C-Order), which is the one place the
+-            // two orders differ.
+-            //
+-            // A trie is a radix TREE too, so its in-order walk is already key
+-            // order: it takes the tree builder, not the hash one (whose bucket
+-            // walk would read a trie's records as a hash table).
+-            let is_radix = matches!(in_type.base(), Type::Radix(_, _, _) | Type::Trie(_, _, _));
+-            let scratch_tp = Type::Reference(content, dep.clone());
+-            let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
+-            let hash_tp_id = self.get_type(in_type);
+-            let tp_arg = if hash_tp_id == u16::MAX {
+-                0
+-            } else {
+-                i32::from(hash_tp_id)
+-            };
+-            // Enforces @FR-C-Order's keyed exception.  A sequential `for x in h` is
+-            // KEY-ordered; a `par` one is the hash's UNSORTED bucket walk, because the
+-            // parallel queue has no use for key order — so it skips the O(n log n) key
+-            // sort.  The two orders differing is stated by the rule, not a divergence.
+-            //
+-            // A radix has a natural order and its walk is already ordered (no sort), so
+-            // it uses the same builder in every case (@PLN48).
+-            let scratch_fn_name = if is_radix {
+-                "n_radix_sorted"
+-            } else if is_par {
+-                "n_hash_unsorted"
+-            } else {
+-                "n_hash_sorted"
+-            };
+-            // @PLN48 S3 — a spatial range slice (`xs[(x,y)..]`, `xs[(x,y)..:n]`,
+-            // `xs[(x1,y1)..(x2,y2)]`) and a trie prefix slice have ALREADY been
+-            // rewritten to a call that BUILDS the ordered scratch.  Use it directly
+-            // — do not wrap it in n_radix_sorted, which would walk the scratch as
+-            // if it were a tree.  (There is no `.within` / `.near` / `.nearest`
+-            // method: proximity is ordinary range slicing.)
+-            let already_scratch = matches!(
+-                expr.unspan(),
+-                Value::Call(d, _) if matches!(self.data.def(*d).name(), "n_spatial_range" | "n_trie_prefix")
+-            );
+-            if already_scratch {
+-                fill = v_set(scratch_var, expr.clone());
+-                *expr = Value::Var(scratch_var);
+-                if !self.first_pass {
+-                    self.vars.set_type(scratch_var, scratch_tp);
+-                }
+-            } else {
+-                let hash_sorted_fn = self.data.def_nr(scratch_fn_name);
+-                if hash_sorted_fn != u32::MAX {
+-                    let call = Value::Call(hash_sorted_fn, vec![expr.clone(), Value::Int(tp_arg)]);
+-                    fill = v_set(scratch_var, call);
+-                    *expr = Value::Var(scratch_var);
+-                    if !self.first_pass {
+-                        self.vars.set_type(scratch_var, scratch_tp);
+-                    }
+-                }
+-            }
+-            return Some((scratch_var, fill));
+-        }
+-        None
+-    }
+-
+     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     pub(crate) fn parse_for(&mut self, code: &mut Value) {
+@@ -3548,28 +3463,14 @@ use #count instead"
+             // For vector loops, the iterator runs on a unique temp copy so that the loop
+             // variable does not alias the user-visible collection.  Record the original
+             // variable number so that mutation of the original can be detected later.
+-            // A spatial or trie SLICE arrives as the call that builds its snapshot; the
+-            // collection it walks is that call's first argument.
+-            let walked = match expr.unspan() {
+-                Value::Call(d, args)
+-                    if !args.is_empty()
+-                        && matches!(
+-                            self.data.def(*d).name(),
+-                            "n_spatial_range" | "n_trie_prefix"
+-                        ) =>
+-                {
+-                    args[0].clone()
+-                }
+-                _ => expr.clone(),
+-            };
+-            let orig_coll_var = if let Value::Var(v) = walked.unspan() {
++            let orig_coll_var = if let Value::Var(v) = &expr {
+                 *v
+             } else {
+                 u16::MAX
+             };
+             // Save the original collection expression before the vector temp-copy substitution
+             // so that is_iterated_value() can match field-access patterns like `db.items`.
+-            let orig_coll_expr = walked;
++            let orig_coll_expr = expr.clone();
+             // C60 piece 3 edit B (re-attempt with typed scratch): when
+             // iterating a hash, substitute the collection expression
+             // with a call to `hash_sorted(h, tp_id)` that builds a
+@@ -3588,12 +3489,73 @@ use #count instead"
+             // Set to the `hash_scratch` var for on=4 (Hash/Radix) iteration, so the
+             // loop epilogue can free a read-only source's DEDICATED scratch store
+             // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
+-            let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
+             let mut hash_scratch_var: u16 = u16::MAX;
+-            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, is_par)
++            if let Type::Hash(content, _, dep)
++            | Type::Radix(content, _, dep)
++            | Type::Trie(content, _, dep) = in_type.clone()
+             {
++                // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
++                // order: the hash builder sorts, and the walk reads the sorted copy.  Only
++                // the `par` walk skips the sort (@FR-C-Order), which is the one place the
++                // two orders differ.
++                //
++                // A trie is a radix TREE too, so its in-order walk is already key
++                // order: it takes the tree builder, not the hash one (whose bucket
++                // walk would read a trie's records as a hash table).
++                let is_radix = matches!(in_type, Type::Radix(_, _, _) | Type::Trie(_, _, _));
++                let scratch_tp = Type::Reference(content, dep.clone());
++                let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
+                 hash_scratch_var = scratch_var;
+-                fill = snapshot;
++                let hash_tp_id = self.get_type(&in_type);
++                let tp_arg = if hash_tp_id == u16::MAX {
++                    0
++                } else {
++                    i32::from(hash_tp_id)
++                };
++                // Enforces @FR-C-Order's keyed exception.  A sequential `for x in h` is
++                // KEY-ordered; a `par` one is the hash's UNSORTED bucket walk, because the
++                // parallel queue has no use for key order — so it skips the O(n log n) key
++                // sort.  The two orders differing is stated by the rule, not a divergence.
++                //
++                // A radix has a natural order and its walk is already ordered (no sort), so
++                // it uses the same builder in every case (@PLN48).
++                let is_par =
++                    matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
++                let scratch_fn_name = if is_radix {
++                    "n_radix_sorted"
++                } else if is_par {
++                    "n_hash_unsorted"
++                } else {
++                    "n_hash_sorted"
++                };
++                // @PLN48 S3 — a spatial range slice (`xs[(x,y)..]`, `xs[(x,y)..:n]`,
++                // `xs[(x1,y1)..(x2,y2)]`) and a trie prefix slice have ALREADY been
++                // rewritten to a call that BUILDS the ordered scratch.  Use it directly
++                // — do not wrap it in n_radix_sorted, which would walk the scratch as
++                // if it were a tree.  (There is no `.within` / `.near` / `.nearest`
++                // method: proximity is ordinary range slicing.)
++                let already_scratch = matches!(
++                    expr.unspan(),
++                    Value::Call(d, _) if matches!(self.data.def(*d).name(), "n_spatial_range" | "n_trie_prefix")
++                );
++                if already_scratch {
++                    fill = v_set(scratch_var, expr.clone());
++                    expr = Value::Var(scratch_var);
++                    if !self.first_pass {
++                        self.vars.set_type(scratch_var, scratch_tp);
++                    }
++                } else {
++                    let hash_sorted_fn = self.data.def_nr(scratch_fn_name);
++                    if hash_sorted_fn != u32::MAX {
++                        let call =
++                            Value::Call(hash_sorted_fn, vec![expr.clone(), Value::Int(tp_arg)]);
++                        fill = v_set(scratch_var, call);
++                        expr = Value::Var(scratch_var);
++                        if !self.first_pass {
++                            self.vars.set_type(scratch_var, scratch_tp);
++                        }
++                    }
++                }
+             }
+             if matches!(in_type, Type::Vector(_, _)) {
+                 // loft#1695, `@FR-I-For` — the SOURCE is evaluated once.  A place source
+@@ -3738,16 +3700,8 @@ use #count instead"
+             }
+             let var_tp = self.for_type(&in_type);
+             // For vector loops: set_loop stores the temp-copy var; override with the
+-            // original so that `orig += elem` is correctly identified as a mutation.  A keyed
+-            // loop walks its SNAPSHOT variable, and `(I-For)`'s append refusal is about the
+-            // collection the snapshot was taken of.
+-            if matches!(
+-                in_type,
+-                Type::Vector(_, _)
+-                    | Type::Hash(_, _, _)
+-                    | Type::Radix(_, _, _)
+-                    | Type::Trie(_, _, _)
+-            ) {
++            // original so that `orig += elem` is correctly identified as a mutation.
++            if matches!(in_type, Type::Vector(_, _)) {
+                 if orig_coll_var != u16::MAX {
+                     self.vars.set_coll_var(orig_coll_var);
+                 }
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 3e1758d91..a5b402e17 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1655,7 +1655,6 @@ impl Parser {
+             || !matches!(
+                 f_type,
+                 Type::Vector(_, _)
+-                    | Type::Hash(_, _, _)
+                     | Type::Sorted(_, _, _)
+                     | Type::Index(_, _, _)
+                     | Type::Radix(_, _, _)
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index bfe77cdfe..589909dbd 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3079,9 +3079,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             in_type = in_type.depending(vec_var);
+             fill = v_set(vec_var, expr);
+             expr = Value::Var(vec_var);
+-        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, false) {
+-            // A keyed source is walked through its ordered snapshot, as a `for` walks it.
+-            fill = snapshot;
+         }
+         let var_tp = self.for_type(&in_type);
+         let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
+@@ -3713,13 +3710,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         if !self.first_pass && crate::keys::fused_append_enabled() && !self.keyed_local_kind(vec) {
+             self.fuse_scalar_append(&mut lp, elm, vec_expr);
+         }
+-        // A keyed source's snapshot (`keyed_snapshot`) is released as soon as the walk ends,
+-        // as a `for` statement's epilogue releases it: a comprehension evaluated once per
+-        // round of an enclosing loop builds one per round.
+-        let snapshot = match fill.unspan() {
+-            Value::Set(s, _) if self.vars.name(*s).contains("hash_scratch") => Some(*s),
+-            _ => None,
+-        };
+         let mut for_steps: Vec<Value> = Vec::new();
+         if fill != Value::Null {
+             for_steps.push(fill);
+@@ -3729,10 +3719,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         }
+         for_steps.extend(super::collections::iter_init_steps(create_iter));
+         for_steps.push(v_loop(lp, "For comprehension"));
+-        if let Some(s) = snapshot {
+-            for_steps.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
+-            for_steps.push(v_set(s, Value::Null));
+-        }
+         let mut ls: Vec<Value> = Vec::new();
+         if block {
+             ls.extend(self.vector_db(in_t, vec));
+diff --git b/src/vector.rs a/src/vector.rs
+index 5dfa22a26..3883911f0 100644
+--- b/src/vector.rs
++++ a/src/vector.rs
+@@ -2062,29 +2062,22 @@ pub fn step_ordered(
+     };
+     let wide = tag & SCRATCH_MARK_MASK == SCRATCH_MARK && tag & 0xFFFF == 8;
+     let stride: u16 = if wide { 8 } else { 4 };
+-    let vector = store.collection_rec(data.rec, data.pos);
+     let mut pos = cur as i32;
+-    // A sourced scratch's entry is 0 once its record left the collection mid-walk
+-    // (`Stores::forget_in_scratches`, loft#1710); step over it.
+-    let (rec, elem_pos) = loop {
+-        if reverse {
+-            vector_prev(data, &mut pos, stride, stores);
+-        } else {
+-            vector_next(data, &mut pos, stride, stores);
+-        }
+-        let found = if pos == i32::MAX {
+-            (0, 8)
+-        } else if wide {
+-            (
+-                store.get_u32_raw(vector, pos as u32),
+-                store.get_u32_raw(vector, pos as u32 + 4),
+-            )
+-        } else {
+-            (store.get_u32_raw(vector, pos as u32), 8)
+-        };
+-        if pos == i32::MAX || found.0 != 0 || !sourced {
+-            break found;
+-        }
++    if reverse {
++        vector_prev(data, &mut pos, stride, stores);
++    } else {
++        vector_next(data, &mut pos, stride, stores);
++    }
++    let vector = store.collection_rec(data.rec, data.pos);
++    let (rec, elem_pos) = if pos == i32::MAX {
++        (0, 8)
++    } else if wide {
++        (
++            store.get_u32_raw(vector, pos as u32),
++            store.get_u32_raw(vector, pos as u32 + 4),
++        )
++    } else {
++        (store.get_u32_raw(vector, pos as u32), 8)
+     };
+     let elem_store = if sourced {
+         store.get_u32_raw(data.rec, data.pos + 4) as u16

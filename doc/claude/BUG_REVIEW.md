@@ -304,7 +304,7 @@ out → fix.** It compounds, and its setup cost was paid by the previous fix.
 `loft2` ran the other loop: build a screen over the whole tree, rank 33–124 sites, read them one
 at a time. High setup, low compounding — 27 of its 29 originals carry no `Fixes` trailer.
 
-⚠ **This was already measured here a day earlier and not acted on.** QUALITY.md § B6m ③ —
+⚠ **This was already measured here a day earlier and not acted on.** QUALITY-history.md § B6m ③ —
 written by the `loft2` stream — states *"The instruments find CLASSES; people find DEFECTS. Of
 the eleven tickets the `spellings` screen produced two."* The correction is not new information;
 it is the same finding, now with a control beside it.
@@ -362,7 +362,7 @@ that somebody looked; it does not make the code adhere to the rule, and a tree a
 `76 cited → 255 cited` with the same duplication underneath would read as progress while
 nothing had changed. Each uncited rule is a LENS: ask where it is implemented, expect the answer
 to be *"in three places that do not agree"*, and the disagreement is the defect. That is the
-owner's diagnosis at the head of QUALITY.md § OPEN WORK — *"during that bug fixing a lot of
+owner's diagnosis at the head of QUALITY.md § The duplication thread — *"during that bug fixing a lot of
 duplications were written without design"* — turned into a queue with a count.
 
 So the work per rule is, in order: **evaluate the sites → de-duplicate onto one home → fix what
@@ -374,7 +374,7 @@ The loop is a STANDING practice rather than a sprint — 179 uncited rules is a 
 years — and is written up as such in
 [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md).  The first rule walked that way,
 with its two questions, its one defect, its one filed side-finding and its one measured negative
-result, is [QUALITY.md § B6u](QUALITY.md).
+result, is [QUALITY-history.md § B6u](QUALITY-history.md).
 
 ## What this is NOT
 
@@ -395,4 +395,4 @@ result, is [QUALITY.md § B6u](QUALITY.md).
   and the *fix, don't file* standing rule.
 - [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md) — the sibling monthly pass; same
   cadence, same report-never-gate status.
-- [RELEASE.md § Monthly reviews](RELEASE.md) — where this sits in the cycle.
+- [RELEASE.md § Monthly bug review](RELEASE.md#monthly-bug-review-by-hand--one-month-one-generalization) — where this sits in the cycle.

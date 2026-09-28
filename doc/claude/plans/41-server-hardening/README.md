@@ -260,7 +260,7 @@ wild.
 - [PROBLEMS.md @P246](../../PROBLEMS.md) — file-scope `const`
   (closed; relevant because the server's wire-format constants like
   `H_HELLO`, `TYPE_DELTA` now declare cleanly).
-- [INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#33-const-applies-to-locals-and-parameters-but-not-fields)
+- [INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#resolved-as-design-point-documented--regression-guarded)
   — the const-fields gap.  Tangentially relevant: tightening
   `Cell` / `Player` field immutability would catch tick-loop
   mistakes early in @PLN6.

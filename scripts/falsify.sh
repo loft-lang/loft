@@ -8,7 +8,7 @@
 #   scripts/falsify.sh tests/scripts/<guard>.loft <control-ref>
 #
 # A guard that passes on the build it was written for proves nothing, and the ways that
-# happens are not exotic — four turned up in one afternoon (QUALITY.md § B6m): the wrong
+# happens are not exotic — four turned up in one afternoon (QUALITY-history.md § B6m): the wrong
 # ENTRY POINT (a `main`-less guard under `--interpret` runs no assertion; a `main`-ful one
 # under `--tests` runs the helpers), a success marker the error report ECHOES, a leak gate
 # that is monotone so an over-free reads as an improvement, and a cell whose shape never
@@ -34,7 +34,7 @@
 # form — reports `leak none` on BOTH trees whatever it leaks, and a guard written to catch a
 # LEAK is therefore recorded INERT, i.e. mislabelled a lock.  Measured 2026-08-27 on
 # `a-nullable-return-joins-its-branch-arms.loft`, whose leaking cell `make ci` failed on while
-# this reported `0|0|none|none|0` for both trees (QUALITY.md B6p).  Until `--tests` grows a leak
+# this reported `0|0|none|none|0` for both trees (QUALITY-history.md B6p).  Until `--tests` grows a leak
 # check, score a leak guard by giving it a `main` and running it under `--interpret`.
 #
 # ⚠ A SECOND CHANNEL IS BLIND, for the mirror-image reason.  `expect_channel` counts only

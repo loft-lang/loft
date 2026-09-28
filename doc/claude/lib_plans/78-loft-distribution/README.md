@@ -33,7 +33,7 @@ bootstrap has no verifier, and self-replacement mutates the running program.
 
 | Topic | Home |
 |---|---|
-| Release procedure, the hash chain, per-release verification | [RELEASE.md § Tag & publish](../../RELEASE.md) and § 10 |
+| Release procedure, the hash chain, per-release verification | [RELEASE_PUBLISH.md](../../RELEASE_PUBLISH.md) § Tag & publish and § The bundles and the registry entry |
 | Submitting the toolchain entry, the registry-side gates | [REGISTRY_SUBMIT.md § The toolchain entry](../../REGISTRY_SUBMIT.md) |
 | What `verify-self` proves, and what it does not | `src/verify_self.rs` module docs |
 | Why the entry's fields are what they are | `scripts/gen-toolchain-entry.py` |
@@ -51,10 +51,10 @@ loudly rather than a tracker row that rots:
 2. **`self-update` is unverified on Windows** against a genuinely running
    `loft.exe` — the one platform-divergent step in the chain, and the one thing no
    test can reach.  *Enforced by:* a per-release checklist item in
-   [RELEASE.md § 10](../../RELEASE.md).
+   [RELEASE_PUBLISH.md § The bundles and the registry entry](../../RELEASE_PUBLISH.md#the-bundles-and-the-registry-entry).
 3. **Reproducible builds** (the plan's step 7) were sequenced last on purpose so
    they could never block a user-visible installer, and closing this does not make
-   them urgent.  *Homed at:* [RELEASE.md § 10 Open work](../../RELEASE.md).
+   them urgent.  *Homed at:* [RELEASE_PUBLISH.md § Reproducible builds](../../RELEASE_PUBLISH.md#reproducible-builds).
 
 A note on the original Goal's `curl -sSL https://loft-lang.org/install.sh | sh`:
 the script ships and works, and once this branch is on `main` it is fetchable at

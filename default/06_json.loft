@@ -66,7 +66,7 @@ pub fn json_parse(raw: text) -> JsonValue;
 /// Return a pipe-separated trail of JSON parse errors from the most
 /// recent `json_parse` call.  Empty when the parse succeeded.  Each
 /// entry carries an RFC 6901 path, a `line:col` location, and a
-/// context snippet — see Q1 in `doc/claude/QUALITY.md`.
+/// context snippet.
 pub fn json_errors() -> text;
 // Observes the runtime's
 // json_errors state populated by json_parse.  No parent writes.

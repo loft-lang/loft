@@ -62,7 +62,7 @@ watermark, or the residual is characterised as a different mechanism.
 
 ## Why null is the hard family, measured
 
-The 2026-09-05 evaluation of the rule-led walk queue (QUALITY.md B7q–B7s and the report that
+The 2026-09-05 evaluation of the rule-led walk queue (QUALITY-history.md B7q–B7s and the report that
 followed) put null apart from every other family for three structural reasons:
 
 1. **One fact, two representations.**  Nullability is a type former (`Optional`, the N
@@ -71,7 +71,7 @@ followed) put null apart from every other family for three structural reasons:
 2. **No chokepoint by construction.**  `τ?` is discharged at the point of use — `??`, `?`,
    `match`, or a store into a non-null slot — so the question is asked wherever a value is
    read.  `scripts/ir_walker_audit.py optional` measures it: **703** functions discriminate on
-   a `Type` variant and **352** of them are opaque to a wrapped shape (QUALITY.md B6p, B6s).
+   a `Type` variant and **352** of them are opaque to a wrapped shape (QUALITY-history.md B6p, B6s).
    The `?` survives at DECLARATION time and at LVALUE places; both defects of the B7h walk
    sat exactly there.
 3. **A family the code does not represent.**  Fifteen N rules have no citation, so the walk
@@ -1304,7 +1304,7 @@ because the declaration-time sites it names are where the matrix's undischarged 
   ([nullflow-flip-plan.md](../102-stability-contract/nullflow-flip-plan.md)); phase 2 folds
   the sites that flip left behind.
 - **@PLN25** (finished) — the dense element model; `N-Dense`'s home is its storage decision.
-- The rule-led walk records this plan continues: QUALITY.md B6p, B6s (the `optional`
+- The rule-led walk records this plan continues: QUALITY-history.md B6p, B6s (the `optional`
   screen), B6u (`@FR-L-Null`), B7h (`@FR-L-Null-Tag`).
 
 ## See also

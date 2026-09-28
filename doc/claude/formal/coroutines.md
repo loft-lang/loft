@@ -200,6 +200,14 @@ value built at the yield instead.
              READ out of a member — `h = t.g`, `h = tasks[i]`, a `for` over a collection of
              handles, a tuple binder — is a VIEW (binding.md B-View): advancing it advances
              the member's generator, and the member keeps it.
+             A frame may have SEVERAL holders, and each releases its own hold once: the frame
+             is released with the last.  A handle that lands in a holder while its source
+             keeps its own hold takes a hold of its own — a parameter or a view stored in a
+             field, an element or a tuple member, bound to a local that releases, or handed
+             to a GENERATOR, whose frame holds every handle it is given until its end or its
+             abandonment.  A fresh handle hands its one hold over, and a moved local gives
+             its own up (H-Move), so neither takes another.  An inline handle argument is
+             held by the call's temp, except one handed to a generator.
 ```
 
 **In words.** A generator can be kept anywhere a value can: in a struct, in a vector, in a
@@ -213,7 +221,23 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 0.**  D-gen-lambda opened and closed 2026-09-25 (loft#1676, below).
+**OPEN: 0.**  D-gen-hold opened and closed 2026-09-27 (loft#1708, below); D-gen-lambda opened
+and closed 2026-09-25 (loft#1676, below).
+
+- **D-gen-hold** *(CLOSED 2026-09-27, loft#1708)* — `(G-Hold)` named the holders that release a
+  frame and gave the frame ONE release, and it said nothing about a handle given to a
+  PARAMETER.  So the first holder to end released it while another still named it: a function
+  that stored the handle it was given (`g = gen(); wrap(g)`, returned) answered null from then
+  on, as did a local bound from a parameter (`h = g` freed the caller's generator), a tuple
+  member, a copied member and a generator holding a parameter past its caller's local — on both
+  backends, with no diagnostic.  A MOVE would have fixed those and broken the adapter spelling
+  that worked (a prefix through `fwd(g)`, then `g` continued), so the owner ruled for SHARED
+  HOLDS, written into `(G-Hold)` above: each frame counts its holders (`CoroutineFrame::holds`,
+  native `NATIVE_COROUTINE_HOLDS`), `OpCoroutineRetain` takes a hold where the scope pass's
+  `retain_shared_handles` finds a second holder, a generator gives its parameters' holds back
+  at its end and when abandoned (a never-advanced frame included), and an inline handle
+  argument is lifted for every non-generator callee.  Guard:
+  `tests/scripts/1708-every-holder-of-a-generator-releases-its-own-hold.loft` (22 cells).
 
 - **D-gen-lambda** *(CLOSED 2026-09-25, loft#1676)* — `(G-Own)` named no rule for a yielded
   LAMBDA, and the code gave the closure record a handle into the generator's frame.  A lambda

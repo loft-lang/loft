@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Phase 4 — Typed runtime errors
 
-**REFRAMED 2026-05-11 — see [DESIGN_DECISIONS.md § C66](../../DESIGN_DECISIONS.md#c66--no-runtime-exceptions-in-production-loft-programs-never-abort-on-user-attributable-edge-cases).**
+**REFRAMED 2026-05-11 — see [DESIGN_DECISIONS.md § C66](../../DESIGN_DECISIONS.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).**
 The original phase-4 spec called for HALTING the loft program on
 any typed runtime fault (`State::raise` short-circuiting the
 dispatch loop via `code_pos = u32::MAX`).  This violates loft's

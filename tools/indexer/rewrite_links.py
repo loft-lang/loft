@@ -40,6 +40,28 @@ INLINE_LINK = re.compile(r"(\]\()([^)\s]+)")
 # `[label]: target` reference definitions.
 REF_DEF = re.compile(r"^(\s{0,3}\[[^\]]+\]:\s*)(\S+)")
 FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
+def fence_mask(lines: list[str]) -> list[bool]:
+    """Per line: is it a fence delimiter or inside a fenced block?  CommonMark's rule, not
+    a toggle: a fence closes only on a line holding nothing but the SAME character, at least
+    as many of it as opened it, so `` ```html `` inside an open block is content, and a
+    block left open runs to the end of the file."""
+    mask, close = [], None
+    for line in lines:
+        if close is None:
+            m = FENCE_OPEN.match(line)
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                close = re.compile(r"^\s*" + re.escape(m.group(1)[0]) + "{" + str(len(m.group(1))) + r",}\s*$")
+                mask.append(True)
+                continue
+            mask.append(False)
+        else:
+            mask.append(True)
+            if close.match(line):
+                close = None
+    return mask
 TEXT_SUFFIXES = {
     ".md", ".rs", ".loft", ".py", ".sh", ".toml", ".yml", ".yaml",
     ".json", ".txt", ".html", ".css", ".js",
@@ -123,13 +145,10 @@ def rewrite_target(raw: str, src_old: str, src_new: str,
 
 def rewrite_markdown(text: str, src_old: str, src_new: str,
                      frm: str, to: str) -> tuple[str, list[str]]:
-    out, notes, in_fence = [], [], False
-    for n, line in enumerate(text.split("\n"), 1):
-        if FENCE.match(line):
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
+    out, notes = [], []
+    lines = text.split("\n")
+    for n, (line, fenced) in enumerate(zip(lines, fence_mask(lines)), 1):
+        if fenced:
             out.append(line)
             continue
 

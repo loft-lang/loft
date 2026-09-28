@@ -1024,7 +1024,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, which
   replaces `a-link-to-a-narrow-integer-store-place-is-refused.loft` and keeps its seven shapes,
   scored by value instead of by diagnostic.  `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`
-  still pins the frame half.  D-bind-38, the TEXT face of the same rule, stays open.
+  still pins the frame half.  D-bind-38, the TEXT face of the same rule, is closed too (loft#1566).
 
 * **D-bind-54** *(opened 2026-09-23, CLOSED 2026-09-23; found by loft3-ca on the wide spelling,
   where it was recorded as D-bind-53 — a number this tree had already given loft#1639's entry, so

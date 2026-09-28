@@ -46,9 +46,7 @@ answer "open this 2026 plan."
   by-goal paths route through current docs, not finished
   plans.
 
-**Scope.**  Six categories of work, each enumerated in detail
-in [§ Evaluation — doc state after plan-12 lands](#suggested-closure-sequence-the-work-to-actually-do)
-above.  Recapped here as concrete deliverables:
+**Scope.**  Six categories of work, as concrete deliverables:
 
 | Category | Output | Lines |
 |---|---|---|

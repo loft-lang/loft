@@ -751,7 +751,7 @@ design-level mitigations for each identified risk.
 - [P2 What is Safe](#p2-what-is-safe)
 - [P2-R1 — Text argument `Str` dangles on first resume](#p2-r1--text-argument-str-dangles-on-first-resume)
 - [P2-R2 — `String` objects leaked at exhaustion](#p2-r2--string-objects-leaked-at-exhaustion)
-- [P2-R3 — Text locals have implicit "never freed" invariant](#p2-r3--text-locals-have-implicit-never-freed-invariant)
+- [P2-R3 — Text locals have implicit "never freed" invariant](#p2-r3--text-locals-have-an-implicit-never-freed-between-yield-and-resume-invariant)
 - [P2-R4 — `text_positions` inconsistent across yield/resume](#p2-r4--text_positions-inconsistent-across-yieldresume)
 - [P2-R5 — Store-backed `Str` dangles on record delete](#p2-r5--store-backed-str-dangles-on-record-delete)
 - [P2-R6 — Compiler check for `yield` inside `par()` missing](#p2-r6--compiler-check-for-yield-inside-par-missing)

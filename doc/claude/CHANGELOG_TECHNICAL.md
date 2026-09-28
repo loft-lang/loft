@@ -9,6 +9,40 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Foreign stores: a file mapped read-only is a `vector<u8>` with no copy (@PLN174 F1–F3, 2026-09-28)
+
+`Store` serves bytes the runtime does not own under ONE synthetic record id (`FOREIGN_REC`):
+`Store::make_foreign` locks a minted store, writes the id into its collection slot and keeps
+`(base, len, elem_size)`, a synthetic header and the OWNER (`ForeignOwner`: a `Vec<u8>` or a
+read-only `memmap::Mmap`); `read`, `addr`, `valid` and `elem_base` answer the id from the
+foreign base, so `vec_header`, `length_vector`, `get_vector`, the hoisted element reads and
+the push header serve it unchanged; `Store::bytes_of` is `buffer`'s read-only twin
+(`text_from_bytes` reads through it).  `Stores::foreign_vector` mints one, `free_named`
+drops the owner with the handle.  The first producer is `file_map(path) -> vector<u8>?`
+(`02_files.loft`, both backends; strace shows the `PROT_READ` mapping).  Two store defects
+found on the way: the lock refusal ran after the bounds computation, so a write into a
+locked store at a synthetic record read as a corrupt reference; and an internal lock's write
+was a panic where the program's own doing (the author's `#lock`, now a foreign store too)
+gets the `write_to_locked_store` runtime error, whose advice for the foreign origin is to
+copy first.  F0 priced the plan's claim on pluginabi's bench (−13.6 % on `check_request` from
+the text arm alone); F3 measured that the crawler's `binary_read` row does NOT move on a
+mapped file (the row is its element loop, not a copy).  Reference: DATABASE.md § Foreign
+stores; cells `tests/scripts/174-foreign-file.loft`, `tests/foreign_store.rs`.
+
+### A nested record rides the value tuple (@PLN158, 2026-09-28)
+
+`(R-ValueRecord)` § The nested clause, `(R-ValueLocal)`, `--native`, generation time, default
+ON (`LOFT_NO_VALUE_RECORD=1`, `LOFT_NO_VALUE_LOCAL=1`).  A record whose fields are scalars and
+INLINE sub-records of scalars (`Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }`) is returned,
+bound and passed as the tuple of its scalars, a sub-record's at the summed offset:
+`hoist::type_layout` recurses, a nested read folds through `hoist::view_field`, a builder's
+sub-record copy from a tuple source is that source's elements, and a sub-record of a value
+local crosses a call or a copy as a range of the tuple (`hoist::sub_record`).  The soundness
+half the nesting needed: a write through a sub-record is a write into every enclosing record
+(`hoist::setter_target` answers the chain; a `&` link or a parameter's view reaches every type
+holding its record inline).  Sphere-shaped probe, two million vertices: 0.27 → 0.17 s.  Cells
+`tests/scripts/158-nested-value-record.loft`.
+
 ### Function length is enforced; files split on the release beat (@PLN173, 2026-09-26)
 
 `clippy::too_many_lines` is no longer allowed crate-wide.  Every function over the bar carries
@@ -7491,7 +7525,7 @@ layout gives a shared name+type ONE slot — so the read is right for the varian
 declare it and reads another variant's bytes for the rest. `match` afterwards still
 reports the original variant, because nothing changed the tag. Both backends, exit 0.
 
-**Direct payload access stays.** [C89](DESIGN_DECISIONS.md#c89) decided permanently that
+**Direct payload access stays.** [C89](DESIGN_DECISIONS.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
 enum payloads are named fields you read straight, with matching for *dispatch* and never
 for *extraction* — refusing a bare `c.field` would force a matcher on every read, which
 is the thing C89 exists to prevent. And the common-prefix case is already correct:

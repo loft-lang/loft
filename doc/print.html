@@ -4679,7 +4679,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn file(path: text) -&gt; File fs#read</code></pre>
-<p>Plan-06 phase 5a: #impure(host_io) — reads a host-detected constant.  Could be #pure once detected (it's invariant for the lifetime of a process), but the runtime caches it inside Stores so the access is observable. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.</p>
+<p>#impure(host_io): reads a host-detected constant.  It is fixed for the lifetime of a process, but the runtime caches it inside Stores, so the access is observable and the function cannot be #pure. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.</p>
 </div>
 <div class="item">
 <pre><code>pub fn exists(path: text) -&gt; boolean fs#read</code></pre>
@@ -4724,6 +4724,10 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn read_bytes(path: text) -&gt; vector&lt;u8&gt; ?fs#read</code></pre>
 <p>Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `[]`); discharge with `?? []` to keep the old shape.  Binary-exact (round-trips with write_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn file_map(path: text) -&gt; vector&lt;u8&gt; ?fs#read</code></pre>
+<p>Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read_bytes.  Every read — an index, an iteration, a slice (a copy), text_from_bytes — works as on any vector&lt;u8&gt;; a WRITE is refused at run time (write_to_locked_store): copy first (`w = v[0..len(v)]`) to change bytes.  For a file read once and whole, read_bytes gives the same bytes at the cost of the copy.</p>
 </div>
 <div class="item">
 <pre><code>pub fn write_bytes(path: text, bytes: const vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
@@ -4841,7 +4845,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn store_lazy_fail(local: reference, why: text) fs#read</code></pre>
 <p>A loft DRIVER reporting that it could not reach its source.</p>
-<p>The writing end of the channel `store_lazy_error` reads. A driver written in loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — &quot;the source is down&quot; carries a REASON, and answering `0` for it is exactly the silent wrong answer arc C exists to prevent, because a caller cannot tell it from &quot;no such person&quot;.</p>
+<p>The writing end of the channel `store_lazy_error` reads. A driver written in loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — &quot;the source is down&quot; carries a REASON, and answering `0` for it would be a silent wrong answer, because a caller cannot tell it from &quot;no such person&quot;.</p>
 <p>fn lazy_fetch(coll: hash&lt;Person[id]&gt;, source: text, key_int: integer, key_text: text) -&gt; integer { if !db.db_open(source) { store_lazy_fail(coll, &quot;cannot open {source}: {db.db_last_error()}&quot;); return 0; } .. }</p>
 <p>Sticky and counted exactly like a Rust source's failure: the FIRST reason is kept, every failure is counted, and only `store_lazy_clear` clears them.</p>
 </div>
@@ -5093,7 +5097,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn json_errors() -&gt; text</code></pre>
-<p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.</p>
+<p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.</p>
 </div>
 <div class="item">
 <pre><code>pub fn field(self: const JsonValue, name: text) -&gt; JsonValue[self]</code></pre>

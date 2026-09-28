@@ -487,7 +487,7 @@ converged, and the convergence paid for itself immediately:
 
 - `walk_parsed_into`'s four open-coded narrow arms → `Stores::write_narrow_value`, the
   one place the four encodings live. (Same pass gave the absent-field decision its own
-  home, `Stores::write_absent_value`; see QUALITY.md § Q1/P54.)
+  home, `Stores::write_absent_value`; see QUALITY-history.md § Q1/P54.)
 - `is_null`'s three inline arms → `Stores::narrow_is_null`, its read twin.
 - `set_default_value_nullable`'s narrow arms stay where they are — they write through the
   ENCODING-aware setters (`set_byte`/`set_short`/`set_i16_raw`/`set_i32_raw`), which is a

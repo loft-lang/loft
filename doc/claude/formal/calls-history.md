@@ -101,7 +101,7 @@ with every cell passing.
 
 The shape that discriminates is `(F-Ret)`'s own: mutate THROUGH one call and re-read through
 another — `bump(f(q)); println("{f(q).a}")` — which never touches a binding.  The same blindness
-cost two probes in @PLN160 before it was named; it applies to QUALITY.md § B7t's 48-cell matrix.
+cost two probes in @PLN160 before it was named; it applies to QUALITY-history.md § B7t's 48-cell matrix.
 
 **CLOSED 2026-09-12.**  Re-measured on both backends in exactly that discriminating shape, over
 all six halves — whole, element and element-bind, generic beside concrete — every one reading 7.
@@ -333,7 +333,7 @@ its own assertion, on both backends.
 `(F-ParamRebind)` names two spellings — `p = [..]`, `p = other` — and says both rebind LOCALLY.
 Its oracle (`1290-a-heap-parameter-rebind-is-local-in-every-spelling`) crosses {struct,
 struct-enum} × {literal, call, another local}, and the keyed row (`1294`) carries the vector kind
-only as a literal control; the vector × `other local` cell was in neither.  Measured (QUALITY.md
+only as a literal control; the vector × `other local` cell was in neither.  Measured (QUALITY-history.md
 B7w): `fn f(x: vector<integer>) { va = [1, 2]; x = va; x[0] = 7 }` wrote `7` into the CALLER's
 vector on both backends — alone, through a value branch, when the rebound value was returned,
 and on every turn of a loop.  The copy lowering asks `(O-Proxy)` whether the local owns the
@@ -360,7 +360,7 @@ deliver it.  The declaration DEFERS a generic's return promotion to instantiatio
 kept the RECORD lowering the template parsed `T` as: a `-> T { x }` carried no return deps
 and the caller bound the argument's own store; a `-> (T, integer)` stayed a stack tuple whose
 heap member was the argument; a vector `s = x` aliased and the frame then freed the caller's
-vector.  Measured on the F-Ret independence matrix (QUALITY.md B7t): 13 generic cells failed
+vector.  Measured on the F-Ret independence matrix (QUALITY-history.md B7t): 13 generic cells failed
 identically on both backends, every concrete twin passed.  Boxing the generic then routed it
 through the concrete tuple-return leg, which had two pre-existing defects of its own — a
 nullable record member written on the tag's discriminant (`4294967199` for `7`) and a nullable

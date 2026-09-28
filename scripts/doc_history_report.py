@@ -33,7 +33,6 @@ EXCLUDE_EXACT = {
     "CHANGELOG.md",
     "doc/claude/CHANGELOG_TECHNICAL.md",
     "doc/claude/PROBLEMS.md",       # the closed-issue archive
-    "doc/claude/QUALITY.md",        # the walk journal — its entries ARE the record
     "doc/claude/ROADMAP.md",
     "doc/claude/STABILITY_ROADMAP.md",
     "doc/claude/STABILITY_SWEEP.md",

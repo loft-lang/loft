@@ -509,6 +509,10 @@ pub struct Store {
     /// growth and every move by hand, and phase 0 measured 33 separate routes that write
     /// these bytes.
     init_shadow: Vec<u32>,
+    /// @PLN174 — the foreign bytes this store serves under [`FOREIGN_REC`], or `None` for
+    /// every ordinary store.  Set by [`Store::make_foreign`], dropped by
+    /// [`Store::release_foreign`] at the handle's free.
+    foreign: Option<Foreign>,
 }
 
 impl Debug for Store {
@@ -520,6 +524,49 @@ impl Debug for Store {
 impl PartialEq for Store {
     fn eq(&self, other: &Self) -> bool {
         self.ptr == other.ptr
+    }
+}
+
+/// @PLN174 — the ONE synthetic record id a foreign store serves its bytes under.  A vector
+/// handle into a foreign store holds it in its collection slot exactly as a handle into an
+/// ordinary store holds a claimed record's id, so `vec_header`, `length_vector`,
+/// `get_vector` and every hoisted read resolve it through the same accessors
+/// ([`Store::read`], [`Store::addr`], [`Store::valid`], [`Store::elem_base`]) — those four
+/// answer this id from the foreign base instead of the store's own bytes, and that is the
+/// whole of the variant.  Past any record an owned store can hold (`u64::from(rec) * 8`
+/// must be inside a store of at most [`MAX_STORE_WORDS`]), so it collides with nothing.
+pub const FOREIGN_REC: u32 = 0x7FFF_FFF0;
+
+/// @PLN174 — what keeps a foreign store's bytes alive: dropped with the store, at the
+/// free of the handle that names it.  A host's token (a browser typed array, F7) joins
+/// here when it is served; every variant must stay `RefUnwindSafe`, because a `Store` is
+/// carried across `catch_unwind` (a `Box<dyn Any + Send>` is not, and broke a test build).
+pub enum ForeignOwner {
+    /// A buffer the runtime or a library built and handed over whole.
+    Bytes(Vec<u8>),
+    /// A read-only mapping of a file (`file_map`).
+    #[cfg(feature = "mmap")]
+    Map(memmap::Mmap),
+}
+
+/// @PLN174 — the bytes a foreign store serves and the header contract it presents for
+/// them: `header` is the size word and the length every vector read expects at `+0` and
+/// `+4` of a vector record, in the store's own (native) byte order, and `base` is where
+/// `+8` begins.  The invariant every accessor rests on: the bytes are READ-ONLY, they are
+/// described by this header, and they outlive every `DbRef` into the store — the owner
+/// below is what makes the third hold.
+struct Foreign {
+    base: *const u8,
+    len: u32,
+    elem_size: u32,
+    header: [u8; 8],
+    _owner: ForeignOwner,
+}
+
+impl Foreign {
+    /// The payload's size in bytes.
+    fn bytes(&self) -> u64 {
+        u64::from(self.len) * u64::from(self.elem_size)
     }
 }
 
@@ -905,6 +952,7 @@ impl Store {
             free: true,
             read_only: false,
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -1030,6 +1078,7 @@ impl Store {
             free: false,
             read_only: false,
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             free_root: 0,
             wild: 0,
@@ -1112,6 +1161,7 @@ impl Store {
             free: false,
             read_only: false,
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -1214,6 +1264,7 @@ impl Store {
             free: false,
             read_only: false,
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             borrowed: false,
             store_nr: u16::MAX,
@@ -2141,6 +2192,9 @@ impl Store {
 
     /// The lock origin of the CONSTANT store, read back by the write refusal.
     pub const CONST_STORE_ORIGIN: &'static str = "the constant store";
+    /// @PLN174 — the lock origin of a FOREIGN store: read-only by contract, and the runtime
+    /// error a write meets picks its advice off it (copy, never unlock).
+    pub const FOREIGN_ORIGIN: &'static str = "a foreign store (read-only by contract)";
 
     /// Lock the constant store — the program-lifetime store every top-level vector constant
     /// is pre-built into, on both backends.  `@FR-H-WriteLocked`: a write that reaches it is
@@ -2351,6 +2405,7 @@ impl Store {
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             free_root: 0, // workers never claim/delete; no free tree needed
             wild: 0,
@@ -2399,6 +2454,7 @@ impl Store {
             free: self.free,
             read_only: false,
             user_locked: false,
+            foreign: None,
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
             store_nr: self.store_nr,
@@ -2444,6 +2500,7 @@ impl Store {
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
+            foreign: None,
             free_protect_depth: 0,
             free_root: self.free_root,
             wild: self.wild,
@@ -3280,8 +3337,100 @@ impl Store {
     /// used where the field is provably aligned — see its own note (loft#1481).
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
+        if rec == FOREIGN_REC {
+            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+            return unsafe { at.cast::<T>().read_unaligned() };
+        }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+    }
+
+    /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
+    /// header for `fld < 8`, the foreign base past it, each bounded exactly as
+    /// [`Store::offset_in_bounds`] bounds an owned record.  A store with no foreign bytes
+    /// answers the same out-of-bounds refusal a corrupt reference gets.
+    fn foreign_addr(&self, fld: u32, width: usize) -> *const u8 {
+        let Some(f) = &self.foreign else {
+            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+        };
+        if fld < 8 {
+            if fld as usize + width > 8 {
+                self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+            }
+            return unsafe { f.header.as_ptr().add(fld as usize) };
+        }
+        let off = u64::from(fld - 8);
+        if off + width as u64 > f.bytes() {
+            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+        }
+        // SAFETY: the bound just proved `off + width` is inside the owner's live bytes.
+        unsafe { f.base.add(off as usize) }
+    }
+
+    /// @PLN174 — does this store serve foreign bytes?
+    #[must_use]
+    pub fn is_foreign(&self) -> bool {
+        self.foreign.is_some()
+    }
+
+    /// @PLN174 — turn this minted store into a FOREIGN one: the collection slot at
+    /// `(rec, pos)` names [`FOREIGN_REC`], the header presents `len` elements of
+    /// `elem_size` bytes starting at `base`, `owner` keeps those bytes alive, and the store
+    /// is locked — a write through any route meets the read-only refusal, which is what
+    /// makes every hoist over it sound (nothing can grow or move the block).
+    pub fn make_foreign(
+        &mut self,
+        rec: u32,
+        pos: u32,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: ForeignOwner,
+    ) {
+        assert!(
+            self.foreign.is_none() && !self.read_only,
+            "make_foreign on a store that is already foreign or locked"
+        );
+        self.set_u32_raw(rec, pos, FOREIGN_REC);
+        let bytes = u64::from(len) * u64::from(elem_size);
+        // The size word counts itself, as a claimed record's does (`Store::buffer`).
+        let words = u32::try_from(bytes.div_ceil(8) + 1).unwrap_or(u32::MAX);
+        let mut header = [0u8; 8];
+        header[..4].copy_from_slice(&words.to_ne_bytes());
+        header[4..].copy_from_slice(&len.to_ne_bytes());
+        self.foreign = Some(Foreign {
+            base,
+            len,
+            elem_size,
+            header,
+            _owner: owner,
+        });
+        self.read_only = true;
+        self.lock_origin = std::borrow::Cow::Borrowed(Self::FOREIGN_ORIGIN);
+    }
+
+    /// @PLN174 — drop the foreign bytes with their owner: the handle that named them is
+    /// being freed.  The store's own block stays what it was and is recycled as any other.
+    pub fn release_foreign(&mut self) {
+        self.foreign = None;
+    }
+
+    /// The payload bytes of vector record `rec`, READ-ONLY — the record's claim past its
+    /// header, or, for a foreign store's record, the foreign bytes themselves.  The twin
+    /// of [`Store::buffer`] for a reader: a decoder that only reads must come here, since a
+    /// foreign store has no `&mut [u8]` to give.
+    #[must_use]
+    pub fn bytes_of(&self, rec: u32) -> &[u8] {
+        if rec == FOREIGN_REC {
+            return self.foreign.as_ref().map_or(&[], |f| {
+                // SAFETY: the owner keeps `bytes()` bytes live at `base` for as long as
+                // the store holds it, and the borrow is tied to `self`.
+                unsafe { std::slice::from_raw_parts(f.base, f.bytes() as usize) }
+            });
+        }
+        let size = (self.read::<u32>(rec, 0) as usize).saturating_sub(1) * 8;
+        let at = self.offset_in_bounds(rec, 8, size);
+        unsafe { std::slice::from_raw_parts(self.ptr.offset(at), size) }
     }
 
     /// Borrow a field IN PLACE, for the values that cannot be copied out.
@@ -3298,6 +3447,15 @@ impl Store {
     /// forbids was invisible for the life of this file, because `<*mut T>::as_mut()` derefs
     /// inside `core`, which is precompiled without `-C debug-assertions=on`.
     pub fn addr<T>(&self, rec: u32, fld: u32) -> &T {
+        if rec == FOREIGN_REC {
+            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+            assert!(
+                (at as usize).is_multiple_of(std::mem::align_of::<T>()),
+                "Store::addr: foreign field {fld} is not aligned for {}",
+                std::any::type_name::<T>(),
+            );
+            return unsafe { &*at.cast::<T>() };
+        }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         // The allocation is `Layout::from_size_align(size * 8, 8)` and the address is
         // `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment is
@@ -3397,6 +3555,13 @@ impl Store {
             "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
             self.lock_origin
         );
+        // The lock is refused BEFORE the address is computed: a write into a locked store
+        // is the author's fault whatever the address, and a FOREIGN store (@PLN174) has no
+        // address of its own for its record — asked first, the bounds test would call the
+        // reference corrupt where the write is merely refused.
+        if self.read_only {
+            self.refuse_locked_write(rec, fld);
+        }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         #[cfg(debug_assertions)]
         if in_record && rec > 1 && fld > 0 {
@@ -3412,9 +3577,6 @@ impl Store {
                 (fld as isize + std::mem::size_of::<T>() as isize) <= rec_size,
                 "Fld {fld} is outside of record {rec} size {rec_size}",
             );
-        }
-        if self.read_only {
-            self.refuse_locked_write(rec, fld);
         }
         // @PLN154 — the one write hook.  Phase 0 counted 33 sites that write the
         // interpreter stack and 32 of them arrive here, where `T` also names the width;
@@ -3437,7 +3599,9 @@ impl Store {
     fn refuse_locked_write(&self, rec: u32, fld: u32) -> ! {
         // The author's own `#lock` is a loft fault with the author's frames; an
         // internal lock reaching here is a compiler defect and stays an assert.
-        if self.user_locked {
+        // The author's lock and a FOREIGN store (@PLN174) are the program's own doing and
+        // get the runtime error whose advice names the cure; every other lock is internal.
+        if self.user_locked || self.is_foreign() {
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
         }
         panic!(
@@ -3454,6 +3618,9 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn elem_base(&self, rec: u32) -> *const u8 {
+        if rec == FOREIGN_REC {
+            return self.foreign.as_ref().map_or(std::ptr::null(), |f| f.base);
+        }
         // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
         // past) the allocation `ptr` was made for.
         unsafe { self.ptr.add(rec as usize * 8 + 8) }
@@ -3548,6 +3715,11 @@ impl Store {
     }
 
     pub fn buffer(&mut self, rec: u32) -> &mut [u8] {
+        assert!(
+            rec != FOREIGN_REC,
+            "Write to read-only store: a foreign store's bytes have no mutable buffer \
+             (read them with `Store::bytes_of`)"
+        );
         // The header word counts itself: `claim(n)` reserves `n` words at `rec*8`, of
         // which the first IS the size word this reads.  The payload therefore starts one
         // word in and is one word SHORTER than the record — a span of `size` bytes from
@@ -3629,6 +3801,13 @@ impl Store {
     /// Complete validations are only done in 'test' mode.
     #[inline]
     pub fn valid(&self, rec: u32, fld: u32) -> bool {
+        // @PLN174 — the foreign record: its header, then exactly the owner's bytes.
+        if rec == FOREIGN_REC {
+            return self
+                .foreign
+                .as_ref()
+                .is_some_and(|f| fld >= 4 && u64::from(fld) < 8 + f.bytes());
+        }
         // S29/P1-R3: locked (worker) stores have empty claims by design — skip the
         // claims check.  Records in worker stores are valid copies of the originals.
         // Likewise a REOPENED file-backed (mmap) store: `claims` is in-memory
@@ -4970,7 +5149,87 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{Claims, MAX_STORE_WORDS, Store, slack_target};
+    use super::{Claims, FOREIGN_REC, ForeignOwner, MAX_STORE_WORDS, Store, slack_target};
+
+    /// @PLN174 F1 — a foreign store answers a vector read through the SAME accessors an
+    /// ordinary vector store answers, byte for byte; a write meets the read-only refusal;
+    /// the structure validates; and the release drops the bytes.  Goes red if any accessor
+    /// a vector read uses reads the store's real header instead of the synthetic one —
+    /// measured: with `Store::read`'s intercept struck the first length read panics
+    /// "Store access out of bounds: rec=2147483632 fld=4"; with `elem_base`'s struck the
+    /// process dies on the address 16 GiB past the store.
+    #[test]
+    fn a_foreign_store_answers_a_vector_read_through_the_same_accessors() {
+        let data: Vec<u8> = (0..37u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(3))
+            .collect();
+        let len = data.len() as u32;
+        // The ordinary form: the bytes copied into a store.
+        let mut plain = Store::new(64);
+        let root = plain.claim(4);
+        let rec = crate::vector::alloc_vector_from_bytes(&mut plain, 1, len, &data);
+        plain.set_u32_raw(root, 8, rec);
+        // The foreign form: the same bytes, owned by a buffer the store keeps.
+        let owned = data.clone();
+        let base = owned.as_ptr();
+        let mut foreign = Store::new(8);
+        let froot = foreign.claim(4);
+        foreign.make_foreign(froot, 8, base, len, 1, ForeignOwner::Bytes(owned));
+        assert!(foreign.is_foreign() && foreign.read_only);
+        assert_eq!(foreign.collection_rec(froot, 8), FOREIGN_REC);
+        assert_eq!(
+            foreign.get_u32_raw(FOREIGN_REC, 4),
+            plain.get_u32_raw(rec, 4)
+        );
+        assert_eq!(foreign.read::<u32>(FOREIGN_REC, 4), len);
+        for i in 0..len {
+            assert_eq!(
+                foreign.get_byte(FOREIGN_REC, 8 + i, 0),
+                plain.get_byte(rec, 8 + i, 0),
+                "byte {i}"
+            );
+        }
+        assert_eq!(
+            foreign.read::<u32>(FOREIGN_REC, 8),
+            plain.read::<u32>(rec, 8)
+        );
+        assert_eq!(
+            foreign.read::<u16>(FOREIGN_REC, 8 + len - 2),
+            plain.read::<u16>(rec, 8 + len - 2)
+        );
+        let seen =
+            unsafe { std::slice::from_raw_parts(foreign.elem_base(FOREIGN_REC), len as usize) };
+        assert_eq!(seen, &data[..]);
+        assert_eq!(
+            foreign.bytes_of(FOREIGN_REC),
+            &plain.bytes_of(rec)[..len as usize]
+        );
+        assert!(foreign.valid(FOREIGN_REC, 8 + len - 1));
+        assert!(!foreign.valid(FOREIGN_REC, 8 + len));
+        assert!(!foreign.valid(FOREIGN_REC, 0));
+        assert!(foreign.validate_structure().is_ok());
+        // Past the end is the corrupt-reference refusal, not a read of whatever lies there.
+        let past = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            foreign.read::<u8>(FOREIGN_REC, 8 + len)
+        }));
+        assert!(past.is_err(), "a read past the foreign bytes must refuse");
+        // A write is the read-only refusal — nothing can grow or move the block.
+        let grow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| foreign.claim(1)));
+        assert!(grow.is_err(), "a claim on a foreign store must refuse");
+        let mutate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            foreign.buffer(FOREIGN_REC).len()
+        }));
+        assert!(
+            mutate.is_err(),
+            "a mutable buffer of the foreign bytes must refuse"
+        );
+        // The release drops the bytes: the record is gone, the store itself is not.
+        foreign.release_foreign();
+        assert!(!foreign.is_foreign());
+        assert!(foreign.elem_base(FOREIGN_REC).is_null());
+        assert!(!foreign.valid(FOREIGN_REC, 8));
+        assert!(foreign.validate_structure().is_ok());
+    }
 
     /// loft#1507 — a recycled slot must not inherit the widest claims set it ever held.
     ///

@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SLICE CAP BELOW ZERO ANSWERS NO RECORDS (`@FR-Slice-Cap`: `xs[(x,y)..:n]` yields at most `n`
+// records; the trie's `t[pre..:n]` is the same cap on the same scratch path).  The lowering spelled
+// "no `:n` written" as the limit `-1`, and the runtime read every negative limit as that flag — so
+// a program's own `:k`, with `k` gone negative (a budget overspent) or null (`i64::MIN` underneath), answered EVERY record
+// instead of none, on both backends.  The flag is now `i64::MAX` (`SLICE_UNCAPPED`), a cap that
+// means "uncapped" whoever writes it, and `slice_cap` is the one reader.  The uncapped and
+// positive cells are the controls: they must not move.
+//
+// Collection: seven points, so "every record" is 7 and cannot be mistaken for a cap.  Each cell
+// asserts the COUNT; the uncapped control also asserts a signature, sum of (x*10 + y + 1):
+// (0,0)=1 (3,0)=31 (0,3)=4 (3,3)=34 (4,0)=41 (0,4)=5 (2,2)=23 -> 139.
+//
+// @falsified-at: 395a07e98 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/a-slice-cap-below-zero-answers-no-records.patch — the same channels.
+// CHANNEL: assertions — the control tree answers 7 (spatial) and 3 (trie) where 0 is expected.
+// HOLDS: every assertion passes on both backends on the cure tree.
+
+struct P { x: integer, y: integer }
+struct W { k: text }
+
+fn pts() -> spatial<P[x, y]> {
+  xs: spatial<P[x, y]> = [];
+  xs += [P { x: 0, y: 0 }]; xs += [P { x: 3, y: 0 }]; xs += [P { x: 0, y: 3 }];
+  xs += [P { x: 3, y: 3 }]; xs += [P { x: 4, y: 0 }]; xs += [P { x: 0, y: 4 }];
+  xs += [P { x: 2, y: 2 }];
+  xs
+}
+
+fn words() -> trie<W[k]> {
+  t: trie<W[k]> = [];
+  t += [W { k: "aa" }]; t += [W { k: "ab" }]; t += [W { k: "ac" }]; t += [W { k: "b" }];
+  t
+}
+
+fn near_count(k: integer) -> integer {
+  xs = pts();
+  n = 0;
+  for p in xs[(2, 2)..:k] { n += 1 + p.x * 0; }
+  n
+}
+
+fn prefix_count(k: integer) -> integer {
+  t = words();
+  n = 0;
+  for w in t["a"..:k] { n += 1 + len(w.k) * 0; }
+  n
+}
+
+fn test_spatial_uncapped_is_every_record() {
+  xs = pts();
+  n = 0;
+  s = 0;
+  for p in xs[(2, 2)..] { n += 1; s += p.x * 10 + p.y + 1; }
+  assert(n == 7, "uncapped walk: {n}");
+  assert(s == 139, "uncapped walk signature: {s}");
+}
+
+fn test_spatial_caps_that_admit_records() {
+  assert(near_count(1) == 1, "cap 1: {near_count(1)}");
+  assert(near_count(3) == 3, "cap 3: {near_count(3)}");
+  // More than the collection holds: every record, not more.
+  assert(near_count(100) == 7, "cap 100: {near_count(100)}");
+}
+
+fn test_spatial_cap_zero_and_below() {
+  assert(near_count(0) == 0, "cap 0: {near_count(0)}");
+  // -1 was the lowering's own "no cap" flag, so it is the cell that answered 7.
+  assert(near_count(-1) == 0, "cap -1: {near_count(-1)}");
+  assert(near_count(-1000) == 0, "cap -1000: {near_count(-1000)}");
+}
+
+fn test_spatial_budget_overspent() {
+  // The use case: a per-frame budget of 5 with 8 already used leaves -3, which asks for none.
+  budget = 5;
+  used = 8;
+  n = 0;
+  xs = pts();
+  for p in xs[(2, 2)..:budget - used] { n += 1 + p.x * 0; }
+  assert(n == 0, "an overspent budget: {n}");
+}
+
+fn test_trie_caps() {
+  t = words();
+  n = 0;
+  for w in t["a"..] { n += 1 + len(w.k) * 0; }
+  assert(n == 3, "trie uncapped: {n}");
+  assert(prefix_count(2) == 2, "trie cap 2: {prefix_count(2)}");
+  assert(prefix_count(0) == 0, "trie cap 0: {prefix_count(0)}");
+  assert(prefix_count(-1) == 0, "trie cap -1: {prefix_count(-1)}");
+}
+
+fn test_box_is_not_capped() {
+  // The box form passes no `:n`; it must still answer exactly the box.
+  // (0,0)..(3,3): (0,0) (3,0) (0,3) (3,3) (2,2) -> 5
+  xs = pts();
+  n = 0;
+  for p in xs[(0, 0)..(3, 3)] { n += 1 + p.x * 0; }
+  assert(n == 5, "box: {n}");
+}

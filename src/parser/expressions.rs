@@ -1655,6 +1655,7 @@ impl Parser {
             || !matches!(
                 f_type,
                 Type::Vector(_, _)
+                    | Type::Hash(_, _, _)
                     | Type::Sorted(_, _, _)
                     | Type::Index(_, _, _)
                     | Type::Radix(_, _, _)
@@ -4393,7 +4394,7 @@ use a separate collection or add after the loop"
         // `is_dbref`, not a spelled list: the list this used to carry named six heap kinds
         // and not `spatial` or `trie`, so `g.sp = null` took the SCALAR sentinel path —
         // found when @FR-N-Store's one home started asking here (the drifted-deny-list
-        // shape QUALITY.md § Design P8 records).  The store face asks the bare-null half
+        // shape QUALITY-history.md § Design P8 records).  The store face asks the bare-null half
         // for the scalar slot; a HEAP slot's `= null` is asked where it LOWERS, which is the
         // only place the five things that spelling can mean are told apart (loft#1404 —
         // `Parser::copy_ref`).

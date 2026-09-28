@@ -65,8 +65,13 @@ every ratio to within about 1 % (the threaded row to about 4 %).  A spread above
 (5 %) is flagged on the row: the box was busy, and that row wants re-running.
 
 `scripts/native_ratio.sh` (`make native-ratio`) reads the same rows against the per-routine
-bars in `ratio_oracle.tsv`; `--gate` fails a ratio over its bar.  The bars are ratcheted
-DOWN as the ratios fall.
+bars in `ratio_oracle.tsv`; `--gate` (`make native-ratio-gate`, and the last step of the
+local `make ci`) fails a ratio over its bar.  The bars are ratcheted DOWN as the ratios fall.
+A ratio is machine-bound, and the bars are the owner's x86-64 laptop's: on another CPU a row
+can sit over its bar repeatably (a cloud Xeon read `sum_loop` at 3.1–3.5 against 2.3 and
+`collatz` at 3.7–4.1 against 2.5, twice, while `sieve` and `mandelbrot` read as on the
+laptop), which is a calibration question to raise, never a reason to re-bless the oracle
+on that box.
 
 ## The portal: where we stand, by class
 
@@ -135,6 +140,11 @@ Four rules keep a row LIKE-FOR-LIKE, and a bench that breaks one measures someth
    the kernel.**  Inside, it blocks the optimisations the reference is there to show.
 4. **A kernel an optimiser can collapse is not a benchmark.**  A plain `sum += i` has a
    closed form; the integer loop here carries a dependency from step to step instead.
+
+A twin that wins by a construction loft cannot express — a lazy iterator, a borrowed
+slice, a struct in registers — breaks none of these and is NOT rewritten down to loft's
+form: it names an abstraction loft is missing, and the finding goes to the language
+(`formal/performance.md` `(Perf-Gap)`).
 
 ## Targets
 

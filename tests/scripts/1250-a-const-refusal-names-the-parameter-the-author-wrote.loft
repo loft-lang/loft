@@ -14,7 +14,7 @@
 // `Variables::const_report_var` is the one home for the question — it maps a promoted local
 // back to the parameter it came from and every other variable to itself — and it existed
 // throughout, asked by ONE of the five sites that report a const modification.  The other
-// four read the raw variable.  That is the shape QUALITY.md calls a restated predicate: the
+// four read the raw variable.  That is the shape QUALITY-history.md calls a restated predicate: the
 // home is not wrong, it is simply not asked, and the site that does ask it is the one that
 // happens to be right.
 //

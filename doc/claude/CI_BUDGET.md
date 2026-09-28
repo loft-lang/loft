@@ -577,8 +577,10 @@ half — `make sweep-scratch`), delete scratch whose durable copy exists, and bo
 `CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 ./scripts/find_problems.sh --subject <name>`
 finishes later and finishes.  A killed run is no verdict, exactly as above.
 
-What a GitHub run cannot do: measure a ratio (`make native-ratio`, `make speed` — reports,
-never gates, and they stay local) or read this box's scratch.  What it does that a local
+What a GitHub run cannot do: measure a ratio (`make speed` is a report and stays local;
+the native/Rust ratio gate, `scripts/native_ratio.sh --gate`, runs LAST in the local
+`make ci` and is deliberately not mirrored in ci.yml, because a shared runner's timing is
+noise and a flaking timing gate is one people learn to ignore) or read this box's scratch.  What it does that a local
 run cannot: run cold, on a machine nobody else is using, and leave a verdict that
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
@@ -783,8 +785,7 @@ Two measurements, both from `gh run list`, decided this:
   one join, all three were green on `main` the morning before it, and none is in the
   local gate's path.  **So a green `make ci` is not evidence about POISON, the
   debug-assertions gate, or any macOS leg** — the same shape as the shipped libraries,
-  which `make ci` also says nothing about ([DEVELOPMENT.md](DEVELOPMENT.md) §
-  `revalidate_libs_local.sh`).  Two of the three needed a
+  which `make ci` also says nothing about ([REVALIDATE_LIBS.md](REVALIDATE_LIBS.md)).  Two of the three needed a
   config the box cannot run at all (macOS) or does not build by default
   (`-C debug-assertions=on`, which `[profile.dev.package.loft]` strips), so the way to
   ask before a merge is `gh workflow run miri.yml --ref <branch>` — a dispatch runs the

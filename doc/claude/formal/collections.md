@@ -292,7 +292,7 @@ key sort for a hash and nothing for a radix, which is already ordered), and LOFT
 STDLIB.md both describe it — *"hash iterates via its internal ordered index"*. So this was a
 transcription inverted in one place, not a rule the code had drifted from: the code, `C-Order`
 and the user-facing docs already agreed, and only this line dissented. Found in the
-`@FR-Col-Order` walk (QUALITY.md B8g).
+`@FR-Col-Order` walk (QUALITY-history.md B8g).
 
 `Col-Order-Sign` is the half that was violated rather than merely unpinned. `index` applied the
 sign a second time in two places — the iterator bit (`fill_iter`) and the range-cursor bound swap
@@ -369,17 +369,24 @@ STDLIB.md:281. sorted-slice design: [../plans/38-sorted-slice/](../plans/38-sort
 ### 1.7 Spatial slices — `Slice-Spatial` (the Morton specialization of `Slice-KeyedIter`)
 
 ```
-  (Slice-Box)    xs[(x1,y1)..(x2,y2)]   iterate records whose MORTON code is in [code(x1,y1), code(x2,y2)],
-                                        in Morton order.  This is a SUPERSET of the geometric box — Z-order
-                                        threads codes outside the box IN, so the caller filters/`break`s for
-                                        an exact shape.  (INV-Superset — a deliberate contract, not a bug.)
+  (Slice-Box)    xs[(x1,y1)..(x2,y2)]   iterate EXACTLY the records inside the closed box — every axis
+                                        within its two corners, both ends inclusive — each once.  A
+                                        corner-swapped axis names the same interval.
   (Slice-Open)   xs[(x,y)..]            open outward walk from a point; the caller `break`s to stop.
   (Slice-Cap)    xs[(x,y)..:n]          same, capped at n records (k nearest-in-Morton).  EXACTLY
                                         n when the collection holds n — the cap does not vary with
                                         where the query sits (answers open question 4 below).
+                                        AT MOST n: an n below one answers none, a negative or null
+                                        n included.  The trie's `t[pre..:n]` is the same cap.
                  1–3 axes; lowers to n_spatial_range(...); the same scratch path as iteration.
 ```
 
+> **`Slice-Box` was the Morton INTERVAL until loft#800** — `[code(x1,y1), code(x2,y2)]`, a superset
+> Z-order threads out of the box and back, which this rule once stated as a deliberate contract
+> (`INV-Superset`, now `INV-BoxExact`) for the caller to filter.  The surface (STDLIB.md, LOFT.md) has promised the
+> exact box since, and `radix_db::box_range` walks it (@PLN136); `tests/scripts/800-spatial-box-containment.loft`
+> pins it.  The rule text was the last place the superset survived (re-measured 2026-09-28).
+>
 > **`Slice-Open`/`Slice-Cap` HELD only from 2026-08-19** (loft#1002). Until then both lowered to
 > `radix_db::range` — the one-directional walk — so they answered the Z-order **tail**: records
 > at or after the query only. A record one code behind was unreachable however close it was
@@ -565,9 +572,10 @@ tests/scripts/901-linked-group-fill.loft.
   either is a definitional error (the `C-Order` precedent, generalised to every kind incl. spatial Morton).
 - **INV-KeyedSlice** — a keyed range slice is a `for`-only iterator, never a value (`D-key-1`); a
   value-position use is rejected identically across `--dump`/`--interpret`/`--native` (driver-agreement).
-- **INV-Superset** — a spatial box slice yields a SUPERSET of the geometric box (caller filters). The
-  honest contract; both backends return the same superset (same Morton interval), so a divergence in
-  membership or order is the error.
+- **INV-BoxExact** — a spatial box slice yields exactly the geometric box, each record once (it was
+  `INV-Superset`, the raw Morton interval, until loft#800).  Both backends run one walk
+  (`radix_db::box_range`), so agreement between them is no evidence: membership is checked against
+  hand-computed boxes.
 - **INV-LookupNull** — a keyed point lookup is `τ?` (absent ⟹ null); enforced by `(N-Store)` like any
   other nullable, both backends.
 - **INV-SliceFresh** — a `vector`/`text` value slice is a FRESH, independent value (H-Alloc); mutating
@@ -576,6 +584,27 @@ tests/scripts/901-linked-group-fill.loft.
 ## 3. Deviations / decided edges
 
 **OPEN: 0.**
+
+- **`D-col-11`** — opened and CLOSED 2026-09-28: **a comprehension over a keyed collection walked
+  the collection, not its snapshot**, against `(Col-Order)`.  A `for` statement walks a `hash`,
+  `spatial` or `trie` through the ordered snapshot `parse_for` built; a comprehension over the same
+  source built none and stepped the COLLECTION in the snapshot's mode — a non-empty hash panicked
+  on a record number read out of its table header, a two-key trie answered `[null]`, a four-point
+  spatial one element, the last two silently, on both backends.  **Closed**: `keyed_snapshot` is
+  the one home both walks call, and the comprehension releases its snapshot when its loop ends.
+  Guard `tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft`,
+  falsified at `49350ce2b`.
+
+- **`D-col-10`** — opened and CLOSED 2026-09-28: **a range slice's cap below zero answered every
+  record**, against `(Slice-Cap)`'s "capped at n".  The lowering spelled "no `:n` written" as the
+  limit `-1` and the runtime read every negative limit as that flag, so `xs[(x,y)..:k]` and
+  `t[pre..:k]` with `k` gone negative (an overspent budget) or null answered the whole collection,
+  on both backends — silently, since a cap has no answer that looks wrong.  **Closed** by moving the
+  flag out of the program's reach: `SLICE_UNCAPPED` is `i64::MAX`, a cap that means "uncapped"
+  whoever writes it, and `slice_cap` is the one reader, for the spatial and trie builders both.
+  The paged loaders (`store_load_prefix`, `store_load_box`) keep "negative means no cap": theirs
+  is a documented function parameter, not this rule.  Guard
+  `tests/scripts/a-slice-cap-below-zero-answers-no-records.loft`.
 
 - **`D-col-7`** — opened and CLOSED 2026-09-25 (loft#1670): **`insert` and `reverse` did not act
   on a LINKED vector's layout.**  A `vector<T>` is linked — each slot a 4-byte record id, each
@@ -643,8 +672,9 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
 - `Col-Order` per kind (esp. spatial Morton order + hash unsorted vs sorted key-order).
 - `Slice-Value` clamp + freshness (vector + text) + the subject evaluated exactly ONCE.
 - `Slice-KeyedIter` value-position REJECT (driver-agreement) + iterate-in-key-order.
-- `Slice-Box/Open/Cap` — the superset membership + `:n` cap + open-walk `break` (extend
-  tests/scripts/48b-spatial-slice.loft → an oracle program).
+- `Slice-Box/Open/Cap` — exact box membership (`800-spatial-box-containment.loft`), the outward walk
+  and `:n` from every origin (`48b-spatial-slice.loft`), and a cap below one answering none
+  (`a-slice-cap-below-zero-answers-no-records.loft`).
 - `Col-Lookup` nullable (absent key ⟹ null, discharge required) — pinned by
   `tests/scripts/1120-one-null-question-for-a-collection.loft`, which scores `??`, `== null` and the
   condition position against each other so no two of them can drift apart again.  Its defaults are

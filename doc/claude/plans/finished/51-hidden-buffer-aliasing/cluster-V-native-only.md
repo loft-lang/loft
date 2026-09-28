@@ -9,7 +9,7 @@
 | V-c native (lambda dispatch — probes 30, 59, 62) | Native rustc `unreachable!("invalid fn-ref")` | NONE for 59, 62; Canvas×6/iter for 30 (interp-side, separate from V-c) | ✅ FIXED (commit `e4cd328d`) |
 | V-c interp (lambda dispatch — probes 30, 59, 62) | Interp corrupted main's stack frame (loop var `i = 65535` after lambda return) | Canvas×6/iter for 30 (separate from corruption) | ✅ Corruption FIXED (commit `5eb7d90d`); leak remains for 30 |
 
-**Status (2026-05-28): ✅ ALL CORRUPTION CLOSED.**  Two probes (30, 40) still carry leaks separate from their corruption fixes; both stayed in `probes/` (substitutes graduated to `tests/scripts/`).  See [§ Graduated probes](#graduated-probes) for the substitution rationale.
+**Status (2026-05-28): ✅ ALL CORRUPTION CLOSED.**  Two probes (30, 40) still carry leaks separate from their corruption fixes; both stayed in `probes/` (substitutes graduated to `tests/scripts/`).  See § Graduated probes for the substitution rationale.
 
 **Graduated probes:**
 - V-a: probe 29 → `tests/scripts/147-plan51-cluster5a-tuple-return.loft`

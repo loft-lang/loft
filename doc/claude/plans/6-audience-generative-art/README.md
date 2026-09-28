@@ -294,7 +294,7 @@ override hotkey to lock the camera.
    phone (portrait touch) and desktop (laptop pointer + larger
    world view) are first-class targets.  Phone is the primary
    layout; desktop is a separate UI tuned for mouse + keyboard.
-   Detail in [`00-audience-browser-page.md` § Desktop variant](00-audience-browser-page.md#desktop-variant).
+   Detail in [`00-audience-browser-page.md` § Desktop variant](00-audience-browser-page.md#desktop-variant--projector-view--input).
 6. ~~**Presenter as a special role**~~ — RESOLVED 2026-05-10:
    no.  Presenter uses the regular phone or desktop client like
    everyone else.  Operational actions (server restart, clear

@@ -1139,6 +1139,13 @@ impl Stores {
         {
             return 0;
         }
+        // A loop over a snapshot kind may be walking this collection (loft#1710).
+        if matches!(
+            kind,
+            RemoveKind::Hash | RemoveKind::Trie | RemoveKind::Radix
+        ) {
+            self.forget_in_scratches(data, rec);
+        }
         match kind {
             // BY-VALUE: elements sit inline in the container, so the element's
             // byte position IS its index.

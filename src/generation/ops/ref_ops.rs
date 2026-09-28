@@ -503,9 +503,62 @@ impl OpEmitter for OpCopyRecordEmitter {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
-                write!(ctx.w, "{{ ")?;
-                ctx.output
-                    .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
+                // The destination is derived ONCE: an element reached through an index
+                // re-resolved per field cost seven lookups for one record (`map_set_hex`).
+                write!(ctx.w, "{{ let __cd: DbRef = ")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, "; ")?;
+                ctx.output.write_tuple_fields(
+                    ctx.w,
+                    d,
+                    &Value::RawExpr("__cd".to_string()),
+                    &format!("var_{name}"),
+                )?;
+                return write!(ctx.w, "}}");
+            }
+            // A copy FROM a SUB-RECORD of a value local (`Vtx { pos: w.pos, … }`): the
+            // range of the tuple the sub-record is, materialised through the same typed
+            // setters, each element named by the summed offset the PARENT's layout indexed
+            // it under — the sub-record's own type need not have a layout of its own.
+            if let Some((root, base, sub)) = super::super::hoist::sub_record(ctx.output.data, src)
+                && let Some(d) = ctx.output.value_record_locals.get(&root).copied()
+                && let Some(fields) = ctx
+                    .output
+                    .value_records
+                    .types
+                    .get(&d)
+                    .map(|t| t.fields.clone())
+            {
+                let name = super::super::sanitize(
+                    ctx.output
+                        .data
+                        .def(ctx.output.def_nr)
+                        .variables()
+                        .name(root),
+                );
+                let end = base + i64::from(ctx.output.stores.size(sub));
+                write!(ctx.w, "{{ let __cd: DbRef = ")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, "; ")?;
+                for (off, rt) in fields.iter().filter(|(o, _)| *o >= base && *o < end) {
+                    let Some(idx) = ctx.output.value_records.index.get(&(d, *off)).copied() else {
+                        panic!(
+                            "sub-record at +{base} of value local `{name}` has no element at +{off}"
+                        );
+                    };
+                    let setter = Value::Call(
+                        ctx.output
+                            .data
+                            .def_nr(super::super::hoist::value_setter(rt)),
+                        vec![
+                            Value::RawExpr("__cd".to_string()),
+                            Value::Int(i32::try_from(*off - base).unwrap_or(i32::MAX)),
+                            Value::RawExpr(format!("var_{name}.{idx}")),
+                        ],
+                    );
+                    ctx.emit(&setter)?;
+                    write!(ctx.w, "; ")?;
+                }
                 return write!(ctx.w, "}}");
             }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the

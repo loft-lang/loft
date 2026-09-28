@@ -13,7 +13,10 @@ to nothing outside the project; `(Perf-Twin)` where no natural counterpart exist
 WRITTEN the moment a hit is expected, never waived; `(Perf-Cure)` the twin MEASURES and
 never ships — a failed bar is closed in the engine (or the loft algorithm), because the
 libraries stay readable loft (the teaching corpus), and a native rewrite is a recorded
-per-routine edge case, not a habit.  The model harness is the drawing
+per-routine edge case, not a habit; `(Perf-Gap)` an advantage the twin holds by a
+construction loft cannot express is a MISSING ABSTRACTION in loft — routed to the language,
+never a twin rewritten down or a row excused, because loft's standard implementation
+optimises one way of working without excluding the others.  The model harness is the drawing
 library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard read
 by the release checklist's `M-perf-pass`.
 
@@ -703,9 +706,15 @@ names.  Both matter where a real routine is recursive or matrix-shaped — which
 library routines of @PLN158 should show it first.
 
 **What changed since the old table (and what it means):**
-- **The interpreter now beats CPython on 8 of 11** (interp/Py 0.09–1.22, median ~0.6) — the
-  old table had it 1.4–8.85× *slower*. A large, previously-unrecorded interpreter improvement.
-  This makes the interpreter optimisations (P1/P2) **low-priority** — it's already fast.
+- **The `loft-interp` column was the NATIVE backend, not the interpreter** (the ⚠ note
+  under § Benchmark results): a bare `loft` takes the default backend, so the "beats CPython
+  on 8 of 11" reading this bullet once carried was native beating CPython.  With
+  `--interpret` the interpreter is 3.5–16× slower than CPython on every row.  That does not
+  make P1/P2 low-priority for being unneeded, nor the interpreter poor — most of it is fine
+  for the lane it serves.  They are SEQUENCED after the native bar: a game is developed
+  interpreted and shipped native, so the interpreter is not ignored in the long run, and the
+  ask is the compiled backend's efficient data access, not its speed
+  (STABILITY_ROADMAP § Evaluation, the interpreter item).
 - **Optimized native vs Rust is healthy on compute** (mandelbrot 0.9×, sieve 1.3×, sum 1.5×,
   newton 1.7×, collatz 2.0×) but has **two real gaps**:
   - **Data structures — matrix 24.5×, word-count 20.5×, sort 18.5×** (the `codegen_runtime`/`DbRef`
@@ -807,20 +816,24 @@ store-indirection cost on the many arithmetic operations inside the call body do
 
 ## Interpreter vs Python
 
-> **⚠ Ratios below are SUPERSEDED** by the refreshed table (2026-06-25): the interpreter now
-> *beats* CPython on most benchmarks (interp/Py median ~0.6), so the "2–9× slower" framing here
-> is stale. The root-cause *mechanisms* (dispatch overhead, store indirection) still hold as the
-> per-op cost model; only the headline ratios are out of date. Refresh this section next.
+> **⚠ Ratios below are the `--interpret` measurement** in the table under § Benchmark
+> results.  A refresh that once claimed the interpreter *beat* CPython measured the native
+> backend (a bare `loft` takes the default backend); the interpreter is 3.5–16× slower than
+> CPython on every row, string building included.  The root-cause *mechanisms* (dispatch
+> overhead, store indirection) hold as the per-op cost model.  Most of the interpreter is
+> fine for the lane it serves; it is looked at after the native bar is met rather than
+> ignored, and the ask then is the compiled backend's data access, not its speed
+> (STABILITY_ROADMAP § Evaluation, the interpreter item).
 
 ### Summary table
 
 | Group | Benchmarks | Typical ratio | Primary cost |
 |---|---|---|---|
-| Tight integer loops | 02, 04 | 2–9× | Dispatch overhead per opcode |
-| Recursive compute | 01, 06 | 1.4–2.3× | Dispatch × call depth |
-| Float loops | 05, 09 | 2.5–2.7× | Same dispatch; FPU hides some |
-| Collection-heavy | 08, 10 | 2.2–3.7× | Store indirection on collection access |
-| String building | 07 | **0.87×** | loft format-strings beat CPython object churn |
+| Tight integer loops | 02, 04 | 6.7–8.4× | Dispatch overhead per opcode |
+| Recursive compute | 01, 06 | 6.5–9.6× | Dispatch × call depth |
+| Float loops | 05, 09 | 7.1–16× | Same dispatch; `dot_product` adds element access through the store |
+| Collection-heavy | 08, 10 | 9.4–12.7× | Store indirection on collection access |
+| String building | 07 | 3.5× | the smallest gap: format-strings avoid CPython's object churn, dispatch still costs |
 
 ### Root causes (interpreter)
 
@@ -853,12 +866,14 @@ pointer with no extra indirection.
 before performing the operation. Collatz (04) uses `long` throughout; this is roughly
 one extra conditional branch per arithmetic operation.
 
-**4. Near parity and one win**
+**4. The smallest gap is allocation-shaped**
 
-String building (07) runs faster in loft (61 ms) than CPython (70 ms) because loft's
-format-string concatenation avoids CPython's per-character `PyUnicodeObject` allocation.
-This shows the interpreter's overhead is not universal — I/O-bound and allocation-heavy
-workloads can favour loft.
+String building (07) is the closest row at 3.5× (80.5 ms against CPython's 23.2 ms on the
+§ Benchmark results workload): loft's format-string concatenation avoids CPython's per-character
+`PyUnicodeObject` allocation, which is why the row does not pay the 7–16× the dispatch-bound
+rows pay.  The earlier "loft 61 ms beats CPython 70 ms" reading here was the native backend.
+The lesson stands in its corrected form: the interpreter's overhead is per opcode, so a row
+that does more work per opcode (allocation, text) shows less of it.
 
 ---
 
@@ -4945,8 +4960,8 @@ non-null operands (M3), and a bitcode-free rlib that blocks post-hoc inlining
 (`plans/157-native-4x-drawing/`) drives every judged row to within **4×**.
 
 Regenerate: the in-tree rows (`hash`, `lock` — `bench/12_drawing/`, hashes
-asserted) with `make native-ratio` (`--gate` fails ratios over
-`bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
+asserted) with `make native-ratio` (`make native-ratio-gate`, the last step of the local
+`make ci`, fails ratios over `bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
 with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
 `drawing-lock`).
 

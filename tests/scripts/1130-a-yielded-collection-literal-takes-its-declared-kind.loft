@@ -5,7 +5,7 @@
 // A collection literal cannot say its own kind: `[K { … }]` infers `vector<K>` wherever it
 // stands, and only the destination's declared type says whether a `hash`, `index`, `trie`,
 // `spatial` or `sorted` was meant.  The parser has a channel for exactly that (`self.expected`,
-// the `⇐` channel censused in QUALITY.md § B6t), and `yield` was not one of its push sites —
+// the `⇐` channel censused in QUALITY-history.md § B6t), and `yield` was not one of its push sites —
 // so a keyed literal yielded from a generator was BUILT as a vector and handed to the consumer
 // with the wrong length and no keys, on both backends and with no diagnostic.  The identical
 // literal bound to a declared local first was correct, because that position reads its

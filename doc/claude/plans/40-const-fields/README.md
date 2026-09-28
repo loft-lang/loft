@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Extend the existing `const` keyword from locals + parameters to
 **struct fields**, giving loft a "frozen after construction" field
 modifier.  Closes the locals-vs-fields asymmetry surfaced in
-[INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#33-const-applies-to-locals-and-parameters-but-not-fields).
+[INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#resolved-as-design-point-documented--regression-guarded).
 
 ## Status
 
@@ -254,7 +254,7 @@ and should become its own plan / `loft-lang/features` issue before build.
 
 ## See also
 
-- [INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#33-const-applies-to-locals-and-parameters-but-not-fields) — the gap this closes
+- [INCONSISTENCIES.md § 33](../../INCONSISTENCIES.md#resolved-as-design-point-documented--regression-guarded) — the gap this closes
 - `@P386` / `src/parser/definitions.rs:2467` — the existing parser guard that is the landing site
 - `@F18` — the const-**parameter** feature (`Argument.constant`) whose enforcement shape this mirrors
 - [LOFT.md § Field modifiers](../../LOFT.md) — current modifier list (to be extended in step 6)

@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SNAPSHOT WALK SKIPS A RECORD REMOVED AHEAD OF IT (loft#1710, `@FR-I-For`: the cursor sees the
+// collection as it is at that step).  A `for` over a `hash`, `spatial` or `trie` walks a snapshot of
+// record numbers built before the first round, and the loop's own `#remove` refusal tells the
+// author to remove by key instead.  Removing a record the walk had not reached still yielded it: a
+// freed record, read as data — its `text` came back as a NUL character, on both backends, with
+// `LOFT_STRICT_STORES` and `LOFT_POISON` silent.  `vector` and `sorted` already skipped it.
+// The removal now zeroes the record's entry in every live snapshot of that collection
+// (`Stores::forget_in_scratches`), and the shared step passes over it.
+//
+// Every cell spells what it visited as a string of the records' own texts, so a skipped record,
+// a doubled one and a freed one (NUL) each read differently.  Expected values are written beside
+// each cell; the records are k = 0..5 with v = "h{k}".
+//
+// @falsified-at: 198ac01e7 — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 16 assertion failures -> 0
+// @falsified-by: tests/falsified/1710-a-snapshot-walk-skips-a-record-removed-ahead-of-it.patch — the same channels.
+// CHANNEL: assertions.
+// HOLDS: every assertion passes on both backends on the cure tree.
+
+struct H { k: integer, v: text }
+struct T { k: text, v: text }
+struct P { x: integer, y: integer, v: text }
+
+fn six() -> hash<H[k]> {
+  h: hash<H[k]> = [];
+  for i in 0..6 { h += [H { k: i, v: "h{i}" }]; }
+  h
+}
+
+fn grid() -> spatial<P[x, y]> {
+  xs: spatial<P[x, y]> = [];
+  for i in 0..6 { xs += [P { x: i, y: i, v: "r{i}" }]; }
+  xs
+}
+
+fn drop_key(h: hash<H[k]>, k: integer) { h[k] = null; }
+
+// An append the loop body cannot see: `(I-For)` refuses one written in the body.
+fn add_key(h: hash<H[k]>, k: integer) { h += [H { k: k, v: "h{k}" }]; }
+
+fn first_then_leave(h: hash<H[k]>) -> text {
+  for e in h { return e.v; }
+  ""
+}
+
+fn test_hash_remove_ahead() {
+  h = six();
+  s = "";
+  for e in h { s += e.v; if e.k == 1 { h[4] = null; } }
+  assert(s == "h0h1h2h3h5", "ahead: {s}");
+  assert(h.len() == 5, "ahead len: {h.len()}");
+}
+
+fn test_hash_remove_current() {
+  h = six();
+  s = "";
+  for e in h { s += e.v; if e.k == 2 { h[2] = null; } }
+  assert(s == "h0h1h2h3h4h5", "current: {s}");
+  assert(h.len() == 5, "current len: {h.len()}");
+}
+
+fn test_hash_remove_behind() {
+  h = six();
+  s = "";
+  for e in h { s += e.v; if e.k == 3 { h[0] = null; } }
+  assert(s == "h0h1h2h3h4h5", "behind: {s}");
+}
+
+fn test_hash_remove_all_ahead() {
+  h = six();
+  s = "";
+  for e in h { s += e.v; if e.k == 1 { for k in 2..6 { h[k] = null; } } }
+  assert(s == "h0h1", "all ahead: {s}");
+  assert(h.len() == 2, "all ahead len: {h.len()}");
+}
+
+fn test_hash_remove_then_append() {
+  // The append (made by a callee, which the append refusal cannot see) may re-claim the
+  // freed record; neither the removed nor the appended one is visited.
+  h = six();
+  s = "";
+  for e in h {
+    s += e.v;
+    if e.k == 1 { h[4] = null; add_key(h, 9); }
+  }
+  assert(s == "h0h1h2h3h5", "remove then append: {s}");
+  assert(h.len() == 6, "remove then append len: {h.len()}");
+}
+
+fn test_hash_nested() {
+  // The inner loop removes k=5; the OUTER walk, a second snapshot of the same hash, skips it.
+  h = six();
+  s = "";
+  for e in h {
+    s += e.v;
+    if e.k == 0 { for f in h { if f.k == 1 { h[5] = null; } } }
+  }
+  assert(s == "h0h1h2h3h4", "nested: {s}");
+}
+
+fn test_hash_removed_by_a_callee() {
+  h = six();
+  s = "";
+  for e in h { s += e.v; if e.k == 0 { drop_key(h, 3); } }
+  assert(s == "h0h1h2h4h5", "callee: {s}");
+}
+
+fn test_hash_after_break_and_return() {
+  // A walk left by `break` and one left by `return` must not keep reaching the collection.
+  h = six();
+  for e in h { if e.k == 1 { break; } }
+  f = first_then_leave(h);
+  assert(f == "h0", "return: {f}");
+  h[2] = null;
+  s = "";
+  for e in h { s += e.v; }
+  assert(s == "h0h1h3h4h5", "after break and return: {s}");
+}
+
+fn test_text_keyed_hash() {
+  h: hash<T[k]> = [];
+  h += [T { k: "a", v: "A" }]; h += [T { k: "b", v: "B" }]; h += [T { k: "c", v: "C" }];
+  s = "";
+  for e in h { s += e.v; if e.k == "a" { h["c"] = null; } }
+  assert(s == "AB", "text keys: {s}");
+}
+
+fn test_spatial_forms() {
+  xs = grid();
+  s = "";
+  for p in xs { s += p.v; if p.x == 1 { xs[4, 4] = null; } }
+  assert(s == "r0r1r2r3r5", "plain: {s}");
+  ys = grid();
+  t = "";
+  for p in ys[(0, 0)..(9, 9)] { t += p.v; if p.x == 1 { ys[4, 4] = null; } }
+  assert(t == "r0r1r2r3r5", "box: {t}");
+  zs = grid();
+  u = "";
+  // From (0,0) the outward walk visits r0 r1 r2 r3 first; with r2 removed the cap of 4
+  // counts the SNAPSHOT, so three are visited.
+  for p in zs[(0, 0)..:4] { u += p.v; if p.x == 1 { zs[2, 2] = null; } }
+  assert(u == "r0r1r3", "capped: {u}");
+}
+
+fn test_trie() {
+  t: trie<T[k]> = [];
+  t += [T { k: "aa", v: "1" }]; t += [T { k: "ab", v: "2" }]; t += [T { k: "ac", v: "3" }];
+  s = "";
+  for e in t { s += e.v; if e.k == "aa" { t["ab"] = null; } }
+  assert(s == "13", "trie: {s}");
+}

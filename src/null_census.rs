@@ -9,7 +9,7 @@
 //! construct `Type::Optional(Box::new(…))` directly, and one of them re-wraps a field's `?`
 //! around a type that was resolved AFTER the `?` was peeled, so a `τ??` can only come from a
 //! route the former never sees.  A rule with one home and a second spelling beside it is the
-//! shape every walk in QUALITY.md finds, and this is the instrument that says whether the
+//! shape every walk in QUALITY-history.md finds, and this is the instrument that says whether the
 //! second spelling has ever produced the thing the rule forbids.
 //!
 //! Gated on `LOFT_NULL_CENSUS` because `[profile.dev.package.loft]` compiles a `debug_assert`

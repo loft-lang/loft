@@ -4426,7 +4426,7 @@ impl Parser {
     /// consumer received a collection with the wrong length and no keys, on both backends
     /// and with no diagnostic (loft#1130).  The general rule LOFT.md already states is
     /// *the expected type wherever there is one*; the census of this channel's remaining
-    /// push sites and their differing admission lists is QUALITY.md § B6t.
+    /// push sites and their differing admission lists is QUALITY-history.md § B6t.
     pub(crate) fn seed_leaving_value_hint(&mut self, result: &Type) {
         if self.enum_context(result)
             || crate::parser::vectors::is_collection(result)
@@ -7133,7 +7133,7 @@ impl Parser {
                     "generic type {tv_name}: method call requires a concrete type",
                 );
             } else {
-                // QUALITY 6c (follow-on): when a free call fails but a method
+                // QUALITY-history.md 6c (follow-on): when a free call fails but a method
                 // `t_<LEN><Type>_<name>` exists on some other type, tell the
                 // user to call it as a method.  Mirror image of the
                 // field-access hint that covers the method→free direction.
@@ -7688,7 +7688,7 @@ impl Parser {
         // `boxed_tuple_return` boxes a concrete declaration, and
         // `promote_monomorph_tuple_return` rewrites the body's tuple tails to match.  Left
         // bare, the instance handed up a stack tuple whose heap member was the ARGUMENT's own
-        // store, on both backends (QUALITY.md B7t; loft#1365's collection half,
+        // store, on both backends (QUALITY-history.md B7t; loft#1365's collection half,
         // `formal/tuples.md` D-tup-9).
         if !from_type_var {
             if !elems.iter().any(crate::data::has_lifetime_concern) {
@@ -8219,7 +8219,7 @@ impl Parser {
         // type variable and drops the deps it carried, and those deps are what say *this
         // result borrows argument N*: without them a `fn g<T>(x: T) -> T { x }` instance
         // reads as a fresh owner, the caller binds the raw argument store, and mutating
-        // the result mutated the argument on both backends (QUALITY.md B7t) — where the
+        // the result mutated the argument on both backends (QUALITY-history.md B7t) — where the
         // concrete twin, whose `-> Ctr["x"]` says so, is copied by the caller.  Attribute
         // indices are frame-independent and the instance copies the template's parameters
         // in order, so re-attaching is exact; `expand_deferred_par` does the same for a
@@ -8278,7 +8278,7 @@ impl Parser {
         // `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
         // read as a fresh owner while its body hands the ARGUMENT up.  The caller then bound
         // the argument's own store and a write through the result wrote the argument, on both
-        // backends (QUALITY.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
+        // backends (QUALITY-history.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
         // derivation the body itself answers to — the oracle's return summary — and let the
         // instance's declared return say what its twin's says, so the caller copies a
         // borrowed return exactly as it does for a named function (loft#1346).
@@ -8287,7 +8287,7 @@ impl Parser {
         // is delivered through a return buffer on a named function (`ref_return`'s per-arm
         // leg), which a monomorph does not have yet; a dep alone would make the caller copy
         // the mint arm and orphan the minted store.  That shape stays as it is, named in
-        // QUALITY.md B7t as the residual with its cure.
+        // QUALITY-history.md B7t as the residual with its cure.
         //
         // And only where every return LEAF is the parameter itself.  A local bound from it
         // (`y: T = x; y`) COPIES at codegen for a record (@FR-B-Copy) — a copy the IR does
@@ -10949,7 +10949,7 @@ impl Parser {
     /// Only where EVERY result is such a read or absent ([`Self::every_result_is_a_tuple_read`]):
     /// a result that also mints on some path (a tuple parameter, a local, a literal) would
     /// be a borrow on one path and an owned record on another, which a call read without a
-    /// binding does not free (`@FR-O-Complete`'s join, the residual QUALITY.md B7t records).
+    /// binding does not free (`@FR-O-Complete`'s join, the residual QUALITY-history.md B7t records).
     /// There every read stays unboxed, every path mints, and the caller owns the result.
     fn keep_returned_tuple_reads(v: &mut Value, tail: bool, ret: &Type) -> bool {
         match v {
@@ -13469,7 +13469,7 @@ impl Parser {
                 // wrote into a released, reused store (`Write to read-only store`, the const
                 // store had taken the slot) and `--native` refused an int for a `DbRef`
                 // (E0308) — an accept/reject split on `s = x; t = (s, 7); return t` with a
-                // keyed `x` (QUALITY.md B7t; the cell D-tup-8's guard did not cross).  A bare
+                // keyed `x` (QUALITY-history.md B7t; the cell D-tup-8's guard did not cross).  A bare
                 // `Int` source is a raw header and keeps the raw write.
                 let keyed_tp = elem_tp.base().clone();
                 if matches!(value.unspan(), Value::Int(_))

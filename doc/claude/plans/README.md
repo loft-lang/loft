@@ -56,7 +56,7 @@ work mixed into the architecture content, add an
 `## Open work` section IN THAT REFERENCE DOC and link
 ROADMAP rows directly at it (e.g.
 [NATIVE.md § Open work](../NATIVE.md#open-work),
-[QUALITY.md § Open work](../QUALITY.md#open-work--actionable-summary)).
+[QUALITY.md](../QUALITY.md)).
 Single source of truth, no indirection — pointer-plans were
 tried (33/35/lib-11) and shown to be over-engineering.
 

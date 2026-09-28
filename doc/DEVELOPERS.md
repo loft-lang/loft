@@ -23,13 +23,12 @@ existing pipeline works so you can locate the right place to make a change.
   - [4. Scope Analysis](#4-scope-analysis-srcscopesrs)
   - [5. Variable Liveness](#5-variable-liveness-srcvariablesrs)
   - [6. Bytecode Stack Tracker](#6-bytecode-stack-tracker-srcstackrs)
-  - [7. Bytecode Generation](#7-bytecode-generation-srcinterpreterrs--srcstate)
+  - [7. Bytecode Generation](#7-bytecode-generation-srccompilers--srcstate)
   - [8. Operator Dispatch & Execution](#8-operator-dispatch--execution-srcfillrs)
-  - [9. Data Store & Type Schema](#9-data-store--type-schema-srcdatabasers)
-  - [10. Standard Library (native functions)](#10-standard-library-srcnativersdefaultloft)
+  - [9. Data Store & Type Schema](#9-data-store--type-schema-srcdatabase)
+  - [10. Standard Library (native functions)](#10-standard-library-srcnativers--defaultloft)
 - [Known Caveats by Subsystem](#known-caveats-by-subsystem)
 - [Debugging Strategy](#debugging-strategy) *(see [claude/DEBUG.md](claude/DEBUG.md) for full guide)*
-- [Working Effectively with Claude](#working-effectively-with-claude)
 
 ---
 

@@ -23,7 +23,7 @@ parallel mechanism are superseded:
 
 | Earlier design | Status | Replaced by |
 |---|---|---|
-| `Dispatcher` struct + `dispatch(env, &Dispatcher)` ([GAME_CLIENT_LIB.md § Dispatcher](../../lib_plans/64-game-client/README.md#dispatcher-in-loft)) | Superseded paper, never implemented | EventLoop bidirectional handlers |
+| `Dispatcher` struct + `dispatch(env, &Dispatcher)` ([GAME_CLIENT_LIB.md § Dispatcher](../../lib_plans/64-game-client/README.md#dispatcher-in-loft--superseded)) | Superseded paper, never implemented | EventLoop bidirectional handlers |
 | `run_game_loop(GameLoop, tick_fn)` ([WEB_SERVER_LIB.md § Server-side game loop](../../lib_plans/future/08-server/README.md)) | Superseded paper, never implemented | `el::run` with a programmer-supplied `poll_sources` callback (kernel-multiplexed source polling is recorded as future work in [EVENT_LOOP_DISCUSSION.md](DISCUSSION.md), not as a separate API) |
 | `GameEnvelope { sender, recipient, sequence, timestamp, message: WsMessage }` + `MsgType` enum (`lib/game_protocol/src/game_protocol.loft`, 104 lines, used only by its own tests) | Superseded shipped paper — the structs compile but nothing depends on them | EventLoop wire frame: `[handler_id][priority][seq][flags][length][payload]` |
 

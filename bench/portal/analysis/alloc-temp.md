@@ -165,5 +165,11 @@ appends**.  Nothing in that list is one lever:
   store, a design, not a rewrite.
 
 And the twin runs a cheaper algorithm than the library: its `Cbor` BORROWS text and byte
-slices from the frame, where the library's `CborValue` owns copies.  Bench rule 1 says the
-twin should own them too (a `Vec` / `String` per payload); the 51× overstates loft's share.
+slices from the frame, where the library's `CborValue` owns copies.  That is `(Perf-Gap)`
+(`formal/performance.md`): the twin stays as written, and the borrow it has and loft has not
+is the abstraction @PLN174 builds — a FOREIGN store, the frame served through the store
+contract with a slice of it a view.  **F0 of that plan, priced 2026-09-28** (arm64, the lane
+binary hand-patched: the text arm's span read off the frame's element base into ONE
+`set_str`, the `tb` store and its byte loop gone): `check_request` **10.87 → 9.39 ms/op
+(−13.6 %)**, hash equal, two interleaved runs within 0.1 %.  The bytes arm still copies in
+that probe; a view removes it too.

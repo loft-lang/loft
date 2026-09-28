@@ -3269,7 +3269,7 @@ fn test() {
 
 // Malformed JSON — `Struct.parse(text)` routes through the
 // legacy lenient parser (preserves loft-native bare-key
-// support per QUALITY.md § P54-U) which populates `s#errors`.
+// support per QUALITY-history.md § P54-U) which populates `s#errors`.
 // The new typed-tree path (`Struct.parse(json_parse(text))`)
 // populates `json_errors()` instead.  Both produce null fields
 // on bad input.
@@ -6421,7 +6421,7 @@ fn run_enum() -> integer {
 // The remaining B7 symptom is narrower — the character-
 // interpolation text-return path still SIGSEGVs, guarded by
 // `b7_character_interpolation_return_crashes` (`#[ignore]`).
-// See QUALITY.md § B7.
+// See QUALITY-history.md § B7.
 #[test]
 fn b7_method_on_jsonvalue_returning_integer_works() {
     code!(
@@ -6567,7 +6567,7 @@ fn b7_character_interpolation_return_crashes() {
 
 // Multiple json_parse() in the same function — currently OK
 // when each result is consumed via pattern matching.  Investigated
-// while writing B7 regression tests; the previous QUALITY.md claim
+// while writing B7 regression tests; the previous QUALITY-history.md claim
 // that "multiple json_parse() corrupts memory" was a misattribution
 // — the corruption observed in earlier smoke tests came from the
 // kind()/len() method calls, not from json_parse() itself.  This
@@ -6917,7 +6917,7 @@ fn q1_json_errors_empty_after_clean_parse() {
 
 // ── Q1 spec-named acceptance tests (complete the § Q1 Tests list) ──────
 //
-// QUALITY.md § Q1 Tests enumerates five `p54_err_*` names as the
+// QUALITY-history.md § Q1 Tests enumerates five `p54_err_*` names as the
 // target acceptance coverage.  Earlier landings used `q1_*`
 // prefixes (with equivalent content for some, different content
 // for others).  These add the missing spec names directly so a
@@ -6945,7 +6945,7 @@ fn p54_err_reports_path_into_nested_object() {
 /// Q1 — `json_errors()` path into an array element is
 /// `/N` with the element index.  Same assertion shape as the
 /// pre-existing `q1_json_errors_path_for_array_index`; kept
-/// under the spec name as well so QUALITY.md's § Q1 Tests
+/// under the spec name as well so QUALITY-history.md's § Q1 Tests
 /// checklist matches the landed test set by-name.
 #[test]
 fn p54_err_reports_path_into_array_element() {
@@ -7354,7 +7354,7 @@ fn q4_constructor_keys_preserves_insertion_order() {
 /// Deep-nesting navigation — a 5-level-deep JSON tree parses
 /// into a tree where the leaf is reachable via five chained
 /// `.field()` calls without tripping store-lifecycle or
-/// arena-offset bugs.  QUALITY.md § Q3 Tests mentions
+/// arena-offset bugs.  QUALITY-history.md § Q3 Tests mentions
 /// "nested up to depth 5" as the property-test target; this
 /// guard pins that depth concretely.
 #[test]
@@ -8080,7 +8080,7 @@ fn p54_step4_item_out_of_bounds_returns_jnull() {
 /// Q3 — round-trip property for primitives.  Each primitive
 /// variant survives `to_json` → `json_parse` with its kind
 /// (and where applicable, payload) intact.  Listed in
-/// QUALITY.md § Q3 Tests as `q3_primitives_round_trip`.
+/// QUALITY-history.md § Q3 Tests as `q3_primitives_round_trip`.
 #[test]
 fn q3_primitives_round_trip() {
     code!(
@@ -8107,7 +8107,7 @@ fn run_q3prt() -> integer {
 
 /// Q3 — round-trip property for nested objects.  An object with
 /// primitive fields survives `to_json` → `json_parse` and the
-/// extracted leaves agree on values.  Listed in QUALITY.md
+/// extracted leaves agree on values.  Listed in QUALITY-history.md
 /// § Q3 Tests as `q3_nested_object_round_trip`.
 #[test]
 fn q3_nested_object_round_trip() {
@@ -8129,7 +8129,7 @@ fn q3_nested_object_round_trip() {
 
 /// Q3 — round-trip property for arrays of mixed primitive kinds.
 /// `[1,true,\"x\"]` survives `to_json` → `json_parse` with each
-/// element's kind preserved.  Listed in QUALITY.md § Q3 Tests as
+/// element's kind preserved.  Listed in QUALITY-history.md § Q3 Tests as
 /// `q3_array_of_mixed_kinds_round_trip`.
 #[test]
 fn q3_array_of_mixed_kinds_round_trip() {
@@ -8149,7 +8149,7 @@ fn q3_array_of_mixed_kinds_round_trip() {
 /// Q3 — pretty-printed output is still valid JSON: `parse(to_json_pretty(v))`
 /// produces an equivalent tree.  Locks the property that pretty
 /// mode only adds whitespace between structural tokens, never
-/// inside string literals or numbers.  Listed in QUALITY.md § Q3
+/// inside string literals or numbers.  Listed in QUALITY-history.md § Q3
 /// Tests as `q3_pretty_form_valid_json`.
 #[test]
 fn q3_pretty_form_valid_json() {
@@ -8167,7 +8167,7 @@ fn q3_pretty_form_valid_json() {
 
 /// Q3 — UTF-8 string content passes through `to_json` verbatim
 /// (no `\\uXXXX` escaping of BMP characters).  Listed in
-/// QUALITY.md § Q3 Tests as `q3_unicode_string_escaping`.
+/// QUALITY-history.md § Q3 Tests as `q3_unicode_string_escaping`.
 #[test]
 fn q3_unicode_string_escaping() {
     code!(
@@ -9258,7 +9258,7 @@ fn q4_json_object_serialisation() {
 /// constructed JObject field, and serialises.  Locks that the
 /// `dbref_to_parsed` deep-copy used by `n_json_object` correctly
 /// preserves container values originating from a parse arena
-/// (not just constructor calls).  Listed in QUALITY.md § Q4 Tests
+/// (not just constructor calls).  Listed in QUALITY-history.md § Q4 Tests
 /// as `q4_forward_captured_subtree`.
 #[test]
 fn q4_forward_captured_subtree_array() {
@@ -9548,7 +9548,7 @@ fn inc08_sum_of_is_free_function_only() {
 /// works, free-function syntax doesn't.  Pairs with
 /// `inc08_sum_of_is_free_function_only` to show the asymmetry runs in
 /// both directions per the stdlib declaration.
-/// QUALITY 6d — writing a bare `hash<Row[id]>()` constructor
+/// QUALITY-history.md 6d — writing a bare `hash<Row[id]>()` constructor
 /// expression used to produce the cryptic `"Indexing a non vector"`
 /// error with no pointer to the struct-literal idiom that actually
 /// works.  The diagnostic now spells out both halves (the missing
@@ -9748,7 +9748,7 @@ fn f() -> float { 4.5 }"
     .result(Value::Float(3.5));
 }
 
-/// QUALITY 6c — the free-function hint must NOT fire when there is
+/// QUALITY-history.md 6c — the free-function hint must NOT fire when there is
 /// no `n_<field>` function compatible with the receiver.  Locks the
 /// specificity of the hint: a genuinely-misspelled field produces
 /// the plain "Unknown field" message without a misleading "did you
@@ -9783,7 +9783,7 @@ fn inc08_starts_with_is_method_not_free_function() {
     .result(Value::Boolean(true));
 }
 
-/// QUALITY 6c follow-on — the free→method direction.  `starts_with`
+/// QUALITY-history.md 6c follow-on — the free→method direction.  `starts_with`
 /// is declared `self: text`; calling it as a free function with a
 /// wrong-type receiver (`starts_with(5, "he")`) used to produce the
 /// cryptic `"Unknown function starts_with"` — the function *does*
@@ -9799,7 +9799,7 @@ fn quality_6c_free_call_on_wrong_type_suggests_method() {
     .error("Unknown function starts_with — did you mean the method `x.starts_with(…)` on text? (stdlib declared `starts_with` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_on_wrong_type_suggests_method:2:5");
 }
 
-/// QUALITY 6c follow-on — methods declared on several receiver types
+/// QUALITY-history.md 6c follow-on — methods declared on several receiver types
 /// (`is_numeric` lives on both `text` and `character`) enumerate all
 /// candidates so the user can pick the right one.
 #[test]
@@ -9812,7 +9812,7 @@ fn quality_6c_free_call_lists_all_method_receivers() {
     .error("Unknown function is_numeric — did you mean the method `x.is_numeric(…)` on text / character? (stdlib declared `is_numeric` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_lists_all_method_receivers:2:5");
 }
 
-/// QUALITY 6c follow-on — the hint must stay silent when no method
+/// QUALITY-history.md 6c follow-on — the hint must stay silent when no method
 /// by that name exists anywhere.  A genuinely-misspelled free
 /// function name still produces the plain "Unknown function …"
 /// message, without a misleading "did you mean …" tail.

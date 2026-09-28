@@ -345,6 +345,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     const_store_text,
     call_ref_store,
     bind_fn_ref_result,
+    coroutine_retain,
 ];
 
 fn goto(s: &mut State) {
@@ -2883,4 +2884,10 @@ fn call_ref_store(s: &mut State) {
 
 fn bind_fn_ref_result(s: &mut State) {
     s.bind_fn_ref_result();
+}
+
+fn coroutine_retain(s: &mut State) {
+    let v_gen = s.get_stack::<DbRef>();
+    let new_value = s.coroutine_retain(v_gen);
+    s.put_stack(new_value);
 }

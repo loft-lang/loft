@@ -163,7 +163,7 @@ taken. `recover_backer` confines each block's store to its block: a flat **5** a
 step for a wrong answer in a function that reassigns a local across sibling blocks. ⚠ The
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
-wrong element on the branch NOT taken. QUALITY.md § Cluster III Route 2.
+wrong element on the branch NOT taken. QUALITY-history.md § Cluster III Route 2.
 
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
@@ -230,6 +230,17 @@ first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at th
 null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+
+**Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
+element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
+fresh literal into its hidden buffer on every exit and its return adopted raw — is handed
+the element `OpNewRecord` just claimed as that buffer, so the record is written where it
+lives: no temporary store, no copy, no free.  The record may carry text,
+plain-vector and inline-record fields (the element is fresh, so nothing leaks under the
+write); a keyed collection field, a struct-enum field and a synthetic-nullable field keep the
+copy.  **`LOFT_NO_APPEND_IN_PLACE=1`** restores the lift + copy — the first bisect step for
+a wrong field, a leak or a double free out of an appended call result; `LOFT_STRICT_STORES=1`,
+`LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
 
 **Mint at first use (@PLN164 A0, `@FR-O-LazyBuffer`, default-ON, both backends, scopes
 pass):** a hidden return buffer (`__ref_N`) is minted in front of the statement that hands it
@@ -328,6 +339,13 @@ also what fixed the heap-owning case: the claims walk read the source through a 
 captured before the growth relocated it — a freed block).  The doubling fill a canvas is
 built with is this shape run to a ladder; `render_marks` −8 %.  First bisect step for a
 wrong element out of a self-append.
+**`LOFT_NO_EXACT_COPY_CLAIM=1`** (runtime, BOTH backends) gives a whole vector appended
+into an EMPTY destination (`Rec { xs: v }`, `r.ys += r.xs`) `vector_append`'s eleven-element
+first claim again — with it off, `Stores::vector_add` claims the source's length, as a deep
+copy does, so a short vector in a fresh field is not a flat block (a rebuilt store reaches
+the from-scratch size, @PLN123; a builder written in its element keeps the size the copy
+had).  First bisect step for a wrong element or a size change out of such an append;
+`store_rebuild_b1` / `store_compact_b3` are the falsifiers.
 
 ## Runtime: keyed collections
 

@@ -74,7 +74,7 @@ slot.**
 ## 2. The class + the one invariant (design-protocol step 4)
 
 This is the open OWNERSHIP_MODEL hole — *"`returned_var` collapses `match`/`if` → a return-source
-**set** (union of arms), not one var"* ([OWNERSHIP_MODEL.md § holes](../../OWNERSHIP_MODEL.md#the-current-holes--the-migration-backlog),
+**set** (union of arms), not one var"* ([OWNERSHIP_MODEL.md § holes](../../OWNERSHIP_MODEL.md#the-migration-backlog-provenance-record--live-status-is-formalownershipmd),
 row "returned_var") — in its **adopt/free** facet, and cluster-V's invariant
 ([cluster-V-nrvo-adopt-ownership.md](cluster-V-nrvo-adopt-ownership.md)):
 

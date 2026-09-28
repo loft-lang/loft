@@ -35,12 +35,12 @@ fn main() {
   y = S.parse(`{{"keep":"k","s":null,"i":null,"o":null}}`);
   assert(y.s == null && y.i == null && y.o == null, "explicit JSON null reads back null");
 
-  // NOT asserted here, deliberately: a struct LITERAL that omits a nullable field takes
-  // the type's ZERO (`u16?` → 0, `boolean?` → false), except `limit(lo,hi)?`, which gives
-  // null.  That is a third spelling of "absent" and it disagrees with these two — but it
-  // is loft#914's documented omitted-field-zero behaviour, so changing it is a design
-  // call, not a fix.  Recorded in QUALITY.md; pinning it here would freeze one side of an
-  // open question.
+  // A struct LITERAL that omits a nullable field is the third spelling of "absent", and it
+  // agrees with the two above: a nullable field starts null (`D-Opt-Zero`, formal/types.md).
+  z = S { keep: "k", plain: 0, flag: false };
+  assert(z.b == null && z.s == null && z.i == null, "omitted narrow fields are null");
+  assert(z.r == null && z.w == null, "omitted ranged and wide integers are null");
+  assert(z.f == null && z.t == null && z.o == null, "omitted float, text and boolean are null");
 
   // And the round-trip, which is where the two halves have to agree: a field absent from
   // the input is absent from the output, and still absent when read back.  It starts from

@@ -53,7 +53,9 @@ Uses [operational.md](operational.md)'s `⟨e, σ⟩ → ⟨e', σ'⟩` and [hea
 binding `x` to each element, and stops exactly when the cursor reaches the length. The cursor is
 re-read each round, so it observes the length **as it is at that step** (loft does not snapshot
 the length of a collection it walks; a body cannot append to that collection — the parser refuses
-it — but it can remove the current element with `#remove`).  The SOURCE is not re-read: see
+it — but it can remove the current element with `#remove`).  A `hash`, `spatial` or `trie` is
+walked through an ordered snapshot of its records (`Col-Order`), and the same holds there: a
+record removed by key before the walk reaches it is not visited.  The SOURCE is not re-read: see
 *The source is evaluated ONCE* below. The loop is a pure desugaring to
 [operational.md](operational.md)'s `loop`/`break`/`if`, so its control flow is already pinned;
 `I-For` only fixes the ORDER and the stop condition.
@@ -172,16 +174,16 @@ and gives exactly this rule's answer: `for x in v?` and `for x in v ?? []` each 
 Until 2026-09-07 this paragraph ended *"so a `for` over a possibly-null collection is safe
 without a guard"*, which reads as a promise about the `?` spelling — the one spelling the rule
 does not cover and the compiler refuses. The formal line was right and its gloss reached one
-case past it (QUALITY.md B8i).
+case past it (QUALITY-history.md B8i).
 
 ---
 
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md) — the latest, D-iter-8 (a loop over a collection
-FIELD walked the new vector, or a released one, when its body replaced the field or its
-owner — loft#1695), closed 2026-09-26.
+[iteration-history.md](iteration-history.md) — the latest, D-iter-9 and D-iter-10 (a walk over
+a `hash`, `spatial` or `trie` yielded a record removed ahead of it, and accepted an append the
+rule refuses — loft#1710), closed 2026-09-28.
 
 ## Conformance
 

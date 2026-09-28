@@ -18,7 +18,7 @@
 #   3. bin/loft self-update --dry-run --refresh RESOLVES — the signed index reaches
 #      this binary.  "no releases published to compare against" is a FAILURE here,
 #      never a quiet line: a cache predating the splice prints the same words as an
-#      empty index, which is why --refresh is not optional (RELEASE.md step 4).
+#      empty index, which is why --refresh is not optional (RELEASE_PUBLISH.md step 4).
 #   4. bin/loft verify-self reports the ANCHOR: the literal
 #      "origin: matches the signed registry index".  Exit 0 alone is NOT the pass —
 #      an unreachable registry SKIPS the origin check and still exits 0, and a check

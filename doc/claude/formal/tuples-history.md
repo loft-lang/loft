@@ -123,7 +123,7 @@ what the declining version bought by making the record cells wrong.
 so the collapse unwraps it — and the member is then a VIEW of its local
 (`Variables::retarget_tuple_member_deps`, `(B-View)`; the first cut stripped the dep and
 freed the caller's hash at the callee's exit, which the @FR-F-Ret guard's second call
-observed).  The @FR-F-Ret walk (QUALITY.md B7t, calls-history D-call-13) boxes a generic's
+observed).  The @FR-F-Ret walk (QUALITY-history.md B7t, calls-history D-call-13) boxes a generic's
 `-> (T, …)` at instantiation exactly as a named function's is boxed, so the copy the concrete
 path performs at the RETURN applies unchanged and happens once.  Measured on the joined tree,
 both backends, no leaked store: `keep<T>(a: T) -> (T, integer)` with a `vector<integer>` reads
@@ -137,7 +137,7 @@ that last cell is unmeasurable rather than open.
 
 ### D-tup-8 — OPENED AND CLOSED (2026-09-04, loft#1361): a tuple with a heap member was shared where the rules say copy
 
-> **The cell this entry's guard did not cross (2026-09-05, QUALITY.md B7t).**  A keyed member
+> **The cell this entry's guard did not cross (2026-09-05, QUALITY-history.md B7t).**  A keyed member
 > reaching the tuple literal through a LOCAL bound from a parameter and then RETURNED —
 > `s = x; t = (s, 7); return t` — was written into the synthetic `__tuple` record by
 > `emit_set_one_element` as a 4-byte header where a struct field write copies
@@ -155,7 +155,7 @@ heap member's word is its handle.  A whole-tuple bind `u = t` copied the words (
 leaf), so `t.0 += [9]` grew `u.0`; the literal's member copy (`tuple_member_owned_copy`) knew a
 VECTOR and a KEYED local but not a STRUCT, so `(s, 5); s.v = 9` read 9 through `p.0.v`; and the
 destructure's `T1.4` temp read its elements back the same way.  Both backends, the same wrong
-values, nothing said so — the walk of `@FR-B-Copy` (QUALITY.md § B7n) found it by moving the
+values, nothing said so — the walk of `@FR-B-Copy` (QUALITY-history.md § B7n) found it by moving the
 struct's bind through every position a bind can take.
 
 Closed with ONE home rather than four: the whole-tuple bind and the destructure lower onto the
@@ -397,7 +397,7 @@ than a third spelling both would have to learn.  Guard:
 > rather than bound: the ELEMENT's type is one the tuple declares, while the chain's RESULT type
 > would have to be inferred, and a temp typed off the CALLEE'S PARAMETER instead carries no deps —
 > it then reads as an OWNER of a store it only views, and the free that follows is a
-> use-after-free rather than a leak (QUALITY.md § B6k).
+> use-after-free rather than a leak (QUALITY-history.md § B6k).
 >
 > ⚠ **The class, and this is its fourth instance in a week: one notion, two spellings, one looked
 > for.** A projection resolved by OP NAME cannot see the `TupleGet` spelling; the same blindness

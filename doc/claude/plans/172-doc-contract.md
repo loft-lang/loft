@@ -9,6 +9,85 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **Active — Phases 1–3 done; Phase 4 (the burn-down, one doc per `[mid]`) is the standing work.**
 
+**Phase 4, the 2026-10 cycle's D-review — DEVELOPMENT.md (2026-09-28):**
+- **Size:** 1565 → 452 lines; lint findings 24 → 1 (a literal `FIXED` in quoted runner output).
+- **Split by question:**
+  - [JOINING.md](../JOINING.md) — rebasing onto a squash, joining sibling checkouts, resolving
+    and verifying a join; it now also holds the commit-classification ladder, which had lived
+    only in agent memory.
+  - [REVALIDATE_LIBS.md](../REVALIDATE_LIBS.md) — does a change break a shipped library.
+  - [INTERMEDIATE.md § Adding an operator](../INTERMEDIATE.md#adding-an-operator) — the
+    opcode bootstrap, with the `make surface-gen` step it lacked.
+- **History out:** the dated incidents went to
+  [DEVELOPMENT-history.md](../DEVELOPMENT-history.md).  Among them is the unbuilt auto-regen
+  idea for `fill_rs_up_to_date` (improvement B).
+- **Contradictions with CLAUDE.md resolved to CLAUDE.md:**
+  - "always branch from `main`" (rule 5 says: from the tip of in-flight work);
+  - open a PR before the local test run;
+  - bugs as PROBLEMS.md rows;
+  - sprint branches and `{id}-{name}` branch names;
+  - merging `origin/main` into a branch that is behind.
+- **Stale facts corrected against the tree:**
+  - the five-job CI table (`main` requires Test ×3, Clippy and Format; the rest is CI_BUDGET.md);
+  - the manual gate list (`make ci` now builds the wasm and no-default-features variants and the
+    fixture cdylibs);
+  - the commit-message style (the log states outcomes as present-tense sentences, not
+    `{scope}: {imperative}`);
+  - the Co-Authored-By model;
+  - the routing table (COMPILER.md has no § Open work; `lib_plans/future` became plan issues).
+- **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
+  in `formal/` stays visible as new.
+
+**Phase 4 — QUALITY.md split into working doc and record (2026-09-28, owner-steered).**
+- **The owner's rule, now DOC_QUALITY § Maintainer docs rule 4:** everything normal work needs
+  lives in compact files, and history is split off one way — the `<doc>-history.md` companion.
+  Rule 2 now exempts such a companion from the size ceiling (`<!-- size-exempt: … -->`).
+- **QUALITY.md went from 12,892 lines to 169, with 0 history lines.**  It holds the open
+  non-defect decisions, the three gated ratchets, what remains of the duplication thread, the
+  instruments, and the store-lifetime residuals.
+- **QUALITY-history.md is the old file moved intact,** so every anchor survives and ~90
+  citations repoint mechanically.  The ratchet tables left behind pointers.
+- **Tools and tests follow the content:**
+  - `campaign_review.py` reads its walks from the companion;
+  - the two Tier guards read the companion;
+  - the open-table and ratchet gates stay on QUALITY.md.
+- **Two open items that existed only as prose were measured:**
+  - The vector/tuple `null`-first-arm chain still answers `null` silently, bare form included.
+    Filed as loft#1711 (`silent-wrong`, `wa:clean`).
+  - The omitted-field "third spelling of absent" had been settled by `D-Opt-Zero`; its guard
+    now pins the answer.
+- A stale "D-bind-38 stays open" in formal/binding.md was corrected; the old QUALITY.md was
+  restating that register.
+
+**Phase 4, the 2026-10 cycle's second pick — RELEASE.md (2026-09-28, on the owner's repeated
+ask to implement the plan):**
+- **Size:** 1211 → 702 lines; lint findings 38 → 8 (the rest are `timeline` false positives:
+  dates inside an anchor, "no longer" describing present staleness, literal state words).
+- **Split by question:** [RELEASE_PUBLISH.md](../RELEASE_PUBLISH.md) takes how a release is
+  tagged, built, published and made installable:
+  - the draft-first mechanics and the registry splice;
+  - the bundles (old step 10);
+  - what the tag pipeline proves;
+  - the reference-PDF checks;
+  - the two install layouts;
+  - reproducible builds, as the current state.
+- **History out:** [RELEASE-history.md](../RELEASE-history.md) takes the dated measurements:
+  - the never-completed splice;
+  - the clippy census;
+  - the reproducible-build investigations;
+  - the waiver story;
+  - the past cycle themes.
+- **Stale facts corrected:**
+  - `checklist.json` is committed, not git-ignored;
+  - the release gate calls six workflows, not "five";
+  - the PDF ships inside each bundle and is not a separate release asset;
+  - the safety gate's `0.8.4 / 1.0.0` framing is gone;
+  - the out-of-scope list now names the current applications, not retired demo IDs.
+- **Pointers:** every pointer into a moved section follows it, including `release.yml`'s
+  comments and `release-checklist.py`'s printed pointers.
+- **Side finding:** `every_markdown_link_resolves` does not check `#fragment` anchors; five
+  links from PLANNING.md and a finished plan into ROADMAP.md name anchors that no longer exist.
+
 **Phase 3, as built (2026-09-25):** two rows in `scripts/release-checklist.py`.
 - **`A-docs-lint`** (automatic, `mid pre`) fails on growth since the baseline, and also on a
   burn-down left un-pinned, because headroom would hide the next regrowth.  It was falsified

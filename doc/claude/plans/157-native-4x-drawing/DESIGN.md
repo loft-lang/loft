@@ -727,6 +727,18 @@ consumer bench.  Switch: `LOFT_NO_APPEND_IN_PLACE`.  Guard:
 `tests/append_in_place.rs`, which pins the EMITTED shape (element claimed,
 called with the element, `OpDistinctStore`, no lift) and the NRVO exclusion.
 
+**Widened to heap fields (2026-09-27, @PLN158).**  The all-scalar gate was the
+synthetic-nullable exclusion's, which `record_is_fully_written_by_a_literal`
+carries on its own; the element is FRESH (`OpNewRecord` zeroes every handle), so a
+literal's text claims in the element's store, a plain vector zeroes its handle and
+appends, an inline record is written field by field — exactly what they do in a
+store of their own.  A keyed collection field and a struct-enum field keep the
+copy.  Consumer `panel_build` (six `make_button` calls per frame, two texts each):
+6.7 → **5.4 ms per op (−20 %)**, hash equal; the same site is `m.chunks +=
+[build_chunk(…)]` in moros's map and every `out += [mk(…)]` over a record with a
+name.  Cells `tests/scripts/158-a-heap-record-builder-lands-in-its-element.loft`
+h1–h11; the pin gains a text-carrying callee and a struct-enum control.
+
 ## V-e — the remaining half of `smooth` is the runtime's per-allocation overhead (2026-09-08)
 
 **Instrument.** `perf` became usable on this box (`kernel.perf_event_paranoid` 4 → 2;

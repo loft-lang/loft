@@ -21,6 +21,13 @@ fn self_append_block_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_SELF_APPEND_BLOCK").is_none())
 }
+/// `LOFT_NO_EXACT_COPY_CLAIM=1` gives a vector copied into an empty destination
+/// `vector_append`'s eleven-element first claim again (the first bisect step for a wrong
+/// element or a size change out of a whole-vector append into a fresh field).
+fn exact_copy_claim_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_EXACT_COPY_CLAIM").is_none())
+}
 fn vadd_trace_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
@@ -1401,6 +1408,12 @@ impl Stores {
         }
     }
 
+    /// Append every element of the vector at `o_db` to the vector at `db`, deep-copying
+    /// the heap each element owns.
+    ///
+    /// # Panics
+    ///
+    /// When the source's byte length does not fit a store claim.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
@@ -1478,6 +1491,21 @@ impl Stores {
         } else {
             Vec::new()
         };
+        // A copy into an EMPTY destination claims the source's length, as a deep copy does —
+        // not `vector_append`'s eleven-element first claim, which would make every short
+        // vector written into a fresh field (a record literal's `xs: v`, a rebuild's
+        // `Rec { xs: r.xs }`) a flat block however few elements it holds.  A later push
+        // grows it ~2x from there.
+        if !same_vec && db.rec != 0 && exact_copy_claim_enabled() {
+            let store = keys::mut_store(db, &mut self.allocations);
+            if store.get_u32_raw(db.rec, db.pos) == 0 {
+                let words = u32::try_from((u64::from(o_length) * u64::from(size) + 15) / 8)
+                    .unwrap_or_else(|_| panic!("vector_add: {o_length} elements of {size} bytes"));
+                let rec = store.claim(words);
+                store.set_u32_raw(db.rec, db.pos, rec);
+                store.set_u32_raw(rec, 4, 0);
+            }
+        }
         let new_db = vector::vector_append(db, size, &mut self.allocations);
         let append_pos = new_db.pos;
         // Claim more than 1 record if needed for the actual copy.

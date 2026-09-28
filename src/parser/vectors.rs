@@ -3079,6 +3079,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             in_type = in_type.depending(vec_var);
             fill = v_set(vec_var, expr);
             expr = Value::Var(vec_var);
+        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, false) {
+            // A keyed source is walked through its ordered snapshot, as a `for` walks it.
+            fill = snapshot;
         }
         let var_tp = self.for_type(&in_type);
         let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
@@ -3710,6 +3713,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if !self.first_pass && crate::keys::fused_append_enabled() && !self.keyed_local_kind(vec) {
             self.fuse_scalar_append(&mut lp, elm, vec_expr);
         }
+        // A keyed source's snapshot (`keyed_snapshot`) is released as soon as the walk ends,
+        // as a `for` statement's epilogue releases it: a comprehension evaluated once per
+        // round of an enclosing loop builds one per round.
+        let snapshot = match fill.unspan() {
+            Value::Set(s, _) if self.vars.name(*s).contains("hash_scratch") => Some(*s),
+            _ => None,
+        };
         let mut for_steps: Vec<Value> = Vec::new();
         if fill != Value::Null {
             for_steps.push(fill);
@@ -3719,6 +3729,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         for_steps.extend(super::collections::iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "For comprehension"));
+        if let Some(s) = snapshot {
+            for_steps.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
+            for_steps.push(v_set(s, Value::Null));
+        }
         let mut ls: Vec<Value> = Vec::new();
         if block {
             ls.extend(self.vector_db(in_t, vec));
@@ -9668,14 +9682,13 @@ mod plan22_phase02d_iii_d_alloc_prepend_tests {
 /// the element itself?  Answers the callee, the buffer's argument index and the call's
 /// arguments; `None` keeps today's copy.
 ///
-/// The set is deliberately the one Route R proved: a loft-defined callee with a hidden
-/// buffer whose record is non-nullable and ALL-SCALAR (no collection, text or reference
-/// field — a reused record is not zeroed, and only a literal that writes every field is
-/// sound over one; the synthetic-nullable exclusion is
-/// `record_is_fully_written_by_a_literal`'s), and the argument in the buffer's position
-/// is the buffer the caller minted for this call (`caller_hidden_buf`), so substituting
-/// it changes only where the answer is built.  A projection of a call, a nullable
-/// return, a call through a fn-ref, and a record with a vector field all answer `None`.
+/// The set is Route R's: a loft-defined callee with a hidden buffer whose record is
+/// non-nullable and written whole by a literal (the synthetic-nullable exclusion is
+/// `record_is_fully_written_by_a_literal`'s), whose fields are scalars, texts, plain
+/// vectors or inline records (a keyed collection or a struct-enum field keeps the copy),
+/// and the argument in the buffer's position is the buffer the caller minted for this
+/// call (`caller_hidden_buf`), so substituting it changes only where the answer is built.
+/// A projection of a call, a nullable return and a call through a fn-ref answer `None`.
 impl Parser {
     pub(crate) fn element_call_takes_record_buffer(
         &self,
@@ -9688,7 +9701,12 @@ impl Parser {
         if !def.name().starts_with("n_") || *def.code() == Value::Null {
             return None;
         }
-        let Type::Reference(td, _) = def.returned() else {
+        // `@FR-N-Shape` — a nullable return keeps the copy, said so rather than left to a
+        // bare match that cannot see the wrapper.
+        if def.returned().peel_optional().1 {
+            return None;
+        }
+        let Type::Reference(td, _) = def.returned().base() else {
             return None;
         };
         // The caller must ADOPT the answer raw: a return that names its hidden buffer
@@ -9710,11 +9728,41 @@ impl Parser {
         {
             return None;
         }
-        let all_scalar = self.data.def(*td).attributes().iter().all(|a| {
+        // The element is FRESH — `OpNewRecord` claimed it a statement earlier with every
+        // handle zeroed — so a literal's write of a heap field lands as it would in a store
+        // of its own: a text claims in the element's store, an inline record is written
+        // field by field.  A VECTOR field keeps the copy, at any inline depth: built in the
+        // element it is pushed into a quantised block, where the copy claims it at its
+        // LENGTH, and a persisted file is dense only because everything in it arrived by
+        // copy (measured: the from-scratch file of `tests/scripts/store_rebuild_b1.loft`
+        // grew 37 256 → 46 744 bytes with vectors placed; @PLN123 B1/B3 are the guards).
+        // A keyed or linked collection field and a struct-enum field keep the copy too:
+        // their writes run group maintenance and variant tagging the fresh-element
+        // argument does not cover.
+        let placeable = self.record_fields_placeable(*td, 0);
+        placeable.then(|| (*fn_nr, buf_idx, args.clone()))
+    }
+
+    /// Every field of record definition `td` is one a literal may write straight into a
+    /// fresh element: a scalar, a text, or an inline record whose fields are (recursively)
+    /// the same.  `depth` bounds the walk; a shape past it keeps the copy.
+    fn record_fields_placeable(&self, td: u32, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        self.data.def(td).attributes().iter().all(|a| {
+            // `@FR-N-Shape` — every shape test peels the nullable marker.
             a.constant
-                || matches!(a.typedef, Type::Routine(_))
+                || matches!(a.typedef.base(), Type::Routine(_))
                 || crate::data::is_scalar(&a.typedef)
-        });
-        all_scalar.then(|| (*fn_nr, buf_idx, args.clone()))
+                || matches!(a.typedef.base(), Type::Text(_))
+                || match a.typedef.base() {
+                    Type::Reference(sub, _) => {
+                        self.data.def_type(*sub) == crate::data::DefType::Struct
+                            && self.record_fields_placeable(*sub, depth + 1)
+                    }
+                    _ => false,
+                }
+        })
     }
 }

@@ -835,7 +835,7 @@ def audit_spellings():
 
     ⚠ Per FUNCTION, so a pair that splits the question — one function matching the call and
     a caller carrying the tuple arm — reads as a miss.  Every hit is a site to READ, and the
-    verdict is whether the fallback encodes a semantic boundary (QUALITY.md B6d), not
+    verdict is whether the fallback encodes a semantic boundary (QUALITY-history.md B6d), not
     whether the arm is present.
     """
     rows = []

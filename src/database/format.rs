@@ -834,14 +834,15 @@ impl Stores {
         if bytes.rec == 0 || bytes.pos == 0 || length == 0 {
             return String::new();
         }
-        let store = self.store_mut(&bytes);
+        let store = self.store(&bytes);
         let vec_rec = store.get_u32_raw(bytes.rec, bytes.pos);
         if vec_rec == 0 {
             return String::new();
         }
-        // `buffer` returns the payload slice starting at offset 8; the live
-        // length (offset 4) bounds it — trailing capacity slack is ignored.
-        let raw = &store.buffer(vec_rec)[..length as usize];
+        // `bytes_of` is the payload slice starting at offset 8; the live length
+        // (offset 4) bounds it — trailing capacity slack is ignored.  A READ, so a
+        // foreign store (@PLN174) answers it too.
+        let raw = &store.bytes_of(vec_rec)[..length as usize];
         String::from_utf8(raw.to_vec()).unwrap_or_default()
     }
 
@@ -2341,7 +2342,7 @@ impl ShowDb<'_> {
 /// backends number the coroutine table differently — the interpreter's handle carries the null
 /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
 /// element holding one renders as its kind rather than as either backend's numbers.
-fn is_generator_handle(store_nr: u16) -> bool {
+pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
     store_nr == crate::state::COROUTINE_STORE
         || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
 }

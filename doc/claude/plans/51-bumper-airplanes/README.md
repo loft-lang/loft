@@ -302,7 +302,7 @@ audience can see who's where without needing to read labels.
   shows tier transitions for diagnostics; player-side shows
   nothing.
 
-  Captured as a post-v1 sub-arc — see [§ Sub-arcs](#sub-arcs-sketch--phase-the-work-like-plan36)
+  Captured as a post-v1 sub-arc — see [§ Sub-arcs](#sub-arcs-sketch--phase-the-work-like-pln6)
   phase 7.  Static defaults from NUMBERS.md ship in v1; the
   multipliers and tier thresholds become tunables when phase 7
   starts.
@@ -656,7 +656,7 @@ projector — are already proven.  What this demo would surface as
 | Surface | What's needed | Status |
 |---|---|---|
 | Twin-strip touch input | Phone-side: capture two simultaneous touches by x-coordinate band, report `{L, R}` ∈ `[0, 1]²` over WS at ~30 Hz | New on the HTML/JS side; pure client work |
-| Per-frame WS pose sync | 30 Hz `(L, R, L_on, R_on)` input per phone → server; 30 Hz per-plane pose broadcast back, **sight-filtered per recipient** (`net.peer_sight_range`) so each phone only receives poses for OTHER planes within visual range.  Total throughput scales with typical visible-peer count, not N − 1 — substantially under naïve worst-case.  Pose frames are ~32 bytes fixed-point (see `net.pose_frame_bytes_budget`), not JSON | Reuses [`lib_plans/future/08-server/` § Gap 8 — `BroadcastTopology`](../../lib_plans/future/08-server/README.md#gap-8--per-recipient-broadcast-qos-sight--rate-lod--forecast); the sight + rate-LOD + forecast pattern is generalised there for dryopea reuse |
+| Per-frame WS pose sync | 30 Hz `(L, R, L_on, R_on)` input per phone → server; 30 Hz per-plane pose broadcast back, **sight-filtered per recipient** (`net.peer_sight_range`) so each phone only receives poses for OTHER planes within visual range.  Total throughput scales with typical visible-peer count, not N − 1 — substantially under naïve worst-case.  Pose frames are ~32 bytes fixed-point (see `net.pose_frame_bytes_budget`), not JSON | Reuses [`lib_plans/future/08-server/` § Gap 8 — `BroadcastTopology`](../../lib_plans/future/08-server/README.md); the sight + rate-LOD + forecast pattern is generalised there for dryopea reuse |
 | Phone-side first-person 3D | WebGL view from the cockpit: extruded world geometry + other planes' positions + their smoke trails.  Own plane mostly invisible (nose section + frame overlay only) — no chase-camera tuning since the camera IS the cockpit | New on the HTML/JS side; same world payload as projector, simpler camera |
 | Static world load | Read a dryopea MapFile JSON OR a `store_persist_bind`'d hash, extrude per palette; serve as a single download to phone + projector at session start | Loader is [`hex_world::load_mapfile()`](https://github.com/loft-lang/loft-libs-world/blob/main/hex_world/MAPFILE.md) (Phase 7a wraps the existing moros_map shape behind a documented schema); palette extrusion fields live on `MaterialDef.md_extrude` per the schema doc.  Stencil-pipeline supplement after @PLN49 plan 06 lands |
 | 3D continuous physics | Plane integrator (pose + velocity + angular vel); sphere-vs-geometry + sphere-vs-sphere collision; reflection with damping | Uses [`lib_plans/75-physics-2body/`](../../lib_plans/75-physics-2body/README.md) — shared rigid-body library; PLAN50's "0.7 outward / 0.2 tangent" target kick is `reflect(v, n, 0.7, 0.2)` in that slot's API |
@@ -764,7 +764,7 @@ This demo:
 | 4  | Physics — plane integrator + bounce + stall | M | [`lib_plans/75-physics-2body/`](../../lib_plans/75-physics-2body/README.md) Phases 1-5; the existing [`tools/audience-demo-50/forecast_test.loft`](../../../../tools/audience-demo-50/forecast_test.loft) (Q1/Q2/Q4/Q5 — 4/4 PASS) is the acceptance rig for the slot's reflect-with-energy-split + nose/body 2-collider |
 | 5  | Scoring + ambience — targets file + off-axis collision rule + leaderboard + "the storm" difficulty ramp | S | particles Phase 3 (score-burst factory) |
 | 6  | Live playtest + tuning (controls, audio mix, palette) | S | all above |
-| 7  | **Per-phone adaptive QoS** (post-v1) — passive RTT/loss estimation, three-tier classification (Good / OK / Limited), per-phone scaling of `peer_sight_range` and rate-LOD radii.  Phones with strong connections see more peers at higher fidelity; weak connections degrade gracefully instead of dropping | S | [`lib_plans/future/08-server/` § Gap 8](../../lib_plans/future/08-server/README.md#gap-8--per-recipient-broadcast-qos-sight--rate-lod--forecast) — the QoS tier-classification layer lives in `lib/server`'s `PerPeerScaling` strategy, reusable by dryopea multiplayer |
+| 7  | **Per-phone adaptive QoS** (post-v1) — passive RTT/loss estimation, three-tier classification (Good / OK / Limited), per-phone scaling of `peer_sight_range` and rate-LOD radii.  Phones with strong connections see more peers at higher fidelity; weak connections degrade gracefully instead of dropping | S | [`lib_plans/future/08-server/` § Gap 8](../../lib_plans/future/08-server/README.md) — the QoS tier-classification layer lives in `lib/server`'s `PerPeerScaling` strategy, reusable by dryopea multiplayer |
 
 Each phase ships standalone (incremental playable state); the
 cadence is the same flat-2D-MVP-first sequence that worked for
@@ -780,14 +780,14 @@ cadence is the same flat-2D-MVP-first sequence that worked for
 - [@PLN49 dryopea](../49-dryopea/README.md) — editor that authors
   the world; plan 06 stencil pipeline gives us authored prop
   libraries when it lands.
-- [`lib_plans/12-library-extraction § Phase 7p`](../../lib_plans/12-library-extraction/README.md#phases-6w--7b--7c--8)
+- [`lib_plans/12-library-extraction § Phase 7p`](../../lib_plans/12-library-extraction/moros-split.md#phases-6w--7b--7c--8)
   — the cross-cutting primitives (physics, particles, server QoS,
   MapFile schema) PLAN50 depends on land via Phase 7p.
 - [`lib_plans/75-physics-2body/`](../../lib_plans/75-physics-2body/README.md)
   — shared rigid-body physics; sub-arc 4 consumes Phases 1-5.
 - [`lib_plans/76-particles/`](../../lib_plans/76-particles/README.md)
   — Trail + Burst particle library; sub-arcs 3 + 5 consume.
-- [`lib_plans/future/08-server/` § Gap 8](../../lib_plans/future/08-server/README.md#gap-8--per-recipient-broadcast-qos-sight--rate-lod--forecast)
+- [`lib_plans/future/08-server/` § Gap 8](../../lib_plans/future/08-server/README.md)
   — broadcast QoS layer (sight + rate-LOD + bounce-forecast);
   sub-arc 7 consumes.
 - [`hex_world/MAPFILE.md`](https://github.com/loft-lang/loft-libs-world/blob/main/hex_world/MAPFILE.md) —

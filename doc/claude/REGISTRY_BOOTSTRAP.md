@@ -26,7 +26,7 @@ running.  Two paths, deliberately:
 | **Final (K_real)** | First public release that ships an embedded trust-root key. | Full 3-2-1 backup (§ Step 1.5): laptop + 2 hardware tokens + sealed paper.  Off-site copies. | Loft releases embed `K_real` in `TRUSTED_PUBLIC_KEYS`; users worldwide trust signatures made by `K_real`. |
 
 **Going from interim → final** is a [REGISTRY_RECOVERY.md
-Scenario C](REGISTRY_RECOVERY.md#scenario-c) key-rotation event:
+Scenario C](REGISTRY_RECOVERY.md#scenario-c--key-compromised-stolen--exfiltrated) key-rotation event:
 generate `K_real`, embed in `TRUSTED_PUBLIC_KEYS` removing
 `K_tmp`, re-sign every signed index/asset with `K_real`, ship the
 public release.  That procedure is documented as "compromised key
@@ -162,7 +162,7 @@ different device, and embed all three public keys:
 compromised → drop just that key's public entry from
 `TRUSTED_PUBLIC_KEYS` in the next loft release; the other two keep
 signing — no rotation, no re-signing, no user-visible break (contrast
-[REGISTRY_RECOVERY.md Scenario C](REGISTRY_RECOVERY.md#scenario-c),
+[REGISTRY_RECOVERY.md Scenario C](REGISTRY_RECOVERY.md#scenario-c--key-compromised-stolen--exfiltrated),
 the disruptive single-key rotation).  A lost independent key is
 *revoked, not recovered*, so you do **not** need a 3-2-1 backup of
 each one.  (Optional belt-and-suspenders: a sealed paper copy of

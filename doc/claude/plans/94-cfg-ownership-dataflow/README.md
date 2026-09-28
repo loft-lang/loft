@@ -34,12 +34,12 @@ The `n_choose` fact-disagree residual is now RESOLVED: a
 owns — so `check` is now **0 RED across the entire corpus** (806 files + 54 fuzz), and
 `85-struct-copy-return-owned` joined the clean corpus. The `check-dev` over-free Check B is **now PROMOTED** onto `check` (its
 true-positive is `LOFT_OWN_INJECT_FREE_BORROWED`); `check-dev` retains only the exit-state Check C as a
-second opinion. **Check D** (2026-09-05, the `@FR-O-Override` walk, QUALITY.md B7q) also runs on
+second opinion. **Check D** (2026-09-05, the `@FR-O-Override` walk, QUALITY-history.md B7q) also runs on
 `check`: every free op — in any of the five spellings `OpSets::frees` names — whose first argument is a
 never-free (`skip_free`) binding is a RED in a spelling the backends do not intercept and a NOTE in one they
 drop; the admissible exception is a staged text temp (`Function::is_staged_text_temp`) freed by the pass
 that staged it.  Its true-positive is `LOFT_OWN_INJECT_FREE_SKIPFREE=<var>`; 0 RED / 0 NOTE over 1247 files. **Check A's
-true positive is injected too** since the `@FR-O-Oracle` walk (2026-09-05, QUALITY.md B7r):
+true positive is injected too** since the `@FR-O-Oracle` walk (2026-09-05, QUALITY-history.md B7r):
 `LOFT_OWN_INJECT_FACT_OWNED=<var>` forces the shadow's fact to `Owned`.  The A1b disagreement it used
 to assert was two derivation defects meeting on one fixture — the oracle's "minted ⇒ Owned regardless"
 shortcut and the shadow's private, drifted base translation — both closed; the shadow now reads

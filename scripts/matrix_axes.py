@@ -5,7 +5,7 @@
 
 A boundary matrix is only as good as the axes it MOVES, and the failure mode is
 always the same: the author varies the axis the bug report named and pins four
-others.  QUALITY.md § B6m counted five such matrices in a single day and named the
+others.  QUALITY-history.md § B6m counted five such matrices in a single day and named the
 gap exactly — *"which axis did I hold fixed" has no instrument; it is entirely a
 matter of the author remembering*.
 
@@ -81,7 +81,7 @@ what a pinned axis looks like.
 
 So there is no corpus-wide queue here, because nothing measured supports one.  EVERY file
 in the corpus leaves some axis short -- 892 of 892 -- which is a thermometer nobody will
-read (QUALITY.md § B4).
+read (QUALITY-history.md § B4).
 Two products replace it, and both are measurements rather than rankings:
 
   * `file <path>` -- the census for ONE guard, to run while writing it.  This is the

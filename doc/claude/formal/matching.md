@@ -177,7 +177,7 @@ element is written without them, as a bare capture with the suffix on the type:
 `[ xs:integer* ]`.  There is no parenthesised scalar form and no bare variant form; each kind
 takes exactly one of the two, and the wrong one is a parse error that reports `Expect token ,`
 rather than naming the spelling.  Reading `(a)*` as literal syntax is what a first reader does —
-it cost four wrong probes in the walk that added this note (QUALITY.md B8i) — so the two forms
+it cost four wrong probes in the walk that added this note (QUALITY-history.md B8i) — so the two forms
 are written out here beside the rule they instantiate.
 
 **In words.** A pattern either matches — moving the cursor forward and binding names — or fails,

@@ -633,6 +633,7 @@ dependencies = [
  "libc",
  "libloading",
  "loft-ffi",
+ "memmap",
  "mmap-storage",
  "png",
  "rand_core 0.9.5",

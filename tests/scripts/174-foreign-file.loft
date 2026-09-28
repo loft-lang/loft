@@ -1,0 +1,94 @@
+// @PLN174 F2 — a FOREIGN store: `file_map(path)` serves a file's bytes through the store
+// contract with no copy into a store (a read-only mapping the store owns until the handle
+// is freed), and every read op — the length, an index, an iteration, a slice, a hoisted
+// loop, `text_from_bytes` — answers exactly what the copying `read_bytes` path answers.
+// Each cell reads BOTH paths and compares, and the file's bytes are chosen so every value
+// is hand-computed too.  The interpreter and native read through the same `Store`, so the
+// oracle here is the copying path, not the other backend; `LOFT_HOIST_VERIFY=1`,
+// `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` must all answer the same, and the corpus
+// leak check must see the mapping released with its handle.  The write that must be
+// refused is `174-foreign-file-write-refused.loft`, its own file (an expected failure
+// ends a run).
+//
+// @falsified-at: none — the store had no earlier build to catch, so the receipt is the
+//   unit test's SABOTAGE (`store::tests::a_foreign_store_answers_a_vector_read_through_
+//   the_same_accessors`, 2026-09-28): with `Store::read`'s foreign intercept struck the
+//   length read refuses as an out-of-bounds reference.  This file adds the runtime half:
+//   with `fs_file_map` answering `fs_read_bytes` (the copy) every cell still passes, which
+//   is the point — the two paths are observationally one.
+
+fn ff_path() -> text { return "loft_174_foreign.tmp"; }
+
+// 64 bytes: "hello, foreign!" (15) then a byte pattern 32 + (i * 7) % 90 for i in 15..64
+// (byte 15 is 32 + 15 = 47, byte 63 is 32 + 81 = 113)
+fn ff_bytes() -> vector<u8> {
+  v: vector<u8> = [104, 101, 108, 108, 111, 44, 32, 102, 111, 114, 101, 105, 103, 110, 33];
+  for i in 15..64 { v += [(32 + (i * 7) % 90) as u8? ?? 0]; }
+  v
+}
+
+fn ff_sum(v: const vector<u8>) -> integer { s = 0; for b in v { s += b; } s }
+fn ff_indexed(v: const vector<u8>) -> integer { s = 0; for i in 0..len(v) { s += (v[i] ?? 0) * (i + 1); } s }
+fn ff_same(a: const vector<u8>, b: const vector<u8>) -> boolean {
+  if len(a) != len(b) { return false; }
+  for i in 0..len(a) { if a[i] != b[i] { return false; } }
+  true
+}
+
+fn main() {
+  src = ff_bytes();
+  assert(len(src) == 64 && src[15] == 47 && src[63] == 113, "the file's bytes: {len(src)} {src[15]} {src[63]}");
+  assert(write_bytes(ff_path(), src), "write");
+  r = read_bytes(ff_path()) ?? [];
+  m = file_map(ff_path()) ?? [];
+
+  // c1: the length
+  assert(len(m) == 64 && len(m) == len(r), "c1 {len(m)} {len(r)}");
+
+  // c2: every index, both paths, and three hand values
+  for i in 0..64 { assert(m[i] == r[i], "c2 at {i}: {m[i]} {r[i]}"); }
+  assert(m[0] == 104 && m[15] == 47 && m[63] == 113 && m[64] == null && m[-1] == 113, "c2 hand {m[0]} {m[15]} {m[63]} {m[-1]}");
+
+  // c3: an iteration — the sum: 15 ascii bytes = 1387, the pattern's 49 = 3785 → 5172
+  assert(ff_sum(m) == ff_sum(r) && ff_sum(m) == 5172, "c3 {ff_sum(m)} {ff_sum(r)}");
+
+  // c4: a slice (a copy at this phase), both paths and by hand
+  s1 = m[7..14];
+  t1 = r[7..14];
+  assert(len(s1) == 7 && s1[0] == 102 && s1[6] == 110 && ff_same(s1, t1), "c4 {len(s1)} {s1[0]} {s1[6]}");
+  s2 = m[60..];
+  t2 = r[60..];
+  assert(len(s2) == 4 && s2[3] == 113 && ff_same(s2, t2), "c4 tail {len(s2)} {s2[3]}");
+
+  // c5: text from a slice, and from the whole vector
+  h1 = m[0..15];
+  h2 = r[0..15];
+  assert(text_from_bytes(h1) == "hello, foreign!" && text_from_bytes(h1) == text_from_bytes(h2), "c5 '{text_from_bytes(h1)}'");
+  wd = m[7..14];
+  assert(text_from_bytes(wd) == "foreign", "c5 word");
+  assert(len(text_from_bytes(m)) == 64 && text_from_bytes(m) == text_from_bytes(r), "c5 whole {len(text_from_bytes(m))}");
+
+  // c6: a hoisted indexed loop — the header and base held across the loop
+  assert(ff_indexed(m) == ff_indexed(r), "c6 {ff_indexed(m)} {ff_indexed(r)}");
+
+  // c7: a missing file maps as null, an empty one as the empty vector
+  none = file_map("loft_174_missing.tmp");
+  assert(none == null, "c7 missing");
+  assert(write_bytes("loft_174_empty.tmp", []), "c7 write empty");
+  e = file_map("loft_174_empty.tmp") ?? [1];
+  assert(len(e) == 0, "c7 empty {len(e)}");
+
+  // c8: two mappings of one file live at once, each its own handle
+  m2 = file_map(ff_path()) ?? [];
+  assert(len(m2) == 64 && m2[15] == m[15] && ff_sum(m2) == 5172, "c8");
+
+  // c9: the handle rebound — the first mapping is released, the second reads the same
+  m = file_map(ff_path()) ?? [];
+  assert(m[63] == 113 && len(m) == 64, "c9");
+
+  // c10: a copy of the mapped bytes is an ordinary vector: writable, and independent
+  w = m[0..len(m)];
+  w[0] = 72;
+  assert(w[0] == 72 && m[0] == 104 && len(w) == 64, "c10 {w[0]} {m[0]}");
+  println("foreign file ok");
+}

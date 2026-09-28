@@ -37,7 +37,7 @@ to keep MVP scope tight).  Explicit "not adopted" table records
 items deliberately rejected (pre/postinst scripts, debconf,
 alternatives, triggers, epoch versioning, `main`/`contrib`/`non-free`)
 so future PRs aren't re-litigated.  See
-[§ Comparison to Debian](#comparison-to-debian--what-we-adopted-what-we-didnt).
+[§ Decoupled lifecycle — Debian-style](#decoupled-lifecycle--debian-style-the-registry-is-a-repo).
 
 ---
 
@@ -258,7 +258,7 @@ only sets one explicitly once the corresponding feature ships.
 The package manifests are TOML for human authoring.  The registry
 index is JSON because it's machine-generated, never hand-edited, and
 loft's existing `serde_json` (or `data.rs`'s JSON walker — see
-[QUALITY.md § P54](QUALITY.md))
+[QUALITY-history.md § P54](QUALITY-history.md))
 parses it without a TOML dependency on the client side.  Smaller
 binary.
 
@@ -1181,7 +1181,7 @@ pattern, not a shortcut:
   maintainer's local loft trusts it; blast radius is one
   machine.
 - **Final (`K_real`)**: full 3-2-1 storage per
-  [REGISTRY_BOOTSTRAP.md § Step 1.5](REGISTRY_BOOTSTRAP.md#step-15--store-the-private-key-for-the-long-haul).
+  [REGISTRY_BOOTSTRAP.md § Step 1.5](REGISTRY_BOOTSTRAP.md#step-15--trust-root-topology-three-independent-keys-final-path).
   First public loft release embeds `K_real` in
   `TRUSTED_PUBLIC_KEYS`.
 
@@ -1190,7 +1190,7 @@ pattern, not a shortcut:
 `TRUSTED_PUBLIC_KEYS` removing `K_tmp`, re-sign every signed
 index/asset with `K_real`, ship the public loft release.  The
 recovery runbook for this is
-[REGISTRY_RECOVERY.md § Scenario C](REGISTRY_RECOVERY.md#scenario-c).
+[REGISTRY_RECOVERY.md § Scenario C](REGISTRY_RECOVERY.md#scenario-c--key-compromised-stolen--exfiltrated).
 
 Running this transition as a *planned* rotation has two
 benefits:

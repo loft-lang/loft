@@ -220,9 +220,9 @@ element's append (the text set grows a store), and `(R-Alias)` for a parameter r
 another vector (a type-based alias rule would admit `sc.ops += […]` beside `src[i]`).
 
 
-## Next (2026-09-25) — R8: a nested record rides the tuple
+## R8: a nested record rides the tuple — priced 2026-09-25, BUILT 2026-09-28 (§ Built below)
 
-Priced, designed, NOT built.  The value-record family (`(R-ValueRecord)`, `(R-ValueLocal)`)
+Priced and designed here; built as `(R-ValueRecord)`'s nested clause.  The value-record family (`(R-ValueRecord)`, `(R-ValueLocal)`)
 stops at a record whose fields are scalars: `hoist::type_layout` declines any field that is
 itself a record, so mesh3d's `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }` — eight floats
 two structs deep — keeps its return buffer while `Vec3` rides the tuple.  A census of the 42
@@ -274,3 +274,83 @@ admission.  Matrix axes to hold: nesting depth (1, 2), a nested field written af
 literal, a sub-record handed to another tuple parameter, a nested record with a narrow or
 boolean member, an enum member (declines), a site that copies the whole sub-record
 (`q = v.pos`).
+
+## Built (2026-09-27) — an appended builder's heap record lands in its element
+
+The record-build rows' commonest site is `out += [mk(…)]` over a record WITH A NAME — a
+text field — and @PLN157 § V-d built the in-place delivery for all-scalar records only.  The
+gate's stated reason was the synthetic-nullable field, which
+`record_is_fully_written_by_a_literal` already excludes on its own; the element is fresh, so
+a text, a plain vector or an inline record is written into it exactly as into a store of
+its own.  Hand-priced first on `panel_build`'s emitted Rust (six `make_button(…, _elm)` calls
+in place of lift + copy + free): 6.55 → 5.30 ms per op, hash `11c234`; built (the gate widened,
+`LOFT_NO_APPEND_IN_PLACE` the A/B on one build): **6.7–7.0 → 5.4 ms (−20 %)**, hash equal.
+What the row still pays, from its profile after the change: the per-frame free of the
+previous `Panel` (`remove_claims_mode` 10 %, `owned_walk` 4 %), the store claims of its
+texts (`claim_block`, `fl_insert`, `set_free_header` ~12 %), and `palette_items_for_tool`'s
+copy of a constant vector into the list.  A keyed or struct-enum field keeps the copy
+(h9, h11 of the cell file), and so does a VECTOR field at any inline depth (2026-09-28): built
+in the element it keeps its quantised push block where the copy claims it at length, and the
+persisted file grew 25 % (`store_rebuild_b1`; the @PLN123 guards caught it on the branch's
+gate); `slope_path_with_undo` is unmoved — its builder site
+(`m.m_chunks += [build_chunk(…)]`) runs only when a chunk is absent, and the row is the
+two `map_get_hex` result stores per step, which is `(R-ValueRecord)`'s width and the `?`
+discharge exit (priced next).
+
+## Built (2026-09-27) — the seven-field accessor rides the value path
+
+`slope_path_with_undo` (19.8×) was two `map_get_hex` result stores per step — a mint, a
+seven-field copy and a free, twice — plus the lookup loop's declined hoist.  Hand-priced on
+the emitted Rust (the accessor answering `[i64; 7]`, its two hot callers taking it): 565 →
+297 µs per op, hash `3f61de`.  Built as four admissions of the value-record family, none of
+them a new rule: the width six → eight; a `return v[i]?` exit as a value leaf; a field write
+on a value local; and the tuple-parameter gate's terminal-copy exemption with the narrower
+"existing record" question for a body `body_writes` cannot type — plus the hoist gate
+admitting the frame's own return-buffer mint.  On one build: 572 → **293 µs (−49 %)**, hash
+equal; `LOFT_NO_VALUE_RECORD=1` is the A/B.  What the row still pays, from its profile: the
+two linear chunk scans per step (`map_get_hex` and `map_set_hex` walk `m.m_chunks` comparing
+three fields per chunk — the library's algorithm, now hoisted), and `undo_push`'s
+`s.us_redo = []` clear plus the `UndoEntry` append.  Beside it, `resolve_move` (10×) calls the
+same accessor and is the next row to re-read.  One lesson the corpus paid for: the
+discharge-return's copy source is a served leaf read, and the copy clause of the local-use
+accounting counted that mention a second time, so a local with a bare in-place mint beside
+a field write passed as a value local and its mint was emitted into a tuple
+(`85-struct-copy-return-owned` failed to compile natively).  The accounting counts a
+mention once; cell v9 holds the shape.
+
+**The lane against the pre-arc commit** (2e4199b7 built into its own target dir, the two
+binaries interleaved twice on the idle arm64 box, `--n 10`, every hash equal):
+
+| row | pre-arc | now | |
+|---|---:|---:|---:|
+| `resolve_move` | 6.24 ms | 3.78 ms | −40 % |
+| `panel_build` | 6.74 ms | 5.66 ms | −16 % |
+| `slope_path_with_undo` | 579 µs | 301 µs | −48 % |
+| `emit_to_material` | 1.53 ms | 1.14 ms | −25 % |
+
+`resolve_move` and `emit_to_material` were not worked on: they call `map_get_hex` and the
+`vec3` / `vertex` builders, which the width and the discharge-return leaf reached.
+
+## Built (2026-09-28) — R8: a nested record rides the tuple
+
+Built as designed in § R8 (`formal/rewrites.md` `(R-ValueRecord)` § The nested clause): the
+layout recurses into an inline sub-record (one home, `hoist::type_layout`), the sites fold a
+nested read to the summed key, the builder's literal takes a tuple source's elements for a
+sub-record copy, and a sub-record of a value local crosses a call or a copy as a range of the
+tuple.  On the sphere-shaped probe (`p = vec3(…); n = vec3(…); add_vertex(m, vertex(p, n,
+vec2(…)))`, 2 000 000 vertices, this arm64 box idle): **0.27 → 0.17 s (−37 %)**, values equal
+on the interpreter; `LOFT_NO_VALUE_RECORD=1` 0.43 s.  The emitted `n_vertex` answers
+`(f64 × 8)` from its three tuple parameters with no store touched, and `add_vertex` takes the
+eight floats and writes them into the appended slot — the general record append (`OpNewRecord`,
+eight `set_float`s, `OpFinishRecord`) that the push-window form of `(R-PushRec)` is the clause
+after this one.  What the building found the design had not said: a write through a
+sub-record must count as a write into EVERY enclosing record, or a `Vertex` tuple parameter
+would not see `other.pos.x = …` (the classifier typed such a write by the sub-record alone,
+which the flat family never had to notice — cell n12 is the falsifier, and a `&` link to a
+sub-record reaches every type holding it inline); and a bind from a sub-record (`q = w.pos`)
+is a VIEW by the oracle, not a copy, so that local keeps its record (n10).  The rows it
+stands behind (`sphere`, `mesh_to_floats`, `save_glb`, stage `draw_list`, tween `value`,
+game_protocol `msg_ping`) are re-read on the x86-64 lane at the next portal re-measure;
+`msg_ping` returns a nested record PAIR by value, so it is the row to read first.  Cells
+`tests/scripts/158-nested-value-record.loft`; the `nested_field` pin's n12 row moved
+(2 → 9 reads through the address: the callee's parameter is a tuple now, filled at the site).

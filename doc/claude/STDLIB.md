@@ -17,7 +17,7 @@ This document describes all public functions, constants, and types available in 
 - [Reflection](#reflection)
 - [Environment](#environment)
 - [Time](#time)
-- [Random](#random)
+- [Random](#random--use-random)
 
 ---
 
@@ -436,14 +436,12 @@ answer the raw code interval between the corners, a strict superset, because
 Z-order threads out of the box and back). A corner-swapped axis names the
 same box.
 
-The two OPEN forms are the Morton **tail**: they yield only records at or
-after the query point in the collection's order, so what you get depends on
-where that point sits in the curve, and a record just BEHIND it is not
-returned however close it is. `..:n` therefore under-delivers near the end of
-the curve — over five records it answers 3, 3, 3, 2, 1, 0 as the query moves
-along — and a query past every record answers nothing (loft#1002). For a
-neighbourhood in every direction use a symmetric box, `xs[(x-r, y-r)..(x+r,
-y+r)]`.
+The two OPEN forms walk outward from the query point in both directions, so
+`..:n` answers `n` records from any origin, including one past every record.
+The order is by Morton distance, which jumps at quadrant boundaries, so a
+truly-near point can arrive a little late; when the answer must be exact, use
+a symmetric box, `xs[(x-r, y-r)..(x+r, y+r)]`. A cap of zero or below —
+`:k` with `k` negative or null — answers no records.
 
 A slice is a `for`-loop iterator, not a value, same as other keyed range
 slices. See [DATABASE.md § Spatial Index](DATABASE.md#spatial-index-srcradix_treers)
@@ -791,6 +789,7 @@ loft-level existence check.
 | `is_file(path: text) -> boolean` | Returns `true` if the path exists and is a regular file. |
 | `list_dir(path: text) -> vector<text>?` | Entry names (base names, sorted) of a directory. **Null** when the path is missing or is not a readable directory; `[]` means the directory really is empty. Discharge with `?? []`. |
 | `read_bytes(path: text) -> vector<u8>?` | Reads the whole file as raw bytes. **Null** when the file is missing or unreadable; `[]` means the file really is empty. Binary-exact (round-trips with `write_bytes`). Discharge with `?? []`. |
+| `file_map(path: text) -> vector<u8>?` | Maps the whole file READ-ONLY without copying it: the vector's bytes are the file's, mapped for as long as the vector lives. **Null** when missing or unreadable; `[]` for an empty file. Every read works as on any `vector<u8>`; a write is refused at run time (`write_to_locked_store`) — copy first (`w = v[0..len(v)]`). |
 | `write_bytes(path: text, bytes: vector<u8>) -> boolean` | Writes raw bytes to a file, truncating existing content; `true` on success. |
 | `set_file_size(self: File, size: integer) -> FileResult` | Truncates or extends a file to exactly `size` bytes. |
 

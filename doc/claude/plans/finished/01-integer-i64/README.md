@@ -97,7 +97,7 @@ Each opens its own sub-phase only when prioritised
   prerequisite for G′ on 32-bit microcontrollers; loft doesn't
   target those yet.  Defer until a concrete board is picked.
 - **Saturating arithmetic as a user-selectable mode.**  Explicitly
-  rejected in the design (QUALITY.md § 561).
+  rejected in the design (QUALITY-history.md § 561).
 - **Auto-widening type system** (`i32 + i32 → i64` Python-style).
   C54.A is the capped instance; wider type-level widening is a
   separate conversation.
@@ -107,8 +107,8 @@ Each opens its own sub-phase only when prioritised
 
 ## Provenance
 
-- Design captured: `doc/claude/QUALITY.md § 392-567` (2026-03 to
-  2026-04).  Decision tree (G vs G′): QUALITY.md § 479-557.
+- Design captured: `doc/claude/QUALITY-history.md § 392-567` (2026-03 to
+  2026-04).  Decision tree (G vs G′): QUALITY-history.md § 479-557.
 - Initiative opened 2026-04-18 on branch `int_migrate`.
 - Closed 2026-04-21 across the phase commits listed in the
   Phase outcome table above.

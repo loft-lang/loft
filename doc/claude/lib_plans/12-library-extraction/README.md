@@ -161,7 +161,7 @@ resolving extracted packages through the registry rather than via
 `path = "../<pkg>"`.
 
 **Two-stage per-chunk workflow** (codified 2026-05-31, see [Phase
-6.5 § Bringing a chunk to all-green CI — checklist](#phase-65--green-ci-across-chunks-done-chunk-side-2026-05-31)):
+6.5 § Bringing a chunk to all-green CI — checklist](ci-and-warnings.md#bringing-a-chunk-to-all-green-ci--checklist)):
 
 - **Stage A — green extraction:** chunk PR (canonical CI + 6r
   re-clean + warning sweep + tests) → tag + tarball + GitHub
@@ -252,7 +252,7 @@ moros extraction work plus the closure ritual.
    libraries are not independently testable post-extraction
    because critical coverage lives in monorepo Rust harnesses, not
    in `lib/<name>/tests/`.  Close the gaps before any chunk extracts
-   that depends on them.  See [§ Phase 6t detail](#phase-6t--library-test-self-sufficiency)
+   that depends on them.  See [§ Phase 6t detail](test-coverage.md#phase-6t--library-test-self-sufficiency)
    below.  *Verify:* for each library, deleting `tests/<harness>.rs`
    from the monorepo leaves the library's regression coverage
    intact (each `lib/<name>/tests/` directory plus, where needed,
@@ -385,7 +385,7 @@ point-burst particles, two flavours — is cheap to design once.
 | [`lib_plans/75-physics-2body/`](../75-physics-2body/README.md) | **FILED** 2026-05-28 | Shared collision + integrator API for moros / dryopea / bumper | PLAN50 sub-arc 4; dryopea phase 4 (vehicle); Phase 7b clean moros migration |
 | [`lib_plans/76-particles/`](../76-particles/README.md) | **FILED** 2026-05-28 | Shared trails + point-burst particles for dryopea + bumper | PLAN50 phase 3 (trails); dryopea phase TBD (explosions) |
 | MapFile schema in `lib/world/` (covered by Phase 7a) | DESIGNED below | Cross-project contract; today buried in `lib/moros_map` | Phase 6w (`loft-libs-world` extraction) |
-| [`lib_plans/future/08-server/` § Gap 8](../future/08-server/README.md#gap-8--per-recipient-broadcast-qos-sight--rate-lod--forecast) — broadcast QoS layer | **FILED** 2026-05-28 | Sight + rate-LOD + forecast pattern from PLAN50 phase 7; reused by dryopea | dryopea multiplayer; Phase 6r (re-clean already-extracted `loft-libs-net`) |
+| [`lib_plans/future/08-server/` § Gap 8](../future/08-server/README.md) — broadcast QoS layer | **FILED** 2026-05-28 | Sight + rate-LOD + forecast pattern from PLAN50 phase 7; reused by dryopea | dryopea multiplayer; Phase 6r (re-clean already-extracted `loft-libs-net`) |
 | Editor rename — `lib/moros_editor` → `world_editor` family (covered by [`lib_plans/73-universal-editor/`](../73-universal-editor/README.md) L1-L5) | EXISTING SLOT | Editor authors maps for three games, not just moros | Phase 7b moros migration (rename **before** moros leaves) |
 
 The two new `lib_plans/` slots (26, 27) carry their own API

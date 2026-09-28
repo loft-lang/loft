@@ -128,7 +128,7 @@ Python, Go, and it makes the dependency surface greppable.
   [§ Load sequence](#load-sequence),
   [§ Sub-modules and multi-tier loading](#sub-modules-and-multi-tier-loading),
   [§ Implementation scope](#implementation-scope), and
-  [§ Recommended adoption order](#recommended-adoption-order) describe
+  [§ Recommended adoption order](#recommended-adoption-order-re-premised--use-loaded-libs) describe
   the trigger-registry machinery that is **not being built**.  Kept for
   context and in case the "no-`use` ergonomic" is ever judged worth the
   cost.

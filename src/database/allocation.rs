@@ -21,6 +21,27 @@ use crate::vector;
 /// schema is bounded well under 0x8000, which is what makes the top bit free.
 pub const CLEAR_KEYED_VIEW: u16 = 0x8000;
 
+/// The `limit` a range slice's lowering passes when the program wrote no `:n` — the
+/// spatial `xs[(x,y)..]` and the trie `t[pre..]`.  `i64::MAX` rather than a negative
+/// flag, because a cap of that size means "uncapped" whoever writes it.
+pub const SLICE_UNCAPPED: i64 = i64::MAX;
+
+/// A range slice's `:n` as a record cap (`@FR-Slice-Cap`): at most `n` records, so a
+/// negative `n` — or a null one, whose integer is `i64::MIN` — answers none.
+///
+/// The spelling that preceded this read `limit < 0` as "no cap", which is the flag the
+/// lowering itself passed, so a program's `:k` with `k` gone negative answered EVERY
+/// record.  The paged loaders (`store_load_prefix`, `store_load_box`) are a different
+/// surface: a function parameter documented as "negative means no cap".
+#[must_use]
+pub fn slice_cap(limit: i64) -> Option<usize> {
+    if limit == SLICE_UNCAPPED {
+        None
+    } else {
+        Some(usize::try_from(limit).unwrap_or(0))
+    }
+}
+
 /// Which keyed collection a paged working-set load is reading and filling.
 ///
 /// The only thing that differs between the two once a record is located: a `hash`
@@ -1224,6 +1245,8 @@ impl Stores {
         // persists 0xDEADBEEF into durable state (the store_persist reload
         // read back an empty hash under LOFT_POISON).  The detector targets
         // in-memory stale reads; durable bytes are out of its scope.
+        // @PLN174 — a foreign store's bytes go with the handle: the owner drops here.
+        store.release_foreign();
         if (self.poison_free || crate::keys::poison_enabled()) && !store.is_file_backed() {
             let cap_bytes = store.capacity_words() as usize * 8;
             if cap_bytes > 8 {
@@ -1290,6 +1313,11 @@ impl Stores {
         // sentinel pattern (store_nr=0, rec=0) which is the default
         // value written by `set_default_value` for unset DbRef fields.
         for target in cascade_targets {
+            // A captured GENERATOR handle is no store: the closure's drop hook gives its hold
+            // back (`(G-Hold)`), and here it named `--native`'s coroutine table as a store.
+            if crate::database::format::is_generator_handle(target.store_nr) {
+                continue;
+            }
             if target.store_nr != 0 || target.rec != 0 {
                 self.free_named(&target, "<cascade>");
             }
@@ -1609,6 +1637,27 @@ impl Stores {
         self.database(u32::MAX)
     }
 
+    /// @PLN174 — a `vector`-shaped handle over bytes the runtime does not own: `len`
+    /// elements of `elem_size` bytes at `base`, kept alive by `owner` until the handle is
+    /// freed ([`Stores::free_named`] drops the owner with the store).  The handle has the
+    /// shape every minted vector has — a root record whose slot at `+8` names the
+    /// collection — so every read op and every hoist serves it unchanged; the collection
+    /// is [`crate::store::FOREIGN_REC`], and the store is read-only from here on.  The
+    /// bytes are not the store-heap ceiling's to count: they are the owner's.
+    #[must_use]
+    pub fn foreign_vector(
+        &mut self,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) -> DbRef {
+        let db = self.database(4);
+        self.store_mut(&db)
+            .make_foreign(db.rec, db.pos, base, len, elem_size, owner);
+        db
+    }
+
     /// Like [`null`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     /// Generated native code calls this for each `DbRef` variable declaration.
     pub fn null_named(&mut self, name: &str) -> DbRef {
@@ -1746,16 +1795,9 @@ impl Stores {
         self.build_rec_scratch(coll, &recs)
     }
 
-    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
-    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  Records whose Morton code
-    /// lies in `[from, till]` (or `[from, ∞)` when `has_till == 0`), in natural order,
-    /// capped at `limit` (`< 0` = no cap).  Backs `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the
-    /// bounding box `xs[(x1,y1)..(x2,y2)]`.  Coordinates arrive as a fixed `MAX_AXES`-wide
-    /// triple; only the collection's own `keys.len()` axes are read (a 2D collection
-    /// ignores `fz`/`tz`), so the same ABI serves 1D…3D slices.
     /// A trie PREFIX slice as an iterable scratch vector, the trie's twin of
     /// `build_radix_range_vec` and feeding the same on=4 scratch path.  Every record
-    /// whose key begins with `pre`, in key order, capped at `limit` (`< 0` = no cap).
+    /// whose key begins with `pre`, in key order, capped at `limit` ([`slice_cap`]).
     /// Backs `t["kerk"..]` and `t["kerk"..:n]`.
     ///
     /// There is no `till` here and that is the point: a prefix is the whole query, so
@@ -1766,11 +1808,19 @@ impl Stores {
             return DbRef::NULL;
         }
         let keys = self.types[tp as usize].keys.clone();
-        let cap = (limit >= 0).then_some(limit as usize);
+        let cap = slice_cap(limit);
         let recs = crate::trie_db::prefix(coll, &self.allocations, &keys, pre.as_bytes(), cap);
         self.build_rec_scratch(coll, &recs)
     }
 
+    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
+    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  With `has_till` the records
+    /// inside the closed box `from`..`till` (`@FR-Slice-Box`); without it the outward
+    /// walk from `from` (`@FR-Slice-Open`).  Capped at `limit` ([`slice_cap`]).  Backs
+    /// `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the bounding box `xs[(x1,y1)..(x2,y2)]`.
+    /// Coordinates arrive as a fixed `MAX_AXES`-wide triple; only the collection's own
+    /// `keys.len()` axes are read (a 2D collection ignores `fz`/`tz`), so the same ABI
+    /// serves 1D…3D slices.
     #[allow(clippy::too_many_arguments)]
     pub fn build_radix_range_vec(
         &mut self,
@@ -1793,7 +1843,7 @@ impl Stores {
         let n = keys.len().min(crate::radix_db::MAX_AXES);
         let from = [fx, fy, fz];
         let till = [tx, ty, tz];
-        let cap = (limit >= 0).then_some(limit as usize);
+        let cap = slice_cap(limit);
         // Two different queries share this entry point, and `has_till` is the fact
         // that tells them apart. A CLOSED box promises containment (loft#800); the
         // OPEN forms (`xs[(x,y)..]`, `xs[(x,y)..:n]`) promise an outward walk from the
@@ -1870,11 +1920,13 @@ impl Stores {
                 crate::vector::scratch_tag(4),
             );
         }
-        DbRef {
+        let scratch = DbRef {
             store_nr: scratch_store,
             rec: header_rec,
             pos: 4,
-        }
+        };
+        self.live_scratches.push((*hash_ref, scratch));
+        scratch
     }
 
     /// The `build_rec_scratch` sibling for elements that are `(record, offset)` pairs
@@ -1922,11 +1974,59 @@ impl Stores {
                 crate::vector::scratch_tag(8),
             );
         }
-        DbRef {
+        let scratch = DbRef {
             store_nr: scratch_store,
             rec: header_rec,
             pos: 4,
+        };
+        self.live_scratches.push((*hash_ref, scratch));
+        scratch
+    }
+
+    /// Take `elem`, just removed from the collection `coll`, out of every scratch a loop
+    /// over `coll` is still walking (loft#1710, `@FR-I-For`): its entry becomes 0, which
+    /// `vector::step_ordered` steps over.  A registered header is believed only while it
+    /// is still a scratch header over `coll`'s store, for the reason
+    /// [`Self::free_iteration_scratch`] gives; one that is not is forgotten.
+    pub(crate) fn forget_in_scratches(&mut self, coll: &DbRef, elem: &DbRef) {
+        if self.live_scratches.is_empty() {
+            return;
         }
+        let mut live = std::mem::take(&mut self.live_scratches);
+        live.retain(|(source, scratch)| {
+            if source != coll || scratch.store_nr as usize >= self.allocations.len() {
+                return source != coll;
+            }
+            let store = &mut self.allocations[scratch.store_nr as usize];
+            if store.free
+                || !store.is_claimed_record(scratch.rec)
+                || !crate::vector::is_scratch_header(store, scratch)
+                || store.get_u32_raw(scratch.rec, scratch.pos + 4) as u16 != coll.store_nr
+            {
+                return false;
+            }
+            let vec_rec = store.get_u32_raw(scratch.rec, scratch.pos);
+            if vec_rec == 0 || !store.is_claimed_record(vec_rec) {
+                return false;
+            }
+            let tag = store.get_u32_raw(
+                scratch.rec,
+                scratch.pos + crate::vector::SCRATCH_TAG_FLD - 4,
+            );
+            let wide = tag & 0xFFFF == 8;
+            let stride = if wide { 8 } else { 4 };
+            let len = store.get_u32_raw(vec_rec, 4);
+            for i in 0..len {
+                let at = 8 + i * stride;
+                if store.get_u32_raw(vec_rec, at) == elem.rec
+                    && (!wide || store.get_u32_raw(vec_rec, at + 4) == elem.pos)
+                {
+                    store.set_u32_raw(vec_rec, at, 0);
+                }
+            }
+            true
+        });
+        self.live_scratches = live;
     }
 
     /// Release an iteration scratch at loop exit — the counterpart of
@@ -1964,6 +2064,7 @@ impl Stores {
     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
     /// behaviour for those cases, never worse.
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
+        self.live_scratches.retain(|(_, live)| live != scratch);
         if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
             return;
         }
@@ -2259,6 +2360,7 @@ impl Stores {
             lazy_sources: std::collections::HashMap::new(),
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
+            live_scratches: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,

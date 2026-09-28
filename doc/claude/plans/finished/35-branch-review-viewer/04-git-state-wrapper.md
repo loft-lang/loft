@@ -267,6 +267,6 @@ $ curl -s http://localhost:8765/ | grep -c 'class="status-M"'
 ## Cross-references
 
 - [Phase 05 — diff and commit views](05-diff-and-commit.md) — consumer of `state/diffs/` + `/commit/<sha>` route
-- [`doc/claude/QUALITY.md` § JSON ecosystem](../../../QUALITY.md) — JSON parser story
+- [`doc/claude/QUALITY-history.md` § JSON ecosystem](../../../QUALITY-history.md) — JSON parser story
 - [Plan-04 — JsonValue (P54)](../../../QUALITY.md) — what the dashboard's JSON parsing depends on
 - [Plan-22 README § Loft has no subprocess primitive](README.md#out-of-scope-deferred--separate-plans) — the architectural reason for the wrapper-script approach

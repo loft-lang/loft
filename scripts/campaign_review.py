@@ -15,7 +15,7 @@ one row per mechanism class, one column per gate (@PLN155 arc A).
                  shape by naming variants?  `ir_walker_audit.py former <F>`'s opacity
                  screen, one type former at a time.
   4. WALK        has a rule-led walk already been tried on this class, and did the class's
-                 share fall afterwards?  The QUALITY.md walk records, measured against the
+                 share fall afterwards?  The QUALITY-history.md walk records, measured against the
                  bug population rather than believed.
 
 A class passing all four earns a PLAN; passing only 1-3 earns a rule-led WALK; passing only
@@ -176,7 +176,7 @@ def walks():
     must come OUT of the after-window before a share is compared, for the reason the bug
     review states about a screen that files into the window that scores it.
     """
-    path = os.path.join(ROOT, "doc", "claude", "QUALITY.md")
+    path = os.path.join(ROOT, "doc", "claude", "QUALITY-history.md")
     text = open(path, encoding="utf-8").read()
     docs = rules_by_doc()
     found, spans = [], [(m.start(), m.group(1), m.group(2), m.group(3)) for m in WALK.finditer(text)]

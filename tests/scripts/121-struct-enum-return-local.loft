@@ -7,7 +7,7 @@
 // caller-pre-alloc DbRef parameter (like Reference/Vector returns), but
 // `add_defaults` had no `Type::Enum(_, true, _)` arm to fill that hidden
 // arg, so it stayed `Value::Null` → emitted as `()`.  The interpreter
-// always handled every form (this is the `B3` family from QUALITY.md;
+// always handled every form (this is the `B3` family from QUALITY-history.md;
 // its `p54_b3_*` guards are interpreter-only, so the native gap went
 // unnoticed).  Inline direct-return (`fn mk() -> JV { A{..} }`) always
 // worked on both backends.

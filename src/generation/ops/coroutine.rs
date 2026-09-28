@@ -224,3 +224,17 @@ impl OpEmitter for OpCoroutineExhaustedEmitter {
         Ok(())
     }
 }
+
+/// `OpCoroutineRetain` emitter — one more holder for a generator (`(G-Hold)`, loft#1708).
+/// `args`: `[gen]`.  Answers the handle.
+pub struct OpCoroutineRetainEmitter;
+
+impl OpEmitter for OpCoroutineRetainEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(gen_val) = args.first() {
+            let gen_code = ctx.output.generate_expr_buf(gen_val)?;
+            write!(ctx.w, "loft::codegen_runtime::coroutine_retain({gen_code})")?;
+        }
+        Ok(())
+    }
+}

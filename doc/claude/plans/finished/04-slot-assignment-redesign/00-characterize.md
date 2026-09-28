@@ -23,7 +23,7 @@ V1 in the cases V2 authors happened to think of."
    - The `set_stack_pos` assertion in `src/variables/mod.rs`.
 
 2. **Exhaustive fixture catalogue.**  Every pattern currently
-   documented in [SLOTS.md § Known Patterns](../../../SLOTS.md#known-patterns-and-tests)
+   documented in [SLOTS.md § Known Patterns](../../../SLOTS.md)
    becomes an explicit `tests/issues.rs::slot_v2_fixture_*` assertion
    that reads the assigned slot and compares against a hard-coded
    expected value.  Patterns to cover (initial list — extend as we

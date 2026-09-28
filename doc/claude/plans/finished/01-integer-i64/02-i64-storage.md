@@ -78,7 +78,7 @@ optimisation for common small-magnitude literals**.
 
 ### Bytecode-constant family (width-graded by magnitude)
 
-Per QUALITY.md § 421-432:
+Per QUALITY-history.md § 421-432:
 
 | Opcode | Stream bytes | Range | Use case |
 |---|---|---|---|
@@ -174,7 +174,7 @@ Critical files for the migrator:
 - New: `src/migrate_i64.rs` — the migration logic.
 - `src/main.rs` — CLI `--migrate-i64 <path>` handler.
 
-## Test plan (from QUALITY.md § 434-440)
+## Test plan (from QUALITY-history.md § 434-440)
 
 Un-ignore and make pass on all three backends:
 

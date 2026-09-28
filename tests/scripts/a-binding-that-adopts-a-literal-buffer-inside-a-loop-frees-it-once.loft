@@ -3,7 +3,7 @@
 //
 // A binding that ADOPTS a construction work-ref's store inside a loop body frees it once,
 // and the next iteration's literal lands in a store of its own (`formal/ownership.md`
-// `(O-Complete)` and `(O-Owner)`; QUALITY.md B7u).
+// `(O-Complete)` and `(O-Owner)`; QUALITY-history.md B7u).
 //
 // `y: S? = S { n: 3 }`, a struct-enum literal, and the literal in an `if`/`match` arm are
 // built in a FUNCTION-scoped work-ref (`__ref_p2_N`) that the binding then aliases — two

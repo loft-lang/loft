@@ -211,4 +211,4 @@ d_problematic_pattern_fixed_by_reorder // moving the outer read BEFORE closure c
 - [README § Diagnostic shape](README.md#diagnostic-shape)
 - [DISCUSSION § Snippet 4](DISCUSSION.md) — paper-trace of case D rejection.
 - `src/diagnostics.rs::DiagEntry` — extension point for Path (b).
-- [@P257 fix](../../../PROBLEMS.md#257) — same parse-time-rejection pattern (vector capture into closure).
+- [@P257 fix](../../../PROBLEMS.md) — same parse-time-rejection pattern (vector capture into closure).

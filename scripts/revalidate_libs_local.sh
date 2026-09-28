@@ -10,7 +10,7 @@
 # invisible for as long as the branch stays unmerged, which on a bundled branch is
 # days.  On 2026-08-19 that was nine libraries losing their entire public surface to
 # one resolution rule, green on every branch gate for a full day
-# (DEVELOPMENT.md § Opening a PR is the owner's call).
+# (REVALIDATE_LIBS.md).
 #
 # Running ONE library's suite is the advice that incident produced, and it is not the
 # gate: the gate is the whole registry.  This script is that, locally.

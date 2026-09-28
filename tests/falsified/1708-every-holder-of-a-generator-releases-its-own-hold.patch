@@ -1,0 +1,646 @@
+diff --git b/default/02_files.loft a/default/02_files.loft
+index a84a53b93..e09be9ea0 100644
+--- b/default/02_files.loft
++++ a/default/02_files.loft
+@@ -1158,12 +1158,6 @@ fn OpCallRefStore(fn_var: const u16, arg_size: const u16, mask: const integer);
+ // earlier operator.  Interpreter-only — the native backend does the same inline in
+ // `generation::dispatch`.
+ fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
+-// A generator handle landing in a SECOND holder — a field, an element, a tuple member, a local
+-// or a generator frame given it while its source keeps its own hold — takes a hold on the frame
+-// (`(G-Hold)`, loft#1708): the frame is released when its last holder releases it.  Answers
+-// the handle.  Declared last, so it renumbers no earlier operator.
+-fn OpCoroutineRetain(gen: reference) -> reference;
+-#rust"s.coroutine_retain(@gen)"
+ 
+ // ── Path helpers (moved from 03_text.loft so they're available
+ //    before file-I/O code that wants to compose them) ─────────
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 8cf2649f4..312fdc587 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -4880,35 +4880,6 @@ std::thread_local! {
+         std::cell::RefCell::new(vec![None]);
+     /// Stamp handed to the next coroutine allocated on this thread.
+     static NATIVE_COROUTINE_GENERATION: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+-    /// `(G-Hold)` — each slot's holder count, the interpreter's `CoroutineFrame::holds`
+-    /// (loft#1708).  Read only for a live handle, so a stale count of a freed slot is never
+-    /// consulted: `alloc_coroutine` resets it to one.
+-    static NATIVE_COROUTINE_HOLDS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+-}
+-
+-fn set_native_holds(idx: usize, holds: u32) {
+-    NATIVE_COROUTINE_HOLDS.with(|h| {
+-        let mut h = h.borrow_mut();
+-        if h.len() <= idx {
+-            h.resize(idx + 1, 0);
+-        }
+-        h[idx] = holds;
+-    });
+-}
+-
+-/// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`,
+-/// loft#1708).  A handle naming no live generator takes nothing.  Answers the handle.
+-#[must_use]
+-pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
+-    let live = NATIVE_COROUTINES.with(|c| native_coroutine_live(&c.borrow(), gen_ref));
+-    if live {
+-        NATIVE_COROUTINE_HOLDS.with(|h| {
+-            if let Some(n) = h.borrow_mut().get_mut(gen_ref.rec as usize) {
+-                *n += 1;
+-            }
+-        });
+-    }
+-    gen_ref
+ }
+ 
+ /// Does `gen_ref` still name the frame it was made for — right slot AND right occupant?
+@@ -4940,7 +4911,6 @@ pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
+         for (i, slot) in coroutines.iter_mut().enumerate().skip(1) {
+             if slot.is_none() {
+                 *slot = Some((generation, coro));
+-                set_native_holds(i, 1);
+                 return DbRef {
+                     store_nr: NATIVE_COROUTINE_STORE,
+                     rec: i as u32,
+@@ -4950,7 +4920,6 @@ pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
+         }
+         let idx = coroutines.len();
+         coroutines.push(Some((generation, coro)));
+-        set_native_holds(idx, 1);
+         DbRef {
+             store_nr: NATIVE_COROUTINE_STORE,
+             rec: idx as u32,
+@@ -5078,20 +5047,6 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
+     let taken = NATIVE_COROUTINES.with(|c| {
+         let mut coroutines = c.borrow_mut();
+         if native_coroutine_live(&coroutines, gen_ref) {
+-            // `(G-Hold)`: one of several holders gives its hold back and nothing more.
+-            let shared = NATIVE_COROUTINE_HOLDS.with(|h| {
+-                let mut h = h.borrow_mut();
+-                match h.get_mut(gen_ref.rec as usize) {
+-                    Some(n) if *n > 1 => {
+-                        *n -= 1;
+-                        true
+-                    }
+-                    _ => false,
+-                }
+-            });
+-            if shared {
+-                return None;
+-            }
+             coroutines[gen_ref.rec as usize].take()
+         } else {
+             None
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index d162e6e72..87e94da0b 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -1290,11 +1290,6 @@ impl Stores {
+         // sentinel pattern (store_nr=0, rec=0) which is the default
+         // value written by `set_default_value` for unset DbRef fields.
+         for target in cascade_targets {
+-            // A captured GENERATOR handle is no store: the closure's drop hook gives its hold
+-            // back (`(G-Hold)`), and here it named `--native`'s coroutine table as a store.
+-            if crate::database::format::is_generator_handle(target.store_nr) {
+-                continue;
+-            }
+             if target.store_nr != 0 || target.rec != 0 {
+                 self.free_named(&target, "<cascade>");
+             }
+diff --git b/src/database/format.rs a/src/database/format.rs
+index 10f4cf80b..d423b278e 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -2341,7 +2341,7 @@ impl ShowDb<'_> {
+ /// backends number the coroutine table differently — the interpreter's handle carries the null
+ /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
+ /// element holding one renders as its kind rather than as either backend's numbers.
+-pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
++fn is_generator_handle(store_nr: u16) -> bool {
+     store_nr == crate::state::COROUTINE_STORE
+         || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
+ }
+diff --git b/src/fill.rs a/src/fill.rs
+index 37067eb0e..04b40694b 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -345,7 +345,6 @@ pub const OPERATORS: &[fn(&mut State)] = &[
+     const_store_text,
+     call_ref_store,
+     bind_fn_ref_result,
+-    coroutine_retain,
+ ];
+ 
+ fn goto(s: &mut State) {
+@@ -2885,9 +2884,3 @@ fn call_ref_store(s: &mut State) {
+ fn bind_fn_ref_result(s: &mut State) {
+     s.bind_fn_ref_result();
+ }
+-
+-fn coroutine_retain(s: &mut State) {
+-    let v_gen = s.get_stack::<DbRef>();
+-    let new_value = s.coroutine_retain(v_gen);
+-    s.put_stack(new_value);
+-}
+diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
+index 7d0cc519a..3c482c86d 100644
+--- b/src/generation/coroutine.rs
++++ a/src/generation/coroutine.rs
+@@ -817,13 +817,6 @@ fn write_param_shadows(
+         let aname = sanitize(&attr.name);
+         if is_text_slot(&attr.typedef) {
+             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
+-        } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
+-            // Mutable: the generator's end gives its hold on a handle parameter back
+-            // (`(G-Hold)`, loft#1708), and the free nulls the shadow it read.
+-            writeln!(
+-                w,
+-                "{indent}#[allow(unused_mut)] let mut var_{aname} = self.var_{aname};"
+-            )?;
+         } else {
+             writeln!(w, "{indent}let var_{aname} = self.var_{aname};")?;
+         }
+@@ -869,7 +862,6 @@ fn emit_drop_stores(
+     def_nr: u32,
+     owns_snapshots: bool,
+     owns_fnrefs: bool,
+-    held_params: &[String],
+ ) -> std::io::Result<()> {
+     let vars = data.def(def_nr).variables();
+     let owned: Vec<String> = persistent
+@@ -890,7 +882,6 @@ fn emit_drop_stores(
+                 )
+         })
+         .map(|(v, _)| fields[v].clone())
+-        .chain(held_params.iter().cloned())
+         .collect();
+     if owned.is_empty() && !owns_snapshots && !owns_fnrefs {
+         return Ok(());
+@@ -2137,17 +2128,6 @@ impl Output<'_> {
+         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
+         let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
+         let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
+-        // `(G-Hold)`, loft#1708 — a lazy generator abandoned before its end still holds the
+-        // handles it was handed.  An eager one ran its end, which gave them back, in its factory.
+-        let held_params: Vec<String> = if is_eager(&segments) {
+-            Vec::new()
+-        } else {
+-            attrs
+-                .iter()
+-                .filter(|a| matches!(a.typedef.base(), Type::Iterator(_, _)))
+-                .map(|a| sanitize(&a.name))
+-                .collect()
+-        };
+         emit_drop_stores(
+             w,
+             &persistent,
+@@ -2156,7 +2136,6 @@ impl Output<'_> {
+             def_nr,
+             owns_snapshots,
+             owns_fnrefs,
+-            &held_params,
+         )?;
+         writeln!(w, "}}\n")?;
+         self.in_coroutine_body = prev_in_coroutine;
+@@ -2285,13 +2264,6 @@ impl Output<'_> {
+             let aname = sanitize(&attr.name);
+             if is_text_slot(&attr.typedef) {
+                 writeln!(w, "    let var_{aname}: &str = var_{aname};")?;
+-            } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
+-                // Mutable: the body's end gives its hold on a handle parameter back
+-                // (`(G-Hold)`, loft#1708), and the free nulls the copy it read.
+-                writeln!(
+-                    w,
+-                    "    #[allow(unused_mut)] let mut var_{aname} = var_{aname};"
+-                )?;
+             } else {
+                 writeln!(w, "    let var_{aname} = var_{aname};")?;
+             }
+diff --git b/src/generation/ops/coroutine.rs a/src/generation/ops/coroutine.rs
+index 158610377..6e510bfd2 100644
+--- b/src/generation/ops/coroutine.rs
++++ a/src/generation/ops/coroutine.rs
+@@ -224,17 +224,3 @@ impl OpEmitter for OpCoroutineExhaustedEmitter {
+         Ok(())
+     }
+ }
+-
+-/// `OpCoroutineRetain` emitter — one more holder for a generator (`(G-Hold)`, loft#1708).
+-/// `args`: `[gen]`.  Answers the handle.
+-pub struct OpCoroutineRetainEmitter;
+-
+-impl OpEmitter for OpCoroutineRetainEmitter {
+-    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+-        if let Some(gen_val) = args.first() {
+-            let gen_code = ctx.output.generate_expr_buf(gen_val)?;
+-            write!(ctx.w, "loft::codegen_runtime::coroutine_retain({gen_code})")?;
+-        }
+-        Ok(())
+-    }
+-}
+diff --git b/src/generation/ops/mod.rs a/src/generation/ops/mod.rs
+index a2fffff1c..7ae77a891 100644
+--- b/src/generation/ops/mod.rs
++++ a/src/generation/ops/mod.rs
+@@ -204,10 +204,6 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
+         "OpCoroutineExhausted",
+         Box::new(coroutine::OpCoroutineExhaustedEmitter),
+     );
+-    r.insert(
+-        "OpCoroutineRetain",
+-        Box::new(coroutine::OpCoroutineRetainEmitter),
+-    );
+ 
+     // Phase 04 — key-keyed Op emitters.  Replaces ~70 lines of two
+     // arms in dispatch.rs (`"OpGetRecord" =>` + `"OpIterate" =>`).
+diff --git b/src/scopes.rs a/src/scopes.rs
+index b0397db09..046d7cd1c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -6074,163 +6074,6 @@ fn rewrite_written_out(
+ 
+ #[allow(clippy::too_many_arguments)]
+ #[expect(clippy::too_many_lines, reason = "inherited")]
+-/// `(G-Hold)`, loft#1708 — a generator handle that lands in a SECOND holder while its source
+-/// keeps its own hold takes a hold on the frame (`OpCoroutineRetain`), so each holder releases
+-/// once and the frame dies with the last of them.
+-///
+-/// The holders that release are a field or an element (their cascade), a tuple member and a
+-/// local (the scope sweep), and a generator frame (its end, or its abandonment).  A source
+-/// KEEPS its hold when it is a parameter (the caller's, or a generator frame's), a view
+-/// (`skip_free`), or a member read.  A fresh call hands its one hold over, and an owned local
+-/// placed in a field MOVES there (`(H-Move)`, `handle_handoff`): neither is retained.  Before
+-/// this, the source released the frame while the new holder still named it, and the holder
+-/// answered null — `g = gen(); wrap(g)` returned from a function, `h = g` of a parameter.
+-fn retain_shared_handles(
+-    d_nr: u32,
+-    code: &mut Value,
+-    vars: &Function,
+-    data: &Data,
+-    database: &crate::database::Stores,
+-) {
+-    let retain = data.def_nr("OpCoroutineRetain");
+-    if retain == u32::MAX {
+-        return;
+-    }
+-    let cx = RetainCx {
+-        retain,
+-        set_dbref: data.def_nr("OpSetDbRef"),
+-        get_dbref: data.def_nr("OpGetDbRef"),
+-        vars,
+-        data,
+-        database,
+-    };
+-    cx.rewrite(code);
+-    if matches!(data.def(d_nr).returned.base(), Type::Tuple(_)) {
+-        cx.rewrite_tuple_members(code);
+-    }
+-}
+-
+-struct RetainCx<'a> {
+-    retain: u32,
+-    set_dbref: u32,
+-    get_dbref: u32,
+-    vars: &'a Function,
+-    data: &'a Data,
+-    database: &'a crate::database::Stores,
+-}
+-
+-impl RetainCx<'_> {
+-    fn is_handle_var(&self, x: u16) -> bool {
+-        matches!(self.vars.tp(x).base(), Type::Iterator(_, _))
+-    }
+-
+-    /// Is `val` a handle whose source keeps its own hold?
+-    fn kept(&self, val: &Value) -> bool {
+-        match val.unspan() {
+-            Value::Var(x) => {
+-                self.is_handle_var(*x) && (self.vars.is_argument(*x) || self.vars.is_skip_free(*x))
+-            }
+-            Value::TupleGet(x, i) => matches!(
+-                self.vars.tp(*x).base(),
+-                Type::Tuple(m) if m.get(*i as usize).is_some_and(|t| matches!(t.base(), Type::Iterator(_, _)))
+-            ),
+-            Value::Call(d, args) if *d == self.get_dbref => self.handle_field(args),
+-            _ => false,
+-        }
+-    }
+-
+-    /// Does `OpGetDbRef(rec, off)` read a generator-handle field?
+-    fn handle_field(&self, args: &[Value]) -> bool {
+-        let (Some(Value::Var(r)), Some(Value::Int(off))) = (
+-            args.first().map(Value::unspan),
+-            args.get(1).map(Value::unspan),
+-        ) else {
+-            return false;
+-        };
+-        let Some(d_nr) = self.vars.tp(*r).base().heap_def_nr() else {
+-            return false;
+-        };
+-        let kt = self.data.def(d_nr).known_type();
+-        self.data.def(d_nr).attributes().iter().any(|a| {
+-            matches!(a.typedef.base(), Type::Iterator(_, _))
+-                && i64::from(self.database.position(kt, &a.name)) == i64::from(*off)
+-        })
+-    }
+-
+-    fn wrap(&self, v: &mut Value) {
+-        let inner = std::mem::replace(v, Value::Null);
+-        *v = Value::Call(self.retain, vec![inner]);
+-    }
+-
+-    fn is_generator(&self, d: u32) -> bool {
+-        let def = self.data.def(d);
+-        def.is_loft_defined()
+-            && def.code != Value::Null
+-            && matches!(def.returned.base(), Type::Iterator(_, _))
+-    }
+-
+-    fn rewrite_tuple_members(&self, v: &mut Value) {
+-        match v {
+-            Value::Span(b) => self.rewrite_tuple_members(&mut b.1),
+-            // A block's value is its last operator — a function body's tail is its return.
+-            Value::Block(bl) => {
+-                if let Some(last) = bl.operators.last_mut() {
+-                    self.rewrite_tuple_members(last);
+-                }
+-            }
+-            Value::Tuple(members) => {
+-                for m in members.iter_mut() {
+-                    if self.kept(m) {
+-                        self.wrap(m);
+-                    }
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-
+-    fn rewrite(&self, v: &mut Value) {
+-        v.for_each_child_mut(&mut |c| self.rewrite(c));
+-        match v {
+-            Value::Call(d, args) if *d == self.set_dbref && args.len() == 3 => {
+-                if self.kept(&args[2]) {
+-                    self.wrap(&mut args[2]);
+-                }
+-            }
+-            // A generator HOLDS every handle it is handed, to its end or its abandonment.
+-            Value::Call(d, args) if self.is_generator(*d) => {
+-                for a in args.iter_mut() {
+-                    let handle = match a.unspan() {
+-                        Value::Var(x) => self.is_handle_var(*x),
+-                        _ => self.kept(a),
+-                    };
+-                    if handle {
+-                        self.wrap(a);
+-                    }
+-                }
+-            }
+-            // A LOCAL that will release (not a view, `skip_free`) and is bound from a parameter or
+-            // a view VARIABLE.  A member read into such a local is the parser's move out of the
+-            // member — a destructuring binder of a temp — and the local's own flag already says
+-            // it owns; retaining there leaked the frame.
+-            Value::Set(x, val) => {
+-                if self.is_handle_var(*x)
+-                    && !self.vars.is_argument(*x)
+-                    && !self.vars.is_skip_free(*x)
+-                    && matches!(val.unspan(), Value::Var(_))
+-                    && self.kept(val)
+-                {
+-                    self.wrap(val);
+-                } else if matches!(self.vars.tp(*x).base(), Type::Tuple(_)) {
+-                    self.rewrite_tuple_members(val);
+-                }
+-            }
+-            Value::Return(val) => self.rewrite_tuple_members(val),
+-            _ => {}
+-        }
+-    }
+-}
+-
+ fn run_scan_phase(
+     data: &mut Data,
+     database: &mut crate::database::Stores,
+@@ -9298,7 +9141,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+         // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
+         write_out_joined_copies(&mut orig_code, &orig_vars, data);
+         reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
+-        retain_shared_handles(d_nr, &mut orig_code, &orig_vars, data, database);
+         // Phase 1: the normal scan → apply → set-scope pass.
+         let written_out = run_scan_phase(
+             data,
+@@ -18034,16 +17876,6 @@ impl Scopes<'_> {
+                     vec![Value::Var(param), Value::Var(orig)],
+                 ));
+             }
+-            // `(G-Hold)`, loft#1708 — a generator HOLDS every handle it was handed (its caller
+-            // took a hold for the frame, `retain_shared_handles`), and gives it back at its end.
+-            // An abandoned frame gives it back through `free_coroutine` instead.
+-            if matches!(data.def(self.d_nr).returned.base(), Type::Iterator(_, _)) {
+-                for param in function.arguments() {
+-                    if matches!(function.tp(param).base(), Type::Iterator(_, _)) {
+-                        ls.push(call("OpFreeRef", param, data));
+-                    }
+-                }
+-            }
+         }
+         if !guarded.is_empty() {
+             guarded.append(&mut ls);
+@@ -18558,13 +18390,13 @@ impl Scopes<'_> {
+                 // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
+                 && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
+                 && data.def(*g_nr).is_loft_defined()
+-                && crate::use_analysis::inline_handle_needs_holder(data, outer_call)
++                && crate::use_analysis::handle_param_only_advanced(data, outer_call, arg_idx)
+             {
+-                // `@FR-G-Hold` — an inline generator handle is held by nothing but the
+-                // argument, so a `__lift_N` temp holds it and the scope's sweep releases its
+-                // hold, as the bound `g = gen(); first(g)` does; a callee that keeps it takes a
+-                // hold of its own (loft#1708).  Unlifted, an abandoned frame and every heap
+-                // local it allocated stayed to program exit, one per call (loft#1705).
++                // `@FR-G-Hold` — an inline generator handle whose callee only advances it is
++                // held by nothing else, so a `__lift_N` temp holds it and the scope's sweep
++                // releases its frame, as the bound `g = gen(); first(g)` does.  Unlifted,
++                // an abandoned frame and every heap local it allocated stayed to program
++                // exit, one per call (loft#1705).
+                 let gen_tp = data.def(*g_nr).returned.clone();
+                 let tmp = self.new_lift_var(function, &gen_tp);
+                 preamble.push(v_set(tmp, scanned));
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index f13a15855..e59ef5ddd 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -217,11 +217,6 @@ pub struct CoroutineFrame {
+     /// compares it before touching the slot — otherwise the scope-exit free of an exhausted
+     /// handle would release whichever generator inherited its index (loft#835).
+     pub generation: u32,
+-    /// `(G-Hold)` — how many holders the frame has (loft#1708).  One at creation; a handle
+-    /// that lands in a second holder while its source keeps its own takes another
+-    /// (`OpCoroutineRetain`), and each release gives one back.  The frame is freed with the
+-    /// last.
+-    pub holds: u32,
+ }
+ 
+ /// Internal State of the interpreter to run bytecode.
+@@ -1596,25 +1591,11 @@ impl State {
+     /// this, an early `break` from a generator loop leaks every text local that was
+     /// live at the last yield point.
+     pub fn free_coroutine(&mut self, gen_ref: &DbRef) {
+-        // `(G-Hold)`: a release by one of several holders gives its hold back and nothing more.
+-        if self.coroutine_slot_matches(gen_ref)
+-            && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
+-            && frame.holds > 1
+-        {
+-            frame.holds -= 1;
+-            return;
+-        }
+         if self.coroutine_slot_matches(gen_ref) {
+             let idx = gen_ref.rec as usize;
+             let mut owned_stores: Vec<DbRef> = Vec::new();
+-            // A CREATED frame (never advanced) holds its arguments too: a generator handed a
+-            // handle took a hold on it at the call (`(G-Hold)`, loft#1708).  Its locals were
+-            // never assigned — its bytes end at the arguments — so only those are read.
+             if let Some(frame) = self.coroutines[idx].as_mut()
+-                && matches!(
+-                    frame.status,
+-                    CoroutineStatus::Suspended | CoroutineStatus::Created
+-                )
++                && frame.status == CoroutineStatus::Suspended
+             {
+                 let d_nr = frame.d_nr;
+                 let data_ptr = self.data_ptr; // raw ptr — no borrow conflict with frame
+@@ -1677,13 +1658,10 @@ impl State {
+         };
+         let vars = &def.variables();
+         for v in 0..vars.count() {
+-            let tp = vars.tp(v);
+-            // A generator HOLDS every handle it was handed (`(G-Hold)`, loft#1708): the caller
+-            // took a hold for the frame, and an abandoned frame gives it back.  Any other
+-            // argument is the caller's.
+-            if vars.is_argument(v) && !matches!(tp.base(), Type::Iterator(_, _)) {
++            if vars.is_argument(v) {
+                 continue;
+             }
++            let tp = vars.tp(v);
+             // `Iterator` joins the heap types here: a generator local holding another
+             // generator's handle is freed through the same path, which `free_ref_db`
+             // routes back to this function for that frame.
+@@ -1961,7 +1939,6 @@ impl State {
+             saved_text_positions: std::collections::BTreeSet::new(),
+             saved_store_generations: Vec::new(),
+             generation: 0, // stamped by allocate_coroutine
+-            holds: 1,
+         };
+         let (idx, generation) = self.allocate_coroutine(frame);
+ 
+@@ -2183,18 +2160,6 @@ impl State {
+     /// while the variable holding the handle lives to the end of its scope, where its
+     /// `OpFreeRef` fires.  Comparing the generation stamp in `pos` is what stops that free
+     /// — and any late advance — from reaching the generator that inherited the slot.
+-    /// `OpCoroutineRetain` — one more holder for the frame `gen_ref` names (`(G-Hold)`,
+-    /// loft#1708).  A handle naming no live frame — null, or exhausted and its slot freed —
+-    /// takes nothing, and its holders' releases are no-ops for the same reason.
+-    pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
+-        if self.coroutine_slot_matches(&gen_ref)
+-            && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
+-        {
+-            frame.holds += 1;
+-        }
+-        gen_ref
+-    }
+-
+     pub(crate) fn coroutine_slot_matches(&self, gen_ref: &DbRef) -> bool {
+         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
+             return false;
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index 25b318228..ae21c30f3 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -3892,28 +3892,73 @@ pub(crate) fn read_only_uses(
+     }
+ }
+ 
+-/// `@FR-G-Hold` — does an inline generator handle passed to `fn_nr` need a holder of its own?
+-///
+-/// A handle passed straight to a call (`first(gen())`) is held by nothing but the argument.
+-/// Every holder releases its hold once and the frame dies with the last (loft#1708), so the
+-/// caller's temp is that holder and releases it after the call; a callee that KEEPS the
+-/// handle — in a field, an element, a local — takes a hold of its own.  A GENERATOR callee is
+-/// the exception: its frame is the holder and takes the fresh handle's one hold as it is, to
+-/// its end or its abandonment.  Without a holder an abandoned frame and every heap local it
+-/// allocated stayed to program exit, one per call (loft#1705).
++/// `@FR-G-Hold` — does `fn_nr` only ADVANCE the generator handle it receives at argument
++/// `idx`, keeping nothing of it once it returns?
++///
++/// A handle is a value its holder releases, and an inline one passed straight to a call
++/// (`first(gen())`) has no holder but the call's argument.  Where the callee only advances
++/// it, the caller's temp is that holder and the frame is the caller's to release after the
++/// call; where the callee KEEPS it — in a field, an element, a literal, a closure, its own
++/// generator frame — the one that keeps it releases it, and a release by the caller would
++/// free a frame still held.  So the answer is positive and under-approximating: `next`,
++/// the exhausted test a `for` makes, and a pass to a parameter that is itself only advanced
++/// are advancing; every other use of the parameter, and a callee that is itself a generator,
++/// answers `false`, which leaves the handle unreleased as it was (loft#1705).
+ #[must_use]
+-pub fn inline_handle_needs_holder(data: &Data, fn_nr: u32) -> bool {
++pub fn handle_param_only_advanced(data: &Data, fn_nr: u32, idx: usize) -> bool {
++    let mut visiting = HashSet::default();
++    param_only_advanced(data, fn_nr, idx, &mut visiting)
++}
++
++fn param_only_advanced(
++    data: &Data,
++    fn_nr: u32,
++    idx: usize,
++    visiting: &mut HashSet<(u32, usize)>,
++) -> bool {
+     if (fn_nr as usize) >= data.definitions.len() {
+         return false;
+     }
+     let def = data.def(fn_nr);
+     let name = def.name();
+     if name == "OpCoroutineNext" || name == "OpCoroutineExhausted" {
++        return idx == 0;
++    }
++    if !def.is_loft_defined()
++        || def.code == Value::Null
++        || matches!(def.returned.base(), Type::Iterator(_, _))
++    {
++        return false;
++    }
++    // A recursive pass answers for itself: the question is asked of the whole cycle.
++    if !visiting.insert((fn_nr, idx)) {
+         return true;
+     }
+-    def.is_loft_defined()
+-        && def.code != Value::Null
+-        && !matches!(def.returned.base(), Type::Iterator(_, _))
++    let Some(&p) = def.variables.arguments().get(idx) else {
++        return false;
++    };
++    only_advanced_in(&def.code, p, data, visiting)
++}
++
++fn only_advanced_in(v: &Value, p: u16, data: &Data, visiting: &mut HashSet<(u32, usize)>) -> bool {
++    match v.unspan() {
++        Value::Var(x) => *x != p,
++        Value::Set(x, _) if *x == p => false,
++        Value::Call(d, args) => args.iter().enumerate().all(|(j, a)| {
++            if matches!(a.unspan(), Value::Var(x) if *x == p) {
++                param_only_advanced(data, *d, j, visiting)
++            } else {
++                only_advanced_in(a, p, data, visiting)
++            }
++        }),
++        other => {
++            let mut ok = true;
++            other.for_each_child(&mut |c| {
++                ok = ok && only_advanced_in(c, p, data, visiting);
++            });
++            ok
++        }
++    }
+ }
+ 
+ /// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when

@@ -5,11 +5,10 @@
 // whatever holds it releases the frame once.  A handle passed INLINE to a call
 // (`first(gen())`) had no holder at all: nothing bound it, so an abandoned frame, and here
 // the vector each generator built, stayed allocated to program exit, one per call, on both
-// backends (loft#1705).  The bound spelling `g = gen(); first(g)` was clean.  Where the
-// callee only ADVANCES the handle (`next`, a `for`, a pass to a parameter that is itself
-// only advanced) the call's temp is its holder and the scope releases it after the call.
-// Where the callee KEEPS it (a field, a generator frame), the keeper releases it, and the
-// cells below prove the caller does not.
+// backends (loft#1705).  The bound spelling `g = gen(); first(g)` was clean.  The call's
+// temp is now its holder and the scope releases it after the call; a callee that KEEPS it
+// (a field, an element) takes a hold of its own (loft#1708), and a generator callee takes
+// the fresh handle's one hold as it is.  The kept cells prove the frame outlives the call.
 //
 // The leak is the channel: `main` runs every cell and the interpreter prints the stores
 // left at exit.

@@ -4888,6 +4888,35 @@ std::thread_local! {
         std::cell::RefCell::new(vec![None]);
     /// Stamp handed to the next coroutine allocated on this thread.
     static NATIVE_COROUTINE_GENERATION: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+    /// `(G-Hold)` — each slot's holder count, the interpreter's `CoroutineFrame::holds`
+    /// (loft#1708).  Read only for a live handle, so a stale count of a freed slot is never
+    /// consulted: `alloc_coroutine` resets it to one.
+    static NATIVE_COROUTINE_HOLDS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn set_native_holds(idx: usize, holds: u32) {
+    NATIVE_COROUTINE_HOLDS.with(|h| {
+        let mut h = h.borrow_mut();
+        if h.len() <= idx {
+            h.resize(idx + 1, 0);
+        }
+        h[idx] = holds;
+    });
+}
+
+/// `OpCoroutineRetain` — one more holder for the generator `gen_ref` names (`(G-Hold)`,
+/// loft#1708).  A handle naming no live generator takes nothing.  Answers the handle.
+#[must_use]
+pub fn coroutine_retain(gen_ref: DbRef) -> DbRef {
+    let live = NATIVE_COROUTINES.with(|c| native_coroutine_live(&c.borrow(), gen_ref));
+    if live {
+        NATIVE_COROUTINE_HOLDS.with(|h| {
+            if let Some(n) = h.borrow_mut().get_mut(gen_ref.rec as usize) {
+                *n += 1;
+            }
+        });
+    }
+    gen_ref
 }
 
 /// Does `gen_ref` still name the frame it was made for — right slot AND right occupant?
@@ -4919,6 +4948,7 @@ pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
         for (i, slot) in coroutines.iter_mut().enumerate().skip(1) {
             if slot.is_none() {
                 *slot = Some((generation, coro));
+                set_native_holds(i, 1);
                 return DbRef {
                     store_nr: NATIVE_COROUTINE_STORE,
                     rec: i as u32,
@@ -4928,6 +4958,7 @@ pub fn alloc_coroutine(coro: Box<dyn LoftCoroutine>) -> DbRef {
         }
         let idx = coroutines.len();
         coroutines.push(Some((generation, coro)));
+        set_native_holds(idx, 1);
         DbRef {
             store_nr: NATIVE_COROUTINE_STORE,
             rec: idx as u32,
@@ -5055,6 +5086,20 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
     let taken = NATIVE_COROUTINES.with(|c| {
         let mut coroutines = c.borrow_mut();
         if native_coroutine_live(&coroutines, gen_ref) {
+            // `(G-Hold)`: one of several holders gives its hold back and nothing more.
+            let shared = NATIVE_COROUTINE_HOLDS.with(|h| {
+                let mut h = h.borrow_mut();
+                match h.get_mut(gen_ref.rec as usize) {
+                    Some(n) if *n > 1 => {
+                        *n -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            if shared {
+                return None;
+            }
             coroutines[gen_ref.rec as usize].take()
         } else {
             None

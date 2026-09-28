@@ -583,6 +583,27 @@ fn c_binary_read(path: text, n: integer) -> integer {
   acc
 }
 
+// ── the same read off a MAPPED file (@PLN174 F3): `file_map` + two byte reads per element ──
+fn read_i16_map(m: const vector<u8>, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n {
+    lo = m[2 * i] ?? 0;
+    hi = m[2 * i + 1] ?? 0;
+    v = lo + hi * 256;
+    if v >= 32768 { v = v - 65536; }
+    out += [v];
+  }
+  out
+}
+
+fn c_binary_map(path: text, n: integer) -> integer {
+  m = file_map(path) ?? [];
+  vals = read_i16_map(m, n);
+  acc = len(vals);
+  for v in vals { acc = (acc * 31 + v + 32768) & HMASK; }
+  acc
+}
+
 // ── crawler `sort_floats`: a selection sort into a fresh vector, per scanline ──────────
 fn sort_floats(v: vector<float>) -> vector<float> {
   n = len(v);
@@ -732,6 +753,10 @@ fn main() {
   t0 = ticks();
   for r in 0..n { if (r & 1) == 0 { sink += c_binary_read(bin0, nbin); } else { sink += c_binary_read(bin1, nbin); } }
   row("binary_read", n, ticks() - t0, nbin, c_binary_read(bin0, nbin));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_binary_map(bin0, nbin); } else { sink += c_binary_map(bin1, nbin); } }
+  row("binary_map", n, ticks() - t0, nbin, c_binary_map(bin0, nbin));
 
   t0 = ticks();
   for r in 0..n { if (r & 1) == 0 { sink += c_sort_floats(xs0, ys); } else { sink += c_sort_floats(xs1, ys); } }

@@ -21,7 +21,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 5. A live pointer to a doc, issue or plan is kept; a dead plan-or-date stamp is not. — DOC_QUALITY § A
 6. A durable fact an agent keeps in memory also goes into a repo doc; machine-specific values stay out of shared docs. — [CLAUDE.md](../../CLAUDE.md) § Conventions
 7. A generated file is never hand-edited, and carries data, not rationale. — DOC_QUALITY § D · gate: the `*_is_up_to_date` guards in `tests/doc_hygiene.rs`
-8. Every relative link resolves; move a doc with `make plan-move`, repair with `make doc-fix`. — [DEVELOPMENT](DEVELOPMENT.md) § Moving a doc · gate: `every_markdown_link_resolves`
+8. Every relative link resolves, `#fragment` included; move a doc with `make plan-move`, repair with `make doc-fix`. — [DEVELOPMENT](DEVELOPMENT.md) § Moving a doc · gate: `every_markdown_link_resolves`
 9. A reference row naming something absent is worse than none; a capability with two spellings names the other in both. — DOC_QUALITY rule 8
 10. A causal claim ("X causes Y") is measured before it is written. — DOC_QUALITY § An attribution in a comment
 
@@ -51,9 +51,9 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 ## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
 
 28. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
-29. 1000 lines is a hard ceiling; under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
+29. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
 30. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
-31. A contract doc states the current rule; a record doc keeps its dates. — rule 4, RELEASE § 5b
+31. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
 32. Commit the goal and the command that reports the position, never the position. — rule 5
 33. Prose beside a gated number carries the reason, not the value. — rule 6
 34. Search a doc before adding to it; read the code before stating what it does. — rules 7–8

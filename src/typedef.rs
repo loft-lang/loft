@@ -615,7 +615,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
             }
         }
     }
-    // QUALITY B5 fix: register `main_vector<T>` wrapper structs for every
+    // QUALITY-history.md B5 fix: register `main_vector<T>` wrapper structs for every
     // `vector<T>` field found on a struct or enum-value.  Parser paths
     // that assign or construct a `vector<T>` already call
     // `data.vector_def(...)`, but **struct-enum variant fields** (e.g.

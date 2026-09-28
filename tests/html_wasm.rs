@@ -422,7 +422,7 @@ fn p137_html_arithmetic_loop_runs() {
     );
 }
 
-/// QUALITY Tier 3 #9 — `file("...")` under `--html` (wasm32
+/// QUALITY-history.md Tier 3 #9 — `file("...")` under `--html` (wasm32
 /// without the wasm host-bridge) must not trap even though there
 /// is nothing at that path.  The page HAS a filesystem now (loft#851) — it just
 /// starts empty unless the page seeds a base tree — so a file nobody wrote must

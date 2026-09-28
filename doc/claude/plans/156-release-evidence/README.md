@@ -95,7 +95,7 @@ records rather than invented first.
 
 ## See also
 
-- [RELEASE.md](../../RELEASE.md) — step 4's measured block (the never-completed splice, the
+- [RELEASE-history.md](../../RELEASE-history.md) — step 4's measured block (the never-completed splice, the
   validator rejection, the end-to-end throwaway-clone verification this plan automates), the
   checklist section and its two corrections (`install.sh`, smoke-from-the-ZIP).
 - [releases/2026-08/](../../releases/2026-08/) and [releases/2026-09/](../../releases/2026-09/)

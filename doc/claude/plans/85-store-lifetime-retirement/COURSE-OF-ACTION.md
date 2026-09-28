@@ -23,7 +23,7 @@ re-exposed it as step 6. Fixing the brittleness fixes #462 *at the root*, withou
 
 ## Current tree state — branch `fix-crawler`, everything UNCOMMITTED
 
-Three threads coexist (see [implementation-steps.md § Reconciliation](../25-nullable-sequences/implementation-steps.md#reconciliation-with-the-in-flight-work-branch-fix-crawler-all-uncommitted)):
+Three threads coexist (see [implementation-steps.md § Reconciliation](../25-nullable-sequences/implementation-steps.md#reconciliation-with-the-in-flight-work-historical--origin-of-the-rewrite)):
 
 | Thread | files | state |
 |---|---|---|

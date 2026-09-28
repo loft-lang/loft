@@ -3,7 +3,7 @@
 //
 // A keyed local bound from a `match` whose arms are fresh-storage calls frees the store the
 // taken arm's callee minted, exactly as the `if … else if …` spelling of the same program
-// does (`formal/ownership.md` `(O-Complete)`: every `match`/`if` arm; QUALITY.md B7u).
+// does (`formal/ownership.md` `(O-Complete)`: every `match`/`if` arm; QUALITY-history.md B7u).
 //
 // A keyed bind lowers to `OpReplaceKeyed(value, x, tp)`, a deep copy into `x`'s own store,
 // and the type tag's `0x8000` bit says whether the SOURCE store is the copy's to free.  For
