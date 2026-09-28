@@ -4571,6 +4571,11 @@ bump; now an unchanged-bytes rlib keeps the cache warm.  The CI `LOFT_TMPDIR`
 relocation is the only CI-specific part (cross-*run* persistence — local /tmp
 already persists within a machine).  Design notes preserved below.
 
+**Cross-run persistence withdrawn on Linux/macOS 2026-09-28** — the dir reached 9–13 GB,
+pushed every cache out of the repo's 10 GB budget, and misses on any commit that
+touches loft's source anyway; Windows keeps it.  The content-hash key and the in-run
+cache stand.  [CI_BUDGET.md § F](CI_BUDGET.md#f-the-cache-budget--a-cache-that-is-never-restored-is-a-cost-not-a-cache-2026-09-28).
+
 **Symptom.**  The Windows CI leg is the long pole at ~25 min (Build
 311s + Build-release 149s + Test 1010s).  A large slice of the Test step
 is native compiles: `native_library_suite` + `native_scripts` + the two

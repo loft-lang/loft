@@ -1139,6 +1139,40 @@ macOS spends 8m20s building before a test runs. `scripts/sccache_env.sh` exists
 and is unused in CI. Worth measuring after A–D; it is the next constraint once the
 suite stops dominating, not before.
 
+### F. The cache budget — a cache that is never restored is a cost, not a cache (2026-09-28)
+
+**Rule: everything `ci.yml` saves in one run must fit GitHub's 10 GB per-repo cache
+budget, with room for the nightlies — and it is saved on `main` only.** Over the budget,
+GitHub evicts least-recently-used entries, so an over-budget run evicts its own caches
+before the next run restores them. A branch can restore only its own caches and
+main's, so a branch save helps that branch alone and evicts main's, which every run uses.
+
+Measured on run 36421513313 and main's 36420537678: a PR run saved **24.8 GB**, a main
+run **39 GB** (`Linux-cargo` 13.8, `macOS-cargo` 9.8, the corpus binaries 9.1, three
+advisory jobs' own `target` caches ~3.5 each). No run restored a cargo cache — every
+leg's `Build` compiled all 474 crates cold (331 s), and the release, wasm-rlib and
+warm-up steps rebuilt on top of that, **~14 of the ~24 min per leg before a test ran**.
+
+What `ci.yml` does since:
+
+- **Saves on `main` only** (`github.ref == 'refs/heads/main'`); every other run restores.
+- **`target/loft-native-cache` is out of the Linux/macOS cargo cache.** The compiled
+  native test binaries are 9–13 GB, and their key includes the `libloft.rlib` content
+  hash (`tests/native.rs` `cache_key`), so any commit touching loft's source misses
+  all of them. The `corpus` shard's own cache of them is gone for the same reason.
+  Windows keeps its copy: that cache holds nothing else large.
+- **`index-hygiene` and `viewer-smoke` restore the `test` job's cache read-only.** They
+  build the same release `loft`; their own 3.5 GB caches only competed for the budget.
+  A restore matches only a save with the identical `path:` list, so theirs is a copy.
+- **The save key is the restore step's `cache-primary-key`.** A second
+  `hashFiles('**/Cargo.lock')` at save time also hashed the gitignored
+  `tests/fixtures/libs/*/native/Cargo.lock` the warm-up step creates, so the saved key
+  never matched the next run's exact-prefix restore key.
+
+To check it holds: `gh api repos/loft-lang/loft/actions/cache/usage` after a main run, and
+the `Restore cargo registry and build` step of the NEXT PR run reading `Cache restored
+from key`, not `Cache not found`.
+
 ## The daily overview
 
 Two problems today: a red nightly is **undifferentiated** (six nights of
