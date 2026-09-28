@@ -25,7 +25,7 @@ struct Node {
   v: integer,
 }
 
-fn ident(c: Cur) -> Node {
+fn ident(c: Cur) -> Node? {
   match c {
     [
       Id { x },
@@ -51,7 +51,7 @@ fn main() {
   assert(c.farthest == 1, "farthest names the failing token index: {c.farthest}");
 
   // Reporting as a VALUE (never a trap): the failing token is src[farthest].
-  msg = "parse error at token {c.farthest}: expected identifier, found {describe(c.src[c.farthest])}";
+  msg = "parse error at token {c.farthest}: expected identifier, found {describe(c.src[c.farthest]?)}";
   assert(msg == "parse error at token 1: expected identifier, found `(`", "report: {msg}");
 
   // Opt-in — a plain cursor WITHOUT a `farthest` field is unaffected.

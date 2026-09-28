@@ -818,6 +818,7 @@ impl Parser {
         let ms_base = self.math_sign_proven.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
         let mut last_expr_peek = self.lexer.peek().clone();
+        self.block_tail_null_literal = false;
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
         // The fit-failure of a store lives across exactly one statement boundary: offered to
         // the statement that follows, and gone after it.  Held here rather than on the
@@ -1010,6 +1011,8 @@ impl Parser {
             self.stmt_if_pending = self.lexer.peek_token("if") || self.lexer.peek_token("match");
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
+            self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if tok == "null")
+                && matches!(n.unspan(), Value::Null);
             self.stmt_if_pending = saved_stmt_if;
             // @PLN152 step 5 — a `!place` in that `if`'s condition took the fit temp, so
             // split the store that is already in `l`: the checked cast binds the temp, and
@@ -4641,6 +4644,23 @@ impl Parser {
     /// The `scopes`-side siblings (`is_null_terminal`, `return_has_null_arm`) ask the same
     /// null question about a return EXPRESSION, where that wrapper is the subject rather
     /// than an escape, and pass through it.
+    /// A lowered scalar `null` literal, `OpConv<τ>FromNull()`.  Deliberately NOT a reference's
+    /// `OpNullRefSentinel()` or an enum's `OpConvEnumFromNull(<type>)`: those also appear inside
+    /// LOWERED constructs (a comprehension's loop), and the walkers that ask this descend into
+    /// lowered code, so a `[for …]` arm read as a null arm.  The heap case asks the arm's TYPE
+    /// instead (`Type::Null` — only a literal `null` arm has it).
+    fn is_null_literal_call(&self, d: u32, args: &[Value]) -> bool {
+        if !args.is_empty() || (d as usize) >= self.data.definitions.len() {
+            return false;
+        }
+        let n = self.data.def(d).name();
+        n.starts_with("OpConv") && n.ends_with("FromNull")
+    }
+
+    /// Are the next tokens exactly `{ null }`?  Asked before an `if` arm is parsed, because
+    /// after it the arm is its sibling's typed null and no longer SAYS null — and on the first
+    /// pass a comprehension arm is a placeholder of the same shape, so no reading of the lowered
+    /// code separates the two.  The source does.
     fn branch_yields_null(&self, v: &Value) -> bool {
         match v.unspan() {
             Value::Null => true,
@@ -4654,12 +4674,7 @@ impl Parser {
             Value::If(_, then_b, else_b) => {
                 self.branch_yields_null(then_b) || self.branch_yields_null(else_b)
             }
-            Value::Call(d, args)
-                if args.is_empty() && (*d as usize) < self.data.definitions.len() =>
-            {
-                let n = self.data.def(*d).name();
-                n.starts_with("OpConv") && n.ends_with("FromNull")
-            }
+            Value::Call(d, args) => self.is_null_literal_call(*d, args),
             _ => false,
         }
     }
@@ -4685,14 +4700,35 @@ impl Parser {
                 .last()
                 .is_some_and(|o| self.arm_yields_direct_null(o)),
             Value::Insert(ops) => ops.last().is_some_and(|o| self.arm_yields_direct_null(o)),
-            Value::Call(d, args)
-                if args.is_empty() && (*d as usize) < self.data.definitions.len() =>
-            {
-                let n = self.data.def(*d).name();
-                n.starts_with("OpConv") && n.ends_with("FromNull")
-            }
+            Value::Call(d, args) => self.is_null_literal_call(*d, args),
             _ => false,
         }
+    }
+
+    /// `@FR-N-Join` for a `null` arm: does joining `null` with a value of type `tp` make the
+    /// result `tp?`?  The one home for the question, asked by every construct that can join a
+    /// `null` arm — an `if`, and a `match` over an enum, a scalar, a tuple or a vector.
+    ///
+    /// Every type with a `τ?` (`data::has_null`, `(N-Opt)`) — a scalar, a struct, a collection,
+    /// an enum.  It was the scalars only, on the premise *"heap types stay nullable"*: that a
+    /// struct or a collection already holds null without a `?`.  `(N-Opt)` says the opposite, and
+    /// the cost was concrete — `a = if c { null } else { [..] }` typed `a` non-null, so
+    /// `(Col-Insert-Absent)` did not apply and `a += [x]` was lost (loft#1714, `D-types-5`).
+    /// Measured before the change over the corpus, the libraries, the consumers and the
+    /// registry: the programs it reaches are functions declared `-> T` whose branch returns
+    /// `null`, which now warn as `(N-Store)` says.
+    pub(crate) fn null_arm_widens(tp: &Type) -> bool {
+        Self::is_non_null_scalar(tp)
+            || (crate::data::has_null(tp)
+                && !matches!(
+                    tp,
+                    Type::Optional(_)
+                        | Type::Void
+                        | Type::Null
+                        | Type::Never
+                        | Type::Unknown(_)
+                        | Type::RefVar(_)
+                ))
     }
 
     /// @PLN25 DN1 — widen a value's result type to `Optional(τ)` when its lowered `code` yields a
@@ -5217,6 +5253,7 @@ impl Parser {
         let write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
         let mut true_type = self.parse_block("if", &mut true_code, expected);
+        let true_is_null_literal = self.block_tail_null_literal;
         if !is_bindings.is_empty()
             && let Value::Block(bl) = &mut true_code
         {
@@ -5254,6 +5291,8 @@ impl Parser {
             self.math_sign_proven.push((v, sg));
         }
         let mut false_type = Type::Void;
+        // Read before the else arm is parsed, as the then arm's is (`peek_literal_null_block`).
+        let mut false_is_null_literal = false;
         let mut false_code = Value::Null;
         // What an `else if` CHAIN borrows, when its type is not adopted as `false_type`.
         let mut chain_borrow: Option<Type> = None;
@@ -5336,6 +5375,7 @@ impl Parser {
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
                 false_type = self.parse_block("else", &mut false_code, &true_type);
+                false_is_null_literal = self.block_tail_null_literal;
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
                 if let (Some(tc), Some(fc)) =
@@ -5474,6 +5514,15 @@ impl Parser {
             if t_null != f_null {
                 let other = if t_null { &false_type } else { &true_type };
                 if Self::is_non_null_scalar(other) {
+                    result_tp = Type::optional(other.clone());
+                }
+            }
+            // A struct, collection or enum sibling: the arm written `{ null }`, read from the
+            // source before the arm was parsed (`peek_literal_null_block`).
+            let (t_lit, f_lit) = (true_is_null_literal, false_is_null_literal);
+            if !matches!(result_tp, Type::Optional(_)) && t_lit != f_lit {
+                let other = if t_lit { &false_type } else { &true_type };
+                if !Self::is_non_null_scalar(other) && Self::null_arm_widens(other) {
                     result_tp = Type::optional(other.clone());
                 }
             }
@@ -6603,7 +6652,7 @@ impl Parser {
         // NESTED exhaustive match's synthesised unreachable `OpConv*FromNull` default and
         // falsely widens (p54: `Wrap { inner } => match inner { Leaf { v } => v }` typed `τ?`).
         if crate::keys::pln25_dn1_enabled()
-            && Self::is_non_null_scalar(&result_type)
+            && Self::null_arm_widens(&result_type)
             && arms
                 .iter()
                 .any(|a| matches!(a.tp, Type::Null) || self.arm_yields_direct_null(&a.code))
@@ -6654,13 +6703,22 @@ impl Parser {
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
+        // A bare `null` arm, told from the SOURCE token; a block arm reports through
+        // `block_tail_null_literal`, read in `parse_match_arm_body_inner`.
+        let bare_null = self.lexer.peek_token("null");
         // Each arm runs INSTEAD of its siblings, so the dead-store tracking starts every arm from
         // the state before the `match` and leaves it there — as `parse_if` does for its arms.
         // Asked here, the one body every arm kind parses through: held at the arm sites, three
         // of seven had it, and in the others one arm's write read as overwritten by the next.
         let arm_write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
+        let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        if (bare_null && matches!(arm_code.unspan(), Value::Null))
+            || (block_arm && self.block_tail_null_literal)
+        {
+            self.null_literal_arms += 1;
+        }
         self.vars.restore_write_state(&arm_write_state);
         self.end_pattern_arm();
         tp
@@ -9875,6 +9933,7 @@ impl Parser {
         let mut arms: Vec<(Option<Value>, Value, Type, Option<Value>)> = Vec::new();
         let mut has_wildcard = false;
         let mut result_type = Type::Void;
+        let saved_null_arms = std::mem::replace(&mut self.null_literal_arms, 0);
 
         loop {
             if self.lexer.peek_token("}") {
@@ -10053,6 +10112,7 @@ impl Parser {
                 arms.iter()
                     .any(|(pat, _, _, _)| matches!(pat, Some(Value::Boolean(x)) if x == b))
             });
+        let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
         let chain = self.build_scalar_chain(
             v,
             subject_type,
@@ -10060,6 +10120,17 @@ impl Parser {
             &result_type,
             arms,
         );
+        // A struct, collection or enum result with a literal `null` arm; the scalar result is
+        // widened by the caller (`dn1_widen_branch_null`), as it always was.
+        let result_type = if has_null_arm
+            && crate::keys::pln25_dn1_enabled()
+            && !Self::is_non_null_scalar(&result_type)
+            && Self::null_arm_widens(&result_type)
+        {
+            Type::optional(result_type)
+        } else {
+            result_type
+        };
         *code = v_block(
             vec![v_set(v, subject), chain],
             result_type.clone(),
@@ -10214,7 +10285,11 @@ impl Parser {
             if let LexItem::Identifier(rule) = self.lexer.peek().has.clone() {
                 let fn_nr = self.data.def_nr(&format!("n_{rule}"));
                 if fn_nr != u32::MAX {
-                    let ret = self.data.def(fn_nr).returned().clone();
+                    // `@FR-N-Shape` — through the `?`: a sub-rule answers null for "no match",
+                    // so `-> N?` is its honest declaration, and `(N-Join)` warns a `-> N` whose
+                    // `_ => null` arm says otherwise (loft#1714).  The capture is bound only on
+                    // the arm where the rule matched, so it is the non-null `N`.
+                    let ret = self.data.def(fn_nr).returned().base().clone();
                     if matches!(ret, Type::Reference(..)) {
                         result = Some((name, fn_nr, ret));
                     }
@@ -10460,6 +10535,7 @@ impl Parser {
 
         self.lexer.token("{");
         let mut result_type = Type::Void;
+        let saved_null_arms = std::mem::replace(&mut self.null_literal_arms, 0);
         let mut arms: Vec<PatternArm> = Vec::new();
         // loft#1682 — a `PatternArm` carries no type; the join reconverts by this list.
         let mut arm_types: Vec<Type> = Vec::new();
@@ -11145,6 +11221,7 @@ impl Parser {
         }
 
         // Build if-else chain from arms
+        let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
         self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
         let fallback = if has_wildcard {
             arms.pop().unwrap().code
@@ -11155,6 +11232,10 @@ impl Parser {
         let mut block_ops = vec![v_set(v, subject)];
         block_ops.append(&mut prechain);
         block_ops.push(chain);
+        // The tuple and vector chains never widened for a `null` arm, scalars included.
+        if has_null_arm && crate::keys::pln25_dn1_enabled() && Self::null_arm_widens(&result_type) {
+            result_type = Type::optional(result_type);
+        }
         *code = v_block(block_ops, result_type.clone(), "vector_match");
         // loft#1019 — an arm that OWNS what it yields needs a home in this frame when
         // the merged type is a view (`Parser::own_joined_call_arms`).
@@ -11186,6 +11267,7 @@ impl Parser {
         let mut arm_types: Vec<Type> = Vec::new();
         let mut has_wildcard = false;
         let mut result_type = Type::Void;
+        let saved_null_arms = std::mem::replace(&mut self.null_literal_arms, 0);
 
         loop {
             if self.lexer.peek_token("}") {
@@ -11504,6 +11586,7 @@ impl Parser {
         self.lexer.token("}");
 
         // Build if-else chain (last arm is fallback / wildcard)
+        let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
         self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
         let fallback = if has_wildcard {
             arms.pop().unwrap().code
@@ -11511,6 +11594,10 @@ impl Parser {
             self.null_value(&result_type)
         };
         let chain = chain_pattern_arms(arms, fallback, &result_type);
+        // The tuple and vector chains never widened for a `null` arm, scalars included.
+        if has_null_arm && crate::keys::pln25_dn1_enabled() && Self::null_arm_widens(&result_type) {
+            result_type = Type::optional(result_type);
+        }
 
         *code = v_block(
             vec![v_set(tmp, subject), chain],

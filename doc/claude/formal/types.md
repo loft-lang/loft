@@ -684,20 +684,28 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-* **D-types-5** *(opened 2026-09-28, OPEN; loft#1714)* — `(N-Join)`: a branch that joins `null`
-  with a COLLECTION types the result non-optional.  `a = if n == 0 { null } else { [n] }` and
-  `match n { 0 => null, _ => [n] }` give `a: vector<integer>` where the rule, which has no
-  collection carve-out, gives `vector<integer>?`; the integer twin is right (`int?`).  The cost
-  is not only the type: `(Col-Insert-Absent)` is written for `<kind><…>?`, so `a += [7]` after
-  the null arm writes through a null handle and the element is lost, silently, on both
-  backends.  **Why not closed with the append fix.**  Restoring the `?` changes the static type
-  of every such local, and a `vector?` handed to a non-null parameter (`len(a)`) WARNS, which a
-  library's CI denies — so it wants the published-library gate and a ruling on whether that
-  warning is the right answer there.  The declared spelling `a: vector<integer>? = if …` is
-  correct today (`tests/scripts/an-append-to-an-absent-vector-local-builds-it.loft`).
-
+* **D-types-5** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1714)* — `(N-Join)`: a branch that
+  joins `null` with a struct, a collection or an enum typed the result NON-optional — `a = if n ==
+  0 { null } else { [n] }` gave `a: vector<integer>` while the integer twin gave `int?` — on the
+  premise *"heap types stay nullable"*, which `(N-Opt)` contradicts.  The cost was a lost write:
+  `(Col-Insert-Absent)` is written for `<kind>?`, so `a += [7]` after the null arm wrote through
+  a null handle, silently, on both backends; and the tuple and vector `match` chains did not
+  widen at all, scalars included.  **Fix.**  One home for the question, `Parser::null_arm_widens`
+  (every type `data::has_null` admits), asked by all five constructs (`if`; `match` over an enum,
+  a scalar, a tuple, a vector).  What a `null` arm IS is read from the SOURCE token
+  (`block_tail_null_literal`, `null_literal_arms`): the lowered arm is its sibling's typed null by
+  then, and on the first pass a comprehension arm is a placeholder of the same shape — reading
+  the lowered code widened `if c { [for …] } else { … }`.  Two consumers of the wider type were
+  closed with it: a variant joined with null is admitted into its enum through the `?`
+  (`change_var_type`), and a cursor sub-rule may be declared `-> N?` (`peek_subrule_capture`).
+  **Measured before the change** with `loft --check` over every file containing `null` in the
+  corpus, the libraries, the consumers and the registry: 65 sites, all functions declared `-> T`
+  whose branch returns `null` — a warning, as `(N-Store)` says — plus one library signature that
+  was wrong (`imaging` `png() -> Image`, which answers null; published as 0.4.0 `-> Image?`).
+  Guards `tests/scripts/a-branch-joining-null-is-optional-for-every-kind.loft`,
+  `tests/scripts/a-sub-rule-may-answer-an-optional.loft`.
 * **D-types-4** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1692)* — `(N-Reserve)` /
   `layout.md (L-Narrow-Enc)`: the loop variable of `for x in v`, over a vector of a NULLABLE
   narrow integer, read a null element as its stored code — `255` for `u8?`, `-32768` for

@@ -25,7 +25,7 @@ struct HeadNode {
 }
 
 // 1-token sub-rule: match an Id, capture its x.
-fn parse_id(c: Cur) -> IdNode {
+fn parse_id(c: Cur) -> IdNode? {
   match c {
     [
       Id { x },
@@ -34,7 +34,7 @@ fn parse_id(c: Cur) -> IdNode {
 }
 
 // 2-token sub-rule: `Fn Id` advances pos by 2, captures the Id's x.
-fn parse_head(c: Cur) -> HeadNode {
+fn parse_head(c: Cur) -> HeadNode? {
   match c {
     [
       Fn,
@@ -48,7 +48,7 @@ fn parse_head(c: Cur) -> HeadNode {
 fn dbl(x: integer) -> integer {
   x * 2
 }
-fn parse_dbl(c: Cur) -> IdNode {
+fn parse_dbl(c: Cur) -> IdNode? {
   match c {
     [
       Id { x },

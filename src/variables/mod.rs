@@ -3177,8 +3177,12 @@ impl Function {
                 Type::RefVar(inner) => inner.base(),
                 other => other.base(),
             };
+            // Through the RIGHT side's `?` too: a branch joining `null` with a variant is that
+            // variant, optional (`(N-Join)`, loft#1714), and whether it may be absent says no
+            // more about which enum it belongs to than the left side's `?` did.  A non-null
+            // destination is still told by `(N-Store)` at the store.
             if let (Type::Enum(parent_d, true, _), Type::Reference(rhs_d, _)) =
-                (lhs_shape, type_def)
+                (lhs_shape, type_def.base())
                 && data.def(*rhs_d).parent == *parent_d
             {
                 return self.is_new(var_nr);
@@ -3228,7 +3232,11 @@ impl Function {
                 && ((is_null_scalar(var_tp) && matches!(type_def, Type::Null))
                     || (matches!(var_tp, Type::Null) && is_null_scalar(type_def)));
             if heap_mix {
-                let heap = if is_null_heap(var_tp) { var_tp } else { type_def };
+                let heap = if is_null_heap(var_tp) {
+                    var_tp
+                } else {
+                    type_def
+                };
                 let heap_name = heap.source_name(data);
                 diagnostic!(
                     lexer,
