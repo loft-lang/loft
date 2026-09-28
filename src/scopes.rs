@@ -10713,7 +10713,13 @@ pub(crate) fn capture_build_backings(
             // The buffer this assignment minted is the store any LATER build adopts through
             // `v`.  An assignment that mints none leaves the local naming something this walk
             // cannot pin to a buffer, and a stale entry would name the wrong store outright.
-            let arms = join_arm_stores(rhs, function, data);
+            // Only a CAPTURED local can reach a build, and asking every assignment of every
+            // function allocated once per branch right-hand side in the stdlib alone.
+            let arms = if function.is_captured(*v) {
+                join_arm_stores(rhs, function, data)
+            } else {
+                Vec::new()
+            };
             if arms.is_empty() {
                 join_arms.remove(v);
             } else {
@@ -10914,7 +10920,7 @@ fn reassigned_join_capture_slot(
         if function.is_argument(w) {
             continue;
         }
-        let Type::Reference(record, _) = function.tp(w) else {
+        let Type::Reference(record, _) = function.tp(w).base() else {
             continue;
         };
         if !data.def(*record).name.starts_with("__closure_") {
