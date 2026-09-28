@@ -91,4 +91,7 @@ fn main() {
   w[0] = 72;
   assert(w[0] == 72 && m[0] == 104 && len(w) == 64, "c10 {w[0]} {m[0]}");
   println("foreign file ok");
+  // The run writes into the script's own directory, so it leaves nothing behind there.
+  delete(ff_path());
+  delete("loft_174_empty.tmp");
 }
