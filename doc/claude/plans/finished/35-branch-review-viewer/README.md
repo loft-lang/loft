@@ -108,7 +108,7 @@ deliberately.  CI does not auto-rebuild.
   viewer reads those files; refreshing state means re-running
   `make view`.  Loft has no subprocess primitive today and
   this plan does NOT block on adding one — see the
-  [out-of-scope](#out-of-scope) section.
+  [out-of-scope](#out-of-scope-deferred--separate-plans) section.
 - **Markdown rendering minimal in v1, tables in v2** — the
   user's pain point with current tools is poor table rendering;
   proper tables are a planned phase, not v1.  See
@@ -583,7 +583,7 @@ freshness target.
 
 ## Cross-references
 
-- [`lib/server/src/server.loft`](../../../../lib/server/src/server.loft)
+- [`server/src/server.loft`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft) in `loft-libs-net`
   — the HTTP / WebSocket primitives the viewer depends on.
 - [`plans/finished/22-mutable-closures/`](../22-mutable-closures/README.md)
   — closures are the natural shape for route handlers; viewer

@@ -54,12 +54,12 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "tools", "indexer"))
 
 import doc_history_report as history_report  # noqa: E402
+from rewrite_links import fence_mask  # noqa: E402
 import doc_review  # noqa: E402
 
 SIZE_CEILING = 1000
 SIZE_EXEMPT = re.compile(r"<!--\s*size-exempt:")
 GATED = {"stamp", "history", "two-h1", "size"}
-FENCE = re.compile(r"^\s*(```|~~~)")
 
 
 # ── the patterns, read from their homes ──────────────────────────────────────
@@ -130,11 +130,7 @@ def comment_lines(lines):
 
 def prose_lines(lines):
     """Lines of a markdown file outside code fences."""
-    fenced = False
-    for n, line in enumerate(lines, 1):
-        if FENCE.match(line):
-            fenced = not fenced
-            continue
+    for n, (line, fenced) in enumerate(zip(lines, fence_mask(lines)), 1):
         if not fenced:
             yield n, line
 

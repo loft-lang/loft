@@ -46,7 +46,7 @@ sparse Cell/Chunk shape (TTT v5 + audience demo) alongside the hex
 additions (they share addressing — Open Q #10).  Unblocks dryopea
 ([@PLAN46](../../plans/49-dryopea/README.md)) AND
 bumper-airplanes ([@PLAN50](../../plans/51-bumper-airplanes/README.md))
-— see [§ Cross-project consumers](#cross-project-consumers--moros--dryopea--bumper-airplanes)
+— see [README.md § Cross-project consumers](README.md#cross-project-consumers--moros--dryopea--bumper-airplanes)
 for the shared-substrate argument.  Phase 7a is described as
 "monorepo-internal" because no user-visible behaviour changes, but
 **three downstream projects depend on its output** — it is the
@@ -253,7 +253,7 @@ ships:
 | Physics primitives | [`lib_plans/75-physics-2body/`](../75-physics-2body/README.md) Phase 1 (types + sphere-vs-AABB step) | `lib/moros_sim/collide.loft` items migrated into `lib/physics_2body/`; moros tests green using the new package |
 | MapFile schema | Inline design in Phase 7a above | `world::load_mapfile()` + `world::save_mapfile()` are the only entry points; `MAPFILE.md` documents v1 |
 | Particles slot | [`lib_plans/76-particles/`](../76-particles/README.md) Phases 1–2 (trail + burst types) | Slot READMEs exist; PLAN50 / dryopea use the slot's API in their (still-stalled) design docs |
-| Broadcast QoS | [`lib_plans/future/08-server/` § Gap 8](../future/08-server/README.md#gap-8--per-recipient-broadcast-qos-sight--rate-lod--forecast) — `BroadcastTopology` + sight + rate-LOD + forecast | `lib/server/src/broadcast.loft` exposes the topology API; PLAN50 wires through it |
+| Broadcast QoS | [`lib_plans/future/08-server/` § Gap 8](../future/08-server/README.md) — `BroadcastTopology` + sight + rate-LOD + forecast | `lib/server/src/broadcast.loft` exposes the topology API; PLAN50 wires through it |
 
 Each row is independently sized in its own slot; this table is the
 order-of-operations checklist, not the implementation plan.

@@ -297,7 +297,7 @@ types, and a call on a type that declares none is refused.
 The generator frame is placed immediately above the caller's current stack top
 (`new_base = self.stack_pos`) at each resume. It is never at a fixed absolute
 position; `frame.stack_base` is updated to `self.stack_pos` at the start of
-every `OpCoroutineNext` (see [SC-CO-7](#sc-co-7--absolute-stack_base-stale-when-the-caller-pushes-locals-after-creation)).
+every `OpCoroutineNext` (see [SC-CO-7](#sc-co-7--absolute-stack_base-stale-when-caller-pushes-locals-after-creation)).
 
 When the generator yields, the region `[new_base .. value_start)` is serialised
 into `frame.stack_bytes` and the stack pointer is rewound to `new_base`. The
@@ -354,7 +354,7 @@ When the compiler encounters a call to a generator function, it emits
 
 1. Check `active_coroutines` for a re-entrant advance (see
    [SC-CO-3](#sc-co-3--re-entrant-advance-corrupts-the-live-stack),
-   [SC-CO-9](#sc-co-9--coroutine_sp-scalar-cannot-represent-yield-from-nesting)).
+   [SC-CO-9](#sc-co-9--scalar-coroutine_sp-cannot-represent-yield-from-nesting)).
 2. Record `frame.caller_return_pos = self.code_pos` (continuation address).
 3. Set `frame.call_depth = self.call_stack.len()` — the frame's call frames
    will go above the current call stack depth at this resume (see note below).
@@ -381,7 +381,7 @@ at the time of the advance.
    `value_start = stack_pos - value_size`.
 2. Serialise the **entire** region `stack[stack_base..stack_pos]` (locals
    **and** yielded value together) to detect any `Str` in the yielded value
-   itself (see [SC-CO-10](#sc-co-10--yielded-text-value-is-not-serialised-its-string-may-be-freed)).
+   itself (see [SC-CO-10](#sc-co-10--yielded-text-value-not-serialised-its-string-may-be-freed)).
    Split the result: `frame.stack_bytes = bytes[..locals_len]`, and keep the
    updated value bytes separately for the slide step below.
 3. Free original dynamic `String` allocations via the text side-table

@@ -153,7 +153,7 @@ Adding suffix syntax would:
 - Solve a 1 % problem that `as` already covers.
 
 **Decision.** **Closed — declined.**  Dated 2026-04-13.  See
-[QUALITY.md § C54](QUALITY.md#active-design--c54-integer-i64) — `C54.D` listed under sub-tickets.
+[QUALITY.md § C54](QUALITY.md#c54--integer-i64--landed-2026-04-21) — `C54.D` listed under sub-tickets.
 
 **Revisit when.** A real loft program needs a literal-size
 distinction that cannot be expressed as `as <T>` in reasonable
@@ -366,7 +366,7 @@ value structs (none on the roadmap) would re-open the row.
 > faults (divide-by-zero, overflow, OOB, null-deref): those now yield **null and continue in
 > every mode** (the spreadsheet model), silently by default. C66's split still holds for the
 > *explicit* signals — `panic` / `assert` halt in dev/test, log + continue in production — and
-> for startup ([C67](#c67--fail-at-startup-not-at-runtime)).
+> for startup ([C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)).
 
 **Question.** Should runtime fault sites (divide-by-zero, vector /
 text out-of-bounds, null DbRef dereference, narrow-cast overflow,
@@ -1710,7 +1710,7 @@ corruption surface.
    deliberate `assert(false)` / `panic(...)` to stop and show you, exactly as today). In
    **production** they **log and continue** — one assertion never takes down a running system.
    Only the *implicit* calculation faults of point 1 move to universal null-and-continue.
-4. **Startup still stops** ([C67](#c67--fail-at-startup-not-at-runtime)): bad config /
+4. **Startup still stops** ([C67](#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs)): bad config /
    port-bind / missing deps exit *before* the run begins — "can't open the spreadsheet," not
    "a cell errored." A running calculation never stops.
 5. **Implicit faults are MODE-INDEPENDENT — and tested via the debug log.** Points 1–2 hold
@@ -2400,7 +2400,7 @@ Evaluation count of the place is observable semantics, so it freezes at contract
 
 ## C93 — A `par` worker's captured parent state is read-only; a write to it is a compile error
 
-**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [C80](#c80--)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
+**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
 
 ### Question
 
@@ -2464,7 +2464,7 @@ The load-bearing fact is that **`/` and `%` are a matched pair**: the identity `
 
 ## C95 — A definition a same-named method would silently shadow is a compile error (no silent redefinition)
 
-**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([C80](#c80--)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by C94 (adding stdlib `floor_mod` collided with an existing library helper).
+**Catalogue:** @F2 (operators) / naming. Instances the platform rule *no runtime errors, ever* ([C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)) at its **compile-time valve**: what cannot work is *disallowed*, not run into a silent-wrong result. Surfaced by C94 (adding stdlib `floor_mod` collided with an existing library helper).
 
 ### Question
 
@@ -2524,7 +2524,7 @@ The maintainer's only irreducibly-human steps become **policy**: admit a namespa
 
 ### Question
 
-A library's `pub fn clamp` registers as the **global** `n_clamp` — the same namespace as the stdlib (that is why [C95](#c95--)'s redefinition error fired on it). So library public symbols **leak into the global namespace**. The consequence surfaced at once: adding a stdlib `floor_mod` ([C94](#c94--)) **broke already-shipped libraries** that defined the same name — `shapes` (`clamp`) and `time` (`floor_mod`) both stopped compiling. Post-freeze, with an absolute-compat stdlib we still want to grow, this is a contradiction: any stdlib addition might collide with a name some published, immutable library already ships. Should library public symbols share the global namespace, or live strictly under their module?
+A library's `pub fn clamp` registers as the **global** `n_clamp` — the same namespace as the stdlib (that is why [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition)'s redefinition error fired on it). So library public symbols **leak into the global namespace**. The consequence surfaced at once: adding a stdlib `floor_mod` ([C94](#c94--integer--truncates-toward-zero-and--takes-the-dividends-sign-floor_mod-is-the-wrap-around-helper)) **broke already-shipped libraries** that defined the same name — `shapes` (`clamp`) and `time` (`floor_mod`) both stopped compiling. Post-freeze, with an absolute-compat stdlib we still want to grow, this is a contradiction: any stdlib addition might collide with a name some published, immutable library already ships. Should library public symbols share the global namespace, or live strictly under their module?
 
 ### Evaluation
 
@@ -2546,7 +2546,7 @@ Only (b) is compatible with an absolute-compat stdlib that still grows. The stdl
 
 ## C98 — `use lib;` binds only the `lib` namespace; unqualified access is an EXPLICIT `use lib::*` / `use lib::(…)`, where the imported name wins
 
-**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [C97](#c97--) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
+**Catalogue:** @F2 (operators) / modules + naming. The name-resolution HOW that [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) deferred — the rule that makes "the stdlib can grow without breaking a program" actually hold.
 
 ### Question
 
@@ -2566,10 +2566,10 @@ So absolute compat holds both ways — bare-`use` programs qualify (no collision
 - **`use lib;`** introduces exactly one name, `lib` (the namespace); members are `lib::fn` / `lib::Type`. **No** unqualified leakage.
 - **`use lib::*;`** (wildcard) and **`use lib::(a, b, c);`** (selective) explicitly bind those names into the unqualified namespace; an explicitly-imported name **wins** over a stdlib name of the same spelling — the author's owned choice, so the C95 silent-shadow concern does not apply.
 - Because bare `use lib;` never imports unqualified and an explicit import keeps its binding across stdlib growth, **no program breaks when the stdlib grows**, and no ambiguity-error is needed — the C97 guarantee holds.
-- **Intended asymmetry with [C95](#c95--):** *defining* your own top-level free fn that a stdlib method would silently shadow is a C95 error (the def was silently dead); *explicitly importing* a library name unqualified is allowed and wins — the line is exactly **silent vs explicit**.
+- **Intended asymmetry with [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition):** *defining* your own top-level free fn that a stdlib method would silently shadow is a C95 error (the def was silently dead); *explicitly importing* a library name unqualified is allowed and wins — the line is exactly **silent vs explicit**.
 - **Collision resolver — aliased import (ALREADY in loft, @PLN22 P3/P4):** `use lib::(a as x, b);` imports `a` locally as `x` (plus namespace/type/fn aliases: `use lib as el;`, `use lib::Status as St;`, `use lib::make as mk;`). So any clash — two libraries exporting the same name, or an import you want to keep distinct — is resolved by binding it under a chosen local name. This also resolves the two-explicit-imports edge below: `use a::(x); use b::(x as bx);`. **Syntax — keep `as` (owner 2026-07-15):** the resolver already exists and `original as alias` is uniform across all four alias forms, so no new syntax is added (a proposed `alias = original` was declined — it would fragment the shipped alias grammar and break existing `use` statements for a cosmetic disambiguation; the `as` overload with the type-cast `as` is unambiguous inside a `use` group).
 - **Open edges (not ruled here):** an explicitly-imported name vs the program's own top-level def — resolve when specced.
-- Owner ruling 2026-07-15. Companion: [C97](#c97--). **Already shipped (@PLN22 P1–P4):** the whole `use` surface — bare `use lib;` = prefix-required namespace bind, `use lib::*;` = wildcard, `use lib::(a, b, c)` = selective, `use lib::(a as x, b)` / `use lib as el` / `use lib::T as St` = aliasing. So C98 needs **no new syntax**; the only residual is the C97 internal change (a library's `pub` symbol must stop registering as global `n_<name>` — the dual registration that still collides with the stdlib during the library's own compile, per C95 — and be module-scoped only, which the shipped `use` machinery already brings into scope). Import-wins precedence for an explicit `::*` / `::(…)` binding is the one resolution rule to confirm against that change.
+- Owner ruling 2026-07-15. Companion: [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib). **Already shipped (@PLN22 P1–P4):** the whole `use` surface — bare `use lib;` = prefix-required namespace bind, `use lib::*;` = wildcard, `use lib::(a, b, c)` = selective, `use lib::(a as x, b)` / `use lib as el` / `use lib::T as St` = aliasing. So C98 needs **no new syntax**; the only residual is the C97 internal change (a library's `pub` symbol must stop registering as global `n_<name>` — the dual registration that still collides with the stdlib during the library's own compile, per C95 — and be module-scoped only, which the shipped `use` machinery already brings into scope). Import-wins precedence for an explicit `::*` / `::(…)` binding is the one resolution rule to confirm against that change.
 
 ⚠ **The shipped `use lib;` is NOT the bind this ruling describes — re-measured 2026-09-01.** A
 bare `use lib;` wildcard-imports every `pub` name into the unqualified namespace, which is what
@@ -2685,13 +2685,13 @@ reversing the no-variadics stance and is not on the table for contract 1.
 ## C101 — `std`/`core` are reserved package names; `std::name` is the stdlib's qualified form (the shadow escape hatch)
 
 **Catalogue:** @F2 (operators) / modules + naming. The pre-freeze completion of the
-[C97](#c97--)/[C98](#c98--) namespace model — sealing the one global namespace's own
+[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) namespace model — sealing the one global namespace's own
 qualified name before the resolution rule freezes with contract 1. Closes @PLN13 phase 6.
 
 ### Question
 
-[C97](#c97--) made the stdlib the sole global unqualified namespace and libraries
-module-scoped (`lib::name`); [C98](#c98--) makes `use lib::*` / `use lib::name` bring a
+[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) made the stdlib the sole global unqualified namespace and libraries
+module-scoped (`lib::name`); [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) makes `use lib::*` / `use lib::name` bring a
 library name into unqualified scope, where the imported name **wins** over the stdlib.
 Two loose ends the freeze must close: (1) when an imported (or user-defined) name shadows
 a stdlib name, is the stdlib symbol still reachable, and under what spelling? (2) nothing
@@ -2720,19 +2720,19 @@ before they freeze:
 - **`std::name` is the stdlib's permanent qualified form** and the escape hatch for a
   shadowed bare name (a user def or a `use lib::*` import shadowing a stdlib name — the
   original stays reachable as `std::name`). It mirrors `lib::name`; bare-unqualified
-  remains the beginner default ([C97](#c97--)) and `std::` stays opt-in, never required.
+  remains the beginner default ([C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)) and `std::` stays opt-in, never required.
 - **`std` and `core` are reserved package names** — refused by `loft new` and not
   admissible to the registry (`core` held for a possible future stdlib-core split).
   Canonical list + predicate: `libscan::RESERVED_PACKAGE_NAMES` /
   `is_reserved_package_name`; guard test in `tests/imports.rs`.
-- **Not fixed by this:** the [C97](#c97--) residual stands — a library `self:`/`both:`
+- **Not fixed by this:** the [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) residual stands — a library `self:`/`both:`
   *method* named like a stdlib method still errors at definition (methods register as
   attributes on a shared global type, which module-scoping and `std::` cannot cover).
   Free-fn collisions are the real cases and are covered. The path for use-free *library*
   calls is the existing lazy-load trigger surface (`derive_triggers` — method/type
   triggers, @I87), grown by adoption and by completing under-covered trigger kinds
   (e.g. operator overloads), **not** bare free-fn resolution (which C97/C98 declined).
-- Owner-directed 2026-07-24. Companion: [C97](#c97--)/[C98](#c98--); closes @PLN13 phase 6.
+- Owner-directed 2026-07-24. Companion: [C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib)/[C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins); closes @PLN13 phase 6.
 
 ## C102 — a release binary says nothing when it falls back to the interpreter
 
@@ -3350,7 +3350,7 @@ monomorphised call, not a re-entry into an interpreter.
 
 ## C112 — a binding position mints a local whatever else carries that name; the function stays reachable as a call
 
-**Catalogue:** @F2 (operators) / modules + naming · [C98](#c98--)'s consumer-facing half · loft#852, loft#756
+**Catalogue:** @F2 (operators) / modules + naming · [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756
 
 ### Question
 
@@ -3360,7 +3360,7 @@ verb to a library was a breaking change for every consumer that already used tha
 crawler's gate went red across 109 rows, on a commit crawler did not make, when `engine_host` gained
 `pub fn turn()`.
 
-[C97](#c97--) and [C98](#c98--) exist to make exactly this impossible for the *stdlib*: the stdlib may
+[C97](#c97--a-librarys-public-symbols-live-under-its-module-not-the-global-namespace-so-the-stdlib-can-grow-without-breaking-a-shipped-lib) and [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) exist to make exactly this impossible for the *stdlib*: the stdlib may
 grow additively forever because a library's symbols are module-scoped. The question C98 left is the
 same hazard one level up, and it is worse there — a package ecosystem has no chokepoint weighing each
 new name, and nothing announces "this release claims the word `turn`".
@@ -3388,7 +3388,7 @@ clean workaround for the instance. It is not an answer to the class: the cost la
 with no local change, and it is not available in advance. You find out which words are forbidden by
 compiling against each new library release.
 
-**This does not re-open [C95](#c95--).** C95 refuses a top-level *function definition* that a method
+**This does not re-open [C95](#c95--a-definition-a-same-named-method-would-silently-shadow-is-a-compile-error-no-silent-redefinition).** C95 refuses a top-level *function definition* that a method
 would silently shadow, because that definition is dead code the author believes runs. A local binding
 is scoped to one function body, re-points no other call site, and is not silent — the author wrote
 the name. The three forms that never refused are the proof that the language already accepted that

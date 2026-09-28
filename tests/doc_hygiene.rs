@@ -3423,6 +3423,24 @@ fn nightly_gate_classes_drive_every_list_that_reads_them() {
 /// and inline code spans are not links) and exempts what `scripts/linkcheck.sh`
 /// exempts.  It reads no index, so it runs here, in the required matrix, rather than beside
 /// `index_hygiene`'s `make index`.
+/// The link check's own rules — GitHub's heading slugs, CommonMark's fence closing, the
+/// anchors a document renders, a dead `#fragment` flagged — each asked of a case with a
+/// known answer, so `every_markdown_link_resolves` staying green is evidence the check can
+/// still go red rather than a sign it has gone blind.
+#[test]
+fn the_link_check_answers_its_known_cases() {
+    let out = std::process::Command::new("python3")
+        .args(["tools/indexer/fix_broken_links.py", "--self-test"])
+        .output()
+        .expect("failed to spawn tools/indexer/fix_broken_links.py --self-test");
+    assert!(
+        out.status.success(),
+        "the link check's self-test failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn every_markdown_link_resolves() {
     let out = std::process::Command::new("python3")
@@ -3436,7 +3454,9 @@ fn every_markdown_link_resolves() {
          `make doc-fix` writes each `fix` line; a `flag` line needs a person \
          (point it at the thing's new home, or mark an intentional placeholder \
          with `<!--noindex-->` or a code span).  A directory move is \
-         `make plan-move FROM=… TO=…`, which rewrites the links as it moves.",
+         `make plan-move FROM=… TO=…`, which rewrites the links as it moves.  A `no heading #…` \
+         flag names a fragment the target does not render: point it at the heading that holds \
+         the content now, or drop the fragment.",
         String::from_utf8_lossy(&out.stderr)
     );
 }

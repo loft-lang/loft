@@ -6,10 +6,8 @@ This document covers source files that are part of the runtime and build infrast
 ---
 
 ## Contents
-- [Field Layout Calculator (`src/calc.rs`)](#field-layout-calculator-srccalcrs)
-- [Bytecode Generation Stack (`src/stack.rs`)](#bytecode-generation-stack-srcstackrs)
-- [Rust Code Generator (`src/create.rs`)](#rust-code-generator-srccreatrs)
-- [Native Function Registry (`src/native.rs`)](#native-function-registry-srcnativrs)
+- [Field Layout, Stack, and Code Generation](#field-layout-stack-and-code-generation)
+- [Native Function Registry (`src/native.rs`)](#native-function-registry-srcnativers)
 - [Low-Level String & Arithmetic Helpers (`src/ops.rs`)](#low-level-string--arithmetic-helpers-srcopsrs)
 - [PNG Image Loading (`src/png_store.rs`)](#png-image-loading-srcpng_storers)
 - [Radix Tree (`src/radix_tree.rs`)](#radix-tree-srcradix_treers)

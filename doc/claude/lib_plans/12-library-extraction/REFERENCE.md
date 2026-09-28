@@ -288,7 +288,7 @@ The four gates above cover every loft-side test that lives in
 `lib/<name>/tests/`.  Some monorepo Rust harnesses drive library
 code outside that pattern (PNG-tolerance compare, subprocess
 multiplayer orchestration); these need a separate home before
-extraction completes — see [README.md § Phase 6t](README.md#phase-6t--library-test-self-sufficiency).
+extraction completes — see [test-coverage.md § Phase 6t](test-coverage.md#phase-6t--library-test-self-sufficiency).
 The library-side counterpart for a Rust harness is
 `lib/<name>/native/tests/<harness>.rs`, run by the chunk's CI via
 `cd lib/<name>/native && cargo test --release` (added as a new step

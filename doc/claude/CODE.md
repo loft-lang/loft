@@ -9,7 +9,7 @@ Rules for all Rust and loft code in this project.
 - [Naming](#naming)
 - [Functions](#functions)
 - [Doc Comments](#doc-comments)
-- [Test Suite (`tests/docs/`, `tests/scripts/`)](#test-suite-testsdocs)
+- [Test Suite (`tests/docs/`, `tests/scripts/`)](#test-suite-testsdocs-testsscripts)
 - [Clippy and Formatting](#clippy-and-formatting)
 - [Null Sentinels](#null-sentinels)
 - [Hot-path conventions](#hot-path-conventions)

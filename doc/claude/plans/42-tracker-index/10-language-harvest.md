@@ -23,7 +23,7 @@ stdlib gaps.  This phase harvests them — turns "we worked
 around X because the language doesn't have Y" into "the
 language has Y now."
 
-Per [CLAUDE.md § Development cadence](../../../../CLAUDE.md#development-cadence--the-dogfood-loop):
+Per [CLAUDE.md § Dogfood loop](../../../../CLAUDE.md#dogfood-loop):
 
 > Build a real consumer → harvest the language lessons →
 > fix the language → ship the lessons as a release.
@@ -131,7 +131,7 @@ language has caught up.
 
 ### Sub-steps for newly discovered issues during this phase
 
-Per [CLAUDE.md § Development cadence](../../../../CLAUDE.md#development-cadence--the-dogfood-loop)
+Per [CLAUDE.md § Dogfood loop](../../../../CLAUDE.md#dogfood-loop)
 and [DEVELOPMENT.md § Inserting Discovered Enhancements](../../DEVELOPMENT.md#inserting-discovered-enhancements-into-the-active-plan):
 
 > **Always add the FIX SCHEDULING for newly-found issues to
@@ -233,7 +233,7 @@ Each item is small enough to ship alone.  Bundling matters because:
 
 ## Cross-references
 
-- [CLAUDE.md § Development cadence](../../../../CLAUDE.md#development-cadence--the-dogfood-loop)
+- [CLAUDE.md § Dogfood loop](../../../../CLAUDE.md#dogfood-loop)
   — the project model that makes this phase the natural
   bookend of the dogfood cycle.
 - [DEVELOPMENT.md § Inserting Discovered Enhancements](../../DEVELOPMENT.md#inserting-discovered-enhancements-into-the-active-plan)

@@ -21,7 +21,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 5. A live pointer to a doc, issue or plan is kept; a dead plan-or-date stamp is not. — DOC_QUALITY § A
 6. A durable fact an agent keeps in memory also goes into a repo doc; machine-specific values stay out of shared docs. — [CLAUDE.md](../../CLAUDE.md) § Conventions
 7. A generated file is never hand-edited, and carries data, not rationale. — DOC_QUALITY § D · gate: the `*_is_up_to_date` guards in `tests/doc_hygiene.rs`
-8. Every relative link resolves; move a doc with `make plan-move`, repair with `make doc-fix`. — [DEVELOPMENT](DEVELOPMENT.md) § Moving a doc · gate: `every_markdown_link_resolves`
+8. Every relative link resolves, `#fragment` included; move a doc with `make plan-move`, repair with `make doc-fix`. — [DEVELOPMENT](DEVELOPMENT.md) § Moving a doc · gate: `every_markdown_link_resolves`
 9. A reference row naming something absent is worse than none; a capability with two spellings names the other in both. — DOC_QUALITY rule 8
 10. A causal claim ("X causes Y") is measured before it is written. — DOC_QUALITY § An attribution in a comment
 

@@ -2734,7 +2734,7 @@ fact — they unify when ownership is carried as one typed `deps` fact end-to-en
   bind is deleted.  Proof: the ladder introspects change ONLY in the type display
   (`&ref(Pair)` → `&ref(Pair)["whole"]`) — zero op changes, both backends green,
   leak-gated (434-pln87-scalar-reference, 28-references, 87-store-leaks).
-- **Residual sliver (recorded under [D-own-1](#d-own-1)):** a scalar-place ref
+- **Residual sliver (recorded under [D-own-1](#d-own-1--closed-2026-07-04-ownership-is-carried-as-one-deps-fact-read-not-re-derived-per-site)):** a scalar-place ref
   (`c = &v[0]`, `r = &s.x`) holds a DbRef into the source's store, but a scalar inner
   carries no `Deps` slot (`depending()` is the identity), so the link is not a readable
   fact — vacuous for FREE placement (the binder owns no store) but unavailable to any

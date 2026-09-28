@@ -304,8 +304,14 @@ and runs the drift checker.  `python3 tools/indexer/rewrite_links.py FROM TO` is
 exactly one tracked path ends in every segment the link names.  Anything else is printed as a
 `flag` for a person: a target that has left the tree (a library now in a `loft-libs-*` repo
 wants that repo's URL) or a name several files share.
-`tests/doc_hygiene.rs::every_markdown_link_resolves` fails on either kind.  Not links: fenced
-blocks, inline code spans, `<placeholder>` targets, a line marked `<!--noindex-->`, and
+A `#fragment` into a markdown file must name an anchor it renders — a heading's slug as
+GitHub computes it (`-1`, `-2` for repeats), an `id=`/`name=` attribute, or a heading's
+`{#id}` — and a dead one is always a `flag`: a renamed heading has no successor a tool can
+pick, so point it at the heading that holds the content now or drop the fragment.
+`tests/doc_hygiene.rs::every_markdown_link_resolves` fails on any `fix` or `flag`, and
+`the_link_check_answers_its_known_cases` runs the tool's `--self-test`.  Not links: fenced
+blocks (closed the CommonMark way — a bare fence of the same character, at least as long),
+inline code spans, `<placeholder>` targets, a line marked `<!--noindex-->`, and
 `tests/fixtures/`.
 
 ### Pushing `.github/workflows/` changes — use the SSH remote

@@ -283,7 +283,7 @@ Two concrete consequences that follow:
 2. **Better parallel.** The shared rc counter is cross-thread contention; removing it
    helps parallel execution (already largely mitigated, but cleaner).
 
-**Why this is the right tail-end, in this order:** the [rc crux](#the-open-crux--pin-this-first-blocks-the-design)
+**Why this is the right tail-end, in this order:** the [rc crux](#the-crux--resolved-the-slot-lifetime-via-the-body-0-null-init-hoist)
 already showed **no vector store needs rc** (`dec_rc=0` every shape — `inc_rc` fires only
 for **closure capture**, `fill.rs:1967` / `allocation.rs:299`).  So once correct scoping
 frees stores at scope end, the only remaining rc user is closure capture — and the

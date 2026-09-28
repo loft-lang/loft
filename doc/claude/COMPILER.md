@@ -12,7 +12,7 @@ This document covers how loft source code is turned into executable bytecode: th
 - [IR — The `Value` tree (`src/data.rs`)](#ir--the-value-tree-srcdatars)
 - [Type resolution (`src/typedef.rs`)](#type-resolution-srctypedefrs)
 - [Scope analysis (`src/scopes.rs`)](#scope-analysis-srcscopesrs)
-- [Rust code generation (`src/generation/`)](#rust-code-generation-srcgenerationrs)
+- [Rust code generation (`src/generation/`)](#rust-code-generation-srcgeneration)
 - [Bytecode generation (`src/compile.rs`, `src/state/`)](#bytecode-generation-srccompilers-srcstate)
 - [Default library (`default/*.loft`)](#default-library-defaultloft)
 - [Naming conventions enforced by the parser](#naming-conventions-enforced-by-the-parser)
@@ -1275,7 +1275,7 @@ wrapped; see `plans/28-error-messages/01-spans-on-ir.md § Resolution
 Runtime faults (divide-by-zero, index OOB, null deref, narrowing-cast
 overflow, `panic`/`assert`) build a `runtime_error::RuntimeError` and
 store it in `Stores::runtime_error` with `had_fatal = true`. Per
-[DESIGN_DECISIONS § C66](DESIGN_DECISIONS.md#c66--no-runtime-exceptions-in-production-loft-programs-never-abort-on-user-attributable-edge-cases),
+[DESIGN_DECISIONS § C66](DESIGN_DECISIONS.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt),
 the faulting op then **completes with its sentinel** (null DbRef, char 0,
 `i64::MIN`, …) and execution **continues** — loft programs must not abort
 on user-attributable edge cases. The stored error carries the source

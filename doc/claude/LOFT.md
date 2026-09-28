@@ -329,7 +329,7 @@ enum Shape {
 ```
 
 A variant's fields are read **directly** — `s.radius` — with `match` / `is` reserved for
-*dispatch* rather than extraction ([C89](DESIGN_DECISIONS.md#c89)).  A field EVERY variant
+*dispatch* rather than extraction ([C89](DESIGN_DECISIONS.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced)).  A field EVERY variant
 declares shares one slot and reads correctly from any of them.
 
 **A field only SOME variants declare answers for the variant the value holds** (loft#980).

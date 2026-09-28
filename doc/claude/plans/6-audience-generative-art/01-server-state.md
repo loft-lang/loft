@@ -558,7 +558,7 @@ shutdown at 22:00.
 
 The durable fix: separate socket I/O from the simulation loop using OS
 readiness multiplexing.  This is the model `lib/server` already designs
-toward in [§ Multi-threading model](../../lib_plans/future/08-server/README.md#multi-threading-model)
+toward in [§ Multi-threading model](../../lib_plans/future/08-server/README.md)
 (tokio runtime + thread pool); the shipped server is the "polled-only"
 subset noted in [TTT v5](../39-tic-tac-toe/README.md).  What's
 needed:

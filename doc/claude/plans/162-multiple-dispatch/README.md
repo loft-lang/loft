@@ -33,10 +33,8 @@ methods*".  Measured:
   has nothing about enums and methods either.
 - A second claim fails the same way: **untyped parameters do not exist** — `fn twice(a)` is
   refused with *"Expecting a clear type, found unknown"*.  So `Disp-Fallback` as written has
-  no surface, and the worked example's `fn hit(a, b, world) { }` would not parse.  See
-  [IMPL.md § Step 6](IMPL.md#step-6--disp-fallback--s-and-it-needs-a-surface-decision-first).
-- A second claim fails the same way: **untyped parameters do not exist**, so `Disp-Fallback`
-  as written has no surface — see § Decision below.
+  no surface, and the worked example's `fn hit(a, b, world) { }` would not parse — see
+  [§ Decision](#decision--no-untyped-parameters) below.
 - More to the point, **a plain enum can already have a method.**  `fn describe(self: Colour)
   -> text` over `enum Colour { Red, Green, Blue }` compiles and `c.describe()` calls it,
   printing its result on `--interpret`.
@@ -330,7 +328,7 @@ is closed.
 
 `Verify` names the comparison that would go RED if the phase were done wrong.  The phases are
 cut finer than the design's four-step landing order, because several of its steps have no
-half-done state to compare against — see [§ Phase cutting](#phase-cutting-why-these-and-not-the-designs-four).
+half-done state to compare against — see [§ Phase cutting](#phase-cutting--why-these-and-not-the-designs-four).
 
 | Item | Source | Verify | Status |
 |---|---|---|---|

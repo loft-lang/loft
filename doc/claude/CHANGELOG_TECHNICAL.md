@@ -7491,7 +7491,7 @@ layout gives a shared name+type ONE slot — so the read is right for the varian
 declare it and reads another variant's bytes for the rest. `match` afterwards still
 reports the original variant, because nothing changed the tag. Both backends, exit 0.
 
-**Direct payload access stays.** [C89](DESIGN_DECISIONS.md#c89) decided permanently that
+**Direct payload access stays.** [C89](DESIGN_DECISIONS.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
 enum payloads are named fields you read straight, with matching for *dispatch* and never
 for *extraction* — refusing a bare `c.field` would force a matcher on every read, which
 is the thing C89 exists to prevent. And the common-prefix case is already correct:

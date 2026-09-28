@@ -792,5 +792,5 @@ Deferred to follow-ups (post-@PLAN06):
   phase 7d rewrites the "variants" section.
 - [../../LOFT.md](../../../LOFT.md) — phase 7d adds a "Parallel
   for-loop" subsection.
-- [../../ROADMAP.md § 1.1+ I13](../../../ROADMAP.md#11-backlog) —
+- [../../ROADMAP.md § 1.1+ I13](../../../ROADMAP.md) —
   iterator protocol; future-compatible with body `yield`.

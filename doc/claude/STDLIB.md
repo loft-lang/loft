@@ -17,7 +17,7 @@ This document describes all public functions, constants, and types available in 
 - [Reflection](#reflection)
 - [Environment](#environment)
 - [Time](#time)
-- [Random](#random)
+- [Random](#random--use-random)
 
 ---
 

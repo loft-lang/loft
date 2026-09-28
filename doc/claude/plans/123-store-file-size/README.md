@@ -94,8 +94,8 @@ Build order, failure paths and code points: **[DESIGN.md](DESIGN.md)**.
 | **B3** — on by default, documented, probes graduated | [DESIGN.md](DESIGN.md) | **Done** — default ON, gated, `bind_path` wired |
 | **F4/F6 refusals** — the last two done-bar cells | [DESIGN.md](DESIGN.md) | **Done** — F4's guard was on the wrong subject and did not fire |
 | **Collection-kind matrix** for arc B | [DESIGN.md](DESIGN.md) | **Done** — hash/sorted/index/nested rebuild, spatial refuses; `ordered` now covered too (loft#719 fixed, `Both` declared in the kinds test) |
-| **A5** — reclaim at bind time (proposed) | [README.md](README.md#a5) | **Rejected** — built and measured; the premise is false and it makes the file grow (loft#727) |
-| **loft#727** — the growth A5 surfaced | [README.md](README.md#a5) | **Fixed** — an iteration-snapshot leak, not a slack policy; `reclaim_tail` keeps the eighth too |
+| **A5** — reclaim at bind time (proposed) | [README.md](README.md#a5--reclaim-at-bind-time--rejected-measured) | **Rejected** — built and measured; the premise is false and it makes the file grow (loft#727) |
+| **loft#727** — the growth A5 surfaced | [README.md](README.md#a5--reclaim-at-bind-time--rejected-measured) | **Fixed** — an iteration-snapshot leak, not a slack policy; `reclaim_tail` keeps the eighth too |
 
 ### A — truncate the tail
 

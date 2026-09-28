@@ -42,23 +42,18 @@ instead of re-proposing it.
   - [Milestone Reevaluation](#milestone-reevaluation)
   - [Recommended Implementation Order](#recommended-implementation-order)
 - [S — Stability Hardening](#s--stability-hardening)
-  - [S4 — Binary I/O type coverage (Issue 59, 63)](#s4--binary-io-type-coverage)
-  - [S6 — `for` loop in recursive function](#s6--fix-for-loop-in-recursive-function----too-few-parameters-panic) *(1.1+)*
+  - [S6 — `for` loop in recursive function](#s6--fix-remaining-recursive-call-sees-stale-attribute-count-cases) *(1.1+)*
 - [I — Interfaces](#i--interfaces) *(completed — I1–I8 + I9 stdlib; P136 loop bug open)*
-- [P — Prototype Features](#p--prototype-features)
+- [L — Language Quality](#l--language-quality)
   - [T1 — Tuple types](#t1--tuple-types) *(1.1+)*
   - [CO1 — Coroutines](#co1--coroutines) *(1.1+)*
 - [A — Architecture](#a--architecture)
-  - [A1 — Parallel workers: extra args + value-struct + text/ref returns](#a1--parallel-workers-extra-arguments-value-struct-returns-and-textreference-returns) *(completed 0.8.3)*
   - [A12 — Lazy work-variable initialization](#a12--lazy-work-variable-initialization) *(deferred to 1.1+)*
-  - [A13 — Complete two-zone slot assignment](#a13--complete-two-zone-slot-assignment-steps-8-and-10) *(completed 0.8.3)*
-  - [A14 — `par_light`: lightweight parallel loop with pre-allocated stores](#a14--par_light-lightweight-parallel-loop-with-pre-allocated-stores)
   - [TR1 — Stack trace introspection](#tr1--stack-trace-introspection) *(completed 0.8.3)*
 - [E — Library Ergonomics](#e--library-ergonomics)
   - [C57 — Route decorator syntax (`@get`, `@post`, `@ws`)](#c57--route-decorator-syntax) *(1.1+)*
 - [N — Native Codegen](#n--native-codegen)
-- [O — Performance Optimisations](#o--performance-optimisations)
-  - [O1–O7 — Interpreter and native performance](#o1--superinstruction-merging) *(O1 deferred indefinitely — opcode table full; O2–O7 deferred to 1.1+)*
+  - [O1–O7 — Interpreter and native performance](#o1--superinstruction-merging) *(O2–O7 deferred to 1.1+; the opcode table has room — [INTERMEDIATE.md § Opcode budget](INTERMEDIATE.md#opcode-budget--and-why-the-count-is-never-written-down))*
 - [H — HTTP / Web Services](#h--http--web-services)
 - [R — Repository](#r--repository)
 - [W — Web IDE](#w--web-ide)
@@ -249,11 +244,8 @@ Ordered by (immediate leverage) × (low scope risk) ×
 (dependencies-on / unblocking), now split across three releases so
 each ship is a standalone tag with its own CHANGELOG entry.  The
 split was introduced after today's "can we advertise loft?"
-assessment; see
-[ROADMAP.md § 0.8.5](ROADMAP.md#085--loft-is-learnable),
-[§ 0.8.6](ROADMAP.md#086--loft-is-extensible), and
-[§ 0.9.0](ROADMAP.md#090--fully-working-loft-language) for per-release
-scope and ship criteria.
+assessment.  These releases predate calendar versioning; a cycle's scope
+and ship criteria are its [releases/](releases/README.md) directory.
 
 **Release 0.8.5 — "loft is learnable" (~2 weeks)**
 
@@ -327,7 +319,7 @@ federated.
     earlier; not reopening the bug.
 17. **PKG.EXTRACT** — **last 0.9.0 item**.  Move every `lib/*/`
     into separate GitHub projects (logical bundling allowed — see
-    [ROADMAP.md § 0.9.0 Library extraction](ROADMAP.md#library-extraction)).
+    [lib_plans/12-library-extraction](lib_plans/12-library-extraction/README.md)).
     Depends on PKG.REG + DX.4 + FFI.1–4 (all shipped in 0.8.5 /
     0.8.6).  Starting earlier duplicates work; starting later is
     fine.  L effort per bundle; moves happen one family at a time

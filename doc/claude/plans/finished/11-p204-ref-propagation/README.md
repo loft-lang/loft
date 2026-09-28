@@ -14,7 +14,7 @@ tail-call rewrite fires on Span-wrapped IR.  3-line fix.
 PR-readiness gate: @P204's two failing native tests
 (`85_yield_resume`, `87_store_leaks`) blocked PR-readiness; both
 green post-fix.  P-issue closure record:
-[PROBLEMS.md § 204](../../../PROBLEMS.md#204-tail-expression-return-of-inner-helper-call-discarded).
+[PROBLEMS.md § 204](../../../PROBLEMS.md#204-tail-expression-return-of-inner-helper-call-discarded-closed-2026-05-02).
 
 ## What broke
 
@@ -92,7 +92,7 @@ a known-but-broken site (vs. new emitter / new infrastructure).
 
 ## See also
 
-- [PROBLEMS.md § 204](../../../PROBLEMS.md#204-tail-expression-return-of-inner-helper-call-discarded)
+- [PROBLEMS.md § 204](../../../PROBLEMS.md#204-tail-expression-return-of-inner-helper-call-discarded-closed-2026-05-02)
   — symptom + reproducer + closure narrative
 - [`../09-native-runtime-rewrite/`](../09-native-runtime-rewrite) —
   parent native-runtime arc; explicitly out-of-scope for @PLAN09

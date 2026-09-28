@@ -7,6 +7,7 @@
 #
 #   fix_broken_links.py            dry run: print each repair and each flag
 #   fix_broken_links.py --apply    write the repairs
+#   fix_broken_links.py --self-test   the rules against cases with known answers
 #
 # A link is broken when its target, resolved against the file's directory,
 # does not exist.  It is REPAIRED only when the answer is unique and
@@ -19,6 +20,13 @@
 # points at something that is gone, and a path several files end in is
 # ambiguous; both are FLAGGED for a human, with the reason.  The anchor,
 # and a trailing `/`, are kept as written.
+#
+# A `#fragment` into a markdown file — another one, or the same file's own
+# `(#fragment)` — must name an anchor that file renders: a heading's slug the
+# way GitHub computes it (duplicates suffixed `-1`, `-2`, …), an explicit
+# `id=`/`name=` attribute, or a heading's `{#id}`.  A fragment naming none is
+# FLAGGED, never repaired: a renamed heading has no unique successor a tool
+# can pick.
 #
 # Not links, the same as for `scripts/linkcheck.sh` and the index scanner:
 # text in a fenced block or an inline code span, a `<placeholder>` or
@@ -38,8 +46,10 @@ import os
 import re
 import sys
 
+from urllib.parse import unquote
+
 from rewrite_links import (
-    FENCE, INLINE_LINK, REF_DEF, REPO_ROOT, is_rewritable, rel,
+    INLINE_LINK, REF_DEF, REPO_ROOT, fence_mask, is_rewritable, rel,
     split_target, tracked_files,
 )
 
@@ -95,9 +105,84 @@ def candidates(resolved: str, paths: set[str]) -> tuple[list[str], int]:
     return best, best_len
 
 
+ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+HTML_ID = re.compile(r"""<[^>]*?\b(?:id|name)\s*=\s*["']([^"']+)["']""")
+LINE_ANCHOR = re.compile(r"^L\d+(?:-L\d+)?$")
+_ANCHORS: dict[str, set[str]] = {}
+
+
+def slug(heading: str) -> str:
+    """GitHub's anchor for a heading: its rendered text lower-cased, every character but
+    a word character, `-` or a space dropped, spaces turned into `-`."""
+    parts = re.split(r"(`+[^`]*`+)", heading)       # a code span renders its text verbatim
+    for k in range(0, len(parts), 2):
+        part = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", parts[k])   # a link renders its label
+        parts[k] = re.sub(r"<[^>]+>", "", part)                       # inline HTML renders nothing
+    text = re.sub(r"[^\w\- ]", "", "".join(parts).strip().lower())
+    return text.replace(" ", "-")
+
+
+def anchors(path: str) -> set[str]:
+    """Every fragment a link may name in the markdown file at `path` (repo-relative),
+    lower-cased."""
+    if path not in _ANCHORS:
+        try:
+            lines = (REPO_ROOT / path).read_text(encoding="utf-8").split("\n")
+        except (OSError, UnicodeDecodeError):
+            lines = []
+        _ANCHORS[path] = anchors_of(lines)
+    return _ANCHORS[path]
+
+
+def anchors_of(lines: list[str]) -> set[str]:
+    """The fragments the markdown `lines` render, lower-cased."""
+    out: set[str] = set()
+    seen: dict[str, int] = {}
+
+    def add(heading: str) -> None:
+        base = slug(heading)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out.add(base if n == 0 else f"{base}-{n}")
+
+    fenced = fence_mask(lines)
+    for k, line in enumerate(lines):
+        if fenced[k]:
+            continue
+        out.update(a.lower() for a in HTML_ID.findall(line))
+        m = ATX_HEADING.match(line)
+        if m:
+            text = m.group(2) or ""
+            attr = re.search(r"\s*\{#([^}\s]+)\}$", text)     # `{#id}`: an anchor declared by hand
+            if attr:
+                out.add(attr.group(1).lower())
+                text = text[:attr.start()]
+            add(text)
+        elif line.strip() and not line.lstrip().startswith(("|", "-", "*", ">", "<")) \
+                and k + 1 < len(lines) and not fenced[k + 1] \
+                and SETEXT_UNDERLINE.match(lines[k + 1]) \
+                and not (k > 0 and ATX_HEADING.match(lines[k - 1])):
+            add(line)
+    return out
+
+
+def dead_fragment(target: str, suffix: str) -> str:
+    """The reason `suffix` names no anchor of the markdown file `target`, or ""."""
+    if not suffix.startswith("#") or not target.endswith(".md") \
+            or not (target in _ANCHORS or (REPO_ROOT / target).is_file()):
+        return ""
+    frag = unquote(suffix[1:])
+    if not frag or LINE_ANCHOR.match(frag) or frag.lower() in anchors(target):
+        return ""
+    return f"no heading #{frag} in {target}"
+
+
 def repair(raw: str, src: str, paths: set[str]) -> tuple[str | None, str]:
     """(new spelling or None, reason when None)."""
     path_part, suffix = split_target(raw)
+    if not path_part and suffix.startswith("#"):
+        return None, dead_fragment(src, suffix)
     if not is_rewritable(path_part) or path_part in SKIP_TARGETS:
         return None, ""
     if path_part[0] in "<{" or path_part.endswith("doc/claude/LIBRARIES.md") \
@@ -106,7 +191,7 @@ def repair(raw: str, src: str, paths: set[str]) -> tuple[str | None, str]:
     src_dir = os.path.dirname(src)
     resolved = os.path.normpath(os.path.join(src_dir, path_part))
     if (REPO_ROOT / resolved).exists():
-        return None, ""
+        return None, dead_fragment(resolved, suffix)
     named = [x for x in path_part.split("/") if x not in ("", ".", "..")]
     found, n = candidates(resolved, paths)
     if not found:
@@ -127,7 +212,7 @@ def scan(path: str, text: str, paths: set[str]) -> tuple[str, list]:
     # Code spans can wrap, so they are found per paragraph: a run of
     # non-blank lines outside a fence.
     para: list[int] = []
-    in_fence = False
+    fenced = fence_mask(lines)
 
     def flush() -> None:
         if not para:
@@ -167,11 +252,8 @@ def scan(path: str, text: str, paths: set[str]) -> tuple[str, list]:
         para.clear()
 
     for k, line in enumerate(lines):
-        if FENCE.match(line):
+        if fenced[k]:
             flush()
-            in_fence = not in_fence
-            continue
-        if in_fence:
             continue
         if line.strip() == "":
             flush()
@@ -179,6 +261,41 @@ def scan(path: str, text: str, paths: set[str]) -> tuple[str, list]:
         para.append(k)
     flush()
     return "\n".join(lines), found
+
+
+def self_test() -> int:
+    """The checks this tool makes, each asked of a case whose answer is known, so a green
+    `every_markdown_link_resolves` is evidence the fragment check can still go red."""
+    bad = []
+
+    def expect(what, got, want):
+        if got != want:
+            bad.append(f"{what}: got {got!r}, want {want!r}")
+
+    # GitHub's slugs, as github.com renders them.
+    for heading, want in [
+        ("Native Function Registry (`src/native.rs`)", "native-function-registry-srcnativers"),
+        ("Execution timeout (`LOFT_TIMEOUT` / `--timeout`)", "execution-timeout-loft_timeout----timeout"),
+        ("I4 — Parser first pass: parse `<T: Bound>` syntax", "i4--parser-first-pass-parse-t-bound-syntax"),
+        ("See [the guide](x.md) and <b>bold</b>", "see-the-guide-and-bold"),
+    ]:
+        expect(f"slug({heading!r})", slug(heading), want)
+    # CommonMark fences: a closer is bare, the same character, at least as long.
+    text = ["a", "```", "x", "```", "b", "```", "```html", "c", "```", "d", "~~~~", "~~~", "e"]
+    expect("fence_mask", [t for t, m in zip(text, fence_mask(text)) if not m], ["a", "b", "d"])
+    doc = ["# Title", "## Same", "## Same", "## Custom {#my-id}", '<a id="Raw"></a>',
+           "Setext", "------", "```", "## In a fence", "```"]
+    expect("anchors_of", anchors_of(doc),
+           {"title", "same", "same-1", "custom", "my-id", "raw", "setext"})
+    # The scan flags a dead same-file fragment and passes a live one.
+    fake = "doc/claude/__self_test__.md"
+    _ANCHORS[fake] = anchors_of(doc)
+    _, found = scan(fake, "[ok](#same-1) [dead](#gone) [line](#L12)", set())
+    expect("scan", [(t, bool(w)) for _, t, _, w in found], [("#gone", True)])
+    for b in bad:
+        print(f"  self-test FAILED  {b}")
+    print("self-test: " + ("ok" if not bad else f"{len(bad)} failed"))
+    return 1 if bad else 0
 
 
 def in_scope(path: str) -> bool:
@@ -190,7 +307,11 @@ def in_scope(path: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the slug, fence and fragment rules against known answers")
     a = ap.parse_args()
+    if a.self_test:
+        return self_test()
 
     files = tracked_files()
     paths = all_paths(files)

@@ -86,7 +86,7 @@ doc/claude/LOFT.md	timeline	34
 doc/claude/LOGGER.md	timeline	5
 doc/claude/NATIVE.md	history	3
 doc/claude/NATIVE.md	size	1
-doc/claude/NATIVE.md	timeline	45
+doc/claude/NATIVE.md	timeline	46
 doc/claude/NATIVE.md	two-h1	2
 doc/claude/NATIVE_SWITCHES.md	timeline	19
 doc/claude/OWNERSHIP_MODEL.md	timeline	29
@@ -99,7 +99,7 @@ doc/claude/PERFORMANCE.md	size	1
 doc/claude/PERFORMANCE.md	timeline	92
 doc/claude/PERF_PORTAL.md	timeline	192
 doc/claude/PKG_REGISTRY.md	size	1
-doc/claude/PKG_REGISTRY.md	timeline	37
+doc/claude/PKG_REGISTRY.md	timeline	38
 doc/claude/PLANNING.md	size	1
 doc/claude/PLANNING.md	timeline	30
 doc/claude/PROBLEMS.md	size	1
@@ -219,7 +219,6 @@ doc/claude/plans/_TEMPLATE.md	two-h1	1
 doc/claude/plans/finished/03-native-moros-editor/03-panel.md	two-h1	1
 doc/claude/plans/finished/06-typed-par/ARC.md	size	1
 doc/claude/plans/finished/06-typed-par/DESIGN.md	size	1
-doc/claude/plans/finished/35-branch-review-viewer/README.md	two-h1	1
 doc/claude/presentations/audience-generative-art/README.md	timeline	5
 doc/claude/presentations/par/PAR_PRESENTATION.md	timeline	26
 doc/claude/presentations/par/PAR_PRESENTATION_SLIDES.md	timeline	1
