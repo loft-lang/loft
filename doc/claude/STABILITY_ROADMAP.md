@@ -160,12 +160,24 @@ re-ask them.**
    above sit on three.  So the perf axis changes no priority; it only keeps its
    measurement honest (the two items above: the gate wired, the census in the pass).
 
-**Left alone, deliberately.**  The interpreter's speed — 3.5–16× behind CPython, 50–500×
-behind native (PERFORMANCE.md § Benchmark results) — is the debug and oracle lane, not what
-ships; the only change owed there is the two PERFORMANCE.md sections that still call it
-"already fast".  And the October → November → December order in the directive above
-stands; this read adds the perf meter, the null re-cut and the two gate repairs to it,
-and takes nothing out.
+**Sequenced, not dropped: the interpreter (owner, 2026-09-28).**  The interpreter's
+speed — 3.5–16× behind CPython, 50–500× behind native (PERFORMANCE.md § Benchmark
+results) — waits until compiled speed is at the bar, and then it is looked at.  It will not
+measure up to compiled code and is not asked to; what it IS asked is to use **the same
+efficient data access as the compiled version**.  Today every access rewrite
+([NATIVE_SWITCHES.md](NATIVE_SWITCHES.md): the hoisted vector header, element bases and
+record addresses, loop-local buffers, counted pushes, guarded reads) is generation-time,
+so the runtime helpers they call (`get_elem_hoisted` and its kin in `src/vector.rs`) are
+reached only from `src/generation/` while the interpreter runs the unrewritten ops through
+`src/fill.rs` with a `DbRef` walk per access.  The target is that those rewrites become
+BYTECODE-level — a hoisted base or a cached record address the interpreter carries as an
+operand — so both backends call one helper and one fix serves both; P1 (superinstructions)
+and P2 (the stack pointer cache) in PERFORMANCE.md § Improvement priority order are the
+existing homes, and P2's "low priority" reads as "after the native bar", not "never".  The
+two PERFORMANCE.md sections that still call the interpreter "already fast" are owed a
+correction now, whatever the sequence.  The October → November → December order in the
+directive above stands; this read adds the perf meter, the null re-cut, the two gate
+repairs and the interpreter's place in the sequence, and takes nothing out.
 
 ## The wide-release bar — what must be true before loft goes to many people
 
