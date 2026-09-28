@@ -2248,7 +2248,16 @@ ci: ci-guard
 	#      Not mirrored in ci.yml because a shared runner's timing is noise
 	#      (CI_BUDGET.md § What a GitHub run cannot do), and a timing gate that
 	#      flakes is a gate people learn to ignore.  Red here: `make
-	#      native-ratio-gate` alone before believing it.
+	#      native-ratio-gate` alone before believing it.  ~40 s.
+	#      ⚠ The bars are RATIOS, and a ratio is machine-bound: the oracle's rows
+	#      were measured on the owner's x86-64 laptop (bench/README.md § The row
+	#      protocol).  Another CPU can read a row over its bar REPEATABLY — a cloud
+	#      Xeon @ 2.80GHz read sum_loop 3.1/3.5 against 2.3, collatz 3.7/4.1 against
+	#      2.5 and sort 3.5/3.4 against 3.1 on two consecutive runs (2026-09-28),
+	#      with sieve, mandelbrot and dot_product at their laptop values.  So a red
+	#      row on a box the bars were not set on is a CALIBRATION question, not a
+	#      regression in the diff: read the table as the report it also is, and
+	#      raise it rather than re-blessing the oracle on that box.
 	# The `Browser build + probe` (gallery) job is intentionally not
 	# mirrored here: it requires wasm-pack + node + a clean network and
 	# is heavy enough that local devs run `make gallery` separately when

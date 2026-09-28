@@ -67,6 +67,11 @@ every ratio to within about 1 % (the threaded row to about 4 %).  A spread above
 `scripts/native_ratio.sh` (`make native-ratio`) reads the same rows against the per-routine
 bars in `ratio_oracle.tsv`; `--gate` (`make native-ratio-gate`, and the last step of the
 local `make ci`) fails a ratio over its bar.  The bars are ratcheted DOWN as the ratios fall.
+A ratio is machine-bound, and the bars are the owner's x86-64 laptop's: on another CPU a row
+can sit over its bar repeatably (a cloud Xeon read `sum_loop` at 3.1–3.5 against 2.3 and
+`collatz` at 3.7–4.1 against 2.5, twice, while `sieve` and `mandelbrot` read as on the
+laptop), which is a calibration question to raise, never a reason to re-bless the oracle
+on that box.
 
 ## The portal: where we stand, by class
 
