@@ -47,7 +47,7 @@ The change waits on **loft-ffi 0.1.2 on crates.io** (the release workflow's `car
 covers the `loft` crate only; loft-ffi is published by hand) — until then a library cannot
 pin it, so the branch carries a `[patch.crates-io]` to the in-tree crate for the testbed run,
 to be dropped at publish (the imaging fixture's precedent).  The branch is
-`174-f5-crypto-foreign` in the `loft-libs-core` clone (local, unpushed — the owner's call).
+`174-f5-crypto-foreign` on `loft-lang/loft-libs-core` (pushed 2026-09-28, no PR).
 **Measured (2026-09-28, `--native-release`, the perf-branch bench, `--n 20`, two runs
 each):** the `base64_to_bytes` row answers hash `273f96a` with the copying library and
 with the foreign one, at 11.40–11.51 µs per 4 KiB decode either way — the row does NOT
