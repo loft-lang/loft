@@ -7900,6 +7900,14 @@ extern crate loft;"
             }
             let attrs = def.attributes().to_vec();
             for a in &attrs {
+                // A `virtual(…)` field is computed on every read and has NO store slot —
+                // `fill_database` (src/typedef.rs) skips it, and `init()` must register the
+                // same table or every field NUMBER after the interpreter's differs from the
+                // emitted offsets (an append to a vector field then targets the wrong slot
+                // or panics on a non-structure — the second reference walk of @PLN176).
+                if a.constant {
+                    continue;
+                }
                 // Resolve field's content dep and recurse inline
                 // before the field is emitted — parse-time
                 // `fill_database` does the same via recursive content
@@ -8804,6 +8812,10 @@ extern crate loft;"
             writeln!(w, "    db.field({s_var}, \"enum\", byte_enum);")?;
         }
         for a in def.attributes() {
+            // Computed (`virtual`) fields have no slot — see `emit_def_create_recurse_fields`.
+            if a.constant {
+                continue;
+            }
             let is_coll = is_collection_field(&a.typedef);
             let emit = match phase {
                 FieldPhase::AllFields => true,

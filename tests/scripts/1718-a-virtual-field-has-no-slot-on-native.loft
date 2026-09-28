@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1718 (`@FR-L-Struct`) — A `virtual(…)` FIELD HAS NO SLOT, ON BOTH BACKENDS.  The
+// interpreter's `fill_database` skips the computed marker when it packs a record; the native
+// `init()` registered it as a stored field, so every field NUMBER after it in the runtime
+// table was one off the numbering the emitted code was compiled against: an append to a
+// vector field declared BEFORE the virtual one landed in the wrong slot (`len` read 0) and
+// one declared AFTER it panicked on a non-structure.  Each cell puts the virtual field at a
+// different position relative to a vector, a nullable text and a scalar, and asserts value
+// AND length AND the computed read.
+//
+// @falsified-at: 9a76922 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1718-a-virtual-field-has-no-slot-on-native.patch — the same channels.
+// CHANNEL: the asserts on both backends (native exit 101 on the panic cell before the fix).
+// HOLDS: the control (a stored default beside the vector, no virtual field) passes on both.
+
+struct Cell { id: integer }
+
+struct Before { cells: vector<Cell>, x: float, area: float virtual($.x * 2.0) }
+struct After { x: float, area: float virtual($.x * 2.0), cells: vector<Cell> }
+struct Between { cells: vector<Cell>, x: float, area: float virtual($.x * 2.0), note: text?, n: integer }
+struct Scalars { x: float, area: float virtual($.x * 2.0), n: integer, note: text? }
+struct Control { cells: vector<Cell>, x: float, half: float = 0.75, note: text? }
+
+fn main() {
+  b = Before { x: 1.5 };
+  b.cells += [Cell { id: 9 }];
+  b.cells += [Cell { id: 10 }];
+  assert(len(b.cells) == 2, "vector before the virtual field: length {len(b.cells)}");
+  assert(b.cells[1].id == 10, "vector before the virtual field: the element");
+  assert(b.area == 3.0, "vector before the virtual field: the computed read {b.area}");
+
+  a = After { x: 2.5 };
+  a.cells += [Cell { id: 11 }];
+  assert(len(a.cells) == 1, "vector after the virtual field: length {len(a.cells)}");
+  assert(a.cells[0].id == 11, "vector after the virtual field: the element");
+  assert(a.area == 5.0, "vector after the virtual field: the computed read {a.area}");
+
+  m = Between { x: 0.5, n: 7 };
+  m.cells += [Cell { id: 12 }];
+  assert(len(m.cells) == 1 and m.cells[0].id == 12, "virtual between vector and text: the vector");
+  assert(m.note == null, "virtual between vector and text: the null text reads null");
+  assert(m.n == 7, "virtual between vector and text: the scalar after it");
+  m.note = "set";
+  assert(m.note == "set" and m.n == 7, "virtual between vector and text: a text write beside the scalar");
+  assert(m.area == 1.0, "virtual between vector and text: the computed read {m.area}");
+
+  s = Scalars { x: 4.0, n: 3 };
+  assert(s.n == 3 and s.note == null and s.area == 8.0, "scalars after the virtual field");
+  s.n += 1;
+  s.note = "t";
+  assert(s.n == 4 and s.note == "t" and s.x == 4.0, "writes after the virtual field land in their own slots");
+
+  c = Control { x: 1.0 };
+  c.cells += [Cell { id: 13 }];
+  assert(len(c.cells) == 1 and c.half == 0.75 and c.note == null, "control: a stored default beside the vector");
+  println("ok");
+}
