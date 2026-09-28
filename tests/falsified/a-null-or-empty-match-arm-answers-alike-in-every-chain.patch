@@ -1,0 +1,354 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 811a8b3ec..4aa7a0881 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -446,6 +446,14 @@ struct PatternArm {
+     code: Value,
+ }
+ 
++/// Assemble collected [`PatternArm`]s into the match's if-chain, last arm first.
++///
++/// A guarded arm lowers to `if <cond> { <bindings>; if <guard> { <body> } else { <rest> } }
++/// else { <rest> }` — captures assigned once, inside the branch their pattern already
++/// selected, before the guard reads them.  The `<rest>` appears twice, as it does in the
++/// enum arm chain this mirrors; only an arm that actually carries a guard pays for it.
++/// Bindings are never duplicated: a slice arm's are a `..name` materialisation and a PEG
++/// cursor advance, neither of which survives being run twice.
+ /// Is this arm or branch body a `null` — written bare (`0 => null`) or as a BLOCK
+ /// (`0 => { null }`)?
+ ///
+@@ -460,9 +468,8 @@ struct PatternArm {
+ ///
+ /// ⚠ Do NOT fold this together with `Parser::arm_is_null`, which looks similar and answers a
+ /// DIFFERENT question.  That one also counts `OpNullRefSentinel` — the shape a null arm has
+-/// AFTER this repair has run — because its callers (the return-delivery selectors
+-/// `tail_if_has_null_arm` and `tail_nonnull_arm_count`) run later in the pipeline and have to
+-/// recognise the repaired form.  This one runs BEFORE the repair
++/// AFTER this repair has run — because its caller (@PLN85's slice materialisation) runs later
++/// in the pipeline and has to recognise the repaired form.  This one runs BEFORE the repair
+ /// and must match only unrepaired nulls; teaching it the sentinel would make it re-repair its
+ /// own output.  Two predicates, two lifecycle stages, measured to disagree exactly once over
+ /// the 858-program corpus — and that one disagreement is the nested-block tail `arm_is_null`
+@@ -500,14 +507,6 @@ fn set_arm_null_typed(code: &mut Value, typed_null: &Value, result_type: &Type)
+     }
+ }
+ 
+-/// Assemble collected [`PatternArm`]s into the match's if-chain, last arm first.
+-///
+-/// A guarded arm lowers to `if <cond> { <bindings>; if <guard> { <body> } else { <rest> } }
+-/// else { <rest> }` — captures assigned once, inside the branch their pattern already
+-/// selected, before the guard reads them.  The `<rest>` appears twice, as it does in the
+-/// enum arm chain this mirrors; only an arm that actually carries a guard pays for it.
+-/// Bindings are never duplicated: a slice arm's are a `..name` materialisation and a PEG
+-/// cursor advance, neither of which survives being run twice.
+ fn chain_pattern_arms(arms: Vec<PatternArm>, fallback: Value, result_type: &Type) -> Value {
+     // The fn-ref widening `build_scalar_chain` does for a scalar subject, for the
+     // pattern subject: an enum arm yielding a non-capturing lambda is the same bare
+@@ -2923,9 +2922,9 @@ impl Parser {
+                 // @P377 / S1: collapse `cv = inner_call(...); cv` so the inner
+                 // call's hidden buffer arg points at cv directly.
+                 self.nrvo_collapse_tail_set(l, &ws);
+-                // NOTE: no arm reaching this delivery is a bare `null`: a `[]` arm is typed
+-                // by the sibling hint and builds a real vector, and a `null` arm is the
+-                // result type's typed null (`Parser::type_null_arms`).
++                // NOTE: a `[]`/empty slice arm is already a REAL fresh vector here —
++                // `parse_vector_match::materialize_null_slice_arms` rewrote it before
++                // this delivery, so there is no bare `null` arm left to handle.
+                 true
+             }
+             Delivery::CopyBorrow(ls) => {
+@@ -5820,8 +5819,8 @@ impl Parser {
+                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
+                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
+-                self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-                if Self::match_result_unsettled(&result_type) {
++                self.match_void_arm |= matches!(arm_type, Type::Void);
++                if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
+                     result_type = arm_type.clone();
+                 } else if let Some(joined) =
+                     self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
+@@ -6381,8 +6380,8 @@ impl Parser {
+             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
+-            self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-            if Self::match_result_unsettled(&result_type) {
++            self.match_void_arm |= matches!(arm_type, Type::Void);
++            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
+                 result_type = arm_type.clone();
+             } else if let Some(joined) =
+                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
+@@ -6518,11 +6517,29 @@ impl Parser {
+         let base = if matches!(result_type, Type::Void | Type::Null) {
+             Value::Null
+         } else {
+-            for arm in arms.iter_mut().filter(|a| arm_body_is_null(&a.code)) {
++            let typed_null = self.null_value(&result_type);
++            for arm in &mut arms {
++                let null_body = match &arm.code {
++                    Value::Null => true,
++                    Value::Block(bl) => bl
++                        .operators
++                        .last()
++                        .is_some_and(|o| matches!(o, Value::Null)),
++                    _ => false,
++                };
++                if !null_body {
++                    continue;
++                }
++                match &mut arm.code {
++                    Value::Block(bl) => {
++                        let last = bl.operators.len() - 1;
++                        bl.operators[last] = typed_null.clone();
++                        bl.result = result_type.clone();
++                    }
++                    _ => arm.code = typed_null.clone(),
++                }
+                 arm.tp = result_type.clone();
+             }
+-            self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+-            let typed_null = self.null_value(&result_type);
+             // Seed the chain base with the typed null too: an exhaustive enum
+             // match's innermost else is unreachable, but codegen still emits it
+             // and it must balance the value-sized stack slot the arms push.
+@@ -6627,11 +6644,18 @@ impl Parser {
+         result_type
+     }
+ 
++    /// Parse a wildcard (`_`) arm in a match expression.
++    /// Returns the arm and whether it is exhaustive (no guard).
+     /// The type a match arm is expected to answer in: what the arms have agreed on so
+     /// far, or `Unknown` while nothing is settled yet.
++    ///
++    /// `Void` and `Null` are "not settled": a `null`-first arm must not pin the result
++    /// (`match c { false => null, true => S{…} }` answers `S`), and a `Void` result is
++    /// either the initial value or a statement `match` whose arms yield nothing — the
++    /// same "expect nothing" an `else if` chain passes down for a `Void` then arm.
+     fn match_arm_expected(result_type: &Type) -> Type {
+         if result_type.is_unknown()
+-            || Self::match_result_unsettled(result_type)
++            || matches!(result_type, Type::Void | Type::Null | Type::Never)
+             || Self::tuple_has_null_member(result_type)
+         {
+             Type::Unknown(0)
+@@ -6694,15 +6718,7 @@ impl Parser {
+             expected
+         };
+         let at = self.lexer.pos().clone();
+-        // A bare arm is a block arm without the braces, so its value is hinted the way a
+-        // block tail's is: without it an empty `[]` arm had no element type to build with and
+-        // lowered to the placeholder `Insert([Null])`, which the chain emitted as a jump over
+-        // nothing — the arm after it fell through into the placeholder's null and answered
+-        // null (interpreter), or rustc refused the `()` (native).  `0 => { [] }` was right.
+-        let saved_expected = self.expected.clone();
+-        self.seed_leaving_value_hint(expected);
+         let t = self.expression(arm_code);
+-        self.expected = saved_expected;
+         self.arm_convert_reported = false;
+         if self.first_pass || expected.is_unknown() {
+             return t;
+@@ -6757,50 +6773,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Whether a match's running result type is still UNSETTLED, so the next arm's type takes
+-    /// it over instead of joining with it.  The one home for the question every arm site asks
+-    /// — seven sites re-asked it with their own subset, and the ones missing `Null` let a
+-    /// `null` first arm pin the whole chain to `Null`: every later arm then answered null,
+-    /// silently, on both backends (loft#1711).
+-    ///
+-    /// `Void`, `Null` and `Never` settle nothing: a `null` arm lowers to the result type's
+-    /// null once the result is known (`match c { false => null, true => S{…} }` answers `S`),
+-    /// a diverging arm answers no value, and a `Void` result is either the initial value or a
+-    /// statement `match` whose arms yield nothing — the same "expect nothing" an `else if`
+-    /// chain passes down for a `Void` then arm.
+-    fn match_result_unsettled(result_type: &Type) -> bool {
+-        matches!(result_type.base(), Type::Void | Type::Null | Type::Never)
+-    }
+-
+-    /// Give every `null` arm of a value-producing match chain the result type's typed null.
+-    /// The one home for the repair, asked by every chain kind — scalar, enum, tuple and
+-    /// vector subjects.
+-    ///
+-    /// A bare `null` arm (`0 => null`, or `{ null }`) parses to `Value::Null`, which pushes
+-    /// NOTHING, while its siblings push a value; the if-chain join then reads a value-sized
+-    /// slot one arm never wrote.  Held at two of the four chain kinds, the tuple and vector
+-    /// chains kept the bare null, and on the interpreter the arm AFTER it fell through into
+-    /// the join's padding and answered null (loft#1711).  `null_value` and not `null`
+-    /// (loft#936): `null` is also a variable's default-init, which answers a bare
+-    /// `Value::Null` for the whole collection family.  A no-op for a `Void`/`Null` result,
+-    /// where the match is a statement and nothing is read.
+-    fn type_null_arms<'a>(
+-        &mut self,
+-        codes: impl Iterator<Item = &'a mut Value>,
+-        result_type: &Type,
+-    ) {
+-        if matches!(result_type.base(), Type::Void | Type::Null) {
+-            return;
+-        }
+-        let mut typed_null = None;
+-        for code in codes.filter(|c| arm_body_is_null(c)) {
+-            let typed_null = typed_null.get_or_insert_with(|| self.null_value(result_type));
+-            set_arm_null_typed(code, typed_null, result_type);
+-        }
+-    }
+-
+-    /// Parse a wildcard (`_`) arm in a match expression.
+-    /// Returns the arm and whether it is exhaustive (no guard).
+     fn parse_match_wildcard_arm(&mut self, result_type: &mut Type) -> (EnumArm, bool) {
+         let guard_opt = self.parse_optional_guard();
+         // @FR-M-Total — `total(pat if cond) = false`: a guard can reject after the pattern has
+@@ -6814,8 +6786,8 @@ impl Parser {
+         // loft#978 — see the arm sites above: the wildcard is an arm like any other.
+         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
+         *result_type = joined;
+-        self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-        if Self::match_result_unsettled(result_type) {
++        self.match_void_arm |= matches!(arm_type, Type::Void);
++        if matches!(result_type.base(), Type::Void | Type::Never) {
+             *result_type = arm_type.clone();
+         } else if let Some(joined) =
+             self.join_null_tuple_arm(&result_type.clone(), &mut arm_code, &mut arm_type)
+@@ -6911,7 +6883,7 @@ impl Parser {
+         let arm_expected = Self::match_arm_expected(result_type);
+         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
+-        if Self::match_result_unsettled(result_type) {
++        if matches!(result_type.base(), Type::Void | Type::Never) {
+             *result_type = arm_type;
+         }
+         let (guard, exhaustive) = if field_conditions.is_empty() {
+@@ -9971,8 +9943,8 @@ impl Parser {
+             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
+-            self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-            if Self::match_result_unsettled(&result_type) {
++            self.match_void_arm |= matches!(arm_type, Type::Void);
++            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
+                 result_type = arm_type.clone();
+             } else if let Some(joined) =
+                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
+@@ -11085,8 +11057,8 @@ impl Parser {
+             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
+-            self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-            if Self::match_result_unsettled(&result_type) {
++            self.match_void_arm |= matches!(arm_type, Type::Void);
++            if matches!(result_type.base(), Type::Void | Type::Never) {
+                 result_type = arm_type.clone();
+             } else if let Some(joined) =
+                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
+@@ -11145,13 +11117,25 @@ impl Parser {
+         }
+ 
+         // Build if-else chain from arms
+-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+         let fallback = if has_wildcard {
+             arms.pop().unwrap().code
+         } else {
+             self.null_value(&result_type)
+         };
+-        let chain = chain_pattern_arms(arms, fallback, &result_type);
++        let mut chain = chain_pattern_arms(arms, fallback, &result_type);
++        // @PLN85 — a bare `[]` arm (`_ => []`) lowers to a `null` of the result type, which the
++        // native backend emits as `()` where a vector (`DbRef`) is expected.  In a RETURN context
++        // the delivery renames it onto `__retbuf`; but when the match value is BOUND to a local
++        // (`cap = match v { … , _ => [] }`, copy-on-bind in `parse_assign_op`) the copy's
++        // `OpAppendVector(cap, <match>)` needs every arm to be a real vector.  Materialise each
++        // null arm as a FRESH empty vector — ONLY when the match RESULT is a vector (a
++        // cursor/prefix match that returns a struct/scalar, `[ n: rule ] => …, _ => null`, keeps
++        // its genuine `null` arm; the result's OWN element type is used, not the subject's).
++        if !self.first_pass
++            && let Type::Vector(result_elm, _) = result_type.clone()
++        {
++            self.materialize_null_slice_arms(&mut chain, &result_elm);
++        }
+         let mut block_ops = vec![v_set(v, subject)];
+         block_ops.append(&mut prechain);
+         block_ops.push(chain);
+@@ -11454,8 +11438,8 @@ impl Parser {
+             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
+-            self.match_void_arm |= matches!(arm_type.base(), Type::Void);
+-            if Self::match_result_unsettled(&result_type) {
++            self.match_void_arm |= matches!(arm_type, Type::Void);
++            if result_type == Type::Void {
+                 result_type = arm_type.clone();
+             } else if let Some(joined) =
+                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
+@@ -11504,7 +11488,6 @@ impl Parser {
+         self.lexer.token("}");
+ 
+         // Build if-else chain (last arm is fallback / wildcard)
+-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+         let fallback = if has_wildcard {
+             arms.pop().unwrap().code
+         } else {
+@@ -11574,7 +11557,12 @@ impl Parser {
+         // this one tested only the bare form, so `match n { 0 => { null }, _ => { [n] } }`
+         // answered null for EVERY n while the bare-arm spelling of the same function was
+         // right — a wrong value with no diagnostic, on both backends.
+-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.1), result_type);
++        if arms.iter().any(|a| arm_body_is_null(&a.1)) {
++            let typed_null = self.null_value(result_type);
++            for arm in arms.iter_mut().filter(|a| arm_body_is_null(&a.1)) {
++                set_arm_null_typed(&mut arm.1, &typed_null, result_type);
++            }
++        }
+         // The same repair one width up, for the fn-ref result type.  A non-capturing
+         // lambda arm is a bare `Value::Int(d_nr)` — eight bytes — where the join reads
+         // the full twenty-byte fn-ref, so the arms of one choice leave different depths
+@@ -14789,6 +14777,49 @@ impl Parser {
+         }
+     }
+ 
++    /// @PLN85 — rewrite each `null` arm of a slice-match tail to a FRESH empty vector
++    /// (`{ OpDatabase(o); o }`), so a `[]` arm bound to a local (whose copy-on-bind
++    /// appends the whole match value) is a real `DbRef`, not a bare `null` native emits
++    /// as `()`.  Descends `if`/block/insert; a non-null arm is left untouched.
++    fn materialize_null_slice_arms(&mut self, tail: &mut Value, elm_tp: &Type) {
++        match tail {
++            Value::Span(b) => self.materialize_null_slice_arms(&mut b.1, elm_tp),
++            Value::Return(inner) | Value::Drop(inner) => {
++                self.materialize_null_slice_arms(inner, elm_tp);
++            }
++            Value::Block(bl) => {
++                if let Some(last) = bl.operators.last_mut() {
++                    self.materialize_null_slice_arms(last, elm_tp);
++                }
++            }
++            Value::Insert(ops) => {
++                if let Some(last) = ops.last_mut() {
++                    self.materialize_null_slice_arms(last, elm_tp);
++                }
++            }
++            Value::If(_, t, f) => {
++                self.rewrite_null_arm_fresh(t, elm_tp);
++                self.rewrite_null_arm_fresh(f, elm_tp);
++            }
++            _ => {}
++        }
++    }
++
++    fn rewrite_null_arm_fresh(&mut self, arm: &mut Value, elm_tp: &Type) {
++        if self.arm_is_null(arm) {
++            let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
++            let o = self.create_unique("empty_arm", &vec_tp);
++            if o != u16::MAX {
++                self.vars.defined(o);
++                let mut ops = self.vector_db(&vec_tp, o);
++                ops.push(Value::Var(o));
++                *arm = Value::Insert(ops);
++            }
++        } else {
++            self.materialize_null_slice_arms(arm, elm_tp);
++        }
++    }
++
+     /// #425 — if the return tail is a projection of a container held by a variable
+     /// (a struct/enum FIELD `OpGetField(Var(base), …)`, or a TUPLE element
+     /// `TupleGet(base, i)`, possibly wrapped in `Return`/`Block`), return the base var

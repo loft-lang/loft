@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match` whose value is a vector answers what an `if` chain answers, whatever the SUBJECT
+// kind: a `null` arm delivers null (`!v` is true), a `[]` arm an empty vector (`!v` is false),
+// and every other arm its own value.  `(H-RefNull)`, `(N-Store)`: a null stored into a
+// non-null slot is the slot's null, never a quietly allocated empty collection.
+//
+// Four lowerings build the chain — scalar, enum, tuple and vector subjects — and each held its
+// own copy of two questions (loft#1711):
+//   * is the result type still unsettled, so the next arm's type takes over?  The tuple site
+//     asked `Void` only and the vector site `Void | Never`, so a FIRST `null` arm pinned the
+//     chain to `Null` and every later arm answered null, both backends.
+//   * does a `null` arm get the result type's typed null?  Only the scalar and enum chains
+//     repaired it; in the tuple chain the arm AFTER a bare null fell into the join's padding
+//     and answered null on the interpreter.
+// A bare `0 => []` arm also parsed without its siblings' type, so it lowered to an untyped
+// placeholder: the next arm fell through to null (interpreter), rustc refused the `()`
+// (native) — while `0 => { [] }` was right.  And the vector chain rewrote a `null` arm into a
+// fresh `[]`, the one chain whose null arm was not null.
+//
+// Axes: subject kind (scalar, tuple, vector — the enum chain is the reference's twin and has
+// its own guards) × arm spelling (`null`, `[]`) × position (first arm, middle arm) × which arm
+// runs, plus the `if` chain as the reference and a BOUND match (`cap = match …`), the context
+// the vector chain's rewrite was written for.
+//
+// @falsified-at: 0d01a971f — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-null-or-empty-match-arm-answers-alike-in-every-chain.patch — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+// HOLDS: the `if` reference cells and the scalar null-arm cells pass on the interpreter on both
+// trees; native's control exit is rustc refusing the untyped `[]` arm, so it scores the whole
+// file, not a cell.
+
+fn sn_first(n: integer) -> vector<integer> { match n { 0 => null, 1 => [9], _ => [n] } }
+fn sn_mid(n: integer) -> vector<integer> { match n { 1 => [9], 0 => null, _ => [n] } }
+fn se_first(n: integer) -> vector<integer> { match n { 0 => [], 1 => [9], _ => [n] } }
+fn se_mid(n: integer) -> vector<integer> { match n { 1 => [9], 0 => [], _ => [n] } }
+
+fn tn_first(t: (integer, integer)) -> vector<integer> { match t { (0,_) => null, (1,_) => [9], (a,_) => [a] } }
+fn tn_mid(t: (integer, integer)) -> vector<integer> { match t { (1,_) => [9], (0,_) => null, (a,_) => [a] } }
+fn te_first(t: (integer, integer)) -> vector<integer> { match t { (0,_) => [], (1,_) => [9], (a,_) => [a] } }
+fn te_mid(t: (integer, integer)) -> vector<integer> { match t { (1,_) => [9], (0,_) => [], (a,_) => [a] } }
+fn tn_block(t: (integer, integer)) -> vector<integer> { match t { (0,_) => { null }, (a,_) => { [a] } } }
+
+fn vn_first(v: vector<integer>) -> vector<integer> { match v { [0] => null, [1] => [9], _ => [len(v) + 4] } }
+fn vn_mid(v: vector<integer>) -> vector<integer> { match v { [1] => [9], [0] => null, _ => [len(v) + 4] } }
+fn ve_first(v: vector<integer>) -> vector<integer> { match v { [0] => [], [1] => [9], _ => [len(v) + 4] } }
+fn ve_mid(v: vector<integer>) -> vector<integer> { match v { [1] => [9], [0] => [], _ => [len(v) + 4] } }
+
+fn in_mid(n: integer) -> vector<integer> { if n == 1 { [9] } else if n == 0 { null } else { [n] } }
+fn ie_mid(n: integer) -> vector<integer> { if n == 1 { [9] } else if n == 0 { [] } else { [n] } }
+
+// What a result IS, in one text: its rendering, whether it is null, and its length.
+fn shape(r: vector<integer>) -> text { "{r}/{!r}/{len(r)}" }
+
+fn test_the_if_chain_reference() {
+  assert(shape(in_mid(0)) == "null/true/0", "if: null arm, got {shape(in_mid(0))}");
+  assert(shape(in_mid(5)) == "[5]/false/1", "if: arm after null, got {shape(in_mid(5))}");
+  assert(shape(ie_mid(0)) == "[]/false/0", "if: [] arm, got {shape(ie_mid(0))}");
+  assert(shape(ie_mid(5)) == "[5]/false/1", "if: arm after [], got {shape(ie_mid(5))}");
+}
+
+fn test_scalar_subject() {
+  assert(shape(sn_first(0)) == "null/true/0", "scalar null-first null arm, got {shape(sn_first(0))}");
+  assert(shape(sn_first(1)) == "[9]/false/1", "scalar null-first next arm, got {shape(sn_first(1))}");
+  assert(shape(sn_mid(5)) == "[5]/false/1", "scalar null-mid last arm, got {shape(sn_mid(5))}");
+  assert(shape(se_first(0)) == "[]/false/0", "scalar []-first [] arm, got {shape(se_first(0))}");
+  assert(shape(se_mid(0)) == "[]/false/0", "scalar []-mid [] arm, got {shape(se_mid(0))}");
+  assert(shape(se_mid(5)) == "[5]/false/1", "scalar []-mid arm after it, got {shape(se_mid(5))}");
+}
+
+fn test_tuple_subject() {
+  assert(shape(tn_first((0, 7))) == "null/true/0", "tuple null-first null arm, got {shape(tn_first((0, 7)))}");
+  assert(shape(tn_first((1, 7))) == "[9]/false/1", "tuple null-first next arm, got {shape(tn_first((1, 7)))}");
+  assert(shape(tn_first((5, 7))) == "[5]/false/1", "tuple null-first last arm, got {shape(tn_first((5, 7)))}");
+  assert(shape(tn_mid((0, 7))) == "null/true/0", "tuple null-mid null arm, got {shape(tn_mid((0, 7)))}");
+  assert(shape(tn_mid((5, 7))) == "[5]/false/1", "tuple null-mid arm after it, got {shape(tn_mid((5, 7)))}");
+  assert(shape(te_first((0, 7))) == "[]/false/0", "tuple []-first [] arm, got {shape(te_first((0, 7)))}");
+  assert(shape(te_mid((0, 7))) == "[]/false/0", "tuple []-mid [] arm, got {shape(te_mid((0, 7)))}");
+  assert(shape(te_mid((5, 7))) == "[5]/false/1", "tuple []-mid arm after it, got {shape(te_mid((5, 7)))}");
+  assert(shape(tn_block((4, 9))) == "[4]/false/1", "tuple block-bodied null-first, got {shape(tn_block((4, 9)))}");
+}
+
+fn test_vector_subject() {
+  assert(shape(vn_first([0])) == "null/true/0", "vector null-first null arm, got {shape(vn_first([0]))}");
+  assert(shape(vn_first([1])) == "[9]/false/1", "vector null-first next arm, got {shape(vn_first([1]))}");
+  assert(shape(vn_first([1, 2])) == "[6]/false/1", "vector null-first last arm, got {shape(vn_first([1, 2]))}");
+  assert(shape(vn_mid([0])) == "null/true/0", "vector null-mid null arm, got {shape(vn_mid([0]))}");
+  assert(shape(vn_mid([1, 2])) == "[6]/false/1", "vector null-mid arm after it, got {shape(vn_mid([1, 2]))}");
+  assert(shape(ve_first([0])) == "[]/false/0", "vector []-first [] arm, got {shape(ve_first([0]))}");
+  assert(shape(ve_mid([0])) == "[]/false/0", "vector []-mid [] arm, got {shape(ve_mid([0]))}");
+  assert(shape(ve_mid([1, 2])) == "[6]/false/1", "vector []-mid arm after it, got {shape(ve_mid([1, 2]))}");
+}
+
+fn bound_null(v: vector<integer>) -> text { cap = match v { [0] => null, [1] => [9], _ => [len(v)] }; shape(cap) }
+fn bound_empty(v: vector<integer>) -> text { cap = match v { [1] => [9], _ => [] }; cap += [7]; shape(cap) }
+
+fn test_a_bound_match_answers_as_the_returned_one() {
+  assert(bound_null([0]) == "null/true/0", "bound null arm, got {bound_null([0])}");
+  assert(bound_null([1]) == "[9]/false/1", "bound next arm, got {bound_null([1])}");
+  assert(bound_null([4, 4]) == "[2]/false/1", "bound last arm, got {bound_null([4, 4])}");
+  assert(bound_empty([0]) == "[7]/false/1", "bound [] arm then append, got {bound_empty([0])}");
+  assert(bound_empty([1]) == "[9,7]/false/2", "bound value arm then append, got {bound_empty([1])}");
+}
+
+fn test_many_calls_neither_leak_nor_accumulate() {
+  // Every third call takes the null arm, every third the [] arm, the rest build one element:
+  // 10 nulls, 10 empties and 10 one-element vectors sum to 10.
+  t = 0;
+  nulls = 0;
+  for i in 0..30 {
+    r = if i % 3 == 0 { tn_mid((0, i)) } else if i % 3 == 1 { te_mid((0, i)) } else { vn_first([i, i]) };
+    t += len(r);
+    if !r { nulls += 1; }
+  }
+  assert(t == 10, "ten one-element vectors sum to 10, got {t}");
+  assert(nulls == 10, "ten null arms, got {nulls}");
+}
