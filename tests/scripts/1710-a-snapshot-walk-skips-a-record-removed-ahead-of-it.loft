@@ -14,7 +14,8 @@
 // a doubled one and a freed one (NUL) each read differently.  Expected values are written beside
 // each cell; the records are k = 0..5 with v = "h{k}".
 //
-// @falsified-at: PENDING
+// @falsified-at: 198ac01e7 — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 16 assertion failures -> 0
+// @falsified-by: tests/falsified/1710-a-snapshot-walk-skips-a-record-removed-ahead-of-it.patch — the same channels.
 // CHANNEL: assertions.
 // HOLDS: every assertion passes on both backends on the cure tree.
 

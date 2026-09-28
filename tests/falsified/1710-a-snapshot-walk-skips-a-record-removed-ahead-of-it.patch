@@ -1,0 +1,202 @@
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index dbf3d9650..9afd4504a 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -1892,13 +1892,11 @@ impl Stores {
+                 crate::vector::scratch_tag(4),
+             );
+         }
+-        let scratch = DbRef {
++        DbRef {
+             store_nr: scratch_store,
+             rec: header_rec,
+             pos: 4,
+-        };
+-        self.live_scratches.push((*hash_ref, scratch));
+-        scratch
++        }
+     }
+ 
+     /// The `build_rec_scratch` sibling for elements that are `(record, offset)` pairs
+@@ -1946,59 +1944,11 @@ impl Stores {
+                 crate::vector::scratch_tag(8),
+             );
+         }
+-        let scratch = DbRef {
++        DbRef {
+             store_nr: scratch_store,
+             rec: header_rec,
+             pos: 4,
+-        };
+-        self.live_scratches.push((*hash_ref, scratch));
+-        scratch
+-    }
+-
+-    /// Take `elem`, just removed from the collection `coll`, out of every scratch a loop
+-    /// over `coll` is still walking (loft#1710, `@FR-I-For`): its entry becomes 0, which
+-    /// `vector::step_ordered` steps over.  A registered header is believed only while it
+-    /// is still a scratch header over `coll`'s store, for the reason
+-    /// [`Self::free_iteration_scratch`] gives; one that is not is forgotten.
+-    pub(crate) fn forget_in_scratches(&mut self, coll: &DbRef, elem: &DbRef) {
+-        if self.live_scratches.is_empty() {
+-            return;
+         }
+-        let mut live = std::mem::take(&mut self.live_scratches);
+-        live.retain(|(source, scratch)| {
+-            if source != coll || scratch.store_nr as usize >= self.allocations.len() {
+-                return source != coll;
+-            }
+-            let store = &mut self.allocations[scratch.store_nr as usize];
+-            if store.free
+-                || !store.is_claimed_record(scratch.rec)
+-                || !crate::vector::is_scratch_header(store, scratch)
+-                || store.get_u32_raw(scratch.rec, scratch.pos + 4) as u16 != coll.store_nr
+-            {
+-                return false;
+-            }
+-            let vec_rec = store.get_u32_raw(scratch.rec, scratch.pos);
+-            if vec_rec == 0 || !store.is_claimed_record(vec_rec) {
+-                return false;
+-            }
+-            let tag = store.get_u32_raw(
+-                scratch.rec,
+-                scratch.pos + crate::vector::SCRATCH_TAG_FLD - 4,
+-            );
+-            let wide = tag & 0xFFFF == 8;
+-            let stride = if wide { 8 } else { 4 };
+-            let len = store.get_u32_raw(vec_rec, 4);
+-            for i in 0..len {
+-                let at = 8 + i * stride;
+-                if store.get_u32_raw(vec_rec, at) == elem.rec
+-                    && (!wide || store.get_u32_raw(vec_rec, at + 4) == elem.pos)
+-                {
+-                    store.set_u32_raw(vec_rec, at, 0);
+-                }
+-            }
+-            true
+-        });
+-        self.live_scratches = live;
+     }
+ 
+     /// Release an iteration scratch at loop exit — the counterpart of
+@@ -2036,7 +1986,6 @@ impl Stores {
+     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
+     /// behaviour for those cases, never worse.
+     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
+-        self.live_scratches.retain(|(_, live)| live != scratch);
+         if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
+             return;
+         }
+@@ -2332,7 +2281,6 @@ impl Stores {
+             lazy_sources: std::collections::HashMap::new(),
+             lazy_errors: std::collections::HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: (self.allocations.len() + scratch_stores) as u16,
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index 5bec45531..c713a9f6b 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -418,17 +418,6 @@ pub struct Stores {
+     /// meaning is "reachable, genuinely no such key". A trie bound to a paged
+     /// source then looked healthy and answered null forever.
+     pub(crate) paged_refusal: Option<String>,
+-    /// Every `on = 4` iteration scratch a loop is still walking, beside the collection it
+-    /// snapshots: `(collection, scratch header)`.  Registered by the scratch builders and
+-    /// dropped by [`Stores::free_iteration_scratch`].
+-    ///
+-    /// A snapshot walk holds record numbers, so a record removed from the collection ahead
+-    /// of the cursor was still yielded — a freed record read as data (loft#1710).  The
+-    /// removal consults this list and zeroes the record's entry in each scratch of that
+-    /// collection, and `vector::step_ordered` steps over a zeroed entry, so the walk sees
+-    /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
+-    /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
+-    pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
+     /// `None` when none is.
+     ///
+@@ -713,7 +702,6 @@ impl Clone for Stores {
+             lazy_sources: HashMap::new(),
+             lazy_errors: HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: self.max,
+@@ -1471,7 +1459,6 @@ impl Stores {
+             lazy_sources: HashMap::new(),
+             lazy_errors: HashMap::new(),
+             paged_refusal: None,
+-            live_scratches: Vec::new(),
+             lazy_driver_allocs: None,
+             files: Vec::new(),
+             max: 0,
+diff --git b/src/database/search.rs a/src/database/search.rs
+index b6bd91f87..57b4b825e 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -1139,13 +1139,6 @@ impl Stores {
+         {
+             return 0;
+         }
+-        // A loop over a snapshot kind may be walking this collection (loft#1710).
+-        if matches!(
+-            kind,
+-            RemoveKind::Hash | RemoveKind::Trie | RemoveKind::Radix
+-        ) {
+-            self.forget_in_scratches(data, rec);
+-        }
+         match kind {
+             // BY-VALUE: elements sit inline in the container, so the element's
+             // byte position IS its index.
+diff --git b/src/vector.rs a/src/vector.rs
+index 5dfa22a26..3883911f0 100644
+--- b/src/vector.rs
++++ a/src/vector.rs
+@@ -2062,29 +2062,22 @@ pub fn step_ordered(
+     };
+     let wide = tag & SCRATCH_MARK_MASK == SCRATCH_MARK && tag & 0xFFFF == 8;
+     let stride: u16 = if wide { 8 } else { 4 };
+-    let vector = store.collection_rec(data.rec, data.pos);
+     let mut pos = cur as i32;
+-    // A sourced scratch's entry is 0 once its record left the collection mid-walk
+-    // (`Stores::forget_in_scratches`, loft#1710); step over it.
+-    let (rec, elem_pos) = loop {
+-        if reverse {
+-            vector_prev(data, &mut pos, stride, stores);
+-        } else {
+-            vector_next(data, &mut pos, stride, stores);
+-        }
+-        let found = if pos == i32::MAX {
+-            (0, 8)
+-        } else if wide {
+-            (
+-                store.get_u32_raw(vector, pos as u32),
+-                store.get_u32_raw(vector, pos as u32 + 4),
+-            )
+-        } else {
+-            (store.get_u32_raw(vector, pos as u32), 8)
+-        };
+-        if pos == i32::MAX || found.0 != 0 || !sourced {
+-            break found;
+-        }
++    if reverse {
++        vector_prev(data, &mut pos, stride, stores);
++    } else {
++        vector_next(data, &mut pos, stride, stores);
++    }
++    let vector = store.collection_rec(data.rec, data.pos);
++    let (rec, elem_pos) = if pos == i32::MAX {
++        (0, 8)
++    } else if wide {
++        (
++            store.get_u32_raw(vector, pos as u32),
++            store.get_u32_raw(vector, pos as u32 + 4),
++        )
++    } else {
++        (store.get_u32_raw(vector, pos as u32), 8)
+     };
+     let elem_store = if sourced {
+         store.get_u32_raw(data.rec, data.pos + 4) as u16
