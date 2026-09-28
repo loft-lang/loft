@@ -23,7 +23,8 @@ the 51 rewrites (`make rewrite-census` names a drop in any of them), the switch 
 complete, and the `(R-Const)` panic is loft#1729 / D-rw-6 (open — fix it, the copy road the
 rule names, before the PR).  Its § Order 2 is built: a growth is judged per STORE
 (`(R-Base)`'s growth clause, `hoist::StoreFacts`, `LOFT_NO_DISTINCT_GROWTH`), six bench
-functions gained bases.  The four functions the audit named need two further clauses, both
+functions gained bases: `bfs_flow` −27 %, `mesh_emit` −17 %, `sort_floats` −14 %, same hashes
+(`rules.md`'s decline table has the row).  The four functions the audit named need two further clauses, both
 in `rules.md`'s decline table: the heap-record rebind mint (`make_map`: `OpDatabase(ck, …)`
 on a fresh local blocks the hoist) and the "bound null" window (`panel_build`: a buffer
 pre-initialised null, minted later, takes no address).  Those are next.  The branch was A/B'd against

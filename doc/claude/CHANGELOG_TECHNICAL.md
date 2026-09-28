@@ -24,7 +24,10 @@ the switch, `LOFT_HOIST_VERIFY=1` the falsifier (under a sabotaged oracle it pan
 sibling-field cell the plain run answers right by luck).  Cells
 `tests/scripts/158-a-base-survives-a-growth-of-another-store.loft`; the pins that read "any
 growth, no base" (`vector_base`, `iteration_base`, `join_read`, `record_ptr`, `twin_base`)
-now pin the per-store truth with a same-store cell beside each.
+now pin the per-store truth with a same-store cell beside each.  Measured on the consumer
+lanes, old compiler against new, hashes identical: `bfs_flow` −27 % (1.65× → 1.20× of Rust),
+`mesh_emit` −17 % (3.30× → 2.73×), `sort_floats` −14 % (1.76× → 1.52×), `binary_map` −5 %,
+26 routines within noise.
 
 ### A package's loft floor holds on every path that adopts its manifest (2026-09-28)
 
