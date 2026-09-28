@@ -12,6 +12,14 @@
 //
 // Every value is hand-computed.  Each cell reads the value, the length and the null test, and
 // the loop cell calls each shape many times so a store kept per call shows as a leak.
+//
+// @falsified-at: 3d4f1036a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-nullable-vector-local-at-the-tail-keeps-its-writes.patch — the same channels.
+//   CHANNEL: the ASSERTS — `assigned(4)` answers null on the control tree.
+//   WITNESS: "assigned: [4, 5]" on --interpret; --native also panics in a store accessor.
+//   HOLDS: on --interpret the null-path and many-calls cells pass on both trees (one assert
+//   fails there, the value path's); no leak on either; every cell is clean under
+//   LOFT_STRICT_STORES and LOFT_POISON on this one.
 
 fn assigned(k: integer) -> vector<integer>? {
   v: vector<integer>? = null;

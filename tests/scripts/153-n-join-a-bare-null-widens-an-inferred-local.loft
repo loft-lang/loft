@@ -9,6 +9,12 @@
 // Every cell answers a hand-computed value on its null path AND on its value path, so a
 // widen that dropped the value or kept a stale one fails; the last cell proves the widen by
 // the declared store it reaches, which warns (`@FR-N-Store`).  No other report may appear.
+// @falsified-at: 3d4f1036a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/153-n-join-a-bare-null-widens-an-inferred-local.patch — the same channels.
+//   CHANNEL: the EXIT — the control refuses the inferred joins at pass 1, so it runs no cell.
+//   WITNESS: the "cannot hold both `null` and the non-null …" refusal.
+//   HOLDS: no leak and no panic on either tree; no cell's value is compared on the control.
+
 struct P { a: integer, n: text }
 
 fn int_after(k: integer) -> integer { x = k; if k > 5 { x = null; } x ?? -1 }

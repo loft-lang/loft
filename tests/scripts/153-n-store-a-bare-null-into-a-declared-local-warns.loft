@@ -15,6 +15,12 @@
 // The last three cells are a PLAIN enum at a field, an argument and a return: neither a
 // scalar nor a handle, it was asked by neither half of the report and took the `null` in
 // silence while the slot held it.
+// @falsified-at: 3d4f1036a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/153-n-store-a-bare-null-into-a-declared-local-warns.patch — the same channels.
+//   CHANNEL: the EXIT — the control refuses the declared locals at pass 1, so it runs no cell.
+//   WITNESS: the "cannot hold both `null` and the non-null …" refusal.
+//   HOLDS: no leak and no panic on either tree; no cell's value is compared on the control.
+
 struct S { n: integer }
 enum E { A, B }
 struct H { e: E }
