@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C96 — shipping is keyed on trust-root presence.
 
 //! `registry-sign.sh`'s scope check must tell a version's METADATA correction from a
 //! re-point of a version's BYTES.

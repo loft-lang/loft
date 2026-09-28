@@ -38,14 +38,18 @@ decide.
 
 ## C3 — WASM `par()` runs sequentially
 
-**Decision.** In the browser, `par()` runs its body sequentially; the native target keeps real
-parallelism.  **Why.** A Web Worker pool costs bundle size, ~50 ms cold start per worker and a
-`SharedArrayBuffer` that needs COOP/COEP headers most loft hosts do not send — and no shipping
-loft program is CPU-bound in the browser.
+**Decision.** Reopened and changed by @PLN117 (owner, finished): in the browser a program that uses
+`par` gets the THREADED runtime — Web Workers over a `SharedArrayBuffer` — and runs its bodies in
+parallel; `--threads` / `--no-threads` override the choice.  It runs `par` sequentially, with the
+same answer, where the threaded runtime is not available: a host that does not send the COOP/COEP
+headers, or a build without the nightly toolchain its atomics std needs (the build says so).
+**Why.** The original reasons — bundle size, worker start-up, COOP/COEP — became costs paid only by
+a page that uses `par`, and a page without the headers still runs.
 
-**Revisit when.** A loft program shows a browser CPU bottleneck that algorithmic work cannot
-remove, AND its host sends COOP/COEP headers — bring the profile.  Decided 2026-04 —
-[record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Revisit when.** The threaded runtime no longer needs a nightly toolchain to build.  Decided
+2026-04, changed by @PLN117 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
+**Holds at:** `@C3` — `tests/wasm/html-thread-proof.sh`, `tests/wasm/par-ui-responsive.sh` (the
+`browser-threads` workflow).
 **Catalogue:** @F33 (par), @F54 (WASM/browser target).
 
 ## C38 — Closure capture is copy-at-definition
@@ -70,6 +74,7 @@ suffixes would add lexer ambiguity and put the intent on the literal instead of 
 **Revisit when.** A real program needs a literal-size distinction `as <T>` cannot express
 reasonably ("Rust does it" is not evidence).  Decided 2026-04-13 —
 [record](DESIGN_DECISIONS-history.md#c54d--rust-style-numeric-literal-suffixes).
+**Holds at:** `@C54.D` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
 ## C62 — No type annotations in `|x|` shorthand lambdas
@@ -98,25 +103,27 @@ implementing nested `fn` would.  Decided 2026-05-04 —
 
 ## C64 — Tuple struct-ref elements use MOVE semantics (not copy + null)
 
-**Decision.** A struct-reference tuple element MOVES on destructure: each destination variable
-owns its element and frees it at its own scope exit; the source tuple frees nothing per element.
-**Why.** That is what the runtime already does, correctly on both backends; copy-then-null adds
-an opcode and a runtime write per destructure with no observable difference.
+**Decision.** Superseded by the binding rules.  A destructured tuple member binds as its TYPE
+binds: a plain struct member is a VIEW of the tuple's member (formal/binding.md `(B-View)` — a
+struct-typed projection names an interior place), a collection or `text` member is a COPY
+(`(B-Copy)`), and a `value struct` member a value.  The tuple stays whole; nothing moves.
+**Why.** The move this entry described is not what either backend does: after `(a, _) = t`, `t` is
+still read and a write through `a` reaches `t.0`, as `(B-View)` says it must.
 
-**Revisit when.** A shape appears where move is observably wrong and copy + null right.  Decided
-2026-05-11 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
-**Holds at:** `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
+**Revisit when.** `(B-View)` changes.  Decided 2026-05-11, superseded 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
+**Holds at:** `@C64` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`; `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
 **Catalogue:** @F11 (tuples).
 
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
-**Decision.** A tuple element of struct type is a reference (E5); there is no separate by-value
-struct element (E6).  **Why.** loft has no inline by-value struct type — a struct value is a
-`DbRef` to a store record — so an E6 row would duplicate E5 or need a new type variant with no
-consumer.
+**Decision.** Superseded by `value struct`.  A tuple element of a plain struct type is a reference
+to a record (E5), and of a `value struct` type a value (E6): destructuring, projecting or copying
+the tuple gives an independent value, on both backends.  **Why.** The entry's premise — loft has
+no inline by-value struct — ended with `value struct` (@PLN101), which was its own revisit trigger.
 
-**Revisit when.** A feature introduces inline value structs.  Decided 2026-05-11 —
-[record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
+**Revisit when.** Never for the fold; it no longer applies.  Decided 2026-05-11, superseded
+2026-09-28 — [record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
+**Holds at:** `@C65` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`.
 **Catalogue:** @F11 (tuples).
 
 ## C66 — Production loft programs never abort on user-attributable edge cases (development may halt)
@@ -456,6 +463,7 @@ remove the need for it.
 
 **Revisit when.** Never for tuple variants.  The "reads like grammar" bar applies to each PEG
 syntax choice.  Decided 2026-07-10 — [record](DESIGN_DECISIONS-history.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
+**Holds at:** `@C89` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 
 ## C90 — Each nullable scalar reserves ONE bit-pattern for null (the in-band sentinel residual; accepted, frozen)
 
@@ -471,17 +479,26 @@ collision sites are guarded.
 **Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
 **Holds at:** `tests/scripts/pln102-null-residual-golden.loft`.
 
-## C91 — `==` is value-by-value / reference-by-identity (bounded, never a reference-chase); `===` reserved for opt-in deep equality
+## C91 — `==` compares content for every type, cycles included; `&a == &b` asks identity
 
-**Decision.** `==`/`!=` compare value types (scalars, `text`, `value struct`, unit enums) by
-content over their own storage, and reference types (`struct`, `vector`, `hash`, `index`, …) by
-identity in O(1); neither ever follows a reference into another store.  `===`/`!==` are
-reserved for an explicit deep equality, which when built must be deep all the way down and
-cycle-safe.  A shallow hybrid `==` is rejected.  **Why.** `==` must be cheap and describable in
-one sentence; a shallow structural `==` is inconsistent in a way that depends on layout.
+**Decision.** `==`/`!=` compare CONTENT for every type — scalars, `text`, `struct`, `value struct`,
+vectors, tuples, keyed collections — recursively through what the value owns and through
+`reference<T>`, and terminate on cyclic values (a pair met again while it is being compared counts
+as equal).  Identity is asked in the source: `&a == &b` / `&a != &b` compare whether both name the
+same record; `&` on only one side is refused, and a scalar or `text` has no record to name.  That
+two operands are one record is only the fast path of content equality, never its meaning, and a
+`value struct` is a layout choice with the same `==`.  Key comparison and hashing in keyed
+collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
+identity `==` reported where a value is stored: `b = a; a == b` answered false, and
+`value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
+decided by what is written; how fast it is, by the compiler.  **Not built yet:** `==` on a plain
+struct still compares identity and `&a == &b` is still refused; the change follows its census
+(@PLN175).
 
-**Revisit when.** No trigger recorded; `===` ships when a consumer needs it.  Decided 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c91---is-value-by-value--reference-by-identity-bounded-never-a-reference-chase--reserved-for-opt-in-deep-equality).
-**Catalogue:** @F1 (null / equality), @F2 (operators). Closes the @PLN102 pre-freeze **F7** ("`ref ==` is identity, not structural — a decision"). Sibling of [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
+**Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
+identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
+and `&a == &b` 2026-09-28 (owner) — [record](DESIGN_DECISIONS-history.md#c91---is-value-by-value--reference-by-identity-bounded-never-a-reference-chase--reserved-for-opt-in-deep-equality).
+**Catalogue:** @F1 (null / equality), @F2 (operators). Sibling of [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
 
 ## C92 — Compound assignment evaluates its place expression exactly once
 
@@ -732,6 +749,7 @@ kinds; a generic `hole<T>` would drop the per-kind opt-in keeping non-literal va
 
 **Revisit when.** A multi-parameter keyed type has a use a record set cannot express.  Decided
 2026-08-11, revised 2026-09-21 by C126 — [record](DESIGN_DECISIONS-history.md#c110--a-generics-type-variable-stays-in-the-first-parameter-and-a-keyed-collection-stays-a-record-set).
+**Holds at:** `@C110` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
 ## C111 — a drop cascade reaches a container's death, not an element's removal
@@ -912,13 +930,14 @@ Remove `both` once no published version declares it.  Decided 2026-09-15 —
 
 **Decision.** A value-const value may reach a record or collection parameter only if it is declared
 `const` (including `fn(const T)` and builtin callbacks), and a `&` parameter never; judged by the
-SIGNATURE, never the callee's body.  The plain case is the gating warning
-`const-to-plain-parameter` until the shipped libraries mark their read-only parameters, then an
-error.  **Why.** What a line means is decided by what is written on it and the signatures it
+SIGNATURE, never the callee's body.  Both are errors; the plain case, `const-to-plain-parameter`,
+shipped as a warning until every shipped library had declared its read-only parameters `const`.
+**Why.** What a line means is decided by what is written on it and the signatures it
 names (C121); that a body does not write is a proof an optimisation may use, not a license.
 
 **Revisit when.** A read-only helper cannot be declared `const` — a gap in `const`'s syntax to
-close.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof).
+close.  Decided 2026-09-15, an error from 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof).
+**Holds at:** `@C124` — `./scripts/idx tag:@C124`.
 **Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
 
 ## C125 — The store model stays simple: performance work removes objects, it does not add a second kind of object
@@ -952,15 +971,17 @@ set of hole kinds.  Decided 2026-09-21 —
 **Decision.** A declared narrow range without `?` (`limit(lo, hi)` and the aliases
 `u8`/`i8`/`u16`/`i16`/`u32`) has no null: an unfitting value takes the type's DEFAULT — zero where
 the range holds it, else the bound nearest zero — for a local, field, element, parameter and return
-alike.  Where the author can be made to choose, the narrowing is refused (`?` or `?? d` cures it);
-elsewhere a warning says the default was used.  Plain `integer` and `i32` keep C85's sentinel — a
+alike.  Where the author can be made to choose, the narrowing is refused (`?`, `?? d` or `as T?`
+cures it) — a local, a parameter, a field, an element, a cast; the one shape it cannot ask about,
+a compound step (`x += 10`), carries the advice `narrow-fallback` — advice, because the default IS
+the promised answer (the two-tier rule).  Plain `integer` and `i32` keep C85's sentinel — a
 PRAGMATIC exemption, not a line to extend.  **Why.** Null-on-overflow depended on whether the range
 left a spare code, so two non-nullable declarations behaved oppositely.
 
 **Revisit when.** The `i32` exemption's cost changes (a program needs the full 32-bit range); that
 clause is one predicate.  Decided 2026-09-23 — [record](DESIGN_DECISIONS-history.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
-**Holds at:** `IntegerSpec::non_null_reads_null`;
+**Holds at:** `@C127` — `./scripts/idx tag:@C127`; `IntegerSpec::non_null_reads_null`;
 `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft`.
 
 ## C128 — a yielded lambda owns copies of what it captures

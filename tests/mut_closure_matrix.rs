@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C38 — closure capture is copy-at-definition (the e_d3_* cells).
 
 //! Plan-22 mutable-closures validation matrix.
 //!

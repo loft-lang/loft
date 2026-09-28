@@ -4010,7 +4010,10 @@ impl Parser {
             *ctp = base;
             return;
         }
-        let base = ctp.base().clone();
+        // @FR-B-Ref-Uniform — a `&τ?` parameter discharges like its `τ?` twin, so the default
+        // is the REFERENT's: through `peel_link`, as `??` peels the link.  Asked through
+        // `base()`, `c?` on a `&vector<T>?` was refused with "`&vector<T>?` has no default".
+        let base = ctp.peel_link().clone();
         // The single well-definedness check (the home `S{}` shares): a bare reference,
         // or a record with an un-defaulted non-null field or a bare enum field with no
         // explicit choice, has no default.  `x?` needing one there is a COMPILE error —

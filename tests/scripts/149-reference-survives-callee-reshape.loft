@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C79 — ownership is internal; a refusal only where `&` cannot be honoured.
 //
 // @PLN130 F9 / loft#779 — the programs the reshape refusal must NOT swallow.
 //

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C71 — native libraries compile, scripts interpret.
 
 //! @PLN166 B3 — the source-keyed native fast path: a native run of an unchanged program
 //! execs its cached binary without parsing, and NOTHING that would change the binary is

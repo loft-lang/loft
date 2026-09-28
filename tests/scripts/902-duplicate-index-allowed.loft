@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C113 — a different key, struct or kind stays legal.
 //
 // The scope of loft#902's refusal, from the other side: what two `index` collections
 // over one element type are still allowed to be, and that each still works.

@@ -1245,6 +1245,10 @@ pub struct Parser {
     /// context — parsing it standalone leaks).  `build_null_coalesce_default` swaps the
     /// lexer to this source at its own parse site, so `x?` matches `x ?? []` exactly.
     pub(crate) pending_default_src: Option<String>,
+    /// @C118 — the slot a NULL collection local is given before a `c = &a` bind shares its
+    /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
+    /// placed before its statement by `parse_assign_op`; empty between binds.
+    pub(crate) pending_link_slot: Vec<Value>,
     /// loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion
     /// span.  Set as the default is parsed and consumed by `handle_null_coalesce`, because
     /// the notice fires before the default exists and the caller's cursor has moved past
@@ -1779,6 +1783,7 @@ impl Parser {
             admit_unwrap: 0,
             pending_default_rhs: None,
             pending_default_src: None,
+            pending_link_slot: Vec::new(),
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
@@ -4300,8 +4305,9 @@ impl Parser {
     /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
     /// judged from the call and the declaration it names (C121), while a proof that a body does
     /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
-    /// (plan 40's rule 4); a plain one is the gating warning `const-to-plain-parameter`, C124's
-    /// rollout (owner, 2026-09-15), whose cure is in the message.
+    /// (plan 40's rule 4), and so is a plain one, `const-to-plain-parameter` (@C124): the
+    /// warning that rolled it out ended once every shipped library declared its read-only
+    /// parameters `const`.  The cure is in the message.
     ///
     /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
     /// links exactly as its dense twin does, so it is asked through `base()`.
@@ -4348,7 +4354,7 @@ impl Parser {
                 let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
                      `const`: its value is read-only, and a plain parameter names the caller's \
@@ -4380,7 +4386,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {} of {label}, whose function type does not \
                      declare it `const`: its value is read-only, and a plain parameter names the \
@@ -4407,7 +4413,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
                      `const`: their value is read-only, and a plain parameter names the caller's \
@@ -5577,6 +5583,7 @@ impl Parser {
         } else {
             Self::is_narrowing_int_store(is_type, should)
         } && !self.is_null_source(code);
+        // A value that may not fit a narrow slot is refused where the author can choose (@C127).
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);
@@ -6113,7 +6120,16 @@ impl Parser {
                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
                     // field encoding from here on (`Variable::linked_narrow`).
                     self.vars.set_linked_narrow(v);
-                    *code = self.cl("OpCreateStack", &[orig]);
+                    // @C118 — a null collection local is given its slot before the callee
+                    // links to it, or an append in the callee has no place to land.
+                    let mut ls = self.null_local_slot(v);
+                    let create = self.cl("OpCreateStack", &[orig]);
+                    *code = if ls.is_empty() {
+                        create
+                    } else {
+                        ls.push(create);
+                        Value::Insert(ls)
+                    };
                 } else if crate::data::is_scalar(ref_tp)
                     && Self::is_amp_place(&orig, &self.data)
                     && let Some(place) = self.scalar_place_ref(&orig)
@@ -15224,6 +15240,22 @@ impl Parser {
                 && let Some(eq) = self.value_struct_eq(d, list, op == "!=")
             {
                 *code = eq;
+                return Type::Boolean;
+            }
+            // Two references to one struct type compare the records they name, absent ones
+            // included (`OpEqRef` answers two absent as equal).  With either side optional no
+            // `OpEqRef` candidate matched, and the loop below took `OpEqBool` over two
+            // presence tests — so two present references to DIFFERENT records compared equal.
+            // The presence test is right only against the `null` literal, whose type is
+            // `Null`, not `Reference` (@C91).
+            if (op == "==" || op == "!=")
+                && list.len() == 2
+                && let (Type::Reference(da, _), Type::Reference(db, _)) =
+                    (types[0].base(), types[1].base())
+                && da == db
+                && (matches!(types[0], Type::Optional(_)) || matches!(types[1], Type::Optional(_)))
+            {
+                *code = self.cl(if op == "==" { "OpEqRef" } else { "OpNeRef" }, list);
                 return Type::Boolean;
             }
             let mut possible = Vec::new();

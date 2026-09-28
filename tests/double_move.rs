@@ -53,6 +53,7 @@ fn lint_command() -> Command {
 }
 
 /// The default refuses the lint's own canonical shape before the lint can warn about it.
+/// @C121 — a copy of a droppable takes its own lease or is refused.
 #[test]
 fn the_lease_errors_refuse_a_double_move_first() {
     let src = format!(

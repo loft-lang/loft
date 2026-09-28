@@ -45,6 +45,13 @@ trace.
 
 ---
 
+
+**Changed by @PLN117 (2026-09-28 note, @PLN175).**  The browser runs `par` on Web Workers since
+@PLN117 ("Browser multi-threading", finished): `--html` builds the threaded runtime for a program
+that uses `par` and falls back to the sequential one — saying so — when the nightly toolchain its
+atomics std needs is missing.  The plan changed this decision without the register saying so; the
+walk found it and the entry now states the current rule.
+
 ## C38 — Closure capture is copy-at-definition
 
 **Catalogue:** @F22 (closures & lambdas).
@@ -301,6 +308,13 @@ in the move/copy axis.
 
 ---
 
+
+**Superseded 2026-09-28 (@PLN175).**  Measured on both backends: after `(a, _) = t` with a struct
+member, `t` is still read and a write through `a` reaches `t.0` — the member is a VIEW, from a
+local, a call return, a vector element, a struct field and a loop variable alike, while a vector
+member is a copy.  That is `(B-View)` / `(B-Copy)` (formal/binding.md), not the move this entry
+described; the entry now points at those rules.
+
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
 **Catalogue:** @F11 (tuples).
@@ -327,6 +341,11 @@ matrix in `00-matrix.md` marks every E6 cell as
 value structs (none on the roadmap) would re-open the row.
 
 ---
+
+
+**Superseded 2026-09-28 (@PLN175).**  This entry's revisit trigger — "a feature introduces inline
+value structs" — fired with `value struct` (@PLN101).  Measured on both backends: a `value struct`
+tuple member destructures, projects and copies as a value.
 
 ## C66 — Production loft programs never abort on user-attributable edge cases (development may halt)
 
@@ -1962,6 +1981,15 @@ disagreeing) — remain defects and keep their guards: what changes is the value
 must agree ON, from null to the type's default.  Uniformity across local, field, element,
 parameter and return is the part that was right.
 
+
+**Corrected 2026-09-28 (@PLN175): the report is advice, as the two-tier rule decides.**  The entry
+said a warning reports the default; the code gives the advice `narrow-fallback`, on purpose
+(`src/keys.rs`): a diagnostic gates only when ignoring it can produce a wrong answer, and the
+default is the answer this decision promises.  Measured over the routes into a `u8` slot: a local,
+a parameter, a field, an element and an explicit `as` are all refused; a compound step on a local,
+a field or an element takes the default and carries the advice.  No route was found that reaches
+the default without one of the two.  Guards: `tests/scripts/c127-*.loft`.
+
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)
 
 **Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).
@@ -2327,6 +2355,20 @@ The deciding constraints (owner, 2026-07-13): **`==` must be quick — never an 
 - **`==` / `!=`** — value types (`integer`, `float`, `single`, `character`, `boolean`, `text`, `value struct`, unit enum) compare **by value/content**, bounded by the value's own storage and **never chasing a reference into another store**; reference types (`struct`, `vector`, `hash`, `index`, …) compare **by identity**, O(1). One uniform rule; part of the contract-1 freeze.
 - **`===` / `!==`** — RESERVED for opt-in **deep structural** equality (recurse through references, all the way down). Not shipped by this decision — the contract (that deep equality is a distinct, explicit, more-expensive operator, never the `==` default) is fixed now; `===` itself ships when a consumer needs it. When built it MUST be **consistently deep** (recurse into everything — a shallow `===` reintroduces the inconsistency this decision rejects) and **cycle-safe** (reference structs can form cycles; a naive deep walk loops forever).
 - **Rejected:** a shallow/hybrid `==` (structural for a record's own fields, identity for nested references) — internally inconsistent and therefore dangerous, regardless of its speed.
+
+
+**Amended 2026-09-28 (owner): content everywhere, and identity is spelled `&a == &b`.**  Walking
+C91 under @PLN175 found `===` was never reserved (`a === b` lexed as `==` then `=` and failed
+naming `OpEqInt`) and measured what the identity `==` did under C86's copy semantics, on both
+backends: `b = a; a == b` answered **false**, two equal plain structs answered false, two equal
+`value struct`s answered true, and vectors had no `==` at all.  So `==` reported how a value is
+stored, and a layout keyword changed a program's meaning.  The owner's rulings, in order: `===`
+is a patch other languages put over a `==` that means the wrong thing, so none; semantics and
+speed are kept apart, so `==` compares content for every type — `reference<T>` included, with
+identity only as the fast path and cyclic values compared coinductively; and because loft
+answers a construction with syntax, identity is asked as `&a == &b`, which reuses `&`'s one
+meaning (the link, not the value) and was refused before, so giving it a meaning only loosens.
+The census of `==` whose answer this changes is recorded with the change that builds it.
 
 ## C92 — Compound assignment evaluates its place expression exactly once
 
@@ -4154,6 +4196,14 @@ parameters to mark `const`:
 | Moros-Economy-Development | `cmp_f` · `a` / `b`, `direct_chain` · `g` | `loft_planet/tests/14-workflow.loft` |
 
 The `&` spelling (D-bind-44) is refused as an error already: it had no call sites to migrate.
+
+**2026-09-28, the warning becomes the error (@PLN175).**  Re-measured with `loft --check` over this
+repository, the libraries and the consumer checkouts: the shipped libraries had declared their
+read-only parameters — `graphics` 0.9.3 already, `input` 0.2.1 published this day for
+`input_tick_from_state`'s `keys` — and dryopea and crawler no longer reach one.  What remains is a
+consumer's test file, Moros-Economy-Development `loft_planet/tests/14-workflow.loft` (`cmp_f` ·
+`a` / `b`, `direct_chain` · `g`, 13 calls), whose cure is in COMPATIBILITY.md.  So
+`const-to-plain-parameter` is an error, as this decision always said it would be.
 
 ### Function references and callbacks
 

@@ -546,8 +546,8 @@ fn function_name(param: type, other: type = default_value) -> return_type {
     it. Passing it to a `const` parameter is always allowed.
   - Passing it to a plain **record or collection parameter** is reported unless that parameter is
     declared `const` — decided by the signature, not by whether the callee happens to write
-    (DESIGN_DECISIONS.md C124). It is the warning `const-to-plain-parameter` for now, and becomes an
-    error once the shipped libraries declare their read-only parameters. A read-only helper says so: `fn total(v: const vector<T>)`. The
+    (DESIGN_DECISIONS.md C124): the error `const-to-plain-parameter`. A read-only helper says so:
+    `fn total(v: const vector<T>)`. The
     standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
     parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
     and scalar parameters take their own copy and are not affected.

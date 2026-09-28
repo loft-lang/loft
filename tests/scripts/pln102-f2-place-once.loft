@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN102 F2 (DESIGN_DECISIONS C92) — a compound assignment evaluates its place
+// @PLN102 F2 (DESIGN_DECISIONS @C92) — a compound assignment evaluates its place
 // EXACTLY ONCE.  Before the fix `w[idx()] += 5` called `idx()` twice (nested
 // `m[i()][j()]` four times), and a divergent index read one slot but wrote
 // another — a silent-wrong.  The place's non-idempotent addressing sub-expressions

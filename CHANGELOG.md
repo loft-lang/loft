@@ -62,6 +62,19 @@ on the way: a bind of a mapped vector (`w = m`) and a `par` loop over one crashe
 `vector<u8>` parameter rebound from its own slice (`p = p[1..3]`) copied eight bytes per
 element.
 
+**An append to an empty-by-`null` list lands however the list is reached.**  A
+`vector<T>?` or `hash<…>?` local holding `null` is filled by `c += [x]` — and now also when
+it is handed to a `&` parameter (`fn add(c: &vector<T>?)`), linked with `c = &a`, or set back
+to `null` after it held something (`r = null; r += [x]`).  Before, those appends were lost
+without a word (a `hash` stopped with an internal error), and a list rebuilt inside a loop
+could leave one store unreleased.  `c?` inside such a `&` parameter now gives the list's
+default like it does anywhere else, instead of being refused.
+
+**Setting a list to `null` reaches every name for it, and an absent list prints `null`.**
+With `c = &a`, `a = null` now makes `c` null too (and the other way round), for vectors and
+keyed collections alike; `s.h = null` on a `hash` field now leaves `s.h == null` true.  And
+`"{s.items}"` of an absent list prints `null`, not `[]`: an empty list still prints `[]`.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

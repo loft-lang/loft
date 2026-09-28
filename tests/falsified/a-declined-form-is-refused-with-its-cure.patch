@@ -1,0 +1,103 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index 17c073dcc..e23983c1b 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -2054,35 +2054,6 @@ impl Lexer {
+             };
+             self.ret_number(res, pos, false)
+         } else if let Ok(r) = val.parse::<u64>() {
+-            // An integer literal takes no suffix (@C54.D): its width comes from the binding
+-            // or parameter type, or from `as`.  A letter glued to one (`34u8`) is named here,
+-            // while the two are still adjacent, and consumed — left to the parser it was a
+-            // separate identifier and the reader was told a `;` was missing.
+-            // Not inside a format hole: a spec such as `{n:08x}` reads a width then a letter.
+-            if !self.in_format_expr
+-                && let Some(&c) = self.iter.peek()
+-                && c.is_ascii_alphabetic()
+-            {
+-                let mut bad = String::new();
+-                while let Some(&n) = self.iter.peek() {
+-                    if n.is_ascii_alphanumeric() || n == '_' {
+-                        bad.push(n);
+-                        self.next_char();
+-                    } else {
+-                        break;
+-                    }
+-                }
+-                let msg = if bad == "f" {
+-                    format!("`{val}f`: a `single` literal needs a decimal point — write `{val}.0f`")
+-                } else {
+-                    format!(
+-                        "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
+-                         where it goes: write `{val} as {bad}`, or give the binding the type \
+-                         (`x: {bad} = {val}`)"
+-                    )
+-                };
+-                self.err(Level::Error, &msg);
+-            }
+             self.ret_number(r, pos, val.starts_with('0'))
+         } else {
+             self.err(Level::Error, "Problem parsing number");
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index b7c42a778..63a2a9295 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -668,32 +668,6 @@ impl Parser {
+                     "Expect enum values to be in camel case style"
+                 );
+             }
+-            // A positional payload (`Ok(a)`) is declined (@C89): a variant carries NAMED
+-            // fields, read as `e.field`.  Said by name, then the parenthesised list is skipped
+-            // so the rest of the enum still parses.
+-            if self.lexer.peek_token("(") {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "a variant's payload is named fields — write `{value_name} {{ value: <type> }}` \
+-                     and read it as `e.value`; loft has no positional variants"
+-                );
+-                let mut depth = 0;
+-                loop {
+-                    if self.lexer.has_token("(") {
+-                        depth += 1;
+-                    } else if self.lexer.has_token(")") {
+-                        depth -= 1;
+-                        if depth == 0 {
+-                            break;
+-                        }
+-                    } else if self.lexer.peek().has == crate::lexer::LexItem::None {
+-                        break;
+-                    } else {
+-                        self.lexer.cont();
+-                    }
+-                }
+-            }
+             let v_nr = if self.first_pass {
+                 // A forward reference may already have left a stub under this name:
+                 // `Circle{ r: 2 }` written ABOVE `enum Shape { Circle { r: integer } }`
+@@ -4600,25 +4574,6 @@ impl Parser {
+     }
+ 
+     pub(crate) fn parse_fields(&mut self, directions: bool, result: &mut Vec<(String, bool)>) {
+-        // A second type argument (`hash<integer, text>`) is a key and a value, which a keyed
+-        // collection does not have (@C110): it holds records keyed on a named field.
+-        if self.lexer.peek_token(",") {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "a keyed collection holds records keyed on a named field, not a key type and a \
+-                 value type — declare `struct Row {{ key: …, value: … }}` and write \
+-                 `hash<Row[key]>`; there is no `hash<K, V>`"
+-            );
+-            while !self.lexer.peek_token(">")
+-                && !self.lexer.peek_token(">>")
+-                && self.lexer.peek().has != crate::lexer::LexItem::None
+-            {
+-                self.lexer.cont();
+-            }
+-            self.lexer.closing_angle();
+-            return;
+-        }
+         self.lexer.token("[");
+         loop {
+             let desc = self.lexer.has_token("-");

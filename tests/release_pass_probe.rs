@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C129 — the machine-dependent emission exists only behind LOFT_RELEASE_PASS_PROBE.
 //! `LOFT_RELEASE_PASS_PROBE=1` — the MEASUREMENT instrument for the eventual release build
-//! pass for games (DESIGN_DECISIONS.md C120, NATIVE.md § Optimisation tiers): every
+//! pass for games (DESIGN_DECISIONS.md @C120, NATIVE.md § Optimisation tiers): every
 //! integer `+`, `-`, `*` and non-literal division emits the processor's wrapping operator
 //! and every float comparison the plain one, so a row's time under it is the ceiling its
 //! checked build is measured against.  This pins that the probe changes the EMISSION and

@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `c = null` on a collection makes it ABSENT at every name that reaches it, and an absent
+// collection renders `null`.  Found walking @C118; each cell was silently wrong on both
+// backends and in 2026.9.0:
+//
+//   * a `&` link and its source (@FR-B-Ref-Alias): `a = null` left `c = &a` holding the old
+//     list, `d = null` left `b` holding it, and a refill through `d` then read 1 on one name
+//     and 0 on the other.  Both names reach ONE slot, so the null is written into it —
+//     emptied and marked ABSENT in place, as `s.items = null` writes a field's.  A keyed
+//     local's store IS the collection, so every keyed local takes that route; the sentinel it
+//     used to take also left the store released by nobody.
+//   * a keyed FIELD: `s.h = null` only cleared the collection, so `s.h == null` answered
+//     false.  The slot is now marked ABSENT as well.
+//   * `(F-Render)` — "a null of any type renders as the literal word `null`".  An absent
+//     field, captured local or linked local rendered `[]` while `== null` answered true: the
+//     renderer read the slot's empty list, not the slot's absence.  An EMPTY list still
+//     renders `[]`, which is the other half of the distinction.
+//
+// @falsified-at: 011933e76 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/a-null-written-to-a-collection-reaches-every-name-for-it.patch
+//   CHANNEL: the value channel — the first failing assertion.
+//   WITNESS: on the control `c == null` answers false after `a = null` (the first cell; the
+//   file stops there, so the later cells are not scored by this receipt).
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
+//   requires HERE to be clean, so all four are clean on both.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+
+struct Ln { k: integer, v: integer }
+struct Lh { k: integer, v: integer }
+struct Bx { items: vector<integer>?, h: hash<Lh[k]>?, n: integer }
+
+fn main() {
+  // ------------------------------------------------------------- a vector link, both ways
+  a: vector<Ln>? = [Ln { k: 1, v: 1 }];
+  c = &a;
+  a = null;
+  assert(a == null && c == null, "the source's null reaches the link");
+  b: vector<Ln>? = [Ln { k: 1, v: 1 }];
+  d = &b;
+  d = null;
+  assert(b == null && d == null, "the link's null reaches the source");
+  d += [Ln { k: 2, v: 20 }];
+  assert(len(b?) == 1 && len(d?) == 1 && b?[0].v == 20, "a refill through the link is one list");
+
+  // -------------------------------------------------------------- a keyed link, both ways
+  ka: hash<Lh[k]>? = [Lh { k: 1, v: 1 }];
+  kc = &ka;
+  ka = null;
+  assert(ka == null && kc == null, "a keyed source's null reaches the link");
+  kb: hash<Lh[k]>? = [Lh { k: 1, v: 1 }];
+  kd = &kb;
+  kd = null;
+  assert(kb == null && kd == null, "a keyed link's null reaches the source");
+  kd += [Lh { k: 3, v: 30 }];
+  assert(len(kb?) == 1 && kb?[3].v == 30, "a keyed refill through the link");
+
+  // ----------------------------------------------- a keyed local, nulled and refilled
+  h: hash<Lh[k]>? = [Lh { k: 1, v: 1 }];
+  for i in 0..10 { h += [Lh { k: i, v: i }]; h = null; }
+  assert(h == null, "filled and nulled on every pass ends null");
+  h += [Lh { k: 4, v: 40 }];
+  assert(len(h?) == 1 && h?[4].v == 40, "and fills again");
+
+  // ------------------------------------------------------------------- a keyed field
+  s = Bx { items: [5], h: [Lh { k: 1, v: 1 }], n: 3 };
+  s.h = null;
+  assert(s.h == null, "a keyed field set to null is null");
+  s.h += [Lh { k: 2, v: 2 }];
+  assert(len(s.h?) == 1, "and an append fills it again");
+
+  // ------------------------------------------------------ an absent collection renders null
+  s.items = null;
+  assert("{s.items}" == "null", "an absent field renders null: {s.items}");
+  w: vector<integer>? = null;
+  ew = &w;
+  assert("{ew}" == "null" && "{w}" == "null", "a linked absent local renders null: {ew}");
+  cap: vector<integer>? = null;
+  addc = fn(x: integer) { cap += [x]; };
+  assert("{cap}" == "null", "a captured absent local renders null: {cap}");
+  addc(6);
+  assert("{cap}" == "[6]", "and its contents once filled: {cap}");
+  e: vector<integer>? = [];
+  assert("{e}" == "[]" && e != null, "an EMPTY list is not absent: {e}");
+}

@@ -122,6 +122,7 @@ fn pln22_phase3_use_as_aliasing() {
 /// @PLN22 Phase 4 — grouped selective import `use lib::(a as x, b);`.  Parses a
 /// main file that imports two names from `enumlib` in one parenthesised group,
 /// with per-name aliases, and asserts both bind.
+/// @C76 — selective imports group with `()`.
 #[test]
 fn pln22_phase4_grouped_import() {
     let s = sep_str();
@@ -139,6 +140,7 @@ fn pln22_phase4_grouped_import() {
 
 /// @PLN22 Phase 4 — the flat comma list `use lib::a, b` is dropped; multiple
 /// names must be parenthesised.  Parsing the flat form must produce an error.
+/// @C76 — the flat comma list is refused.
 #[test]
 fn pln22_phase4_flat_list_rejected() {
     let s = sep_str();
@@ -164,6 +166,7 @@ fn pln22_phase4_flat_list_rejected() {
 /// it is module-scoped (reached as `c97_shadowlib::clamp`) and does NOT trigger the C95
 /// "Cannot redefine" error, while the bare name stays the stdlib's.  This is the fix that
 /// lets the stdlib grow without breaking a shipped library (the shapes/time break).
+/// @C97 — a library's public symbols live under its module.
 #[test]
 fn pln102_c97_library_may_define_a_stdlib_name() {
     let s = sep_str();
@@ -291,6 +294,7 @@ fn issue940_the_lint_has_an_opt_out() {
 /// @PLN13 C101 — `std`/`core` are reserved package names (a library may not claim a
 /// language-namespace name), and `std::name` is the stdlib's qualified form — the escape
 /// hatch that still reaches a stdlib symbol shadowed by a user def or a `use lib::*`.
+/// @C101 — `std`/`core` are reserved; `std::name` is the stdlib's qualified form.
 #[test]
 fn pln13_c101_reserved_names_and_std_qualifier() {
     // The canonical reserved list refuses the namespace names, admits ordinary ones.
@@ -480,6 +484,7 @@ fn an_unresolvable_call_names_the_package_that_declares_the_method() {
 /// Run on BOTH backends through the binary rather than parsed in-process: the
 /// resolution is the parser's, but the values are what a consumer sees, and
 /// only running proves the call did not silently answer the local.
+/// @C112 — a local may shadow a library function.
 #[test]
 fn pln102_c98_a_local_may_shadow_a_library_function() {
     let s = sep_str();

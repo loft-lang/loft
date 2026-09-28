@@ -205,6 +205,7 @@ impl crate::parser::Parser {
         self.narrow_fallback_advice(cand.spec, &cand.at);
     }
 
+    /// The report C127 promises for the one shape it cannot refuse, a compound step (@C127).
     fn narrow_fallback_advice(&mut self, spec: IntegerSpec, at: &crate::lexer::Position) {
         if !crate::keys::narrow_fallback_lint_enabled() {
             return;

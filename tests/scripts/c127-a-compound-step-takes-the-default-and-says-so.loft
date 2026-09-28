@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C127 — the one shape where the language cannot ask the author what an unfitting value should
+// become is a compound step on a narrow place (`x += 10`): the result takes the type's DEFAULT —
+// zero where the range holds it, else the bound nearest zero — and the step carries the advice
+// `narrow-fallback`.  Advice, not a warning: the default IS what the language promises, so
+// ignoring the report cannot produce an answer the language did not promise (the two-tier rule).
+// Every route where it can ask is refused: c127-where-the-language-can-ask-it-refuses-the-narrowing.loft.
+//
+// @falsified-by: tests/falsified/c127-a-compound-step-takes-the-default-and-says-so.patch — scored by hand
+//   (`falsify.sh` does not read warning pins and reports INERT): the control's `--tests` run FAILs
+//   "expected warnings not found for: c127_bound, c127_element, c127_field, c127_local"; this
+//   tree passes.
+//   CHANNEL: expectations (the advice pins).  ARMED: nothing.
+//   HOLDS: the four default answers (0, 0, 0, 1000) are the same on both — the advice is what moves.
+
+struct C127F { b: u8 }
+
+// @EXPECT_WARNING: a step past `0..255` takes this type's default, `0`
+fn c127_local() -> integer { x: u8 = 250; x += 10; x }
+
+// @EXPECT_WARNING: a step past `0..255` takes this type's default, `0`
+fn c127_field() -> integer { s = C127F { b: 250 }; s.b += 10; s.b }
+
+// @EXPECT_WARNING: a step past `0..255` takes this type's default, `0`
+fn c127_element() -> integer { v: vector<u8> = [250]; v[0] += 10; v[0] }
+
+// @EXPECT_WARNING: a step past `1000..1100` takes this type's default, `1000`
+fn c127_bound() -> integer { h: integer limit(1000, 1100) = 1050; h += 5000; h }
+
+fn main() {
+  assert(c127_local() == 0, "a local takes the default 0: {c127_local()}");
+  assert(c127_field() == 0, "a field takes the default 0: {c127_field()}");
+  assert(c127_element() == 0, "an element takes the default 0: {c127_element()}");
+  assert(c127_bound() == 1000, "a range without 0 takes the bound nearest 0: {c127_bound()}");
+}

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C121 — a copy of a droppable takes its own lease or is refused.
 
 //! @PLN163 P4 (`@FR-H-Copy-Lease`) — A COPY OF A TYPE THAT DECLARES `OpCopy` TAKES A LEASE.
 //!

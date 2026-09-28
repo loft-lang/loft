@@ -149,6 +149,7 @@ fn golden_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/layout/corpus.txt")
 }
 
+/// @C105 — a hash keeps its two reads — its persisted layout is pinned here.
 #[test]
 fn layout_golden() {
     let (data, db) = cached_default();

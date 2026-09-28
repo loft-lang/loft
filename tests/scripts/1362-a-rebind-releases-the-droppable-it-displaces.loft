@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C111 — an element's removal or overwrite does not run its drop.
 // `OpDrop` runs when the value's OWNER dies, and a reassignment is that death for the
 // record it displaces: the droppable itself, a struct or a struct-enum holding one, a
 // nullable local, a rebind to null, a call result, a right-hand side that reads the old

@@ -717,7 +717,7 @@ pub fn omitted_field_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OMITTED_FIELD"))
 }
 
-/// C127 — a compound step whose result does not fit a DECLARED narrow range takes that
+/// @C127 — a compound step whose result does not fit a DECLARED narrow range takes that
 /// type's DEFAULT, and nothing at the site says so.
 ///
 /// `x: u8 = 250; x += 10` answers `0`; `h: integer limit(1000, 1100) = 1050; h += 5000`

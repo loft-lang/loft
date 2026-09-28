@@ -18720,7 +18720,16 @@ impl Scopes<'_> {
                         .all(|v| Self::is_ref_materialisation(v, function, data))
                     && matches!(&ops[n - 1], Value::Call(d_nr, _)
                         if data.def(*d_nr).name == "OpCreateStack");
-                if is_a56_hoisted || is_p135_hoisted || is_p179_hoisted {
+                // @C118 — the slot a null collection local is given before a `&` links to
+                // it (`Parser::null_local_slot`): guarded mints of the variable the final
+                // `OpCreateStack` names.  They hoist like the materialisations above, so the
+                // argument stays the bare `OpCreateStack(Var)` native passes as `&mut`.
+                let is_slot_hoisted = n >= 2
+                    && matches!(&ops[n - 1], Value::Call(d_nr, a)
+                        if data.def(*d_nr).name == "OpCreateStack"
+                            && matches!(a.as_slice(), [Value::Var(v)]
+                                if ops[..n - 1].iter().all(|op| Self::is_null_slot_mint(op, *v, data))));
+                if is_a56_hoisted || is_p135_hoisted || is_p179_hoisted || is_slot_hoisted {
                     // @PLN90 / loft#506 — a computed-lvalue `&`-WRITE-BACK arg.  Capture
                     // `items[i]` into a FRESH OWNED temp (so the callee's write-back frees the
                     // COPY, never the caller's element), pass the temp, then copy the result
@@ -19160,6 +19169,15 @@ impl Scopes<'_> {
     /// either bare or wrapped with the overwrite-`OpFreeRef` a re-assigned work-ref
     /// carries (loft#745).  `scan_args` hoists these out of the argument so the
     /// work-ref lives at function scope and its slot survives the call.
+    /// The guarded mint `Parser::null_local_slot` emits for `var`:
+    /// `if OpRefIsNull(var) { … } else null`.
+    fn is_null_slot_mint(op: &Value, var: u16, data: &Data) -> bool {
+        matches!(op.unspan(), Value::If(test, _, _)
+            if matches!(test.unspan(), Value::Call(d_nr, a)
+                if data.def(*d_nr).name == "OpRefIsNull"
+                    && matches!(a.as_slice(), [Value::Var(t)] if *t == var)))
+    }
+
     fn is_ref_materialisation(v: &Value, function: &Function, data: &Data) -> bool {
         let writes_work_ref = |op: &Value| matches!(op, Value::Set(v_nr, _) if function.name(*v_nr).starts_with("__ref_"));
         match v {

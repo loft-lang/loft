@@ -877,7 +877,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
   declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
   the line and the signatures it names (C121), and a proof about a body stays an optimisation's
-  (C122).  **Built, as a WARNING first** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  (C122).  **Built, as a WARNING first — an error since 2026-09-28, when every shipped library had declared its read-only parameters** (`const-to-plain-parameter`, the owner's rollout: 102 call
   sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
   C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
   gate, reading the parameter's `const` from

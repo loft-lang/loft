@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C94 — `/` truncates, `%` takes the dividend's sign.
 //
 // INTEGER DIVISION TRUNCATES AND THE REMAINDER TAKES THE DIVIDEND'S SIGN.  `@FR-E-Op-IntDivMod`
 // (formal/operational.md) picks the C/Rust convention over the floor-toward-minus-infinity one

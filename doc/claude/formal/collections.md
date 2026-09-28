@@ -95,7 +95,10 @@ owns their *operations + order*).
 **An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
 vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an
 element or a parameter of a nullable collection type behaves the same, and so does every keyed
-kind (loft#1213 is the keyed FIELD half of it).  This is deliberately the opposite answer from
+kind (loft#1213 is the keyed FIELD half of it).  So does a LINK to a null local (a `&τ?`
+parameter, `c = &a`, a closure capture) and a local set back to `null`: each reaches the same
+slot, which the local is given, marked absent, before it is shared or re-nulled
+(`tests/scripts/c118-an-append-reaches-an-absent-collection-through-a-link.loft`).  This is deliberately the opposite answer from
 iteration: a `for` over a nullable collection is refused until discharged
 ([iteration.md](iteration.md)), because a loop body binds a dense element and the only way
 there is an unwrap, while an insert has no such binding — its only question is *which store*,

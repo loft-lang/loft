@@ -80,7 +80,7 @@ re-annotated to match.  No new keyword.
     view local rebound to a fresh value is still refused.
   - **Built 2026-09-15 — the plain-parameter half, by SIGNATURE (owner, DESIGN_DECISIONS.md C124),
     landing as the warning `const-to-plain-parameter` until the 17 library helpers C124 § Rollout
-    lists declare `const`.**
+    lists declare `const` — an error since 2026-09-28, when every shipped library had.**
     A value-const value reaches a record or collection parameter only when that parameter is
     declared `const`; the body is never read (C121), and a proof that a callee does not write stays
     an optimisation's (C122).  The parameter's `const` is carried on the definition's attribute

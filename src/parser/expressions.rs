@@ -3356,7 +3356,99 @@ use a separate collection or add after the loop"
         self.rebind_local_heap_param(code, op, to, var_nr);
         self.rebind_lowered = already;
         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
+        // @C118 — `r = null` on a vector LOCAL is a whole-value write of the ABSENT
+        // collection, so it takes the whole-value route `r = []` takes — a fresh backing —
+        // marked ABSENT, instead of the value-level null `convert` gives a null in flight.
+        // `vector::is_absent_collection` states why: a collection local is addressed AT its
+        // slot, so the value-level null "can never appear there", and one that did left the
+        // next append nowhere to land — `r = [x]; r = null; r += [y]` answered 0, directly,
+        // through a capture and through a `&` parameter.  A first bind keeps the sentinel: a
+        // local that starts null is given its slot where one is first needed.
+        //
+        // A `&`-LINKED vector local shares its slot with its partner (`amp_vector_locals`), so
+        // there the null is written INTO the shared slot, as `s.items = null` writes a field's:
+        // emptied and marked ABSENT in place.  A fresh backing would re-point one name and
+        // leave the other holding the old list (@FR-B-Ref-Alias).
+        //
+        // A KEYED local's store IS its collection, and a `&` link shares that store, so every
+        // keyed local takes the in-place route: a sentinel re-pointed only one name, and the
+        // store it let go of was released by nobody.
+        if op == "="
+            && let Value::Var(r) = *to.unspan()
+            && let Some(linked) = self.nulls_a_backed_collection_local(code, r)
+        {
+            #[allow(clippy::cast_possible_wrap)]
+            let absent = crate::keys::DbRef::ABSENT_REC as i32;
+            let keyed = crate::parser::vectors::is_keyed(self.vars.tp(r));
+            if keyed {
+                let kt = self.vars.tp(r).clone();
+                if let Some(kt) = self.keyed_known_type(&kt) {
+                    let clear =
+                        self.cl("OpClearKeyed", &[Value::Var(r), Value::Int(i32::from(kt))]);
+                    let mark = self.cl(
+                        "OpSetInt4",
+                        &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                    );
+                    let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                    *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+                }
+            } else if linked {
+                let clear = self.cl("OpClearVector", &[Value::Var(r)]);
+                let mark = self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                );
+                let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+            } else {
+                let elm = match self.vars.tp(r).base() {
+                    Type::Vector(elm, _) => (**elm).clone(),
+                    _ => unreachable!("checked by nulls_a_backed_collection_local"),
+                };
+                let ls = self.vector_db_init(&elm, r, absent, false);
+                if !ls.is_empty() {
+                    *code = Value::Insert(ls);
+                }
+            }
+        }
+        // @C118 — the slot `parse_assign_op_inner` built for a `&` bind's source goes before
+        // the bind's statement: the bind reads its source as a plain variable.
+        let bind_slot = std::mem::take(&mut self.pending_link_slot);
+        if !bind_slot.is_empty() {
+            let mut ls = bind_slot;
+            ls.push(std::mem::replace(code, Value::Null));
+            *code = Value::Insert(ls);
+        }
         tp
+    }
+
+    /// Is `code` the bind `r = null` of a nullable COLLECTION local that is not an argument
+    /// nor this variable's first bind — the shape the @C118 rewrite above replaces?
+    /// `Some(true)` when `r` is a `&`-linked vector, `Some(false)` otherwise, `None` when the
+    /// shape does not apply.
+    fn nulls_a_backed_collection_local(&self, code: &Value, r: u16) -> Option<bool> {
+        if self.first_pass
+            || r == u16::MAX
+            || self.vars.is_argument(r)
+            || !matches!(self.vars.tp(r), Type::Optional(_))
+            || !crate::parser::vectors::is_collection(self.vars.tp(r))
+        {
+            return None;
+        }
+        if !matches!(code.unspan(), Value::Set(s, rhs) if *s == r
+            && matches!(rhs.unspan(), Value::Call(d, a)
+                if a.is_empty() && self.data.def(*d).name() == "OpNullRefSentinel"))
+        {
+            return None;
+        }
+        let name = self.vars.name(r);
+        if self.first_bind_targets.last().map(String::as_str) == Some(name) {
+            return None;
+        }
+        Some(
+            self.amp_vector_locals
+                .contains(&(self.context, name.to_string())),
+        )
     }
 
     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
@@ -4043,6 +4135,12 @@ use a separate collection or add after the loop"
         // programs the whole-record write route and the two refusals decline.  Whether a
         // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
         // silent downgrade the rules say to refuse — is that separate question, left open.
+        // @C118 — the share copies the source's handle, so a NULL collection local is given its
+        // slot first (`null_local_slot`, as a closure capture is): a slot-less null handed the
+        // link nothing to append into, and the append was lost on both sides.
+        if amp_collection_bind && let Value::Var(src) = *code.unspan() {
+            self.pending_link_slot = self.null_local_slot(src);
+        }
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
             // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
@@ -4277,7 +4375,15 @@ use a separate collection or add after the loop"
                 // frees its store and the link frees nothing.  A scalar inner carries no
                 // `Deps` slot and owns no store, so there is no free decision to derive.
                 let is_ref = matches!(inner, Type::Reference(..) | Type::Text(_));
-                *code = self.cl("OpCreateStack", &[Value::Var(src)]);
+                // @C118 — the slot a null collection local needs before a link can share it.
+                let mut ls = self.null_local_slot(src);
+                let create = self.cl("OpCreateStack", &[Value::Var(src)]);
+                *code = if ls.is_empty() {
+                    create
+                } else {
+                    ls.push(create);
+                    Value::Insert(ls)
+                };
                 // @PLN85 D-own-5 — the borrow fact rides `deps` (O-Borrow), not a
                 // side-flag: a heap whole-value alias (`p = &o`, L5) is NON-OWNING
                 // because its type deps name the source, and the free suppression
@@ -6054,16 +6160,27 @@ use a separate collection or add after the loop"
                 *code = Value::Insert(ops);
                 return Type::Void;
             }
-            match code {
-                // A literal: run the clear FIRST, so the element-construction ops that
-                // follow build into an empty collection instead of appending to the old one.
-                Value::Insert(ls) => {
-                    for (i, op) in clear.into_iter().enumerate() {
-                        ls.insert(i, op);
-                    }
+            // A literal: run the clear FIRST, so the element-construction ops that follow
+            // build into an empty collection instead of appending to the old one.
+            if let Value::Insert(ls) = code {
+                for (i, op) in clear.into_iter().enumerate() {
+                    ls.insert(i, op);
                 }
-                // `= null`: the clear is the whole statement.
-                _ => *code = Value::Insert(clear),
+            } else {
+                // `= null`: the clear, and then — for a nullable field — the ABSENT mark in its
+                // slot, as `s.items = null` writes a vector field's.  The clear alone left
+                // `s.h == null` answering false after `s.h = null` (@C118, `(F-Render)` and
+                // `==` read absence from the slot).
+                let mut ops = clear;
+                if matches!(f_type, Type::Optional(_)) {
+                    #[allow(clippy::cast_possible_wrap)]
+                    let absent = crate::keys::DbRef::ABSENT_REC as i32;
+                    ops.push(self.cl(
+                        "OpSetInt4",
+                        &[to.clone(), Value::Int(0), Value::Int(absent)],
+                    ));
+                }
+                *code = Value::Insert(ops);
             }
             return Type::Void;
         }
@@ -8478,6 +8595,7 @@ use a separate collection or add after the loop"
                 // sentinel of a nullable narrow FIELD — explain that, not "too big".
                 diagnostic!(self.lexer, Level::Error, "{hint}");
             } else if !self.int_value_fits(code, store_tp) {
+                // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
                 let cures = Self::narrowing_cures(code, &dst);
                 diagnostic!(
