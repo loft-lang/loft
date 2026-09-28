@@ -10643,6 +10643,9 @@ pub(crate) fn capture_build_backings(
     // through that local therefore adopts.  A value branch mints one per arm and the local
     // adopts whichever ran, so all of them are carried.
     let mut minted: HashMap<u16, Vec<u16>> = HashMap::default();
+    // The join arms of each local's LATEST assignment ([`join_arm_stores`]), for a build to
+    // record against the capture it reaches.
+    let mut join_arms: HashMap<u16, Vec<u16>> = HashMap::default();
     // How many times each local has been ASSIGNED so far in this walk.  Two records hold the
     // SAME store only if they adopted a local at the same generation: a local assigned between
     // two builds gives them different stores (@FR-O-Latest), which the capture NAME cannot say
@@ -10677,6 +10680,9 @@ pub(crate) fn capture_build_backings(
                 for &b in minted.get(&c).into_iter().flatten() {
                     out.buffer_adopted.entry(b).or_default().push((record, c));
                 }
+                if let Some(arms) = join_arms.get(&c) {
+                    out.join_arms_at_build.insert(c, arms.clone());
+                }
                 resolved_in_rhs.insert(c);
                 // @FR-O-Latest — this very assignment is the one that moves the local off
                 // the store the record just adopted.
@@ -10707,6 +10713,12 @@ pub(crate) fn capture_build_backings(
             // The buffer this assignment minted is the store any LATER build adopts through
             // `v`.  An assignment that mints none leaves the local naming something this walk
             // cannot pin to a buffer, and a stale entry would name the wrong store outright.
+            let arms = join_arm_stores(rhs, function, data);
+            if arms.is_empty() {
+                join_arms.remove(v);
+            } else {
+                join_arms.insert(*v, arms);
+            }
             let mut bufs = Vec::new();
             adopted_work_refs(rhs, function, data, &mut bufs);
             if bufs.is_empty() {
@@ -10732,6 +10744,9 @@ pub(crate) fn capture_build_backings(
                         .push((*c, *generation.get(c).unwrap_or(&0)));
                     for &b in minted.get(c).into_iter().flatten() {
                         out.buffer_adopted.entry(b).or_default().push((*record, *c));
+                    }
+                    if let Some(arms) = join_arms.get(c) {
+                        out.join_arms_at_build.insert(*c, arms.clone());
                     }
                 }
             }
@@ -10829,6 +10844,11 @@ pub(crate) struct CaptureBuilds {
     /// asking about the NAME answers about whichever the local happens to hold last
     /// (loft#1446).  `@FR-O-Witness` is the same currency for a mixed-ownership local.
     pub(crate) buffer_adopted: HashMap<u16, Vec<(u16, u16)>>,
+    /// Per capture: the stores its value could be AT THE BUILD when that value was a JOIN
+    /// ([`join_arm_stores`]).  The local's own deps cannot say it once the local is assigned
+    /// again — a type's dep list is the whole body's, and the reassignment's store is on it —
+    /// so the arms are read off the assignment that reached the build.  loft#1725.
+    pub(crate) join_arms_at_build: HashMap<u16, Vec<u16>>,
 }
 
 /// The capture whose value may be `v`'s store among OTHERS — a join — when its record adopts
@@ -10866,12 +10886,14 @@ fn join_capture_witness(
 /// as the record lives.  loft#1725.
 ///
 /// Only where ONE closure record in the frame captures `c` (two records may hold two
-/// different stores of one name, loft#1440) and the record adopts it, so the frame does not
-/// free the record under the read; the caller guards the build having run at all.
+/// different stores of one name, loft#1440), the record adopts it, and the record LEAVES the
+/// frame — one that stays is released by the frame, possibly before this read; the caller
+/// guards the build having run at all.
 fn reassigned_join_capture_slot(
     data: &Data,
     database: &crate::database::Stores,
     function: &Function,
+    d_nr: u32,
     built_with: &CaptureBuilds,
     v: u16,
 ) -> Option<(u16, u16)> {
@@ -10880,7 +10902,10 @@ fn reassigned_join_capture_slot(
             && function.is_captured(c)
             && built_with.reassigned_after_build.contains(&c)
             && !built_with.rebuilt_in_loop.contains(&c)
-            && capture_join_candidates(function, c).contains(&v)
+            && built_with
+                .join_arms_at_build
+                .get(&c)
+                .is_some_and(|arms| arms.contains(&v))
             && capture_is_adopted(data, function, built_with, c)
     })?;
     let name = function.name(c);
@@ -10896,7 +10921,8 @@ fn reassigned_join_capture_slot(
             continue;
         }
         if (0..data.attributes(*record)).any(|a| data.attr_name(*record, a) == name) {
-            if slot.is_some() {
+            // A record that stays in the frame is released by it, possibly before this read.
+            if slot.is_some() || !record_leaves_frame(data, function, d_nr, w) {
                 return None;
             }
             let pos = database.position(data.def(*record).known_type(), name);
@@ -10904,6 +10930,66 @@ fn reassigned_join_capture_slot(
         }
     }
     slot
+}
+
+/// The stores a JOIN assigned by `rhs` may leave in its destination, or empty when `rhs` is no
+/// join: a `??` temp's value chain with its default arm's owners (`Function::join_owners`,
+/// loft#1721), else a value branch's per-arm constructions ([`construction_work_refs`]).
+/// Read off the assignment, so it stays true of the build it reaches however often the
+/// destination is assigned afterwards.  loft#1725.
+fn join_arm_stores(rhs: &Value, function: &Function, data: &Data) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    rhs.walk(&mut |node: &Value| {
+        if let Value::Set(t, _) = node.unspan()
+            && !function.join_owners(*t).is_empty()
+        {
+            let mut work: Vec<u16> = function.join_owners(*t).to_vec();
+            work.extend(function.tp(*t).depend());
+            while let Some(a) = work.pop() {
+                if a == *t || a == u16::MAX || function.is_argument(a) || out.contains(&a) {
+                    continue;
+                }
+                out.push(a);
+                work.extend_from_slice(function.join_owners(a));
+                work.extend(function.tp(a).depend());
+            }
+        }
+    });
+    // A branch arm beside a `??` is an arm too (`if … { f() ?? [] } else { [7] }`): the two
+    // spellings of a join union, and one arm on its own is no join at all.
+    let mut arms = construction_work_refs(rhs, function, data);
+    branch_arm_stores(rhs, &mut arms);
+    let branch = arms.len() > 1;
+    for a in arms {
+        if (branch || !out.is_empty()) && !out.contains(&a) {
+            out.push(a);
+        }
+    }
+    out
+}
+
+/// The stores the arms of a value branch name — each arm block's own result deps, through
+/// nested branches — for the arms [`construction_work_refs`] does not list (a collection
+/// literal is built into a `__vdb_N`, not a record work-ref).
+fn branch_arm_stores(v: &Value, out: &mut Vec<u16>) {
+    match v.unspan() {
+        Value::If(_, t, e) => {
+            branch_arm_stores(t, out);
+            branch_arm_stores(e, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail @ Value::If(..)) = bl.operators.last().map(Value::unspan) {
+                branch_arm_stores(tail, out);
+            } else {
+                for d in bl.result.depend() {
+                    if !out.contains(&d) {
+                        out.push(d);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The stores capture `c` may hold when its value is a JOIN — every dep and the backing chain
@@ -10980,9 +11066,12 @@ pub(crate) fn backs_an_adopted_capture(
                 // assigned once.
                 // A JOIN capture's stores are released by identity instead
                 // (`join_capture_witness`), so none of them is suppressed wholesale.
+                // So is one whose value WAS a join at the build and was assigned since: its
+                // type names the later store, which the record never held (loft#1725).
                 None => {
                     backing_chain(function, c).contains(&v)
                         && capture_join_candidates(function, c).is_empty()
+                        && !built_with.join_arms_at_build.contains_key(&c)
                 }
             }
     })
@@ -17946,6 +18035,7 @@ impl Scopes<'_> {
                         data,
                         self.database,
                         function,
+                        self.d_nr,
                         &self.capture_build_backing,
                         v,
                     ) {
