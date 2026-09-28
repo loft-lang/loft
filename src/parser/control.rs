@@ -5173,7 +5173,7 @@ impl Parser {
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;
-        self.convert_condition(&mut test, &tp);
+        self.convert_condition_at(&mut test, &tp, Some(&cond_at));
         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
         // matching branch (then for `!= null`/truthy, else for `== null`).
         let narrow = self.narrowing_from_condition(&test);
@@ -18062,7 +18062,7 @@ impl Parser {
             // a heap handle raw here: the interpreter accepted `assert(v)` while `--native`
             // refused to compile it (`(DbRef) as u8`), which is one program and two drivers
             // disagreeing about whether it is a program at all.
-            self.convert_condition(&mut test, &types[0]);
+            self.convert_condition_at(&mut test, &types[0], Some(call_pos));
             let message = if list.len() > 1 {
                 list[1].clone()
             } else {

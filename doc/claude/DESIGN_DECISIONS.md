@@ -4408,9 +4408,11 @@ Four spellings were weighed:
   v[1] = null; if !v[1]` reports a write that landed as missed, and on a keyed collection it
   is a second lookup.
 - **The store as a condition** — `if v[5748] = 2 { … }` or `if !v[5748]=2 { … }`.  It is the
-  C `=`-for-`==` typo compiled as intended, and it reads badly.  (Today it is not even refused:
-  the interpreter panics on a corrupt reference and `--native` fails in rustc — a defect,
-  fixed under @PLN178 phase 0.)
+  C `=`-for-`==` typo compiled as intended, and it reads badly.  (Until 2026-09-28 it was
+  not even refused: the interpreter read a stack byte as the flag and `if x = 5` left `x`
+  holding garbage, while `--native` failed in rustc — one program, two drivers disagreeing.
+  Refused at `Parser::convert_condition_at` since; the guard is
+  `tests/scripts/a-store-in-condition-position-is-refused.loft`.)
 - **`v[5748] = 2 || …`**, bash-style.  A third meaning for "or": `??` already names a fallback
   VALUE for the right-hand side, so `v[i] = 2 ?? x` reads as "2, or x when 2 is null", and an
   action-on-failure operator beside it is one more thing to learn.
@@ -4486,7 +4488,7 @@ by reading two lines.
 `formal/heap.md` gains `(H-Write-Else)` beside `(H-WriteOOB)`; `(E-Report)` gains the
 dropped-write clause; `(E-Uncomp-Seen)` is restated with `else` as its form and `if !place` as
 the fused twin.  LOFT.md's narrow-slot section moves to `else`.  A store in condition position
-becomes a refusal.  The phases, the composition matrix and the verification are
+is a refusal (shipped with this entry).  The phases, the composition matrix and the verification are
 [@PLN178](https://github.com/loft-lang/plans/issues/178).
 
 ### Revisit when

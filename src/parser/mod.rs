@@ -5218,6 +5218,39 @@ impl Parser {
     /// next argument off its slot and ended a run in a SIGSEGV.  The type list is the one
     /// [`coalesce_not_null`](Parser::coalesce_not_null) uses, for the same reason.
     pub(crate) fn convert_condition(&mut self, code: &mut Value, tp: &Type) -> bool {
+        self.convert_condition_at(code, tp, None)
+    }
+
+    /// [`convert_condition`](Parser::convert_condition) anchored at the condition's own
+    /// start, so the refusal below names the expression and not the `{` after it.
+    ///
+    /// **A store stays a statement (@C130).**  `if v[9] = 2 { … }` is the C `=`-for-`==`
+    /// typo, and it is refused here rather than read as a flag: the expression answers
+    /// NOTHING, so there is no value to test.  Nothing is wrong with the pair of types —
+    /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
+    /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
+    /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
+    /// ()`): one program, two drivers disagreeing whether it is a program (measured
+    /// 2026-09-28, both `if` and `while`).  A `Never` condition (a `return` in it) is not
+    /// this case and keeps its own path.
+    pub(crate) fn convert_condition_at(
+        &mut self,
+        code: &mut Value,
+        tp: &Type,
+        at: Option<&Position>,
+    ) -> bool {
+        if matches!(tp, Type::Void) {
+            if !self.first_pass {
+                let msg = "A condition needs a value, and this expression answers nothing \
+                           — write `==` to compare, or move the store to its own line";
+                if let Some(at) = at {
+                    diagnostic_at!(self.lexer, at, Level::Error, "{msg}");
+                } else {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
+            }
+            return false;
+        }
         if Self::is_heap_handle(tp) {
             if !self.first_pass {
                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
