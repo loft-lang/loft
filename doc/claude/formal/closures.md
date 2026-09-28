@@ -220,9 +220,24 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
+
+- **D-clo-44** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1715)* — `(L-CapHeap)` for a
+  `vector<τ>?` local that holds null because of a VALUE — a call that answered null, a reset to
+  null.  loft#1218 gives a null capture an ABSENT slot to share, but decided "does the local
+  hold a store?" by whether it had a backing, and such a local has one: the closure copied the
+  null handle and its appends were lost (`[1,3]` for `[1,2,3]`), and one built while the local
+  was null that then escaped read a released store (`null`).  **Fix.**  While the local holds
+  null at run time, the capture points it at an ABSENT slot in the backing it ALREADY names
+  (`Parser::null_backing_home`), spelled as a projection of that backing so `@FR-O-Latest`'s
+  walk records it — the record adopts the store the local holds on every run.  An append while
+  the local holds null keeps its own fresh mint: after a rebind detaches a captured local, the
+  backing IS the closure's store.  A mint in
+  a second variable (the first attempt, measured by loft2) fixed the local cells and broke the
+  escaping ones by exactly that: the dependency named the mint that parsed last.  Guard
+  `tests/scripts/1715-a-null-that-arrived-as-a-value-shares-its-backing-with-a-closure.loft`.
 
 - **D-clo-43** *(opened 2026-09-27, CLOSED 2026-09-27; found with loft#1700)* — `(L-CapScalar)` /
   `(L-CapHeap)` capture "the variable", which is the binding the name spells where the closure

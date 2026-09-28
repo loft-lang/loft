@@ -2239,6 +2239,74 @@ or build a local and use that."
         )
     }
 
+    /// loft#1715, `@FR-L-CapHeap` — a nullable vector local that HAS a backing may still hold
+    /// null when a closure captures it: the null arrived as a value (`c = f()` answering null,
+    /// `c = [1]; c = null`).  The closure copies the handle, so a null handle shares nothing
+    /// and its appends are lost.  At run time, while the local holds null, it is pointed at an
+    /// ABSENT slot in the store its backing already names — never a store minted beside it.
+    ///
+    /// Reusing the backing is what keeps `@FR-O-Latest` true: the store a record adopts is the
+    /// one the capture names at the build, read off the local's backing, and a mint in a
+    /// second variable made that reading right only on the run where the mint fired (an
+    /// escaping closure over a non-null local then adopted the empty mint while the frame
+    /// freed what it held — the `1439` e4 cell).  With one backing, both runs hold it.
+    ///
+    /// Two backings arrive here, both compiler-made and both the local's only dependency: a
+    /// vector WRAPPER (`__vdb_N`, a literal or an append's mint), minted in place when it holds
+    /// no store yet, and a call's return BUFFER (`__ref_N`), a vector handle that is live after
+    /// the call.  Anything else is left as it was: this only ever replaces a null handle.
+    ///
+    /// Only the CAPTURE reuses the backing.  An append onto the local while it holds null keeps
+    /// its own fresh mint (`absent_append_mint`): after `c = null` detaches a local a closure
+    /// already captured, the backing IS that closure's store, and building in it would hand the
+    /// closure the rebind (`an-append-to-an-absent-vector-local-builds-it.loft`, the control).
+    fn null_backing_home(&mut self, v_nr: u16, slot: i32) -> Vec<Value> {
+        let deps = self.vars.tp(v_nr).depend();
+        let [home] = deps[..] else {
+            return Vec::new();
+        };
+        // `@FR-N-Shape` — a shape question, through `base()`.
+        let home_tp = self.vars.tp(home).clone();
+        let v_null = self.cl("OpRefIsNull", &[Value::Var(v_nr)]);
+        let mark =
+            |p: &mut Self, at: Value| p.cl("OpSetInt4", &[at, Value::Int(0), Value::Int(slot)]);
+        match home_tp.base().clone() {
+            Type::Reference(vec_def, _) if self.vars.name(home).starts_with("__vdb_") => {
+                let Some(tp) =
+                    Some(self.vector_wrapper_known_type(vec_def)).filter(|&t| t != u16::MAX)
+                else {
+                    return Vec::new();
+                };
+                let mint = crate::data::v_if(
+                    self.cl("OpRefIsNull", &[Value::Var(home)]),
+                    self.cl("OpDatabase", &[Value::Var(home), Value::Int(i32::from(tp))]),
+                    Value::Null,
+                );
+                let point = v_set(v_nr, self.get_field(vec_def, 0, Value::Var(home)));
+                let absent_slot = mark(self, Value::Var(home));
+                vec![crate::data::v_if(
+                    v_null,
+                    Value::Insert(vec![mint, point, absent_slot]),
+                    Value::Null,
+                )]
+            }
+            Type::Vector(elm, _) if self.vars.name(home).starts_with("__ref_") => {
+                // Spelled as a PROJECTION of the buffer, not a bare read of it: the slot is the
+                // same, and a projection is what `@FR-O-Latest`'s walk records as the store the
+                // local names (a bare local read is the `(B-Copy)` shape and records none).
+                let vec_def = self.data.vector_def(&mut self.lexer, &elm);
+                let point = v_set(v_nr, self.get_field(vec_def, 0, Value::Var(home)));
+                let absent_slot = mark(self, Value::Var(home));
+                vec![crate::data::v_if(
+                    v_null,
+                    Value::Insert(vec![point, absent_slot]),
+                    Value::Null,
+                )]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// The backing a NULL collection capture needs before the closure record can share it —
     /// empty for every other capture.
     ///
@@ -2272,16 +2340,20 @@ or build a local and use that."
         if !nullable || !Self::is_collection_type(base) {
             return Vec::new();
         }
-        // A dep means the local already owns a backing — a `= []` capture, or one an earlier
-        // statement built.  Its slot is already there to share.
-        if !tp.depend().is_empty() {
-            return Vec::new();
-        }
         #[allow(clippy::cast_possible_wrap)]
         let absent = crate::keys::DbRef::ABSENT_REC as i32;
         if let Type::Vector(elm, _) = base {
             let elm = (**elm).clone();
-            return self.vector_db_init(&elm, v_nr, absent, true);
+            // No dependency: nothing backs the local yet, so it gets a slot of its own.
+            if tp.depend().is_empty() {
+                return self.vector_db_init(&elm, v_nr, absent, true);
+            }
+            return self.null_backing_home(v_nr, absent);
+        }
+        // A dep means the local already owns a backing — a `= []` capture, or one an earlier
+        // statement built.  Its slot is already there to share.
+        if !tp.depend().is_empty() {
+            return Vec::new();
         }
         // A KEYED local has no wrapper record: its store IS the collection, so the slot it must
         // gain is the one `OpDatabase` hands it.  Built with the guarded emission a keyed WRITE
