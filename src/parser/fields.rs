@@ -2877,7 +2877,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
             n
         } else {
-            Value::Int(-1)
+            Value::Long(crate::database::SLICE_UNCAPPED)
         };
         if !self.first_pass && !self.lexer.peek_token("]") {
             diagnostic!(
@@ -2963,7 +2963,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
         // The `..` is followed by a till tuple `(tx,ty,…)`, a limit `:n`, or nothing.
         let (has_till, till, limit) = if self.lexer.peek_token("(") {
-            (Value::Int(1), parse_tuple(self), Value::Int(-1))
+            (
+                Value::Int(1),
+                parse_tuple(self),
+                Value::Long(crate::database::SLICE_UNCAPPED),
+            )
         } else if self.lexer.has_token(":") {
             let mut n = Value::Null;
             let nt = self.expression(&mut n);
@@ -2989,7 +2993,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
             (Value::Int(0), vec![Value::Int(0); max_axes], n)
         } else {
-            (Value::Int(0), vec![Value::Int(0); max_axes], Value::Int(-1))
+            let uncapped = Value::Long(crate::database::SLICE_UNCAPPED);
+            (Value::Int(0), vec![Value::Int(0); max_axes], uncapped)
         };
         if !self.first_pass {
             let tp = self.get_type(typedef);

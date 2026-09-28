@@ -20,7 +20,30 @@ destinations D-iter-4's snapshot could not NAME.  D-iter-6 opened and closed 202
 place source and a range bound were re-read per round.  D-iter-7 opened and closed 2026-09-25
 (below): two native rewrites stepped an inclusive range past its end in plain Rust.  D-iter-8
 opened and closed 2026-09-26 (loft#1695, below): a collection field source followed a body that
-replaced it.
+replaced it.  D-iter-9 and D-iter-10 opened and closed 2026-09-28 (loft#1710, below): the
+snapshot walk of a keyed kind yielded a record removed ahead of it, and accepted an append.
+
+> **D-iter-9 — OPENED AND CLOSED (2026-09-28, loft#1710). A snapshot walk yielded a record removed
+> ahead of it.**  A `for` over a `hash`, `spatial` (any form) or `trie` walks a scratch of record
+> numbers built before the first round, and the loop's own `#remove` refusal on these kinds tells
+> the author to remove by key instead.  A record removed by key before the cursor reached it was
+> still yielded — a freed record read as data (its `text` a NUL character), on both backends,
+> with `LOFT_STRICT_STORES` and `LOFT_POISON` silent.  `vector` and `sorted` walks already skipped
+> it.  **Fix.**  `Stores::live_scratches` registers each snapshot beside its collection;
+> `unlink`, the keyed removal chokepoint, zeroes the record's entry in every live snapshot of
+> that collection (`forget_in_scratches`); `vector::step_ordered`, shared by both backends, steps
+> over a zeroed entry.  Guard `tests/scripts/1710-a-snapshot-walk-skips-a-record-removed-ahead-of-it.loft`,
+> eleven cells, falsified at `198ac01e7`.
+
+> **D-iter-10 — OPENED AND CLOSED (2026-09-28). An append to a snapshot-walked collection was
+> accepted.**  `(I-For)` says the parser refuses a body's append to the collection it walks.
+> `check_iter_safety` asked it of `vector`/`sorted`/`index`; `hash` was not in its list, and a
+> `spatial`/`trie` walk recorded its SNAPSHOT variable as the iterated one, so `xs += […]` in the
+> body never matched.  The append was merely not visited — no corruption — but the promise did not
+> hold.  **Fix.**  `Hash` joins the list, and a keyed loop records the collection its snapshot was
+> taken of (a slice's first argument), as a vector loop records its source.  Guard
+> `tests/parse_errors.rs` `add_to_iterated_{hash,spatial,spatial_slice,trie}`, beside the two
+> controls a removal by key and an append to ANOTHER hash, which stay accepted.
 
 > **D-iter-4 — OPENED AND CLOSED (2026-09-06). A vector LITERAL that reads its destination.**
 > `I-Comp` was walked three times for the comprehension (D-iter-1..3) and the literal — the same

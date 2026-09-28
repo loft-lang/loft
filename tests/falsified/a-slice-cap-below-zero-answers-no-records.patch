@@ -1,0 +1,128 @@
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index 9afd4504a..87e94da0b 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -21,27 +21,6 @@ use crate::vector;
+ /// schema is bounded well under 0x8000, which is what makes the top bit free.
+ pub const CLEAR_KEYED_VIEW: u16 = 0x8000;
+ 
+-/// The `limit` a range slice's lowering passes when the program wrote no `:n` — the
+-/// spatial `xs[(x,y)..]` and the trie `t[pre..]`.  `i64::MAX` rather than a negative
+-/// flag, because a cap of that size means "uncapped" whoever writes it.
+-pub const SLICE_UNCAPPED: i64 = i64::MAX;
+-
+-/// A range slice's `:n` as a record cap (`@FR-Slice-Cap`): at most `n` records, so a
+-/// negative `n` — or a null one, whose integer is `i64::MIN` — answers none.
+-///
+-/// The spelling that preceded this read `limit < 0` as "no cap", which is the flag the
+-/// lowering itself passed, so a program's `:k` with `k` gone negative answered EVERY
+-/// record.  The paged loaders (`store_load_prefix`, `store_load_box`) are a different
+-/// surface: a function parameter documented as "negative means no cap".
+-#[must_use]
+-pub fn slice_cap(limit: i64) -> Option<usize> {
+-    if limit == SLICE_UNCAPPED {
+-        None
+-    } else {
+-        Some(usize::try_from(limit).unwrap_or(0))
+-    }
+-}
+-
+ /// Which keyed collection a paged working-set load is reading and filling.
+ ///
+ /// The only thing that differs between the two once a record is located: a `hash`
+@@ -1767,9 +1746,16 @@ impl Stores {
+         self.build_rec_scratch(coll, &recs)
+     }
+ 
++    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
++    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  Records whose Morton code
++    /// lies in `[from, till]` (or `[from, ∞)` when `has_till == 0`), in natural order,
++    /// capped at `limit` (`< 0` = no cap).  Backs `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the
++    /// bounding box `xs[(x1,y1)..(x2,y2)]`.  Coordinates arrive as a fixed `MAX_AXES`-wide
++    /// triple; only the collection's own `keys.len()` axes are read (a 2D collection
++    /// ignores `fz`/`tz`), so the same ABI serves 1D…3D slices.
+     /// A trie PREFIX slice as an iterable scratch vector, the trie's twin of
+     /// `build_radix_range_vec` and feeding the same on=4 scratch path.  Every record
+-    /// whose key begins with `pre`, in key order, capped at `limit` ([`slice_cap`]).
++    /// whose key begins with `pre`, in key order, capped at `limit` (`< 0` = no cap).
+     /// Backs `t["kerk"..]` and `t["kerk"..:n]`.
+     ///
+     /// There is no `till` here and that is the point: a prefix is the whole query, so
+@@ -1780,19 +1766,11 @@ impl Stores {
+             return DbRef::NULL;
+         }
+         let keys = self.types[tp as usize].keys.clone();
+-        let cap = slice_cap(limit);
++        let cap = (limit >= 0).then_some(limit as usize);
+         let recs = crate::trie_db::prefix(coll, &self.allocations, &keys, pre.as_bytes(), cap);
+         self.build_rec_scratch(coll, &recs)
+     }
+ 
+-    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
+-    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  With `has_till` the records
+-    /// inside the closed box `from`..`till` (`@FR-Slice-Box`); without it the outward
+-    /// walk from `from` (`@FR-Slice-Open`).  Capped at `limit` ([`slice_cap`]).  Backs
+-    /// `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the bounding box `xs[(x1,y1)..(x2,y2)]`.
+-    /// Coordinates arrive as a fixed `MAX_AXES`-wide triple; only the collection's own
+-    /// `keys.len()` axes are read (a 2D collection ignores `fz`/`tz`), so the same ABI
+-    /// serves 1D…3D slices.
+     #[allow(clippy::too_many_arguments)]
+     pub fn build_radix_range_vec(
+         &mut self,
+@@ -1815,7 +1793,7 @@ impl Stores {
+         let n = keys.len().min(crate::radix_db::MAX_AXES);
+         let from = [fx, fy, fz];
+         let till = [tx, ty, tz];
+-        let cap = slice_cap(limit);
++        let cap = (limit >= 0).then_some(limit as usize);
+         // Two different queries share this entry point, and `has_till` is the fact
+         // that tells them apart. A CLOSED box promises containment (loft#800); the
+         // OPEN forms (`xs[(x,y)..]`, `xs[(x,y)..:n]`) promise an outward walk from the
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index c713a9f6b..714b953f9 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -5,7 +5,6 @@
+ #![allow(dead_code)]
+ 
+ mod allocation;
+-pub use allocation::SLICE_UNCAPPED;
+ mod descriptor;
+ mod format;
+ mod io;
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index fbc29c68f..026afb284 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -2877,7 +2877,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+             }
+             n
+         } else {
+-            Value::Long(crate::database::SLICE_UNCAPPED)
++            Value::Int(-1)
+         };
+         if !self.first_pass && !self.lexer.peek_token("]") {
+             diagnostic!(
+@@ -2963,11 +2963,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         }
+         // The `..` is followed by a till tuple `(tx,ty,…)`, a limit `:n`, or nothing.
+         let (has_till, till, limit) = if self.lexer.peek_token("(") {
+-            (
+-                Value::Int(1),
+-                parse_tuple(self),
+-                Value::Long(crate::database::SLICE_UNCAPPED),
+-            )
++            (Value::Int(1), parse_tuple(self), Value::Int(-1))
+         } else if self.lexer.has_token(":") {
+             let mut n = Value::Null;
+             let nt = self.expression(&mut n);
+@@ -2993,8 +2989,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+             }
+             (Value::Int(0), vec![Value::Int(0); max_axes], n)
+         } else {
+-            let uncapped = Value::Long(crate::database::SLICE_UNCAPPED);
+-            (Value::Int(0), vec![Value::Int(0); max_axes], uncapped)
++            (Value::Int(0), vec![Value::Int(0); max_axes], Value::Int(-1))
+         };
+         if !self.first_pass {
+             let tp = self.get_type(typedef);

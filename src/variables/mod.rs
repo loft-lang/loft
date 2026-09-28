@@ -101,6 +101,11 @@ struct Iterator {
     /// `u16::MAX` when the iterated expression is not a simple variable
     /// (e.g. a struct-field access like `db.map`).
     coll_var: u16,
+    /// The ordered snapshot a `hash` / `spatial` / `trie` loop walks (`keyed_snapshot`'s
+    /// scratch variable), or `u16::MAX`.  Apart from `coll_var` because the two answer
+    /// different questions: an append is refused against the collection the program wrote
+    /// (`coll_var`), a `#remove` is refused because the walk is a snapshot (this).
+    snapshot_var: u16,
     counter: u16, // variable number or MAX when it is not used
     /// @PLN102 strict-index lint — for a `for i in 0..len(X)` range, the `VecKey` of `X`
     /// (the vector whose length bounds this loop). `Some` only when the range's upper bound
@@ -1063,6 +1068,7 @@ impl Function {
             db_tp: u16::MAX,
             value: Box::new(Value::Null),
             coll_var: u16::MAX,
+            snapshot_var: u16::MAX,
             counter: u16::MAX,
             len_bound: None,
             source_places: Vec::new(),
@@ -1138,6 +1144,11 @@ impl Function {
     /// the iterator runs over the copy, but the user-visible variable is `orig_var`.
     pub fn set_coll_var(&mut self, orig_var: u16) {
         self.loops[self.current_loop as usize].coll_var = orig_var;
+    }
+
+    /// Record the snapshot variable the current loop walks (see `Loop::snapshot_var`).
+    pub fn set_snapshot_var(&mut self, var_nr: u16) {
+        self.loops[self.current_loop as usize].snapshot_var = var_nr;
     }
 
     /// Override the iterated collection `value` expression after `set_loop`.
@@ -1423,14 +1434,28 @@ impl Function {
 
     /// Return the iterated-collection variable for the loop whose index
     /// variable is `var_nr`, or `u16::MAX` when the loop iterates an
-    /// expression that isn't a plain variable.  Used by `#remove` to
-    /// detect the C60 hash-iteration scratch variable.
+    /// expression that isn't a plain variable.  For a vector or keyed loop this
+    /// is the collection the program wrote, not the copy or snapshot it walks.
     #[must_use]
     pub fn loop_coll_var(&self, var_nr: u16) -> u16 {
         let mut c = self.current_loop;
         while c != u16::MAX {
             if self.loops[c as usize].variable == var_nr {
                 return self.loops[c as usize].coll_var;
+            }
+            c = self.loops[c as usize].inside;
+        }
+        u16::MAX
+    }
+
+    /// The snapshot variable of the loop whose loop variable is `var_nr`, or `u16::MAX` when
+    /// that loop walks its collection directly.  Used by `#remove` to refuse a snapshot walk.
+    #[must_use]
+    pub fn loop_snapshot_var(&self, var_nr: u16) -> u16 {
+        let mut c = self.current_loop;
+        while c != u16::MAX {
+            if self.loops[c as usize].variable == var_nr {
+                return self.loops[c as usize].snapshot_var;
             }
             c = self.loops[c as usize].inside;
         }

@@ -436,14 +436,12 @@ answer the raw code interval between the corners, a strict superset, because
 Z-order threads out of the box and back). A corner-swapped axis names the
 same box.
 
-The two OPEN forms are the Morton **tail**: they yield only records at or
-after the query point in the collection's order, so what you get depends on
-where that point sits in the curve, and a record just BEHIND it is not
-returned however close it is. `..:n` therefore under-delivers near the end of
-the curve — over five records it answers 3, 3, 3, 2, 1, 0 as the query moves
-along — and a query past every record answers nothing (loft#1002). For a
-neighbourhood in every direction use a symmetric box, `xs[(x-r, y-r)..(x+r,
-y+r)]`.
+The two OPEN forms walk outward from the query point in both directions, so
+`..:n` answers `n` records from any origin, including one past every record.
+The order is by Morton distance, which jumps at quadrant boundaries, so a
+truly-near point can arrive a little late; when the answer must be exact, use
+a symmetric box, `xs[(x-r, y-r)..(x+r, y+r)]`. A cap of zero or below —
+`:k` with `k` negative or null — answers no records.
 
 A slice is a `for`-loop iterator, not a value, same as other keyed range
 slices. See [DATABASE.md § Spatial Index](DATABASE.md#spatial-index-srcradix_treers)

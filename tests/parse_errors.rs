@@ -860,6 +860,48 @@ fn add_to_outer_loop_iterated() {
     .error("Cannot add elements to 'v' while it is being iterated — use a separate collection or add after the loop at add_to_outer_loop_iterated:1:63");
 }
 
+// `(I-For)`'s append refusal on the SNAPSHOT kinds (D-iter-10): a `hash`, `spatial` or `trie`
+// walk reads a snapshot, and the refusal is about the collection the snapshot was taken of.
+#[test]
+fn add_to_iterated_hash() {
+    code!("struct H { k: integer } fn test() { h: hash<H[k]> = []; for e in h { h += [H { k: e.k + 1 }]; } }")
+        .error("Cannot add elements to 'h' while it is being iterated — use a separate collection or add after the loop at add_to_iterated_hash:1:76");
+}
+
+#[test]
+fn add_to_iterated_spatial() {
+    code!("struct P { x: integer, y: integer } fn test() { xs: spatial<P[x, y]> = []; for p in xs { xs += [P { x: p.x, y: 9 }]; } }")
+        .error("Cannot add elements to 'xs' while it is being iterated — use a separate collection or add after the loop at add_to_iterated_spatial:1:97");
+}
+
+#[test]
+fn add_to_iterated_spatial_slice() {
+    code!("struct P { x: integer, y: integer } fn test() { xs: spatial<P[x, y]> = []; for p in xs[(0, 0)..] { xs += [P { x: p.x, y: 9 }]; } }")
+        .error("Cannot add elements to 'xs' while it is being iterated — use a separate collection or add after the loop at add_to_iterated_spatial_slice:1:107");
+}
+
+#[test]
+fn add_to_iterated_trie() {
+    code!("struct T { k: text } fn test() { t: trie<T[k]> = []; for e in t { t += [T { k: \"{e.k}x\" }]; } }")
+        .error("Cannot add elements to 't' while it is being iterated — use a separate collection or add after the loop at add_to_iterated_trie:1:73");
+}
+
+#[test]
+fn remove_by_key_from_iterated_hash_is_allowed() {
+    // A removal by key is what `#remove`'s refusal on these kinds recommends; loft#1710 makes
+    // the walk skip a record removed ahead of it.
+    code!(
+        "struct H { k: integer } fn test() { h: hash<H[k]> = []; for e in h { h[e.k + 1] = null; } }"
+    );
+}
+
+#[test]
+fn add_to_another_hash_while_iterating_is_allowed() {
+    code!(
+        "struct H { k: integer } fn test() { h: hash<H[k]> = []; g: hash<H[k]> = []; for e in h { g += [H { k: e.k }]; } }"
+    );
+}
+
 // T1-10: unused loop variable warning
 #[test]
 fn unused_loop_var_range() {

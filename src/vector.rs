@@ -2062,22 +2062,29 @@ pub fn step_ordered(
     };
     let wide = tag & SCRATCH_MARK_MASK == SCRATCH_MARK && tag & 0xFFFF == 8;
     let stride: u16 = if wide { 8 } else { 4 };
-    let mut pos = cur as i32;
-    if reverse {
-        vector_prev(data, &mut pos, stride, stores);
-    } else {
-        vector_next(data, &mut pos, stride, stores);
-    }
     let vector = store.collection_rec(data.rec, data.pos);
-    let (rec, elem_pos) = if pos == i32::MAX {
-        (0, 8)
-    } else if wide {
-        (
-            store.get_u32_raw(vector, pos as u32),
-            store.get_u32_raw(vector, pos as u32 + 4),
-        )
-    } else {
-        (store.get_u32_raw(vector, pos as u32), 8)
+    let mut pos = cur as i32;
+    // A sourced scratch's entry is 0 once its record left the collection mid-walk
+    // (`Stores::forget_in_scratches`, loft#1710); step over it.
+    let (rec, elem_pos) = loop {
+        if reverse {
+            vector_prev(data, &mut pos, stride, stores);
+        } else {
+            vector_next(data, &mut pos, stride, stores);
+        }
+        let found = if pos == i32::MAX {
+            (0, 8)
+        } else if wide {
+            (
+                store.get_u32_raw(vector, pos as u32),
+                store.get_u32_raw(vector, pos as u32 + 4),
+            )
+        } else {
+            (store.get_u32_raw(vector, pos as u32), 8)
+        };
+        if pos == i32::MAX || found.0 != 0 || !sourced {
+            break found;
+        }
     };
     let elem_store = if sourced {
         store.get_u32_raw(data.rec, data.pos + 4) as u16
