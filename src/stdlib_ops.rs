@@ -24,61 +24,72 @@
 
 use crate::data::Data;
 
-/// The loft names of the parsed operator definitions, in opcode order.
-#[must_use]
-pub fn parsed_operator_names(data: &Data) -> Vec<String> {
-    let mut ops: Vec<(u16, String)> = (0..data.definitions())
+/// Refuse a parsed stdlib whose operator declarations are not, slot for slot, the ones this
+/// binary's dispatch table was generated from.  One walk over the definitions and nothing
+/// allocated on the way through: the front end's allocation count is a gate
+/// (`tests/frontend_counts.rs`), and this runs on every stdlib parse.
+///
+/// # Errors
+///
+/// The whole user-facing message — which slot differs, or which declaration has no body, or
+/// which body has no declaration — and the cure.
+pub fn verify(data: &Data, dir: &str) -> Result<(), String> {
+    let parsed = (0..data.definitions())
         .map(|d_nr| data.def(d_nr))
         .filter(|def| def.is_operator() && def.op_code() != u16::MAX)
-        .map(|def| (def.op_code(), def.name().to_string()))
-        .collect();
-    ops.sort_by_key(|(code, _)| *code);
-    ops.into_iter().map(|(_, name)| name).collect()
+        .map(|def| (def.op_code(), def.name()));
+    verify_names(parsed, crate::fill::OPERATOR_NAMES, dir)
 }
 
-/// Refuse a parsed stdlib whose operator declarations are not, slot for slot, the ones this
-/// binary's dispatch table was generated from.  `Err` carries the whole user-facing message.
-pub fn verify(data: &Data, dir: &str) -> Result<(), String> {
-    verify_names(
-        &parsed_operator_names(data),
-        crate::fill::OPERATOR_NAMES,
-        dir,
-    )
-}
-
-/// The comparison behind [`verify`], on plain names so it can be tested without a parse.
-pub fn verify_names(parsed: &[String], expected: &[&str], dir: &str) -> Result<(), String> {
-    let build = env!("LOFT_BUILD_ID");
-    let intro =
-        format!("the standard library at `{dir}` does not match this loft binary (build {build})");
-    for (slot, (have, want)) in parsed.iter().zip(expected.iter()).enumerate() {
-        if have != want {
+/// The comparison behind [`verify`], on `(slot, name)` pairs so it can be tested without a
+/// parse.  The pairs arrive in declaration order, which is slot order (`Data::op_code`
+/// numbers them as they are declared), so the first pair that parts from `expected` is the
+/// lowest slot that does.
+///
+/// # Errors
+///
+/// As [`verify`]: the message names the first slot where the pairs and `expected` part.
+pub fn verify_names<'a>(
+    parsed: impl Iterator<Item = (u16, &'a str)>,
+    expected: &[&str],
+    dir: &str,
+) -> Result<(), String> {
+    let intro = || {
+        format!(
+            "the standard library at `{dir}` does not match this loft binary (build {})",
+            env!("LOFT_BUILD_ID")
+        )
+    };
+    let mut count = 0usize;
+    for (slot, have) in parsed {
+        count += 1;
+        let Some(want) = expected.get(usize::from(slot)) else {
             return Err(format!(
-                "{intro}: operator slot {slot} declares `{have}` where the binary carries \
+                "{}: operator slot {slot} declares `{have}`, and this binary has no body for \
+                 it.\n  An operator was added to `default/` after this binary was built: run \
+                 `make fill` and rebuild (`cargo build --bin loft`).",
+                intro()
+            ));
+        };
+        if have != *want {
+            return Err(format!(
+                "{}: operator slot {slot} declares `{have}` where the binary carries \
                  `{want}`.\n  The binary and `default/` come from different trees.  Rebuild \
                  loft from the tree that owns this `default/` (`cargo build --bin loft`; \
                  `make fill` first when an operator was added or removed), or pass `--path` \
-                 pointing at the tree this binary was built from."
+                 pointing at the tree this binary was built from.",
+                intro()
             ));
         }
     }
-    if parsed.len() > expected.len() {
-        let extra = &parsed[expected.len()];
+    if count < expected.len() {
+        let missing = expected[count];
         return Err(format!(
-            "{intro}: operator slot {} declares `{extra}`, and this binary has no body for \
-             it.\n  An operator was added to `default/` after this binary was built: run \
-             `make fill` and rebuild (`cargo build --bin loft`).",
-            expected.len()
-        ));
-    }
-    if parsed.len() < expected.len() {
-        let missing = expected[parsed.len()];
-        return Err(format!(
-            "{intro}: the binary carries `{missing}` at operator slot {}, and the library \
+            "{}: the binary carries `{missing}` at operator slot {count}, and the library \
              declares nothing there.\n  This `default/` is older than the binary: rebuild \
              loft from the tree that owns it (`cargo build --bin loft`), or pass `--path` \
              pointing at the tree this binary was built from.",
-            parsed.len()
+            intro()
         ));
     }
     Ok(())
@@ -88,20 +99,22 @@ pub fn verify_names(parsed: &[String], expected: &[&str], dir: &str) -> Result<(
 mod tests {
     use super::verify_names;
 
-    fn names(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| (*s).to_string()).collect()
+    fn slots<'a>(v: &'a [&'a str]) -> impl Iterator<Item = (u16, &'a str)> + 'a {
+        v.iter()
+            .enumerate()
+            .map(|(i, s)| (u16::try_from(i).unwrap(), *s))
     }
 
     #[test]
     fn a_matching_library_passes() {
-        assert!(verify_names(&names(&["OpA", "OpB"]), &["OpA", "OpB"], "d").is_ok());
-        assert!(verify_names(&[], &[], "d").is_ok());
+        assert!(verify_names(slots(&["OpA", "OpB"]), &["OpA", "OpB"], "d").is_ok());
+        assert!(verify_names(slots(&[]), &[], "d").is_ok());
     }
 
     #[test]
     fn a_shifted_slot_names_both_operators_and_its_slot() {
         let e =
-            verify_names(&names(&["OpA", "OpNew", "OpB"]), &["OpA", "OpB"], "lib/x").unwrap_err();
+            verify_names(slots(&["OpA", "OpNew", "OpB"]), &["OpA", "OpB"], "lib/x").unwrap_err();
         assert!(e.contains("`lib/x`"), "{e}");
         assert!(
             e.contains("slot 1 declares `OpNew` where the binary carries `OpB`"),
@@ -111,7 +124,7 @@ mod tests {
 
     #[test]
     fn a_declaration_past_the_table_names_make_fill() {
-        let e = verify_names(&names(&["OpA", "OpB", "OpC"]), &["OpA", "OpB"], "d").unwrap_err();
+        let e = verify_names(slots(&["OpA", "OpB", "OpC"]), &["OpA", "OpB"], "d").unwrap_err();
         assert!(
             e.contains("slot 2 declares `OpC`, and this binary has no body"),
             "{e}"
@@ -121,7 +134,7 @@ mod tests {
 
     #[test]
     fn a_library_short_of_the_table_names_the_missing_operator() {
-        let e = verify_names(&names(&["OpA"]), &["OpA", "OpB"], "d").unwrap_err();
+        let e = verify_names(slots(&["OpA"]), &["OpA", "OpB"], "d").unwrap_err();
         assert!(e.contains("carries `OpB` at operator slot 1"), "{e}");
     }
 }
