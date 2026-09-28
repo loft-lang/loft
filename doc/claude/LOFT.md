@@ -2154,13 +2154,13 @@ with a `<` (`Ordered`): a struct defining `op <` sorts by it, stably, and a null
 `reduce` folds into any accumulator — a number, a `text`, a struct, a vector — and takes any
 function value, a fn-ref variable or a capturing lambda included.
 
-**Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
-be used in `for x in v[lo..hi] { … }` and wherever an iterator is
-accepted, and assigning it to a local (`sub = v[lo..hi]` or
-`sub: vector<T> = v[lo..hi]`) materialises a fresh vector.  It still
-cannot be passed directly where a `vector<T>` **argument** is expected
-("expected vector<integer>, got iterator<integer>") — materialise first
-via a local, or a comprehension: `f([for x in v[lo..hi] { x }])`.
+**Slices are iterators, and a vector wherever a vector is expected.**  `v[lo..hi]`
+can be used in `for x in v[lo..hi] { … }` and wherever an iterator is accepted
+without building anything; wherever a `vector<T>` is expected — a local
+(`sub = v[lo..hi]`), a function argument (`f(v[lo..hi])`), a return, a struct
+field's value, an element of a literal — it is the fresh vector that local
+would hold, independent of `v`.  Only a KEYED range slice (`sorted`, `index`,
+`trie`) stays a `for`-only iterator.
 
 **Negative slice bounds count from the end (@P384).**  `v[2..-1]` is
 "element 2 up to (not including) the last": on `[10, 20, 30, 40, 50]`

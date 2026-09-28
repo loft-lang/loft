@@ -1408,6 +1408,55 @@ impl Stores {
         }
     }
 
+    /// @PLN174 F4a — append elements `lo..hi` of `o_db` to `db` in ONE block: the slice
+    /// materialisation for a scalar element kind, where the per-element loop minted a record
+    /// per element.  The bounds arrive clamped (the slice prelude's `slice_lo` / `slice_hi`),
+    /// and are clamped again here so a stale prelude cannot read past the source.  The
+    /// source span is taken through [`Store::bytes_of`], so a FOREIGN store's bytes (a
+    /// mapped file) copy exactly as an owned record's; the one intermediate buffer keeps
+    /// the source and destination borrows apart (the same store, or the same vector).  A
+    /// linked or heap-owning element kind is refused: its elements are records to deep-copy,
+    /// which the loop form does.
+    ///
+    /// # Panics
+    /// When `known` is a linked or heap-owning element type — the parser never emits the op
+    /// for one, so this is a generator defect, not a program's.
+    pub fn vector_slice(&mut self, db: &DbRef, o_db: &DbRef, lo: i64, hi: i64, known: u16) {
+        if db.is_null() || db.rec == 0 || o_db.is_null() || o_db.rec == 0 || o_db.pos == 0 {
+            return;
+        }
+        assert!(
+            !self.is_linked(known) && !self.type_owns_heap(known),
+            "vector_slice: element type {known} owns records; the slice loop is its form"
+        );
+        let o_length = i64::from(vector::length_vector(o_db, &self.allocations));
+        let lo = lo.clamp(0, o_length);
+        let hi = hi.clamp(lo, o_length);
+        let n = u32::try_from(hi - lo).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let size = u32::from(self.size(known));
+        let span: Vec<u8> = {
+            let store = keys::store(o_db, &self.allocations);
+            let o_rec = store.collection_rec(o_db.rec, o_db.pos);
+            if o_rec == 0 {
+                return;
+            }
+            let from = lo as usize * size as usize;
+            store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec()
+        };
+        let new_db = vector::vector_append(db, size, &mut self.allocations);
+        let append_pos = new_db.pos;
+        self.vector_set_size(db, n, size);
+        let store = keys::mut_store(db, &mut self.allocations);
+        let dest_rec = store.get_u32_raw(db.rec, db.pos);
+        // `vector_append` answers the byte position of the new slot from the record's
+        // start; `buffer` starts at the payload (+8).
+        let at = (append_pos - 8) as usize;
+        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(&span);
+    }
+
     /// Append every element of the vector at `o_db` to the vector at `db`, deep-copying
     /// the heap each element owns.
     ///

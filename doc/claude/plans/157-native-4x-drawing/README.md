@@ -34,7 +34,7 @@ record.
 **The record** — the progress log as it was written (every unit, its numbers and what it
 found), the `smooth` and `fronds` run-downs, the session hand-offs, the sub-arc table, the
 joined-tree verification, the phase queue and the open design questions — is
-[HISTORY.md](HISTORY.md), a pure move out of this file on 2026-09-28: history apart from the
+[README-history.md](README-history.md), a pure move out of this file on 2026-09-28: history apart from the
 state, so the state stays readable.  Nothing in it is maintained; the live performance work
 is @PLN158 (`bench/portal/analysis/`) and @PLN174.
 

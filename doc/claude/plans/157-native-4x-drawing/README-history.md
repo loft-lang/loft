@@ -3,7 +3,8 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# 157 — Native within 4× of Rust on the drawing pass
+<!-- size-exempt: a closed plan's record, moved whole out of its README and never edited
+     again; splitting it by date would only spread one story over files -->
 # 157 — the record: progress log, run-downs, hand-offs, sub-arcs
 
 The history of the closed plan [README.md](README.md), moved here whole on 2026-09-28 so the

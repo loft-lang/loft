@@ -9642,6 +9642,74 @@ use a separate collection or add after the loop"
     /// Materialise an iterator (e.g. `v[a..b]` slice) into a vector variable.
     /// Promotes the LHS variable to `Vector<elm_tp>` and builds a loop that appends
     /// each element in-place.
+    /// @PLN174 F4a — the subject and the clamped-bound variables of a SLICE iterator, read
+    /// off its prelude: the `slice_len` variable is bound from `OpLengthVector(subject)`,
+    /// and `slice_lo` / `slice_hi` are the clamps.  `None` for any other iterator.
+    fn slice_plan(&self, init: &Value) -> Option<(Value, u16, u16)> {
+        let Value::Insert(stmts) = init.unspan() else {
+            return None;
+        };
+        let len_nr = self.data.def_nr("OpLengthVector");
+        let mut subject = None;
+        let mut lo = None;
+        let mut hi = None;
+        for st in stmts {
+            let Value::Set(v, rhs) = st.unspan() else {
+                continue;
+            };
+            let name = self.vars.name(*v).trim_start_matches('_');
+            if name.starts_with("slice_len")
+                && let Value::Call(d, args) = rhs.unspan()
+                && *d == len_nr
+                && let Some(data) = args.first()
+            {
+                subject = Some(data.clone());
+            } else if name.starts_with("slice_lo") {
+                lo = Some(*v);
+            } else if name.starts_with("slice_hi") {
+                hi = Some(*v);
+            }
+        }
+        Some((subject?, lo?, hi?))
+    }
+
+    /// The block-copy form of a scalar-element slice bound to `var_nr` (@PLN174 F4a): the
+    /// slice prelude `init` (the clamped bounds), then ONE `OpSliceVector` from `subject`
+    /// over `lo_var..hi_var` into the local — the statements `materialize_iterator` puts
+    /// in place of its per-element loop.
+    fn slice_copy_form(
+        &mut self,
+        init: Value,
+        elm_tp: &Type,
+        var_nr: u16,
+        elm_var: u16,
+        op: &str,
+        (subject, lo_var, hi_var): (Value, u16, u16),
+    ) -> Value {
+        let row = Value::Int(self.append_elem_tp(elm_tp));
+        let needs_db = self.vector_needs_db(var_nr, elm_tp, true);
+        let mut stmts = Vec::new();
+        if op == "=" && !needs_db {
+            stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
+        }
+        stmts.push(init);
+        stmts.push(self.cl(
+            "OpSliceVector",
+            &[
+                Value::Var(var_nr),
+                subject,
+                Value::Var(lo_var),
+                Value::Var(hi_var),
+                row,
+            ],
+        ));
+        if needs_db {
+            let db = self.insert_new(var_nr, elm_var, elm_tp, &mut stmts);
+            self.vars.depend(var_nr, db);
+        }
+        Value::Insert(stmts)
+    }
+
     pub(crate) fn materialize_iterator(
         &mut self,
         code: &mut Value,
@@ -9678,6 +9746,20 @@ use a separate collection or add after the loop"
             // miscompile of `v[lo..hi]` on struct-enum vectors; native kept its owned copy so it
             // did not corrupt but paid a redundant copy+free.  Copying `for_var` directly keeps
             // the borrow-dep and removes both faults.)
+            // @PLN174 F4a — a SCALAR element kind copies its span in one block
+            // (`OpSliceVector`): the prelude names the subject (the `slice_len` read) and the
+            // clamped bounds (`slice_lo`, `slice_hi`), and the loop below is the form kept
+            // for a heap, struct, type-variable or linked element.  `LOFT_NO_SLICE_COPY=1`
+            // keeps the loop everywhere — the A/B.
+            let bulk = crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none());
+            if bulk
+                && crate::data::is_scalar(&elm_tp)
+                && !self.is_type_var_element(&elm_tp)
+                && let Some(plan) = self.slice_plan(&init)
+            {
+                *code = self.slice_copy_form(*init, &elm_tp, var_nr, elm_var, op, plan);
+                return;
+            }
             let for_next = v_set(for_var, *next);
             let mut lp = vec![for_next];
             // Two DIFFERENT types, one per role — sharing one id here is what let

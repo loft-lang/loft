@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A slice is a vector wherever a vector is expected.**  `v[lo..hi]` used to be accepted
+only in a `for` loop or on the right of a bind; handing it to a function
+(`f(v[2..5])`), returning it, putting it in a struct field or in a vector literal was
+refused with "expected vector, got iterator" and sent you through a local or a
+comprehension.  Every such place now takes the slice as the fresh vector the bind would
+have made, on both backends; a keyed range slice (`sorted`, `index`, `trie`) stays a
+`for`-only iterator.  And a slice of a scalar vector is copied in one block instead of
+one element at a time (forty 200 000-element slices: 0.13 → 0.03 s).
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

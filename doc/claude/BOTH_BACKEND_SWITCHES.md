@@ -289,6 +289,17 @@ spends 0.17 s.  The pool is disjoint from the frame's OWN promoted locals, the o
 that hold data across a call.  The bisect step between the rewrite and the pool: a wrong
 value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame
 sharing a store they must not.
+## Lowering: slices
+
+**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON since
+2026-09-28, parse time, BOTH backends) keeps the per-element loop for a SCALAR-element slice
+bound to a local (`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the
+coercion serves) — with it off the span is copied in ONE block (`OpSliceVector`,
+`Stores::vector_slice`; forty 200 000-element slices 0.13 → 0.03 s) — and is the first bisect
+step for a wrong slice of a scalar vector.  A heap, struct, type-variable or linked element
+keeps the loop either way.  **`LOFT_TRACE_ITERVEC=1`** names an iterator that meets a
+vector-typed position and is NOT materialised, with the value's shape — the instrument for
+"expected vector, got iterator" surviving at a site the coercion should serve.
 
 ## Lowering: `??` chains and nested literals
 

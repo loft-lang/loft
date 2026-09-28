@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — ACTIVE since 2026-09-28; F0–F2 shipped, F3 measured red (the row is not a copy).**  The design is the plan issue
+**Open — ACTIVE since 2026-09-28; F0–F2 and F4a shipped, F3 measured red (the row is not a copy).**  The design is the plan issue
 ([loft-lang/plans#174](https://github.com/loft-lang/plans/issues/174), the one home for the
 phases, the invariant and the precedents); this README is the per-phase state.
 
@@ -17,7 +17,7 @@ phases, the invariant and the precedents); this README is the per-phase state.
 | F1 | a `Store` that serves foreign bytes | **DONE 2026-09-28** — `Store::make_foreign` / `FOREIGN_REC` / `ForeignOwner`; four accessors answer the id (`read`, `addr`, `valid`, `elem_base`), `bytes_of` the read-only reader; unit test reads it beside a copied store through the same accessors, byte for byte; sabotage receipts in its doc comment (the `read` intercept struck: out-of-bounds refusal; `elem_base` struck: the process dies 16 GiB past the store).  Reference: DATABASE.md § Foreign stores |
 | F2 | the runtime hands one out and frees it with its handle; `file_map` | **DONE 2026-09-28** — `Stores::foreign_vector` / `free_named` releases the owner; `file_map(path)` in `02_files.loft` (a read-only `memmap::Mmap`, strace shows `mmap(…, PROT_READ, MAP_SHARED)` of the file); cells `tests/scripts/174-foreign-file.loft` c1–c10 (length, every index, an iteration, slices, `text_from_bytes` of a slice and of the whole, a hoisted loop, missing and empty files, two mappings, a rebind, a copy that is independent) pass on both backends and under `LOFT_HOIST_VERIFY`, `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_STORES=warn`; the write refusal is `tests/foreign_store.rs` on the spawned binary.  Two defects the phase found in the store: the lock refusal ran AFTER the bounds computation (a foreign write read as a corrupt reference), and an internal lock's write was a panic where the program's own doing deserves the runtime error |
 | F3 | the crawler's `binary_read` row on it | **RED 2026-09-28, as designed** — `binary_map` (the same 150 000 i16 off `file_map`, two byte reads per element) beside `binary_read` (`bf#read(2)` per element), same hash `fa34c62d78` on all four lanes: loft 2.36 ms against 2.28 ms (idle box, two runs within 0.5 %) — the row does NOT move.  Why: this row is not a copy of the file; `bf#read(2)` is a buffered read at ~16 ns per element, and the row is the element loop — two nullable index reads, the arithmetic and the push into `out` per element — so removing the copy removes nothing.  A mapping pays where a consumer COPIES bytes out (the F0 shape, −13.6 %), not where it streams them.  The row stays in the registry as a like-for-like shape (`vector-read`); the crawler's own code keeps `f#read` |
-| F4 | a slice of a read-only store is a view | open |
+| F4 | a slice of a read-only store is a view | **F4a DONE 2026-09-28** — a scalar-element slice is ONE block copy (`OpSliceVector` / `Stores::vector_slice`, the span read through `bytes_of`, so a mapped file's slice copies without a record per byte): forty 200 000-element slices 0.13 → 0.03 s; sabotage receipt in the cell file (the copy's start struck: c1 reads 18 36 189 for 21 39 210).  **And the language half the owner asked for on the way:** `(Slice-Value)` holds at EVERY vector-typed position now — an argument, a return, an `if` arm, a field value, a literal element — through one home (`Parser::iterator_as_vector`); `text_from_bytes(bytes[a..b])` is a plain call.  Gap pinned: a generic's instance keeps the loop.  **F4b (the view) and F4c open** — see § Where to resume |
 | F5 | the library bridge | open |
 | F6 | pluginabi's front door | open |
 | F7 | the wasm side | deferred until F5 holds |
@@ -59,10 +59,10 @@ copy F4 elides sits at the BIND, and it is dearer than a `memcpy` by two orders.
    under `LOFT_HOIST_VERIFY=1`, `text_from_bytes(view)` (reads through `bytes_of`, which
    must learn the view ids).  `(Slice-Value)` in `formal/collections.md` gains the clause
    and cites `slice_into`.
-3. **F4c — `text_from_bytes` of a slice without the bind** (XS after F4b): the parser
-   already refuses an iterator there (`expected vector<u8>, got iterator<u8>`); with F4b a
-   bound slice is free, so the library form is `tb = bytes[a..b]; text_from_bytes(tb)` and no
-   new signature is needed.  F6 then rewrites cbor's two arms exactly so.
+3. **F4c — DONE with F4a (2026-09-28), and wider than planned**: a slice is a vector at every
+   vector-typed position (`(Slice-Value)`, `Parser::iterator_as_vector`), so
+   `text_from_bytes(bytes[a..b])` is a plain call today; with F4b that call reads a view.
+   F6 then rewrites cbor's two arms exactly so.
 
 **Not to do:** a static dep from a slice-bound local to its source (it would forbid every
 program that rebinds the source while a COPY lives — a contract change for no gain); a
