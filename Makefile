@@ -2293,6 +2293,7 @@ ci: ci-guard
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
+	python3 scripts/ci_failure_digest.py selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/unreleased-work.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \

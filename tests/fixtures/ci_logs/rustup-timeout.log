@@ -1,0 +1,40 @@
+﻿2026-09-27T19:08:13.9462240Z Current runner version: '2.337.0'
+2026-09-27T19:08:13.9493030Z ##[group]Runner Image Provisioner
+2026-09-27T19:08:20.7318990Z   RUST_BACKTRACE: 1
+2026-09-27T19:08:20.7319210Z   CARGO_HOME: /Users/runner/.cargo
+2026-09-27T19:08:20.7319490Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-09-27T19:08:20.7319770Z ##[endgroup]
+2026-09-27T19:08:20.8359190Z info: syncing channel updates for nightly-aarch64-apple-darwin
+2026-09-27T19:08:38.9884740Z error: could not download file from 'https://static.rust-lang.org/dist/channel-rust-nightly.toml.sha256' to '/Users/runner/.rustup/tmp/v1qkkjwernxr3pp2_file'
+2026-09-27T19:08:38.9885720Z 
+2026-09-27T19:08:38.9885820Z Caused by:
+2026-09-27T19:08:38.9886050Z     0: error downloading file
+2026-09-27T19:08:38.9886560Z     1: error sending request for url (https://static.rust-lang.org/dist/channel-rust-nightly.toml.sha256)
+2026-09-27T19:08:38.9887300Z     2: client error (SendRequest)
+2026-09-27T19:08:38.9887550Z     3: connection error
+2026-09-27T19:08:38.9887760Z     4: timed out
+2026-09-27T19:08:38.9888000Z 
+2026-09-27T19:08:38.9888090Z Stack backtrace:
+2026-09-27T19:08:38.9892720Z    0: std::backtrace::Backtrace::capture
+2026-09-27T19:08:38.9893090Z    1: <E as anyhow::context::ext::StdError>::ext_context
+2026-09-27T19:08:38.9893650Z    2: rustup::download::download_file_with_resume::{{closure}}
+2026-09-27T19:08:38.9894160Z    3: rustup::download::download_file::{{closure}}
+2026-09-27T19:08:38.9894740Z    4: rustup::dist::download::DownloadCfg::download_and_check::{{closure}}
+2026-09-27T19:08:38.9898880Z    5: rustup::dist::download::DownloadCfg::dl_v2_manifest::{{closure}}
+2026-09-27T19:08:38.9899920Z    6: rustup::dist::try_update_from_dist_::{{closure}}
+2026-09-27T19:08:38.9901130Z    7: rustup::dist::DistOptions::install_into::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9902920Z    8: rustup::install::InstallMethod::install::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9905430Z    9: rustup::install::InstallMethod::install::{{closure}}
+2026-09-27T19:08:38.9912850Z   10: rustup::toolchain::distributable::DistributableToolchain::install::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9914010Z   11: rustup::toolchain::distributable::DistributableToolchain::install::{{closure}}
+2026-09-27T19:08:38.9914910Z   12: rustup::cli::rustup_mode::update::{{closure}}
+2026-09-27T19:08:38.9915310Z   13: rustup::cli::rustup_mode::main::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9915730Z   14: rustup_init::run_rustup_inner::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9916280Z   15: rustup_init::run_rustup::{{closure}}::{{closure}}
+2026-09-27T19:08:38.9916730Z   16: rustup_init::main::{{closure}}
+2026-09-27T19:08:38.9917090Z   17: tokio::runtime::runtime::Runtime::block_on
+2026-09-27T19:08:38.9917670Z   18: rustup_init::main
+2026-09-27T19:08:38.9918110Z   19: std::sys::backtrace::__rust_begin_short_backtrace
+2026-09-27T19:08:38.9918460Z   20: _main
+2026-09-27T19:08:38.9941060Z ##[error]Process completed with exit code 1.
+2026-09-27T19:08:38.9969280Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=failure;conclusion=failure;duration_ms=18273]

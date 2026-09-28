@@ -1,0 +1,70 @@
+# Advisory failures — one issue per advisory CI job that went red, with what failed and
+# where to look (`scripts/ci_failure_digest.py`, whose docstring is the contract).
+#
+# Why this exists: a REQUIRED check blocks the merge, so it is fixed before anything
+# lands.  An advisory one does not — it goes red on a PR, the PR merges, and the finding
+# survives only if someone opened the log.  Every finding here is meant to be fixed; the
+# issue is what keeps it on the list (`make work` counts `ci-advisory` issues like any
+# other) until it is, instead of relying on someone watching the checks.
+#
+# Why `workflow_run`: the watched workflows run on pull requests, and a pull_request run
+# must not be able to write issues (`miri.yml`'s `notify` refuses PR events for exactly
+# that).  `workflow_run` runs THIS file from the default branch, with the default
+# branch's token, after the watched run has finished.  It never checks out or executes
+# the PR's code: it reads the run through the API, reads the head's HISTORY for
+# `git log` / `git blame` (fetched, never built), and treats every log line as data —
+# fenced, truncated, `@` mentions defused (see the script).
+#
+# Which jobs count: on a PR, every job the PR's check list does not mark REQUIRED, asked
+# live through `isRequired` (a copied list is what `miri.yml` documents drifting three
+# times); on the default branch, every job.  A run on any other branch files nothing —
+# a feature branch's run is that branch's evidence (loft#1527).
+#
+# `workflow_run` only fires for a workflow file on the default branch, so this starts
+# working when it merges.  Before that: `scripts/ci_failure_digest.py dry-run <run-id>`.
+name: Advisory failures
+
+on:
+  workflow_run:
+    workflows: ["CI", "Nightly checks (UB sanitizers + toolchain matrix)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write   # the one summary comment on the PR
+  actions: write         # the single retry of a run whose failures were all the runner's
+
+concurrency:
+  # One digest per watched run; a re-run of it (a new attempt) queues behind the first.
+  group: advisory-failures-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    # A cancelled run was superseded (a newer push) and proves nothing either way.
+    if: github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The default branch's copy of the script; history for `git log` / `git blame`
+          # (blobs fetched lazily, only for the files an issue names).
+          fetch-depth: 0
+          filter: blob:none
+      - name: Fetch the run's head (history only — never built or run)
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          git fetch --no-tags --filter=blob:none origin "$HEAD_SHA" 2>/dev/null \
+            || { [ "$EVENT" = pull_request ] && [ -n "$PR" ] \
+                 && git fetch --no-tags --filter=blob:none origin "refs/pull/$PR/head"; } \
+            || echo "::notice::head $HEAD_SHA not fetchable; issues will name files without commits"
+      - name: File, update or close the advisory-failure issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci_failure_digest.py file "${{ github.event.workflow_run.id }}"

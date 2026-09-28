@@ -1,0 +1,9 @@
+2026-09-27T21:02:11.0000000Z ##[group]Run cargo clippy --all-targets -- -D warnings
+2026-09-27T21:03:40.0000000Z    Compiling loft v2026.9.0 (/home/runner/work/loft/loft)
+2026-09-27T21:04:02.0000000Z error[E0594]: cannot assign to `var_g.store_nr`, as `var_g` is not declared as mutable
+2026-09-27T21:04:02.0000001Z     --> src/generation/coroutine.rs:3520:53
+2026-09-27T21:04:02.0000002Z      |
+2026-09-27T21:04:02.0000003Z 3520 |                     OpFreeRef(cell,var_g, "var_g"); var_g.store_nr = u16::MAX;
+2026-09-27T21:04:02.0000004Z      |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+2026-09-27T21:04:02.0000005Z error: aborting due to 1 previous error
+2026-09-27T21:04:02.3000000Z ##[error]Process completed with exit code 101.

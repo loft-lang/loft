@@ -292,6 +292,8 @@ this convention carry no `hit-by:`; treat any count over that period as a floor,
 | `bug` / `enhancement` / `documentation` / … | the GitHub defaults; keep `bug` on every bug |
 | `proposal` | a proposed new library or API change/rewrite (the `library_proposal` intake → the @PLN112 provenance view) |
 | `showcase` | an accepted COMMUNITY app, listed in the @PLN112 applications tier (first-party apps self-describe in their own repo via a `.loft-showcase.toml` + the `loft-showcase` topic, no label) |
+| `ci-advisory` | **auto-filed** by [`advisory-failures.yml`](workflows/advisory-failures.yml): an advisory CI job went red (a PR's non-required check, or any job on `main`).  A bug like any other and pick-up work (`make work`); triage it with `sev:`/`area:`/`wa:`.  Closes itself when the job is green on `main` after the cause landed — [ISSUE_TRACKING.md § Advisory CI failures](../doc/claude/ISSUE_TRACKING.md#advisory-ci-failures--filed-by-the-run-fixed-like-any-bug) |
+| `ci-infra` | **auto-filed**: the one rolling issue for CI RUNNER failures (downloads, lost runners, full disks) — not a loft bug, kept visible so a flaky runner is noticed |
 | `showcase:pending` | a submitted `application_showcase` awaiting review — the intake queue; NOT listed until a maintainer relabels it `showcase` |
 
 ## Triage-state (where an investigation got stuck)

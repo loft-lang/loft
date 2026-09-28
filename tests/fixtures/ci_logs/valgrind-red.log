@@ -1,0 +1,54 @@
+﻿2026-09-27T09:41:10.6094542Z Current runner version: '2.337.0'
+2026-09-27T09:41:10.6131811Z ##[group]Runner Image Provisioner
+2026-09-27T09:47:00.4788759Z env:
+2026-09-27T09:47:00.4788960Z   CARGO_TERM_COLOR: always
+2026-09-27T09:47:00.4789206Z   RUST_BACKTRACE: 1
+2026-09-27T09:47:00.4789435Z   CARGO_HOME: /home/runner/.cargo
+2026-09-27T09:47:00.4789689Z   CARGO_INCREMENTAL: 0
+2026-09-27T09:47:00.4789904Z ##[endgroup]
+2026-09-27T09:52:52.2940982Z environment: line 11: 31542 Aborted                 (core dumped) LOFT_TIMEOUT=300 $VG --log-file="$log" target/release/loft $mode "$u" > /dev/null 2>&1
+2026-09-27T10:49:43.3744980Z valgrind sweep: 2015 runs over 1808 files, 185 of them one test function of a split file (1979 interpreter, 36 native)
+2026-09-27T10:49:43.3746043Z   invalid accesses: 1945 file(s) · definitely lost: 0 file(s) · native not built: 0 · timed out: 0
+2026-09-27T10:49:43.3746845Z   RED — the offending runs (kind, unit, exit, invalid-access count, bytes definitely lost, seconds):
+2026-09-27T10:49:43.3764417Z interp	/home/runner/work/loft/loft/target/vg/cold-stdlib.loft	77	3	0	6.655220717
+2026-09-27T10:49:43.3766562Z interp	tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft	77	2	0	13.373398012
+2026-09-27T10:49:43.3767812Z interp	tests/scripts/a-character-and-i32-push-hold-a-header.loft	77	2	0	35.193209938
+2026-09-27T10:49:43.3769204Z interp	tests/scripts/a-methods-inline-record-result-is-released.loft	77	2	0	43.572922135
+2026-09-27T10:49:43.3770180Z interp	tests/scripts/158-push-window.loft	77	2	0	36.588141577
+2026-09-27T10:49:43.3775209Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_named_record_join_arm_owns_its_copy	77	2	0	9.387293092
+2026-09-27T10:49:43.3777077Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_the_shapes_one_axis_away_are_unmoved	77	2	0	21.891175683
+2026-09-27T10:49:43.3778419Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_local_bound_at_two_sites_from_two_bases	77	2	0	41.476209260
+2026-09-27T10:49:43.3779569Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_forwarding_closure_arm_is_witnessed_by_the_declared_dep	77	2	0	69.040381600
+2026-09-27T10:49:43.3780711Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_declared_local_re_bound_from_a_join_in_a_loop	77	2	0	66.469237140
+2026-09-27T10:49:43.3781806Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_closure_view_collection_is_owned_at_a_plain_bind	77	2	0	28.842195732
+2026-09-27T10:49:43.3782872Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_coalesce_hoist_owns_a_call_subject	77	2	0	77.031194313
+2026-09-27T10:49:43.3783892Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_base_reminted_while_the_borrower_is_live	77	2	0	9.334971493
+2026-09-27T10:49:43.3784957Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_closure_mint_arm_beside_a_variable_arm_is_freed	77	2	0	55.497805395
+2026-09-27T10:49:43.3786043Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_closure_mint_arm_beside_a_join_arm_is_freed	77	2	0	39.168695306
+2026-09-27T10:49:43.3786893Z interp	tests/scripts/1245-a-fn-ref-bind-copies-like-its-named-twin.loft	77	2	0	32.720895661
+2026-09-27T10:49:43.3787579Z interp	tests/scripts/a-tuple-member-releases-once-beside-any-neighbour.loft	77	2	0	28.109872551
+2026-09-27T10:49:43.3788664Z interp	tests/scripts/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::test_a_base_reassigned_after_the_bind	77	2	0	41.531141434
+2026-09-27T10:49:43.3789374Z interp	tests/scripts/158-split-table.loft	77	2	0	18.602646556
+2026-09-27T10:49:43.3790023Z interp	tests/scripts/1185b-a-forwarded-fnref-result-bound-before-return-is-not-the-callers.loft	77	2	0	22.209699353
+2026-09-27T10:49:43.3790897Z interp	tests/scripts/93-vector-advanced.loft	77	2	0	23.816012696
+2026-09-27T10:49:43.3791358Z interp	tests/scripts/164-adopt-buffer-reuse.loft	77	2	0	22.849540587
+2026-09-27T10:49:43.3792012Z interp	tests/scripts/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft	77	2	0	20.932099840
+2026-09-27T10:49:43.3792782Z interp	tests/scripts/1636-a-closure-kept-from-a-loop-pass-keeps-that-pass.loft	77	2	0	22.081173611
+2026-09-27T10:49:43.3793717Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_the_if_chain_of_the_same_arms_is_the_reference	77	2	0	25.278770926
+2026-09-27T10:49:43.3794815Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_a_two_arm_match_frees_the_arm_that_ran	77	2	0	24.386654943
+2026-09-27T10:49:43.3795909Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_a_three_arm_match_frees_the_arm_that_ran	77	2	0	25.826351888
+2026-09-27T10:49:43.3796670Z interp	tests/scripts/157-clear-release.loft	134	2	0	304.245337113
+2026-09-27T10:49:43.3797451Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_a_nullable_keyed_match_frees_the_arm_that_ran	77	2	0	25.923457169
+2026-09-27T10:49:43.3799099Z interp	tests/scripts/1564-a-local-releases-every-record-it-held-across-passes-and-returns.loft	77	2	0	19.553567531
+2026-09-27T10:49:43.3799896Z interp	tests/scripts/1327-an-opaque-fn-ref-return-may-be-its-argument.loft	77	2	0	24.510571305
+2026-09-27T10:49:43.3800483Z interp	tests/scripts/808-tuple-return-value-abi.loft	77	2	0	18.774325096
+2026-09-27T10:49:43.3800951Z interp	tests/scripts/164-element-place.loft	77	2	0	20.049204921
+2026-09-27T10:49:43.3801734Z interp	tests/scripts/1331-a-repointed-literal-accumulator-is-detached.loft	77	2	0	23.219638673
+2026-09-27T10:49:43.3802368Z interp	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft	77	2	0	22.446542934
+2026-09-27T10:49:43.3803015Z interp	tests/scripts/a-nullable-struct-has-one-notion-and-two-spellings.loft	77	2	0	18.552431594
+2026-09-27T10:49:43.3803589Z interp	tests/scripts/byte-push-is-fused.loft	77	2	0	20.069877306
+2026-09-27T10:49:43.3804073Z interp	tests/scripts/1119-a-callees-var-slots-are-its-own.loft	77	2	0	16.163492146
+2026-09-27T10:49:43.3804542Z interp	tests/scripts/10-match.loft	77	2	0	17.348717567
+2026-09-27T10:49:43.3804922Z interp	tests/scripts/139-drop-cascade.loft	77	2	0	17.183973301
+2026-09-27T10:49:43.3805362Z   logs: /home/runner/work/loft/loft/target/vg/<kind>-<stem>.log
+2026-09-27T10:49:43.3815420Z ##[error]Process completed with exit code 1.
