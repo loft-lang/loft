@@ -407,7 +407,9 @@ def file_one(ctx: dict, d: dict, dry: bool) -> str:
         return url.rsplit("/", 1)[-1]
     n = str(existing["number"])
     comments = gh("issue", "view", n, "--json", "comments", "--jq", ".comments[].body", check=False)
-    if f"runs/{run['id']})" in comments:
+    # This run already reported: in the body that filed it, or in a comment since.  A second
+    # digest of one run (a re-triggered workflow) adds nothing.
+    if f"runs/{run['id']})" in existing["body"] + comments:
         return n
     if existing["state"] != "OPEN":
         gh("issue", "reopen", n, check=False)
