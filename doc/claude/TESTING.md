@@ -484,6 +484,15 @@ causing filesystem races.
 The lock is poisoning-tolerant (`unwrap_or_else(|e| e.into_inner())`): a panicking test
 releases the lock and the next test can proceed.
 
+`WRAP_LOCK` only covers one process, and nextest runs every test in a process of its own. Each
+program runs from the repository root, so a file it writes by a relative name is shared by
+every harness that runs it. `wrap::dir` (the interpreter) and `native::native_dir` (the compiled
+binary) run the same `tests/docs` pages at the same time, and `13-file.loft`'s `test.bin` was
+read back by the other one (loft#1724). So each RUN also holds `common::source_run_lock(path)`,
+a cross-process `flock` keyed by the program's absolute path. It serialises only runs of the
+same file, and never across two checkouts. `wrap::run_test` and `native::run_native_job` take
+it. The wasm runner does not: `wasmtime` gets no preopened directory, so it cannot write any.
+
 ### Every skip says why, how it runs instead, and when it ends
 
 An ignore or a skip is a ROUTING, never a resting place: the test still runs somewhere, or a

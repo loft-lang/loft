@@ -2150,6 +2150,20 @@ use a separate collection or add after the loop"
         }
         let mut hoists = Vec::new();
         self.sink_vec_arms(code, to, var_nr, f_type, s_type, lhs_parent_tp, &mut hoists);
+        // loft#1726 — each arm binds the local to a store of its own (a copy arm its `__vdb`,
+        // a literal arm its buffer), and the local's type names the last one written.  The
+        // local holds whichever arm ran, so every arm's store is a JOIN OWNER — the same fact
+        // a `??` records (loft#1721), which the scope pass settles by store identity.  Not a
+        // dep: a union of deps moves the native declaration into the arms.
+        if !self.first_pass {
+            let mut owners = Vec::new();
+            self.arm_bind_stores(code, var_nr, &mut owners);
+            owners.sort_unstable();
+            owners.dedup();
+            if owners.len() > 1 {
+                self.vars.add_join_owners(var_nr, &owners);
+            }
+        }
         self.branch_sunk_vectors
             .insert((self.context, self.vars.name(var_nr).to_string()));
         // A wrapper BLOCK opens a scope — a `??` hoist's, a `match` subject's — and a local
@@ -2164,6 +2178,47 @@ use a separate collection or add after the loop"
             *code = Value::Insert(vec![Value::Set(var_nr, Box::new(Value::Null)), sunk]);
         }
         true
+    }
+
+    /// The store each arm of a sunk bind binds `var_nr` to: a copy arm's `__vdb` (its
+    /// `var_nr = OpGetField(__vdb, …)`), a whole arm's own buffer (a block or temp yielding
+    /// `_vec_N`).  Read off the IR `sink_vec_arms` wrote, so it names exactly the arms that
+    /// bind.
+    fn arm_bind_stores(&self, node: &Value, var_nr: u16, out: &mut Vec<u16>) {
+        match node.unspan() {
+            Value::If(_, t, f) => {
+                self.arm_bind_stores(t, var_nr, out);
+                self.arm_bind_stores(f, var_nr, out);
+            }
+            Value::Block(bl) => {
+                for op in &bl.operators {
+                    self.arm_bind_stores(op, var_nr, out);
+                }
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    self.arm_bind_stores(op, var_nr, out);
+                }
+            }
+            Value::Set(v, rhs) if *v == var_nr => {
+                let get_field_nr = self.data.def_nr("OpGetField");
+                match rhs.unspan() {
+                    Value::Call(d, args) if *d == get_field_nr => {
+                        if let Some(Value::Var(db)) = args.first().map(Value::unspan) {
+                            out.push(*db);
+                        }
+                    }
+                    Value::Block(bl) => {
+                        if let Some(Value::Var(x)) = bl.operators.last().map(Value::unspan) {
+                            out.push(*x);
+                        }
+                    }
+                    Value::Var(x) if self.vars.is_compiler_generated(*x) => out.push(*x),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The compiler temps the operators AHEAD of a branch bind, with what each was bound

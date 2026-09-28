@@ -19,8 +19,8 @@
 // branch) × closure (escaping, used in the frame, two closures sharing the capture) × a loop
 // of builds (the leak channel), with the single-owner shapes that were always right as
 // controls.  NOT covered: a capture REASSIGNED after the build (loft#1725) — identity against
-// the local then names the wrong store, so it is excluded from this route — and `d = f(); c =
-// d ?? []`, the call bound first (loft#1726), whose per-arm bind names one arm's store only.
+// the local then names the wrong store, so it is excluded from this route.  `d = f(); c = d ??
+// []`, the call bound first, is a per-arm bind: `a-sunk-branch-bind-captured-by-…` (loft#1726).
 //
 // @falsified-at: deaf30ba7 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
 // @falsified-by: tests/falsified/an-escaping-capture-of-a-join-keeps-the-store-it-holds.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0

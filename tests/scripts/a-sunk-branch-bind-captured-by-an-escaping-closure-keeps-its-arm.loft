@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector local bound from a value branch — `c = d ?? [9, 9]`, `c = d ?? e`, `c = if … { [7] }
+// else { d }`, a `match` — and captured by a closure that leaves the frame keeps the store of
+// whichever arm RAN (loft#1726).
+//
+// The bind is written out per arm (`sink_vec_bind_into_arms`): a copy arm builds into a `__vdb`
+// of its own, a literal arm is bound whole to its buffer, and the local's type names only the
+// last store written.  The escaping closure adopted that one store and the frame freed the
+// others at exit — so when another arm ran, the record held a released store.  The value read
+// back right (nothing reused the slot); `LOFT_STRICT_STORES=1` named 17–21 uses after free per
+// cell on both backends.  Now every arm's store is recorded as the local's JOIN OWNER — the
+// fact a `??` result records (loft#1721) — and the frame releases each by store identity
+// against the capture.
+//
+// Axes: the arm that runs (the literal / the local / the call's copy) × the branch spelling
+// (`??` over a local or a parameter, `if`, a three-arm `match`) × element kind (integer, a
+// struct) × a loop of builds alternating arms.  Controls: a closure that stays in the frame, a
+// sunk bind never captured (the shape store confinement once broke), and a vector returned
+// directly.
+//
+// @falsified-at: 085d02cf0, WITH THE INSTRUMENT ARMED — `LOFT_STRICT_STORES=1 make falsify`:
+//   interpret exit 1 -> 0, native exit 1 -> 0.  Plain mode reads INERT: every value is right
+//   on both trees, so no assertion moves; the fault is a read of a released store that nothing
+//   had reused yet.
+// @falsified-by: tests/falsified/a-sunk-branch-bind-captured-by-an-escaping-closure-keeps-its-arm.patch — with `LOFT_STRICT_STORES=1`: interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: assertions, leak, panic and refusals are equal on both trees and both backends; only
+// the strict-store exit moved.
+
+struct P { v: integer }
+fn nulv(n: integer) -> vector<integer>? { if n == 0 { null } else { [n] } }
+fn nulp(n: integer) -> vector<P>? { if n == 0 { null } else { [P { v: n }] } }
+fn run(f: fn(integer) -> text) -> text { f(2); f(3) }
+
+fn mk_empty(n: integer) -> fn(integer) -> text { d = nulv(n); c = d ?? []; c += [1]; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_lit(n: integer) -> fn(integer) -> text { d = nulv(n); c = d ?? [9, 9]; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_param(d: vector<integer>?) -> fn(integer) -> text { c = d ?? [9]; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_locals(n: integer) -> fn(integer) -> text { d = nulv(n); e = [4, 4]; c = d ?? e; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_struct(n: integer) -> fn(integer) -> text { d = nulp(n); c = d ?? [P { v: 9 }]; fn(x: integer) -> text { c += [P { v: x }]; "{len(c)}:{c[0].v}:{c[len(c) - 1].v}" } }
+fn mk_if(n: integer) -> fn(integer) -> text { d = [5, 5]; c = if n == 0 { [7] } else { d }; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_match(n: integer) -> fn(integer) -> text { d = [5]; c = match n { 0 => [7, 7], 1 => d, _ => [1] }; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn in_frame(n: integer) -> text { d = nulv(n); c = d ?? [9]; add = fn(x: integer) { c += [x]; }; add(2); add(3); "{c}" }
+fn not_captured(n: integer) -> text { d = nulv(n); c = d ?? [7, 8]; c += [1]; "{c}" }
+fn returned(n: integer) -> vector<integer> { d = nulv(n); c = d ?? [9]; c += [1]; c }
+
+fn the_literal_arm_of_a_question_question() {
+  assert(run(mk_empty(0)) == "[1,2,3]", "empty literal ran: {run(mk_empty(0))}");
+  assert(run(mk_empty(5)) == "[5,1,2,3]", "empty literal skipped: {run(mk_empty(5))}");
+  assert(run(mk_lit(0)) == "[9,9,2,3]", "two-element literal ran: {run(mk_lit(0))}");
+  assert(run(mk_lit(4)) == "[4,2,3]", "two-element literal skipped: {run(mk_lit(4))}");
+  assert(run(mk_param(nulv(0))) == "[9,2,3]", "parameter, literal ran: {run(mk_param(nulv(0)))}");
+  assert(run(mk_param(nulv(8))) == "[8,2,3]", "parameter copied: {run(mk_param(nulv(8)))}");
+  assert(run(mk_struct(0)) == "3:9:3", "struct literal ran: {run(mk_struct(0))}");
+  assert(run(mk_struct(5)) == "3:5:3", "struct copied: {run(mk_struct(5))}");
+}
+
+fn two_locals() {
+  assert(run(mk_locals(0)) == "[4,4,2,3]", "the right local: {run(mk_locals(0))}");
+  assert(run(mk_locals(3)) == "[3,2,3]", "the left local: {run(mk_locals(3))}");
+}
+
+fn the_value_branches() {
+  assert(run(mk_if(0)) == "[7,2,3]", "if, literal arm: {run(mk_if(0))}");
+  assert(run(mk_if(1)) == "[5,5,2,3]", "if, local arm: {run(mk_if(1))}");
+  assert(run(mk_match(0)) == "[7,7,2,3]", "match arm 0: {run(mk_match(0))}");
+  assert(run(mk_match(1)) == "[5,2,3]", "match arm 1: {run(mk_match(1))}");
+  assert(run(mk_match(2)) == "[1,2,3]", "match arm 2: {run(mk_match(2))}");
+}
+
+fn the_controls() {
+  assert(in_frame(0) == "[9,2,3]" && in_frame(6) == "[6,2,3]", "in frame: {in_frame(0)} {in_frame(6)}");
+  assert(not_captured(0) == "[7,8,1]" && not_captured(2) == "[2,1]", "not captured: {not_captured(0)} {not_captured(2)}");
+  assert("{returned(0)}" == "[9,1]" && "{returned(7)}" == "[7,1]", "returned: {returned(0)} {returned(7)}");
+}
+
+fn many_builds() {
+  // Alternating arms: 100 × "[9,9,2,3]" (9 chars) + 100 × "[1,2,3]" (7 chars), and 100 ×
+  // "[4,4,2,3]" + 100 × "[1,2,3]" likewise.
+  t = 0;
+  for i in 0..200 { t += len(run(mk_lit(i % 2))) + len(run(mk_locals(i % 2))); }
+  assert(t == 3200, "got {t}");
+}
+
+// A `main`, not `test_*` functions: the strict-store report ends a direct run with exit 1, and
+// `--tests` prints it without failing — so only this entry point lets the instrument score.
+fn main() {
+  the_literal_arm_of_a_question_question();
+  two_locals();
+  the_value_branches();
+  the_controls();
+  many_builds();
+}

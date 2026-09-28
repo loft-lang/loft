@@ -215,6 +215,8 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
 /// Paths for one native compilation job.
 struct NativeJob {
     stem: String,
+    /// The `.loft` program, whose run lock `run_native_job` holds (loft#1724).
+    source: PathBuf,
     tmp_rs: PathBuf,
     binary: PathBuf,
     /// Sidecar file that stores the cache key written at compile time.
@@ -484,6 +486,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     let key_file = scratch.join(format!("loft_native_{stem}_bin.key"));
     Ok(NativeJob {
         stem,
+        source: entry.to_path_buf(),
         tmp_rs,
         binary,
         key_file,
@@ -677,6 +680,7 @@ fn compile_native_job(
 /// cache on the next invocation (see `binary_cache_valid`).
 fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     let cwd = std::env::current_dir().unwrap_or_default();
+    let _run_lock = common::source_run_lock(&job.source);
     let run_status = std::process::Command::new(&job.binary)
         .current_dir(&cwd)
         .status()?;
