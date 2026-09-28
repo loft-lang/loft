@@ -461,7 +461,7 @@ v[i];                // index read
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
-**Never swap `vector<STRUCT>` elements in-place via a temp (loft#338).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
+**Never swap `vector<STRUCT>` elements in-place via a temp (a bind is a VIEW — `(B-View)` in `formal/binding.md`).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
 
 ---
 
@@ -980,7 +980,7 @@ results[i] = "true";               // propagates
 Reads through a plain copy are correct, which is what makes this
 expensive to find: `len`, indexing and field reads all behave, and only
 the writes vanish — arbitrarily far from where the value is later found
-missing (loft#670).  The compiler warns on the simple shape (`w = v`
+missing.  The compiler warns on the simple shape (`w = v`
 followed by an unread `w[i] = …`), but a bound-guard such as
 `if i < len(results)` counts as a read and silences it, so the diagnostic
 is a backstop, not a guarantee.
@@ -1023,7 +1023,7 @@ fn main(args: vector<text>) {                // the invocation arguments
 
 **One `vector<text>` parameter is the ONLY supported shape.** It works on both backends.
 Any other spelling is a clean compile error (*"`main` takes no parameters, or one
-`vector<text>` …"* — loft#1172 made the old silent-garbage fill a refusal). There is
+`vector<text>` …"*; guard `tests/main_signature.rs`). There is
 no `args()` builtin.
 
 A file with no `main` is a library: the interpreter runs nothing, and `--native`

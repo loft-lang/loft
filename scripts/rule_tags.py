@@ -31,6 +31,24 @@
 #                  entry's issue has closed
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
+#   claims         the LIMITATION sentences of the hand-written reference docs (LOFT.md,
+#                  STDLIB.md, CAVEATS.md, the loft-write skill) that cite a `loft#N`, each with
+#                  the guard `tests/scripts/N-*.loft` that would say which way N went; with
+#                  `--issues` asks the tracker which of those issues have CLOSED — a limitation
+#                  still on the page after its issue closed is what routes every agent around a
+#                  feature that works (@PLN176); `--gate` fails on any such sentence.  The
+#                  nightly runs it (`stale-claims`); `make ci` prints the offline half.  A
+#                  lifted limitation LEAVES the page (a new reader is not helped by what loft
+#                  could not do last month) and its record goes to `<doc>-history.md`
+#   fences         every `loft` code fence in the hand-written reference docs, and the executed
+#                  program it is cut from: the line above a fence reads `<!-- from <path> -->`
+#                  and the fence must be a VERBATIM window of that file (indent-normalised), so
+#                  a sample on the page is code that runs in `make ci`.  The two comparison
+#                  pages are read the same way, each loft block against
+#                  `tests/comparisons/<section id>.loft`.  A fence that is a shape, a grammar or
+#                  a signature listing rather than a program is a ```grammar fence and is not
+#                  asked.  `--gate` fails a fence with no source or one that has drifted
+#                  (@PLN176 phase 2; the walk that gives every fence a home is the plan's)
 #   coverage       what share of the rules carry a code ANNOTATION and what share carry an
 #                  active GUARD, against the contract-1 FLOORS — the command a doc links to
 #                  INSTEAD of writing a position down.  A measured position is stale the
@@ -381,17 +399,36 @@ def closed_issues(numbers):
     decides them.
     """
     import json
+    import shutil
     import subprocess
     out, unreachable = {}, []
+    # Without `gh` the REST endpoint answers the same two fields; a public tracker needs no
+    # token, and `GH_TOKEN` is sent when set.  The fallback exists so a box that has no `gh`
+    # (an agent container) is not silently "unreachable" on every number.
+    have_gh = shutil.which("gh") is not None
+    repo = os.environ.get("LOFT_REPO", "loft-lang/loft")
     for n in sorted(numbers):
         try:
-            r = subprocess.run(["gh", "issue", "view", str(n), "--json", "state,title"],
-                               capture_output=True, text=True, timeout=30)
-            if r.returncode:
-                unreachable.append(n)
-                continue
-            d = json.loads(r.stdout)
-            if d.get("state") == "CLOSED":
+            if have_gh:
+                r = subprocess.run(["gh", "issue", "view", str(n), "--json", "state,title"],
+                                   capture_output=True, text=True, timeout=30)
+                if r.returncode:
+                    unreachable.append(n)
+                    continue
+                d = json.loads(r.stdout)
+                state = d.get("state")
+            else:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"https://api.github.com/repos/{repo}/issues/{n}",
+                    headers={"Accept": "application/vnd.github+json",
+                             "User-Agent": "loft-rule-tags"})
+                if os.environ.get("GH_TOKEN"):
+                    req.add_header("Authorization", f"Bearer {os.environ['GH_TOKEN']}")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    d = json.loads(resp.read().decode("utf-8"))
+                state = (d.get("state") or "").upper()
+            if state == "CLOSED":
                 out[n] = d.get("title", "")
         except Exception:
             unreachable.append(n)
@@ -418,6 +455,247 @@ def citations_in(dirs, exts):
 def citations():
     """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
     return citations_in(CITE_DIRS, CITE_EXTS)
+
+
+# ---- claims: the limitation sentences of the hand-written reference docs (@PLN176) ----
+#
+# A limitation written on LOFT.md is what an agent reads first and believes, so a sentence
+# that still says "does not work (loft#N)" after N closed routes every consumer around a
+# feature that works.  The sentence goes stale on the day the ISSUE closes — an event outside
+# any commit — which is why the check that asks the tracker runs in the nightly and not only
+# at push time.  Measured 2026-09-28: of five limitation sentences in LOFT.md citing a closed
+# issue, two described a bug fixed three weeks earlier, each with a regression guard in
+# tests/scripts asserting the opposite of the page.
+#
+# The docs are the hand-written ones a reader takes as the definition; the generated pages
+# (tests/docs/*.loft) run and need no such check.  Env-overridable for a vendoring project.
+CLAIM_DOCS = (os.environ["CLAIM_DOCS"].split(":") if os.environ.get("CLAIM_DOCS")
+              else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md", "doc/claude/CAVEATS.md",
+                    ".claude/skills/loft-write/SKILL.md"])
+ISSUE_CITE = re.compile(r"loft#(\d+)")
+# A sentence is a LIMITATION when it says something does not work, is refused, needs a
+# workaround, or holds "until" something — the forms the two stale callouts took.
+CLAIM_LIMIT = re.compile(
+    r"\b(does not|doesn't|do not|cannot|can't|not supported|unsupported|refus\w*|until"
+    r"|workaround|work around|known|silently|fails?|crash\w*|wrong|missing|dropped"
+    r"|limit\w*|not (?:yet )?(?:parse|work|accept|reach)\w*)\b", re.I)
+# ... and it is HISTORY, not a limitation, when the sentence (or the words just before the
+# citation) puts the fault in the past: that is how a closed issue is cited on purpose, and
+# the doc contract asks for exactly one of these words beside such a citation (rule 23).
+CLAIM_PAST = re.compile(
+    r"\b(since|fixed|closed|before|used to|was|were|had|previously|no longer|(?<!for )now"
+    r"|cured|landed|made|corrected|resolved)\b", re.I)   # "for now" is a HEDGE, not history
+
+
+def _claim_paragraphs(lines):
+    """(first line number, [lines]) per blank-separated block; blockquote / bullet / table
+    prefixes are stripped so the sentence reads as one string."""
+    buf, start = [], 1
+    for i, line in enumerate(lines, 1):
+        if line.strip() == "":
+            if buf:
+                yield start, buf
+            buf = []
+        else:
+            if not buf:
+                start = i
+            buf.append(re.sub(r"^\s*(?:>\s*|[-*]\s+|\|\s*)*", "", line).strip())
+    if buf:
+        yield start, buf
+
+
+def _claim_sentence(text, at, end):
+    """The sentence around a citation: from the previous `. ` to the next one."""
+    a = text.rfind(". ", 0, at)
+    b = text.find(". ", end)
+    return text[(a + 2 if a >= 0 else 0):(b + 1 if b >= 0 else len(text))].strip()
+
+
+def classify_claim(sentence, before=""):
+    """('limit' | 'past' | 'neutral', the word that decided it).
+
+    `before` is the text just ahead of the citation in the same paragraph — "Since loft#N"
+    puts the marker outside the sentence's own words when the citation opens it."""
+    past = CLAIM_PAST.search(before[-60:]) or CLAIM_PAST.search(sentence)
+    if past:
+        return "past", past.group(0)
+    lim = CLAIM_LIMIT.search(sentence)
+    if lim:
+        return "limit", lim.group(0)
+    return "neutral", ""
+
+
+def guard_for(n, tests_dir=None):
+    """The guard that speaks for issue N: `tests/scripts/N-*.loft` (or `N<letter>-*`), else
+    the first test file that cites `loft#N` — else None.  The guard is the evidence of which
+    way the issue went, so a closed issue WITH a guard is a re-read with its answer beside
+    it, and one without is unkept."""
+    tests_dir = tests_dir or TESTS
+    hits = sorted(glob.glob(os.path.join(tests_dir, "scripts", f"{n}-*.loft")) +
+                  glob.glob(os.path.join(tests_dir, "scripts", f"{n}[a-z]-*.loft")))
+    if hits:
+        return os.path.relpath(hits[0], ROOT)
+    needle = re.compile(rf"loft#{n}(?!\d)")
+    for path in sorted(glob.glob(os.path.join(tests_dir, "**", "*"), recursive=True)):
+        # `.expect` is the error-message baseline: a refusal's guard lives there.
+        if not path.endswith((".loft", ".rs", ".expect")):
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                if needle.search(fh.read()):
+                    return os.path.relpath(path, ROOT)
+        except OSError:
+            continue
+    return None
+
+
+def claim_sites(docs=None):
+    """Every `loft#N` citation in the reference docs, classified:
+    [(file, line, n, kind, word, sentence)]."""
+    out = []
+    for rel in (docs or CLAIM_DOCS):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        for start, buf in _claim_paragraphs(lines):
+            text = " ".join(buf)
+            for m in ISSUE_CITE.finditer(text):
+                sentence = _claim_sentence(text, m.start(), m.end())
+                kind, word = classify_claim(sentence, text[:m.start()])
+                out.append((rel, start, int(m.group(1)), kind, word, sentence))
+    return out
+
+
+# ---- fences: every code sample in a hand-written reference doc is a slice of a program that
+# runs (@PLN176 phase 2) ----
+#
+# A sample that nothing runs is the other way a page goes stale: the language moves, the
+# fence keeps the old spelling, and the reader learns it.  LOFT.md carried 65 `loft` fences
+# and STDLIB.md 29 with no program behind any of them (measured 2026-09-28: one had a
+# `fn main`, 25 of the 94 ran as written, the rest were excerpts assuming context).  So a
+# fence NAMES its program and must match a window of it verbatim; the program asserts.
+FENCE_DOCS = (os.environ["FENCE_DOCS"].split(":") if os.environ.get("FENCE_DOCS")
+              else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md", "doc/claude/CAVEATS.md",
+                    ".claude/skills/loft-write/SKILL.md"])
+FENCE_PAGES = (os.environ["FENCE_PAGES"].split(":") if os.environ.get("FENCE_PAGES")
+               else ["doc/00-vs-rust.html", "doc/00-vs-python.html"])
+FENCE_FROM = re.compile(r"<!--\s*from\s+(\S+)\s*-->")
+
+
+def _dedent(lines):
+    """Trailing whitespace off, blank edges off, the common leading indent off."""
+    out = [l.rstrip() for l in lines]
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    ind = min((len(l) - len(l.lstrip()) for l in out if l.strip()), default=0)
+    return [l[ind:] for l in out]
+
+
+def fence_matches(fence_lines, source_lines):
+    """The 1-based line in `source_lines` where the fence starts, else 0.
+
+    A window of the source is compared after ITS common indent is removed, so a fence cut
+    from inside a `fn main` body matches although the file indents it — and blank lines
+    inside the fence must be blank in the source too, so a fence cannot be assembled from
+    two places."""
+    f = _dedent(fence_lines)
+    if not f:
+        return 0
+    src = [l.rstrip() for l in source_lines]
+    n = len(f)
+    for i in range(len(src) - n + 1):
+        if _dedent(src[i:i + n]) == f:
+            return i + 1
+    return 0
+
+
+def markdown_fences(text):
+    """[(line of the ``` opener, info string, [body lines], source path or None)]."""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        m = re.match(r"^\s*```([A-Za-z-]*)\s*$", lines[i])
+        if m and m.group(1):
+            j = i + 1
+            while j < len(lines) and not re.match(r"^\s*```\s*$", lines[j]):
+                j += 1
+            src = None
+            k = i - 1
+            while k >= 0 and not lines[k].strip():
+                k -= 1
+            if k >= 0:
+                fm = FENCE_FROM.search(lines[k])
+                if fm:
+                    src = fm.group(1)
+            out.append((i + 1, m.group(1), lines[i + 1:j], src))
+            i = j
+        i += 1
+    return out
+
+
+def html_loft_blocks(text):
+    """[(line, section id, [code lines])] for the loft side of a comparison page: the
+    `<pre><code>` blocks with no class (the other language's carry one), text unescaped."""
+    import html as _html
+    out = []
+    section = ""
+    pos = 0
+    for m in re.finditer(r'<h2 id="([^"]+)"|<pre(?P<attrs>[^>]*)><code>(?P<body>.*?)</code></pre>',
+                         text, re.S):
+        if m.group(1):
+            section = m.group(1)
+            continue
+        if "class=" in (m.group("attrs") or ""):
+            continue
+        body = re.sub(r"<[^>]+>", "", m.group("body"))
+        body = _html.unescape(body)
+        line = text.count("\n", 0, m.start()) + 1
+        out.append((line, section, body.split("\n")))
+    return out
+
+
+def fence_report(docs=None, pages=None):
+    """[(file, line, status, source, detail)] — status is ok / drift / unsourced / missing."""
+    rows = []
+    for rel in (docs or FENCE_DOCS):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        for line, info, body, src in markdown_fences(open(path, encoding="utf-8").read()):
+            if info != "loft":
+                continue
+            if not src:
+                rows.append((rel, line, "unsourced", "", body[0].strip()[:60] if body else ""))
+                continue
+            if src.startswith("library:"):
+                # kept by that library's own testbed (its CI); listed, never gated here
+                rows.append((rel, line, "library", src, "kept by the library's testbed"))
+                continue
+            sp = os.path.join(ROOT, src)
+            if not os.path.exists(sp):
+                rows.append((rel, line, "missing", src, "names a file that does not exist"))
+                continue
+            at = fence_matches(body, open(sp, encoding="utf-8").read().split("\n"))
+            rows.append((rel, line, "ok" if at else "drift", src,
+                         f"line {at}" if at else "not a verbatim window of the file"))
+    for rel in (pages or FENCE_PAGES):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        for line, section, body in html_loft_blocks(open(path, encoding="utf-8").read()):
+            src = f"tests/comparisons/{section}.loft"
+            sp = os.path.join(ROOT, src)
+            if not os.path.exists(sp):
+                rows.append((rel, line, "missing", src, f"#{section}: no comparison program"))
+                continue
+            at = fence_matches(body, open(sp, encoding="utf-8").read().split("\n"))
+            rows.append((rel, line, "ok" if at else "drift", src,
+                         f"line {at}" if at else f"#{section}: not a verbatim window"))
+    return rows
 
 
 def main():
@@ -554,6 +832,54 @@ def main():
             got = _tracking_issues(head)
             if got != want:
                 bad.append(f"  {name}\n    want {want}, got {got}")
+        # The `claims` classifier (@PLN176): one cell per verdict, and the guard finder.  Each
+        # proven able to fail: s1 against a classifier with no LIMIT vocabulary, s2 against one
+        # that ignores the words BEFORE the citation, s3 against one that calls every citation
+        # a limitation, s4/s5 against a finder that matches by substring (`14330-…`) or none.
+        claim_cells = [
+            ("s1 a present-tense fault with a workaround",
+             ("Appending through a `&` to a hash does not work: the append is silently "
+              "dropped (loft#1433).", ""), "limit"),
+            ("s2 the past marker sits before the citation, outside the sentence",
+             ("the compiler says exactly that at the call site.", "Since loft#1043 "), "past"),
+            ("s3 a citation that states no fault",
+             ("The walk is ordered by distance (loft#1002).", ""), "neutral"),
+        ]
+        for name, (sentence, before), want in claim_cells:
+            got, _ = classify_claim(sentence, before)
+            if got != want:
+                bad.append(f"  {name}\n    want {want}, got {got}")
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            os.makedirs(os.path.join(td, "scripts"))
+            open(os.path.join(td, "scripts", "14330-not-this-one.loft"), "w").close()
+            if guard_for("1433", tests_dir=td) is not None:
+                bad.append("  s4 guard_for matches the number exactly — `14330-…` does not "
+                           "speak for loft#1433")
+            open(os.path.join(td, "scripts", "1433-a-keyed-alias.loft"), "w").close()
+            g = guard_for("1433", tests_dir=td)
+            if not g or not g.endswith("1433-a-keyed-alias.loft"):
+                bad.append(f"  s5 guard_for finds the issue-numbered guard\n    got {g}")
+            if guard_for("999999", tests_dir=td) is not None:
+                bad.append("  s6 guard_for answers None when nothing speaks for the issue")
+        # The `fences` matcher (@PLN176 phase 2).  f1 against a matcher that ignores indent
+        # (a fence cut from a `fn main` body would never match), f2 against one that matches
+        # line by line without adjacency (a fence assembled from two places would pass), f3
+        # against one that drops blank lines (same), f4 against an HTML reader that keeps the
+        # other language's block or the markup.
+        src = ["fn main() {", "  a = 1;", "  b = a + 1;", "", "  c = b;", "}", "  a = 1;", "  c = b;"]
+        if fence_matches(["a = 1;", "b = a + 1;"], src) != 2:
+            bad.append("  f1 fence_matches finds an indented window of the file")
+        if fence_matches(["a = 1;", "c = b;"], src) != 7:
+            bad.append("  f2 fence_matches needs the lines ADJACENT (lines 2 and 5 are not)")
+        if fence_matches(["b = a + 1;", "c = b;"], src) != 0:
+            bad.append("  f3 fence_matches keeps a blank line as a line of the window")
+        page = ('<h2 id="null">2. Null</h2><pre><code>p = <span class="en">P</span> { x: '
+                '<span class="nm">1</span> };\n<span class="kw">if</span> a &lt; b {}</code></pre>'
+                '<pre class="rust-pre"><code>let p = P;</code></pre>')
+        got = html_loft_blocks(page)
+        if got != [(1, "null", ["p = P { x: 1 };", "if a < b {}"])]:
+            bad.append(f"  f4 html_loft_blocks reads the loft side, unescaped, untagged\n    got {got}")
         # And one cell for the WIRING, because a helper can be right while the caller still
         # asks the old question: the same c1 head, read the way a chapter is read.
         wired = _register_entries(
@@ -604,6 +930,66 @@ def main():
         # the way `check` gates — a `doc_hygiene` test shelling out to this same command, so the
         # gate and the tool cannot drift (`every_rule_citation_resolves` is the pattern).
         return 0
+
+    if cmd == "claims":
+        want_issues = "--issues" in sys.argv
+        gate = "--gate" in sys.argv
+        sites = claim_sites()
+        limits = [c for c in sites if c[3] == "limit"]
+        past = sum(1 for c in sites if c[3] == "past")
+        print(f"{len(CLAIM_DOCS)} docs · {len(sites)} issue citations · "
+              f"{len(limits)} in a LIMITATION sentence · {past} in a past-tense one · "
+              f"{len(sites) - len(limits) - past} neutral")
+        if not want_issues:
+            print("limitation sentences (the nightly asks the tracker whether each issue is "
+                  "still open; `--issues` asks now):")
+            for f, line, n, _, word, sentence in limits:
+                g = guard_for(n)
+                print(f"  {f}:{line} loft#{n} [{word}] "
+                      f"{'guard ' + g if g else 'NO GUARD'}\n      \"{sentence[:110]}\"")
+            return 0
+        done, unreachable = closed_issues({n for _, _, n, _, _, _ in limits})
+        stale = [c for c in limits if c[2] in done]
+        print(f"{len({n for _, _, n, _, _, _ in limits})} issue(s) cited by a limitation, "
+              f"{len(done)} now CLOSED")
+        if unreachable:
+            print(f"  ⚠ {len(unreachable)} could not be asked "
+                  f"({', '.join('loft#%d' % n for n in unreachable)}) — unknown, not clean")
+        for f, line, n, _, word, sentence in stale:
+            g = guard_for(n)
+            print(f"  STALE? {f}:{line} states a limitation citing loft#{n}, CLOSED "
+                  f"({done[n][:60]})\n      {'guard ' + g + ' says which way it went' if g else 'NO GUARD — unkept'}"
+                  f"\n      \"{sentence[:110]}\"")
+        if stale:
+            print(f"\n{len(stale)} sentence(s) to re-read.  A LIFTED limitation leaves the page: "
+                  "state the current behaviour with its guard, and move the record (what it "
+                  "was, the issue, the guard) to the doc's `-history.md` companion.  One that "
+                  "still holds cites the rule that makes it a decision (rule 23).")
+        return 1 if (gate and (stale or unreachable)) else 0
+
+    if cmd == "fences":
+        gate = "--gate" in sys.argv
+        rows = fence_report()
+        by = collections.Counter(st for _, _, st, _, _ in rows)
+        files = sorted({f for f, _, _, _, _ in rows})
+        print(f"{len(files)} docs · {len(rows)} loft samples · {by['ok']} verbatim from a "
+              f"program that runs · {by['library']} kept by a library's testbed · "
+              f"{by['drift']} drifted · {by['missing']} naming a missing file · "
+              f"{by['unsourced']} with no source")
+        for f in files:
+            mine = [r for r in rows if r[0] == f]
+            c = collections.Counter(st for _, _, st, _, _ in mine)
+            print(f"  {f}: {len(mine)} samples — {c['ok']} ok, {c['library']} library, "
+                  f"{c['drift']} drift, {c['missing']} missing, {c['unsourced']} unsourced")
+        bad = [r for r in rows if r[2] not in ("ok", "library")]
+        if bad:
+            print("\nnot kept by a program:")
+            for f, line, st, src, detail in bad:
+                print(f"  {f}:{line} {st.upper()}{' ' + src if src else ''} — {detail}")
+            print("\nA sample is a verbatim window of the program named on the line above it "
+                  "(`<!-- from tests/reference/<file>.loft -->`); a shape or signature that is "
+                  "not a program is a ```grammar fence.  DOC_CONTRACT rule 22.")
+        return 1 if (gate and bad) else 0
 
     if cmd == "dups":
         multi = {t: v for t, v in cites.items() if len({f for f, _ in v}) >= 2}

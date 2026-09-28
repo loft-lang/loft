@@ -890,6 +890,101 @@ fn native_dir() -> std::io::Result<()> {
     run_native_jobs(jobs, rlib_info)
 }
 
+/// Compile and run every `.loft` file in `tests/reference/` natively — the reference pages'
+/// samples (@PLN176 phase 2), the `--native` half of `wrap::reference`.  An `@EXPECT_ERROR`
+/// file is skipped as everywhere on this backend (the refusal is the interpreter's to
+/// prove); a `// @SCRIPT` file (top-level statements, no `fn main`) is a shape the test
+/// harness's parser does not model, so it is compiled and run as the binary does it —
+/// `loft --native <file>` — and its exit status is the verdict.
+#[test]
+fn native_reference() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/reference") {
+        Ok(rd) => rd
+            .filter_map(|f| f.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+            })
+            .collect(),
+        Err(_) => return Ok(()),
+    };
+    files.sort();
+    let rlib_info = find_loft_rlib();
+    let mut jobs = Vec::new();
+    for entry in files {
+        let src = std::fs::read_to_string(&entry)?;
+        if src.contains("@EXPECT_ERROR") {
+            println!("skip {entry:?} (expected error — the interpreter proves the refusal)");
+            continue;
+        }
+        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--native")
+                .arg(&entry)
+                .env("LOFT_TIMEOUT", "300")
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped reference sample {} failed on --native:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            println!("script {entry:?} ran natively");
+            continue;
+        }
+        jobs.push(prepare_native_test(&entry)?);
+    }
+    run_native_jobs(jobs, rlib_info)
+}
+
+/// Compile and run every `.loft` file in `tests/comparisons/` natively — the comparison pages'
+/// claims, the `--native` half of `wrap::comparisons`.  Every file there is script-shaped
+/// (`// @SCRIPT`), so each runs as the binary runs it.
+#[test]
+fn native_comparisons() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/comparisons") {
+        Ok(rd) => rd
+            .filter_map(|f| f.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+            })
+            .collect(),
+        Err(_) => return Ok(()),
+    };
+    files.sort();
+    let rlib_info = find_loft_rlib();
+    let mut jobs = Vec::new();
+    for entry in files {
+        let src = std::fs::read_to_string(&entry)?;
+        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--native")
+                .arg(&entry)
+                .env("LOFT_TIMEOUT", "300")
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped comparison program {} failed on --native:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            println!("script {entry:?} ran natively");
+            continue;
+        }
+        jobs.push(prepare_native_test(&entry)?);
+    }
+    run_native_jobs(jobs, rlib_info)
+}
+
 /// Compile and run every extracted feature example in `tests/docs/features/`
 /// through the native backend — the native half of @PLN92 strand-3's
 /// "example-must-run" guard (@I81).  These files are generated from

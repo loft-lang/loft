@@ -153,6 +153,61 @@ jobs:
             *) echo "::warning::the plan audit could not complete (exit $rc); its result is UNKNOWN, not clean" ;;
           esac
 
+  stale-claims:
+    # @nightly-class: report — a limitation the reference still states after its issue closed (@PLN176)
+    name: Stale limitation claims in the reference docs
+    # Nightly-only: a sentence goes stale when its ISSUE closes, which is an event outside
+    # any commit — a push-time gate never fires for it.  `make ci` prints the offline half
+    # (which sentences are limitations, and their guards); this leg asks the tracker.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Ask the tracker about every limitation sentence
+        # A limitation on LOFT.md is what an agent reads first and believes, so one that
+        # outlives its issue routes every consumer around a feature that works — the fix
+        # delivers nothing until the page catches up.  Measured 2026-09-28: two of five such
+        # sentences described bugs fixed three weeks earlier, each with a regression guard
+        # asserting the opposite of the page.  ONE tracking issue, refreshed while any
+        # sentence is stale and closed when none is (the `notify` pattern above); the body
+        # names each sentence with the guard that says which way its issue went.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          out=$(python3 scripts/rule_tags.py claims --issues --gate 2>&1); rc=$?
+          set -e
+          echo "$out"
+          gh label create stale-claim --color 5319e7 \
+            --description "A reference doc states a limitation whose issue has closed (@PLN176)" --force >/dev/null 2>&1 || true
+          existing=$(gh issue list --state open --label stale-claim \
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ "$rc" = 0 ]; then
+            echo "every limitation sentence cites an open issue"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "✅ No limitation sentence cites a closed issue as of $RUN_URL — closing." || true
+              gh issue close "$existing" --reason completed || true
+            fi
+            exit 0
+          fi
+          # Unreachable issues also exit 1: an answer the tracker could not give is UNKNOWN,
+          # not clean, and the body says which.
+          echo "::warning::a reference doc states a limitation whose issue has closed (or could not be asked)"
+          body=$(printf 'A hand-written reference doc states a limitation whose tracking issue has CLOSED — the page is describing a bug that may be fixed, and every agent that reads it routes around a feature that may work (@PLN176).\n\nRun: %s\n\n```\n%s\n```\n\nFor each line: a LIFTED limitation leaves the page — state the current behaviour with the guard it names and move the record to the doc'"'"'s `-history.md` companion; one that still holds cites the rule that makes it a decision (DOC_CONTRACT rule 23).  This issue refreshes while any sentence is stale and closes when none is.' "$RUN_URL" "$out")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "updated existing issue #$existing"
+          else
+            gh issue create --title "A reference doc states a limitation whose issue has closed" \
+              --label stale-claim --body "$body"
+            echo "opened a new tracking issue"
+          fi
+
   miri:
     # @nightly-class: unsound — hard UB — alignment, OOB, UAF, uninit
     name: Miri hard-UB gate (${{ matrix.os }})
@@ -1423,7 +1478,7 @@ jobs:
   # without opening anything.
   daily-status:
     name: Daily status (the one place to look)
-    needs: [stale-plans-audit, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a

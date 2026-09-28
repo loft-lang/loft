@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: loops
+// @CLAIM: `while` takes a condition and `while true { … break; }` is the infinite loop; a queue is drained by removing its head.
+// @SEEN-FROM: 00-vs-rust.html#loops · 00-vs-python.html#loops
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#loops (a verbatim window: `rule_tags.py fences`) ---
+fn done() -> boolean { true }
+fn step() { }
+fn should_exit() -> boolean { true }
+while !done() { step(); }  // while works
+
+while true {           // infinite until a break
+    if should_exit() { break; }
+    step();
+}
+assert(done(), "both loops ended at once: `done()` and `should_exit()` say so");
+
+// --- as shown on 00-vs-python.html#loops (a verbatim window: `rule_tags.py fences`) ---
+fn ready() -> boolean { true }
+fn process(v: integer) { }
+queue = [1, 2, 3];
+while !ready() { step(); }  // works
+
+while len(queue) > 0 {
+    process(queue[0]);
+    queue.remove(0);   // `#remove` is for a loop variable
+}
+
+// An infinite loop, left by a break:
+while true {
+    if should_exit() { break; }
+    step();
+}
+assert(len(queue) == 0, "the queue was drained one element at a time");

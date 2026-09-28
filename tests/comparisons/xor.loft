@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: xor
+// @CLAIM: `**` is exponentiation and `^` is bitwise XOR — the operator a Rust reader reaches for is the one loft has, and each is spelled once.
+// @SEEN-FROM: 00-vs-rust.html#xor
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#xor (a verbatim window: `rule_tags.py fences`) ---
+r = 2.0;
+a = 6;
+b = 3;
+sq   = 2 ** 10;          // ** exponentiation — integers: 1024
+area = PI * r ** 2.0;    // floats too; pow(r, 2.0) also works
+bits = a | b;            // bitwise OR
+mask = a & b;            // bitwise AND
+xor  = a ^ b;            // bitwise XOR
+assert(sq == 1024 and bits == 7 and mask == 2 and xor == 5, "integer operators");
+assert(area > 12.56 and area < 12.57, "PI * r ** 2.0");

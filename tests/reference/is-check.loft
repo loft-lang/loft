@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § `is` variant check — `is` tests a variant, and `is Variant { field }` also
+// binds the payload for the block that follows.
+
+enum Dir { North, South }
+enum Shape { Circle { radius: float }, Rect { width: float, height: float } }
+
+fn test_is_answers_the_variant() {
+  hit = false;
+  d: Dir = North;
+  if d is North { hit = true; }       // true
+  assert(!(d is South));       // negation
+  assert(hit, "`is` selected the branch");
+}
+
+fn test_is_binds_the_payload_for_its_block() {
+  area = 0.0;
+  s = Circle { radius: 3.14 };
+  if s is Circle { radius } {
+    area = PI * radius * radius;   // radius is in scope here
+  }
+  // radius is NOT in scope here
+  assert(area > 30.9 and area < 31.0, "the bound `radius` was used inside the block");
+}
+
+fn area_of(shape: Shape) -> float {
+  area = 0.0;
+  if shape is Rect { width, height } {
+    area = width * height;
+  }
+  area
+}
+
+fn area_or_zero(shape: Shape) -> float {
+  area = 0.0;
+  if shape is Circle { radius } {
+    area = PI * radius * radius;
+  } else {
+    area = 0.0;
+  }
+  area
+}
+
+fn test_the_bind_form_dispatches() {
+  assert(area_of(Rect { width: 2.0, height: 3.0 }) == 6.0, "a Rect's width and height were bound");
+  assert(area_of(Circle { radius: 1.0 }) == 0.0, "a Circle is not a Rect");
+  assert(area_or_zero(Rect { width: 2.0, height: 3.0 }) == 0.0, "the else branch answers zero");
+}
+
+fn test_is_inside_a_loop_sums_one_variant() {
+  total = 0.0;
+  shapes = [Circle { radius: 1.5 }, Rect { width: 1.0, height: 1.0 }, Circle { radius: 2.5 }];
+  for item in shapes {
+    if item is Circle { radius } {
+      total += radius;
+    }
+  }
+  assert(total == 4.0, "only the circles' radii were summed");
+}

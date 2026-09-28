@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § Lazy store binding — a miss on a lazily bound collection is a null, and
+// `store_lazy_error` says whether it was a real absence or a fetch that failed.
+
+struct Person { id: integer, name: text }
+
+fn test_a_miss_is_null_and_the_error_text_tells_absence_from_failure() {
+  persons: hash<Person[id]> = [];
+  verdict = "";
+  p = persons[42];
+  if p == null {
+    why = store_lazy_error(persons);
+    if why == "" { verdict = "really no such person"; } else { verdict = "could not reach: {why}"; }
+  }
+  assert(verdict == "really no such person", "an unbound collection has no fetch to fail");
+}

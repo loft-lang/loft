@@ -21,6 +21,33 @@
 // `a` is the element as in any loop, `b` is that element's result, and the body runs on the
 // main thread with both in hand.  The worker is a named function — which is the design, not a
 // restriction to work around: it is what makes the read-only capture rule (C93) checkable.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
+
+// --- as shown on 00-vs-rust.html#parallel (a verbatim window: `rule_tags.py fences`) ---
+struct Score { value: integer }
+fn twice(self: const Score) -> integer { self.value * 2 }
+scores = [Score { value: 1 }, Score { value: 2 }, Score { value: 3 }];
+fn double(r: const Score) -> integer { r.value * 2 }
+
+sum = 0;
+for item in scores par(b=double(item), 4) {
+    sum += b;   // b is double(item), computed in parallel
+}               // results arrive in original order
+
+// Method form:
+for item in scores par(b=item.twice(), 4) { sum += b; }
+assert(sum == 24, "2 + 4 + 6 from the function form, then again from the method form");
+
+// --- as shown on 00-vs-python.html#parallel (a verbatim window: `rule_tags.py fences`) ---
+struct Record { value: integer }
+records = [Record { value: 1 }, Record { value: 2 }, Record { value: 3 }];
+fn score(item: const Record) -> integer { item.value * 2 }
+
+total = 0;
+for item in records par(s=score(item), 4) {
+    total += s;   // results arrive in original order
+}                 // 4 worker threads, no GIL
+assert(total == 12, "2 + 4 + 6, in order");
 fn square(v: integer) -> integer { v * v }
 
 fn test_par_computes_the_same_values_as_a_serial_loop() {
@@ -45,3 +72,7 @@ fn test_the_body_sees_the_element_and_its_result_together() {
   assert((pairs[0] ?? -1) == 2, "1 + 1");
   assert((pairs[2] ?? -1) == 12, "3 + 9 — the element is still readable beside its result");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_par_computes_the_same_values_as_a_serial_loop();
+test_the_body_sees_the_element_and_its_result_together();

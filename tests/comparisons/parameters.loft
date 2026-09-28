@@ -16,10 +16,26 @@
 //
 // The trade the page states: loft asks for no lifetime and no `mut` at the call site, and in
 // exchange the sharing is a property of the TYPE rather than something the signature spells.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
-fn push_two(v: &vector<integer>)                  { v += [1, 2]; }
-fn count(v: const vector<integer>) -> integer     { len(v) }
-fn add_to(n: &integer, delta: integer)            { n += delta; }
+// --- as shown on 00-vs-rust.html#parameters (a verbatim window: `rule_tags.py fences`) ---
+// a plain collection parameter is already shared — the append reaches the caller
+fn push_two(v: &vector<integer>) {
+    v += [1, 2];  // caller sees the change
+}
+// const: read-only (locked in debug builds)
+fn count(v: const vector<integer>) -> integer {
+    len(v)
+}
+// &: explicit write-back for primitives
+fn add_to(n: &integer, delta: integer) {
+    n += delta;
+}
+v0: vector<integer> = [];
+push_two(v0);
+n0 = 1;
+add_to(n0, 4);
+assert(len(v0) == 2 and count(v0) == 2 and n0 == 5, "the three parameter spellings, as the page shows them");
 fn append_plain(v: vector<integer>)               { v += [9]; }
 
 fn test_a_collection_parameter_is_already_shared() {
@@ -47,3 +63,9 @@ fn test_an_ampersand_scalar_writes_back() {
   add_to(n, 5);
   assert(n == 15, "`&integer` is the explicit write-back for a scalar");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_a_collection_parameter_is_already_shared();
+test_a_plain_collection_parameter_shares_too();
+test_const_is_read_only_and_still_reads();
+test_an_ampersand_scalar_writes_back();

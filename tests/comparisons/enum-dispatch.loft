@@ -21,7 +21,21 @@
 // `Rock` is then a value of `Hand` and not a type, and dispatch definitions taking it are
 // refused with that sentence.  The two forms below are the ones that work: plain structs for
 // dispatch, and an INLINE struct-enum for payloads.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-rust.html#enum-dispatch (a verbatim window: `rule_tags.py fences`) ---
+s: Shape = Rect { w: 2.0, h: 3.0 };
+enum Shape {
+    Circle { r: float },
+    Rect   { w: float, h: float }
+}
+fn area(self: Circle) -> float { PI * pow(self.r, 2.0) }
+fn area(self: Rect)   -> float { self.w * self.h }
+
+s.area();   // dispatches on the runtime variant
+assert(s.area() == 6.0, "the Rect arm ran");
+c: Shape = Circle { r: 1.0 };
+assert(c.area() > 3.14 and c.area() < 3.15, "the Circle arm ran");
 struct Rock { n: integer }
 struct Paper { n: integer }
 struct Scissors { n: integer }
@@ -72,3 +86,9 @@ fn test_match_is_available_but_not_required() {
   };
   assert(said == "shot 7", "`match` is there when the DECISION is what you want");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_dispatch_reads_both_arguments();
+test_a_payload_is_a_named_field_read_directly();
+test_the_checked_read_is_the_one_the_lint_names();
+test_match_is_available_but_not_required();

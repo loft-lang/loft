@@ -253,6 +253,9 @@ fn dir() -> std::io::Result<()> {
 /// Same `run_test` as `dir()` and `loft_suite()`, so the entry-point rule and the
 /// `@EXPECT_WARNING` / `@EXPECT_ERROR` annotations behave identically.  There is deliberately
 /// no skip list: a comparison claim that cannot run is a claim to delete, not to except.
+/// A file headed `// @SCRIPT` holds the page's block as a top-level window (a struct beside
+/// the statements that use it, as the page shows them), which `run_test` does not model, so
+/// it runs as the binary runs it and its exit status is the verdict — as `reference()` does.
 ///
 /// The contract each file follows is `tests/comparisons/README.md`; the subject index and the
 /// links to every rationale are `doc/claude/SUBJECTS.md`.
@@ -273,6 +276,69 @@ fn comparisons() -> std::io::Result<()> {
          and an empty one passes while proving nothing"
     );
     for entry in files {
+        if std::fs::read_to_string(&entry)?
+            .lines()
+            .any(|l| l.starts_with("// @SCRIPT"))
+        {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--interpret")
+                .arg(&entry)
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped comparison program {} failed:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            continue;
+        }
+        run_test(entry, false, true)?;
+    }
+    Ok(())
+}
+
+/// Run every `.loft` file in `tests/reference/` — the code samples of LOFT.md and STDLIB.md,
+/// as programs (@PLN176 phase 2).
+///
+/// Each `loft` fence on those two pages is a verbatim window of a file here (`rule_tags.py
+/// fences` checks the windows); the file asserts what the page says.  Same `run_test` as
+/// `comparisons()`, with one difference: a file headed `// @SCRIPT` is a script-shaped sample
+/// (top-level statements, no `fn main`), which `run_test` does not model, so it is run as the
+/// binary runs it and its exit status is the verdict — a failing top-level `assert` exits 1.
+/// The contract is `tests/reference/README.md`.
+#[test]
+fn reference() -> std::io::Result<()> {
+    let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/reference")?
+        .filter_map(|f| f.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+        })
+        .collect();
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "tests/reference/ is empty — the directory exists to gate the reference pages' samples, \
+         and an empty one passes while proving nothing"
+    );
+    for entry in files {
+        let src = std::fs::read_to_string(&entry)?;
+        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--interpret")
+                .arg(&entry)
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped reference sample {} failed:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            continue;
+        }
         run_test(entry, false, true)?;
     }
     Ok(())
@@ -455,20 +521,25 @@ fn loft_suite_whole_corpus() -> std::io::Result<()> {
 
 /// Every `.loft` file the two corpus runners execute, in sorted order.
 ///
-/// `tests/docs/` and `tests/comparisons/` run through the same `run_test` as
-/// `tests/scripts/`, so the entry-point rule below applies identically to all three.
+/// `tests/docs/`, `tests/comparisons/` and `tests/reference/` run through the same `run_test`
+/// as `tests/scripts/`, so the entry-point rule below applies identically to all four.
 fn corpus_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = ["tests/scripts", "tests/docs", "tests/comparisons"]
-        .iter()
-        .filter_map(|d| std::fs::read_dir(d).ok())
-        .flatten()
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
-        .collect();
+    let mut files: Vec<PathBuf> = [
+        "tests/scripts",
+        "tests/docs",
+        "tests/comparisons",
+        "tests/reference",
+    ]
+    .iter()
+    .filter_map(|d| std::fs::read_dir(d).ok())
+    .flatten()
+    .filter_map(|f| f.ok().map(|e| e.path()))
+    .filter(|p| {
+        p.is_file()
+            && p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+    })
+    .collect();
     files.sort();
     files
 }
