@@ -61,7 +61,8 @@ irreversible moves not to make.
   `doc/claude/DEBUG.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
   investigate (CLAUDE.md § Debugging policy) — read the dump and reason.
 - **Tight loop**: `./scripts/find_problems.sh --subject <name>` (seconds) while
-  iterating — full suite only before a commit (CLAUDE.md § Key commands).
+  iterating — one full gate per change of unknown reach, and `scripts/ci-run.sh recheck`
+  after it rather than a restart (CLAUDE.md § Key commands).
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
 

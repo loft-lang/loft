@@ -360,15 +360,25 @@ hides the next real regression.  Leave the gate cleaner than you found it.
 
 ### Local CI gate
 
-**`make ci` before every commit** — fmt, both clippy variants, the no-default-features and wasm
-builds, the native fixture cdylibs, then the suite; it stops at the first failure and writes
-`result.txt`.  It takes minutes, so iterate with the tight loop and run the full gate once
-before committing:
+**One full gate per change whose reach you cannot bound — not one per commit.**  `make ci` runs
+fmt, both clippy variants, the no-default-features and wasm builds, the native fixture cdylibs,
+then the suite (the stages before the suite stop at their first failure; the suite collects up
+to `CI_MAX_FAIL`, default 5).  It takes ~20 minutes, so the gate is used once and the cheap
+tools around it do the rest:
 
 ```bash
-./scripts/find_problems.sh --changed      # seconds: the subjects your diff touches
-make ci                                   # the full gate, before the commit
+./scripts/find_problems.sh --changed      # seconds: the subjects your diff touches, while iterating
+scripts/ci-run.sh start                   # the full gate; a ~15 s pre-flight refuses it first
+                                          #   when fmt, an audit row or doc drift would stop it
+scripts/ci-run.sh recheck                 # AFTER a gate: its failed tests + what changed since
 ```
+
+**After a red gate, `recheck` — do not restart it.**  Fix what it named, then `recheck` re-runs
+exactly the failed tests, the pre-flight, both clippy variants when Rust changed since the
+gate, and `find_problems.sh --changed <gate sha>`.  The gate plus a green recheck is the
+evidence for a push; name both.  A NEW full gate is owed only when the fix's reach is not known —
+the cases [CI_BUDGET.md § After a red gate](CI_BUDGET.md#after-a-red-gate-recheck-do-not-restart)
+lists — and never before opening a PR, whose own `ci.yml` is the full gate on the exact sha.
 
 Start a long gate with `scripts/ci-run.sh start` and wait on its recorded pid, never on a
 process name ([CLAUDE.md § Key commands](../../CLAUDE.md)).  When this box cannot run the gate
