@@ -455,7 +455,7 @@ would take it (−30 % more on the price).
 
 `binary_map` — the same 150 000 i16 read off `file_map` (two byte reads per element, no copy
 of the file) — beside `binary_read` (`bf#read(2)` per element), same hash on all four lanes:
-**2.54 ms against 2.48 ms** in one run.  The mapping moves nothing here because the row is
+**2.36 ms against 2.28 ms** (idle box, two runs within 0.5 %).  The mapping moves nothing here because the row is
 not a copy: the buffered `f#read` costs ~16 ns per element, and the row is the element loop
 (two nullable index reads, the sign arithmetic, the push into `out`).  A foreign store pays
 where a consumer copies bytes OUT of a buffer (pluginabi's decode, −13.6 % priced), not
