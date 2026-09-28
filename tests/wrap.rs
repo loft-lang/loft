@@ -1657,6 +1657,7 @@ fn source_without_failing_fns(src: &str, diags: &[String], path: &str) -> Option
 
 fn run_test(entry: PathBuf, debug: bool, allow_dump: bool) -> std::io::Result<()> {
     let mut collected: Vec<String> = Vec::new();
+    let _run_lock = common::source_run_lock(&entry);
     run_test_inner(entry, debug, allow_dump, None, 0, &mut collected)
 }
 

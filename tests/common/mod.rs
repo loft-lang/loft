@@ -15,6 +15,34 @@ pub mod cross_mode;
 #[allow(dead_code)]
 pub mod timing;
 
+/// Hold this while a corpus program RUNS: a cross-process advisory lock keyed by the program's
+/// absolute path (loft#1724).
+///
+/// A program runs from the repository root, so the file names it writes are shared by every
+/// harness that runs it — `wrap` (the interpreter) and `native` (the compiled binary) run the
+/// same `tests/docs` and `tests/scripts` files in separate nextest processes at once, and
+/// `13-file.loft`'s `test.bin` written by one was read back by the other.  An in-process mutex
+/// cannot see the other binary; this lock can, and serialises only runs of the SAME file.  The
+/// key is the absolute path, so two checkouts never wait on each other.  Best-effort: a lock
+/// that cannot be opened is `None` and the run proceeds unserialised, as before.  Take it once
+/// per run — a second `lock` on a fresh handle in the same process blocks on the first.
+#[allow(dead_code)]
+#[must_use]
+pub fn source_run_lock(source: &std::path::Path) -> Option<std::fs::File> {
+    use std::hash::{Hash, Hasher};
+    let abs = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    abs.hash(&mut h);
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(std::env::temp_dir().join(format!("loft-run-{:016x}.lock", h.finish())))
+        .ok()?;
+    lock.lock().ok()?;
+    Some(lock)
+}
+
 /// The `file://` URL for a local path, in the one shape this repo's registry fixtures and
 /// `registry_index::http_get_bytes` both handle.
 ///
