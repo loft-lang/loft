@@ -178,7 +178,26 @@ operand — so both backends call one helper and one fix serves both; P1 (superi
 and P2 (the stack pointer cache) in PERFORMANCE.md § Improvement priority order are the
 existing homes, and P2's "low priority" reads as "after the native bar", not "never".  The
 two PERFORMANCE.md sections that still call the interpreter "already fast" are owed a
-correction now, whatever the sequence.  The October → November → December order in the
+correction now, whatever the sequence.
+
+*The light side, and the floor under it (owner, 2026-09-28).*  During development the
+parts of a program NOT touched for a while should be compiled and optimised automatically,
+so a day's work feels fast even while the part under edit runs interpreted.  That is
+[DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS.md) with its boundary moved inward: today the
+line between native and interpreted is "published library vs the user's script", and the
+ask is to draw it by EDIT AGE instead — a function or module whose source has been stable
+for a set duration is built in the background and dispatched through the same
+`OpStaticCall` → `dlsym` primitive the stdlib and native libraries already use, sharing the
+one `Stores` heap so nothing crosses a boundary.  Its two real constraints, named so the
+plan that takes it starts from them: a struct edit in the interpreted part changes the
+layout every compiled part addresses (the artefact key already folds the consumer's
+`layout_fp`, so such an edit re-tiers everything on that type), and the debugger forces
+interpretation to step and hot-reload, so a tiered function with a breakpoint in it falls
+back.  The floor the tier cannot restore: **store access has to be efficient in both
+backends regardless**, because no processor cache or interpreter trick makes up for moving
+chunks of memory around — and "moving chunks of memory" is precisely the alloc-temp,
+record-build and vector-build classes (mint, copy, free) that top the portal.  Those are
+shared-runtime paths, which is why the engine classes come first for the interpreter too.  The October → November → December order in the
 directive above stands; this read adds the perf meter, the null re-cut, the two gate
 repairs and the interpreter's place in the sequence, and takes nothing out.
 
