@@ -983,3 +983,25 @@ target, silently; a value-range proof is portable by construction.
 **Revisit when.** Never for the machine-dependent form.  Decided 2026-09-08, amended 2026-09-15
 (renumbered from a duplicate C67) — [record](DESIGN_DECISIONS-history.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type).
 **Catalogue:** @F38 (arithmetic safety).
+
+## C130 — A store carries its own failure arm: else after the assignment
+
+**Decision.** An assignment statement may end in `else { … }`, run exactly when the store did
+not take: an index out of range, a null index, a write through `nullref` at any step of the
+chain, a narrow slot the value did not fit, a lock fault.  The place is spelled once; the store
+stays a statement (a store in condition position is refused) and has no success arm.  An
+unguarded dropped write logs one Warn line in every build kind — that log is the default
+resolution, and a missing `else` is never diagnosed.  `else` supersedes `if !place`, which stays
+accepted.  **A lock fault is not a dropped write (owner, 2026-09-28):** writing a locked store is
+a program error, not a missing element, so unguarded it halts a DEVELOPMENT run with the lock
+report, and a production run logs and discards it (`@FR-H-WriteLocked`, C80).  **Why.**
+Re-spelling the place copies a chain exactly where the copy goes wrong, and re-reads instead of
+reporting; a store as a condition is the `=`-for-`==` typo; `||` or `??` would give "or" a third
+meaning; a result wrapper is declined by C89.
+
+**Revisit when.** A consumer shows the Warn line is noise in a real program — and even then the
+answer is a cheaper guard (`else {}`), never a mode split or a compile-time nag.  Decided
+2026-09-28 — [record](DESIGN_DECISIONS-history.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
+**Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](plans/178-store-else.md) ·
+`formal/heap.md` `(H-WriteOOB)` / `(H-WriteNull)` / `(H-WriteLocked)`, `formal/operational.md`
+`(E-Uncomp-Seen)` / `(E-Report)`.
