@@ -30,6 +30,11 @@
 
 struct P { x: integer, y: integer }
 
+// The `assert` cell stands in a function of its own: a refusal file with a `main` may not
+// carry an `assert` outside an `@EXPECT_ERROR` function (`wrap::a_refusal_file_carries_no_runtime_assertions`).
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn assert_cell() { v = [1, 2, 3]; assert(v[1] = 2, "a store is not a test"); }
+
 fn main() {
   v = [1, 2, 3];
   x = 4;
@@ -48,8 +53,6 @@ fn main() {
   if x == 9 { println("nine"); } else if v[2] = 7 { println("seven"); }
   // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
   while v[1] = 2 { break; }
-  // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
-  assert(v[1] = 2, "a store is not a test");
   // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
   for e in 1..=9 if x = e { x += 1; }
   // @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
