@@ -6,6 +6,8 @@ Source files use the `.loft` extension. The language compiles to an internal byt
 and can emit Rust code for host integration.
 
 **Quick reference with common patterns and gotchas:** see the loft-write skill (`.claude/skills/loft-write/SKILL.md`).
+This page states the language as it stands; a limitation the language has since lost is
+recorded in [LOFT-history.md](LOFT-history.md), not here.
 
 ---
 
@@ -780,9 +782,8 @@ Four things to know:
   `use self::catalogue as cat;` (or `use catalogue as cat;`) to get `cat::part_list()`.
   ⚠ The short name gives NO qualifier: after `use self::catalogue;`, `catalogue::f()` is
   refused — the flat `catalogue::` slot is shared by the whole dependency graph, and
-  staying out of it is what `self::` is for, so it is withheld rather than missing. Since
-  loft#1043 the compiler says exactly that at the call site instead of *"Unknown
-  library"*, which read as *the module is gone* and took a tree-wide rewrite to diagnose.
+  staying out of it is what `self::` is for, so it is withheld rather than missing, and
+  the compiler says exactly that at the call site (guard `tests/module_name_clash.rs`).
   ⚠⚠ **And an alias DOES take that shared slot**, so `as cat` re-enters the namespace
   `self::` kept you out of — pick a name no other package would plausibly use
   (`hexmesh_surfaces`), never the module's own name.
@@ -794,14 +795,9 @@ Four things to know:
   is what keeps another package from taking the name, and it is also a second name for a
   file that may already be loaded under its bare one — a program OUTSIDE the package
   writes `use catalogue;` and gets the file flat, then a file INSIDE the package writes
-  the same line and computes the qualified key, which is absent. Until loft#1080 that
-  parsed the same file a SECOND time, and every consequence followed from the two copies:
-  bare calls became ambiguous against a module the author never wrote (`src2::part_list`,
-  the orphaned second source), and a native build emitted every duplicated function twice
-  under one identifier, so the cdylib would not compile (55 × `error[E0428]`, each pair
-  with an identical hash — a same-file collision, unlike loft#305's two different files).
-  The loader now asks whether the FILE is loaded, by canonical path, and binds the second
-  name to the source that exists. Two different files that merely share a module name are
+  the same line and computes the qualified key, which is absent. The loader asks whether
+  the FILE is loaded, by canonical path, and binds the second name to the source that
+  exists (guard `tests/imports.rs`). Two different files that merely share a module name are
   untouched: they are still two modules, and still an error when a bare call cannot pick.
 
 ### Shadowing and qualified names (`@PLN22`)
@@ -1064,8 +1060,8 @@ do by looking up the pair in this table:
 | Integer → `single`                 | Implicit      | `[1, 2]` is a valid `vector<single>` |
 | `float` → `single`                 | Explicit `as` | NARROWING (64→32-bit loses precision).  A bare decimal literal is `float`; write a **`single` literal** with the `f` suffix (`1.0f`) or cast (`x as single`).  This is enforced element-wise: a `vector<single>` literal must be `[1.0f, 2.0f]` or `[a as single, …]` — `[1.0, 2.0]` (float literals) is a compile error ("would lose precision"), never a silent truncation |
 | `i32` / narrow int → `integer`     | Implicit      | widening; a 4-byte `i32` (or `u8`/`u16`/`i8`/`i16`) widens into the 8-byte `integer` with no loss |
-| `integer` → `u8`/`u16`/`i8`/`i16`/`u32`/`i32` | Explicit `as` at storage sites | NARROWING — a plain `integer` is 64-bit; writing one into a narrow **struct field**, local, parameter or return (any narrow storage) requires `as` ("cannot implicitly narrow integer to u16 … cast explicitly").  A **constant that provably fits** the target is exempt (`x: u16 = 5`, `f(200)`).  The check is range containment **or a drop in storage width**, so it covers every narrow alias — including `i32`, which the range half cannot see (see the row below).  (@PLAN48 / @P370 / loft#931) |
-| `integer` → `i32` — why it needs the width half | Explicit `as` | `i32` spans the whole 32-bit range, which is the range a plain `integer` *reports*: the 64-bit value lives in an 8-byte slot the bounds do not describe.  So the two specs differ in `forced_size` alone and `[s.min,s.max] ⊆ [d.min,d.max]` holds for a pair whose storage drops 8 → 4 — the one alias whose NAME says "32 bits" was the one range containment never checked, and an `i32` field took `5000000000` and stored `705032704` in silence, on both backends (loft#931, fixed).  The **implicit** stores compare storage width; an **explicit** `as i32` keeps the range rule alone, so it stays spellable as the cure this diagnostic prescribes |
+| `integer` → `u8`/`u16`/`i8`/`i16`/`u32`/`i32` | Explicit `as` at storage sites | NARROWING — a plain `integer` is 64-bit; writing one into a narrow **struct field**, local, parameter or return (any narrow storage) requires `as` ("cannot implicitly narrow integer to u16 … cast explicitly").  A **constant that provably fits** the target is exempt (`x: u16 = 5`, `f(200)`).  The check is range containment **or a drop in storage width**, so it covers every narrow alias — including `i32`, which the range half cannot see (see the row below).  (guard `tests/scripts/931-i32-narrowing-is-checked.loft`) |
+| `integer` → `i32` — why it needs the width half | Explicit `as` | `i32` spans the whole 32-bit range, which is the range a plain `integer` *reports*: the 64-bit value lives in an 8-byte slot the bounds do not describe.  So the two specs differ in `forced_size` alone and `[s.min,s.max] ⊆ [d.min,d.max]` holds for a pair whose storage drops 8 → 4 — the one alias whose NAME says "32 bits" was the one range containment never checked, so an `i32` field would take `5000000000` and store `705032704` in silence.  The **implicit** stores compare storage width; an **explicit** `as i32` keeps the range rule alone, so it stays spellable as the cure this diagnostic prescribes |
 | `float` → integer                  | Explicit `as` | `pi as integer` truncates toward zero; preserves the current sentinel semantics |
 | `text` → integer / float / single  | Explicit `as` — **a PARSE, types `τ?`** | `"42" as integer` is a fallible parse, so it types **`integer?`** (`float?` / `single?`), not `integer`. A non-numeric text yields `null`. You MUST discharge before storing into non-null: `"42" as integer ?? 0`, `s as integer?` (keep it nullable), or `match`. This is `(N-Parse)` — a bad parse is a reachable fault, exactly like `÷0` and out-of-bounds indexing (§ @PLN25). Contrast the *numeric* casts above (`float`→`integer`, width narrowing), which reinterpret an existing number rather than parse text |
 | Integer / float / boolean → `text` | **Format-only** | `"n={m}"` renders the value inline; `t = m` with `t: text` is a compile error.  If you want the rendered form as a standalone text value, assign through interpolation: `t = "{m}"` |
@@ -1208,7 +1204,7 @@ transform: fn(integer) -> integer = fn(x: integer) -> integer { x * 2 }
 
 Short-form parameter types are inferred from the expected `fn(T1, T2) -> R` type
 **wherever there is one** — the position does not matter, only that something names the
-signature (loft#1067):
+signature (guard `tests/scripts/1067-lambda-expected-type.loft`):
 
 | where | example |
 |---|---|
@@ -1329,7 +1325,11 @@ as a crash much later in an unrelated function that touched the same value.
   A struct field on its own is fine: `Holder { f: fn(x: integer) -> integer { x + a } }`
   captures and calls normally — which is what makes the compiler's advice work, namely
   keep the captured state in a struct and store a non-capturing `fn` that reads it.
-- A `&` parameter cannot be captured at all, in any shape (loft#1276).
+- A `&` parameter IS capturable, and what the closure captures is the POINTEE: a `&S` or
+  `&vector<τ>` is shared (the same DbRef), a `&integer` / `&text` is copied at creation
+  like any scalar.  The one refusal is a WRITE to a captured `&` scalar — the copy could
+  not reach the caller — and it is named, with the cure (`local = p; …; p = local;`).
+  Guard `tests/scripts/1276-a-closure-captures-a-ref-parameter.loft`.
 
 `spatial` is not an exception to any of this: it stores a non-capturing `fn` field and calls
 it (`for e in sp { e.f(21) }` answers), and it refuses a capturing one with the same message
@@ -1365,8 +1365,7 @@ alone (a tab is not a space, so there is nothing to count).  The first and last 
 are dropped when they contain only whitespace.
 
 Interpolation is no exception — a block with `{…}` in it dedents exactly like one
-without.  Until loft#990 it did not, which mattered most for the shape the feature
-exists for: templates.
+without (guard `tests/scripts/990-backtick-dedent-with-holes.loft`).
 
 `{` opens an interpolation hole here as it does in `"…"`, so a literal brace is written
 `{{` — which is what the `void main() {{` below is doing.
@@ -1715,8 +1714,9 @@ for x in 1..5 {
 
 **Gotcha (INC#18).** `x#break` looks like an attribute access but is a jump
 instruction — it produces no value and cannot appear on the right of `=`.  The name
-must be a real loop variable: an ordinary local currently crashes the compiler
-rather than being diagnosed (loft#998).
+must be a real loop variable: an ordinary local is refused with a message naming the
+loop variables that CAN be written (`n` is not a loop variable … write a plain `break`, or
+`i#break`); guard `tests/parse_errors.rs`.
 
 **Labelled continue — `loop_var#continue`.** Symmetric to `x#break`: use
 `x#continue` from inside an inner loop to skip the remainder of the current
@@ -1805,9 +1805,7 @@ no-ops.  Copy a parameter into a local first if an arm needs its value.
 An arm's result is discarded.  When you need the answers back, use `for x in xs par(y =
 f(x), n) { … }`, which delivers each worker's value to the loop body.
 
-Both backends run the arms concurrently.  (On `--native` this needed loft#1054: the block
-used to compile to nothing there, so the arms never ran and the program exited 0 having
-done none of the work.)
+Both backends run the arms concurrently (guard `tests/scripts/1054-parallel-block-arms-run.loft`).
 
 ### Match expressions
 
@@ -2334,12 +2332,11 @@ inserts-or-replaces, and `xs[x, y] = null` removes — the same three roles
 separate subscripts (`xs[3, 6]`), where the range forms below parenthesise
 them.  Proximity queries use range-slice
 syntax instead of new keywords or methods: `xs[(x1,y1)..(x2,y2)]` is the
-bounding box and gives exactly what is inside it (loft#800), while
+bounding box and gives exactly what is inside it, while
 `xs[(x,y)..]` and `xs[(x,y)..:n]` walk OUTWARD from that point, nearest
 first — two cursors seeded either side of the query, so `..:n` answers `n`
 records from any origin and a query past every record still answers its
-neighbours.  They used to be the Morton TAIL, where a record just behind the
-query was never returned however close it was (loft#1002).  The walk is
+neighbours.  The walk is
 APPROXIMATE: it orders by Morton distance, which jumps at quadrant
 boundaries, so a truly-near point can arrive a little late.  Reach for a
 symmetric box, `xs[(x-r, y-r)..(x+r, y+r)]`, when the answer must be exact.
@@ -2599,7 +2596,8 @@ one.**  A function whose first parameter is `self` answers `x.f(…)` AND `f(x, 
 by name like any function (`use lib::(f)`).  A plain first-parameter name makes a
 free function, and its method spelling is refused by name.  **A `self` method is
 not a fn-ref value**, so it cannot be handed to `map`/`filter` or to a parameter of
-function type (loft#1008 — wrap it in a lambda, `map(v, |q| { q.m(…) })`).  In
+function type — the refusal names the cure, wrap it in a lambda, `map(v, |q| { q.m(…) })`
+(guard `tests/error_messages/cases/56_method_is_not_a_fn_ref.loft`).  In
 the standard library `len(v)`, `abs(n)`, `text.starts_with(s)` are `self`
 functions and callable either way; `sum_of(v)` and `print(s)` are free-only.  When
 in doubt, try the free form first — it works for both kinds.
@@ -3038,8 +3036,8 @@ so growing it is a mutation of the shared store rather than a local act.
 `&` buys exactly one thing: a WHOLE-VALUE replacement writes back. `v = [7, 7]` inside a plain
 parameter gives that function a different vector and leaves the caller's alone
 (`F-ParamRebind`); through a `&vector<T>` the caller sees the new vector. So reach for `&` when
-the function REPLACES, not when it appends (loft#1251 — this paragraph previously claimed a
-plain append was local to the callee, which the rules never said).
+the function REPLACES, not when it appends (guard
+`tests/scripts/1251-a-heap-parameter-is-shared-not-copied.loft`).
 
 ### Polymorphic text methods on struct-enum variants
 

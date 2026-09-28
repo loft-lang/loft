@@ -42,7 +42,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 20. A library's user-facing text has one home: the library. — USER_DOCS § The one-home rule
 21. A topic page states `@NAME`/`@TITLE`, asserts something, and renders no directive as prose. — DOC § Adding a new topic page · gate: `every_doc_page_asserts_something`
 22. Every example runs on both backends; an indented `$ ` line is executed and its output checked. — [RELEASE](RELEASE.md) § 0b · gate: the docs suite, `tests/doc_commands.rs`
-23. No temporal or hedge words (currently, planned, for now, not yet, TODO); a fault claim cites a live issue. — API_SURFACE S7 · report: `doc_review.py`
+23. No temporal or hedge words (currently, planned, for now, not yet, TODO); a fault claim cites a live issue or the rule that makes it a decision; a limitation the language has since lost leaves the page — the page states the behaviour with its guard, and the record (what it was, the issue, the guard) goes to `<doc>-history.md`. — API_SURFACE S7 · report: `doc_review.py`; `rule_tags.py claims --issues` (the `stale-claims` nightly, @PLN176)
 24. Every `make` target or flag named in prose resolves. — RELEASE § 0d · report: `doc_review.py`
 25. A comparison claim is a program in `tests/comparisons/`; its rationale is a link, never a restatement. — [SUBJECTS](SUBJECTS.md) · gate: `wrap::comparisons`
 26. A library ships a guide, `docs/01-getting-started.loft`, whose numbers are measured. — [LIBRARY_AUTHORING](LIBRARY_AUTHORING.md) § 2c

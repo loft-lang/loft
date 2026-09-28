@@ -2,6 +2,8 @@
 # Loft Standard Library Reference
 
 This document describes all public functions, constants, and types available in the loft standard library.
+It states the library as it stands; a limitation the library has since lost is recorded in
+[STDLIB-history.md](STDLIB-history.md), not here.
 
 ## Contents
 - [Implementation notes](#implementation-notes)
@@ -187,7 +189,7 @@ Both ends clamp, a reversed range gives `""`, and a negative bound counts from t
 them, and the character at each position is the same value `s[…]` reads there.  The
 count is a fact about the text, never about the characters in it: a text carrying a
 NUL (`text_from_bytes([65, 0, 66])`) yields all three, with the NUL position reading
-as `null` (loft#755 — it used to end the loop there).  A NUL therefore round-trips
+as `null` (guard `tests/scripts/text-nul-iteration-755.loft`).  A NUL therefore round-trips
 through `byte_at`, not through iteration; see
 [CAVEATS.md](CAVEATS.md#accepted-trade-offs-not-scheduled-for-change).
 
@@ -244,12 +246,6 @@ sites — every button label, every hotkey, every list entry, the status line, t
 subject line and both verb slots, green the whole time because every one of its
 tests is ASCII. Two independent hand-rolls is this project's admission test for a
 primitive belonging one level down; three is late.
-
-> `text_from_bytes` and `byte_at` existed for two releases and were reported
-> missing (loft#748) because the generated reference filed them under Environment
-> — a keyword sweep of the Text page came back empty and was read as a language
-> gap. Check an instrument against something it *should* find before trusting it
-> to report an absence; `grep default/*.loft` answers in one call.
 
 ### Character Classification
 
@@ -426,14 +422,13 @@ coordinate key fields (@PLN48):
 | `xs[x, y] = mob` | Insert-or-replace at that point (the key comes from `mob`'s own coordinate fields, as for `hash`/`sorted`/`index`). |
 | `xs[x, y] = null` | Remove the record at that point; a no-op when the point is empty. |
 | `xs[(x,y)..]` | Walk OUTWARD from that point, nearest first; caller `break`s to stop. Approximate — ordered by Morton distance, so a truly-near point can arrive a little late. |
-| `xs[(x,y)..:n]` | Same, capped at `n` records. Answers `n` from any origin (it used to answer the Morton TAIL, so it under-delivered near the end of the curve — loft#1002). |
+| `xs[(x,y)..:n]` | Same, capped at `n` records. Answers `n` from any origin (guard `tests/scripts/48b-spatial-slice.loft`). |
 | `xs[(x1,y1)..(x2,y2)]` | Bounding-box range — exactly what is inside the box. |
 
 There are no `.near`/`.within`/`.nearest` methods — proximity is ordinary
 range slicing. The BOX form gives exactly the records inside the box and
-nothing outside it, in the collection's own order (loft#800 — it used to
-answer the raw code interval between the corners, a strict superset, because
-Z-order threads out of the box and back). A corner-swapped axis names the
+nothing outside it, in the collection's own order (guard
+`tests/scripts/800-spatial-box-containment.loft`). A corner-swapped axis names the
 same box.
 
 The two OPEN forms walk outward from the query point in both directions, so
@@ -448,8 +443,7 @@ slices. See [DATABASE.md § Spatial Index](DATABASE.md#spatial-index-srcradix_tr
 for the implementation.
 
 A text key is refused here — `spatial<Word[w]>` names `trie<Word[w]>` instead
-(loft#799).  Before that, it compiled and then answered `null` for a key just
-inserted.
+(guard `tests/parse_errors.rs`).
 
 ### `trie<T[k]>` — text-keyed collection
 
@@ -652,11 +646,10 @@ call; the stdlib does not, and did not meaningfully do so before.
 | `content(self: File) -> text?` | Reads the entire file as a UTF-8 text value. **Null** when there is no text to read: the file is missing, the path is a directory, or the bytes are not valid UTF-8. `""` means the file really is empty. |
 | `lines(self: File) -> vector<text>` | Reads the file and splits it into lines. **Empty** wherever `content()` is null — a missing file, a directory, or bytes that are not UTF-8 — so a loop over it runs zero times and reads exactly like a loop over an empty file. `lines()` has no null of its own to carry the distinction; ask `content()` when it matters. |
 
-`content()` is nullable because `""` cannot carry three different meanings.  A
-non-UTF-8 file used to answer `""`, indistinguishable from an empty one, so a
-gate of the shape *"write bytes, read them back, compare"* passed **vacuously**
-on binary data — both sides were `""` (loft#829).  Discharge with `?? ""` to
-keep the old shape where the distinction does not matter.
+`content()` is nullable because `""` cannot carry three different meanings — a
+missing file, a directory and non-UTF-8 bytes are each `null`, never an empty text
+(guard `tests/binary_io_matrix.rs`).  Discharge with `?? ""` where the distinction
+does not matter.
 
 Reading such a file is not the failure — asking for it as *text* is.  Use
 [`read_bytes(path) -> vector<u8>?`](#filesystem-operations), which is
@@ -966,7 +959,7 @@ resident count, and what a binding refuses — is [LAZY_STORES.md](LAZY_STORES.m
 
 | Function | Description |
 |----------|-------------|
-| `store_bind_lazy(c: reference, source: text) -> boolean` | Bind collection `c` to `source` — an IMAGE (a local `.store` file or an `http(s)://` URL served with Range, i.e. whatever `store_load_key` accepts) or a DATABASE (`sqlite:<path>`), where the `SELECT` is derived from `c`'s own type: table = the element type's name lowercased, columns = its fields, `WHERE` = its key.  Read-only; the database source serves a keyed lookup on any ordered or hashed kind, and a binding it cannot turn into a query is refused through `store_lazy_error` rather than served wrongly.  Per COLLECTION, not per store: two collections of one type may bind differently.  Binding replaces any previous binding, and may be done before `c` holds anything.  **`false` is worth checking**: besides a null collection, an IMAGE is read a page at a time and only a `hash` or a `trie` supports that, so a `sorted`/`index`/`spatial` bound to one is refused HERE rather than answering `null` at every later lookup (loft#802) — those kinds load whole, with `store_load` / `store_load_url_trusted`.  A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. |
+| `store_bind_lazy(c: reference, source: text) -> boolean` | Bind collection `c` to `source` — an IMAGE (a local `.store` file or an `http(s)://` URL served with Range, i.e. whatever `store_load_key` accepts) or a DATABASE (`sqlite:<path>`), where the `SELECT` is derived from `c`'s own type: table = the element type's name lowercased, columns = its fields, `WHERE` = its key.  Read-only; the database source serves a keyed lookup on any ordered or hashed kind, and a binding it cannot turn into a query is refused through `store_lazy_error` rather than served wrongly.  Per COLLECTION, not per store: two collections of one type may bind differently.  Binding replaces any previous binding, and may be done before `c` holds anything.  **`false` is worth checking**: besides a null collection, an IMAGE is read a page at a time and only a `hash` or a `trie` supports that, so a `sorted`/`index`/`spatial` bound to one is refused HERE rather than answering `null` at every later lookup (guard `tests/scripts/802-lazy-refusal-visible.loft`) — those kinds load whole, with `store_load` / `store_load_url_trusted`.  A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. |
 | `store_lazy_range(c: reference, lo: integer, hi: integer) -> integer` | Pull a whole KEY RANGE from `c`'s bound DATABASE source in ONE query (bounds inclusive, in the collection's own key order); answers how many records `c` gained.  The cure for N+1: 500 records fetched one lookup at a time is 500 round trips, and the same 500 as a range is one.  `c` must be ORDERED (`sorted`/`index`) and keyed on one column — a `hash` has no order to range over and a composite key needs `store_lazy_query`.  A record already resident is left alone. |
 | `store_lazy_query(c: reference, condition: text) -> integer` | Run an explicit SQL `condition` against `c`'s bound DATABASE source and pull every matching row INTO `c`; answers how many records `c` gained.  The escape hatch for what the key cannot express (`name LIKE 'Ada%'`, a predicate on another column) — derived queries need no call, this one cannot be derived, so it is written down and visible.  Rows land in the collection rather than in a detached result, and a row already resident is left alone: a person found this way and the same person found by key are ONE record.  Answers `0` both for "nothing matched" and for "the query could not run"; `store_lazy_error` tells those apart. |
 | `store_lazy_error(c: reference) -> text` | Why a fetch could not REACH the source, or `""` when healthy.  The FIRST failure's reason, kept — it names the original cause, so a later and often more actionable one reaches stderr but not this call.  Nothing clears it but `store_lazy_clear`: neither a genuine absence nor a later success is an acknowledgement, because reaching the source now says nothing about what an earlier failure already lost. |
@@ -1156,7 +1149,7 @@ its peers, which are gone.)
 |---|---|
 | `map(v: vector<T>, f: fn(T) -> U) -> vector<U>` | Applies `f` to each element and collects the results |
 | `filter(v: vector<T>, pred: fn(T) -> boolean) -> vector<T>` | Keeps only elements for which `pred` returns `true` |
-| `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | Left-folds `v` starting from `init`, applying `f(acc, elm)` at each step. `U` may be a scalar or `text`; a COLLECTION accumulator is refused for now (loft#956). Write the loop instead: `acc = <init>; for x in v { acc = f(acc, x); }` |
+| `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | Left-folds `v` starting from `init`, applying `f(acc, elm)` at each step. `U` may be a scalar, `text` or a COLLECTION; `U` is read off `f`'s first parameter, so `v.reduce([], f)` and an init spelled `vector<integer>` are the same fold |
 
 ```loft
 fn double(x: integer) -> integer { x * 2 }
@@ -1183,9 +1176,9 @@ pairs  = nums.map(|x| { [x, x + 1] });   // vector<vector<integer>>
 joined = words.reduce("", |a, w| { "{a}{w}" });   // one string from a vector<text>
 ```
 
-A COLLECTION accumulator (`v.reduce([], f)`) is refused with a message pointing at the
-loop to write instead — it reads back empty and is an internal compiler error on
-`--native`, tracked as loft#956.
+A COLLECTION accumulator (`v.reduce([], f)`) works, and its type is the fold's: `f: fn(U, T)
+-> U` names `U`, and the init only has to be assignable to it, so a bare `[]` is not asked
+what it is.  Guard `tests/scripts/956-reduce-untyped-accumulator.loft`.
 
 All three accept either a named function reference (`fn <name>`) or a lambda expression:
 
