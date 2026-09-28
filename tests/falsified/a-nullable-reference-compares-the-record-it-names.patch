@@ -1,0 +1,14 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 8bc0f4965..c750b6c78 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -14957,7 +14957,8 @@ impl Parser {
+             // presence tests — so two present references to DIFFERENT records compared equal.
+             // The presence test is right only against the `null` literal, whose type is
+             // `Null`, not `Reference` (@C91).
+-            if (op == "==" || op == "!=")
++            if false
++                && (op == "==" || op == "!=")
+                 && list.len() == 2
+                 && let (Type::Reference(da, _), Type::Reference(db, _)) =
+                     (types[0].base(), types[1].base())

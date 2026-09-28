@@ -14951,6 +14951,22 @@ impl Parser {
                 *code = eq;
                 return Type::Boolean;
             }
+            // Two references to one struct type compare the records they name, absent ones
+            // included (`OpEqRef` answers two absent as equal).  With either side optional no
+            // `OpEqRef` candidate matched, and the loop below took `OpEqBool` over two
+            // presence tests — so two present references to DIFFERENT records compared equal.
+            // The presence test is right only against the `null` literal, whose type is
+            // `Null`, not `Reference` (@C91).
+            if (op == "==" || op == "!=")
+                && list.len() == 2
+                && let (Type::Reference(da, _), Type::Reference(db, _)) =
+                    (types[0].base(), types[1].base())
+                && da == db
+                && (matches!(types[0], Type::Optional(_)) || matches!(types[1], Type::Optional(_)))
+            {
+                *code = self.cl(if op == "==" { "OpEqRef" } else { "OpNeRef" }, list);
+                return Type::Boolean;
+            }
             let mut possible = Vec::new();
             for pos in self
                 .data
