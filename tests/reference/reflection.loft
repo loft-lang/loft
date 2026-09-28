@@ -53,11 +53,10 @@ fn test_fields_walks_values_with_their_kinds() {
     if f.value is FvText { v } { println("{f.name} = {v}") }
     if f.value is FvInt  { v } { println("{f.name} = {v}") }
   }
-  // A second walk under the SAME loop-variable name does not compile on --native
-  // (loft#1717), so this one is `g` until that closes.
-  for g in m#fields {
-    if g.value is FvText { v } { out += "{g.name} = {v};"; }
-    if g.value is FvInt  { v } { out += "{g.name} = {v};"; }
+  // A second walk under the SAME loop-variable name is its own binding (loft#1717).
+  for f in m#fields {
+    if f.value is FvText { v } { out += "{f.name} = {v};"; }
+    if f.value is FvInt  { v } { out += "{f.name} = {v};"; }
   }
   assert(out == "id = 1;name = a;", "the walk yields each field with its value");
 }
