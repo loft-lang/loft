@@ -1408,6 +1408,12 @@ impl Stores {
         }
     }
 
+    /// Append every element of the vector at `o_db` to the vector at `db`, deep-copying
+    /// the heap each element owns.
+    ///
+    /// # Panics
+    ///
+    /// When the source's byte length does not fit a store claim.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
