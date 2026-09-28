@@ -4481,6 +4481,12 @@ impl State {
                 was_stack = stack.position;
                 self.gather_key(stack, &parameters, 2, &mut tps);
             }
+            // loft#1716 — the subscript's keys trail the declared operands as they do for
+            // `OpGetRecord`; the op answers nothing, so the stack ends below `coll, value`.
+            "OpSetKeyed" => {
+                was_stack = stack.position - 2 * stack.step(super::size_ref() as u16);
+                self.gather_key(stack, &parameters, 3, &mut tps);
+            }
             "OpStart" => {
                 // @PLAN53 cluster 2 / S4: the iterator-pushed value (+4) and the
                 // consumed iterable DbRef (size_ref) each occupy a stepped span.

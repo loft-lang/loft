@@ -187,18 +187,34 @@ impl OpEmitter for OpReplaceKeyedEmitter {
 
 /// `OpSetKeyed` emitter — @P305 keyed insert-or-replace (`coll[key] = value`).
 ///
-/// `args`: `[coll, value, tp]` → `OpSetKeyed(cell, <coll>, <value>, <tp>_i32)`.
+/// `args`: `[coll, value, tp, count, key1, …]` →
+/// `OpSetKeyed(cell, <coll>, <value>, <tp>_i32, &[Content::…])` — the subscript's keys
+/// (loft#1716), wrapped as `OpGetRecord` wraps its own.
 pub struct OpSetKeyedEmitter;
 
 impl OpEmitter for OpSetKeyedEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        if let [coll, value, tp_val] = args {
+        if let [coll, value, tp_val, Value::Int(_), keys @ ..] = args {
+            let db_tp = if let Value::Int(t) = tp_val {
+                *t & 0x7FFF
+            } else {
+                0
+            };
+            let key_types: Vec<i8> = ctx
+                .output
+                .stores
+                .types
+                .get(usize::try_from(db_tp).unwrap_or(0))
+                .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
+                .unwrap_or_default();
             write!(ctx.w, "OpSetKeyed(cell,")?;
             ctx.emit(coll)?;
             write!(ctx.w, ", ")?;
             ctx.emit(value)?;
             write!(ctx.w, ", ")?;
             ctx.emit_i32_slot(tp_val)?;
+            write!(ctx.w, ", ")?;
+            emit_content_array(ctx, keys, &key_types)?;
             write!(ctx.w, ")")?;
         }
         Ok(())

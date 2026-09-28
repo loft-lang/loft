@@ -38,8 +38,8 @@ fn test_a_reference_parameter_indexes_the_live_vector() {
   assert(len(v) == 2 and (v[1].n ?? -1) == 99 and (v[0].n ?? -1) == 2, "after the remove, index 1 is the old element 3, and it took the write");
 }
 
-fn test_moving_a_keyed_element_is_a_new_record_under_the_new_key() {
+fn test_moving_a_keyed_element_is_an_assignment_under_the_new_key() {
   s: sorted<Keyed[key]> = [Keyed { key: 30, n: 7 }];
-  s += [Keyed { key: 5, n: s[30].n }];  s[30] = null; // a new record under the new key, the old one removed
-  assert((s[5].n ?? -1) == 7 and s[30] == null and len(s) == 1, "the record is now under key 5");
+  s[5] = s[30];  s[30] = null; // the subscript names the key: a copy under 5, then 30 removed
+  assert((s[5].n ?? -1) == 7 and (s[5].key ?? -1) == 5 and s[30] == null and len(s) == 1, "the record is now under key 5");
 }

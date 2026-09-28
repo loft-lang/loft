@@ -1,0 +1,378 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index 9a67c77a9..a53f4e793 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1610,13 +1610,11 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
+ // `tp`'s `0x8000` bit frees the source store after the copy, as it does for OpReplaceKeyed.
+ fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
+ #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
+-// @P305 — `coll[key] = value` insert-or-replace into a keyed collection.  Updates an
+-// existing key in place OR inserts a new one (the plain `OpCopyRecord` lowering could only
+-// update — it no-op'd into the null lookup when the key was absent).  loft#1716 — the
+-// SUBSCRIPT names the key: its `no_keys` values trail the declared parameters exactly as
+-// `OpGetRecord`'s do, the copy is placed under them and they are written into its key
+-// fields, so `c[k] = v` reads back as `c[k]` (`Col-Assign`).
+-fn OpSetKeyed(coll: reference, value: reference, tp: const u16, no_keys: const u8);
++// @P305 — `coll[key] = value` insert-or-replace into a keyed collection
++// (hash/sorted/index), deduped by value's key.  Updates an existing key
++// in place OR inserts a new one (the plain `OpCopyRecord` lowering could
++// only update — it no-op'd into the null lookup when the key was absent).
++fn OpSetKeyed(coll: reference, value: reference, tp: const u16);
+ type iterator;
+ // Forward-declared builtin collection type-keywords: reserved names whose full
+ // implementation lands with the crawler/moros/dryopea library work.  Declaring
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index c6a7aed36..81eb76f82 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1252,18 +1252,11 @@ pub fn OpClearKeyed(cell: &std::cell::UnsafeCell<Stores>, dest: DbRef, tp: i32)
+ /// @P305 — `coll[key] = value` insert-or-replace into a keyed collection.
+ /// Native twin of the `OpSetKeyed` interp op / `State::set_keyed`.  `tp`'s
+ /// `0x8000` bit frees `value`'s store after the deep copy (caller temp).
+-/// loft#1716 — `key` is the subscript's key (`Col-Assign`), as `OpGetRecord` takes it.
+-pub fn OpSetKeyed(
+-    cell: &std::cell::UnsafeCell<Stores>,
+-    collection: DbRef,
+-    value: DbRef,
+-    tp: i32,
+-    key: &[crate::keys::Content],
+-) {
++pub fn OpSetKeyed(cell: &std::cell::UnsafeCell<Stores>, collection: DbRef, value: DbRef, tp: i32) {
+     let stores: &mut Stores = unsafe { &mut *cell.get() };
+     let raw = tp as u16;
+     let free_source = raw & 0x8000 != 0;
+-    stores.set_keyed(&collection, &value, raw & 0x7FFF, key, free_source);
++    stores.set_keyed(&collection, &value, raw & 0x7FFF, free_source);
+ }
+ 
+ /// Sort a vector in-place using the element type's natural ordering.
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index 77b798f3c..b02585906 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -7093,7 +7093,7 @@ mod p318_hash_deepcopy {
+             let e = stores.database(cell_words);
+             stores.store_mut(&e).set_int(e.rec, e.pos, k);
+             stores.store_mut(&e).set_int(e.rec, e.pos + 8, k + 100);
+-            stores.set_keyed(&h, &e, hash_tp, &[], false);
++            stores.set_keyed(&h, &e, hash_tp, false);
+         }
+ 
+         // Sound to start — no false positive.
+@@ -7140,7 +7140,7 @@ mod p318_hash_deepcopy {
+             let v = stores.database(cell_words);
+             stores.store_mut(&v).set_int(v.rec, v.pos, k); // ck = k
+             stores.store_mut(&v).set_int(v.rec, v.pos + 8, k + 1000); // payload
+-            stores.set_keyed(&src_h, &v, hash_tp, &[], false);
++            stores.set_keyed(&src_h, &v, hash_tp, false);
+         }
+         let cur = stores.store(&src_h).get_u32_raw(src_h.rec, src_h.pos);
+         let room = stores.store(&src_h).record_words(cur);
+diff --git b/src/database/search.rs a/src/database/search.rs
+index f4026638e..b6bd91f87 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -572,41 +572,8 @@ impl Stores {
+     /// sequence (so it shares its deep-copy + linking machinery) plus a
+     /// preceding remove.  `free_source` frees `value`'s store after the copy
+     /// when it is a caller temp (the `0x8000` bit, as in `copy_record`).
+-    ///
+-    /// loft#1716 (`@FR-Col-Assign`) — `sub` is the SUBSCRIPT's key: the copy is placed under it and
+-    /// its key fields are written to it, so `c[k] = v` reads back as `c[k]` whatever `v`'s own
+-    /// key said.  A value that may live inside the collection (`s[5] = s[30]`) is snapshotted
+-    /// first: the removal and the insert below move and grow that storage.  An empty `sub`
+-    /// keeps the value's own key.
+-    pub fn set_keyed(
+-        &mut self,
+-        coll: &DbRef,
+-        value: &DbRef,
+-        db: u16,
+-        sub: &[Content],
+-        free_source: bool,
+-    ) {
+-        // An absent value stores nothing and the slot keeps what it had — the promise the
+-        // `K?`-into-`K` warning makes at `c[k] = c[absent]`.  It panicked in a store accessor.
+-        if value.is_null() || value.store_nr == u16::MAX {
+-            return;
+-        }
+-        let full = !sub.is_empty() && sub.len() == self.types[db as usize].keys.len();
+-        let snapshot = if full && value.store_nr == coll.store_nr {
+-            let content_tp = self.content(db);
+-            let size = u32::from(self.size(content_tp));
+-            let tmp = self.database(size);
+-            self.copy_block(value, &tmp, size);
+-            self.copy_claims(value, &tmp, content_tp);
+-            Some(tmp)
+-        } else {
+-            None
+-        };
+-        let source = snapshot.unwrap_or(*value);
+-        self.insert_keyed_copy_at(coll, &source, db, coll, db, u16::MAX, full.then_some(sub));
+-        if let Some(tmp) = snapshot {
+-            self.free(&tmp);
+-        }
++    pub fn set_keyed(&mut self, coll: &DbRef, value: &DbRef, db: u16, free_source: bool) {
++        self.insert_keyed_copy(coll, value, db, coll, db, u16::MAX);
+         if free_source
+             && value.store_nr != coll.store_nr
+             // Sentinel guard: the `allocations[..]` prechecks below index by store_nr, so a null
+@@ -641,22 +608,6 @@ impl Stores {
+         parent: &DbRef,
+         parent_tp: u16,
+         field: u16,
+-    ) {
+-        self.insert_keyed_copy_at(coll, value, db, parent, parent_tp, field, None);
+-    }
+-
+-    /// [`Self::insert_keyed_copy`] under the key `sub` when one is given (loft#1716), written
+-    /// into the copy's key fields before it is linked.
+-    #[allow(clippy::too_many_arguments)]
+-    fn insert_keyed_copy_at(
+-        &mut self,
+-        coll: &DbRef,
+-        value: &DbRef,
+-        db: u16,
+-        parent: &DbRef,
+-        parent_tp: u16,
+-        field: u16,
+-        sub: Option<&[Content]>,
+     ) {
+         let content_tp = match self.types[db as usize].parts {
+             Parts::Hash(c, _)
+@@ -668,10 +619,7 @@ impl Stores {
+             _ => return,
+         };
+         let keys = self.types[db as usize].keys.clone();
+-        let key = match sub {
+-            Some(k) => k.to_vec(),
+-            None => keys::get_key(value, &self.allocations, &keys),
+-        };
++        let key = keys::get_key(value, &self.allocations, &keys);
+         let existing = self.find(coll, db, &key);
+         if existing.rec != 0 {
+             // dedup: free the old record's nested heap, then unlink it.
+@@ -701,9 +649,6 @@ impl Stores {
+         let size = u32::from(self.size(content_tp));
+         self.copy_block(value, &new, size);
+         self.copy_claims(value, &new, content_tp);
+-        if let Some(k) = sub {
+-            keys::set_key(&new, &mut self.allocations, &keys, k);
+-        }
+         self.record_finish(parent, &new, parent_tp, field);
+         // @P317 — LOFT_LOG=copy_check: warn if the keyed deep copy changed any
+         // nested collection length (before the source-free below).
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index f0d39db9c..3df393006 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -3946,7 +3946,7 @@ fn foreign_store_writer(
+             let mut named = false;
+             for (i, a) in args.iter().enumerate() {
+                 let Some(at) = def.attributes().get(i) else {
+-                    if name == "OpGetRecord" || name == "OpSetKeyed" {
++                    if name == "OpGetRecord" {
+                         continue; // a trailing key value
+                     }
+                     why = Some("a writer with an untyped operand in its scope");
+@@ -4039,7 +4039,7 @@ fn text_escapes_with(
+                     // `OpGetRecord`'s keys trail its declared parameters, and each is read
+                     // into a `Content` at the call: a text VALUE.
+                     let value_position = name == "OpFreeText"
+-                        || (matches!(name, "OpGetRecord" | "OpSetKeyed") && i >= attrs.len())
++                        || (name == "OpGetRecord" && i >= attrs.len())
+                         || attrs.get(i).is_some_and(|at| {
+                             !at.constant && matches!(at.typedef.base(), Type::Text(_))
+                         });
+diff --git b/src/generation/ops/key_ops.rs a/src/generation/ops/key_ops.rs
+index f041d634f..2a8226f79 100644
+--- b/src/generation/ops/key_ops.rs
++++ a/src/generation/ops/key_ops.rs
+@@ -186,34 +186,18 @@ impl OpEmitter for OpReplaceKeyedEmitter {
+ 
+ /// `OpSetKeyed` emitter — @P305 keyed insert-or-replace (`coll[key] = value`).
+ ///
+-/// `args`: `[coll, value, tp, count, key1, …]` →
+-/// `OpSetKeyed(cell, <coll>, <value>, <tp>_i32, &[Content::…])` — the subscript's keys
+-/// (loft#1716), wrapped as `OpGetRecord` wraps its own.
++/// `args`: `[coll, value, tp]` → `OpSetKeyed(cell, <coll>, <value>, <tp>_i32)`.
+ pub struct OpSetKeyedEmitter;
+ 
+ impl OpEmitter for OpSetKeyedEmitter {
+     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+-        if let [coll, value, tp_val, Value::Int(_), keys @ ..] = args {
+-            let db_tp = if let Value::Int(t) = tp_val {
+-                *t & 0x7FFF
+-            } else {
+-                0
+-            };
+-            let key_types: Vec<i8> = ctx
+-                .output
+-                .stores
+-                .types
+-                .get(usize::try_from(db_tp).unwrap_or(0))
+-                .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
+-                .unwrap_or_default();
++        if let [coll, value, tp_val] = args {
+             write!(ctx.w, "OpSetKeyed(cell,")?;
+             ctx.emit(coll)?;
+             write!(ctx.w, ", ")?;
+             ctx.emit(value)?;
+             write!(ctx.w, ", ")?;
+             ctx.emit_i32_slot(tp_val)?;
+-            write!(ctx.w, ", ")?;
+-            emit_content_array(ctx, keys, &key_types)?;
+             write!(ctx.w, ")")?;
+         }
+         Ok(())
+diff --git b/src/keys.rs a/src/keys.rs
+index 64976d241..ac4cea857 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3330,56 +3330,6 @@ pub fn get_key(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Content> {
+     result
+ }
+ 
+-/// Write `values` into `record`'s key fields — the inverse of [`get_key`], one width per arm
+-/// it reads.  loft#1716 (`Col-Assign`): a keyed assignment places its copy under the
+-/// SUBSCRIPT, so the copy's key fields must say what the subscript said before the record is
+-/// linked.  A text key's previous string is released first: the copy owns it alone.
+-pub fn set_key(record: &DbRef, stores: &mut [Store], keys: &[Key], values: &[Content]) {
+-    let st = &mut stores[record.store_nr as usize];
+-    for (k, v) in keys.iter().zip(values) {
+-        let p = record.pos + u32::from(k.position);
+-        let rec = record.rec;
+-        match (k.type_nr.abs(), v) {
+-            (1, Content::Long(l)) => {
+-                st.set_int(rec, p, *l);
+-            }
+-            (2, Content::Long(l)) => {
+-                st.set_long(rec, p, *l);
+-            }
+-            (3, Content::Single(f)) => {
+-                st.set_single(rec, p, *f);
+-            }
+-            (4, Content::Float(f)) => {
+-                st.set_float(rec, p, *f);
+-            }
+-            (6, Content::Str(s)) => {
+-                let old = st.get_u32_raw(rec, p);
+-                if old != 0 {
+-                    st.delete(old);
+-                }
+-                let s_pos = st.set_str(s.str());
+-                st.set_u32_raw(rec, p, s_pos);
+-            }
+-            (8, Content::Long(l)) => {
+-                st.set_i32_raw(rec, p, *l as i32);
+-            }
+-            (12, Content::Long(l)) => {
+-                st.set_u32_raw(rec, p, *l as u32);
+-            }
+-            (9, Content::Long(l)) => {
+-                st.set_short(rec, p, k.start, *l as i32);
+-            }
+-            (11, Content::Long(l)) => {
+-                st.write(rec, p, (*l as i32 - k.start) as u16);
+-            }
+-            (_, Content::Long(l)) => {
+-                st.set_byte(rec, p, k.start, *l as i32);
+-            }
+-            _ => {}
+-        }
+-    }
+-}
+-
+ #[must_use]
+ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple> {
+     let mut result = Vec::new();
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 95af8432f..10b81afb1 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1550,11 +1550,7 @@ impl Parser {
+                 }
+                 _ => None,
+             };
+-            // loft#1716 (`@FR-Col-Assign`) — the subscript names the key: its values ride along
+-            // exactly as the lookup's did, and the runtime places the copy under them.
+-            let mut set_args = vec![coll, val.clone(), Value::Int(tp_val)];
+-            set_args.extend(get_args.iter().skip(2).cloned());
+-            let set = self.cl("OpSetKeyed", &set_args);
++            let set = self.cl("OpSetKeyed", &[coll, val.clone(), Value::Int(tp_val)]);
+             return match materialise {
+                 Some(guard) => Value::Insert(vec![guard, set]),
+                 None => set,
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 448de8e43..901f89e96 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -4481,12 +4481,6 @@ impl State {
+                 was_stack = stack.position;
+                 self.gather_key(stack, &parameters, 2, &mut tps);
+             }
+-            // loft#1716 — the subscript's keys trail the declared operands as they do for
+-            // `OpGetRecord`; the op answers nothing, so the stack ends below `coll, value`.
+-            "OpSetKeyed" => {
+-                was_stack = stack.position - 2 * stack.step(super::size_ref() as u16);
+-                self.gather_key(stack, &parameters, 3, &mut tps);
+-            }
+             "OpStart" => {
+                 // @PLAN53 cluster 2 / S4: the iterator-pushed value (+4) and the
+                 // consumed iterable DbRef (size_ref) each occupy a stepped span.
+diff --git b/src/state/io.rs a/src/state/io.rs
+index e879cbc7f..73e73e471 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -2040,19 +2040,15 @@ impl State {
+     }
+ 
+     /// @P305 — `coll[key] = value` insert-or-replace into a keyed
+-    /// collection.  `OpSetKeyed(coll, value, tp, no_keys)` + the subscript's keys on the
+-    /// stack (loft#1716, `Col-Assign`): `tp`'s `0x8000` bit frees `value`'s store after the
+-    /// deep copy (caller temp).
++    /// collection.  `OpSetKeyed(coll, value, tp)`: `tp`'s `0x8000` bit frees
++    /// `value`'s store after the deep copy (caller temp).
+     pub fn set_keyed(&mut self) {
+         let raw_tp = self.code::<u16>();
+         let free_source = raw_tp & 0x8000 != 0;
+         let db_tp = raw_tp & 0x7FFF;
+-        let no_keys = self.code::<u8>();
+-        let key = self.stack_keys(db_tp, no_keys);
+         let value = self.get_stack::<DbRef>();
+         let coll = self.get_stack::<DbRef>();
+-        self.database
+-            .set_keyed(&coll, &value, db_tp, &key, free_source);
++        self.database.set_keyed(&coll, &value, db_tp, free_source);
+     }
+ 
+     pub fn hash_add(&mut self) {
+@@ -2108,18 +2104,12 @@ impl State {
+ 
+     pub(super) fn read_key(&mut self, full: bool) -> (u16, Vec<Content>) {
+         let db_tp = self.code::<u16>();
++        let keys = self.database.get_keys(db_tp);
+         let no_keys = if full {
+-            self.database.get_keys(db_tp).len() as u8
++            keys.len() as u8
+         } else {
+             self.code::<u8>()
+         };
+-        (db_tp, self.stack_keys(db_tp, no_keys))
+-    }
+-
+-    /// The first `no_keys` keys of `db_tp`, popped off the stack — the one reader both a
+-    /// keyed lookup (`OpGetRecord`) and a keyed assignment (`OpSetKeyed`) use.
+-    pub(super) fn stack_keys(&mut self, db_tp: u16, no_keys: u8) -> Vec<Content> {
+-        let keys = self.database.get_keys(db_tp);
+         let mut key = Vec::new();
+         for (k_nr, k) in keys.iter().enumerate() {
+             if k_nr >= no_keys as usize {
+@@ -2153,7 +2143,7 @@ impl State {
+             }
+             // We assume that all none-base types are enumerate types.
+         }
+-        key
++        (db_tp, key)
+     }
+ 
+     pub fn finish_record(&mut self) {

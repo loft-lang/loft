@@ -2386,11 +2386,13 @@ reachable by no key at all:
 c = &s[30];  c.key = 5;      // refused
 ```
 
-A keyed record moves as a NEW record under the new key, the old one removed — the subscript of an assignment does not rename a record, its own key field does, and a subscript that disagrees with that field is not reported, loft#1716):
+A keyed record moves by ASSIGNMENT under the new key, the old one removed.  The subscript of
+an assignment names the key: a copy of the record is placed under it, with its key field set
+to the subscript, whatever key the record carried (`Col-Assign`, loft#1716):
 
 <!-- from tests/reference/vector-views.loft -->
 ```loft
-s += [Keyed { key: 5, n: s[30].n }];  s[30] = null; // a new record under the new key, the old one removed
+s[5] = s[30];  s[30] = null; // the subscript names the key: a copy under 5, then 30 removed
 ```
 
 **Why an error rather than some defined behaviour.**  loft may always drop an error

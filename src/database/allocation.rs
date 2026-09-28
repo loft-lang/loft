@@ -7093,7 +7093,7 @@ mod p318_hash_deepcopy {
             let e = stores.database(cell_words);
             stores.store_mut(&e).set_int(e.rec, e.pos, k);
             stores.store_mut(&e).set_int(e.rec, e.pos + 8, k + 100);
-            stores.set_keyed(&h, &e, hash_tp, false);
+            stores.set_keyed(&h, &e, hash_tp, &[], false);
         }
 
         // Sound to start — no false positive.
@@ -7140,7 +7140,7 @@ mod p318_hash_deepcopy {
             let v = stores.database(cell_words);
             stores.store_mut(&v).set_int(v.rec, v.pos, k); // ck = k
             stores.store_mut(&v).set_int(v.rec, v.pos + 8, k + 1000); // payload
-            stores.set_keyed(&src_h, &v, hash_tp, false);
+            stores.set_keyed(&src_h, &v, hash_tp, &[], false);
         }
         let cur = stores.store(&src_h).get_u32_raw(src_h.rec, src_h.pos);
         let room = stores.store(&src_h).record_words(cur);
