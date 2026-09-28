@@ -166,3 +166,61 @@ fn genuine_expectations_still_pass() {
         "nothing may be reported unmatched:\n{out}"
     );
 }
+
+/// loft#1727 — one report answers ONE expectation.  Both cells below expect the same
+/// text, and only the first still refuses: answered from every diagnostic of the file,
+/// the one report satisfied both, so a guard whose cells share a rule's single message
+/// checked only that SOME cell fired.  The corpus harness (`tests/wrap.rs`) has always
+/// matched one-to-one; this is the `loft test` runner agreeing with it.
+#[test]
+fn two_cells_sharing_a_message_each_need_their_own_report() {
+    let first = "// @EXPECT_ERROR: Cannot modify const parameter\n\
+                 fn cell_first(fv: const vector<integer>) { fv += [1]; }\n";
+    let lapsed = "// @EXPECT_ERROR: Cannot modify const parameter\n\
+                  fn cell_lapsed(lv: vector<integer>) { lv += [2]; }\n";
+    let (code, out) = run_file("shared", &format!("{PLAIN}{first}{lapsed}"));
+    assert_refused(
+        "a second cell sharing the first's message",
+        code,
+        &out,
+        "cell_lapsed: Cannot modify const parameter",
+    );
+}
+
+/// The control for the row above: both cells refuse, so two reports answer the two
+/// expectations and the file is green.
+#[test]
+fn two_cells_sharing_a_message_pass_when_both_report() {
+    let first = "// @EXPECT_ERROR: Cannot modify const parameter\n\
+                 fn cell_first(fv: const vector<integer>) { fv += [1]; }\n";
+    let second = "// @EXPECT_ERROR: Cannot modify const parameter\n\
+                  fn cell_second(sv: const vector<integer>) { sv += [2]; }\n";
+    let (code, out) = run_file("shared_ok", &format!("{PLAIN}{first}{second}"));
+    assert_eq!(
+        code, 0,
+        "two reports for two expectations must pass:\n{out}"
+    );
+    assert!(
+        out.contains("test result: ok."),
+        "the file must be reported green:\n{out}"
+    );
+}
+
+/// The warning twin of the shared-message row: `@EXPECT_WARNING` is answered one report
+/// per expectation as well.
+#[test]
+fn two_cells_sharing_a_warning_each_need_their_own_report() {
+    let warns = "// @EXPECT_WARNING: Parameter a is never read\n\
+                 fn cell_warns(a: integer) { }\n";
+    let reads = "// @EXPECT_WARNING: Parameter a is never read\n\
+                 fn cell_reads(a: integer) -> integer { a }\n";
+    let (code, out) = run_file("shared_warn", &format!("{PLAIN}{warns}{reads}"));
+    assert_ne!(
+        code, 0,
+        "a second warning cell with no report must not exit 0:\n{out}"
+    );
+    assert!(
+        out.contains("expected warnings not found for: cell_reads"),
+        "the silent cell must be named:\n{out}"
+    );
+}

@@ -382,7 +382,10 @@ on each backend — a move in a cell nobody expected is the finding.
 
 **Every expectation must match.**  An `@EXPECT_ERROR` or `@EXPECT_WARNING` whose diagnostic
 does not appear fails the file (loft#929), and the check runs even when the file produced NO
-diagnostics at all.
+diagnostics at all.  **One diagnostic answers one expectation**, in both harnesses: two cells
+expecting the same text need two reports, and under `loft test` a cell's expectation first
+takes a report located in its own function, so a failure names the cell that went quiet
+(loft#1727; `tests/expectation_credit.rs`).
 
 **An expectation claims only what it names.**  Under `loft test` / `--tests` — the path a
 library's CI takes, with `LOFT_DENY_WARNINGS=1` — an `@EXPECT_WARNING` quiets the warnings
