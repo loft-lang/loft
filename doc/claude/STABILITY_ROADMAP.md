@@ -163,7 +163,7 @@ re-ask them.**
    measurement honest (the two items above: the gate wired, the census in the pass).
 
 **Sequenced, not dropped: the interpreter (owner, 2026-09-28).**  The interpreter's
-speed — 3.5–16× behind CPython, 50–500× behind native (PERFORMANCE.md § Benchmark
+speed — 3.5–16× behind CPython, 50–500× behind native (PERFORMANCE-history.md § Benchmark
 results) — waits until compiled speed is at the bar, and then it is looked at.  It will not
 measure up to compiled code and is not asked to; what it IS asked is to use **the same
 efficient data access as the compiled version** — because a game is DEVELOPED interpreted
@@ -177,10 +177,8 @@ reached only from `src/generation/` while the interpreter runs the unrewritten o
 `src/fill.rs` with a `DbRef` walk per access.  The target is that those rewrites become
 BYTECODE-level — a hoisted base or a cached record address the interpreter carries as an
 operand — so both backends call one helper and one fix serves both; P1 (superinstructions)
-and P2 (the stack pointer cache) in PERFORMANCE.md § Improvement priority order are the
-existing homes, and P2's "low priority" reads as "after the native bar", not "never".  The
-two PERFORMANCE.md sections that still call the interpreter "already fast" are owed a
-correction now, whatever the sequence.
+and P2 (the stack pointer cache) in PERFORMANCE.md § Open performance work are the
+existing homes, and P2's "low priority" reads as "after the native bar", not "never".
 
 *The light side, and the floor under it (owner, 2026-09-28).*  During development the
 parts of a program NOT touched for a while should be compiled and optimised automatically,
