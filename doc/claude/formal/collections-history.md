@@ -75,7 +75,7 @@
 > other reason).  Its oracle is FLATNESS, not a count: the absolute record count differs between
 > the backends, so each cell runs one workload at two sizes and asserts the two agree.
 > `collect_store_leaks` cannot see this at all — the records are retained inside a LIVE store,
-> so nothing is unfreed at exit.  Found in the `@FR-Col-Remove` walk (QUALITY.md B8f).
+> so nothing is unfreed at exit.  Found in the `@FR-Col-Remove` walk (QUALITY-history.md B8f).
 >
 > Filed as `D-col-2`, which loft#1385 had already taken and closed the same day; renumbered
 > here.  The same collision happened to this issue's sibling in [binding.md](binding.md),

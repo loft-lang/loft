@@ -45,7 +45,7 @@ literals ("out of range (exceeds u32::MAX)" vs the old generic
 
 Phase 2 (C54.A).  Once i64 register arithmetic + unsigned-read at
 bounded storage lands, revisit this phase: the stdlib alias and all
-5 test probes from QUALITY.md § 452-453 should land in an afternoon.
+5 test probes from QUALITY-history.md § 452-453 should land in an afternoon.
 
 ## Budget (post-Phase-2)
 
@@ -97,7 +97,7 @@ phase — it's the template for `u32`.)
 | `default/01_code.loft` | Audit existing `integer limit(0, 255)` / `limit(-128, 127)` declarations for the size inference rule — this should NOT regress when limits widen to i64-expressible values. |
 | `doc/claude/LOFT.md` | Add `u32` to the primitive-types section, next to `u8` / `u16` / `i8` / `i16` / `i32`. |
 
-## Test plan (from QUALITY.md § 452-453)
+## Test plan (from QUALITY-history.md § 452-453)
 
 Un-ignore:
 

@@ -258,7 +258,7 @@ only sets one explicitly once the corresponding feature ships.
 The package manifests are TOML for human authoring.  The registry
 index is JSON because it's machine-generated, never hand-edited, and
 loft's existing `serde_json` (or `data.rs`'s JSON walker — see
-[QUALITY.md § P54](QUALITY.md))
+[QUALITY-history.md § P54](QUALITY-history.md))
 parses it without a TOML dependency on the client side.  Smaller
 binary.
 

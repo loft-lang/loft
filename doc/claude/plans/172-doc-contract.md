@@ -38,6 +38,27 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
   in `formal/` stays visible as new.
 
+**Phase 4 — QUALITY.md split into working doc and record (2026-09-28, owner-steered).**
+- **The owner's rule, now DOC_QUALITY § Maintainer docs rule 4:** everything normal work needs
+  lives in compact files, and history is split off one way — the `<doc>-history.md` companion.
+  Rule 2 now exempts such a companion from the size ceiling (`<!-- size-exempt: … -->`).
+- **QUALITY.md went from 12,892 lines to 169, with 0 history lines.**  It holds the open
+  non-defect decisions, the three gated ratchets, what remains of the duplication thread, the
+  instruments, and the store-lifetime residuals.
+- **QUALITY-history.md is the old file moved intact,** so every anchor survives and ~90
+  citations repoint mechanically.  The ratchet tables left behind pointers.
+- **Tools and tests follow the content:**
+  - `campaign_review.py` reads its walks from the companion;
+  - the two Tier guards read the companion;
+  - the open-table and ratchet gates stay on QUALITY.md.
+- **Two open items that existed only as prose were measured:**
+  - The vector/tuple `null`-first-arm chain still answers `null` silently, bare form included.
+    Filed as loft#1711 (`silent-wrong`, `wa:clean`).
+  - The omitted-field "third spelling of absent" had been settled by `D-Opt-Zero`; its guard
+    now pins the answer.
+- A stale "D-bind-38 stays open" in formal/binding.md was corrected; the old QUALITY.md was
+  restating that register.
+
 **Phase 4, the 2026-10 cycle's second pick — RELEASE.md (2026-09-28, on the owner's repeated
 ask to implement the plan):**
 - **Size:** 1211 → 702 lines; lint findings 38 → 8 (the rest are `timeline` false positives:

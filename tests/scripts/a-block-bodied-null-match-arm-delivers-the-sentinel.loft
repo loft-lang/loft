@@ -76,4 +76,4 @@ fn test_many_calls_neither_leak_nor_accumulate() {
 // FRESH empty vector, "so a `[]` arm bound to a local … is a real `DbRef`, not a bare `null`
 // native emits as `()`".  So today's sentinel answer here is the BUG bypassing that
 // materialisation, not the rule being honoured.  Reconciling the two is an owner call with
-// two documented mechanisms behind it — recorded in QUALITY.md rather than forced.
+// two documented mechanisms behind it — filed as loft#1711 rather than forced.

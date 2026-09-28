@@ -35,7 +35,7 @@
 // untaken path of a one-arm assignment it reads as PRESENT and empty on both backends — its
 // assignment is `OpReplaceKeyed` into the local's own store, so the null-init allocates that
 // store — and what absence means for a keyed local is the null model's question (@PLN153),
-// recorded in QUALITY.md B7u and not frozen by this file.
+// recorded in QUALITY-history.md B7u and not frozen by this file.
 //
 // Each cell is called twice with a record allocated between the calls: the first call plants
 // the stale word, the second is the one that freed through it.

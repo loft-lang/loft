@@ -163,7 +163,7 @@ taken. `recover_backer` confines each block's store to its block: a flat **5** a
 step for a wrong answer in a function that reassigns a local across sibling blocks. ⚠ The
 soundness condition is `store_dead_after_block`, NOT the flag: a local READ after the blocks
 does not confine, because freeing a confined store while the local still holds it returns the
-wrong element on the branch NOT taken. QUALITY.md § Cluster III Route 2.
+wrong element on the branch NOT taken. QUALITY-history.md § Cluster III Route 2.
 
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after

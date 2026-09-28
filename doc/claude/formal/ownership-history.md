@@ -258,7 +258,7 @@ reads INERT on the build it was written to catch (`scripts/falsify.sh` § ONE CH
 ### D-own-36 — OPENED AND CLOSED (2026-09-06, the `@FR-O-Detach` walk): a collection literal's detach ran before its reads, and `--native` declined a value-`if`'s displaced free
 
 `(O-Detach)` sequences a binding's detach AFTER every read of it by the value being assigned.
-Walked as a rule (QUALITY.md B8a): its eight sites ask one static question — *does the value
+Walked as a rule (QUALITY-history.md B8a): its eight sites ask one static question — *does the value
 read the binding?* — with one home, `Value::reads_var`, and answer it by one of three
 placements (hoist the reads into temporaries; defer the free past the assignment; release by
 store identity after the `Set`).  A 37-cell matrix over 14 binding kinds × 20 right-hand-side
@@ -300,7 +300,7 @@ displaces; loft#1390 — a variant literal does not join with a binding of its e
 that a plain whole-value bind copy.  B7v gave the RECORD spelling its home (D-own-34, the
 statement-form sink in `scopes.rs`); the vector spelling had none, because the vector copy is
 the PARSER's (`classify_vec_bind` and its copy arm), and a value-branch RHS never reached that
-selector.  Measured (QUALITY.md B7w, 33 cells, both backends): every value-branch bind of a
+selector.  Measured (QUALITY-history.md B7w, 33 cells, both backends): every value-branch bind of a
 vector local handed it the chosen arm's STORE — `if`, `else if`, `match`, `??`; dense, nullable
 and null-initialised; every element kind; projection, mixed and parameter-source arms; inside a
 loop; and the first bind through a `match` or `??` wrapper.  Beside it, `x = s.v ?? va` viewed
@@ -320,7 +320,7 @@ green both backends under strict stores, poison and the native leak check.
 
 ### D-own-34 — OPENED AND CLOSED (2026-09-05): the per-path fact was short of three more homes, and the fact the emitters read did not survive the cache
 
-The `@FR-O-Witness` walk (QUALITY.md B7v) built the caller-side and cache matrices B7u's had
+The `@FR-O-Witness` walk (QUALITY-history.md B7v) built the caller-side and cache matrices B7u's had
 not, and each red was a nullable local not treated as the heap local it is — none the mixed-path
 join the matrix was drawn for:
 
@@ -371,7 +371,7 @@ and filed apart: the two-source nullable return (loft#1368) and the vector value
 ### D-own-33 — OPENED AND CLOSED (2026-09-05): the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is
 
 `(O-Complete)` requires the fact PER BINDING and PER PATH — every binding, every arm.  Measured on
-the `@FR-O-Complete` rule-led walk (QUALITY.md B7u) with the matrix the rule states and its
+the `@FR-O-Complete` rule-led walk (QUALITY-history.md B7u) with the matrix the rule states and its
 guards had not crossed — the STATEMENT form, a local assigned on two paths with different
 ownership, every cell called twice — the record, vector and keyed columns held (81 of 81) and
 the nullable column did not, in four ways that are not the mixed-path join at all:
@@ -419,7 +419,7 @@ files, all green on both backends under strict stores.
 `(O-Oracle)` says the answer is a function of the VALUE, computed by one derivation, and that a
 translation which cannot name a base must not upgrade the verdict.  Two things fell short of it,
 found because the @PLN94 shadow derivation (Check A) disagreed with the oracle in 14 places over
-the 1247-file corpus (QUALITY.md B7r).  First, `classify` read *"a var `OpDatabase` minted a
+the 1247-file corpus (QUALITY-history.md B7r).  First, `classify` read *"a var `OpDatabase` minted a
 fresh store into is Owned regardless of any other def"* — right for the retbuf a
 `materialized_view_return` fills, and an UPGRADE for a local minted once and then rebound by a
 call that may hand back its own argument (`c = M {…}; c = cond(c, 3)`, 1017b) or by a capture
@@ -443,7 +443,7 @@ clean on both plans, with an injected true positive (`LOFT_OWN_INJECT_FACT_OWNED
 ### D-own-31 — OPENED AND CLOSED (2026-09-05): the never-free contract named one spelling of five, and forbade a release the language ships
 
 `(O-Override)` read *"no `OpFreeRef` is ever emitted for this binding — exactly that sentence
-and nothing weaker."*  Measured on the `@FR-O-Override` rule-led walk (QUALITY.md B7q) over
+and nothing weaker."*  Measured on the `@FR-O-Override` rule-led walk (QUALITY-history.md B7q) over
 the 1247-file corpus, the sentence was wrong in both directions.  It named ONE of a free's
 five spellings, and the two backends intercept the flag downstream for two of them only
 (`OpFreeRef`, `OpFreeRefTag`; a bare variable operand), so a never-free binding freed by
@@ -481,7 +481,7 @@ naming its base.  A SILENT-WRONG: the freed store read correct until a later all
 its slot, then returned the filler's value (`777` for `71`, both backends); the vector-element
 shape crashed out of bounds under `LOFT_POISON`.
 
-Found on the `@FR-O-Latest` rule-led walk (QUALITY.md B7p), 1266 cells KIND × first source ×
+Found on the `@FR-O-Latest` rule-led walk (QUALITY-history.md B7p), 1266 cells KIND × first source ×
 second source × position, scored under poison because the plain build hid it.  Closed at the
 FACT: a view owns no store, so the empty/argument-dep proxy is wrong for a view-holder and
 `(O-Override)` vetoes it.  `scopes::nullable_view_locals` marks such locals never-free before
@@ -1562,7 +1562,7 @@ every cell built its container INSIDE the function that called.** A free that sh
 then lands on a store dying at the same scope exit, `H-FreeTwice` absorbs it as a silent no-op,
 and neither the value channel nor the leak channel says anything. The general form —
 **a leak channel cannot score an over-free**, because the gate is monotone and freeing MORE always
-reads as an improvement — is QUALITY.md § B6k. Cells:
+reads as an improvement — is QUALITY-history.md § B6k. Cells:
 `kb_outlives_*` and `tb_outlives*` in the two `…-can-witness-the-bracket` guards.
 
 **Measured.** Six cells, both backends, values IDENTICAL before and after — a pure leak, so

@@ -17,7 +17,7 @@
 // answered CORRECTLY both ways.  What the bare ask cost was a slot and a free, not a value —
 // and no corpus program could have said so, because **0 of 883 `tests/scripts` programs
 // returned a nullable heap value from a branch tail at all** (measured 2026-08-27 while
-// screening `Optional` transparency, QUALITY.md B6p).  The shape is here so that the next
+// screening `Optional` transparency, QUALITY-history.md B6p).  The shape is here so that the next
 // change to the branch join has something to break.
 //
 // @falsified-at: none — LOCK, not a guard: measured inert against 81b42f3a on BOTH backends

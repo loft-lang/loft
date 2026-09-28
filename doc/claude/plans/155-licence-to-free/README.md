@@ -77,7 +77,7 @@ point every free ends up (`OpSets::frees`, the five spellings).
 `make bug-review` (2026-09-07, 586 bugs in four bands): ownership/free is **37 of the last 200
 (18.5 %), flat at its own peak** and the second-largest class after null/sentinel — while
 `@FR-O` is the **most-cited rule family in the repo** (13 of 14 rules, 225 sites) and five
-walks landed on it in one day (QUALITY.md B7q–B7v).  Cited everywhere, still firing: the
+walks landed on it in one day (QUALITY-history.md B7q–B7v).  Cited everywhere, still firing: the
 `@FR-L-Null` signature the review scored NO EFFECT.  The full argument, with the four
 representations of the one fact and the three sites where the licence fails open, is on
 [@PLN155](https://github.com/loft-lang/plans/issues/155); it is not restated here.

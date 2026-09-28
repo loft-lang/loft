@@ -972,7 +972,7 @@ impl Parser {
             // accepted it — that position reads its destination from `var_tp` and never
             // needed the channel.  `seeds_tuple_hint` is the one home for the tuple
             // question, asked at the argument sites too; the general census of this
-            // channel's ten push sites and six admission lists is QUALITY.md § B6t.
+            // channel's ten push sites and six admission lists is QUALITY-history.md § B6t.
             // loft#1130 — and `yield` is the SAME question about the same declared type,
             // so the list is one home both spellings read (`seed_leaving_value_hint`).
             self.seed_leaving_value_hint(result);
@@ -4512,7 +4512,7 @@ impl Parser {
             // A `null` for a nullable COLLECTION member is the reserved ABSENT id in the
             // slot, exactly as `H { xs: null }` writes it (loft#917) — `self.null(&ftp)`
             // appends nothing and leaves an EMPTY collection, so `(null, 2)` read back as
-            // `[]` and `miss.0 == null` answered false, on both backends (QUALITY.md B7t).
+            // `[]` and `miss.0 == null` answered false, on both backends (QUALITY-history.md B7t).
             // The null arrives as a bare `Value::Null` from a concrete declaration and as the
             // TYPED null a template gave a `T?` element (`OpNullRefSentinel()`, since the
             // template compiled `T` as a record) from a monomorph — one absence, two
@@ -4561,7 +4561,7 @@ impl Parser {
             // A NULLABLE record member is a TAGGED slot (`__nullable<S>`: discriminant +
             // payload), and a dense `S` written into it by the plain field write lands on
             // the discriminant — presence becomes a data byte, and `(x, 1)` read back as
-            // `4294967199` where `x.a` was `7`, on both backends (QUALITY.md B7t; the
+            // `4294967199` where `x.a` was `7`, on both backends (QUALITY-history.md B7t; the
             // loft#1134 shape, at the tuple return).  The tagged write the element-wise
             // path already uses (`tuple_elem_tag_write`) decides from the STORED type and
             // the member's own spelling, so ask it first and fall back to the field write.
@@ -12583,7 +12583,7 @@ impl Parser {
     /// return copies in the CALLEE (`borrow_tail_copy`), because a caller never copies a
     /// vector it is handed.  So the instance aliased on both counts — `s = x` bound the
     /// argument's store and the frame then FREED it, `{ x }` handed the argument's store up
-    /// and a write through the result wrote the argument, on both backends (QUALITY.md B7t).
+    /// and a write through the result wrote the argument, on both backends (QUALITY-history.md B7t).
     ///
     /// Two rewrites, both on the substituted body: a `Set(v, Var(u))` whose target the TEMPLATE
     /// typed as the type variable and both sides now type as vectors becomes

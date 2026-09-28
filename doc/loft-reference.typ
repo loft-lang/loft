@@ -8721,7 +8721,7 @@ Returns the platform path separator character: '\\' on Windows, '/' elsewhere. D
 pub fn file(path: text) -> File fs#read
 ```
 
-Plan-06 phase 5a: \#impure(host\_io) — reads a host-detected constant.  Could be \#pure once detected (it's invariant for the lifetime of a process), but the runtime caches it inside Stores so the access is observable. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
+\#impure(host\_io): reads a host-detected constant.  It is fixed for the lifetime of a process, but the runtime caches it inside Stores, so the access is observable and the function cannot be \#pure. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
 
 ```rust
 pub fn exists(path: text) -> boolean fs#read
@@ -8945,7 +8945,7 @@ pub fn store_lazy_fail(local: reference, why: text) fs#read
 ```
 
 A loft DRIVER reporting that it could not reach its source.
-The writing end of the channel `store\_lazy\_error` reads. A driver written in loft (`fn lazy\_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — "the source is down" carries a REASON, and answering `0` for it is exactly the silent wrong answer arc C exists to prevent, because a caller cannot tell it from "no such person".
+The writing end of the channel `store\_lazy\_error` reads. A driver written in loft (`fn lazy\_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — "the source is down" carries a REASON, and answering `0` for it would be a silent wrong answer, because a caller cannot tell it from "no such person".
 fn lazy\_fetch(coll: hash\<Person\[id\]\>, source: text, key\_int: integer, key\_text: text) -\> integer { if !db.db\_open(source) { store\_lazy\_fail(coll, "cannot open {source}: {db.db\_last\_error()}"); return 0; } .. }
 Sticky and counted exactly like a Rust source's failure: the FIRST reason is kept, every failure is counted, and only `store\_lazy\_clear` clears them.
 
@@ -9298,7 +9298,7 @@ Parse JSON text into a `JsonValue` tree.  Malformed input returns `JNull`; the e
 pub fn json_errors() -> text
 ```
 
-Populates the runtime's per-call json\_errors state (read by json\_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.
+Populates the runtime's per-call json\_errors state (read by json\_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.
 
 ```rust
 pub fn field(self: const JsonValue, name: text) -> JsonValue[self]

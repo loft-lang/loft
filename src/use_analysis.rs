@@ -2346,7 +2346,7 @@ impl<'a> Ownership<'a> {
                 // argument (`c = M {…}; c = cond(c, 3)`) or to a capture read `Owned`, the
                 // one verdict that licenses a free, where the flow-sensitive shadow read
                 // `Join`/`Borrowed`; Check A's fact-disagree on 1017b/1326/1331 was that
-                // shortcut, not the shadow (@FR-O-Oracle, QUALITY.md B7r).
+                // shortcut, not the shadow (@FR-O-Oracle, QUALITY-history.md B7r).
                 let minted = defs.db_vars.contains(v);
                 // A definition that binds NO STORE — `x = null` — says nothing about what
                 // `x` may own on its other definitions and is left out of the join, exactly
@@ -2870,7 +2870,7 @@ impl<'a> Ownership<'a> {
 /// ([`Ownership::caller_arg_base`]) and by its flow-sensitive shadow (`ownership_cfg`) alike, so
 /// the two cannot drift on it: the shadow's private copy carried none of loft#1318's three fixes
 /// and reported the oracle's CORRECT answers as disagreements — `Borrowed(MAX)` for a call
-/// delivering through a hidden buffer, and no root for a projection argument (QUALITY.md B7r).
+/// delivering through a hidden buffer, and no root for a projection argument (QUALITY-history.md B7r).
 ///
 /// `Ok(base)` names the caller variable the callee's borrowed parameter `callee_base` arrives
 /// in, `u16::MAX` where nothing does: a hidden parameter that is not a delivery buffer (a
@@ -3502,7 +3502,7 @@ pub fn returns_one_of_several_args(data: &Data, callee: u32) -> bool {
 /// alias and stays null.  Asked for a JOIN alone, a nullable local bound from a
 /// borrow-returning callee stayed a plain alias — a write through it reached the caller's
 /// argument on both backends, and a witnessed local's witness then named the CALLER's
-/// store and released it (`@FR-O-Witness`, QUALITY.md B7v).  A call that borrows
+/// store and released it (`@FR-O-Witness`, QUALITY-history.md B7v).  A call that borrows
 /// nothing, or one whose witness the bracket cannot name, keeps today's plain adopt.
 #[must_use]
 pub fn nullable_join_first_bind(

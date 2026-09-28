@@ -7,7 +7,7 @@ choice.  See "Audit result" at the end.
 
 ## Why this is Phase 0
 
-The C54 design (`QUALITY.md § 479-557`) offers two semantic fixes for
+The C54 design (`QUALITY-history.md § 479-557`) offers two semantic fixes for
 arithmetic overflow and divide-by-zero:
 
 - **C54.G** — trap (runtime error) on overflow / div-zero.
@@ -68,7 +68,7 @@ verdict is assigned by running the fixture.
 
 **Critical probe**: `probe_08_nullcoalesce_on_arithmetic.loft`.  If
 `??` does NOT catch arithmetic-overflow-null, G′ is unsafe (the
-`??`-composition argument from QUALITY.md § 537 evaporates).
+`??`-composition argument from QUALITY-history.md § 537 evaporates).
 Conversely, if by some miracle it does catch, G′'s case holds.
 
 ## Decision procedure
@@ -183,7 +183,7 @@ it returns the RHS.  This is orthogonal to the compile-time
 non-null inputs, not the runtime behaviour.
 
 **Implication for G vs G′.**  The design's G′ argument
-(QUALITY.md § 537) — "the `??` composition is the decisive win" — is
+(QUALITY-history.md § 537) — "the `??` composition is the decisive win" — is
 already available *today* on overflow.  G would BREAK this idiom by
 trapping before `??` runs.
 

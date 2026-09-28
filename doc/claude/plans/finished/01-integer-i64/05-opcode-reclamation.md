@@ -7,7 +7,7 @@ Status: **not started** — blocked by Phase 2 (the widen) and Phase 4
 
 After Phase 2, every `integer` slot is i64 and the `Op*Long`
 arithmetic family becomes duplicate.  The inventory from Part B
-(QUALITY.md § 464-474 + exploration findings):
+(QUALITY-history.md § 464-474 + exploration findings):
 
 ### Arithmetic (delete)
 
@@ -152,7 +152,7 @@ list, rewrite every opcode ID in `default/01_code.loft` and
 `src/fill.rs`'s dispatch table.  Regression-test against the
 bytecode-snapshot tests under `tests/dumps/`.
 
-## Test plan (from QUALITY.md § 472-474)
+## Test plan (from QUALITY-history.md § 472-474)
 
 Un-ignore:
 

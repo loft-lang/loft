@@ -152,7 +152,7 @@ discovered gaps:
 | **Bug** — observable wrong behaviour, a panic, a rejection | a GitHub issue in `loft-lang/loft` ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)) |
 | **Stdlib gap** that fits the existing API surface | a row in [STDLIB.md § Open work](STDLIB.md#open-work) |
 | **Native codegen follow-up** | a row in [NATIVE.md § Open work](NATIVE.md#open-work) |
-| **Known tradeoff**, not a defect | [QUALITY.md § Open work](QUALITY.md) |
+| **Known tradeoff**, not a defect | [QUALITY.md](QUALITY.md) |
 | **Feature or infra catalogue entry** | a `loft-lang/features` issue |
 | **New library, or an M+ feature** needing its own design | a `loft-lang/plans` issue (`@PLN<n>`) |
 

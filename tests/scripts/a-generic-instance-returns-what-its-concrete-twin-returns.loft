@@ -7,7 +7,7 @@
 // concrete twin owes; the concrete twin is the ORACLE of every cell here, not a hand-written
 // number, and the pair must agree.
 //
-// What was wrong (QUALITY.md B7t): a template binds `T` as a record, so its instance kept the
+// What was wrong (QUALITY-history.md B7t): a template binds `T` as a record, so its instance kept the
 // RECORD lowering whatever `T` became.  Its `-> T` return carried no deps (the declaration's
 // `ref_return` is deferred for a generic and nothing ran at instantiation), so the caller bound
 // the argument's own store; a `-> (T, integer)` stayed a stack tuple whose heap member was the

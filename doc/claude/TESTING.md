@@ -902,7 +902,7 @@ never opened is either a second defect or a second fix, and it is worth the read
 **A defect only an instrument can see is scored with the instrument armed.**  `LOFT_POISON=1
 LOFT_STRICT_STORES=1 make falsify GUARD=… REF=…` passes both through to the control and to
 this tree.  Measured need: a stale work-ref reclaiming, in place, a store number another
-record had since taken (QUALITY.md B7u) read as `INERT` in plain mode on every shape tried —
+record had since taken (QUALITY-history.md B7u) read as `INERT` in plain mode on every shape tried —
 the allocator hands the stale buffer its own freed number back — and as six assertion
 failures under the arena poison.  A guard falsified that way says so beside its line, and
 names the CI leg that runs with the instrument (the nightly poison sweep), because on the
@@ -956,7 +956,7 @@ verdict, and write into `@falsified-at:` which channel the tool actually scored 
 defects it is blind to.
 
 **Why a record and not just a habit.** Four distinct channels reported success while
-measuring nothing in a single afternoon (QUALITY.md § B6m), and two defects passed a full
+measuring nothing in a single afternoon (QUALITY-history.md § B6m), and two defects passed a full
 green gate the same day:
 
 | how a check reported success while measuring nothing |

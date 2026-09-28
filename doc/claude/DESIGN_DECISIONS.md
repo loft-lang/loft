@@ -153,7 +153,7 @@ Adding suffix syntax would:
 - Solve a 1 % problem that `as` already covers.
 
 **Decision.** **Closed — declined.**  Dated 2026-04-13.  See
-[QUALITY.md § C54](QUALITY.md#c54--integer-i64--landed-2026-04-21) — `C54.D` listed under sub-tickets.
+[QUALITY-history.md § C54](QUALITY-history.md#c54--integer-i64--landed-2026-04-21) — `C54.D` listed under sub-tickets.
 
 **Revisit when.** A real loft program needs a literal-size
 distinction that cannot be expressed as `as <T>` in reasonable

@@ -145,7 +145,7 @@ concrete instantiated return, not the template shape mid-resolution).
 `promote_monomorph_text_return` — gated on a pass-stable concrete-tuple test. The
 probe matrix + trustworthy oracle are now in place to validate it cell-by-cell.
 
-> **2026-09-05 — the deferred half landed** (QUALITY.md B7t, D-call-13).  The RESOLUTION below
+> **2026-09-05 — the deferred half landed** (QUALITY-history.md B7t, D-call-13).  The RESOLUTION below
 > covered a template whose return SHAPE is concrete; a shape that depends on `T` (`-> (T, T)`,
 > `-> T`) "deferred to instantiation as before", and nothing at instantiation received it.  It
 > does now: `tuple_return_rewrite` boxes the lifetime-bearing literal tuple for both passes and

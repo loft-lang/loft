@@ -51,9 +51,9 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 ## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
 
 28. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
-29. 1000 lines is a hard ceiling; under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
+29. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
 30. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
-31. A contract doc states the current rule; a record doc keeps its dates. — rule 4, RELEASE § 5b
+31. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
 32. Commit the goal and the command that reports the position, never the position. — rule 5
 33. Prose beside a gated number carries the reason, not the value. — rule 6
 34. Search a doc before adding to it; read the code before stating what it does. — rules 7–8

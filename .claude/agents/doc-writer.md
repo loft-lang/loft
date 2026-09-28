@@ -106,7 +106,7 @@ edit.
   mention to the closed-items paragraph below.  `~~X~~` markers
   belong to PROBLEMS.md's quick-ref table, NOT QUALITY.md's.
 - **`quality_struck_tier2_items_have_landing_date`** — anything
-  struck in QUALITY.md's Tier 2 section must carry a landing date.
+  struck in QUALITY-history.md's Tier 2 section must carry a landing date.
 - **`problems_quickref_matches_longform_status`** — if
   PROBLEMS.md's quick-ref table row is struck, the longform `###`
   entry below must also be struck (and vice versa).  Update both

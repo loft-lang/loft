@@ -83,7 +83,7 @@ const CLEAN_CORPUS: &[&str] = &[
     "tests/scripts/505-collection-capture.loft",
     "tests/scripts/85-struct-copy-return-owned.loft",
     // The three shapes the two derivations disagreed on over the 1247-file corpus until the
-    // `@FR-O-Oracle` walk (QUALITY.md B7r): a local minted once and rebound by a call that may
+    // `@FR-O-Oracle` walk (QUALITY-history.md B7r): a local minted once and rebound by a call that may
     // hand back its argument, a keyed literal repointed at a captured collection inside a
     // closure, and a call delivering through a hidden buffer.  Zero disagreements is the claim.
     "tests/scripts/1017b-a-conditional-borrow-into-its-own-binding.loft",

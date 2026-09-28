@@ -2404,7 +2404,7 @@ libcatalogue:
 	@python3 scripts/refresh-applications.py # @PLN112 — apps: first-party self-described (repo topic+toml) + community issues
 	@python3 scripts/gen-library-catalogue.py --refresh-snapshot
 
-# QUALITY Tier 4 #12 — the single pre-push gate.
+# QUALITY-history.md Tier 4 #12 — the single pre-push gate.
 #
 # `ci` optimises for the full automated pipeline: it logs to result.txt,
 # runs the GL + packages suites, and only prints on failure.  That's

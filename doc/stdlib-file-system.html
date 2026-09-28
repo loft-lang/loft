@@ -89,7 +89,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn file(path: text) -&gt; File fs#read</code></pre>
-<p>Plan-06 phase 5a: #impure(host_io) — reads a host-detected constant.  Could be #pure once detected (it's invariant for the lifetime of a process), but the runtime caches it inside Stores so the access is observable. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.</p>
+<p>#impure(host_io): reads a host-detected constant.  It is fixed for the lifetime of a process, but the runtime caches it inside Stores, so the access is observable and the function cannot be #pure. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.</p>
 </div>
 <div class="item">
 <pre><code>pub fn exists(path: text) -&gt; boolean fs#read</code></pre>
@@ -251,7 +251,7 @@
 <div class="item">
 <pre><code>pub fn store_lazy_fail(local: reference, why: text) fs#read</code></pre>
 <p>A loft DRIVER reporting that it could not reach its source.</p>
-<p>The writing end of the channel `store_lazy_error` reads. A driver written in loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — &quot;the source is down&quot; carries a REASON, and answering `0` for it is exactly the silent wrong answer arc C exists to prevent, because a caller cannot tell it from &quot;no such person&quot;.</p>
+<p>The writing end of the channel `store_lazy_error` reads. A driver written in loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and two of them are an integer: `1` inserted, `0` absent. The third is not — &quot;the source is down&quot; carries a REASON, and answering `0` for it would be a silent wrong answer, because a caller cannot tell it from &quot;no such person&quot;.</p>
 <p>fn lazy_fetch(coll: hash&lt;Person[id]&gt;, source: text, key_int: integer, key_text: text) -&gt; integer { if !db.db_open(source) { store_lazy_fail(coll, &quot;cannot open {source}: {db.db_last_error()}&quot;); return 0; } .. }</p>
 <p>Sticky and counted exactly like a Rust source's failure: the FIRST reason is kept, every failure is counted, and only `store_lazy_clear` clears them.</p>
 </div>

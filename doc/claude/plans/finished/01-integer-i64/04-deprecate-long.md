@@ -3,7 +3,7 @@
 Status: **not started** — blocked by Phase 2 (the widen makes `long`
 redundant).
 
-## Timeline (per QUALITY.md § 455-462)
+## Timeline (per QUALITY-history.md § 455-462)
 
 - **0.9.0 — deprecate.**  Parser accepts `long` type and `l` suffix
   but emits a warning diagnostic pointing at the migrator.
@@ -132,7 +132,7 @@ LOFT.md.
 Alternative: a CLI flag `--suppress-deprecation-warnings` for
 build-integration.  Keep both.
 
-## Test plan (from QUALITY.md § 460-462)
+## Test plan (from QUALITY-history.md § 460-462)
 
 Un-ignore:
 

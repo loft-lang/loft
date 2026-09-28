@@ -564,11 +564,19 @@ gate here.  What is:
 2. **1000 lines is a hard ceiling** (owner, 2026-09-25).  Under it, the internal structure
    carries the weight: headings a reader can navigate and one topic per section.  A long doc
    that is well sectioned is fine; a short one that is not still fails review.  Formal rule
-   docs and generated reports are exempt and say so in their header.  `make file-sizes`
-   reports the files over it.
+   docs, generated reports and `<doc>-history.md` record companions are exempt and say so in
+   their first lines (`<!-- size-exempt: <why> -->`): a record is read by anchor and grep, not
+   end to end.  `make file-sizes` reports the files over it.
 3. **Every doc is reachable from the CLAUDE.md index in at most two hops**, and each index
    entry names the *start here* doc for its topic, not a list of peers.
-4. **A contract doc states the current rule; a record doc keeps its dates.**  A contract doc
+4. **What normal work needs is in a compact doc; history is split off one way** (owner,
+   2026-09-28).  Everything a reader needs during normal work — the rule, the current state,
+   the open items, the command that measures them — lives in a compact working doc.  The story
+   of how it got there — dated rulings, measurements, the effort behind a subject — goes to
+   that doc's `<doc>-history.md` companion, beside it, and nowhere else: not a differently
+   named archive, not a "historical" section inside the working doc.  The working doc links
+   its companion once; the companion is reached through it.
+   **A contract doc states the current rule; a record doc keeps its dates.**  A contract doc
    (a reference, a rule set, a design that is in force) says what holds now.  A dated ruling
    in it — "the owner ruled on …", "retired on …" — becomes a CHANGELOG_TECHNICAL entry or
    moves to its `<doc>-history.md` companion, and the doc is edited to state the outcome as

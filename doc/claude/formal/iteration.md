@@ -172,7 +172,7 @@ and gives exactly this rule's answer: `for x in v?` and `for x in v ?? []` each 
 Until 2026-09-07 this paragraph ended *"so a `for` over a possibly-null collection is safe
 without a guard"*, which reads as a promise about the `?` spelling — the one spelling the rule
 does not cover and the compiler refuses. The formal line was right and its gloss reached one
-case past it (QUALITY.md B8i).
+case past it (QUALITY-history.md B8i).
 
 ---
 

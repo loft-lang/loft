@@ -803,7 +803,7 @@ length 1, `sorted` and `vector` were correct — five kinds, one missing push si
 `yield` and the block tail / `return` now share ONE admission list
 (`Parser::seed_leaving_value_hint`): they are two spellings of one act against one declared
 type. The census of this channel's remaining push sites — ten of them, carrying six different
-admission lists, none admitting `Type::Tuple` — is [QUALITY.md § B6t](../QUALITY.md); the
+admission lists, none admitting `Type::Tuple` — is [QUALITY-history.md § B6t](../QUALITY-history.md); the
 general rule LOFT.md already states is *the expected type wherever there is one*.
 
 ⚠ **The incident-shaped patch that stood in for the rule was one screen above the fix.** The
@@ -882,7 +882,7 @@ the rule the join is missing; the declared destination should then take `(N-Decl
 against that join, exactly as the direct spelling does.
 
 A LITERAL null in a later arm IS caught, by a different mechanism — the DN1 null-arm walkers
-match the `OpConv*FromNull` spelling. So this is the same shape QUALITY.md § B6g names: one
+match the `OpConv*FromNull` spelling. So this is the same shape QUALITY-history.md § B6g names: one
 notion with two spellings, and only one of them is looked for. Nothing asks about a
 nullable-TYPED value at a join.
 

@@ -26,7 +26,7 @@
 //
 // The mutation is written THROUGH the call (`f(q).a = 99`) on purpose.  A cell that binds
 // first — `r = f(q); r.a = 99` — measures the bind, because a record bind copies, and that is
-// why the 48-cell matrix in QUALITY.md § B7t reads green over all of this.
+// why the 48-cell matrix in QUALITY-history.md § B7t reads green over all of this.
 //
 // The vector control is the BOUND spelling, restored now that loft#1486 is closed: it is the
 //   sharper question — an append reaching the argument is visible where a length alone is not.

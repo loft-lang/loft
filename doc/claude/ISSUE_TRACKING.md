@@ -21,7 +21,7 @@ files.
 | **Closed bugs** (the FIXED record) | `PROBLEMS.md` (frozen archive) + git history + the regression test | the fix + its test ARE the record; keep the history greppable |
 | **Design entries** (the big `###` P-sections, e.g. @P213) | reference docs (`doc/claude/*.md`) | these are design docs, not bug rows — they don't belong as one-line Issues |
 | **Feature / infra catalogue** (`@F<n>` / `@I<n>`, @PLN92) | **GitHub Issues in `loft-lang/features`** — the issue body (incl. its ` ```loft ` example) is the single source of truth | `index/features.json` = committed snapshot (`make features-fetch`); `doc/features/` + `tests/docs/features/*.loft` = one-way GENERATED shadow (`make features-gen`). **Never edit the shadow** — hand-edits fail the `features-check` drift guard and are overwritten by the next regen; a stale example (e.g. one the language has since outlawed) is fixed by editing the ISSUE, then fetch + gen + commit |
-| **Benign tradeoffs / open work** (not defects) | `QUALITY.md § Open work` | a known tradeoff with a fix mapped, not a bug |
+| **Benign tradeoffs / open work** (not defects) | [QUALITY.md](QUALITY.md) | a known tradeoff with a fix mapped, not a bug |
 | **Plan sub-tasks** (the dependency-ordered work-items WE decompose from a plan + fix in sequence) | the plan doc (`plans/*/ROADMAP.md`) | self-created, self-fixed, transient; **don't file them as GitHub Issues** |
 
 **A surfaced issue whose fix path IS a plan carries `status:planned`.**  The two

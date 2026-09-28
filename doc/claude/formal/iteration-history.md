@@ -27,7 +27,7 @@ replaced it.
 > build without the loop — never once: `v = [v[1]?, v[0]?]` answered `[0, 0]`, `len(v)` inside
 > the literal read `0` then `1`, a struct element read its `?? default`, and a parameter, a
 > typed local, a struct field and a `+=` all read the result being built — sixteen spellings,
-> both backends, silently (QUALITY.md B8a).  The build's detach (`create_vector`'s `=` repoint,
+> both backends, silently (QUALITY-history.md B8a).  The build's detach (`create_vector`'s `=` repoint,
 > `clear_vector_field`) sat at the head of the build's ops, ahead of the element reads.
 > Closed by giving the comprehension's snapshot one home, `Parser::snapshot_read_destination`,
 > which the literal asks too: the destination is copied before the first write, every read in

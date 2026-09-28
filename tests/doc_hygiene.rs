@@ -3,7 +3,7 @@
 
 //! Doc-hygiene regression guards.
 //!
-//! QUALITY.md Tier 4 item 10 calls out that INCONSISTENCIES.md,
+//! QUALITY-history.md Tier 4 item 10 calls out that INCONSISTENCIES.md,
 //! PROBLEMS.md, and CAVEATS.md drift independently — resolved INCs
 //! get a status block in their long-form entry but the Summary-by-
 //! Severity tables keep listing them as open.  These tests lock the
@@ -16,12 +16,13 @@ const DOC: &str = "doc/claude/INCONSISTENCIES.md";
 const PROBLEMS: &str = "doc/claude/PROBLEMS.md";
 const CAVEATS: &str = "doc/claude/CAVEATS.md";
 const QUALITY: &str = "doc/claude/QUALITY.md";
+const QUALITY_HISTORY: &str = "doc/claude/QUALITY-history.md";
 
 /// Every guard added under `tests/scripts/` must record the control it was falsified
 /// against, or say why it cannot have one.
 ///
 /// A guard that passes on the build it was written for proves nothing, and the ways that
-/// happens are not exotic — four turned up in one afternoon (QUALITY.md § B6m): the wrong
+/// happens are not exotic — four turned up in one afternoon (QUALITY-history.md § B6m): the wrong
 /// ENTRY POINT (`tests/wrap.rs::run_test` runs `main` when the file has one and every
 /// zero-parameter function otherwise, so `--interpret` on a `main`-less guard runs no
 /// assertion at all), a success marker the error report ECHOES, a leak gate that is monotone
@@ -394,7 +395,7 @@ fn read_doc() -> String {
     fs::read_to_string(DOC).unwrap_or_else(|_| panic!("cannot read {DOC}"))
 }
 
-/// QUALITY Tier 2 #4 — once the `cargo clippy --no-default-features
+/// QUALITY-history.md Tier 2 #4 — once the `cargo clippy --no-default-features
 /// --all-targets -- -D warnings` gate goes green, CI must run it on
 /// every push so the ratchet can't slip.  This guard reads the
 /// `Makefile` `ci:` target and asserts the `--no-default-features`
@@ -406,7 +407,7 @@ fn ci_target_runs_no_default_features_clippy() {
     let needle = "cargo clippy --no-default-features --all-targets -- -D warnings";
     assert!(
         makefile.contains(needle),
-        "Makefile `ci:` target must invoke `{needle}` so the --no-default-features clippy ratchet is enforced on every push.  See QUALITY.md Tier 2 #4."
+        "Makefile `ci:` target must invoke `{needle}` so the --no-default-features clippy ratchet is enforced on every push.  See QUALITY-history.md Tier 2 #4."
     );
 }
 
@@ -472,7 +473,7 @@ fn ci_target_verdict_covers_every_phase_not_just_the_tests() {
     );
 }
 
-/// QUALITY Tier 1 #3 — `p122_long_running_struct_loop` was ignored
+/// QUALITY-history.md Tier 1 #3 — `p122_long_running_struct_loop` was ignored
 /// only because it takes ~10 min in debug and ~0.05 s in release,
 /// not because the test itself was broken.  Closed 2026-04-14 by
 /// switching the attribute to `#[cfg_attr(debug_assertions, ignore)]`
@@ -497,17 +498,17 @@ fn p122_long_running_struct_loop_is_cfg_attr_ignored_in_debug_only() {
             && preamble.contains("ignore"),
         "p122_long_running_struct_loop must be gated with \
          `#[cfg_attr(debug_assertions, ignore = …)]` so CI (release) \
-         runs it.  See QUALITY.md Tier 1 #3.  Preamble found:\n{preamble}"
+         runs it.  See QUALITY-history.md Tier 1 #3.  Preamble found:\n{preamble}"
     );
 }
 
-/// QUALITY Tier 3 #8 — the const-store mmap path is intentionally
+/// QUALITY-history.md Tier 3 #8 — the const-store mmap path is intentionally
 /// deferred per [plans/82-const-store § Phase B] (cache files are
 /// 5-10 KB; mmap overhead exceeds memcpy savings at this size).
-/// QUALITY.md must reflect that decision, not ask for a benchmark the
+/// QUALITY-history.md must reflect that decision, not ask for a benchmark the
 /// design has ruled out.  This guard locks the two docs together: if
-/// 82-const-store stops marking Phase B as deferred, QUALITY.md Tier 3
-/// #8 should be re-opened at the same time; if QUALITY.md loses the
+/// 82-const-store stops marking Phase B as deferred, QUALITY-history.md Tier 3
+/// #8 should be re-opened at the same time; if QUALITY-history.md loses the
 /// closure marker, 82-const-store probably did too.
 #[test]
 fn quality_const_store_mmap_matches_const_store_md() {
@@ -515,17 +516,17 @@ fn quality_const_store_mmap_matches_const_store_md() {
     let cs = fs::read_to_string(cs_path).unwrap_or_else(|e| panic!("cannot read {cs_path}: {e}"));
     assert!(
         cs.contains("## Phase B — Memory-mapped constant store (deferred)"),
-        "{cs_path} must keep its `## Phase B — Memory-mapped constant store (deferred)` heading — if the design position has changed, re-open QUALITY.md Tier 3 #8 and update this guard."
+        "{cs_path} must keep its `## Phase B — Memory-mapped constant store (deferred)` heading — if the design position has changed, re-open QUALITY-history.md Tier 3 #8 and update this guard."
     );
 
-    let q = read_quality();
+    let q = read_quality_history();
     // Locate the Tier 3 #8 block heading.  Items are numbered
     // `8. **...` at column 0; find the one that mentions const-store
     // mmap (not the P54-section "8." which is deeper-indented).
     let heading_start = q
         .find("\n8. **")
         .map(|i| i + 1)
-        .expect("QUALITY.md must contain a top-level Tier 3 item `8. **...`");
+        .expect("QUALITY-history.md must contain a top-level Tier 3 item `8. **...`");
     let block_end = q[heading_start..]
         .find("\n9. ")
         .unwrap_or(q.len() - heading_start)
@@ -533,16 +534,16 @@ fn quality_const_store_mmap_matches_const_store_md() {
     let block = &q[heading_start..block_end];
     assert!(
         block.contains("Const store mmap"),
-        "QUALITY.md Tier 3 #8 should be about the const-store mmap path.  Heading found:\n{}",
+        "QUALITY-history.md Tier 3 #8 should be about the const-store mmap path.  Heading found:\n{}",
         &block[..block.find('\n').unwrap_or(block.len())]
     );
     assert!(
         block.starts_with("8. **~~") || block.contains("**~~Const store mmap"),
-        "QUALITY.md Tier 3 #8 must be struck-through (`~~Const store mmap…~~`) because plans/82-const-store § Phase B is deferred-by-design.  Block:\n{block}"
+        "QUALITY-history.md Tier 3 #8 must be struck-through (`~~Const store mmap…~~`) because plans/82-const-store § Phase B is deferred-by-design.  Block:\n{block}"
     );
     assert!(
         block.contains("82-const-store") || block.contains("CONST_STORE.md"),
-        "QUALITY.md Tier 3 #8 must reference plans/82-const-store § Phase B (or the legacy CONST_STORE.md path during transition) as the source of the deferral decision.  Block:\n{block}"
+        "QUALITY-history.md Tier 3 #8 must reference plans/82-const-store § Phase B (or the legacy CONST_STORE.md path during transition) as the source of the deferral decision.  Block:\n{block}"
     );
 }
 
@@ -602,13 +603,13 @@ fn p54_json_natives_registered_for_every_declaration() {
     assert!(
         missing.is_empty(),
         "default/06_json.loft declares {} pure-native fn(s) without a matching NATIVE_FNS entry in src/native.rs:\n  {}\n\
-         For each missing name `foo`, add `(\"n_foo\", n_foo)` (or a `…foo_dest` variant) to NATIVE_FNS and implement it.  See QUALITY.md § P54 for the JSON native surface.",
+         For each missing name `foo`, add `(\"n_foo\", n_foo)` (or a `…foo_dest` variant) to NATIVE_FNS and implement it.  See QUALITY-history.md § P54 for the JSON native surface.",
         missing.len(),
         missing.join("\n  ")
     );
 }
 
-/// QUALITY P54 — the JSON stdlib + native doc-comments must not
+/// QUALITY-history.md P54 — the JSON stdlib + native doc-comments must not
 /// contain stale "step 4" / "stub" / "forward-compatible" /
 /// "lands when X" / "today returns JNull" language now that
 /// step 4 is complete.  Earlier drafts of `default/06_json.loft`
@@ -771,7 +772,7 @@ fn file_operations_gate_on_host_fs_not_the_wasm_feature() {
     }
 }
 
-/// QUALITY Tier 4 #11 — DESIGN_DECISIONS.md is the closed-by-decision
+/// QUALITY-history.md Tier 4 #11 — DESIGN_DECISIONS.md is the closed-by-decision
 /// register.  Without a prominent cross-ref at the top of the docs
 /// where new items naturally land (PLANNING.md for future work,
 /// PROBLEMS.md for bug reports), the same declined proposals keep
@@ -789,12 +790,12 @@ fn planning_and_problems_link_to_design_decisions() {
         let head: String = src.lines().take(80).collect::<Vec<_>>().join("\n");
         assert!(
             head.contains("DESIGN_DECISIONS.md"),
-            "{label} must link to DESIGN_DECISIONS.md in its opening ~80 lines so contributors see the closed-by-decision register before adding a new entry.  See QUALITY.md Tier 4 #11."
+            "{label} must link to DESIGN_DECISIONS.md in its opening ~80 lines so contributors see the closed-by-decision register before adding a new entry.  See QUALITY-history.md Tier 4 #11."
         );
     }
 }
 
-/// QUALITY Tier 4 #12 — `make ship` is the canonical pre-push gate.
+/// QUALITY-history.md Tier 4 #12 — `make ship` is the canonical pre-push gate.
 /// Four invariants must all be present in the recipe so users who
 /// `make ship && git push` get the same guarantee the remote CI
 /// applies.  If any step is dropped the ratchet silently weakens
@@ -816,7 +817,7 @@ fn planning_and_problems_link_to_design_decisions() {
 fn ship_target_chains_all_required_gates() {
     let makefile = fs::read_to_string("Makefile").expect("cannot read Makefile");
     let ship_recipe = extract_recipe(&makefile, "ship:")
-        .expect("Makefile must define a `ship:` target — see QUALITY.md Tier 4 #12");
+        .expect("Makefile must define a `ship:` target — see QUALITY-history.md Tier 4 #12");
     let required: &[&str] = &[
         "cargo fmt --all -- --check",
         // CI's exact Clippy line (ci.yml `clippy` job) — `ship` mirrors it
@@ -880,6 +881,11 @@ fn read_quality() -> String {
     fs::read_to_string(QUALITY).unwrap_or_else(|_| panic!("cannot read {QUALITY}"))
 }
 
+/// The enhancement tiers and the rest of the quality record, which the tier guards read.
+fn read_quality_history() -> String {
+    fs::read_to_string(QUALITY_HISTORY).unwrap_or_else(|_| panic!("cannot read {QUALITY_HISTORY}"))
+}
+
 /// The main "Open programmer-biting issues" table in QUALITY.md must
 /// not contain any row whose issue ID is wrapped in `~~…~~` (i.e. a
 /// row marked as closed).  Closed items belong in the paragraph
@@ -927,7 +933,7 @@ fn quality_open_table_has_no_crossed_out_rows() {
 /// its body, linking the crossed-out claim to an audit trail.
 #[test]
 fn quality_struck_tier2_items_have_landing_date() {
-    let src = read_quality();
+    let src = read_quality_history();
     let tier2 = src
         .split("### Tier 2")
         .nth(1)
@@ -1042,7 +1048,7 @@ fn inconsistencies_status_blocks_listed_as_resolved() {
 /// if the long-form heading is `### ~~N~~. …` (indicating FIXED /
 /// RESOLVED), the Quick-Reference row must also be crossed out or
 /// carry a "Done" / "Fixed" marker.  Locks the drift between the
-/// two sides of the doc called out in QUALITY.md Tier 4 item 10.
+/// two sides of the doc called out in QUALITY-history.md Tier 4 item 10.
 #[test]
 fn problems_quickref_matches_longform_status() {
     let src = read_problems();

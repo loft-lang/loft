@@ -52,7 +52,7 @@ in `probes/` as landmarks:
 closure).  Two remain, both legitimate resting states rather than unfixed bugs, and both live in
 [COPY_DIAGNOSTICS.md § What remains open](../../COPY_DIAGNOSTICS.md) now that the model moved
 there: the per-file/per-function ACCEPT surface has no syntax yet, and the 29-site uncovered copy
-set is sized but not drained.  [QUALITY.md § Open work → Store-lifetime cluster](../../QUALITY.md)
+set is sized but not drained.  [QUALITY.md § Store-lifetime residuals](../../QUALITY.md#store-lifetime-residuals)
 carries the tracking rows.
 
 The third — F8's *"unmeasured"* `par`/coroutine cells — was **measured at closure and was not

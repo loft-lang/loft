@@ -296,7 +296,7 @@ themselves, and its fact-reading half is `Function::owns_displaced_store` (the s
 kinds, the empty-dep proxy or the one-argument borrow `Function::borrows_one_argument`, the
 `O-Override` veto, the capture exclusion, the detach) — read by the interpreter's `owned_ref`,
 native's `owned_ref_reassign` and the scope-exit sweep alike.  Two lists kept "verbatim" by
-hand drifted four times, each found by a leak or an abort on one backend only (QUALITY.md
+hand drifted four times, each found by a leak or an abort on one backend only (QUALITY-history.md
 B7s); one predicate cannot.  What stays per backend is only what IS per backend — the
 interpreter's hidden-buffer-argument exclusion, native's declared-local and store-producing
 right-hand-side conditions.  A fact both backends need belongs in the IR; one they cannot
@@ -390,7 +390,7 @@ EMITTERS read, it must survive the startup cache like `skip_free` does: it was m
 the IR and restored by no snapshot field, so a WARM program-cache run emitted the pre-witness
 copy arm and wrote a copy INTO the record the local was viewing.  `__own_<name>` is now the
 tenth stored variable field, and the cache format version is bumped so a stale bundle is not
-read (loft#1336 follow-up, QUALITY.md B7v).
+read (loft#1336 follow-up, QUALITY-history.md B7v).
 
 **And the copy `O-Move` asks for is ELIDED where no program can observe it** (@PLN157
 § V-g).  A record local bound once from a call whose return borrows a value-const,
@@ -432,7 +432,7 @@ a VARIABLE is likewise the join of ALL its definitions — a store `OpDatabase` 
 makes it Owned only where nothing else defines it (the retbuf a `materialized_view_return`
 fills), and a variable minted once and then rebound by a call that may hand back its argument
 is a `Join`, not `Owned`; reading the mint alone was the upgrade this paragraph forbids, held
-right at run time by the distinctness guard (D-own-32, QUALITY.md B7r).
+right at run time by the distinctness guard (D-own-32, QUALITY-history.md B7r).
 
 `(O-Borrow-Scalar)` is that principle applied one rule earlier, and it was written after the
 alternative shipped a defect.  `deps` answers *what does this binding borrow from*, and a

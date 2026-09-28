@@ -336,7 +336,7 @@ only the ones a leading `&` reaches (D-bind-10, 2026-08-09).
 > over-materialising is not the smaller error: it silently loses a write that lands today.
 > Unblocks [collections.md](collections.md) `D-col-3` (loft#1402), which could not release a
 > removed element's children while such a binding still viewed it.  Found in the
-> `@FR-Col-Remove` walk (QUALITY.md B8f).
+> `@FR-Col-Remove` walk (QUALITY-history.md B8f).
 
 > **D-bind-23 — OPENED AND CLOSED (2026-09-06, loft#1399) — a branch arm projecting a
 > COLLECTION got no copy.**  loft#1396 gave a projecting arm its own temp and matched

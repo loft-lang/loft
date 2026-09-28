@@ -173,7 +173,7 @@ Plan id: [@PLN85](https://github.com/loft-lang/plans/issues/85) · investigation
 > leaks/UAFs in any covered shape fails CI by construction (cluster V was exactly such a
 > re-discovered sibling — now closed, and its shapes are in the corpus).
 >
-> **Residuals forward-homed** (per the closure policy → [QUALITY.md § Store-lifetime cluster](../../QUALITY.md#store-lifetime-cluster)): cluster I's **latent** FFI struct-return read gap (unreachable until an `alloc_struct` helper) and cluster IV's **@PLN51 latent edge leaks** (re-probed at closure — native-mostly leaks on tuple/lambda/operator/capture-heap shapes, **pre-existing, identical on `origin/main`**, below the graduated-corpus gate).
+> **Residuals forward-homed** (per the closure policy → [QUALITY-history.md § Store-lifetime cluster](../../QUALITY-history.md#store-lifetime-cluster)): cluster I's **latent** FFI struct-return read gap (unreachable until an `alloc_struct` helper) and cluster IV's **@PLN51 latent edge leaks** (re-probed at closure — native-mostly leaks on tuple/lambda/operator/capture-heap shapes, **pre-existing, identical on `origin/main`**, below the graduated-corpus gate).
 >
 > The original detail below is retained as the investigation record.
 

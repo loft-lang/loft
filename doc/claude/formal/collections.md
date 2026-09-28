@@ -292,7 +292,7 @@ key sort for a hash and nothing for a radix, which is already ordered), and LOFT
 STDLIB.md both describe it — *"hash iterates via its internal ordered index"*. So this was a
 transcription inverted in one place, not a rule the code had drifted from: the code, `C-Order`
 and the user-facing docs already agreed, and only this line dissented. Found in the
-`@FR-Col-Order` walk (QUALITY.md B8g).
+`@FR-Col-Order` walk (QUALITY-history.md B8g).
 
 `Col-Order-Sign` is the half that was violated rather than merely unpinned. `index` applied the
 sign a second time in two places — the iterator bit (`fill_iter`) and the range-cursor bound swap

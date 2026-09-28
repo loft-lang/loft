@@ -224,7 +224,7 @@ declaration defers a generic's return promotion to instantiation, and for a long
 instantiation received it, so `fn same<T>(x: T) -> T { x }` bound to a struct, a vector or a keyed
 collection handed the argument up while its concrete twin copied — measured on the 48-cell
 independence matrix the sentence above states, 13 generic cells wrong on both backends and every
-concrete one right (D-call-13, QUALITY.md B7t).  The concrete twin is the oracle for the instance.
+concrete one right (D-call-13, QUALITY-history.md B7t).  The concrete twin is the oracle for the instance.
 
 ### A method belongs to a type, and a `?` is not part of that name
 

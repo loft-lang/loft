@@ -50,7 +50,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn json_errors() -&gt; text</code></pre>
-<p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.</p>
+<p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.</p>
 </div>
 <div class="item">
 <pre><code>pub fn field(self: const JsonValue, name: text) -&gt; JsonValue[self]</code></pre>

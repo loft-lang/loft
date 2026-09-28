@@ -648,7 +648,7 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
                 // TEST-ONLY positive control for Check A: force the shadow's fact for the named
                 // var to `Owned` so it disagrees with the oracle where the oracle says a borrow.
                 // Check A's natural true positive was the A1b plan, and that disagreement was the
-                // shadow's own weaker base translation, not a fact defect (QUALITY.md B7r); with
+                // shadow's own weaker base translation, not a fact defect (QUALITY-history.md B7r); with
                 // one translation shared by both derivations, a disagreement has to be injected
                 // to prove the reporting path fires.  Cached like the other injections.
                 let f = if inject_fact_owned() == Some(data.def(d_nr).variables.name(*var)) {
@@ -939,7 +939,7 @@ pub fn oracle(data: &Data) {
                 // The two summaries of a callee's RETURN — the deps proxy the emitters read
                 // (`return_adopts_fresh_store`) and the oracle's IR-derived class — side by
                 // side, one line per heap-returning function, so a disagreement between them
-                // is a grep rather than a theory (@FR-O-Oracle walk, QUALITY.md B7r).
+                // is a grep rather than a theory (@FR-O-Oracle walk, QUALITY-history.md B7r).
                 let def = data.def(d_nr);
                 if def.returned().base().heap_dep().is_some() {
                     eprintln!(
@@ -1318,7 +1318,7 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
 /// (`__ncc_*`, whose present-arm/JOIN dep is a stale borrow after default-arm materialisation, @PLN25);
 /// and a freed PARAMETER (the retbuf-displacement reassignment — `get_free_vars` otherwise suppresses
 /// freeing caller-owned params — not a user over-free).  0 FP over the nine-file
-/// `oracle_clean_on_correct_corpus`; over the whole 1247-file corpus (2026-09-05, QUALITY.md B7q) it
+/// `oracle_clean_on_correct_corpus`; over the whole corpus (QUALITY-history.md B7q) it
 /// reports TEN, all one shape — a pass-2 work-ref borrowing the NRVO buffer of an inline call
 /// (`__ref_p2_1["__ref_1"]`, 877/882/889), each clean under `LOFT_STRICT_STORES` on both backends —
 /// so that shape is a precision residual of this check, not a corpus defect.  The true-positive is the injected `LOFT_OWN_INJECT_FREE_BORROWED`
