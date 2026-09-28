@@ -26,6 +26,10 @@
 // CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
 //   ten refusals are the only diagnostics.
 // WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
+// HOLDS: the asserts, leak and panic channels stay 0/none on both trees — the control
+//   COMPILES the file and runs it wrong, it does not crash on it; and every condition that
+//   answers a value keeps compiling — a heap handle (`if v`), `!v[i]`, a comparison in a
+//   `for` or comprehension filter — pinned by the corpus files that use those spellings.
 
 struct P { x: integer, y: integer }
 
