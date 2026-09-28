@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(Col-Insert-Absent)`: `c += [x]` onto a `vector<τ>?` local that holds null builds the empty
+// vector first and appends to it — however the null got there.
+//
+// The mint was decided at parse time by a stand-in: a local with no backing dependency yet
+// "holds no store".  That is right for `c: vector<integer>? = null`, the one spelling that was
+// measured when the rule was ruled.  A local that got its dependency from an earlier VALUE — a
+// call's result, a literal it was later reset from, a branch — answered "has a store" while
+// holding null, the append wrote through the null handle, and `c` stayed null: a lost write,
+// no diagnostic, both backends.  A struct field was always right (the runtime materialises it
+// in place), and so was a keyed local (it guards every write).  Now an append onto a nullable
+// vector local that already has a backing asks the runtime question too
+// (`Parser::absent_append_mint`).
+//
+// Axes: how the null arrived (literal declaration, call result, declared from a branch,
+// reset with `= null`, reassigned from a branch) × append size (one, two) × path (null,
+// non-null) × position (straight-line, in a loop, re-nulled every round) × place (local,
+// field — the control that was right) × sharing (plain, captured by a closure) × kind (vector; hash as the keyed control).
+//
+// @falsified-at: cad24eb43 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/an-append-to-an-absent-vector-local-builds-it.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// HOLDS: the present-vector cells, the field and the keyed-local controls pass on both trees.
+
+struct K { k: integer }
+struct Box { items: vector<integer>? }
+
+fn nulv(n: integer) -> vector<integer>? { if n == 0 { null } else { [n] } }
+fn nulh(n: integer) -> hash<K[k]>? { if n == 0 { null } else { [K { k: n }] } }
+
+fn from_decl() -> text { c: vector<integer>? = null; c += [7]; "{c}" }
+fn from_call(n: integer) -> text { c = nulv(n); c += [7]; "{c}" }
+fn from_branch_decl(n: integer) -> text { c: vector<integer>? = if n == 0 { null } else { [n] }; c += [7]; "{c}" }
+fn from_reset() -> text { c: vector<integer>? = [1]; c = null; c += [7]; "{c}" }
+fn from_reassigned_branch(n: integer) -> text { c: vector<integer>? = [1]; c = if n == 0 { null } else { [n] }; c += [7]; "{c}" }
+fn two_at_once() -> text { c = nulv(0); c += [7, 8]; "{c}" }
+
+fn loop_append() -> text { c = nulv(0); for i in 0..3 { c += [i]; } "{c}" }
+fn loop_renull() -> integer { t = 0; for i in 0..4 { c = nulv(0); c += [i, i]; t += len(c ?? []); } t }
+fn reset_in_loop() -> text { c: vector<integer>? = [1]; for i in 0..3 { if i == 1 { c = null; } c += [i]; } "{c}" }
+
+fn field_from_call(n: integer) -> text { b = Box { items: nulv(n) }; b.items += [7]; "{b.items}" }
+fn hash_from_call(n: integer) -> integer { c = nulh(n); c += [K { k: 7 }]; len(c ?? []) }
+
+fn test_the_null_arrives_as_a_value() {
+  assert(from_decl() == "[7]", "declared null: {from_decl()}");
+  assert(from_call(0) == "[7]", "call result: {from_call(0)}");
+  assert(from_branch_decl(0) == "[7]", "declared from a branch: {from_branch_decl(0)}");
+  assert(from_reset() == "[7]", "reset to null: {from_reset()}");
+  assert(from_reassigned_branch(0) == "[7]", "reassigned from a branch: {from_reassigned_branch(0)}");
+  assert(two_at_once() == "[7,8]", "two elements: {two_at_once()}");
+}
+
+fn test_a_present_vector_keeps_its_elements() {
+  assert(from_call(3) == "[3,7]", "call result, present: {from_call(3)}");
+  assert(from_branch_decl(4) == "[4,7]", "branch, present: {from_branch_decl(4)}");
+  assert(from_reassigned_branch(5) == "[5,7]", "reassigned, present: {from_reassigned_branch(5)}");
+}
+
+fn test_in_a_loop_the_build_happens_once_per_absence() {
+  assert(loop_append() == "[0,1,2]", "absent before the loop: {loop_append()}");
+  assert(loop_renull() == 8, "re-nulled every round, two each: {loop_renull()}");
+  assert(reset_in_loop() == "[1,2]", "reset mid-loop: {reset_in_loop()}");
+}
+
+fn test_the_places_that_were_already_right() {
+  assert(field_from_call(0) == "[7]", "field: {field_from_call(0)}");
+  assert(hash_from_call(0) == 1, "keyed local: {hash_from_call(0)}");
+}
+
+// The control: REASSIGNING a captured local detaches it from the closure, null or not —
+// `(L-CapHeap)` shares mutation through the value, not a rebinding (`c = [9]` after the capture
+// leaves the closure appending to the old store too).  So after `c = null` the outer append
+// builds a store of its own and the closure's `3` lands in the store it captured.
+fn reset_after_capture() -> text {
+  c: vector<integer>? = [1];
+  add = fn(x: integer) { c += [x]; };
+  c = null;
+  c += [2];
+  add(3);
+  "{c}"
+}
+
+fn test_a_local_shared_with_a_closure() {
+  assert(reset_after_capture() == "[2]", "reassigned after the capture: {reset_after_capture()}");
+}
+
+fn test_many_calls() {
+  // Half absent, half present: 25 × "[7]" (3 chars) + 25 × "[1,7]" (5 chars).
+  s = 0;
+  for k in 0..50 { s += len(from_call(k % 2)); }
+  assert(s == 200, "got {s}");
+}
+// NOT covered here: `c = if n == 0 { null } else { [n] }` with NO declaration types `c` as a
+// NON-optional `vector<integer>`, so it is outside this rule's `vector<τ>?` and its append is
+// still lost.  That is the branch join dropping the `?` `(N-Join)` asks for — its own case.
+// NOT covered here either: the same local CAPTURED by a closure after its null arrived as a
+// value shares no store with the closure, so the closure's appends are lost (loft#1715).

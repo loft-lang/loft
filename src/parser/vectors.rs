@@ -4165,6 +4165,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             } else {
                 ls.extend(db_ops);
             }
+        } else if let Some(mint) = self.absent_append_mint(in_t, vec, substituted) {
+            ls.push(mint);
         }
         // O8.1a: pre-allocate vector capacity when the element count is known
         // at compile time.  This eliminates resize calls in vector_append.  A keyed
@@ -7269,6 +7271,45 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             ls
         }
+    }
+
+    /// `@FR-Col-Insert-Absent` for a nullable vector LOCAL that already has a backing: an
+    /// append onto it while it holds null builds the empty vector first, at runtime.
+    ///
+    /// The mint above covers only the local with NO dependency yet — the parse-time stand-in
+    /// for "does it hold a store?".  A `vector<τ>?` that got its dependency from an earlier
+    /// value (`c = f()`, `c = [1]; c = null`, `c = if … { null } else { … }`) answers "yes"
+    /// to that stand-in while holding null, and the append wrote through the null handle —
+    /// a no-op — so `c += [7]` left `c` null, silently, on both backends.  A struct field
+    /// was always right: the runtime materialises it in place (`collection_rec`).
+    ///
+    /// The store goes into a FRESH backing that the scope pass frees like any other `__vdb`
+    /// (the local's own free is its backings', never the local's), whose entry null-init is
+    /// the non-allocating sentinel because the mint is conditional.  `None` for every other
+    /// append: a replace (`v = [..]` rebuilds, and a guard would turn it into an append), an
+    /// argument (the caller's store), a keyed local (its own `keyed_local_materialise`), or a
+    /// non-nullable local.
+    fn absent_append_mint(&mut self, in_t: &Type, vec: u16, substituted: bool) -> Option<Value> {
+        if self.first_pass
+            || substituted
+            || vec == u16::MAX
+            || self.assign_replaces
+            || self.assign_target != vec
+            || self.vars.is_argument(vec)
+            || self.keyed_local(vec)
+            || !matches!(self.vars.tp(vec), Type::Optional(_))
+        {
+            return None;
+        }
+        let db_ops = self.vector_db(in_t, vec);
+        let &db = self.vars.tp(vec).depend().last()?;
+        self.vars.mark_inline_ref(db);
+        // `OpRefIsNull`, not `OpVectorIsNull`: the question is whether the local has a STORE.
+        // A local shared with a closure holds a store whose slot says ABSENT (loft#1218), and
+        // the ordinary append builds the collection in that slot, in place; minting a fresh
+        // backing there split the local off the closure's store and lost its elements.
+        let absent = self.cl("OpRefIsNull", &[Value::Var(vec)]);
+        Some(v_if(absent, Value::Insert(db_ops), Value::Null))
     }
 
     pub(crate) fn insert_new(

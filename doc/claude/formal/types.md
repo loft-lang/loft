@@ -684,7 +684,19 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+* **D-types-5** *(opened 2026-09-28, OPEN; loft#1714)* — `(N-Join)`: a branch that joins `null`
+  with a COLLECTION types the result non-optional.  `a = if n == 0 { null } else { [n] }` and
+  `match n { 0 => null, _ => [n] }` give `a: vector<integer>` where the rule, which has no
+  collection carve-out, gives `vector<integer>?`; the integer twin is right (`int?`).  The cost
+  is not only the type: `(Col-Insert-Absent)` is written for `<kind><…>?`, so `a += [7]` after
+  the null arm writes through a null handle and the element is lost, silently, on both
+  backends.  **Why not closed with the append fix.**  Restoring the `?` changes the static type
+  of every such local, and a `vector?` handed to a non-null parameter (`len(a)`) WARNS, which a
+  library's CI denies — so it wants the published-library gate and a ruling on whether that
+  warning is the right answer there.  The declared spelling `a: vector<integer>? = if …` is
+  correct today (`tests/scripts/an-append-to-an-absent-vector-local-builds-it.loft`).
 
 * **D-types-4** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1692)* — `(N-Reserve)` /
   `layout.md (L-Narrow-Enc)`: the loop variable of `for x in v`, over a vector of a NULLABLE
