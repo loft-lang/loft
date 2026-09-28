@@ -13,7 +13,8 @@
 // asserts the COUNT; the uncapped control also asserts a signature, sum of (x*10 + y + 1):
 // (0,0)=1 (3,0)=31 (0,3)=4 (3,3)=34 (4,0)=41 (0,4)=5 (2,2)=23 -> 139.
 //
-// @falsified-at: PENDING
+// @falsified-at: 395a07e98 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/a-slice-cap-below-zero-answers-no-records.patch — the same channels.
 // CHANNEL: assertions — the control tree answers 7 (spatial) and 3 (trie) where 0 is expected.
 // HOLDS: every assertion passes on both backends on the cure tree.
 
