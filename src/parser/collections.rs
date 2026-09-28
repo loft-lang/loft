@@ -3349,8 +3349,6 @@ use #count instead"
         (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
     }
 
-    // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
     /// walked through an ordered scratch of its records, built here as `fill` into a fresh
     /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
@@ -3434,6 +3432,8 @@ use #count instead"
         None
     }
 
+    // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_for(&mut self, code: &mut Value) {
         // P235: tuple destructure — `for (a, b, ...) in items { ... }`.
         // Parse the parenthesised name list now; later (after the iter
