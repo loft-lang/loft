@@ -1610,7 +1610,7 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
 // `tp`'s `0x8000` bit frees the source store after the copy, as it does for OpReplaceKeyed.
 fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
 #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
-// @P305 — `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
+// `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
 // (`Col-Assign`): the subscript's `no_keys` values trail the parameters as `OpGetRecord`'s
 // do, and the copy is placed under them with its key fields set to them, so `c[k] = v`
 // reads back as `c[k]` whatever key `value` carried.
