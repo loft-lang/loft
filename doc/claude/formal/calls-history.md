@@ -6,11 +6,26 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-21` opened AND CLOSED 2026-09-14 (the method spelling read the receiver alone when picking between `m(τ, …)` and `m(τ?, …)`, below); `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-23` opened AND CLOSED 2026-09-28 (loft#1719, an errored operand read as a missing argument, below); `D-call-21` opened AND CLOSED 2026-09-14 (the method spelling read the receiver alone when picking between `m(τ, …)` and `m(τ?, …)`, below); `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
+
+### D-call-23 — OPENED AND CLOSED (2026-09-28, loft#1719): an operand whose call failed was reported as a missing argument of the operator
+
+`(F-Arity)` makes a call ill-formed when a parameter is NOT FILLED.  `nosuch(v) == 3` fills
+both of `==`'s, and one of them errored — which the program had already been told
+(*"Unknown function nosuch"*).  The unknown-function site answered `unknown` where every other
+reporting site answers the `never` poison (@P376), so the operator read its operand as nothing
+supplied and added *"missing argument for parameter 'v1' of `OpEqInt`"*: an arity verdict
+about a compiler-inserted call, naming a parameter the program never wrote, with a cure that
+cannot be applied.  And a failed call wrote no code, so its buffer kept what the caller put
+there — an assignment's own target: `x = nosuch(v) + 1` lowered to `x + 1` and the next read
+said *"Unknown variable 'x'"*.  Measured over comparison, arithmetic, unary, `&&`, `if`
+condition, `len`, method-receiver and format-string operands; ten of thirteen cascaded.
+Closed at `Parser::reported_call`: a reporting tail of `Parser::call` answers `never` and
+clears its code.  Guard `tests/scripts/1719-an-unknown-function-as-an-operand-reports-itself-once.loft`.
 
 ### D-call-21 — OPENED AND CLOSED 2026-09-14: the method spelling picked between `m(τ, …)` and `m(τ?, …)` by the receiver alone
 

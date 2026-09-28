@@ -324,7 +324,7 @@ DESIGN_DECISIONS.md C123.
 
 ## Deviations
 
-**OPEN: 0.**  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
+**OPEN: 0.**  `D-call-23` opened and closed 2026-09-28 (an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
 alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
 in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
 bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,
