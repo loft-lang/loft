@@ -617,6 +617,11 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
 > covers two adopters, and `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`
 > moves the BUILD ORDER those two hold fixed — first, last and middle of three, delivered by a
 > tail, by an `if` over two closures, by an explicit `return`, and written straight out.
+> `an-escaping-capture-of-a-join-keeps-the-store-it-holds.loft` moves the CAPTURE'S SOURCE off a
+> single owner (loft#1721): a capture bound from a `??` or a value branch holds one of several
+> stores, and each arm's owner is released by store identity against it.  Still outside it: a
+> join capture reassigned after the build (loft#1725) and a call bound first, `d = f(); c = d ??
+> []` (loft#1726).
 
 `D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to

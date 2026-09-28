@@ -371,6 +371,11 @@ pub struct Function {
     /// Set on pass 1 and read on pass 2, where such a local's own declaration
     /// (`a: text? = null`) stores into the buffer.
     nullable_text_buffers: std::collections::HashSet<u16>,
+    /// loft#1721 — a `??` temp (`__ncc_N`) mapped to the stores its DEFAULT arm may deliver.
+    /// The `??` result names the temp alone (its type deps; naming the default's store there
+    /// too made store confinement free that store at its own block's exit), so a closure
+    /// capture of the result learns the other arm here: `scopes::capture_join_candidates`.
+    join_owners: HashMap<u16, Vec<u16>>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -698,6 +703,7 @@ impl Function {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
+            join_owners: HashMap::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -901,6 +907,10 @@ impl Function {
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
         self.tuple_backings.clone_from(&other.tuple_backings);
+        // CARRIED for the same reason: `scopes::capture_join_candidates` reads it after
+        // parsing (loft#1721).
+        self.join_owners.clear();
+        self.join_owners.clone_from(&other.join_owners);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -976,6 +986,7 @@ impl Function {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
+            join_owners: other.join_owners.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -2784,6 +2795,23 @@ impl Function {
         if matches!(self.tp(var_nr), Type::Optional(_)) {
             self.nullable_text_buffers.insert(var_nr);
         }
+    }
+
+    /// Record that `??` temp `tmp` may instead deliver the stores `owners` hold — its DEFAULT
+    /// arm's (loft#1721, see the field).
+    pub fn add_join_owners(&mut self, tmp: u16, owners: &[u16]) {
+        let entry = self.join_owners.entry(tmp).or_default();
+        for &o in owners {
+            if o != tmp && o != u16::MAX && !entry.contains(&o) {
+                entry.push(o);
+            }
+        }
+    }
+
+    /// The other stores `var_nr` — a `??` temp — may deliver; empty for every other local.
+    #[must_use]
+    pub fn join_owners(&self, var_nr: u16) -> &[u16] {
+        self.join_owners.get(&var_nr).map_or(&[], Vec::as_slice)
     }
 
     /// Is `var_nr` a hidden work buffer promoted from a `text?` local (see

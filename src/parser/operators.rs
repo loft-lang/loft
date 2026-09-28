@@ -3876,7 +3876,15 @@ impl Parser {
             // heap subject keep the skip_free hand-off, so their result stays the
             // bare owner.
             if owned_vector && let Type::Vector(elm, _) = &result_type {
+                // loft#1721 — the result is whichever arm ran, so a closure that captures it
+                // may hold the DEFAULT arm's store, not `__ncc_N`'s: recorded as the temp's join
+                // owners, which the capture analysis reads (`scopes::capture_join_candidates`).
+                // Not in the view's deps: naming the default's store there made store
+                // confinement free it at its own block's exit while a plain bind still held it.
                 let view = Type::Vector(elm.clone(), crate::data::Deps::frame(vec![tmp]));
+                if !self.first_pass {
+                    self.vars.add_join_owners(tmp, &rhs_type.depend());
+                }
                 *code = v_block(vec![set_tmp, if_expr], view.clone(), "ncc");
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;

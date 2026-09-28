@@ -10831,6 +10831,59 @@ pub(crate) struct CaptureBuilds {
     pub(crate) buffer_adopted: HashMap<u16, Vec<(u16, u16)>>,
 }
 
+/// The capture whose value may be `v`'s store among OTHERS — a join — when its record adopts
+/// it: `v`'s scope-exit free is then released by store identity against that capture.
+///
+/// loft#1721.  A capture bound from a join (`c = f() ?? []`, a value branch) holds whichever
+/// arm's store ran, so neither "the record adopted `v`" nor "it did not" is true of every run.
+/// Freed plainly, the arm that ran was released while an escaping closure still read it
+/// (`[3,3]` for `[1,2,3]`); spared, the arm that did not run leaked.  `OpFreeRefIfDistinct(v,
+/// capture)` answers per run: the store the capture holds is the record's to release, every
+/// other arm's is the frame's.
+///
+/// Only for a capture assigned ONCE before its build and not rebuilt in a loop.  Identity
+/// against the LOCAL is loft#1446's hazard otherwise: a local reassigned after the build reads
+/// "distinct" for the very store the record holds.
+fn join_capture_witness(
+    data: &Data,
+    function: &Function,
+    built_with: &CaptureBuilds,
+    v: u16,
+) -> Option<u16> {
+    (0..function.next_var()).find(|&c| {
+        c != v
+            && function.is_captured(c)
+            && !built_with.rebuilt_in_loop.contains(&c)
+            && !built_with.reassigned_after_build.contains(&c)
+            && capture_join_candidates(function, c).contains(&v)
+            && capture_is_adopted(data, function, built_with, c)
+    })
+}
+
+/// The stores capture `c` may hold when its value is a JOIN — every dep and the backing chain
+/// behind it, and at each step a `??` temp's default-arm owners (`Function::join_owners`) —
+/// or empty when it is not a join (one dep chain and no `??` temp on it), which
+/// [`backs_an_adopted_capture`]'s single-store answer already covers.  loft#1721.
+fn capture_join_candidates(function: &Function, c: u16) -> Vec<u16> {
+    let mut join = function.tp(c).depend().len() > 1;
+    let mut out = Vec::new();
+    let mut work = function.tp(c).depend();
+    let mut seen = HashSet::default();
+    while let Some(v) = work.pop() {
+        if v == c || v == u16::MAX || function.is_argument(v) || !seen.insert(v) {
+            continue;
+        }
+        out.push(v);
+        let owners = function.join_owners(v);
+        if !owners.is_empty() {
+            join = true;
+            work.extend_from_slice(owners);
+        }
+        work.extend(function.tp(v).depend());
+    }
+    if join { out } else { Vec::new() }
+}
+
 /// Is `v` the store behind a capture whose closure record ADOPTS it?
 ///
 /// `get_free_vars` suppresses a captured local's scope-exit free by asking `is_captured` of
@@ -10879,7 +10932,12 @@ pub(crate) fn backs_an_adopted_capture(
                 // No build point in this body, or a right-hand side naming no single root: the
                 // type dep is the only fact there is, and it is right whenever the local is
                 // assigned once.
-                None => backing_chain(function, c).contains(&v),
+                // A JOIN capture's stores are released by identity instead
+                // (`join_capture_witness`), so none of them is suppressed wholesale.
+                None => {
+                    backing_chain(function, c).contains(&v)
+                        && capture_join_candidates(function, c).is_empty()
+                }
             }
     })
 }
@@ -11072,6 +11130,15 @@ fn frame_owns_capture_store(function: &Function, start: u16) -> bool {
     // the free question asked about the BACKING local rather than the binding.
     let mut v = start;
     for _ in 0..8 {
+        // loft#1721 — a `??` temp may deliver its default arm's store instead: owned only
+        // when that store is the frame's too.
+        if function
+            .join_owners(v)
+            .iter()
+            .any(|&o| o == v || function.is_argument(o) || !frame_owns_capture_store(function, o))
+        {
+            return false;
+        }
         let tp = function.tp(v);
         let dep = tp.depend();
         if dep.is_empty() {
@@ -11081,9 +11148,17 @@ fn frame_owns_capture_store(function: &Function, start: u16) -> bool {
         if dep.len() == 1 && dep[0] == v && crate::parser::vectors::is_keyed(tp) {
             return true;
         }
-        // More than one dep names no single backing store to follow, and a self-dep that
-        // is not the keyed marker is not one either.
-        if dep.len() != 1 || dep[0] == v {
+        // loft#1721 — more than one dep is a JOIN: the value is whichever arm ran (`f() ??
+        // []`, a value branch), so the frame owns its store when it owns EVERY arm's.  Which
+        // one the capture ends up holding is a per-run fact, settled at the release
+        // (`join_capture_witness`).
+        if dep.len() > 1 {
+            return dep.iter().all(|&d| {
+                d != v && !function.is_argument(d) && frame_owns_capture_store(function, d)
+            });
+        }
+        // A self-dep that is not the keyed marker names no backing store to follow.
+        if dep[0] == v {
             return false;
         }
         // The caller owns a parameter's store and outlives this frame: no free to hand over.
@@ -17809,6 +17884,18 @@ impl Scopes<'_> {
                         // read/process): drop the scope-exit free for the NAMED owned var, injecting
                         // a genuine leak. The `check-leak` scan must go RED on it — the true-positive
                         // gate. Mirrors LOFT_NO_A1B / LOFT_STORE_GUARD_INJECT.
+                    } else if let Some(c) =
+                        join_capture_witness(data, function, &self.capture_build_backing, v)
+                    {
+                        // loft#1721 — one arm of a join a closure record adopted: released
+                        // unless the capture holds this store (`join_capture_witness`).
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
+                            ls.push(hook);
+                        }
+                        ls.push(Value::Call(
+                            data.def_nr("OpFreeRefIfDistinct"),
+                            vec![Value::Var(v), Value::Var(c)],
+                        ));
                     } else {
                         // The type's scope-end hook, immediately BEFORE the free that ends
                         // the value's life — unless `v` is a buffer whose witness already
