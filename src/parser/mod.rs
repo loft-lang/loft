@@ -4259,8 +4259,9 @@ impl Parser {
     /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
     /// judged from the call and the declaration it names (C121), while a proof that a body does
     /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
-    /// (plan 40's rule 4); a plain one is the gating warning `const-to-plain-parameter`, C124's
-    /// rollout (owner, 2026-09-15), whose cure is in the message.
+    /// (plan 40's rule 4), and so is a plain one, `const-to-plain-parameter` (@C124): the
+    /// warning that rolled it out ended once every shipped library declared its read-only
+    /// parameters `const`.  The cure is in the message.
     ///
     /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
     /// links exactly as its dense twin does, so it is asked through `base()`.
@@ -4307,7 +4308,7 @@ impl Parser {
                 let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
                      `const`: its value is read-only, and a plain parameter names the caller's \
@@ -4339,7 +4340,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {} of {label}, whose function type does not \
                      declare it `const`: its value is read-only, and a plain parameter names the \
@@ -4366,7 +4367,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
                      `const`: their value is read-only, and a plain parameter names the caller's \

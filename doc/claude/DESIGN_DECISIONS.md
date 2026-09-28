@@ -900,13 +900,14 @@ Remove `both` once no published version declares it.  Decided 2026-09-15 —
 
 **Decision.** A value-const value may reach a record or collection parameter only if it is declared
 `const` (including `fn(const T)` and builtin callbacks), and a `&` parameter never; judged by the
-SIGNATURE, never the callee's body.  The plain case is the gating warning
-`const-to-plain-parameter` until the shipped libraries mark their read-only parameters, then an
-error.  **Why.** What a line means is decided by what is written on it and the signatures it
+SIGNATURE, never the callee's body.  Both are errors; the plain case, `const-to-plain-parameter`,
+shipped as a warning until every shipped library had declared its read-only parameters `const`.
+**Why.** What a line means is decided by what is written on it and the signatures it
 names (C121); that a body does not write is a proof an optimisation may use, not a license.
 
 **Revisit when.** A read-only helper cannot be declared `const` — a gap in `const`'s syntax to
-close.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof).
+close.  Decided 2026-09-15, an error from 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof).
+**Holds at:** `@C124` — `./scripts/idx tag:@C124`.
 **Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
 
 ## C125 — The store model stays simple: performance work removes objects, it does not add a second kind of object

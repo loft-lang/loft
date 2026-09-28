@@ -4155,6 +4155,14 @@ parameters to mark `const`:
 
 The `&` spelling (D-bind-44) is refused as an error already: it had no call sites to migrate.
 
+**2026-09-28, the warning becomes the error (@PLN175).**  Re-measured with `loft --check` over this
+repository, the libraries and the consumer checkouts: the shipped libraries had declared their
+read-only parameters — `graphics` 0.9.3 already, `input` 0.2.1 published this day for
+`input_tick_from_state`'s `keys` — and dryopea and crawler no longer reach one.  What remains is a
+consumer's test file, Moros-Economy-Development `loft_planet/tests/14-workflow.loft` (`cmp_f` ·
+`a` / `b`, `direct_chain` · `g`, 13 calls), whose cure is in COMPATIBILITY.md.  So
+`const-to-plain-parameter` is an error, as this decision always said it would be.
+
 ### Function references and callbacks
 
 **2026-09-15, closing D-bind-45.**  A function reference is a call whose signature is its TYPE, so
