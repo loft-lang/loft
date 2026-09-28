@@ -4564,6 +4564,47 @@ use a separate collection or add after the loop"
         if op == "=" && var_nr != u16::MAX && !self.first_pass && self.vars.exists(var_nr) {
             self.vars.track_write(var_nr, &mut self.lexer);
         }
+        // @FR-N-Store / @FR-N-Join — a bare `null` written to a LOCAL is the same store a `τ?`
+        // is, and takes the same two arms the `τ?` takes further down: a DECLARED local keeps
+        // its type and asks the store face (a warning at full width, the local then holds the
+        // null; an error at a narrow one), an INFERRED one widens to `τ?` through
+        // `change_var_type`'s join arm.  Left as `Null`, it met `change_var_type`'s "cannot
+        // hold both" refusal — the one position a bare `null` was refused at full width, and
+        // the inferred `x = 5; x = null` refused where `(N-Join)` widens.  A narrow inferred
+        // integer is left to that refusal: its join with `null` has no width of its own.
+        if s_type == Type::Null
+            && op == "="
+            && var_nr != u16::MAX
+            && self.vars.exists(var_nr)
+            && matches!(to.unspan(), Value::Var(vn) if *vn == var_nr)
+            && !self.vars.is_nullable_text_buffer(var_nr)
+            && !matches!(
+                f_type,
+                Type::Optional(_) | Type::RefVar(_) | Type::Null | Type::Void | Type::Never
+            )
+            && !f_type.is_unknown()
+            && (Self::is_non_null_scalar(f_type)
+                || crate::data::is_dbref(f_type)
+                || matches!(f_type, Type::Enum(_, false, _)))
+        {
+            if self.author_declared(var_nr) {
+                let what = format!(
+                    "{} `{}`",
+                    if self.vars.is_argument(var_nr) {
+                        "the parameter"
+                    } else {
+                        "the local"
+                    },
+                    self.vars.name(var_nr)
+                );
+                self.convert_store(code, &Type::Null, f_type, &what, None);
+                s_type = f_type.clone();
+            } else if !Self::nstore_narrow(f_type, false) {
+                let joined = Type::optional(f_type.clone());
+                self.convert_store(code, &Type::Null, &joined, "the assignment target", None);
+                s_type = joined;
+            }
+        }
         // Convert untyped null to typed null for scalar assignments (not collections).
         // `is_dbref`, not a spelled list: the list this used to carry named six heap kinds
         // and not `spatial` or `trie`, so `g.sp = null` took the SCALAR sentinel path —

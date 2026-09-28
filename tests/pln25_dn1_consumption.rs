@@ -161,42 +161,57 @@ fn index_dev_elision_borrower_native() {
     index_dev_script_exits_zero("--native", "tests/scripts/25-index-elision-borrower.loft");
 }
 
-/// @PLN25 DN6-adjacent — the `change_var` message for a `null` ↔ non-null-scalar local
-/// must name the real fix (`integer?`) and NEVER suggest `as` (which would launder null
-/// into the non-null slot — the DN5 hole). Regression for the fixed diagnostic.
+/// @PLN25 DN6-adjacent — a bare `null` into a declared non-null local names the real fix
+/// (`τ?`) and NEVER suggests `as`, which would launder the null into the non-null slot (the
+/// DN5 hole).  `(N-Store)`'s split holds at the local as everywhere else (D-types-7): a
+/// full-width `integer` WARNS and the program runs, a narrow `u8` is REFUSED.
 #[test]
 fn dn1_null_local_message_names_optional_not_as() {
     let dir = std::env::temp_dir();
-    let src = dir.join("pln25_null_local_msg.loft");
-    std::fs::write(&src, "fn t() { a: integer = null; }\nfn main() { }\n")
-        .expect("write temp source");
-    let out = Command::new(loft_bin())
-        .arg("--interpret")
-        .arg(&src)
-        .current_dir(workspace_root())
-        .env("LOFT_PLN25_DN1", "1")
-        .output()
-        .expect("failed to invoke loft binary");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !out.status.success(),
-        "`a: integer = null` must be rejected under DN1; stderr={stderr:?}"
-    );
-    assert!(
-        stderr.contains("declare it `integer?`"),
-        "message must name the `integer?` fix; got: {stderr:?}"
-    );
-    // Must not be the generic type-mismatch message. Guard BOTH tells additively:
-    // its phrasing ("use a new variable name") AND — the actual DN5 hazard — that it
-    // never SUGGESTS an `as` cast. The suggestion form is the connector "or cast with"
-    // ("… or cast with 'as'"); our helpful message says "do NOT cast with `as`", which
-    // is a prohibition and correctly does not contain "or cast with".
-    assert!(
-        !stderr.contains("use a new variable name"),
-        "message must be the nullability-specific one, not the generic mismatch; got: {stderr:?}"
-    );
-    assert!(
-        !stderr.contains("or cast with"),
-        "message must NOT suggest an `as` cast (the DN5 laundering hole); got: {stderr:?}"
-    );
+    for (name, decl, fix, refused) in [
+        (
+            "pln25_null_local_msg.loft",
+            "a: integer = null;",
+            "declare it `integer?`",
+            false,
+        ),
+        (
+            "pln25_null_local_msg_u8.loft",
+            "a: u8 = null;",
+            "declare it `integer(0, 255)?`",
+            true,
+        ),
+    ] {
+        let src = dir.join(name);
+        std::fs::write(&src, format!("fn t() {{ {decl} }}\nfn main() {{ }}\n"))
+            .expect("write temp source");
+        let out = Command::new(loft_bin())
+            .arg("--interpret")
+            .arg(&src)
+            .current_dir(workspace_root())
+            .env("LOFT_PLN25_DN1", "1")
+            .output()
+            .expect("failed to invoke loft binary");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            !out.status.success(),
+            refused,
+            "`{decl}`: refused must be {refused} (N-Store's width split); stderr={stderr:?}"
+        );
+        assert!(
+            stderr.contains(fix),
+            "`{decl}`: the message must name the `?` fix; got: {stderr:?}"
+        );
+        // Must not be the generic type-mismatch message, and — the actual DN5 hazard — must
+        // never SUGGEST an `as` cast ("… or cast with 'as'").
+        assert!(
+            !stderr.contains("use a new variable name"),
+            "`{decl}`: must be the nullability-specific message; got: {stderr:?}"
+        );
+        assert!(
+            !stderr.contains("or cast with"),
+            "`{decl}`: must NOT suggest an `as` cast (the DN5 laundering hole); got: {stderr:?}"
+        );
+        let _ = std::fs::remove_file(&src);
+    }
 }

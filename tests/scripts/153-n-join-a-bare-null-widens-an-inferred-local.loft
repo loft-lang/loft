@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Join` — an INFERRED local joined with a bare `null` is `τ?`, in either order and at
+// every kind whose `τ?` is declarable, and says nothing.  Before, only `a = null; a = 5` over
+// an inline scalar widened; `a = 5; a = null` was refused even for an integer, and a `text`,
+// vector or record joined with `null` in either order was refused ("cannot hold both").
+//
+// Every cell answers a hand-computed value on its null path AND on its value path, so a
+// widen that dropped the value or kept a stale one fails; the last cell proves the widen by
+// the declared store it reaches, which warns (`@FR-N-Store`).  No other report may appear.
+struct P { a: integer, n: text }
+
+fn int_after(k: integer) -> integer { x = k; if k > 5 { x = null; } x ?? -1 }
+fn text_first(k: integer) -> text { s = null; if k > 0 { s = "t{k}"; } s ?? "none" }
+fn text_after(k: integer) -> text { s = "t{k}"; if k > 5 { s = null; } s ?? "none" }
+fn vec_first(k: integer) -> integer {
+  v = null;
+  if k > 0 { v = [k, k + 1]; v += [k + 2]; }
+  if v == null { -1 } else { len(v) * 100 + v[2] }
+}
+fn vec_after(k: integer) -> integer {
+  v = [k];
+  if k > 5 { v = null; }
+  if v == null { -1 } else { len(v) * 100 + v[0] }
+}
+fn rec_first(k: integer) -> integer {
+  p = null;
+  if k > 0 { p = P { a: k * 3, n: "p{k}" }; }
+  if !p { -1 } else { p.a + len(p.n) }
+}
+fn rec_after(k: integer) -> integer {
+  p = P { a: k, n: "q" };
+  if k > 5 { p = null; }
+  if !p { -1 } else { p.a }
+}
+fn loop_rebuild() -> integer {
+  t = 0;
+  for i in 0..6 {
+    s = null;
+    if i % 2 == 1 { s = "x{i}"; }
+    t += len(s ?? "");
+  }
+  t
+}
+// @EXPECT_WARNING: a nullable `integer?` is stored into the local `d` of the non-null type `integer`
+fn proven(k: integer) -> integer { x = k; if k > 5 { x = null; } d: integer = x; d ?? -2 }
+
+fn main() {
+  assert(int_after(3) == 3 && int_after(9) == -1, "integer after: {int_after(3)} {int_after(9)}");
+  assert(text_first(0) == "none" && text_first(4) == "t4", "text first: {text_first(0)} {text_first(4)}");
+  assert(text_after(2) == "t2" && text_after(8) == "none", "text after: {text_after(2)} {text_after(8)}");
+  assert(vec_first(0) == -1 && vec_first(4) == 306, "vector first: {vec_first(0)} {vec_first(4)}");
+  assert(vec_after(3) == 103 && vec_after(9) == -1, "vector after: {vec_after(3)} {vec_after(9)}");
+  assert(rec_first(0) == -1 && rec_first(4) == 14, "record first: {rec_first(0)} {rec_first(4)}");
+  assert(rec_after(2) == 2 && rec_after(7) == -1, "record after: {rec_after(2)} {rec_after(7)}");
+  // i = 1, 3, 5 build "x1", "x3", "x5": 2 + 2 + 2.
+  assert(loop_rebuild() == 6, "loop rebuild: {loop_rebuild()}");
+  assert(proven(3) == 3 && proven(9) == -2, "proven: {proven(3)} {proven(9)}");
+  println("a bare null widens an inferred local at every kind");
+}

@@ -84,28 +84,6 @@ enum hash {
 // @EXPECT_ERROR: conflicts with a type
 type sorted = integer;
 
-// ── @PLN25 DN6 (N-Join) — the inferred null-start widen ──
-// The widen (`a = null; a = 5` ⇒ `integer?`, accepted — see 25-null-join.loft) applies ONLY
-// to an INFERRED local (`var_tp == null` is the inferred marker). An ANNOTATED non-null
-// scalar still REJECTS a stored `null` — the explicit non-null contract wins.
-// @EXPECT_ERROR: cannot hold both `null` and the non-null scalar
-fn test_annotated_nonnull_rejects_null() {
-  a: integer = null;
-  a = 5;
-  assert(a == 5, "unreached");
-}
-
-// DN6 soundness boundary: the widen is INLINE-scalar only. `text` is the one heap-backed
-// scalar — its Null slot cannot be retroactively widened to a text? heap-ref slot — so an
-// inferred text null-start is NOT widened; it must annotate `s: text? = null`.
-// (Guard: if `Text` were ever added to the DN6 widen set this would start ACCEPTING.)
-// @EXPECT_ERROR: cannot hold both `null` and the non-null scalar
-fn test_inferred_text_null_start_not_widened() {
-  s = null;
-  s = "hi";
-  assert(s == "hi", "unreached");
-}
-
 // ── Nullable vector operators ──────────────────────────────────
 
 // A NULLABLE vector reached no arm of the `+` dispatch and the fall-through returned the

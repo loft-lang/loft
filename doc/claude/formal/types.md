@@ -686,6 +686,32 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-8** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(N-Store)` for a PLAIN enum: a bare
+  `null` into an `E` field, argument or return passed in silence while the slot held null (all
+  three read back null, both backends).  The report's heap half asked `is_dbref` and the scalar
+  half `is_non_null_scalar`; a plain enum is neither, the gap loft#1313 (`D-Null-Heap`) closed for
+  the handles.  **Fix.**  `nstore_null_report` asks a plain enum with the heap half's wording.
+  Guard `tests/scripts/153-n-store-a-bare-null-into-a-declared-local-warns.loft` (its three enum
+  cells).  `Contract: strained` — silence became a warning.
+* **D-types-7** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(N-Store)` / `(N-Join)` for a bare
+  `null` into a LOCAL.  A DECLARED full-width local was refused (*"cannot hold both `null` and the
+  non-null type"*) at every kind where the same `null` WARNED at a field, an argument and a
+  return — `D-Decl-Sev`'s shape for the literal, which that entry had closed for a `τ?` value
+  only.  An INFERRED local joined with `null` was refused in seven of eight cells: only
+  `a = null; a = 5` over an inline scalar widened; `a = 5; a = null` was refused even for an
+  integer, and `text`, a vector and a record were refused in either order — the DN6 note had
+  deferred the one direction ("cannot be told apart from an annotated local here", which
+  `author_declared` now tells) and held `text` out on a slot fear that did not reproduce.
+  **Fix.**  At the assignment seam a bare `null` into a local takes the two arms a `τ?` takes:
+  a declared local asks the store face and keeps its type, an inferred one converts against
+  `τ?` and `change_var_type`'s `(N-Join)` arm widens it; the null-first arm admits every kind
+  whose `τ?` is declarable.  A narrow integer keeps the error at both.  Measured: 32 cells
+  (4 kinds × {local, field, argument, return} × {bare, `τ?`}) and 8 inferred joins before;
+  22 case cells after, both backends under `LOFT_STRICT_STORES`.  Guards
+  `tests/scripts/153-n-store-a-bare-null-into-a-declared-local-warns.loft`,
+  `tests/scripts/153-n-join-a-bare-null-widens-an-inferred-local.loft`; the two pass-1
+  `@EXPECT_ERROR` cells in `102b-pass1-expected-errors.loft` that pinned the refusal are gone.
+  `Contract: strained` — a refusal became a warning, and a refused join compiles.
 * **D-types-6** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1720)* — `(N-Store)` with
   `(C-Var)`: a nullable value reached a non-null slot in silence in three shapes.  A declared
   ENUM local written a nullable VARIANT (`d: Shape = mc(i)`, `mc -> Circle?`): the store face

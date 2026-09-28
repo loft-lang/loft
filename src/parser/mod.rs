@@ -5061,9 +5061,13 @@ impl Parser {
         // model EXACTLY: the scalars back to the uniform hard error below, and the heap half
         // back to silence.  Letting it fall through to that error instead would hand the opt-out
         // a refusal this branch never had — the one outcome the freeze forbids here.
+        // A PLAIN enum is the same question one kind over: a one-byte value whose `null` is a
+        // reserved discriminant, declarable `E?`, and neither a scalar nor a handle — so it
+        // was asked by neither half and a bare `null` into an `E` field, argument or return
+        // passed in silence while the slot held null.  It takes the heap half's wording.
         let heap_target = crate::keys::heap_nstore_enabled()
             && crate::keys::nstore_softens(false)
-            && crate::data::is_dbref(target_tp)
+            && (crate::data::is_dbref(target_tp) || matches!(target_tp, Type::Enum(_, false, _)))
             // Both spellings of `τ?`, asked HERE.  `is_nullable_wrapper` covers the synthetic
             // `__nullable<S>`; the `Type::Optional` marker was covered only by `is_dbref`
             // answering `false` for a wrapper — a nullability question answered by a shape
@@ -5211,13 +5215,13 @@ impl Parser {
     /// distinctly and WARNS instead (`keys::nstore_softens` is the flag half).  `never_error`
     /// is the caller's "this site never escalates" — a null literal into a heap target.  Two
     /// branches spelled this test by hand and could only agree by accident; this is the one.
-    fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
+    pub(crate) fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
         !never_error && matches!(target_tp, Type::Integer(s) if s.byte_width(false) < 8)
     }
 
     /// @PLN25 DN1 — the scalar types whose default flips to NON-null (a bare `null` needs `τ?`).
     /// Heap-nullable types (reference / vector / enum / keyed) are NOT here — they stay nullable.
-    fn is_non_null_scalar(tp: &Type) -> bool {
+    pub(crate) fn is_non_null_scalar(tp: &Type) -> bool {
         matches!(
             tp,
             Type::Integer(_)
