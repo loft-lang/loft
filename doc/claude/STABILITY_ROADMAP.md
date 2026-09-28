@@ -66,6 +66,143 @@ the consumers made no commits after 2026-08-31, not because loft stabilised. Run
 main from scratch copies, their suites went red on three causes, two of them loft moving under
 code nobody was running; the gate that sees that is the consumer nightly, not the tracker.
 
+## Evaluation (2026-09-28) — the position read against the meters, and what it changes
+
+A read of the whole stream at one sitting, asked by the owner: *is loft stable, is the path
+right, should the priorities move, and is performance part of stability?*  The figures are
+the day's measurements — dated so a later reader knows they are a snapshot, not a claim.
+
+**Verdict.** Not stable yet by the meters above, on the right path, and one priority
+moves: the `--native` performance bar of
+[formal/performance.md](formal/performance.md) (Perf-Weight: 3× a routine's Rust twin,
+2× median over the shipped population) joins the meters as the fifth row rather than
+running beside them.  It is already Goal G and already a formal rule; what it lacked was
+a seat in the definition of "stable", and
+[COMPATIBILITY.md](COMPATIBILITY.md) keeps optimiser-rule changes out of
+`contract:strained` precisely so the perf stream cannot hold the freeze open.  The
+reason it belongs in anyway: a routine a consumer avoids for being slow is an
+**unwalked path** in the exact sense COMPATIBILITY.md § What a falling bug rate does and
+does not license says the freeze cannot protect, so the perf bar and the freeze bar are
+one bar seen from two sides.
+
+| meter | stable when | measured 2026-09-28 |
+|---|---|---|
+| `contract:strained` share of judged fixes | 0 for two weeks | 122 of 757 trailers over 60 days (16 %) |
+| owner rulings asked for | 0 | not counted this read |
+| the consumer gate | green two weeks running, consumers active | game consumers dormant since 2026-08-31 (by design — see below) |
+| `silent-wrong` open on main | 0 | 1 (loft#1710, filed that morning by the `@FR-Slice-*` walk) |
+| rule coverage (`make rule-coverage`) | 70 % annotated / 40 % guarded, floors | 73.4 % / 57.6 % — both met |
+| release gate (`release-gate.yml`) | green | never green in three runs; 2026.9.0 shipped on hand-run substitutes |
+| shipped routines vs Rust twin (`make perf-portal`) | median 2×, none over 3× | median 2.80×, 73 of 162 over 3× |
+
+**What the read says is working.** The tracker took 552 issues in the 30 days to this
+date and closed 559; 522 of them were found by loft's own rule-led walk, 259 were
+`silent-wrong`, 191 `sev:high`.  That is the walk reaching cells no consumer program
+has — the only instrument that reaches the paths the freeze will bind, and the yield a
+pre-freeze phase should show.  The consumer-hit issues (19 in the same window, against at
+least 86 the month before) were closed in a median of under 13 hours from report to pushed
+fix.  The edit loop was cut in the same month (@PLN166: front end −48 % instructions, a
+warm native run 23× fewer) and is gated by the allocation ratchet.
+
+**What it says is not.**
+
+- *The keystone is not converging on the null class.*  Three keystones in a row left
+  null/sentinel at a quarter of new bugs ([BUG_REVIEW.md](BUG_REVIEW.md)), and the review
+  itself records the class as mis-cut: five of fourteen residual bugs are one mechanism
+  (the nullable spelling lowered differently from its twin, routed to @PLN160), three are
+  not null defects.  The keyed-collections keystone of this cycle has no payoff
+  measurement yet.  **Re-cut the class through @PLN160 before naming it a keystone again.**
+- *A gate the docs claimed and CI did not run.*  `scripts/release-checklist.py` (the
+  `M-perf-pass` row) and `releases/2026-10/README.md` said `scripts/native_ratio.sh` fails
+  ratios over `bench/ratio_oracle.tsv` in `make ci`, while nothing in `make ci` or
+  `.github/workflows/` called it and the one caller (`make native-ratio`) ran without
+  `--gate` — the stale-figure failure [STABILITY_METHOD.md](STABILITY_METHOD.md) already
+  confessed to once.  **Wired the same day**: `native_ratio.sh --gate` is the last step of
+  the local `make ci` (`make native-ratio-gate` runs it alone), kept out of ci.yml because a
+  shared runner's timing is noise.  The oracle's bars still sit at 5–8 against the stated
+  ceiling of 3: **the ratchet is what is left**, one row at a time as its ratio falls.
+- *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-1)
+  block the 2026.10.0 tag, and `release.yml`'s docs job has failed on every release
+  since 2026.7.2.  **Get `release-gate.yml` green once**; a language that cannot pass its
+  own release gate is not operationally stable whatever the bug meters say.
+
+**The owner's rulings on this read (2026-09-28), recorded so the next reader does not
+re-ask them.**
+
+1. *The games are an oracle, not a stream, on purpose.*  Their pause is the deliberate
+   choice to spend the time in loft while the list here is long; they stay in focus as the
+   validation targets — the five suites the `consumer-main-health` nightly runs against
+   main, and the three consumer lanes in the portal (`bench/16`–`18`, 29 routines).  They
+   get development time again **when loft is green on the problematic axis**.  The trigger
+   to read for that: the four meters above held for two weeks, and the consumer-shapes
+   lane of the portal with no routine over 3× (it read a median of 2.80× with 14 of 29
+   over on this date).  What a frozen oracle cannot report — a new shape avoided for being
+   slow, a workaround become the idiom — is covered by giving every routine the games use
+   a row and a twin through @PLN158's census, and by their agents filing `performance`
+   issues with `hit-by:` when they do run (12 such issues exist since July against roughly
+   a thousand bugs; that ratio is under-reporting, not health).
+2. *The libraries the games produce are the point, and are already in focus.*  They are
+   the frozen surface at contract 1 (COMPATIBILITY.md: everything published, no carve-out;
+   the games are each library's readiness bar), and the plans to extend them across more
+   kinds of game are phase-2 work that rightly lands before the flip.  They are also the
+   population that pulls the perf median over the bar: stdlib alone reads 1.90×, the
+   libraries 3.12× with 65 of 126 over 3×, and the worst rows are game-library rows in
+   their natural spelling (`mesh3d` `mesh_to_floats` 38.7× and `mat4_mul` 36.9×, `cbor`
+   `encode_bytes` 26.3×, `stage` `pack_instances` 24.9×, `text2d` `draw_quads` 12.8×)
+   — three mechanisms (record-field, vector-build, alloc-temp) behind most of them.  The
+   order that follows: **engine classes before library breadth**, the perf census folded
+   into November's library pass so the extension plans start measured, and a new library
+   routine accepted with a row under 3× or a `D-perf` entry naming the engine class that
+   owes it (Perf-Cure: the natural spelling stays in the library, the pressure on the
+   engine).
+3. *Performance is not the worry; the rate is the evidence.*  Library perf measurement is
+   weeks old and moved at class speed: the drawing library from 10–50× behind its twin on
+   2026-09-07 to a 1.41× median on 2026-09-21, `text2d` `write_text` from 81× to 3.13×
+   inside a week.  One engine change moves every row on its mechanism, and the five rows
+   above sit on three.  So the perf axis changes no priority; it only keeps its
+   measurement honest (the two items above: the gate wired, the census in the pass).
+
+**Sequenced, not dropped: the interpreter (owner, 2026-09-28).**  The interpreter's
+speed — 3.5–16× behind CPython, 50–500× behind native (PERFORMANCE.md § Benchmark
+results) — waits until compiled speed is at the bar, and then it is looked at.  It will not
+measure up to compiled code and is not asked to; what it IS asked is to use **the same
+efficient data access as the compiled version** — because a game is DEVELOPED interpreted
+(the edit loop) and shipped native, so an interpreter that trails by two orders of
+magnitude makes developing the game feel horrible while the shipped product is fine.
+The interpreter's speed is the game developer's daily experience, not only the oracle's.  Today every access rewrite
+([NATIVE_SWITCHES.md](NATIVE_SWITCHES.md): the hoisted vector header, element bases and
+record addresses, loop-local buffers, counted pushes, guarded reads) is generation-time,
+so the runtime helpers they call (`get_elem_hoisted` and its kin in `src/vector.rs`) are
+reached only from `src/generation/` while the interpreter runs the unrewritten ops through
+`src/fill.rs` with a `DbRef` walk per access.  The target is that those rewrites become
+BYTECODE-level — a hoisted base or a cached record address the interpreter carries as an
+operand — so both backends call one helper and one fix serves both; P1 (superinstructions)
+and P2 (the stack pointer cache) in PERFORMANCE.md § Improvement priority order are the
+existing homes, and P2's "low priority" reads as "after the native bar", not "never".  The
+two PERFORMANCE.md sections that still call the interpreter "already fast" are owed a
+correction now, whatever the sequence.
+
+*The light side, and the floor under it (owner, 2026-09-28).*  During development the
+parts of a program NOT touched for a while should be compiled and optimised automatically,
+so a day's work feels fast even while the part under edit runs interpreted.  That is
+[DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS.md) with its boundary moved inward: today the
+line between native and interpreted is "published library vs the user's script", and the
+ask is to draw it by EDIT AGE instead — a function or module whose source has been stable
+for a set duration is built in the background and dispatched through the same
+`OpStaticCall` → `dlsym` primitive the stdlib and native libraries already use, sharing the
+one `Stores` heap so nothing crosses a boundary.  Its two real constraints, named so the
+plan that takes it starts from them: a struct edit in the interpreted part changes the
+layout every compiled part addresses (the artefact key already folds the consumer's
+`layout_fp`, so such an edit re-tiers everything on that type), and the debugger forces
+interpretation to step and hot-reload, so a tiered function with a breakpoint in it falls
+back.  The floor the tier cannot restore: **store access has to be efficient in both
+backends regardless**, because no processor cache or interpreter trick makes up for moving
+chunks of memory around — and "moving chunks of memory" is precisely the alloc-temp,
+record-build and vector-build classes (mint, copy, free) that top the portal.  Those are
+shared-runtime paths, which is why the engine classes come first for the interpreter too.  The October → November → December order in the
+directive above stands; this read adds the perf meter, the null re-cut, the two gate
+repairs and the interpreter's place in the sequence, and takes nothing out.
+
 ## The wide-release bar — what must be true before loft goes to many people
 
 > This roadmap exists to clear **one** thing: the GOALS.md promise of **"a floor that

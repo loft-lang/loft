@@ -545,7 +545,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target
+.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
@@ -2240,6 +2240,24 @@ ci: ci-guard
 	#      uncommitted diff to subjects (test_subjects.sh) and hands nextest a
 	#      `priority` override in a tool config file that layers under
 	#      .config/nextest.toml.  Coverage is untouched — it is an order.
+	# And one local-only GATE that ci.yml does not run (2026-09-28):
+	#   R. The native/Rust ratio gate — `scripts/native_ratio.sh --gate` against
+	#      bench/ratio_oracle.tsv, LAST in the chain so it measures on a box the gate
+	#      has finished loading.  It is the (Perf-Weight) bar of formal/performance.md
+	#      made a gate; the release checklist's `M-perf-pass` row reads it as such.
+	#      Not mirrored in ci.yml because a shared runner's timing is noise
+	#      (CI_BUDGET.md § What a GitHub run cannot do), and a timing gate that
+	#      flakes is a gate people learn to ignore.  Red here: `make
+	#      native-ratio-gate` alone before believing it.  ~40 s.
+	#      ⚠ The bars are RATIOS, and a ratio is machine-bound: the oracle's rows
+	#      were measured on the owner's x86-64 laptop (bench/README.md § The row
+	#      protocol).  Another CPU can read a row over its bar REPEATABLY — a cloud
+	#      Xeon @ 2.80GHz read sum_loop 3.1/3.5 against 2.3, collatz 3.7/4.1 against
+	#      2.5 and sort 3.5/3.4 against 3.1 on two consecutive runs (2026-09-28),
+	#      with sieve, mandelbrot and dot_product at their laptop values.  So a red
+	#      row on a box the bars were not set on is a CALIBRATION question, not a
+	#      regression in the diff: read the table as the report it also is, and
+	#      raise it rather than re-blessing the oracle on that box.
 	# The `Browser build + probe` (gallery) job is intentionally not
 	# mirrored here: it requires wasm-pack + node + a clean network and
 	# is heavy enough that local devs run `make gallery` separately when
@@ -2292,6 +2310,7 @@ ci: ci-guard
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
 	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
 	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1 && \
+	bash scripts/native_ratio.sh --gate >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,
@@ -2494,12 +2513,19 @@ perf-portal-render:
 	python3 bench/portal/portal.py render
 
 # Per-routine loft-native vs plain-Rust ratios with asserted output hashes
-# (@PLN157 P0, loft#1426).  A REPORT by default; `--gate` (the plan's phases
-# and the release evidence) also fails ratios over bench/ratio_oracle.tsv's
-# bars.  Hash mismatches always fail.
+# (@PLN157 P0, loft#1426).  `native-ratio` is the REPORT; `native-ratio-gate`
+# also fails a ratio over bench/ratio_oracle.tsv's bar, and is the step `make ci`
+# runs last (formal/performance.md (Perf-Weight): the bars ratchet DOWN toward 3).
+# Hash mismatches always fail, in both forms.  It stays out of ci.yml on purpose:
+# a shared GitHub runner's timing is noise (CI_BUDGET.md), so the ratio is judged
+# on a box somebody owns.  A red row after a loaded `make ci`: rerun this target
+# ALONE — contention does not repeat alone (the speed-gate rule).
 native-ratio:
 	cargo build --release -q
 	bash scripts/native_ratio.sh
+native-ratio-gate:  ## Fail a native/Rust ratio over its bar in bench/ratio_oracle.tsv
+	cargo build --release -q
+	bash scripts/native_ratio.sh --gate
 
 .PHONY: doc doc-packages
 # The whole doc site, the way the release builds it (@PLN149).
