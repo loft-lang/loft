@@ -1465,6 +1465,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
 /// agree on the value, and one past it both must REFUSE. The expected sums are
 /// position-weighted (argument `i` counts `i`), so a trampoline that dropped or
 /// reordered an argument gives a different number rather than a plausible one.
+/// @C106 — one `#c` arity ceiling for both backends.
 #[test]
 fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -1682,6 +1683,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
 ///
 /// Skips when `cc` is absent, like its sibling above; a failed BUILD is a real
 /// failure, not a skip.
+/// @C107 @C109 — the C signature decides the count; a float return crosses `#c`.
 #[test]
 fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -3761,6 +3763,7 @@ fn a_text_return_must_say_it_is_a_c_string() -> std::io::Result<()> {
 /// wrong, so the refusal lands before anything is called. The counterpart —
 /// every element width that DOES cross, checked against values C computes — is
 /// in `numeric_array_shapes_cross_identically_on_both_backends`.
+/// @C108 — a `vector<T>` and the C pointee are one layout.
 #[test]
 fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     // (declaration, the words the refusal has to carry)

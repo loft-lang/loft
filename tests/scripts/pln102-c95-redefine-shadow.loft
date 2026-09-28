@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN102 C95 — a free function that a same-named stdlib METHOD (on its first-arg
+// @PLN102 @C95 — a free function that a same-named stdlib METHOD (on its first-arg
 // type) would silently shadow is a COMPILE ERROR, not a silent redefinition.  A
 // call `foo(x, …)` dispatches to the method `t_<type-of-x>_foo`, so the free
 // `n_foo` would be unreachable — loft rejects the definition instead of shadowing

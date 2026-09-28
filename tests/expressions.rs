@@ -1798,6 +1798,7 @@ fn sorted_reverse_range() {
 ///                  s[1]=null (no key 1, flag 0)  ->  500*1000 + 200 + 0 = 500200
 ///   positional:    range[15..35)=empty (0); s[20]=pos 20=null (-1);
 ///                  s[1]=pos 1=key20 present (flag 1)  ->  0 - 1 + 1 = 0
+/// @C99 — a keyed subscript is key-addressed, never positional.
 #[test]
 fn sorted_subscript_is_key_addressed_not_positional() {
     code!(

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C113 — two same-key `index` collections are refused.
 //
 // @EXPECT_ERROR: are both 'index<E1[k]>' in the same structure
 //

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C71 — native libraries compile, scripts interpret.
 
 //! @PLN11 Arc N / N3 Phase A — `use <lib>` auto-compiles a normal loft library
 //! to a native cdylib and dispatches to it, on the **real binary**.

@@ -863,7 +863,7 @@ fn run() -> integer {
     .result(Value::Int(36));
 }
 
-// A collection element is a plain fn-ref (DESIGN_DECISIONS.md C116): a capturing
+// A collection element is a plain fn-ref (DESIGN_DECISIONS.md @C116): a capturing
 // lambda is refused at the literal, and the message names the struct-field route.
 // The non-capturing element beside it is the shape that passes, so the refusal is
 // about the CAPTURE, not about a lambda in a vector.  (loft#1358)

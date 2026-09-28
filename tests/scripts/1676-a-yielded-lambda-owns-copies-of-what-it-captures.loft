@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C128 — a yielded lambda owns copies of what it captures.
 //
 // A lambda a generator YIELDS gets stores of its own for every heap value it captures, and
 // releases them when it dies (loft#1676, the owner's ruling; `formal/coroutines.md` `(G-Own)`'s

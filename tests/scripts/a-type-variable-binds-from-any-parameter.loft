@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C126 — a generic's type variables are unrestricted.
 //
 // `D-Every-Var` (@PLN165 C1): a type variable may appear in ANY parameter — a call infers it
 // from its arguments, and the binding reads every parameter.  It replaces the rule that the

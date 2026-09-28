@@ -150,6 +150,7 @@ fn test() {}"
 // shaped to discourage.
 
 /// Every row of the cross-language alias table suggests the right loft type.
+/// @C103 — `int`/`str`/`bool` are suggested, never legal.
 #[test]
 fn t03_cross_language_type_aliases_suggest() {
     code!(
@@ -2285,6 +2286,7 @@ fn p85c_enum_inside_fn_emits_diagnostic() {
     );
 }
 
+/// @C63 — no nested `fn` inside a fn body.
 #[test]
 fn p85c_named_fn_inside_fn_emits_diagnostic() {
     code!("fn test() {\n  fn inner() -> integer { 5 }\n  x = 5;\n}").error(
@@ -2740,6 +2742,7 @@ fn gh256_bool_null_coalesce_supported() {
 /// "is x null", and a `not null` value is never null).  Warn rather than error:
 /// nullable operands are a legitimate null test and boolean `!` is ordinary
 /// negation.
+/// @C69 — `!x` on a non-boolean is a null test.
 #[test]
 fn gh253_bang_on_not_null_warns() {
     // Genuinely exercises `not null` (the `!x`-is-always-false diagnostic depends on the
@@ -2811,6 +2814,7 @@ fn p302_unknown_var_arg_column() {
 }
 
 /// A type-mismatched argument points at the argument's start, not the `;`.
+/// @C100 — `print` stays text-only: a non-text argument is refused.
 #[test]
 fn p302_type_mismatch_arg_column() {
     code!("fn test() { print(1 + 2); }")
@@ -4627,6 +4631,7 @@ fn a_keyed_destination_literal_and_a_nested_vector_still_build() {
 /// Every keyed kind, not just the one that was reported: `spatial` and `trie`
 /// reach the same dead end, and a rule that names three of five kinds is how
 /// loft#922's field-replace path left two of them broken.
+/// @C114 — a keyed collection is refused as a vector element.
 #[test]
 fn every_keyed_kind_is_refused_as_a_vector_element() {
     code!("struct Ent { k: integer, v: integer }\nfn test() { vh: vector<sorted<Ent[k]>> = []; }")
@@ -4824,6 +4829,7 @@ fn binary_minus_under_numeric_is_refused_not_bound_to_the_unary_op() {
 /// captured scalar parameter, a `&` parameter — are
 /// `tests/scripts/1281-a-closure-cannot-replace-a-captured-parameter.loft`, which cannot
 /// hold these cells because the fixed compiler refuses to parse them.
+/// @C115 — nor rebind a captured heap parameter.
 #[test]
 fn a_closure_cannot_replace_a_captured_heap_parameter() {
     // The cure the message names is the whole of the diagnostic's value, so it is matched in

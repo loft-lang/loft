@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C85 — overflow types non-null and yields the sentinel at run time.
 //
 // `formal/types.md`: *"index, failed parse, integer OVERFLOW, and a cast that doesn't fit all
 // yield `null`, never a wrapped / saturated / out-of-range value"*, and C85 says how a slot

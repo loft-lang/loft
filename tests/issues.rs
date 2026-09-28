@@ -16002,6 +16002,7 @@ fn run() -> integer {
 // DESIGN_DECISIONS.md).  Shared mutable state belongs in a struct, which both
 // closures may capture.
 
+/// @C74 — a mutated scalar may be captured by only one closure.
 #[test]
 fn issue_314_scalar_shared_by_two_closures_rejected() {
     code!(
@@ -16046,6 +16047,7 @@ fn run_it() -> integer {
 // closure returns (the case-C factory) stay supported.  Probes:
 // /tmp/p_followups/e*.loft; predicate: `Parser::type_carries_closure`.
 
+/// @C75 — closure-carrying struct values are frame-bound.
 #[test]
 fn issue_318_returning_closure_carrying_struct_rejected() {
     code!(

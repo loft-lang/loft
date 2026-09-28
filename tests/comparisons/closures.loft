@@ -6,8 +6,8 @@
 //         and are decisions: a mutated scalar may be captured by exactly ONE closure, and a
 //         capturing closure cannot be stored in a collection.
 // @SEEN-FROM: 00-vs-rust.html#closures · 00-vs-python.html#closures
-// @RATIONALE: DESIGN_DECISIONS.md C38 (copy-at-definition), C74 (one closure per mutated
-//         scalar), C75 (closure-carrying struct values are frame-bound), C115, C116
+// @RATIONALE: DESIGN_DECISIONS.md @C38 (copy-at-definition), @C74 (one closure per mutated
+//         scalar), @C75 (closure-carrying struct values are frame-bound), @C115, @C116
 //
 // Rust:   let add = |b| a + b;             // borrows or moves, checked
 // Python: add = lambda b: a + b           # captures the CELL, so a later `a = …` is seen
