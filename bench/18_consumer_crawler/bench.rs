@@ -434,6 +434,23 @@ fn c_binary_read(path: &str, n: usize) -> i64 {
     acc
 }
 
+// The same read by index off the whole file's bytes (@PLN174 F3's twin: the reference reads
+// the file into memory, as a Rust program would; loft maps it).
+fn c_binary_map(path: &str, n: usize) -> i64 {
+    let m = std::fs::read(path).unwrap();
+    let mut vals: Vec<i64> = Vec::new();
+    for i in 0..n {
+        let lo = m[2 * i] as i64;
+        let hi = m[2 * i + 1] as i64;
+        let mut v = lo + hi * 256;
+        if v >= 32768 { v -= 65536; }
+        vals.push(v);
+    }
+    let mut acc = vals.len() as i64;
+    for v in &vals { acc = (acc * 31 + v + 32768) & HMASK; }
+    acc
+}
+
 fn sort_floats(v: &[f64]) -> Vec<f64> {
     let n = v.len();
     let mut out = Vec::new();
@@ -575,6 +592,10 @@ fn main() {
     let (us, s) = timed(n, |r| c_binary_read(black_box(&bins[(r & 1) as usize]), nbin));
     sink = sink.wrapping_add(s);
     row("binary_read", n, us, nbin as i64, c_binary_read(&bins[0], nbin));
+
+    let (us, s) = timed(n, |r| c_binary_map(black_box(&bins[(r & 1) as usize]), nbin));
+    sink = sink.wrapping_add(s);
+    row("binary_map", n, us, nbin as i64, c_binary_map(&bins[0], nbin));
     let (us, s) = timed(n, |r| c_sort_floats(black_box(&xss[(r & 1) as usize]), &ys));
     sink = sink.wrapping_add(s);
     row("sort_floats", n, us, 400, c_sort_floats(&xss[0], &ys));

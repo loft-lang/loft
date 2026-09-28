@@ -788,6 +788,43 @@ impl Stores {
     /// content.  Returns `true` on success.  The inverse of `fs_read_bytes`;
     /// the pair round-trips a non-UTF-8 blob byte-for-byte.  Drives the
     /// `write_bytes` builtin on both backends via its `#rust` template.
+    /// @PLN174 F2 — `file_map`: the file's bytes served through a FOREIGN store, a read-only
+    /// mapping the store owns until the handle is freed — no copy into a store, and every
+    /// read op serves the vector as it serves any `vector<u8>`.  A missing or unreadable
+    /// file answers null, as `read_bytes` does; an empty file is the empty vector (an empty
+    /// mapping is an error to the OS), and a target without a mapping takes the copy.
+    #[must_use]
+    pub fn fs_file_map(&mut self, path: &str) -> DbRef {
+        #[cfg(all(feature = "mmap", not(host_fs)))]
+        {
+            let resolved = self.resolve_path(path);
+            let Ok(file) = std::fs::File::open(std::path::Path::new(&resolved)) else {
+                return DbRef::NULL;
+            };
+            let Ok(meta) = file.metadata() else {
+                return DbRef::NULL;
+            };
+            let Ok(len) = u32::try_from(meta.len()) else {
+                return DbRef::NULL;
+            };
+            if len == 0 || !meta.is_file() {
+                return self.fs_read_bytes(path);
+            }
+            // SAFETY: the mapping is read-only and lives in the store's owner for as long as
+            // any reference into the store does; a writer changing the file underneath is the
+            // hazard every mapped file has (`Store::open` accepts the same one).
+            let Ok(map) = (unsafe { memmap::Mmap::map(&file) }) else {
+                return DbRef::NULL;
+            };
+            let base = map.as_ptr();
+            self.foreign_vector(base, len, 1, crate::store::ForeignOwner::Map(map))
+        }
+        #[cfg(not(all(feature = "mmap", not(host_fs))))]
+        {
+            self.fs_read_bytes(path)
+        }
+    }
+
     #[must_use]
     pub fn fs_write_bytes(&mut self, path: &str, bytes: DbRef) -> bool {
         // #255 / @PLN9: re-home against the program anchor.  A path `file()`

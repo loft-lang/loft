@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A file can be read without copying it.**  `file_map(path)` maps a file read-only and
+answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
+`text_from_bytes` all work as on any vector, and nothing was copied into memory of the
+program's own — the bytes stay the file's for as long as the vector lives.  A write into
+them is refused with the advice to copy first (`w = v[0..len(v)]`); a missing file maps as
+null, like `read_bytes`.  This is the first of the FOREIGN stores (@PLN174): memory that
+belongs to somebody else — a file, later a library's buffer or the host's frame — served
+through the same store contract every read already uses.
+
 **A program using a library that has its own dependencies starts at once, and works
 offline.**  `use graphics;` alone — nothing from it called — used to cost about a second and
 80 MB on every launch, because such a program was never kept in the startup cache; it now

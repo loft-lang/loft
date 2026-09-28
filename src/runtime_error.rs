@@ -442,6 +442,12 @@ impl RuntimeError {
             "write to a constant — a constant is read-only; bind it to a local first \
              (`v = NAMES`), which copies, and write through the local"
                 .to_string()
+        } else if origin == crate::store::Store::FOREIGN_ORIGIN {
+            // @PLN174 — bytes the runtime does not own (a mapped file, a library's buffer):
+            // read-only by contract, and the cure is a copy, never an unlock.
+            "write to bytes the program does not own (a mapped file, a library's buffer) — \
+             they are read-only; copy them first (`w = v[0..len(v)]`) and write the copy"
+                .to_string()
         } else {
             kind.describe()
         };

@@ -347,6 +347,16 @@ pub fn list_dir(path: text) -> vector<text> ?fs#read;
 pub fn read_bytes(path: text) -> vector<u8> ?fs#read;
 #rust"stores.fs_read_bytes(@path)"
 #impure(io)
+// Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the
+// file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps
+// as NULL, like read_bytes.  Every read — an index, an iteration, a slice (a copy),
+// text_from_bytes — works as on any vector<u8>; a WRITE is refused at run time
+// (write_to_locked_store): copy first (`w = v[0..len(v)]`) to change bytes.  For a file
+// read once and whole, read_bytes gives the same bytes at the cost of the copy.
+// Example: @STD-010
+pub fn file_map(path: text) -> vector<u8> ?fs#read;
+#rust"stores.fs_file_map(@path)"
+#impure(io)
 // Writes `bytes` to file `path`, truncating any existing content.  Returns
 // true on success.  The inverse of read_bytes; the pair round-trips a
 // non-UTF-8 blob byte-for-byte.

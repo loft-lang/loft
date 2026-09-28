@@ -1245,6 +1245,8 @@ impl Stores {
         // persists 0xDEADBEEF into durable state (the store_persist reload
         // read back an empty hash under LOFT_POISON).  The detector targets
         // in-memory stale reads; durable bytes are out of its scope.
+        // @PLN174 — a foreign store's bytes go with the handle: the owner drops here.
+        store.release_foreign();
         if (self.poison_free || crate::keys::poison_enabled()) && !store.is_file_backed() {
             let cap_bytes = store.capacity_words() as usize * 8;
             if cap_bytes > 8 {
@@ -1633,6 +1635,27 @@ impl Stores {
     #[must_use]
     pub fn null(&mut self) -> DbRef {
         self.database(u32::MAX)
+    }
+
+    /// @PLN174 — a `vector`-shaped handle over bytes the runtime does not own: `len`
+    /// elements of `elem_size` bytes at `base`, kept alive by `owner` until the handle is
+    /// freed ([`Stores::free_named`] drops the owner with the store).  The handle has the
+    /// shape every minted vector has — a root record whose slot at `+8` names the
+    /// collection — so every read op and every hoist serves it unchanged; the collection
+    /// is [`crate::store::FOREIGN_REC`], and the store is read-only from here on.  The
+    /// bytes are not the store-heap ceiling's to count: they are the owner's.
+    #[must_use]
+    pub fn foreign_vector(
+        &mut self,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) -> DbRef {
+        let db = self.database(4);
+        self.store_mut(&db)
+            .make_foreign(db.rec, db.pos, base, len, elem_size, owner);
+        db
     }
 
     /// Like [`null`], but includes the loft variable name in `LOFT_STORE_LOG` output.

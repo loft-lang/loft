@@ -163,6 +163,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_is_file", n_is_file),
     ("n_list_dir", n_list_dir),
     ("n_read_bytes", n_read_bytes),
+    ("n_file_map", n_file_map),
     ("n_write_bytes", n_write_bytes),
     ("n_store_durable_check", n_store_durable_check),
     ("n_store_durable_seal", n_store_durable_seal),
@@ -1273,6 +1274,15 @@ fn n_list_dir(stores: &mut Stores, stack: &mut DbRef) {
 fn n_read_bytes(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
     let new_value = stores.fs_read_bytes(v_path.str());
+    stores.put(stack, new_value);
+}
+
+/// Interpreter handler for `file_map` — mirrors the `#rust` template in
+/// `default/02_files.loft`.  Answers the file's bytes as a `vector<u8>` over a foreign
+/// store (@PLN174).
+fn n_file_map(stores: &mut Stores, stack: &mut DbRef) {
+    let v_path = stores.get::<Str>(stack);
+    let new_value = stores.fs_file_map(v_path.str());
     stores.put(stack, new_value);
 }
 

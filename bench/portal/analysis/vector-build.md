@@ -450,3 +450,13 @@ byte, `#next` read and written back, the handle lookup, the buffered `read_exact
 decode — about 19 ns an element with no single owner.  The full push window
 (`@FR-R-PushFill`) is not offered to a `while` loop; the same loop written as `for _ in 0..n`
 would take it (−30 % more on the price).
+
+## `binary_read` and the mapped file (@PLN174 F3, 2026-09-28)
+
+`binary_map` — the same 150 000 i16 read off `file_map` (two byte reads per element, no copy
+of the file) — beside `binary_read` (`bf#read(2)` per element), same hash on all four lanes:
+**2.54 ms against 2.48 ms** in one run.  The mapping moves nothing here because the row is
+not a copy: the buffered `f#read` costs ~16 ns per element, and the row is the element loop
+(two nullable index reads, the sign arithmetic, the push into `out`).  A foreign store pays
+where a consumer copies bytes OUT of a buffer (pluginabi's decode, −13.6 % priced), not
+where it streams them one at a time.  The row stays as a like-for-like `vector-read` shape.

@@ -708,6 +708,48 @@ fn read_value(self: const Counter) // const argument
 - Auto-lock for local `const`: `expression()` in `src/parser/expressions.rs` — after the initialising assignment is compiled, inserts a `n_set_store_lock` call under `#[cfg(debug_assertions)]`.
 - Auto-lock for const arguments: `parse_code()` in `src/parser/expressions.rs` — inserts lock calls at the start of the function body for every argument that is both an argument and const.
 
+### Foreign stores — bytes the runtime does not own (@PLN174)
+
+A `Store` can serve bytes that belong to somebody else — a file's mapping today
+(`file_map`), a library's buffer or a host frame later — through the SAME contract every
+vector read goes through, with no copy into a store.  **The one invariant:** a foreign
+store is read-only, its bytes are described by the header contract every vector op reads
+(a size word at `+0`, the length at `+4`, elements from `+8`), and they outlive every
+`DbRef` into the store.  Everything below re-asserts that sentence.
+
+* **One synthetic record.**  A foreign store is an ordinary minted store (`Stores::database(4)`)
+  whose collection slot at `(rec, 8)` names `FOREIGN_REC` (`0x7FFF_FFF0`, past any record an
+  owned store can hold).  `Store::make_foreign` writes the slot, keeps `(base, len,
+  elem_size)` plus an 8-byte synthetic header and the OWNER (`ForeignOwner`: a `Vec<u8>` or a
+  read-only `memmap::Mmap`; a host's token joins when F7 serves one), then locks the store.  The handle a program
+  holds is `DbRef { store_nr, rec, pos: 8 }` — the shape every minted vector has, so
+  `vec_header`, `length_vector`, `get_vector`, `get_elem_at`, `vec_base` and the push
+  header all serve it unchanged.
+* **Four accessors answer the id.**  `Store::read`, `Store::addr`, `Store::valid` and
+  `Store::elem_base` answer `FOREIGN_REC` from the synthetic header (`fld < 8`) or the
+  foreign base (`fld - 8`, bounded by `len * elem_size` exactly as `offset_in_bounds`
+  bounds an owned record); every other accessor is built on those.  `Store::bytes_of` is
+  the read-only twin of `Store::buffer` for a reader (`text_from_bytes` uses it); `buffer`
+  itself refuses the id, since there is no `&mut [u8]` to give.
+* **A write is the author's fault, not a corrupt reference.**  The store is `read_only`
+  with `Store::FOREIGN_ORIGIN` as its lock origin; `begin_write_inner` refuses the lock
+  BEFORE computing the address (asked after, the bounds test would call the reference
+  corrupt), and `refuse_locked_write` routes a foreign store beside the author's `#lock`
+  to the runtime error `write_to_locked_store`, whose advice for this origin is to copy
+  first.  Nothing can grow or move the block, which is exactly what every hoist needs.
+* **Lifetime is the handle's.**  `Stores::foreign_vector` mints it; `Stores::free_named`
+  drops the owner (`Store::release_foreign`) before the slot is recycled, so the mapping
+  is released with the handle and the slot reinitialises as any other.  The bytes are the
+  owner's, not the store-heap ceiling's (`store_budget` counts the tiny owned block only).
+* **Not (yet):** a slice of it is still a COPY (plan F4 makes it a view on a read-only
+  store), a worker's `clone_locked` snapshot carries no foreign bytes, and a record VIEW
+  (`rec_ptr`) is not served — a foreign store holds scalar vectors until F5.
+
+The unit test `store::tests::a_foreign_store_answers_a_vector_read_through_the_same_accessors`
+reads a foreign store and a copied one through the same accessors byte for byte;
+`tests/foreign_store.rs` does the same at the program level on both backends and asserts the
+write refusal; the cells are `tests/scripts/174-foreign-file.loft`.
+
 ### Binary File I/O: `read_data` and `write_data`
 
 `read_data` reads from a `DbRef` into a `Vec<u8>` (for writing to a binary file). `write_data` reads from a `&[u8]` into a `DbRef` (for reading from a binary file).

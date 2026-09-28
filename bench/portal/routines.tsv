@@ -181,6 +181,7 @@ hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer
 18_consumer_crawler	char_roundtrip	text-build	consumer:crawler	per character a code changed and formatted back as a character
 18_consumer_crawler	quadratic_out	text-build	consumer:crawler	a 2 MB text grown by out = out + "{v:.9}"
 18_consumer_crawler	binary_read	vector-build	consumer:crawler	a binary file read one i16 at a time (f#read(2) as i16)
+18_consumer_crawler	binary_map	vector-read	consumer:crawler	the same 150 000 i16 off a MAPPED file (file_map): two byte reads per element, no copy of the file (@PLN174 F3)
 18_consumer_crawler	sort_floats	vector-write	consumer:crawler	a selection sort into a fresh vector per scanline
 18_consumer_crawler	format_specs	text-build	consumer:crawler	per-frame format widths and precisions, {x:4.1} {n:3} {m:X}
 19_stdlib_par	par_map_float	parallel	stdlib	a float kernel per element of a large vector, results gathered

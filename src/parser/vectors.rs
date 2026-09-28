@@ -9701,7 +9701,12 @@ impl Parser {
         if !def.name().starts_with("n_") || *def.code() == Value::Null {
             return None;
         }
-        let Type::Reference(td, _) = def.returned() else {
+        // `@FR-N-Shape` — a nullable return keeps the copy, said so rather than left to a
+        // bare match that cannot see the wrapper.
+        if def.returned().peel_optional().1 {
+            return None;
+        }
+        let Type::Reference(td, _) = def.returned().base() else {
             return None;
         };
         // The caller must ADOPT the answer raw: a return that names its hidden buffer
@@ -9746,8 +9751,9 @@ impl Parser {
             return false;
         }
         self.data.def(td).attributes().iter().all(|a| {
+            // `@FR-N-Shape` — every shape test peels the nullable marker.
             a.constant
-                || matches!(a.typedef, Type::Routine(_))
+                || matches!(a.typedef.base(), Type::Routine(_))
                 || crate::data::is_scalar(&a.typedef)
                 || matches!(a.typedef.base(), Type::Text(_))
                 || match a.typedef.base() {

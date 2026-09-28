@@ -9,6 +9,26 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Foreign stores: a file mapped read-only is a `vector<u8>` with no copy (@PLN174 F1–F3, 2026-09-28)
+
+`Store` serves bytes the runtime does not own under ONE synthetic record id (`FOREIGN_REC`):
+`Store::make_foreign` locks a minted store, writes the id into its collection slot and keeps
+`(base, len, elem_size)`, a synthetic header and the OWNER (`ForeignOwner`: a `Vec<u8>` or a
+read-only `memmap::Mmap`); `read`, `addr`, `valid` and `elem_base` answer the id from the
+foreign base, so `vec_header`, `length_vector`, `get_vector`, the hoisted element reads and
+the push header serve it unchanged; `Store::bytes_of` is `buffer`'s read-only twin
+(`text_from_bytes` reads through it).  `Stores::foreign_vector` mints one, `free_named`
+drops the owner with the handle.  The first producer is `file_map(path) -> vector<u8>?`
+(`02_files.loft`, both backends; strace shows the `PROT_READ` mapping).  Two store defects
+found on the way: the lock refusal ran after the bounds computation, so a write into a
+locked store at a synthetic record read as a corrupt reference; and an internal lock's write
+was a panic where the program's own doing (the author's `#lock`, now a foreign store too)
+gets the `write_to_locked_store` runtime error, whose advice for the foreign origin is to
+copy first.  F0 priced the plan's claim on pluginabi's bench (−13.6 % on `check_request` from
+the text arm alone); F3 measured that the crawler's `binary_read` row does NOT move on a
+mapped file (the row is its element loop, not a copy).  Reference: DATABASE.md § Foreign
+stores; cells `tests/scripts/174-foreign-file.loft`, `tests/foreign_store.rs`.
+
 ### A nested record rides the value tuple (@PLN158, 2026-09-28)
 
 `(R-ValueRecord)` § The nested clause, `(R-ValueLocal)`, `--native`, generation time, default
