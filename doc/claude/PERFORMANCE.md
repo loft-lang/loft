@@ -4957,8 +4957,8 @@ non-null operands (M3), and a bitcode-free rlib that blocks post-hoc inlining
 (`plans/157-native-4x-drawing/`) drives every judged row to within **4×**.
 
 Regenerate: the in-tree rows (`hash`, `lock` — `bench/12_drawing/`, hashes
-asserted) with `make native-ratio` (`--gate` fails ratios over
-`bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
+asserted) with `make native-ratio` (`make native-ratio-gate`, the last step of the local
+`make ci`, fails ratios over `bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
 with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
 `drawing-lock`).
 

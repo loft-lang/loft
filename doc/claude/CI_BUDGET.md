@@ -577,8 +577,10 @@ half — `make sweep-scratch`), delete scratch whose durable copy exists, and bo
 `CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 ./scripts/find_problems.sh --subject <name>`
 finishes later and finishes.  A killed run is no verdict, exactly as above.
 
-What a GitHub run cannot do: measure a ratio (`make native-ratio`, `make speed` — reports,
-never gates, and they stay local) or read this box's scratch.  What it does that a local
+What a GitHub run cannot do: measure a ratio (`make speed` is a report and stays local;
+the native/Rust ratio gate, `scripts/native_ratio.sh --gate`, runs LAST in the local
+`make ci` and is deliberately not mirrored in ci.yml, because a shared runner's timing is
+noise and a flaking timing gate is one people learn to ignore) or read this box's scratch.  What it does that a local
 run cannot: run cold, on a machine nobody else is using, and leave a verdict that
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final

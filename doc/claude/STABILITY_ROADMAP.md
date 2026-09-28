@@ -112,13 +112,15 @@ warm native run 23× fewer) and is gated by the allocation ratchet.
   (the nullable spelling lowered differently from its twin, routed to @PLN160), three are
   not null defects.  The keyed-collections keystone of this cycle has no payoff
   measurement yet.  **Re-cut the class through @PLN160 before naming it a keystone again.**
-- *A gate the docs claim and CI does not run.*  `scripts/release-checklist.py` (the
-  `M-perf-pass` row) and `releases/2026-10/README.md` say `scripts/native_ratio.sh` fails
-  ratios over `bench/ratio_oracle.tsv` in `make ci`; nothing in `make ci` or
-  `.github/workflows/` calls it, and the one caller (`make native-ratio`) runs without
-  `--gate`.  The oracle's bars still sit at 5–8 against the stated ceiling of 3.  **Wire
-  it, then ratchet the oracle** — a claimed gate that does not run is the stale-figure
-  failure [STABILITY_METHOD.md](STABILITY_METHOD.md) already confessed to once.
+- *A gate the docs claimed and CI did not run.*  `scripts/release-checklist.py` (the
+  `M-perf-pass` row) and `releases/2026-10/README.md` said `scripts/native_ratio.sh` fails
+  ratios over `bench/ratio_oracle.tsv` in `make ci`, while nothing in `make ci` or
+  `.github/workflows/` called it and the one caller (`make native-ratio`) ran without
+  `--gate` — the stale-figure failure [STABILITY_METHOD.md](STABILITY_METHOD.md) already
+  confessed to once.  **Wired the same day**: `native_ratio.sh --gate` is the last step of
+  the local `make ci` (`make native-ratio-gate` runs it alone), kept out of ci.yml because a
+  shared runner's timing is noise.  The oracle's bars still sit at 5–8 against the stated
+  ceiling of 3: **the ratchet is what is left**, one row at a time as its ratio falls.
 - *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-1)
   block the 2026.10.0 tag, and `release.yml`'s docs job has failed on every release
   since 2026.7.2.  **Get `release-gate.yml` green once**; a language that cannot pass its

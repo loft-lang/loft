@@ -65,8 +65,8 @@ every ratio to within about 1 % (the threaded row to about 4 %).  A spread above
 (5 %) is flagged on the row: the box was busy, and that row wants re-running.
 
 `scripts/native_ratio.sh` (`make native-ratio`) reads the same rows against the per-routine
-bars in `ratio_oracle.tsv`; `--gate` fails a ratio over its bar.  The bars are ratcheted
-DOWN as the ratios fall.
+bars in `ratio_oracle.tsv`; `--gate` (`make native-ratio-gate`, and the last step of the
+local `make ci`) fails a ratio over its bar.  The bars are ratcheted DOWN as the ratios fall.
 
 ## The portal: where we stand, by class
 
