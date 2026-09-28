@@ -19055,7 +19055,6 @@ impl Parser {
     /// This is the entry point used by Phase A of the package-mode driver
     /// , which needs to enumerate files + package edges without
     /// spilling symbol-table side-effects before pass-1 parsing begins.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn lib_path_manifest_resolve(&mut self, dir: &str, id: &str) -> Option<ResolvedPkg> {
         // @P296-sibling (Windows) — build the package paths with
         // `Path::join` rather than `format!("{dir}/{id}")`.  When `dir` is
