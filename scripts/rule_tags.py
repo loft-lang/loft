@@ -454,7 +454,7 @@ def citations_in(dirs, exts):
             for path in glob.glob(os.path.join(d, "**/*" + ext), recursive=True):
                 for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
                     for tag in CITE.findall(line):
-                        out[tag].append((os.path.relpath(path, ROOT), n))
+                        out[tag].append((_rel(path), n))
     return out
 
 
@@ -531,6 +531,16 @@ def classify_claim(sentence, before=""):
     return "neutral", ""
 
 
+def _rel(path):
+    """`path` relative to the repository root, or as given when it cannot be: on Windows a
+    path on another drive (a self-test's temp directory on C: under a checkout on D:) has no
+    relative form, and `os.path.relpath` raises for it."""
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return path
+
+
 def guard_for(n, tests_dir=None):
     """The guard that speaks for issue N: `tests/scripts/N-*.loft` (or `N<letter>-*`), else
     the first test file that cites `loft#N` — else None.  The guard is the evidence of which
@@ -540,7 +550,7 @@ def guard_for(n, tests_dir=None):
     hits = sorted(glob.glob(os.path.join(tests_dir, "scripts", f"{n}-*.loft")) +
                   glob.glob(os.path.join(tests_dir, "scripts", f"{n}[a-z]-*.loft")))
     if hits:
-        return os.path.relpath(hits[0], ROOT)
+        return _rel(hits[0])
     needle = re.compile(rf"loft#{n}(?!\d)")
     for path in sorted(glob.glob(os.path.join(tests_dir, "**", "*"), recursive=True)):
         # `.expect` is the error-message baseline: a refusal's guard lives there.
@@ -549,7 +559,7 @@ def guard_for(n, tests_dir=None):
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
                 if needle.search(fh.read()):
-                    return os.path.relpath(path, ROOT)
+                    return _rel(path)
         except OSError:
             continue
     return None
