@@ -78,7 +78,10 @@ The mechanics of rebasing onto a squash and of joining sibling checkouts are
 ### Opening a PR is the owner's call
 
 Do not propose a PR, hint that work is ready for one, or treat a finished issue as a milestone
-that wants one.  Fix, gate, push, and say what is done.  The cadence — one or two stable PRs a
+that wants one.  Fix, gate, push, and say what is done.  A PR is a GATHERING: when the work
+across the agents' active branches is stabilising, the owner asks for it, and it joins those
+branches in one.  Nothing that lands on one branch — a fix, a feature, a workflow that only
+works from `main` — is a reason to mention one.  The cadence — one or two stable PRs a
 day, arcs that finish inside it — is [CLAUDE.md § Branch policy](../../CLAUDE.md) rule 3, with
 the short list of what must hold before opening.
 
