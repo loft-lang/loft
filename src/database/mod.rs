@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod allocation;
+pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod format;
 mod io;

@@ -21,6 +21,27 @@ use crate::vector;
 /// schema is bounded well under 0x8000, which is what makes the top bit free.
 pub const CLEAR_KEYED_VIEW: u16 = 0x8000;
 
+/// The `limit` a range slice's lowering passes when the program wrote no `:n` — the
+/// spatial `xs[(x,y)..]` and the trie `t[pre..]`.  `i64::MAX` rather than a negative
+/// flag, because a cap of that size means "uncapped" whoever writes it.
+pub const SLICE_UNCAPPED: i64 = i64::MAX;
+
+/// A range slice's `:n` as a record cap (`@FR-Slice-Cap`): at most `n` records, so a
+/// negative `n` — or a null one, whose integer is `i64::MIN` — answers none.
+///
+/// The spelling that preceded this read `limit < 0` as "no cap", which is the flag the
+/// lowering itself passed, so a program's `:k` with `k` gone negative answered EVERY
+/// record.  The paged loaders (`store_load_prefix`, `store_load_box`) are a different
+/// surface: a function parameter documented as "negative means no cap".
+#[must_use]
+pub fn slice_cap(limit: i64) -> Option<usize> {
+    if limit == SLICE_UNCAPPED {
+        None
+    } else {
+        Some(usize::try_from(limit).unwrap_or(0))
+    }
+}
+
 /// Which keyed collection a paged working-set load is reading and filling.
 ///
 /// The only thing that differs between the two once a record is located: a `hash`
@@ -1746,16 +1767,9 @@ impl Stores {
         self.build_rec_scratch(coll, &recs)
     }
 
-    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
-    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  Records whose Morton code
-    /// lies in `[from, till]` (or `[from, ∞)` when `has_till == 0`), in natural order,
-    /// capped at `limit` (`< 0` = no cap).  Backs `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the
-    /// bounding box `xs[(x1,y1)..(x2,y2)]`.  Coordinates arrive as a fixed `MAX_AXES`-wide
-    /// triple; only the collection's own `keys.len()` axes are read (a 2D collection
-    /// ignores `fz`/`tz`), so the same ABI serves 1D…3D slices.
     /// A trie PREFIX slice as an iterable scratch vector, the trie's twin of
     /// `build_radix_range_vec` and feeding the same on=4 scratch path.  Every record
-    /// whose key begins with `pre`, in key order, capped at `limit` (`< 0` = no cap).
+    /// whose key begins with `pre`, in key order, capped at `limit` ([`slice_cap`]).
     /// Backs `t["kerk"..]` and `t["kerk"..:n]`.
     ///
     /// There is no `till` here and that is the point: a prefix is the whole query, so
@@ -1766,11 +1780,19 @@ impl Stores {
             return DbRef::NULL;
         }
         let keys = self.types[tp as usize].keys.clone();
-        let cap = (limit >= 0).then_some(limit as usize);
+        let cap = slice_cap(limit);
         let recs = crate::trie_db::prefix(coll, &self.allocations, &keys, pre.as_bytes(), cap);
         self.build_rec_scratch(coll, &recs)
     }
 
+    /// @PLN48 S3 — a `spatial` range slice as an iterable scratch vector, feeding the
+    /// same Ordered (on=3) path as `build_radix_sorted_vec`.  With `has_till` the records
+    /// inside the closed box `from`..`till` (`@FR-Slice-Box`); without it the outward
+    /// walk from `from` (`@FR-Slice-Open`).  Capped at `limit` ([`slice_cap`]).  Backs
+    /// `xs[(x,y)..]`, `xs[(x,y)..:n]`, and the bounding box `xs[(x1,y1)..(x2,y2)]`.
+    /// Coordinates arrive as a fixed `MAX_AXES`-wide triple; only the collection's own
+    /// `keys.len()` axes are read (a 2D collection ignores `fz`/`tz`), so the same ABI
+    /// serves 1D…3D slices.
     #[allow(clippy::too_many_arguments)]
     pub fn build_radix_range_vec(
         &mut self,
@@ -1793,7 +1815,7 @@ impl Stores {
         let n = keys.len().min(crate::radix_db::MAX_AXES);
         let from = [fx, fy, fz];
         let till = [tx, ty, tz];
-        let cap = (limit >= 0).then_some(limit as usize);
+        let cap = slice_cap(limit);
         // Two different queries share this entry point, and `has_till` is the fact
         // that tells them apart. A CLOSED box promises containment (loft#800); the
         // OPEN forms (`xs[(x,y)..]`, `xs[(x,y)..:n]`) promise an outward walk from the
