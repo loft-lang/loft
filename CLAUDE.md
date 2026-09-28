@@ -455,6 +455,11 @@ Neither blocks.
 rule set** (one line per rule, each pointing at its home).
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
+⚠ **a LIMITATION stated on either page is a claim, not a fact** — before repeating one ("loft
+cannot X", "X is not supported", a workaround), run the guard or issue repro it cites; a
+limitation with no citation is unverified, and a stale one routes every consumer around a
+feature that works (two of five sampled were stale on 2026-09-28; @PLN176 is the automatic
+check) ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
 [SUBJECTS.md](doc/claude/SUBJECTS.md) the axes loft made a choice on — one row per subject with its
