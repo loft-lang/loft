@@ -586,14 +586,15 @@ b = 4         // writes a  →  a == 4
 a = 9         // b sees a's value  →  b == 9
 ```
 
-> **One known exception, and it is the KEYED collections.** Appending through a `&` to a
-> `hash` / `sorted` / `index` / `trie` does not work: through a `&` PARAMETER it is refused at
-> compile time, and through a `&` LOCAL alias (`a = &h; a += [rec]`) the append is silently
-> dropped and `len` reads 0 (loft#1433). A `vector` is correct in both spellings. Until it is
-> fixed, reach a keyed collection without the `&` — a keyed collection is already a store
-> handle, so a plain parameter mutates the caller's collection and a direct `h += [rec]` is
-> right. Everything else on this page — including `insert` / `reverse` / `sort` / `reserve`
-> and the generics over `vector<T>` (`sum`, `min_of`, `max_of`) — goes through a `&` as stated.
+The KEYED collections are not an exception. A `&` alias to a `hash` / `sorted` / `index` /
+`trie` / `spatial` (`a = &h; a += [rec]`) is a live link, so the append lands in `h` and both
+names read the same length; a `&` keyed PARAMETER appends through to the caller's collection
+the same way. A keyed collection is already a store handle, so the `&`-free spelling reaches
+the caller's collection too — the two spellings differ only in whether the bind copies, and
+for a keyed collection neither does. Guards: `tests/scripts/1433-a-keyed-alias-is-a-link-not-a-copy.loft`
+(the alias, every kind, both names read) and `tests/scripts/1445-a-keyed-parameter-appends-through-its-link.loft`
+(the parameter). Everything else on this page — `insert` / `reverse` / `sort` / `reserve` and
+the generics over `vector<T>` (`sum`, `min_of`, `max_of`) — goes through a `&` as stated.
 
 `&` is **not a general operator** — it appears only in a reference-*binding* position, and its
 operand must be **addressable** (a variable, struct field, or vector element — never a temporary):
@@ -2028,9 +2029,11 @@ match toks {
 A variant element may itself be matched deeper — `[Box { inner: Num { n } }, ..]` binds `n`.
 A slice arm takes an `if` guard like any other arm.
 
-**Two limits worth knowing.** An element written **after** a `..` must be a plain name or `_`;
-a literal or a variant pattern there does not parse (loft#1419). And a multi-pattern arm
-(`A { r }, B { r } => …`) is for enum variants only — it does not accept slice patterns.
+An element written **after** a `..` takes the same forms as one before it — a name, `_`, a
+literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
+guard `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
+**One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`) is for enum
+variants only — it does not accept slice patterns.
 
 ### `is` variant check
 
