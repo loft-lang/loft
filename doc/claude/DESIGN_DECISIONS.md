@@ -24,6 +24,13 @@ decide.
   entry here under the same heading, in the shape the entries below use: **Decision** and
   **Why**, then **Revisit when**, the date and the record link.  In the source doc, strike the
   question (`~~…~~`) and point at the entry.
+- **A decision is held to what it says (@PLN175).**  Every place that keeps it — the refusal
+  site, the code that implements it, the doc that states it, and at least one guard under
+  `tests/` that fails on a build breaking it — cites `@C<n>`.  `./scripts/idx tag:@C<n>` lists
+  them and `./scripts/idx decisions` counts them per entry (`make index` first).  A decision no
+  site can keep is not a decision: reopen it.  Where code and entry disagree, the code moves,
+  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and an entry
+  numbered C130 or later lands with its guard (`tests/index_hygiene.rs`).
 - **`Catalogue:`** names the `@F`/`@I` catalogue entries a decision limits or shapes, so
   `./scripts/idx tag:@F<n>` shows a feature's design bounds beside its code (@PLN92).
 

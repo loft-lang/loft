@@ -188,6 +188,11 @@ the `features-check` drift guard fails on hand-edits).
 File a NEW plan as a `loft-lang/plans` issue with one `status:*` + one `subject:*` label. Look refs
 up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for queries).
 
+**A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of
+DESIGN_DECISIONS.md — code, doc, and at least one guard under `tests/` — cite it, and
+`./scripts/idx decisions` shows which entries nothing verifies.  A decision no site can keep is
+reopened, not documented.
+
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
 rule already implemented somewhere?"* is a lookup. `scripts/rule_tags.py` is the tool

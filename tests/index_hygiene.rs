@@ -132,6 +132,47 @@ fn check_index_matches_git() {
     }
 }
 
+/// The first design-decision id that must arrive with a guard (@PLN175).
+const FIRST_GUARDED_DECISION: u32 = 130;
+
+fn check_new_decisions_are_guarded(index: &str) {
+    let register = std::fs::read_to_string("doc/claude/DESIGN_DECISIONS.md")
+        .expect("read DESIGN_DECISIONS.md");
+    let ids: Vec<&str> = register
+        .lines()
+        .filter_map(|l| l.strip_prefix("## C"))
+        .filter_map(|rest| rest.split(' ').next())
+        .filter(|id| id.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .collect();
+    assert!(
+        ids.len() > 50,
+        "read {} decision ids from the register — this check is measuring nothing",
+        ids.len()
+    );
+    let unguarded: Vec<&&str> = ids
+        .iter()
+        .filter(|id| {
+            let digits: String = id.chars().take_while(char::is_ascii_digit).collect();
+            digits
+                .parse::<u32>()
+                .is_ok_and(|n| n >= FIRST_GUARDED_DECISION)
+        })
+        .filter(|id| {
+            let key = format!("\"@C{id}\": [");
+            !index
+                .lines()
+                .find(|l| l.trim_start().starts_with(&key))
+                .is_some_and(|bucket| bucket.contains("\"file\":\"tests/"))
+        })
+        .collect();
+    assert!(
+        unguarded.is_empty(),
+        "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: a decision \
+         added from C{FIRST_GUARDED_DECISION} on lands with a test under tests/ that cites \
+         `@C<n>` and fails on a build that breaks it (DESIGN_DECISIONS.md § Using the register)."
+    );
+}
+
 #[test]
 fn index_hygiene_clean() {
     // 1. Refresh the index.  `make index` must exit 0.
@@ -206,9 +247,18 @@ fn index_hygiene_clean() {
          (a) rename the @P-id / @PLAN-id to a real one\n  \
          (b) add the missing PROBLEMS.md row / plan dir\n  \
          (c) add `<!--noindex-->` to the line if the ref is \
-         an intentional documentation example\n\
+         an intentional documentation example\n  \
+         (d) an `@C<n>` names a decision: cite one that has an entry in \
+         doc/claude/DESIGN_DECISIONS.md\n\
          See: doc/claude/plans/37-tracker-index/03-broken-validator.md"
     );
+
+    // 2b. @PLN175 — a design decision is held to what it says: every entry of
+    //     DESIGN_DECISIONS.md numbered above C129 lands with at least one GUARD, a
+    //     `tests/` site citing `@C<n>`.  The entries up to C129 predate the rule and
+    //     are guarded one at a time by the plan's walk; `./scripts/idx decisions`
+    //     reports where each one stands.
+    check_new_decisions_are_guarded(&index);
 
     // 2.5 (retired in sub-commit H, 2026-05-18) — `make index`
     // now invokes scan.loft as the canonical source; the prior
