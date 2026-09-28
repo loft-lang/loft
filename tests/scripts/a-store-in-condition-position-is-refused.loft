@@ -25,6 +25,8 @@
 // CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
 //   ten refusals are the only diagnostics.
 // WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
+// HOLDS: on the fixed tree each cell reports its own refusal and nothing else — an unmatched
+//   `@EXPECT_ERROR` and an unexpected error both fail the file — on both backends.
 
 struct P { x: integer, y: integer }
 
