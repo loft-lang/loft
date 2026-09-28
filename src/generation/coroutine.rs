@@ -861,6 +861,7 @@ fn snapshot_type_id(data: &crate::data::Data, tp: &Type) -> Option<u16> {
     (kt != u16::MAX).then_some(kt)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_drop_stores(
     w: &mut dyn Write,
     persistent: &[(u16, Type)],

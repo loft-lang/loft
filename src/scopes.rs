@@ -6072,8 +6072,6 @@ fn rewrite_written_out(
     hit
 }
 
-#[allow(clippy::too_many_arguments)]
-#[expect(clippy::too_many_lines, reason = "inherited")]
 /// `(G-Hold)`, loft#1708 — a generator handle that lands in a SECOND holder while its source
 /// keeps its own hold takes a hold on the frame (`OpCoroutineRetain`), so each holder releases
 /// once and the frame dies with the last of them.
@@ -6231,6 +6229,8 @@ impl RetainCx<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
