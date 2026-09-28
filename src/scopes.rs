@@ -17336,6 +17336,9 @@ impl Scopes<'_> {
     /// ⚠ Ownership is read here from a carried fact, but "empty deps" is only a PROXY for
     /// it (loft#723) — see [`crate::variables::Function::is_skip_free`], the second fact
     /// that vetoes the proxy for a borrow whose dep list was never populated.
+    ///
+    /// @C88 — this gate stays dep-derived; it is not simplified into "emit more frees and let
+    /// a free be idempotent".  Simplifying it means promoting the ownership oracle to authority.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn get_free_vars(
         &mut self,

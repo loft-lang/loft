@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Plan-12 extraction-hygiene gate.
+//! Plan-12 extraction-hygiene gate — and @C78's checkable half: the engine ships mechanism,
+//! and a library's code (its world model, its natives) never moves into it.
 //!
 //! The loft compiler crate (everything under `src/`) must contain
 //! **zero** library code — only language core, runtime, codegen, and

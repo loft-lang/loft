@@ -2121,6 +2121,10 @@ fn ir_schema_gen_matches_its_loft_source() {
 /// freeing on it alone releases a store someone else owns (loft#723).
 ///
 /// Shells out to the same script a person runs, so the gate and the tool cannot drift.
+///
+/// @C88 — this is also what keeps the scope-exit free gate DEP-DERIVED: a site that emitted
+/// frees without asking the proxy (the declined "free more, rely on an idempotent free") is
+/// the undeclared site this reports.
 #[test]
 fn o_proxy_frees_consult_the_override() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
