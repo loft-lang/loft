@@ -34,7 +34,7 @@ use imaging;
 
 fn main() {
   // ## Loading an Image
-  img = file("map.png").png();
+  img = file("map.png").png() ?? Image { };
   assert(img.width == 256, "width={img.width}");
   assert(img.height == 256, "height={img.height}");
   assert(img.name == "map.png", "name={img.name}");

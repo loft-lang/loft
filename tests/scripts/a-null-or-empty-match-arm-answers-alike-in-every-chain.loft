@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: is stored into the return value of the non-null type
+// ↑ This file covers a function declared NON-null whose branch returns `null` — still legal,
+// and `(N-Join)` + `(N-Store)` warn it (loft#1714).  The declaration stays non-null on purpose:
+// the `-> T?` spelling lowers through a different return path, which is not what this covers.
 //
 // A `match` whose value is a vector answers what an `if` chain answers, whatever the SUBJECT
 // kind: a `null` arm delivers null (`!v` is true), a `[]` arm an empty vector (`!v` is false),
@@ -50,7 +54,7 @@ fn in_mid(n: integer) -> vector<integer> { if n == 1 { [9] } else if n == 0 { nu
 fn ie_mid(n: integer) -> vector<integer> { if n == 1 { [9] } else if n == 0 { [] } else { [n] } }
 
 // What a result IS, in one text: its rendering, whether it is null, and its length.
-fn shape(r: vector<integer>) -> text { "{r}/{!r}/{len(r)}" }
+fn shape(r: vector<integer>?) -> text { "{r}/{!r}/{len(r ?? [])}" }
 
 fn test_the_if_chain_reference() {
   assert(shape(in_mid(0)) == "null/true/0", "if: null arm, got {shape(in_mid(0))}");

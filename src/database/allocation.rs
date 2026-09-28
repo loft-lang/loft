@@ -2050,14 +2050,14 @@ impl Stores {
     /// the whole release — no cascade, and the elements the loop yielded are
     /// records in the SOURCE store, untouched by this.
     ///
-    /// **Idempotent, and it has to be.** Two sites free the same scratch — the
-    /// loop epilogue and the scope exit that catches a `return` out of the loop
-    /// — and only the interpreter nulls the variable between them; the native
-    /// emitter drops that store, so both calls arrive carrying the same live
-    /// `DbRef`. The dedicated case is idempotent through [`Self::free`]'s
-    /// already-freed no-op; the co-located case is idempotent through
-    /// `is_claimed_record`, which reads the block header a `delete` has just
-    /// made negative. A second call is a no-op, not a double free.
+    /// **Called once per scratch.** Two sites can release the same scratch — the loop
+    /// epilogue and the scope exit that catches a `return` out of the loop — and the epilogue
+    /// nulls the handle after releasing (`Parser::release_scratch`), so the scope exit sees
+    /// the sentinel and returns at the first test.  That null store used to be spelled
+    /// `Set(s, Null)`, which the scope pass elides, so on BOTH backends every scratch arrived
+    /// here twice; the tolerance below made the second call a no-op until a later walk reused
+    /// the block (loft#1713).  It stays as the defence, and a second release is now named by
+    /// the store instruments instead of passing silently.
     ///
     /// Declines, leaving the scratch where it is, when the store cannot take a
     /// delete: freed, or pinned read-only / free-protected inside the loop body
@@ -2065,11 +2065,17 @@ impl Stores {
     /// behaviour for those cases, never worse.
     ///
     /// # Panics
-    /// In a debug build or under the store instruments, when the handle names no claimed
-    /// record of a live store — a scratch released twice (see the body).
+    /// Under debug assertions, `LOFT_STRICT_STORES` or `LOFT_POISON`, when a live store's handle
+    /// names no claimed record — a scratch released twice.
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
         self.live_scratches.retain(|(_, live)| live != scratch);
-        if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
+        // A store's PRIMARY record is never a scratch — `build_rec_scratch` claims a fresh one —
+        // while a keyed field walked IN PLACE of a store's root hands exactly that record here,
+        // `pos` at the field.  Declined before a single word of it is read: the tag test below
+        // would read a field of the walked record that nothing wrote (Valgrind, 2026-09-28).
+        if scratch.rec <= crate::store::PRIMARY
+            || scratch.store_nr as usize >= self.allocations.len()
+        {
             return;
         }
         let store = &self.allocations[scratch.store_nr as usize];

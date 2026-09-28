@@ -55,7 +55,7 @@ fn test_save_load_roundtrip_small() {
   orig = make_test_image("rt4.png", 4, 4);
   ok = orig.save_png("_tmp_rt4.png");
   assert(ok, "save_png returned true");
-  loaded = file("_tmp_rt4.png").png();
+  loaded = file("_tmp_rt4.png").png() ?? Image { };
   assert(loaded.width == 4, "loaded width 4, got {loaded.width}");
   assert(loaded.height == 4, "loaded height 4, got {loaded.height}");
   assert(loaded.data.len() == 16, "loaded pixel count 16, got {loaded.data.len()}");
@@ -72,7 +72,7 @@ fn test_save_load_non_square() {
   orig = make_test_image("rt83.png", 8, 3);
   ok = orig.save_png("_tmp_rt83.png");
   assert(ok, "save 8x3 returned true");
-  loaded = file("_tmp_rt83.png").png();
+  loaded = file("_tmp_rt83.png").png() ?? Image { };
   assert(loaded.width == 8, "width 8, got {loaded.width}");
   assert(loaded.height == 3, "height 3, got {loaded.height}");
   assert(loaded.data.len() == 24, "24 pixels, got {loaded.data.len()}");
@@ -87,7 +87,7 @@ fn test_extreme_pixel_values() {
   img.data += [Pixel{r: 0,   g: 255, b: 0}];
   ok = img.save_png("_tmp_extremes.png");
   assert(ok, "save extremes returned true");
-  loaded = file("_tmp_extremes.png").png();
+  loaded = file("_tmp_extremes.png").png() ?? Image { };
   assert(loaded.data.len() == 4, "4 pixels, got {loaded.data.len()}");
   p0 = loaded.data[0] ?? Pixel{r: 1, g: 1, b: 1};
   p1 = loaded.data[1] ?? Pixel{r: 0, g: 0, b: 0};
@@ -107,7 +107,7 @@ fn test_solid_color_image() {
   }
   ok = img.save_png("_tmp_solid.png");
   assert(ok, "save solid returned true");
-  loaded = file("_tmp_solid.png").png();
+  loaded = file("_tmp_solid.png").png() ?? Image { };
   assert(loaded.data.len() == 25, "25 pixels, got {loaded.data.len()}");
   for sli in 0..25 {
     p = loaded.data[sli] ?? Pixel{r: 0, g: 0, b: 0};
@@ -127,7 +127,7 @@ fn test_pixel_index_addressing() {
   }
   ok = img.save_png("_tmp_addr.png");
   assert(ok, "save addr returned true");
-  loaded = file("_tmp_addr.png").png();
+  loaded = file("_tmp_addr.png").png() ?? Image { };
   // (2, 1) is at y * width + x = 1 * 3 + 2 = 5
   p = loaded.data[5] ?? Pixel{r: 0, g: 0, b: 0};
   assert(p.r == 20 && p.g == 10,

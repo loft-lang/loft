@@ -2360,6 +2360,11 @@ impl Type {
     pub fn optional(inner: Type) -> Type {
         match inner {
             Type::Optional(_) | Type::Never | Type::Null => inner,
+            // `Rewritten` is a signal to the expression that parsed the value (built in place),
+            // peeled where the value lands — so it stays OUTERMOST.  A branch joining `null`
+            // with an in-place struct literal widened to `Optional(Rewritten(τ))`, which the
+            // landing site's peel no longer reached (loft#1714).
+            Type::Rewritten(t) => Type::Rewritten(Box::new(Type::optional(*t))),
             other => Type::Optional(Box::new(other)),
         }
     }

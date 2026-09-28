@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: is stored into the return value of the non-null type
+// ↑ This file covers a function declared NON-null whose branch returns `null` — still legal,
+// and `(N-Join)` + `(N-Store)` warn it (loft#1714).  The declaration stays non-null on purpose:
+// the `-> T?` spelling lowers through a different return path, which is not what this covers.
 //
 // A collection-returning function whose tail may deliver `null` must not be handed the
 // caller's return buffer as its own local (loft#1096).

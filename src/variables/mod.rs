@@ -3177,8 +3177,12 @@ impl Function {
                 Type::RefVar(inner) => inner.base(),
                 other => other.base(),
             };
+            // Through the RIGHT side's `?` too: a branch joining `null` with a variant is that
+            // variant, optional (`(N-Join)`, loft#1714), and whether it may be absent says no
+            // more about which enum it belongs to than the left side's `?` did.  A non-null
+            // destination is still told by `(N-Store)` at the store.
             if let (Type::Enum(parent_d, true, _), Type::Reference(rhs_d, _)) =
-                (lhs_shape, type_def)
+                (lhs_shape, type_def.base())
                 && data.def(*rhs_d).parent == *parent_d
             {
                 return self.is_new(var_nr);

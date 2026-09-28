@@ -3188,7 +3188,7 @@ fn stream_match_complex_deferred() {
 // pattern for now; mixing it with fixed elements (the running-pos + revert) is deferred.
 #[test]
 fn subrule_mixing_deferred() {
-    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn parse_id(c: Cur) -> N { match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { match c { [ e: parse_id, y ] => e.v, _ => -1 } }")
+    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn parse_id(c: Cur) -> N? { match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { match c { [ e: parse_id, y ] => e.v, _ => -1 } }")
         .error("a sub-rule element `e: rule` must currently be the whole slice pattern (mixing a sub-rule with fixed elements is deferred to a follow-up) at subrule_mixing_deferred:5:51");
 }
 
@@ -3197,15 +3197,15 @@ fn subrule_mixing_deferred() {
 // consume and would recurse forever.
 #[test]
 fn subrule_left_recursion() {
-    code!("enum Tok { Num { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn expr(c: Cur) -> N { match c { [ Num { x } ] => N { v: x }, [ e: expr ] => e, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ x: expr ] => x.v, _ => -1 }; r }")
-        .error("sub-rule `expr` is left-recursive (expr -> expr): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion:4:68");
+    code!("enum Tok { Num { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn expr(c: Cur) -> N? { match c { [ Num { x } ] => N { v: x }, [ e: expr ] => e, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ x: expr ] => x.v, _ => -1 }; r }")
+        .error("sub-rule `expr` is left-recursive (expr -> expr): a cursor `match` invokes a sub-rule before consuming any input, so this cycle would recurse forever at subrule_left_recursion:4:69");
 }
 
 // @PLN35 PC4 — an invoked sub-rule must be pure: a cursor `match` hoists its call unconditionally
 // (runs even when the arm is not taken) and may backtrack over it, so any observable effect leaks.
 #[test]
 fn subrule_impure_rejected() {
-    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn noisy(c: Cur) -> N { print(\"hi\"); match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ n: noisy ] => n.v, _ => -1 }; r }")
+    code!("enum Tok { Id { x: integer }, LP { x: integer } }\nstruct Cur { src: vector<Tok>, pos: integer }\nstruct N { v: integer }\nfn noisy(c: Cur) -> N? { print(\"hi\"); match c { [ Id { x } ] => N { v: x }, _ => null } }\nfn f(c: Cur) -> integer { r = match c { [ n: noisy ] => n.v, _ => -1 }; r }")
         .error("sub-rule `noisy` is not pure — a cursor `match` may invoke it speculatively (even when its arm is not taken) and backtrack over it, so its side effects would be observable; a sub-rule must only advance the cursor and return (no I/O, host mutation, or randomness) at subrule_impure_rejected:5:46");
 }
 

@@ -494,9 +494,11 @@ one test. The two levers that follow are behavioural, not code:
 1. **Do not run two gates at once.** A second checkout's `make ci` took this one from ~10 min to
    **19 min** (load 42 on 24 cores) and, the same morning, triggered the `systemd-oomd` kill that
    ended a session. Check `pgrep -af "make ci"` and its cwd first.
-2. **Do not use `make ci` as the iteration loop.** `./scripts/find_problems.sh --subject <name>`
-   is seconds; the full gate is the pre-commit check. Measured cost of getting this wrong: six
-   full gates in one day on a three-line change.
+2. **Do not use `make ci` as the iteration loop — nor as the answer to its own red.**
+   `./scripts/find_problems.sh --subject <name>` is seconds; the full gate runs once per change
+   whose reach you cannot bound, and a red one is followed by `scripts/ci-run.sh recheck`, not a
+   restart (§ After a red gate).  Measured cost of getting this wrong: six full gates in one day
+   on a three-line change, and on 2026-09-28 four in one afternoon on fixes to constants.
 
 ⚠ The general lesson is the one this document already teaches about JUnit `time` and did not
 apply to itself: **a recorded measurement is a claim with a date on it.** Re-measure before
@@ -585,6 +587,43 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
+
+## After a red gate: recheck, do not restart
+
+**The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
+it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A recheck builds on the
+last gate in this tree (`.ci-gate-head`, written by `start`) and runs, each timed:
+
+* the pre-flight — `cargo fmt --check`, QUALITY.md's audit rows against
+  `ir_walker_audit.py`, `check_doc_drift.sh` (`scripts/gate_preflight.sh`, ~15 s);
+* both clippy variants the gate runs, when Rust changed since the gate;
+* EXACTLY the tests the gate failed (`.ci-failed`, nextest `binary_id(=…) & test(=…)`);
+* `find_problems.sh --changed <gate sha>` — the subjects the change since the gate touches.
+
+A green recheck writes `.ci-recheck`, and `ci-run.sh status` shows it beside the gate verdict
+for as long as it describes HEAD.  The push then names both: *full gate on `<sha>`, and a
+recheck of the change since.*
+
+**When a new full gate IS owed** — the fix's reach is not known, so `--changed` cannot map it:
+a new refusal or warning, a type-inference or coercion change, a new op or builtin, a change to
+shared lifetime/codegen machinery.  `--changed` maps a PATH to a subject, and a change to what the
+compiler ACCEPTS can break a cell in a subject it never names (a new refusal broke three tests
+in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
+fixture, a derived row, formatting or a lint attribute is not that.
+
+**Why it had to be written down.** Every instruction on this box tied the gate to an EVENT —
+"before committing", "before every commit", "the pre-commit check" — and none said what to do
+after it went red, so each fixup commit read as a new tree owing a new gate.  Measured
+2026-09-28: four consecutive gates on one change, ended by rustfmt (after 279 s, because the
+gate rebuilt the native fixtures and wasm rlibs before running fmt — fmt now runs first), by
+clippy's `too_many_lines`, then by a derived audit row and a fixture test.  The pre-flight
+catches the first and the third before a gate is queued; `recheck` covers the fourth in the
+time of its two tests.
+
+**The pre-flight** runs in `ci-run.sh start` and refuses to queue a gate that would stop on one
+of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygiene` and
+`frontend_counts` through nextest — seconds of tests, minutes of compiling when the release
+test binaries are stale, so not the default).
 
 ## Where the 31 minutes actually are (2026-08-10) — measured, and one axis untried
 

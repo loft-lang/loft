@@ -493,6 +493,16 @@ pub struct Parser {
     /// see a narrowing), so it stays silent for an arm the conversion already named
     /// rather than reporting the same mistake twice.
     pub(crate) arm_convert_reported: bool,
+    /// How many arms of the `match` being parsed are written `null` or `{ null }` — read from
+    /// the SOURCE by `parse_match_arm_body`, because on the first pass a comprehension arm is a
+    /// placeholder that looks like a null arm in the lowered code (`D-types-5`).  Each chain
+    /// saves and zeroes it at its start, so a nested match cannot count into its parent.
+    pub(crate) null_literal_arms: u32,
+    /// Whether the block `parse_block` just parsed ENDS in the source token `null` — the `if`
+    /// arm `{ null }`.  Read by the `(N-Join)` widening straight after the parse: the lowered
+    /// arm no longer says null (it is its sibling's typed null by then), and on the first pass
+    /// a comprehension arm is a placeholder of the same shape, so only the source can tell.
+    pub(crate) block_tail_null_literal: bool,
     /// loft#1382 — the arms currently being parsed belong to a construct in STATEMENT
     /// position, so their types need not agree with each other.
     ///
@@ -1623,6 +1633,8 @@ impl Parser {
             fit_in_condition: false,
             pending_arm_mismatch: None,
             arm_convert_reported: false,
+            null_literal_arms: 0,
+            block_tail_null_literal: false,
             arms_of_statement_construct: false,
             match_void_arm: false,
             amp_head: AmpHead::default(),

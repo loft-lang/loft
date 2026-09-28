@@ -156,6 +156,10 @@ target-*/
 
 # Gate verdict written by scripts/ci-run.sh — local run state, never committed.
 .ci-verdict
+.ci-gate-head
+.ci-failed
+.ci-recheck
+.ci-recheck.log
 
 # ⚠ A ROOT `loft.toml` MAKES THIS REPO A LOFT PACKAGE, and that changes two
 # repo-wide behaviours at once — neither of them anywhere near the file:

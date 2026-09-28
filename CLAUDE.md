@@ -66,14 +66,19 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   codegen runtime store wasm packages lsp sql docs
                                          #   host (`--list-subjects` to see them + exclusions).
                                          #   Shape: --changed/--subject while iterating → the
-                                         #   two clippy variants + fmt → ONE `make ci` before
-                                         #   committing (it runs your diff's subjects FIRST, so
-                                         #   a red shows in its first minute; and it QUEUES
-                                         #   behind another checkout's gate — one at a time on
-                                         #   this box, LOFT_GATE_PARALLEL=1 to run beside it).
-                                         #   `make ci` is ~10 min and only that if the box is
-                                         #   idle — two checkouts running gates at once doubles
-                                         #   it (CI_BUDGET.md § A LOCAL `make ci`).
+                                         #   two clippy variants → ONE gate per change whose
+                                         #   reach you cannot bound, via `scripts/ci-run.sh
+                                         #   start` (a ~15 s pre-flight — fmt, audit rows, doc
+                                         #   drift — refuses a gate that would stop on them).
+                                         #   AFTER a gate, red or not: `ci-run.sh recheck` —
+                                         #   its failed tests + what changed since — NOT a
+                                         #   restart; the push names gate + recheck.  A new
+                                         #   gate only for a change of unknown reach (a new
+                                         #   refusal, inference, a new op) — CI_BUDGET.md § After
+                                         #   a red gate.  The gate runs your diff's subjects
+                                         #   FIRST and QUEUES behind another checkout's (one at a
+                                         #   time on this box, LOFT_GATE_PARALLEL=1 beside it);
+                                         #   ~20 min, twice that with two gates live.
 ./scripts/find_problems.sh --bg|--peek|--wait   # background full-suite run + inspect/block
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
                                          #   tests/scripts file; run it after an IR-schema/
