@@ -637,8 +637,11 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
 > single owner (loft#1721): a capture bound from a `??` or a value branch holds one of several
 > stores, and each arm's owner is released by store identity against it.  A join capture
 > reassigned after the build is released against the record's capture slot instead
-> (`1725-…loft`, loft#1725).  Still outside it: a call bound first, `d = f(); c = d ?? []`
-> (loft#1726).
+> (`1725-…loft`, loft#1725).
+> `a-sunk-branch-bind-captured-by-an-escaping-closure-keeps-its-arm.loft` does the same for a
+> bind written out per arm (`d = f(); c = d ?? [9]`, `c = d ?? e`, an `if` or `match` over a
+> local and a literal): each arm builds into a store of its own, and every one of them is the
+> local's join owner (loft#1726).
 
 `D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to

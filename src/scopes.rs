@@ -11003,9 +11003,11 @@ fn branch_arm_stores(v: &Value, out: &mut Vec<u16>) {
 /// or empty when it is not a join (one dep chain and no `??` temp on it), which
 /// [`backs_an_adopted_capture`]'s single-store answer already covers.  loft#1721.
 fn capture_join_candidates(function: &Function, c: u16) -> Vec<u16> {
-    let mut join = function.tp(c).depend().len() > 1;
+    // loft#1726 — a sunk branch bind records its arms' stores on the capture itself.
+    let mut join = function.tp(c).depend().len() > 1 || !function.join_owners(c).is_empty();
     let mut out = Vec::new();
     let mut work = function.tp(c).depend();
+    work.extend_from_slice(function.join_owners(c));
     let mut seen = HashSet::default();
     while let Some(v) = work.pop() {
         if v == c || v == u16::MAX || function.is_argument(v) || !seen.insert(v) {
