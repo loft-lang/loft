@@ -71,14 +71,15 @@ impl Parser {
     /// The refusal for a GENERIC function named where a value is wanted (`f = idf`), or
     /// `None` when `name` names no generic.  A template has a body only once a call has
     /// fixed its type variables, so there is no one function to bind; one call of it
-    /// wrapped in a lambda is.
+    /// wrapped in a lambda is.  The cure is the `fn(…)` form, because naming a type inside
+    /// the `|x|` shorthand is refused (@C62).
     pub(crate) fn generic_value_refusal(&self, name: &str) -> Option<String> {
         let g = self.data.def_nr(&format!("n_{name}"));
         (g != u32::MAX && self.data.def_type(g) == DefType::Generic).then(|| {
             format!(
                 "`{name}` is a generic function, and a generic is not a function VALUE — it has \
                  no single body until a call fixes its type variables. Wrap one call of it in a \
-                 lambda that names the types: `|x: integer| {{ {name}(x) }}`"
+                 lambda that names the types: `fn(x: integer) -> integer {{ {name}(x) }}`"
             )
         })
     }

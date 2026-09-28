@@ -2582,7 +2582,7 @@ fn s9_text_index_plus_text_index() {
 // Short-form lambdas infer types from the call-site hint.  Explicit type
 // annotations belong in the long form: fn(x: integer) -> integer { body }.
 
-// S10: `|x: integer|` must produce a compile-time error.
+// S10 (@C62): `|x: integer|` must produce a compile-time error.
 #[test]
 fn s10_short_lambda_type_annotation_rejected() {
     code!(

@@ -1702,7 +1702,7 @@ or build a local and use that."
                 };
                 let idx = param_names.len();
                 let tp = if self.lexer.has_token(":") {
-                    // type annotations are not allowed in |x| short-form lambdas.
+                    // type annotations are not allowed in |x| short-form lambdas (@C62).
                     // Use the long form fn(x: type) -> ret { body } instead.
                     diagnostic!(
                         self.lexer,

@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C62 — a type inside the `|x|` shorthand is refused, so a message that prescribes a lambda
+// naming its types must prescribe the `fn(x: T) -> R { … }` form.  The refusal of a generic
+// named as a value (a-generic-is-not-a-function-value.loft) once prescribed
+// `|x: integer| { idf(x) }`, which C62 refuses: following the advice could not compile.  This
+// runs the cure it prescribes now.
+//
+// @falsified-at: none — a LOCK.  The `fn(…)` form compiled on every build; what moved was the
+//   message, which a-generic-is-not-a-function-value.loft pins and which fails on the build
+//   before this change (it expected the `|x: integer|` spelling).
+
+fn idf<T>(x: T) -> T { x }
+
+fn main() {
+  f = fn(x: integer) -> integer { idf(x) };
+  assert(f(3) == 3, "the prescribed cure runs: {f(3)}");
+  assert(f(-8) == -8, "and answers each call: {f(-8)}");
+}
