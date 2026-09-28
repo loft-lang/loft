@@ -87,14 +87,10 @@ pub enum RuntimeErrorKind {
     IndexOutOfBounds { idx: i64, len: u32 },
     /// Vector / text index < 0.
     NegativeIndex { idx: i64 },
-    /// Field / method access through a null `DbRef`.
-    NullDereference,
     /// A write to a store the author locked with `d#lock = true`.  Only the USER lock
     /// reaches here: the const store and a worker borrow share `Store::read_only` but
     /// are the compiler's to get right, and keep their assert.
     WriteToLockedStore { rec: u32, fld: u32 },
-    /// Narrowing cast (e.g. `i64 -> i32`) overflowed the target range.
-    NarrowCastOverflow { value: i64, target: &'static str },
     /// A `<<` / `>>` whose amount is outside `[0, 64)`, or whose result is the
     /// reserved `i64::MIN` null sentinel (@PLN102 null-model keystone,
     /// D-op-null-2): the shift cannot produce a representable non-null value, so
@@ -139,8 +135,6 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::DivideByZero => "divide_by_zero",
             RuntimeErrorKind::IndexOutOfBounds { .. } => "index_out_of_bounds",
             RuntimeErrorKind::NegativeIndex { .. } => "negative_index",
-            RuntimeErrorKind::NullDereference => "null_dereference",
-            RuntimeErrorKind::NarrowCastOverflow { .. } => "narrow_cast_overflow",
             RuntimeErrorKind::ShiftOutOfRange => "shift_out_of_range",
             RuntimeErrorKind::CastOutOfRange => "cast_out_of_range",
             RuntimeErrorKind::RangeDefaulted { .. } => "range_defaulted",
@@ -163,10 +157,6 @@ impl RuntimeErrorKind {
             }
             RuntimeErrorKind::NegativeIndex { idx } => {
                 format!("negative index {idx}")
-            }
-            RuntimeErrorKind::NullDereference => "null dereference".to_string(),
-            RuntimeErrorKind::NarrowCastOverflow { value, target } => {
-                format!("value {value} overflows target type {target}")
             }
             RuntimeErrorKind::RangeDefaulted { value, lo, hi } => {
                 format!(
@@ -600,12 +590,7 @@ mod tests {
             RuntimeErrorKind::DivideByZero,
             RuntimeErrorKind::IndexOutOfBounds { idx: 5, len: 3 },
             RuntimeErrorKind::NegativeIndex { idx: -1 },
-            RuntimeErrorKind::NullDereference,
             RuntimeErrorKind::WriteToLockedStore { rec: 1, fld: 8 },
-            RuntimeErrorKind::NarrowCastOverflow {
-                value: 99_999,
-                target: "i8",
-            },
             RuntimeErrorKind::RangeDefaulted {
                 value: 300,
                 lo: 0,

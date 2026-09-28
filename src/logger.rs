@@ -369,8 +369,6 @@ impl Logger {
             Rk::DivideByZero
             | Rk::IndexOutOfBounds { .. }
             | Rk::NegativeIndex { .. }
-            | Rk::NullDereference
-            | Rk::NarrowCastOverflow { .. }
             | Rk::ShiftOutOfRange
             | Rk::CastOutOfRange
             | Rk::RangeDefaulted { .. } => Severity::Warn,
@@ -875,11 +873,11 @@ mod tests {
     fn runtime_kind_without_position_logs_with_empty_file() {
         let mut lg = tmp_logger();
         lg.log_runtime_kind(
-            &RuntimeErrorKind::NullDereference,
+            &RuntimeErrorKind::DivideByZero,
             None, // no position resolved
         );
         let out = read_log(&lg);
-        assert!(out.contains("[null_dereference]"));
+        assert!(out.contains("[divide_by_zero]"));
         // No source file → empty file field renders as `:0`
         assert!(
             out.contains(":0"),
