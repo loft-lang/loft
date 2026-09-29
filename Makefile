@@ -2785,6 +2785,12 @@ linkcheck-external:
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
 
+.PHONY: script-census
+script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
+	@cargo build --release --bin loft -q
+	@target/release/loft scripts/script_census.loft > doc/claude/plans/179-scripts-in-loft/WORKLIST.md
+	@target/release/loft scripts/script_census.loft --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
+
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
 	@python3 scripts/falsify-review.py $(ARGS)
