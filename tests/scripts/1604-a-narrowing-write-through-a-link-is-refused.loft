@@ -21,7 +21,7 @@
 // @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
 // @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
 // @EXPECT_ERROR: cannot implicitly narrow integer to i8 (may lose data)
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(1, 8) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to Small (may lose data)
 
 type Small = integer limit(1, 8);
 

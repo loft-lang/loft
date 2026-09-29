@@ -882,6 +882,12 @@ pub struct Parser {
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
     pub(crate) last_range_till: Option<Value>,
+    /// The default arms of the `??`s built last, each with the type it SYNTHESISED before it
+    /// was brought to the coalesce's type.  A store whose value is a `??` checks its default
+    /// against the slot (`range_guard_inside_discharge`), and a `u8` field read lowers to an
+    /// op typed `integer`, so an arm's own type cannot be read back off the value.  A chain
+    /// `a ?? b ?? c` nests, so the inner arm is asked too; a short list covers that.
+    pub(crate) coalesce_defaults: Vec<(Value, Type)>,
     /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
     /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
     /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
@@ -1688,6 +1694,7 @@ impl Parser {
             iterable_context: false,
             last_range_from: None,
             last_range_till: None,
+            coalesce_defaults: Vec::new(),
             block_path: Vec::new(),
             pending_loop_binders: Vec::new(),
             block_ord: 0,
@@ -4675,19 +4682,25 @@ impl Parser {
     /// arithmetic OVERFLOW landing in such a slot (`(E-Uncomp-NN)`), never a substitute for
     /// this refusal — a default nothing reports is not the null `??` can recover from.
     fn implicit_checked_narrow(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
-        if self.first_pass {
+        if self.first_pass || !Self::takes_checked_narrow(is_type, should) {
             return false;
         }
         let Type::Optional(inner) = should else {
             return false;
         };
-        if !Self::is_narrowing_int(is_type.base(), inner.base()) {
-            return false;
-        }
         let dst_base = inner.base().clone();
         let src_base = is_type.base().clone();
         self.dn4_checked_cast(code, &dst_base, &src_base);
         true
+    }
+
+    /// Does a value of `is_type` meet `should` through the implicit checked narrowing?  A
+    /// question of the two TYPES alone, so pass 1 — which converts nothing — can ask it too.
+    pub(crate) fn takes_checked_narrow(is_type: &Type, should: &Type) -> bool {
+        let Type::Optional(inner) = should else {
+            return false;
+        };
+        Self::is_narrowing_int(is_type.base(), inner.base())
     }
 
     fn is_narrowing_int(src: &Type, dst: &Type) -> bool {
@@ -4765,7 +4778,17 @@ impl Parser {
             return t.source_name(&self.data);
         };
         if s.forced_size.is_none() {
-            return t.source_name(&self.data);
+            // A `limit(lo, hi)` range has no forced width and is still the author's alias —
+            // `integer(0, 10)` is true and no spelling the parser reads, so the cure built from
+            // it (`as integer(0, 10)?`) could not be typed back in.  The full integer keeps its
+            // own name: an alias of it (`type Count = integer`) must not rename every integer.
+            if s.is_wide_template() || s.is_signed32_template() {
+                return t.source_name(&self.data);
+            }
+            return self
+                .data
+                .integer_alias_any_source(s, false)
+                .map_or_else(|| t.source_name(&self.data), str::to_string);
         }
         // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
         // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
@@ -4802,20 +4825,35 @@ impl Parser {
     /// question (a full-width register value); the narrower nullable-narrow-FIELD
     /// sentinel reservation is a separate, store-only check
     /// ([`Self::nullable_sentinel_hint`]) applied at the field-store sites.
+    ///
+    /// `@FR-I-Lit` — a literal checks at the width EXPECTED of it, and a value `if` or `match`
+    /// passes that expectation to each arm (`@FR-T-Chk`), so one whose every arm is a fitting
+    /// constant fits: `x: u8 = if c { 200 } else { 3 }` was refused while each arm alone was
+    /// accepted.  A value block's answer is its last operator.
     fn int_value_fits(&self, code: &Value, dst: &Type) -> bool {
         let Type::Integer(spec) = dst else {
             return false;
         };
-        let n = match code.unspan() {
-            Value::Int(n) => i64::from(*n),
-            Value::Long(n) => *n,
-            other => match crate::const_eval::const_eval(other, &self.data) {
-                Some(Value::Int(n)) => i64::from(n),
-                Some(Value::Long(n)) => n,
-                _ => return false,
-            },
-        };
-        n >= i64::from(spec.min) && n <= spec.max
+        match code.unspan() {
+            Value::If(_, then, other) => {
+                self.int_value_fits(then, dst) && self.int_value_fits(other, dst)
+            }
+            Value::Block(bl) if bl.name != "ncc" => bl
+                .operators
+                .last()
+                .is_some_and(|last| self.int_value_fits(last, dst)),
+            // The integer null loses no data, so it is no narrowing — an exhaustive `match`
+            // ends in one for the arm no value reaches.  Whether the slot may hold null is
+            // `@FR-N-Store`'s question, asked apart.
+            Value::Call(d, a)
+                if a.is_empty() && self.data.def(*d).name() == "OpConvIntFromNull" =>
+            {
+                true
+            }
+            _ => self
+                .const_int(code)
+                .is_some_and(|n| n >= i64::from(spec.min) && n <= spec.max),
+        }
     }
 
     /// When a literal stored into a NULLABLE narrow field fits the type's full
@@ -5637,6 +5675,14 @@ impl Parser {
         // comparison or a null test asks the slot itself.
         if !self.store_ctx.is_empty() && matches!(should, Type::Optional(_)) {
             self.read_through_enum_slot(code, is_type);
+        }
+        // A tuple's members are narrow slots of their own (`narrow_tuple_members`).
+        if !self.first_pass
+            && !self.in_explicit_cast
+            && let (Type::Tuple(slots), Type::Tuple(values)) = (should.base(), is_type.base())
+        {
+            let (slots, values) = (slots.clone(), values.clone());
+            self.narrow_tuple_members(code, &slots, &values);
         }
         if is_type.is_equal(should) {
             return true;

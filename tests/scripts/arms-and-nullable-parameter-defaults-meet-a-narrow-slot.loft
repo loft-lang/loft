@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Lit` / `@FR-T-Chk` / `@FR-I-Narrow-Opt` — two ways a value reaches a narrow slot that
+// were REFUSED although the rules define them (formal/types.md D-types-13, D-types-14):
+//
+//   - an `if` or `match` whose every arm is a fitting literal: the expected width reaches each
+//     arm, so `x: u8 = if c { 200 } else { 3 }` fits;
+//   - a nullable narrow parameter's default: `fn g(a: u8? = 5)` did not parse, and once it did,
+//     `u8? = 300` must read null rather than reach the parameter as 300.
+//
+// The three that answered WRONG are in `a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft`.
+//
+// Axes this file MOVES:  `if` / `else if` / `match` / an arm with statements; a parameter default
+//                        that is a fitting, an out-of-range, a sentinel or a computed value, or
+//                        is replaced by an explicit argument; the width (u8, u16, i8, `limit`).
+// Axes it HOLDS FIXED:   integer values only.
+//
+// @falsified-at: 1a2de15f1 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/arms-and-nullable-parameter-defaults-meet-a-narrow-slot.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — both defects were refusals, so the control does not compile this file.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+type Lim = integer limit(0, 10);
+enum K { Ka, Kb, Kc }
+
+fn p8(a: u8? = 5) -> text { "{a}" }
+fn p8o(a: u8? = 300) -> text { "{a}" }
+fn p8s(a: u8? = 255) -> text { "{a}" }
+fn p16(a: u16? = 70000) -> text { "{a}" }
+fn pi8(a: i8? = -100) -> text { "{a}" }
+fn dep(b: integer, a: u8? = b + 1) -> text { "{a}" }
+fn lim(b: integer, a: Lim? = b * 5) -> text { "{a}" }
+
+fn test_arms_that_all_fit_are_a_fitting_value() {
+  c = len("ab") > 1;
+  k: K = if c { K.Kb } else { K.Ka };
+  m = len("abc");
+  x: u8 = if c { 200 } else { 3 };
+  y: u8 = if m == 1 { 1 } else if m == 3 { 250 } else { 3 };
+  z: u8 = match k { Ka => 9, Kb => 255, Kc => 0 };
+  w: u8 = if c { assert(m > 0, "m"); 17 } else { 3 };
+  o: u8? = if c { 255 } else { 3 };
+  got = "{x} {y} {z} {w} {o}";
+  assert(got == "200 250 255 17 null", "arms: {got}");
+}
+
+fn test_a_nullable_narrow_parameter_takes_a_default() {
+  got = "{p8()} {p8(9)} {p8o()} {p8s()} {p16()} {pi8()}";
+  assert(got == "5 9 null null null -100", "constant defaults: {got}");
+  got = "{dep(3)} {dep(254)} {dep(300)} {dep(3, 77)} {lim(1)} {lim(3)}";
+  assert(got == "4 null null 77 5 null", "computed defaults: {got}");
+}

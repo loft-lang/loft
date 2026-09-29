@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Lit` / `@FR-I-Narrow` / `@FR-I-Narrow-Opt` — a value reaching a narrow slot fits it, is
+// refused, or (for a nullable slot) reads null; the rule names no exception for HOW the value
+// reaches the slot.  A walk of those rules across the ways a value reaches one found five that
+// disagreed (formal/types.md D-types-10 to D-types-14); this file holds the three that ANSWERED
+// wrong, and `arms-and-nullable-parameter-defaults-meet-a-narrow-slot.loft` the two refusals:
+//
+//   - a tuple LITERAL into declared narrow members: `t: (integer, u8) = (1, 256)` held 256;
+//   - a `??` default: `x: u8 = g() ?? 300` held 300 (the discharge exempted the whole value);
+//   - a struct field DEFAULT met no conversion at all: `f: Lim? = 12` held 12 past its limit;
+//   - an `if` / `match` whose arms are all fitting literals was REFUSED;
+//   - `fn g(a: u8? = 5)` did not parse, and `u8? = 300` reached the parameter as 300.
+//
+// Their refusals are pinned in tests/parse_errors.rs; these are the cells that must RUN.
+// Every value is distinctive, and a nullable slot's out-of-range cell reads `null`.
+//
+// Axes this file MOVES:  how the value reaches the slot (tuple literal: local / argument / return
+//                        / field / vector element / nested; `??` default: constant / narrow var /
+//                        field read / chain; field default), the slot's nullability, the width
+//                        (u8, u16, a `limit` range).
+// Axes it HOLDS FIXED:   integer values only.
+//
+// @falsified-at: 1a2de15f1 — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+// @falsified-by: tests/falsified/a-narrow-slot-is-checked-wherever-a-value-reaches-it.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+//   CHANNEL: asserts — the control compiles this file and the field defaults read wrong values.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+type Lim = integer limit(0, 10);
+struct F { f: u8 }
+struct D { a: u8? = 300, b: Lim? = 12, c: Lim = 4, d: u8 = 200, e: u16? = 70000 }
+struct H { t: (integer, u8) }
+
+fn g(n: integer) -> integer? { if n > 0 { n * 100 } else { null } }
+fn take(t: (integer, u8)) -> integer { t.1 }
+fn ret(k: integer) -> (integer, u8) { (k, 250) }
+
+fn test_a_tuple_literal_meets_each_member() {
+  t: (integer, u8) = (1, 255);
+  h = H { t: (1, 77) };
+  v: vector<(integer, u8)> = [(1, 254)];
+  v += [(2, 3)];
+  n: ((integer, u8), integer) = ((1, 66), 2);
+  o: (integer, u8?) = (1, 300);
+  got = "{t.1} {take((1, 99))} {ret(1).1} {h.t.1} {v[0].1} {v[1].1} {n.0.1} {o.1}";
+  assert(got == "255 99 250 77 254 3 66 null", "tuple members: {got}");
+}
+
+fn test_a_coalesce_default_is_stored_into_the_slot() {
+  small: u8 = 9;
+  rec = F { f: 44 };
+  a: u8 = g(0) ?? 7;
+  b: u8 = g(1) ?? 7;
+  c: u8 = g(0) ?? small;
+  d: u8 = g(0) ?? rec.f;
+  e: u8 = g(3) ?? 7;
+  f: u8 = g(0) ?? g(3) ?? 6;
+  h: u8 = g(3) ?? g(2) ?? 6;
+  o: u8? = g(0) ?? 300;
+  got = "{a} {b} {c} {d} {e} {f} {h} {o}";
+  assert(got == "7 100 9 44 7 6 200 null", "coalesce defaults: {got}");
+}
+
+fn test_a_field_default_meets_its_field() {
+  s = D {};
+  got = "{s.a} {s.b} {s.c} {s.d} {s.e}";
+  assert(got == "null null 4 200 null", "field defaults: {got}");
+}

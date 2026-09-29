@@ -8626,6 +8626,11 @@ use a separate collection or add after the loop"
         if self.first_pass {
             return false;
         }
+        if let (Type::Tuple(slots), Type::Tuple(values)) = (store_tp.base(), s_type.base()) {
+            let (slots, values) = (slots.clone(), values.clone());
+            self.narrow_tuple_members(code, &slots, &values);
+            return false;
+        }
         if self.range_guard_inside_discharge(code, store_tp) {
             return true;
         }
@@ -8647,6 +8652,63 @@ use a separate collection or add after the loop"
             }
         }
         false
+    }
+
+    /// `@FR-I-Narrow` per MEMBER — a tuple is stored member by member, so each member owes the
+    /// narrowing its own slot would (`layout.md` `(L-Tuple)` makes a member a field).  loft#1640
+    /// gave the member WRITE `t.1 = 300` this check; the whole-tuple store did not look inside,
+    /// and `t: (integer, u8) = (1, 256)` held 256.  A literal tuple is asked value by value (a
+    /// nullable member takes the checked narrowing); any other tuple by its member types.
+    pub(crate) fn narrow_tuple_members(
+        &mut self,
+        code: &mut Value,
+        slots: &[Type],
+        values: &[Type],
+    ) {
+        if slots.len() != values.len() {
+            return;
+        }
+        match code.unspan_mut() {
+            Value::Tuple(members) if members.len() == slots.len() => {
+                for (i, member) in members.iter_mut().enumerate() {
+                    if matches!(slots[i], Type::Optional(_)) {
+                        self.implicit_checked_narrow(member, &values[i], &slots[i]);
+                    } else {
+                        self.narrow_store_checks(member, &slots[i], &values[i]);
+                    }
+                }
+                return;
+            }
+            // A join passes the slot to each arm, as `int_value_fits` asks an `if`'s arms:
+            // `if z { (null, 7) } else { (4, 5) }` fits `(u8?, u8)` arm by arm while the joined
+            // member type is `integer`.
+            Value::If(_, then, other) => {
+                self.narrow_tuple_members(then, slots, values);
+                self.narrow_tuple_members(other, slots, values);
+                return;
+            }
+            Value::Block(bl) if bl.name != "ncc" => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.narrow_tuple_members(last, slots, values);
+                }
+                return;
+            }
+            _ => {}
+        }
+        for (i, (slot, value)) in slots.iter().zip(values).enumerate() {
+            if !matches!(slot, Type::Optional(_))
+                && Self::is_narrowing_int_store(value.base(), slot)
+            {
+                let src = self.int_type_name(value);
+                let dst = self.int_type_name(slot);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot implicitly narrow member {i} ({src}) to {dst} (may lose data) — build \
+                     the tuple with a value that fits, or take the checked cast `as {dst}?`"
+                );
+            }
+        }
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?
@@ -8718,6 +8780,7 @@ use a separate collection or add after the loop"
         }) {
             return true;
         }
+        self.refuse_unfitting_coalesce_default(code, &Type::Integer(spec));
         let guarded: Vec<Value> = subjects
             .into_iter()
             .map(|mut sub| {
@@ -8745,6 +8808,64 @@ use a separate collection or add after the loop"
             _ => return false,
         }
         true
+    }
+
+    /// `@FR-I-Narrow` — the default of a `??` is stored into the slot whenever the subject is
+    /// absent or does not fit, so it owes the slot's narrowing check itself: a constant must
+    /// fit, and any other default must not be wider than the slot.  The discharge exempts the
+    /// SUBJECT, whose miss the default answers; nothing answers a default that misses, and
+    /// `x: u8 = g() ?? 300` held 300.
+    fn refuse_unfitting_coalesce_default(&mut self, code: &mut Value, target: &Type) {
+        let slot = match code.unspan_mut() {
+            Value::Block(bl) => match bl.operators.last_mut().map(Value::unspan_mut) {
+                Some(Value::If(_, _, d)) => d,
+                _ => return,
+            },
+            Value::If(_, _, d) => d,
+            _ => return,
+        };
+        let mut default = (**slot).clone();
+        // A chain `a ?? b ?? c` is `a ?? (b ?? c)`: the default is itself a discharge, whose
+        // subject is guarded and whose own default is asked, exactly as the outer one's are.
+        if self.range_guard_inside_discharge(&mut default, target) {
+            if let Value::Block(bl) = code.unspan_mut()
+                && let Some(Value::If(_, _, d)) = bl.operators.last_mut().map(Value::unspan_mut)
+            {
+                **d = default;
+            } else if let Value::If(_, _, d) = code.unspan_mut() {
+                **d = default;
+            }
+            return;
+        }
+        if self.int_value_fits(&default, target) || self.is_null_source(&default) {
+            return;
+        }
+        // The arm's own type, recorded where the `??` was built; a stale record (another
+        // `??` built since) leaves only the constant question, which needs no type.
+        let recorded = self
+            .coalesce_defaults
+            .iter()
+            .rev()
+            .find(|(v, _)| v.unspan() == default.unspan())
+            .map(|(_, t)| t.clone());
+        let constant = self.const_int(&default).is_some();
+        let wider = recorded
+            .as_ref()
+            .is_some_and(|t| Self::is_narrowing_int_store(t.base(), target));
+        if !constant && !wider {
+            return;
+        }
+        let dst = self.int_type_name(target);
+        let what = match self.const_int(&default) {
+            Some(n) => format!("{n}"),
+            None => recorded.map_or_else(|| "integer".to_string(), |t| self.int_type_name(&t)),
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "the `??` default ({what}) does not fit {dst} — it is stored when the value is \
+             absent or does not fit, so give a default within {dst}'s range"
+        );
     }
 
     /// `@FR-N-Coal` — the variable `v` when this `if` is the lowering of `v ?? d` for a BARE
@@ -8860,6 +8981,19 @@ use a separate collection or add after the loop"
         if let Value::Call(d, _) = code.unspan()
             && self.data.def(*d).name() == "OpRangeDefault"
         {
+            return;
+        }
+        // A CONSTANT has its answer now: itself inside the range, the guard's default outside
+        // it.  A guard left around a literal is a runtime test that can never differ, and the
+        // `u8?` parameter default it wrapped looked unreplayable to pass 2 only.
+        if let Some(n) = self.const_int(code) {
+            if n < lo || n > hi {
+                *code = if nullable {
+                    self.cl("OpConvIntFromNull", &[])
+                } else {
+                    Value::Long(dflt)
+                };
+            }
             return;
         }
         // Already inside the slot's range for every value the source can take → no guard.

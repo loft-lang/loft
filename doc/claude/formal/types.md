@@ -686,6 +686,25 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-10 to D-types-14** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(I-Lit)`,
+  `(I-Narrow)` and `(I-Narrow-Opt)` name no exception for HOW a value reaches a narrow slot, and
+  a walk of the ways one does found five that disagreed.  Each held for the direct store and
+  missed where the value arrived another way.
+  **-10**, a tuple LITERAL: `t: (integer, u8) = (1, 256)` held 256, and in a
+  `vector<(integer, u8)>` read 0 — loft#1640 had given only the member WRITE `t.1 = …` the check.
+  **-11**, a `??` default: `x: u8 = g() ?? 300` held 300, because the discharge exempted the
+  whole value where it answers only for the subject; a chain's inner subject is guarded like
+  the outer one.  **-12**, a struct field DEFAULT met no conversion at all: `f: u8 = 256` read 0,
+  and `f: Lim? = 12` held 12 past its `limit(0, 10)`.  **-13**, an `if` or `match` whose every
+  arm is a fitting literal was REFUSED — the expected width reaches each arm (`(T-Chk)`), so the
+  fit test now asks the arms.  **-14**, `fn g(a: u8? = 5)` did not parse: pass 2 turned the
+  default into a checked cast with a temporary and hoisted it into a function pass 1 had not
+  minted; and kept in place, `u8? = 300` reached the parameter as 300, because a call site
+  replays pass 1's unconverted tree.  A constant now folds in the cast and the range guard, and
+  a default meeting a nullable narrow parameter or field is always hoisted, so pass 2 converts
+  its body.  Guards `tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft`
+  (-10 to -12, whose values the pre-fix tree gets wrong), `tests/scripts/arms-and-nullable-parameter-defaults-meet-a-narrow-slot.loft`
+  (-13 and -14, which it refused), and six refusal pins in `tests/parse_errors.rs`.
 * **D-types-9** *(opened 2026-09-29, CLOSED 2026-09-29)* — the "never null" lints against
   `(N-Store)` and `(E-Truthy-1)`.  `redundant-null-negation`, `redundant-null-check`,
   `redundant-coalesce` and `redundant-default-fallback` read a FIELD as never null whenever it

@@ -3541,10 +3541,18 @@ impl Parser {
                     self.first_pass && self.unresolved_types != unresolved_types_before;
                 let hoisted_in_pass_1 =
                     !self.first_pass && self.minted_default_nr(&dflt_fn, arguments) != u32::MAX;
+                // A default meeting a nullable narrow parameter takes the checked narrowing
+                // (`@FR-I-Narrow-Opt`), which only pass 2's `convert` applies — and a call site
+                // replays PASS 1's tree, so kept in place the default reached the slot raw
+                // (`u8? = 300` held 300).  Hoisted, its body is converted like any return.
+                // Pass 1 converts nothing, so it asks the same TYPE question `convert` will.
+                let checked_narrow_in_pass_2 =
+                    self.first_pass && Self::takes_checked_narrow(&dtype, &typedef);
                 if !matches!(typedef, Type::RefVar(_))
                     && (named_a_forward_reference
                         || typed_against_a_forward_declaration
                         || hoisted_in_pass_1
+                        || checked_narrow_in_pass_2
                         || !default_replayable_in_place(&t, site))
                 {
                     // Pass 1's signature is the one the function HAS, so pass 2 re-parses
@@ -6429,7 +6437,26 @@ impl Parser {
         self.expected = Type::Unknown(0);
         self.init_field_tracking = false;
         if a_type.is_unknown() {
-            *a_type = tp;
+            *a_type = tp.clone();
+        }
+        // A field default is a store into the field, so an INTEGER one meets the field's
+        // narrowing the way a parameter default and a struct literal's field do — through
+        // `convert`.  It met nothing: `f: u8 = 256` read 0 with no diagnostic, and a
+        // `limit(0, 10)?` field defaulting to 12 held 12.  Only the integer question is asked
+        // here: a keyed collection's default is a `vector` literal until the function it is
+        // hoisted into delivers it at the field's type (loft#703).
+        let dtype_concrete = match &tp {
+            Type::Rewritten(inner) => inner.as_ref(),
+            other => other,
+        };
+        if !self.first_pass
+            && matches!(a_type.base(), Type::Integer(_))
+            && matches!(dtype_concrete.base(), Type::Integer(_))
+            && !matches!(value, Value::Null)
+            && !self.convert(value, &tp, a_type)
+        {
+            let at = self.lexer.pos().clone();
+            self.validate_convert("default value", &tp, a_type, &at);
         }
         // A default is lowered HERE, in the STRUCT's context, which has no
         // frame, and replayed at every construction site inside some
@@ -6458,7 +6485,13 @@ impl Parser {
             struct_typed: matches!(a_type.base(), Type::Reference(_, _)),
         };
         let dflt_fn = format!("__dflt_{}_{a_name}", self.data.def(d_nr).name());
-        if self.default_hoisted_in_pass_1(&dflt_fn) || !default_replayable_in_place(value, site) {
+        // The checked narrowing `convert` gives a nullable narrow field is pass 2's alone, so
+        // pass 1 asks the same TYPE question to mint the function it will be hoisted into.
+        let checked_narrow = self.first_pass && Self::takes_checked_narrow(&tp, a_type);
+        if self.default_hoisted_in_pass_1(&dflt_fn)
+            || checked_narrow
+            || !default_replayable_in_place(value, site)
+        {
             // A non-empty KEYED default was refused here because loft had no
             // keyed literal as a VALUE at all — `[K { … }]` was a `vector<K>`
             // wherever it stood alone, so there was nothing for the function
