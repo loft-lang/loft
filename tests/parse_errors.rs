@@ -1796,7 +1796,7 @@ fn generic_fn_struct_as_bound_errors() {
 #[test]
 fn interface_factory_method_rejected() {
     code!("interface Creatable { fn create() -> Self }\nfn test() {}")
-        .error("factory methods not yet supported: 'create' returns Self without a 'self: Self' parameter at interface_factory_method_rejected:1:44");
+        .error("'create' returns Self without a 'self: Self' first parameter, and that parameter is what names the type Self stands for — take the starting value as a parameter instead (`fn f<T: I>(…, start: T) -> T`) at interface_factory_method_rejected:1:44");
 }
 
 // ── I6/I10 — Satisfaction checking diagnostics ───────────────────────────────
@@ -3061,22 +3061,35 @@ fn multi_pattern_capture_type_mismatch() {
 #[test]
 fn multi_pattern_partial_overlap() {
     code!("enum Rec { Ra { u: integer }, Rb { w: integer } }\nfn f(r: Rec) -> integer { match r { Ra { u }, Rb { w } => u, _ => 0 } }")
-        .error("multi-pattern arm: capture 'w' is not bound by the first pattern (partial overlap → option<T> is Phase 4) at multi_pattern_partial_overlap:2:55")
+        .error("multi-pattern arm: capture 'w' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own at multi_pattern_partial_overlap:2:55")
         .error("multi-pattern arm: every listed pattern must bind the same captures (u) at multi_pattern_partial_overlap:2:58");
 }
 
-// A guard on a multi-pattern arm (must hold for whichever pattern matched) is Phase 4.
+// A guard on a multi-pattern arm holds for whichever pattern matched (`@FR-P-Guard` ×
+// `@FR-P-Multi`); it was refused as deferred work.  The value cells, the fall-through and a
+// text capture are in `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
 #[test]
-fn multi_pattern_guard_deferred() {
+fn multi_pattern_guard_holds() {
     code!("enum Rec { Ra { k: integer }, Rb { k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { k } if k > 0 => k, _ => 0 } }")
-        .error("a guard is not yet supported on a multi-pattern arm (Phase 4) at multi_pattern_guard_deferred:2:67");
+        .expr("f(Rb { k: 4 }) * 100 + f(Ra { k: -3 })")
+        .result(Value::Int(400));
 }
 
-// A field sub-pattern inside a non-first listed pattern is Phase 4.
+// A field sub-pattern TESTS its field and captures nothing, so `Ra { i }, Rb { i: Sp }` binds `i`
+// in one listed pattern only — the partial overlap, refused on its own terms.  Sub-patterns that
+// bind no name work in any listed pattern: `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
 #[test]
-fn multi_pattern_subpattern_deferred() {
+fn multi_pattern_subpattern_binds_no_capture() {
     code!("enum Sub { Sp, Sq }\nenum Rec { Ra { i: Sub }, Rb { i: Sub } }\nfn f(r: Rec) -> integer { match r { Ra { i }, Rb { i: Sp } => 0, _ => 1 } }")
-        .error("a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4) at multi_pattern_subpattern_deferred:3:57");
+        .error("multi-pattern arm: every listed pattern must bind the same captures (i) at multi_pattern_subpattern_binds_no_capture:3:62");
+}
+
+/// A sub-pattern in a LATER listed pattern that binds a name binds a variable the shared arm
+/// body never reads, so it is refused by name instead of answering the first pattern's value.
+#[test]
+fn a_capture_in_a_later_listed_patterns_sub_pattern_is_refused() {
+    code!("enum Sub { Sp { x: integer }, Sq }\nenum Rec { Ra { i: Sub, k: integer }, Rb { i: Sub, k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { i: Sp { x }, k } => k, _ => 0 } }")
+        .error("a capture inside `i`'s sub-pattern in a later pattern of a multi-pattern arm is not visible to the arm's body — capture it in the first pattern, or give this pattern an arm of its own at a_capture_in_a_later_listed_patterns_sub_pattern_is_refused:3:64");
 }
 
 // Union exhaustiveness: the listed variants are ALL covered by the multi-pattern
@@ -3138,12 +3151,12 @@ fn scalar_rep_type_mismatch() {
         .error("a scalar repetition `xs:text*` must match the vector's element type integer at scalar_rep_type_mismatch:1:59");
 }
 
-// @PLN35 slice 1 — a `..rest` after a scalar repetition is not yet supported (a clean error,
+// @PLN35 slice 1 — a `..rest` after a scalar repetition is refused (a clean error,
 // not a silent mis-parse).
 #[test]
 fn scalar_rep_rest_unsupported() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, .. ] => xs.len(), _ => -1 } }")
-        .error("a `..rest` after a scalar repetition `xs:integer*` is not yet supported at scalar_rep_rest_unsupported:1:66");
+        .error("a `..rest` cannot follow the scalar repetition `xs:integer*` — the repetition already takes every element the pattern leaves; drop the rest at scalar_rep_rest_unsupported:1:66");
 }
 
 // @PLN35 slice 1 — a non-literal element after a scalar repetition is rejected (recovers to
@@ -3151,7 +3164,7 @@ fn scalar_rep_rest_unsupported() {
 #[test]
 fn scalar_rep_nonliteral_tail() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, y ] => xs.len(), _ => -1 } }")
-        .error("only literal elements are supported after a scalar repetition `xs:integer*` at scalar_rep_nonliteral_tail:1:65");
+        .error("only a literal can follow the scalar repetition `xs:integer*` — capture the tail with an arm of its own, or read it from `xs`'s end at scalar_rep_nonliteral_tail:1:65");
 }
 
 // @PLN35 slice 2 — a per-iteration capture of a NON-scalar field `( V { heap } )*` is deferred
@@ -3159,7 +3172,7 @@ fn scalar_rep_nonliteral_tail() {
 #[test]
 fn field_capture_nonscalar_deferred() {
     code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:60");
+        .error("a repetition collects the field `items` only when it is a scalar or text — capture the elements instead, `(x: B)*`, and read `items` from each at field_capture_nonscalar_deferred:2:60");
 }
 
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
@@ -3182,7 +3195,7 @@ fn tail_and_rest_rejected() {
 #[test]
 fn stream_match_complex_deferred() {
     code!("fn g() -> iterator<(integer, integer)> { yield (1, 2); }\nfn f() -> integer { match g() { [ _ ] => 1, _ => -1 } }")
-        .error("streaming `match` over an `iterator<(integer, integer)>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
+        .error("a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<(integer, integer)>` is none of those — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
 }
 
 // @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
@@ -5225,5 +5238,90 @@ fn a_refused_limit_does_not_silence_the_next_declaration() {
         "`size(1)` holds 256 values and a plain `integer` has more — say which values this \
          type holds with `limit(lo, hi)`, or drop the `size(…)` at \
          a_refused_limit_does_not_silence_the_next_declaration:2:31",
+    );
+}
+
+/// loft#1733 — `Sh.Dot { r: 1 }` names a struct variant through its enum and then gives it
+/// fields.  `Sh.Dot` alone is the variant with every field at its default, so the braces are
+/// what a reader writes next, and the parser read them as the end of a statement: *"Expect
+/// token ;"*.  One error now, naming the constructor spellings, and no cascade after it.
+#[test]
+fn a_qualified_struct_variant_given_fields_names_the_constructor() {
+    code!(
+        "enum Sh1733 { Dot { r: integer }, Sq { w: integer } }\n\
+         fn test() { x = Sh1733.Dot { r: 1 }; assert(x is Dot, \"dot\"); }"
+    )
+    .error(
+        "`Sh1733.Dot` is the variant with every field at its default, and does not take \
+         fields — build it with `Sh1733::Dot { … }` or `Dot { … }` at \
+         a_qualified_struct_variant_given_fields_names_the_constructor:2:29",
+    );
+}
+
+/// The control for the case above: a `{` after a qualified variant is also an `if` body, and
+/// one that starts with a typed local declaration begins with the same `name :` tokens.  It
+/// must stay a body — and so must one that starts with an assignment.
+#[test]
+fn a_block_after_a_qualified_struct_variant_is_still_a_block() {
+    code!(
+        "enum Sh1733b { Dot { r: integer }, Sq { w: integer } }\n\
+         fn probe() -> integer {\n\
+         \x20 x = Sh1733b.Dot;\n\
+         \x20 t = 0;\n\
+         \x20 if x == Sh1733b.Dot { r: integer = 5; t += r; }\n\
+         \x20 if x == Sh1733b.Dot { t += 10; }\n\
+         \x20 t\n\
+         }"
+    )
+    .expr("probe()")
+    .result(Value::Int(15));
+}
+
+/// `@FR-M-Total` for a guarded multi-pattern arm: a guard can reject, so the arm covers none of
+/// its variants, and a match whose only arm is guarded is not exhaustive.
+#[test]
+fn a_guarded_multi_pattern_arm_covers_nothing() {
+    code!(
+        "enum Tg { A { v: integer }, B { v: integer } }\n\
+         fn test() { t = A { v: 5 }; r = match t { A { v }, B { v } if v > 2 => v }; assert(r == 5, \"r\"); }"
+    )
+    .error(
+        "match on Tg is not exhaustive — missing: A, B; add the missing variants or a '_ =>' \
+         wildcard at a_guarded_multi_pattern_arm_covers_nothing:2:40",
+    );
+}
+
+/// A `for` comprehension beside other elements, in either position, is ONE error naming the form
+/// that builds the same vector — it used to say "not yet implemented" and then cascade
+/// ("Expect token ;"), or, with the comprehension first, only "Expect token ]".
+#[test]
+fn a_comprehension_beside_other_elements_is_one_error() {
+    code!("fn test() { v = [1, 2]; w = [0, for x in v { x * 10 }]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:33",
+        );
+    code!("fn test() { v = [1, 2]; w = [for x in v { x * 10 }, 5]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:51",
+        );
+}
+
+/// A captured receiver as a `par` worker names the method and a cure that compiles: a context
+/// argument must be a scalar, so the receiver itself cannot be passed.
+#[test]
+fn a_par_method_on_a_captured_value_names_the_scalar_route() {
+    code!(
+        "struct Cp { k: integer }\n\
+         fn scale(self: Cp, e: integer) -> integer { self.k * e }\n\
+         fn test() { c = Cp { k: 3 }; v = [1, 2]; s = 0; for a in v par(b=c.scale(a), 2) { s += b; } assert(s == 9, \"s\"); }"
+    )
+    .error(
+        "a parallel worker is a function, not a method of a captured value (`c.scale(…)`) — read \
+         what `scale` needs from `c` into scalars first, and pass them after the element to a \
+         function: `f(a, k)` at a_par_method_on_a_captured_value_names_the_scalar_route:3:77",
     );
 }

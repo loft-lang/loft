@@ -423,3 +423,32 @@ fn an_elided_copy_skips_its_hook_and_its_drop_together() {
     }
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
+
+/// A copy made under a branch or per loop iteration: the lease is taken on exactly the paths that
+/// copy, and the copy drops where its binding ENDS — at the `if` arm's `}` (`@FR-B-Scope`) and at
+/// each iteration's end — never at the function's end.  INTERFACES.md said a binding inside an
+/// `if` lived to the end of the function; that was true until the block-scope rule, and a drop
+/// hook's timing is the one place a program can see it.
+#[test]
+fn a_copy_under_a_branch_or_a_loop_leases_per_path_and_drops_at_its_block() {
+    check(&[
+        (
+            "branch_taken",
+            "fn b(p: H, c: boolean) { if c { x = p; println(\"R{x.id}\"); } println(\"Rafter{p.id}\"); }\n\
+             fn main() { a = mk(1); b(a, true); println(\"back {a.id}\"); }",
+            "C1 R101 D101 Rafter1 back 1 D1",
+        ),
+        (
+            "branch_not_taken",
+            "fn b(p: H, c: boolean) { if c { x = p; println(\"R{x.id}\"); } println(\"Rafter{p.id}\"); }\n\
+             fn main() { a = mk(1); b(a, false); println(\"back {a.id}\"); }",
+            "Rafter1 back 1 D1",
+        ),
+        (
+            "per_iteration",
+            "fn l(p: H) { for i in 0..2 { x = p; println(\"R{x.id}\"); } }\n\
+             fn main() { a = mk(1); l(a); println(\"back {a.id}\"); }",
+            "C1 R101 D101 C1 R101 D101 back 1 D1",
+        ),
+    ]);
+}

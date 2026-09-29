@@ -308,7 +308,9 @@ and a worker whose first parameter type cannot take it — the check the sequent
 `b = func(a)` always made.  Read what you need INSIDE the worker (`func(a)` then `a.n`),
 and pass anything else after the element as a context argument.
 
-Form 3 (`c.method(a)` — captured receiver) is detected but not yet implemented.
+Form 3 (`c.method(a)` — captured receiver) is refused: a worker is a function, and a context
+argument must be a scalar (the worker runs on an isolated store clone), so read what the method
+needs from `c` into scalars first and pass those after the element, `f(a, k)`.
 
 ### Desugaring
 
@@ -338,7 +340,8 @@ data inline into the result vector; field access on the loop variable works dire
 
 - Any for-loop iterable is accepted as input (vector, range, `iterator<T>`,
   text, keyed collections) — non-vector sources are materialised first.
-- Form 3 (`c.method(a)` — captured receiver) is not yet supported.
+- Form 3 (`c.method(a)` — captured receiver) is refused; read what the method needs into
+  scalars and pass them as context arguments to a function instead.
 - The worker function may not write to shared state.
 
 ### Element Size

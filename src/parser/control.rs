@@ -5839,7 +5839,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "streaming `match` over an `iterator<{en}>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
+                        "a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<{en}>` is none of those — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
                     );
                 }
                 let match_pos = self.lexer.pos().clone();
@@ -6304,7 +6304,10 @@ impl Parser {
             // those slots from ITS OWN offsets and the one arm body reads them.
             // Emitted as one `if disc==Vi { binds_i; body }` branch per pattern —
             // identical to hand-expanding into separate single-pattern arms.
-            let mut multi_branches: Vec<(i32, Vec<Value>)> = Vec::new();
+            let mut multi_branches: Vec<(i32, Vec<Value>, Vec<Value>)> = Vec::new();
+            // The variants this arm's EXTRA patterns marked covered, so a guard parsed after
+            // them can take the marks back (`@FR-M-Total`: a guarded arm covers nothing).
+            let mut multi_covered: Vec<u32> = Vec::new();
             if self.lexer.peek_token(",") && valid_enum && e_nr != u32::MAX {
                 let shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
                     .iter()
@@ -6354,6 +6357,7 @@ impl Parser {
                     }
                     let disc = self.variant_disc(e_nr, is_struct, ev, &vname);
                     let mut stmts_i: Vec<Value> = Vec::new();
+                    let mut conds_i: Vec<Value> = Vec::new();
                     let names_i = if self.lexer.peek_token("{") {
                         self.parse_multi_pattern_extra_bindings(
                             ev,
@@ -6361,6 +6365,7 @@ impl Parser {
                             &subject_val,
                             &shared,
                             &mut stmts_i,
+                            &mut conds_i,
                         )
                     } else {
                         HashSet::new()
@@ -6376,39 +6381,29 @@ impl Parser {
                     }
                     // Union coverage (M-Total): each listed total pattern counts
                     // toward exhaustiveness, exactly like the `|` or-pattern arm.
-                    if !self.first_pass {
-                        covered.insert(ev);
+                    // A pattern with a field sub-pattern can fail on its field, so, like a
+                    // guarded arm, it covers nothing (`@FR-M-Total`).
+                    if !self.first_pass && conds_i.is_empty() && covered.insert(ev) {
+                        multi_covered.push(ev);
                     }
-                    multi_branches.push((disc, stmts_i));
-                }
-                // A field sub-pattern in the FIRST pattern makes its branch condition
-                // non-trivial (a `field_conditions` guard); that combination is Phase 4.
-                if !multi_branches.is_empty() && !field_conditions.is_empty() && !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4)"
-                    );
+                    multi_branches.push((disc, stmts_i, conds_i));
                 }
             }
 
             // parse optional guard clause after pattern + field bindings.
             // Field-bound variables are in scope for the guard expression.
             let guard_opt = self.parse_optional_guard();
-            // @PLN35 Phase 3: a guard on a multi-pattern arm must hold for whichever
-            // pattern matched; replicating it per branch is Phase 4.  Reject for now.
-            let guard_opt = if guard_opt.is_some() && !multi_branches.is_empty() {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a guard is not yet supported on a multi-pattern arm (Phase 4)"
-                    );
+            // @FR-P-Guard × @FR-P-Multi — a guard on a multi-pattern arm holds for whichever
+            // pattern matched: each extra pattern's branch below carries a clone of it, run
+            // after that branch's own bindings.  It was refused ("not yet supported") while the
+            // two rules it composes were each implemented.  A guard can reject, so the arm
+            // covers none of its variants — the extra patterns' coverage marks come back out.
+            let multi_guard = guard_opt.clone().filter(|_| !multi_branches.is_empty());
+            if multi_guard.is_some() {
+                for ev in multi_covered.drain(..) {
+                    covered.remove(&ev);
                 }
-                None
-            } else {
-                guard_opt
-            };
+            }
             // L2: combine field sub-pattern conditions with the explicit guard (if any).
             let guard_opt = if field_conditions.is_empty() {
                 guard_opt
@@ -6529,9 +6524,9 @@ impl Parser {
 
             // @PLN35 Phase 3: capture the raw arm body + type for the extra
             // multi-pattern branches before the single-arm assembly below consumes
-            // them.  A multi-pattern arm carries no guard and no field sub-pattern
-            // conditions (both rejected above), so each branch is a plain
-            // `block(binds_i; body)`.
+            // them.  A multi-pattern arm carries no field sub-pattern conditions
+            // (rejected above), so each branch is `block(binds_i; body)`, or its binds
+            // kept apart and the guard beside them when the arm has one.
             let multi_extra: Option<(Value, Type)> =
                 (!multi_branches.is_empty()).then(|| (arm_body.clone(), arm_type.clone()));
 
@@ -6562,7 +6557,7 @@ impl Parser {
             // the shared slots from its own variant offsets then running a CLONE of
             // the arm body — the hand-expanded form the single arm above equals.
             if let Some((body, tp)) = multi_extra {
-                for (disc, stmts_i) in multi_branches {
+                for (disc, stmts_i, conds_i) in multi_branches {
                     // #673 — the clone carries the FIRST pattern's `text` payload
                     // write-backs, but this branch binds the shared slots from its own
                     // variant's offsets.  Retarget the write-backs to the place this
@@ -6570,6 +6565,25 @@ impl Parser {
                     // writes the result into `A`'s.
                     let mut body_i = body.clone();
                     self.retarget_text_payload_writes(&mut body_i, &stmts_i);
+                    // This branch's own field conditions, then the arm's guard, all under
+                    // this branch's bindings.
+                    let branch_guard = conds_i
+                        .into_iter()
+                        .chain(multi_guard.clone())
+                        .reduce(|a, b| v_if(a, b, Value::Boolean(false)));
+                    if let Some(guard) = &branch_guard {
+                        let mut guard_i = guard.clone();
+                        self.retarget_text_payload_writes(&mut guard_i, &stmts_i);
+                        arms.push(EnumArm {
+                            discs: vec![disc],
+                            code: body_i,
+                            tp: tp.clone(),
+                            guard: Some(guard_i),
+                            bindings: stmts_i,
+                            cond: None,
+                        });
+                        continue;
+                    }
                     let code_i = if stmts_i.is_empty() {
                         body_i
                     } else {
@@ -8390,7 +8404,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "a `..rest` after a scalar repetition `{cap_name}:{tname}*` is not yet supported"
+                        "a `..rest` cannot follow the scalar repetition `{cap_name}:{tname}*` — the repetition already takes every element the pattern leaves; drop the rest"
                     );
                 }
                 self.lexer.has_token("..");
@@ -8405,7 +8419,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "only literal elements are supported after a scalar repetition `{cap_name}:{tname}*`"
+                        "only a literal can follow the scalar repetition `{cap_name}:{tname}*` — capture the tail with an arm of its own, or read it from `{cap_name}`'s end"
                     );
                 }
                 // Recover to the closing `]` so `token("]")` below succeeds and THIS diagnostic
@@ -8584,7 +8598,7 @@ impl Parser {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
-                                "per-iteration capture of the non-scalar field `{fname}` is not yet supported (only scalar/text fields project into a vector)"
+                                "a repetition collects the field `{fname}` only when it is a scalar or text — capture the elements instead, `(x: {real})*`, and read `{fname}` from each"
                             );
                         }
                         None if !self.first_pass => {
@@ -9371,10 +9385,11 @@ impl Parser {
     /// conditional-offset read `f = if tag==V1 { f@V1 } else if tag==V2 { f@V2 } …`).
     /// Enum tags are disjoint, so ordered choice reduces to a disjunction here.
     ///
-    /// Phase 4.1 scope: every branch binds the SAME captures at compatible types
-    /// (partial overlap → `option<T>` is Phase 4.2; a varying-width MULTI-element
-    /// alternative needs the slice cursor, Phase 4.3).  `elem` is the element value
-    /// at this position; it is cloned for each tag test and field read.
+    /// A capture bound by every branch takes the join of its types (`@FR-P-Alt-Same`); one
+    /// bound by only some is `τ?`, null when another branch matched (`@FR-P-Alt-Diff`).  A
+    /// branch may capture the whole element it matched, `a:V | b:W` (`@FR-G-Pat-Prec`).  A
+    /// varying-width MULTI-element alternative is `parse_multi_element_alternation`.  `elem`
+    /// is the element value at this position; it is cloned for each tag test and field read.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_alternation_element(
         &mut self,
@@ -9385,9 +9400,18 @@ impl Parser {
         elem_conds: &mut Vec<Value>,
     ) {
         self.lexer.token("(");
-        // (disc, variant_def_nr, fields: [(name, attr_idx, type)])
+        // (disc, variant_def_nr, fields: [(name, attr_idx, type)]) — an `attr_idx` of
+        // `usize::MAX` is a `name:` capture of the WHOLE element (`@FR-P-Cap`).
         let mut alts: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
+        let elem_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
         loop {
+            // `(G-Pat-Prec)` — `a:V | b:W` is `(a:V) | (b:W)`: a branch may capture the element
+            // it matched.  Read as a variant name, `a` then `:` was a parse error.
+            let branch_capture = self.lexer.peek_named_arg();
+            if branch_capture.is_some() {
+                self.lexer.has_identifier();
+                self.lexer.token(":");
+            }
             let Some(vname) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -9423,6 +9447,9 @@ impl Parser {
                 0
             };
             let mut fields: Vec<(String, usize, Type)> = Vec::new();
+            if let Some(cap) = branch_capture {
+                fields.push((cap, usize::MAX, elem_tp.clone()));
+            }
             if self.lexer.has_token("{") {
                 while let Some(fname) = self.lexer.has_identifier() {
                     let attr = if valid {
@@ -9523,7 +9550,11 @@ impl Parser {
             let mut acc = self.null(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
-                    let read = self.pattern_field_value(*vdef, *attr_idx, elem.clone());
+                    let read = if *attr_idx == usize::MAX {
+                        elem.clone()
+                    } else {
+                        self.pattern_field_value(*vdef, *attr_idx, elem.clone())
+                    };
                     let tag = self.elem_tag_int(elem.clone());
                     let test = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
                     acc = v_if(test, read, acc);
@@ -9562,6 +9593,7 @@ impl Parser {
         subject_val: &Value,
         shared: &std::collections::HashMap<String, (u16, Type)>,
         stmts: &mut Vec<Value>,
+        conds: &mut Vec<Value>,
     ) -> HashSet<String> {
         let mut bound: HashSet<String> = HashSet::new();
         self.lexer.token("{");
@@ -9576,17 +9608,39 @@ impl Parser {
             };
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
-                    // A field sub-pattern (`f: pat`) makes the branch condition
-                    // non-trivial — that is Phase 4.  Reject cleanly and skip.
+                    // `@FR-P-Point` — a field may itself be a pattern.  In a listed pattern
+                    // it TESTS the field and captures nothing, so it becomes this branch's
+                    // condition (the caller ANDs it into the branch's own guard).  A
+                    // sub-pattern that BINDS a name binds a fresh variable the shared arm body
+                    // never reads, so that one is refused by name rather than read wrongly.
                     if self.lexer.has_token(":") {
-                        if !self.first_pass {
+                        let field_read =
+                            self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                        let mut sub_binds: Vec<Value> = Vec::new();
+                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                        if let Some(c) = self.parse_field_sub_pattern(
+                            field_read,
+                            &field_type,
+                            &mut sub_binds,
+                            conds,
+                            &mut aliases,
+                        ) {
+                            conds.push(c);
+                        }
+                        if (!aliases.is_empty() || !sub_binds.is_empty()) && !self.first_pass {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
-                                "a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4)"
+                                "a capture inside `{field_name}`'s sub-pattern in a later pattern of a \
+                                 multi-pattern arm is not visible to the arm's body — capture it in \
+                                 the first pattern, or give this pattern an arm of its own"
                             );
                         }
-                        self.lexer.has_identifier();
+                        self.pattern_binds_pending.append(&mut aliases);
+                        if !self.lexer.has_token(",") {
+                            break;
+                        }
+                        continue;
                     }
                     match shared.get(&field_name) {
                         Some((var_nr, shared_ty)) => {
@@ -9629,7 +9683,7 @@ impl Parser {
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "multi-pattern arm: capture '{}' is not bound by the first pattern (partial overlap → option<T> is Phase 4)",
+                                    "multi-pattern arm: capture '{}' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own",
                                     field_name
                                 );
                             }

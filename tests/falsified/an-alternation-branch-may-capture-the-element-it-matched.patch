@@ -1,0 +1,121 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index e8376c108..a82985917 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5775,7 +5775,7 @@ impl Parser {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,
+-                        "a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<{en}>` is none of those — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
++                        "streaming `match` over an `iterator<{en}>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
+                     );
+                 }
+                 let match_pos = self.lexer.pos().clone();
+@@ -8340,7 +8340,7 @@ impl Parser {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,
+-                        "a `..rest` cannot follow the scalar repetition `{cap_name}:{tname}*` — the repetition already takes every element the pattern leaves; drop the rest"
++                        "a `..rest` after a scalar repetition `{cap_name}:{tname}*` is not yet supported"
+                     );
+                 }
+                 self.lexer.has_token("..");
+@@ -8355,7 +8355,7 @@ impl Parser {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,
+-                        "only a literal can follow the scalar repetition `{cap_name}:{tname}*` — capture the tail with an arm of its own, or read it from `{cap_name}`'s end"
++                        "only literal elements are supported after a scalar repetition `{cap_name}:{tname}*`"
+                     );
+                 }
+                 // Recover to the closing `]` so `token("]")` below succeeds and THIS diagnostic
+@@ -8534,7 +8534,7 @@ impl Parser {
+                             diagnostic!(
+                                 self.lexer,
+                                 Level::Error,
+-                                "a repetition collects the field `{fname}` only when it is a scalar or text — capture the elements instead, `(x: {real})*`, and read `{fname}` from each"
++                                "per-iteration capture of the non-scalar field `{fname}` is not yet supported (only scalar/text fields project into a vector)"
+                             );
+                         }
+                         None if !self.first_pass => {
+@@ -9321,11 +9321,10 @@ impl Parser {
+     /// conditional-offset read `f = if tag==V1 { f@V1 } else if tag==V2 { f@V2 } …`).
+     /// Enum tags are disjoint, so ordered choice reduces to a disjunction here.
+     ///
+-    /// A capture bound by every branch takes the join of its types (`@FR-P-Alt-Same`); one
+-    /// bound by only some is `τ?`, null when another branch matched (`@FR-P-Alt-Diff`).  A
+-    /// branch may capture the whole element it matched, `a:V | b:W` (`@FR-G-Pat-Prec`).  A
+-    /// varying-width MULTI-element alternative is `parse_multi_element_alternation`.  `elem`
+-    /// is the element value at this position; it is cloned for each tag test and field read.
++    /// Phase 4.1 scope: every branch binds the SAME captures at compatible types
++    /// (partial overlap → `option<T>` is Phase 4.2; a varying-width MULTI-element
++    /// alternative needs the slice cursor, Phase 4.3).  `elem` is the element value
++    /// at this position; it is cloned for each tag test and field read.
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     fn parse_slice_alternation_element(
+         &mut self,
+@@ -9336,18 +9335,9 @@ impl Parser {
+         elem_conds: &mut Vec<Value>,
+     ) {
+         self.lexer.token("(");
+-        // (disc, variant_def_nr, fields: [(name, attr_idx, type)]) — an `attr_idx` of
+-        // `usize::MAX` is a `name:` capture of the WHOLE element (`@FR-P-Cap`).
++        // (disc, variant_def_nr, fields: [(name, attr_idx, type)])
+         let mut alts: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
+-        let elem_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
+         loop {
+-            // `(G-Pat-Prec)` — `a:V | b:W` is `(a:V) | (b:W)`: a branch may capture the element
+-            // it matched.  Read as a variant name, `a` then `:` was a parse error.
+-            let branch_capture = self.lexer.peek_named_arg();
+-            if branch_capture.is_some() {
+-                self.lexer.has_identifier();
+-                self.lexer.token(":");
+-            }
+             let Some(vname) = self.lexer.has_identifier() else {
+                 if !self.first_pass {
+                     diagnostic!(
+@@ -9383,9 +9373,6 @@ impl Parser {
+                 0
+             };
+             let mut fields: Vec<(String, usize, Type)> = Vec::new();
+-            if let Some(cap) = branch_capture {
+-                fields.push((cap, usize::MAX, elem_tp.clone()));
+-            }
+             if self.lexer.has_token("{") {
+                 while let Some(fname) = self.lexer.has_identifier() {
+                     let attr = if valid {
+@@ -9486,11 +9473,7 @@ impl Parser {
+             let mut acc = self.null(&var_type);
+             for (disc, vdef, fields) in alts.iter().rev() {
+                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
+-                    let read = if *attr_idx == usize::MAX {
+-                        elem.clone()
+-                    } else {
+-                        self.pattern_field_value(*vdef, *attr_idx, elem.clone())
+-                    };
++                    let read = self.pattern_field_value(*vdef, *attr_idx, elem.clone());
+                     let tag = self.elem_tag_int(elem.clone());
+                     let test = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
+                     acc = v_if(test, read, acc);
+@@ -9619,7 +9602,7 @@ impl Parser {
+                                 diagnostic!(
+                                     self.lexer,
+                                     Level::Error,
+-                                    "multi-pattern arm: capture '{}' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own",
++                                    "multi-pattern arm: capture '{}' is not bound by the first pattern (partial overlap → option<T> is Phase 4)",
+                                     field_name
+                                 );
+                             }
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 61d04954f..2f949e161 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -27,7 +27,7 @@ impl Parser {
+         code: &mut Value,
+     ) -> Option<Type> {
+         if !self.lexer.peek_token("{")
+-            || !matches!(self.data.def(dnr).returned().base(), Type::Enum(_, true, _))
++            || !matches!(self.data.def(dnr).returned(), Type::Enum(_, true, _))
+         {
+             return None;
+         }
