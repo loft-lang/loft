@@ -9,6 +9,14 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `v != null` on a record view no longer declines a loop's hoist (2026-09-29)
+
+`OpEqRef` and `OpNeRef` compare two `DbRef`s and touch no store, but the header hoist's
+store-free list did not name them and its generic test refuses any op with a `reference`
+parameter, so a loop testing a nullable element view against null held no header and pushed
+through the general append.  Listed beside `OpRefIsNull`.  mesh3d's `mesh_to_floats` 6.48 →
+2.85 ms per op (36.9× → 15.8× of Rust) on this box, same hash; cell c18 of the growth cells.
+
 ### A pre-commit performance check, and the routines' trend (2026-09-29)
 
 `scripts/perf_check.py` (`make perf-check`) measures the lanes a compiler change touched —

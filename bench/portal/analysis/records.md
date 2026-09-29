@@ -495,3 +495,25 @@ mechanisms, in the order they were taken:
    runtime made after the call: 487 → **433 ns, 2.67×**, range 2.59–2.74).  The whole
    drawing bench under `LOFT_HOIST_VERIFY=1` prints the same hash.  **`smooth` is under the
    bar on this box**; the closing measurement for loft#1570 is the x86-64 laptop's.
+
+## `mesh_to_floats` (2026-09-29) — a null test on a view declined the whole loop
+
+Profiled alone (`perf` over the lane binary, symbols): `vector_append` 36 %, `append_done`
+13 %, `append_f32` 13 %, `pre_alloc_vector` 4 % — every one of the six `mf_buf += [x, y, z]`
+singles per vertex went through the GENERAL append, because the loop's hoist declined on
+`if mf_v != null`: `OpNeRef` / `OpEqRef` compare two `DbRef`s and touch no store, but they
+were not in the gate's store-free list (a `reference` parameter is not a scalar, so the
+generic test refused them).  Listed beside `OpRefIsNull`: **6.48 → 2.85 ms per op
+(36.9× → 15.8×)** on this box, same hash.  Cell c18 of
+`158-a-base-survives-a-growth-of-another-store.loft`.
+
+What the row still pays, re-profiled: the routine's own code 59 %, and a per-triangle
+`[mf_tri.a, mf_tri.b, mf_tri.c]` — a scalar vector LITERAL walked by `for`: a loop buffer
+reset, a reservation, three general `append_i64`s and a length and element read per step
+through the store (`vector_append` 13 %, `length_vector` 6 %, `append_i64` 5 %, `get_vector`
+4 %).  The nullable view `mf_v` holds no address: its store is the parameter's and the
+remainder grows the adopted result buffer, which the store oracle keeps apart from no
+parameter on purpose.  The lever is a scalar vector literal of constant length carried as
+an ARRAY — a local (`for i in [a, b, c]`, walked without a store) or a record field
+(`Mat4 { m: [16 floats] }`, mat4_mul 38×): one representation clause beside the value
+record, § Order item 7 of the evaluation, and the next unit for both rows.

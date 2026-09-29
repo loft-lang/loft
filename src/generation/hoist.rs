@@ -72,14 +72,18 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 33] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 35] = [
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
-    // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer)
+    // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer);
+    // `v != null` / `v == null` on a record view compare two `DbRef`s the same way (the
+    // mesh3d `mesh_to_floats` loop declined every header on that test alone)
     "OpRefIsNull",
     "OpConvBoolFromRef",
     "OpDistinctStore",
     "OpRefAlias",
+    "OpEqRef",
+    "OpNeRef",
     // element address + length: the vector reads themselves
     "OpGetVector",
     "OpGetVectorNullable",
