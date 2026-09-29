@@ -16806,9 +16806,8 @@ impl Parser {
                     // the flat top-level comma list (`use lib::a, b`) is dropped (it
                     // read poorly — `b` didn't visually bind to `lib::`).
                     let spec = self.parse_import_spec(&id);
-                    if spec.is_none() && lib_alias.is_none() {
-                        self.data.record_bare_use(self.data.source, &id);
-                    }
+                    // Recorded where the `use` BINDS, with the source it bound (@C98).
+                    let bare_use = spec.is_none() && lib_alias.is_none();
                     if spec.is_none() {
                         self.refuse_bare_pub_use(&id);
                     }
@@ -16859,6 +16858,9 @@ impl Parser {
                     }
                     if self.data.use_exists(&id) {
                         let lib_source = self.data.get_source(&id);
+                        if bare_use {
+                            self.data.record_bare_use(self.data.source, &id, lib_source);
+                        }
                         // @PLN22 Phase 3 — register the library alias for `m::` access.
                         if let Some(alias) = &lib_alias {
                             self.data.use_alias(alias, lib_source);
@@ -17745,6 +17747,7 @@ impl Parser {
         // — unchanged from before, and now the only thing they share: each package's own
         // module, and every bare name it exports, is its own.
         let bare_qualifier = spelling.is_empty();
+        let bare_use = spec.is_none() && alias.is_none();
         let key = format!("{pkg}::{module}");
         // loft#1080 — the module may already be loaded under a DIFFERENT name.  This key
         // is deliberately `<pkg>::<module>` so no other package can take the name from
@@ -17774,6 +17777,10 @@ impl Parser {
             self.source_loaded_from(f)
         };
         if let Some(lib_source) = existing {
+            if bare_use {
+                self.data
+                    .record_bare_use(self.data.source, module, lib_source);
+            }
             if !self.data.use_exists(&key) {
                 self.data.use_alias(&key, lib_source);
                 self.record_use_path(&key, f);
@@ -17805,8 +17812,12 @@ impl Parser {
             return;
         }
         let cur = self.lexer.pos().file.to_string();
-        self.todo_files.push((cur, self.data.source));
+        let into = self.data.source;
+        self.todo_files.push((cur, into));
         self.data.use_add(&key);
+        if bare_use {
+            self.data.record_bare_use(into, module, self.data.source);
+        }
         self.record_use_path(&key, f);
         if let Some(a) = alias {
             self.data.use_alias(a, self.data.source);
