@@ -494,6 +494,8 @@ def main():
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
     ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", os.path.join(ROOT, "target/release")))
     a = ap.parse_args()
+    # The janitor runs beside the builds this starts, detached (RUN_BOUNDS.md § Scratch hygiene).
+    subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 
     lanes = [x for x in a.lanes.split(",") if x]
     unknown = set(lanes) - {"native", "rust", "interp", "python"}

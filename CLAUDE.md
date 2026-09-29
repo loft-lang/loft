@@ -162,6 +162,10 @@ make work                                # the open issues that are PICK-UP work
 make disk-headroom                       # ROOM FOR A GATE: every gate runs this first; by hand
                                          #   when a build says `No space left on device`.  This
                                          #   checkout's scratch only, never a sibling's live run
+make janitor-install                     # once per box: scripts/disk_janitor.sh runs, detached,
+                                         #   beside every agent build (a user-level hook) and
+                                         #   beside find_problems/stats.py — every checkout's
+                                         #   stale artefacts, under cargo's build lock
 make sweep-scratch                       # reclaim loft's temp scratch (dead-process native
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
