@@ -448,6 +448,29 @@ comparison asks the bound spelling (`tagged_pointer_type`); the `is` capture's b
 reaches a nullable payload through the shared `element_view_of`.  Guard
 `tests/scripts/a-pattern-binds-a-nullable-record-field-through-its-tag.loft`.
 
+D-layout-11 OPENED AND CLOSED 2026-09-29: `(L-Null-Which)`'s struct-enum clause — a value
+leaving a struct-enum slot for a non-slot position is read through its discriminant at that point
+— was asked only of a slot declared `E?`.  `(L-Null)` gives `E` and `E?` one layout, and
+`(N-Store)` lets a `null` into an `E` field or `vector<E>` element with a warning, after which the
+slot holds it; so `s.e == null` read true while `s.e ?? d`, `s.e?`, `x = s.e; x == null`, an `E?`
+argument, an `E?` return and a `vector<E>` element's `??` all read present, and a `match` on the
+argument fell through every arm, on both backends and with nothing reported.  Closed at the gate,
+`Parser::enum_slot_view`, which no longer asks for the `?`, and the element walk
+(`views_a_nullable_element_slot`) now reaches a `vector<E>` as well as a `vector<E?>`.
+
+The walk's other shape came with it.  A local bound from a call that returns an element
+(`b = head(v)`) has deps naming the vector, so it took the slot test, and it holds a whole HANDLE
+— `nullref` when the callee answered absent.  Read through that handle the slot word said present:
+`head([])` on a `vector<E?>` answered a value on every build since the test existed, and
+`head([null, …])` did too once loft#1529 read a returned element through to `nullref` (2026.9.0
+answered it right; `main` at 70079f138 did not).  The test now asks the handle's null first and
+the slot word only of a handle that exists, which is exact for both shapes.
+
+Not covered: a `for e in v` loop variable over a `vector<E>` of a hand-written struct-enum is typed
+`Reference(E)` (`Parser::for_type`), a spelling the null tests, the `E?` argument and the `??`
+variant join do not recognise — measured refused or present, and pre-existing.  Guard
+`tests/scripts/a-struct-enum-slot-holding-null-reads-null-wherever-it-goes.loft`.
+
 D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
 views to compute the SAME offsets and says their agreement *"is part of the rule, not an
 implementation detail"*.  They did not agree when one tuple type was written BOTH ways in a

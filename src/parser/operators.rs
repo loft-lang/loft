@@ -949,8 +949,18 @@ impl Parser {
                 // chain: the loop variable's own dep names ITSELF, and only its
                 // declaration's dep names the vector. A plain local, parameter or return
                 // reaches no collection that way and keeps the handle test.
+                //
+                // A variable that views the vector is not always a slot, though: a local
+                // bound from a call that returns an element (`b = head(v)`) has the same
+                // deps and holds a whole HANDLE, `nullref` when the callee answered absent.
+                // Read through that handle the word says "present" — `head([])` answered a
+                // value, and since loft#1529 read a returned element through to `nullref`,
+                // `head([null])` did too.  So the handle's own null is asked first and the
+                // slot word only of a handle that exists; each shape answers exactly.
+                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
                 let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
-                self.cl("OpEqInt", &[word, Value::Int(0)])
+                let empty_slot = self.cl("OpEqInt", &[word, Value::Int(0)]);
+                v_if(null_handle, Value::Boolean(true), empty_slot)
             } else if let Some((base, fld)) = self.inline_slot_word(&operand) {
                 // loft#1071 — an INLINE slot (a struct field) is a four-byte RECORD
                 // POINTER, which cannot hold the twelve-byte store_nr sentinel at all.

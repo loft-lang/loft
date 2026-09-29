@@ -203,8 +203,13 @@ impl Parser {
                 let dt = self.vars.tp(d);
                 if Self::is_collection_type(dt.base()) {
                     // The walk stops at the FIRST collection: that is the one this value
-                    // would be a slot of, and a dense one settles the question.
-                    return matches!(dt.base(), Type::Vector(elm, _) if matches!(**elm, Type::Optional(_)));
+                    // would be a slot of, and a dense one settles the question.  A bare
+                    // `vector<E>` of a struct-enum is not dense in that sense: `(L-Null)`
+                    // gives `E` and `E?` one layout and `(N-Store)` lets a `null` into the
+                    // element, so its slot can be absent exactly as a `vector<E?>` one can.
+                    // The element may be spelled `ref(E)`, hence `enum_context`.
+                    return matches!(dt.base(), Type::Vector(elm, _)
+                        if matches!(**elm, Type::Optional(_)) || self.enum_context(elm));
                 }
                 next.extend(dt.depend());
             }
