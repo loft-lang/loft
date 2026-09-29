@@ -68,6 +68,10 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
               Enum ⤳ Integer tag).  NB: the null INTRO `S ⤳ S?` is `(N-Intro)`; there is
               NO implicit `S? ⤳ S` unwrap (that is `(N-Store)`-illegal — discharge via `??`)
   (C-Int)     Integer[a,b] ⤳ Integer[c,d]   ⟸   [a,b] ⊆ [c,d]         (see I-*)
+  (C-Num)     Integer ⤳ float,  Integer ⤳ single,  single ⤳ float     (a numeric WIDENING;
+              the value is converted, never reinterpreted — and through (C-Tuple) a tuple
+              member is converted like any other slot.  `float ⤳ single` is not one: it
+              narrows, and takes an explicit `as`.)
   (C-Ref)     &τ ⤳ σ   ⟸   τ ⤳ σ      (a reference reads through to its referent; there
               is NO  σ ⤳ &τ  — a reference is made only by `&` at a binding, never coerced)
 ```
@@ -76,6 +80,8 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
 `σ` is wanted, no cast needed." The rules list the safe cases: the same type; a `Never`
 (a `return`/`break`, which fits anywhere); tuples element-by-element; a struct used as one
 of an enum's variants (and the nullable/tag duals); and an integer into a *wider* integer.
+`(C-Num)` is the numeric table in [LOFT.md § Type-conversion rules](../LOFT.md) — it was
+promised there and implemented at four of the five store sites before it was written here.
 `(C-Int)` means **width lives inside `⤳`**: an integer flows into another integer iff its
 range fits. There is no separate width authority. `is_equal` answers only the *width-free*
 base-type question ("is this `integer`?" — correctly *yes* for every width); `convert` and
@@ -684,8 +690,29 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1** — D-types-17.
 
+* **D-types-17** *(opened 2026-09-29, OPEN — loft#1742)* — a tuple carrying a HEAP member
+  (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out of a
+  function is REFUSED when the returned value is a CALL: `fn back(k) -> (text, float) { mk(k) }`
+  over `mk -> (text, integer)` says *"expected (text, float), got (text, integer) on return
+  from block"*.  The same value held in a variable first returns correctly (D-types-15).  The
+  return rewrite (`rewrite_tail_tuple_with_work_ref`) stores a stored-spelling tail as it is;
+  converting it before the rewrite answered `null` — a refusal kept over a wrong answer.
+* **D-types-15, D-types-16** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Num)`, which this
+  chapter did not state although LOFT.md's conversion table promises it, through `(C-Tuple)`.
+  **-15**: a tuple that is not a LITERAL was stored bit for bit, so a member widening from
+  `integer` to `float` or `single` was REINTERPRETED — `a: (integer, integer) = (1, 2)` stored
+  as `(integer, float)` read `(1, 1e-323)` on the interpreter and did not compile natively (E0308),
+  at every site: a local, an argument, a return, a field, a vector element, nested members.  A
+  stored-spelling source (a heap-carrying tuple, `__tuple<…>`) had no conversion at all and was
+  refused.  Such a tuple is now rebuilt from its converted member reads (`convert`'s tuple arm;
+  a stored source is unboxed at its OWN members first; a returned variable is rewritten before
+  the synthetic return stores it).  **-16**: the scalar `f: float = a` — `(C-Num)` into a LOCAL —
+  was refused as *"cannot change type from float to integer"*, naming the change backwards,
+  while the other four sites converted; the variable seam now converts before it retypes.
+  Guards `tests/scripts/a-tuple-converts-member-by-member.loft` (-15's wrong values) and
+  `tests/scripts/a-numeric-widening-reaches-a-local-and-a-stored-tuple.loft` (the refusals).
 * **D-types-10 to D-types-14** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(I-Lit)`,
   `(I-Narrow)` and `(I-Narrow-Opt)` name no exception for HOW a value reaches a narrow slot, and
   a walk of the ways one does found five that disagreed.  Each held for the direct store and

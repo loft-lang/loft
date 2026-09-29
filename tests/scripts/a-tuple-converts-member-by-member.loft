@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-C-Tuple` over `@FR-C-Num` — a tuple converts member by member, and a member whose
+// conversion changes its REPRESENTATION (`integer` → `float`, `integer` → `single`) must have
+// that conversion applied.  A tuple LITERAL always had it; a tuple held in a VARIABLE, returned
+// by a call, or read from a struct was copied bit for bit: `(1, 2)` stored as `(integer, float)`
+// read back `(1, 1e-323)` on the interpreter and did not compile natively, at every site a value
+// reaches a slot (formal/types.md D-types-15).  This file holds the cells the pre-fix tree
+// answered WRONG; `a-numeric-widening-reaches-a-local-and-a-stored-tuple.loft` the refusals.
+//
+// Axes this file MOVES:  the site (local, argument, return, field, vector element), the width
+//                        (`float`, `single`), nested members beside a narrow member.
+// Axes it HOLDS FIXED:   non-null tuples.
+//
+// @falsified-at: 9c3c6cf78 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-tuple-converts-member-by-member.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter (the reinterpreted values); exit on native, whose
+//   pre-fix emission of the same store did not compile (E0308).
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+struct P { p: (integer, float) }
+
+fn arg(p: (integer, float)) -> float { p.1 * 2.0 }
+fn ret(k: integer) -> (integer, float) { a: (integer, integer) = (k, k + 1); a }
+
+fn test_a_tuple_variable_converts_each_member() {
+  a: (integer, integer) = (1, 2);
+  x: (integer, float) = a;
+  y: (integer, single) = a;
+  p = P { p: a };
+  v: vector<(integer, float)> = [a];
+  n: ((u8, integer), u8) = ((4, 5), 6);
+  m: ((integer, float), u16) = n;
+  got = "{x.1 + 0.5} {y.1} {arg(a)} {ret(7).1} {p.p.1} {v[0].1} {m.0.1} {m.1}";
+  assert(got == "2.5 2 4 8 2 2 5 6", "tuple members: {got}");
+}

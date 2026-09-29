@@ -1,0 +1,180 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index d5d8daa6d..bb2b4543b 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -4474,36 +4474,6 @@ impl Parser {
+         // loft#821 — a leaf that IS a stack tuple but is not written as one.  Reading it
+         // element-by-element is what the literal path does too; `emit_tuple_set_ops`
+         // stashes the source once and writes each element at the record's own offset.
+-        // `@FR-C-Tuple` over `@FR-C-Num` — a returned tuple variable whose member changes
+-        // REPRESENTATION on the way into the declared return (`integer` → `float`) is written
+-        // member by member below at the VARIABLE's types, which stored an `integer`'s bits into
+-        // the `float` slot.  It is rewritten into the literal of its converted member reads,
+-        // which the literal path writes at the declared types.
+-        if !self.first_pass
+-            && let Value::Var(v) = tail.unspan()
+-            && let Type::Tuple(elems) = self.vars.tp(*v).base()
+-        {
+-            let v = *v;
+-            let elems = elems.clone();
+-            let declared: Vec<Type> = self
+-                .data
+-                .def(synthetic_d_nr)
+-                .attributes()
+-                .iter()
+-                .map(|a| a.typedef.clone())
+-                .collect();
+-            if declared.len() == elems.len()
+-                && elems.iter().zip(&declared).any(|(s, d)| self.changes_representation(s, d))
+-            {
+-                let mut members = Vec::with_capacity(elems.len());
+-                for (i, (s, d)) in elems.iter().zip(&declared).enumerate() {
+-                    let mut member = Value::TupleGet(v, i as u16);
+-                    self.convert(&mut member, s, d);
+-                    members.push(member);
+-                }
+-                *tail = Value::Tuple(members);
+-            }
+-        }
+         if let Value::Var(v) = tail.unspan()
+             && let Type::Tuple(elems) = self.vars.tp(*v).base()
+         {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 592ef7a63..f68ee4d31 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -5731,19 +5731,6 @@ use a separate collection or add after the loop"
+             };
+             *code = crate::data::v_if(test, sentinel, copy);
+         }
+-        // `@FR-C-Num` — a numeric WIDENING into a variable is the same implicit conversion it is
+-        // into an argument, a field, an element or a return, all of which reach `convert`; the
+-        // variable seam instead retyped the variable to the value's type, so `f: float = a`
+-        // (and `f = a` on a `float` local) was refused as "cannot change type from float to
+-        // integer" — naming the change backwards, for a program the conversion table admits.
+-        if op == "="
+-            && let Value::Var(v) = to.unspan()
+-            && let target = self.vars.tp(*v).clone()
+-            && self.changes_representation(&s_type, &target)
+-            && self.convert(code, &s_type, &target)
+-        {
+-            s_type = target;
+-        }
+         self.change_var(to, &s_type);
+         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
+         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
+@@ -8724,16 +8711,6 @@ use a separate collection or add after the loop"
+         }
+     }
+ 
+-    /// `@FR-C-Num` — the numeric widenings the conversion table makes implicit: an integer or
+-    /// a `single` into a `float`, and an integer into a `single`.  Asked of the BASE types, so
+-    /// a nullable side takes the same answer (the null rules are asked apart).
+-    pub(crate) fn is_numeric_widening(from: &Type, to: &Type) -> bool {
+-        matches!(
+-            (from.base(), to.base()),
+-            (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
+-        )
+-    }
+-
+     /// Is this expression itself a null discharge (`a ?? b`)?
+     fn is_root_discharge(v: &Value) -> bool {
+         matches!(v.unspan(), Value::Block(bl) if bl.name == "ncc")
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 5e56e208b..ae2f9949c 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -4703,26 +4703,6 @@ impl Parser {
+         Self::is_narrowing_int(is_type.base(), inner.base())
+     }
+ 
+-    /// Does converting a `from` value to `to` change its representation — a numeric widening
+-    /// (`@FR-C-Num`), at the top or inside a tuple member (`@FR-C-Tuple`)?  An integer width
+-    /// change is not one: every integer member is carried full-width until it is stored.
+-    /// A tuple in its STORED spelling (`Reference(__tuple<…>)`, loft#822) is asked by its
+-    /// members like the stack spelling.
+-    pub(crate) fn changes_representation(&self, from: &Type, to: &Type) -> bool {
+-        let members = |tp: &Type| match tp.base() {
+-            Type::Tuple(m) => Some(m.clone()),
+-            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+-                Some(self.stored_tuple_elements(tp.base()))
+-            }
+-            _ => None,
+-        };
+-        if let (Some(a), Some(b)) = (members(from), members(to)) {
+-            return a.len() == b.len()
+-                && a.iter().zip(&b).any(|(x, y)| self.changes_representation(x, y));
+-        }
+-        Self::is_numeric_widening(from, to)
+-    }
+-
+     /// `@FR-I-Sub` / `@FR-C-Int` — `Integer[a,b] <: Integer[c,d]` iff `[a,b] ⊆ [c,d]`, and this
+     /// is its one home: every implicit integer flow asks it.  `false` is `@FR-I-Widen` (a
+     /// superset target is implicit); `true` hands the store to `@FR-I-Narrow`.
+@@ -5943,41 +5923,10 @@ impl Parser {
+                     break;
+                 }
+             }
+-            let literal = !items.is_empty();
+-            if literal && let Value::Tuple(elements) = code.unspan_mut() {
+-                *elements = items;
+-            }
+-            // `@FR-C-Tuple` over `@FR-C-Num` — a member whose conversion changes the
+-            // REPRESENTATION (`integer` → `float`) needs that conversion applied, and a tuple
+-            // that is not a literal has no member expression to apply it to: the loop above
+-            // converted a placeholder, and the tuple was copied bit for bit — `(1, 2)` held in a
+-            // variable read back `(1, 1e-323)` as `(integer, float)` on the interpreter and did
+-            // not compile natively.  Such a tuple is rebuilt from its members, each converted.
+-            if all_compatible
+-                && !literal
+-                && !self.first_pass
+-                && !matches!(is_type, Type::Optional(_))
+-                && !matches!(should, Type::Optional(_))
+-                && src_elems
+-                    .iter()
+-                    .zip(dst_elems.iter())
+-                    .any(|(s, d)| self.changes_representation(s, d))
++            if !items.is_empty()
++                && let Value::Tuple(elements) = code.unspan_mut()
+             {
+-                let tmp = self.create_unique("_tconv", is_type);
+-                let mut members = Vec::with_capacity(src_elems.len());
+-                for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
+-                    let mut member = Value::TupleGet(tmp, i as u16);
+-                    self.convert(&mut member, s, d);
+-                    // The member is READ out of the temporary, so its type names it — which is
+-                    // what makes a heap member take the copy a hand-written `(t.0, …)` gets.
+-                    self.tuple_member_owned_copy(&mut member, &d.with_deps(&Deps::frame1(tmp)));
+-                    members.push(member);
+-                }
+-                *code = v_block(
+-                    vec![v_set(tmp, code.clone()), Value::Tuple(members)],
+-                    should.clone(),
+-                    "tuple_convert",
+-                );
++                *elements = items;
+             }
+             if all_compatible {
+                 return true;
+@@ -5998,21 +5947,6 @@ impl Parser {
+         // 12 bytes of DbRef where the reader expects the elements.  So the conversion is
+         // a real one — `unbox_tuple_from_dbref` reads each element at its stored offset
+         // and rebuilds the stack tuple, exactly as `v[i]` already does.
+-        // …and a stored tuple whose member changes REPRESENTATION on the way (`@FR-C-Num`) is
+-        // unboxed at its OWN members — the destination's would name another `__tuple` def
+-        // with other offsets — and then converted member by member like a stack tuple.
+-        if let (Type::Reference(d, _), Type::Tuple(_)) = (is_type, should)
+-            && self.data.def(*d).name().starts_with("__tuple<")
+-            && !self.unboxes_stored_tuple(is_type, should)
+-            && self.changes_representation(is_type, should)
+-        {
+-            let src = Type::Tuple(self.stored_tuple_elements(is_type));
+-            if !self.first_pass && !matches!(code.unspan(), Value::Null) {
+-                let elems = self.stored_tuple_elements(is_type);
+-                *code = self.unbox_tuple_from_dbref(code.clone(), &elems);
+-            }
+-            return self.convert(code, &src, should);
+-        }
+         if self.unboxes_stored_tuple(is_type, should) {
+             // A `Value::Null` here is the shape-only probe the Tuple→Tuple arm above
+             // runs for a non-literal source; there is no expression to unbox.

@@ -5731,6 +5731,19 @@ use a separate collection or add after the loop"
             };
             *code = crate::data::v_if(test, sentinel, copy);
         }
+        // `@FR-C-Num` — a numeric WIDENING into a variable is the same implicit conversion it is
+        // into an argument, a field, an element or a return, all of which reach `convert`; the
+        // variable seam instead retyped the variable to the value's type, so `f: float = a`
+        // (and `f = a` on a `float` local) was refused as "cannot change type from float to
+        // integer" — naming the change backwards, for a program the conversion table admits.
+        if op == "="
+            && let Value::Var(v) = to.unspan()
+            && let target = self.vars.tp(*v).clone()
+            && self.changes_representation(&s_type, &target)
+            && self.convert(code, &s_type, &target)
+        {
+            s_type = target;
+        }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
@@ -8709,6 +8722,16 @@ use a separate collection or add after the loop"
                 );
             }
         }
+    }
+
+    /// `@FR-C-Num` — the numeric widenings the conversion table makes implicit: an integer or
+    /// a `single` into a `float`, and an integer into a `single`.  Asked of the BASE types, so
+    /// a nullable side takes the same answer (the null rules are asked apart).
+    pub(crate) fn is_numeric_widening(from: &Type, to: &Type) -> bool {
+        matches!(
+            (from.base(), to.base()),
+            (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
+        )
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?

@@ -4474,6 +4474,39 @@ impl Parser {
         // loft#821 — a leaf that IS a stack tuple but is not written as one.  Reading it
         // element-by-element is what the literal path does too; `emit_tuple_set_ops`
         // stashes the source once and writes each element at the record's own offset.
+        // `@FR-C-Tuple` over `@FR-C-Num` — a returned tuple variable whose member changes
+        // REPRESENTATION on the way into the declared return (`integer` → `float`) is written
+        // member by member below at the VARIABLE's types, which stored an `integer`'s bits into
+        // the `float` slot.  It is rewritten into the literal of its converted member reads,
+        // which the literal path writes at the declared types.
+        if !self.first_pass
+            && let Value::Var(v) = tail.unspan()
+            && let Type::Tuple(elems) = self.vars.tp(*v).base()
+        {
+            let v = *v;
+            let elems = elems.clone();
+            let declared: Vec<Type> = self
+                .data
+                .def(synthetic_d_nr)
+                .attributes()
+                .iter()
+                .map(|a| a.typedef.clone())
+                .collect();
+            if declared.len() == elems.len()
+                && elems
+                    .iter()
+                    .zip(&declared)
+                    .any(|(s, d)| self.changes_representation(s, d))
+            {
+                let mut members = Vec::with_capacity(elems.len());
+                for (i, (s, d)) in elems.iter().zip(&declared).enumerate() {
+                    let mut member = Value::TupleGet(v, i as u16);
+                    self.convert(&mut member, s, d);
+                    members.push(member);
+                }
+                *tail = Value::Tuple(members);
+            }
+        }
         if let Value::Var(v) = tail.unspan()
             && let Type::Tuple(elems) = self.vars.tp(*v).base()
         {
