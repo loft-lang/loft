@@ -29,6 +29,8 @@
 // loop cells did not compile, which here would have hidden every value cell behind a refusal.
 //
 // @falsified-at: 8bd1fec16 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/a-struct-enum-slot-holding-null-reads-null-wherever-it-goes.patch
+//   — the same channels.
 // HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Sh { Dot { r: integer }, Sq { w: integer } }

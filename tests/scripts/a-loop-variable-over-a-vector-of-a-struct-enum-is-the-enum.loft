@@ -15,6 +15,14 @@
 //
 // Axes this file MOVES:  the element's declaration (`Sh` · `Sh?`), presence, read vs write.
 // Axes it HOLDS FIXED:   the collection (a `vector`; keyed collections iterate records).
+//
+// @falsified-at: 8bd1fec16 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit, and it
+//   is a COMPILE refusal (no assertion ran on the control): `show(e)` and `e ?? Sq {…}` were
+//   refused, which is the defect's loudest face.  The null-read face is scored by the slot
+//   guard's element cell.
+// @falsified-by: tests/falsified/a-loop-variable-over-a-vector-of-a-struct-enum-is-the-enum.patch
+//   — the same channel.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Sh { Dot { r: integer }, Sq { w: integer } }
 
