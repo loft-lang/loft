@@ -5115,10 +5115,30 @@ impl Parser {
     /// `OpVectorIsNull` — where a scalar compares against a `…FromNull` literal.  Callers that
     /// read a null proof out of a condition need both spellings; this is the heap one, and it
     /// answers only for a plain variable, which is the only place a proof can be recorded.
+    ///
+    /// A NULLABLE STRUCT held inline — a `vector<P?>` element, a `for` variable over one — is
+    /// the synthetic `__nullable<P>` enum (`Data::is_nullable_wrapper`), whose null test is its
+    /// discriminant: `OpEqInt(OpConvIntFromEnum(OpGetEnum(v, 0)), 0)`, the `== null` lowering
+    /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
+    /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
+    /// ordinary enum's discriminant test says nothing about null.
     fn heap_null_test(&self, test: &Value) -> Option<u16> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
+        if self.data.def(*op).name() == "OpEqInt"
+            && let [lhs, Value::Int(0)] = args.as_slice()
+            && let Value::Call(conv, conv_args) = lhs.unspan()
+            && self.data.def(*conv).name() == "OpConvIntFromEnum"
+            && let [get] = conv_args.as_slice()
+            && let Value::Call(get_op, get_args) = get.unspan()
+            && self.data.def(*get_op).name() == "OpGetEnum"
+            && let [subject, Value::Int(0)] = get_args.as_slice()
+            && let Value::Var(v) = subject.unspan()
+            && self.data.is_nullable_wrapper(self.vars.tp(*v))
+        {
+            return Some(*v);
+        }
         if args.len() != 1 || !matches!(self.data.def(*op).name(), "OpRefIsNull" | "OpVectorIsNull")
         {
             return None;
@@ -20181,6 +20201,13 @@ impl Parser {
     /// function or lambda tail and a default reach the literal only through this channel, and
     /// it admitted narrow integers alone — so `f([1, 2])` into a `vector<float>` was refused
     /// while `v: vector<float> = [1, 2]` compiled.
+    ///
+    /// A NULLABLE element at any level (`vector<text?>`, `vector<P?>`,
+    /// `vector<vector<integer>?>`) seeds too: `@FR-N-Decl` — a declared slot is a commitment,
+    /// and an inferred literal stays dense, so the declared `?` is the one fact the literal
+    /// cannot infer.  Built dense and converted after, it cannot be: a `P?` element is stored as
+    /// `__nullable<P>` (`Data::is_nullable_wrapper`), a different layout, so `f(["a", null])`
+    /// was refused where the same literal in a declared local is accepted.
     ///
     /// The one element type that must NOT seed is one still naming a TYPE VARIABLE (a generic
     /// `vector<T>` parameter): the literal cannot be built at an abstract element type, and

@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULL TEST ON AN INLINE NULLABLE STRUCT NARROWS IT (`@FR-N-Decl`, `@FR-N-Store`).  An element
+// of a `vector<P?>`, and a `for` variable over one, holds its `P?` as the synthetic
+// `__nullable<P>` enum, whose null test is its discriminant.  That test proved nothing, so inside
+// `if e != null { … }` a field read `e.a` stayed `integer?`: a sum over it warned that a nullable
+// was stored into a non-null return, and an inferred local read from it was `integer?`.  A `P?`
+// PARAMETER, the `Optional` spelling, narrowed all along.
+//
+// @falsified-at: 62b857086 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-null-test-on-an-inline-nullable-struct-narrows-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the then-side assertion on both backends — the control types `e.a` as `integer?`.
+// HOLDS: leak, panic and free-refusal are clean on both trees; the control compiles, so the
+//   assertion channel is the only one that moves.
+
+struct P { a: integer }
+
+fn total(v: vector<P?>) -> integer {
+  s = 0;
+  for e in v { if e != null { s += e.a; } }
+  s
+}
+
+fn main() {
+  v: vector<P?> = [P { a: 1 }, null, P { a: 4 }];
+  assert(total(v) == 5, "the sum over the present elements: {total(v)}");
+  for e in v {
+    if e != null {
+      assert(type_name(e.a) == "integer", "then-side proof: {type_name(e.a)}");
+    }
+    if e == null {
+      assert(true, "absent");
+    } else {
+      assert(type_name(e.a) == "integer", "else-side proof: {type_name(e.a)}");
+    }
+  }
+}
