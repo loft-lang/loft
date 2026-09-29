@@ -87,6 +87,9 @@ files would.  The win is the *uniform* convention, not GitHub itself.
   keep the legacy `@P###` token in the title so OLD doc references still grep
   (`gh search issues "@P396"`).  The canonical way docs *reference* an issue is the
   indexed `@GH###` token (below), not the bare gh number.
+  A title names the TARGET, never a measurement: on a long-running issue (a
+  performance population, a class several streams work on) today's figure is stale
+  by the next stream's commit.  The numbers go in the body, dated, as a snapshot.
 - **Reference token: `@GH###`** (the indexed tracker) — docs reference a gh issue
   as `@GH<number>` (e.g. `@GH247`), NOT bare `#247` / `loft#247`.  The `@`-prefix
   makes it an INDEXED token exactly like `@P###` / `@PLAN###`: `scan.loft` finds
