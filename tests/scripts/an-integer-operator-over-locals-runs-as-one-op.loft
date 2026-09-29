@@ -6,7 +6,8 @@
 // The bytecode generator fuses `a op b` and `a op 7` — and `x = a op 7`, the store included —
 // into a single op that reads its operands in place instead of pushing them first
 // (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`), and an `if`
-// or loop test into one compare-and-jump (`OpCmpIntVVJump`, `OpCmpIntVCJump`).  Each fused
+// or loop test into one compare-and-jump (`OpCmpIntVVJump`, `OpCmpIntVCJump`), and the step
+// of a `for c in text` walk into `OpTextWalkStep`.  Each fused
 // op calls the unfused operator's own function, so what can go wrong is WHERE its operands
 // come from: every position is taken at the stack height the op starts at, where the unfused
 // second read was taken eight bytes higher, and a fused store addresses its target as the
@@ -61,6 +62,24 @@ fn test_branch() {
   assert(branch(3, 3) == "eq NE LT le e3 L3", "equal operands take each branch right");
   assert(branch(2, 3) == "EQ ne lt le E3 l3", "a smaller first operand");
   assert(branch(4, 3) == "EQ ne LT LE E3 L3", "a larger first operand");
+}
+
+fn count(s: text, sep: character) -> integer {
+  n = 0;
+  for c in s {
+    if c == sep { n += 1; }
+  }
+  n
+}
+
+fn test_char_walk() {
+  // Three commas each; in the second text every other character is two bytes wide, so a
+  // step with the wrong width lands inside a character.
+  assert(count("a,b,,c", ',') == 3, "an ASCII walk");
+  assert(count("é,ü,,ñ", ',') == 3, "a walk over two-byte characters");
+  assert(count("", ',') == 0, "an empty text walks nothing");
+  parts = "x,yé,z".split(',');
+  assert("{parts}" == "[\"x\",\"yé\",\"z\"]", "split walks the same way");
 }
 
 fn test_arith_positive() {

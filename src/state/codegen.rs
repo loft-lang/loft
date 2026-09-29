@@ -4850,22 +4850,29 @@ impl State {
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
     /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
-    /// `OpTextWalkStep`.  Only when every variable the step names already has its slot, so
-    /// no allocation decision moves; otherwise `false`, and the block is emitted as before.
+    /// `OpTextWalkStep`.  The index, next and text variables already hold their slots; `c`
+    /// may be taking its first assignment, which does what `generate_set`'s first-assignment
+    /// branch does for a character — mark the slot allocated, write the value at its planned
+    /// slot.  Every slot written must lie wholly below the stack top: the unfused form pushes
+    /// before it stores, which grows the stack, and this op pushes nothing.  Any other state
+    /// answers `false`, and the block is emitted as before.
     fn emit_walk_step(&mut self, stack: &mut Stack, c: u16) -> bool {
         let Some(w) = self.walk_steps.iter().find(|w| w.loop_var == c).cloned() else {
             return false;
         };
         let f = &stack.function;
-        if ![c, w.index, w.next, w.src]
+        let below_top = |v: u16| f.stack(v) != u16::MAX && f.stack(v) + 8 <= stack.position;
+        if ![w.index, w.next, w.src]
             .iter()
-            .all(|&v| f.is_stack_allocated(v) && f.stack(v) <= stack.position)
+            .all(|&v| f.is_stack_allocated(v) && below_top(v))
+            || !below_top(c)
             || !matches!(f.tp(c).base(), Type::Character)
             || !matches!(f.tp(w.src).base(), Type::Text(_))
         {
             return false;
         }
         let arg = u8::from(f.is_argument(w.src));
+        stack.function.set_stack_allocated(c);
         let at = self.code_pos;
         let positions = [
             stack.var_pos(c),
