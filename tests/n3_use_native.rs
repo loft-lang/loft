@@ -1534,8 +1534,16 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
         })
         .unwrap_or(0);
     let _ = std::fs::remove_dir_all(&tmp);
-    assert_eq!(first, ["via depver-0.1.0", "via depver-0.1.2"], "locked, then newest");
-    assert_eq!(second, ["via depver-0.1.2", "via depver-0.1.0"], "newest, then locked");
+    assert_eq!(
+        first,
+        ["via depver-0.1.0", "via depver-0.1.2"],
+        "locked, then newest"
+    );
+    assert_eq!(
+        second,
+        ["via depver-0.1.2", "via depver-0.1.0"],
+        "newest, then locked"
+    );
     assert_eq!(
         artifacts, 2,
         "each resolution names its own artifact, so the second order built two as well"
