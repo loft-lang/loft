@@ -1,7 +1,7 @@
 # host=laptop
 # arch=x86_64-linux
 # date=2026-09-29
-# commit=fc2a0d30c
+# commit=c8ec0efba
 # dirty=no
 # rustc=rustc 1.97.0 (2d8144b78 2026-07-07)
 # samples=7
@@ -10,9 +10,9 @@
 # pinned=yes
 # measure_jobs=3
 bench	step	wall_s	cpu_s	peak_mb	jobs	commit	date
-11_par	native-emit	0.06	0.06	20	5	fc2a0d30c	2026-09-29
-11_par	native-rustc	1.19	1.24	221	5	fc2a0d30c	2026-09-29
-11_par	rust-rustc	0.34	0.45	126	5	fc2a0d30c	2026-09-29
-19_stdlib_par	native-emit	0.07	0.07	20	5	fc2a0d30c	2026-09-29
-19_stdlib_par	native-rustc	2.10	2.18	233	5	fc2a0d30c	2026-09-29
-19_stdlib_par	rust-rustc	0.53	1.16	142	5	fc2a0d30c	2026-09-29
+11_par	native-emit	0.07	0.06	19	5	c8ec0efba	2026-09-29
+11_par	native-rustc	1.45	1.27	219	5	c8ec0efba	2026-09-29
+11_par	rust-rustc	0.33	0.44	127	5	c8ec0efba	2026-09-29
+19_stdlib_par	native-emit	0.07	0.07	20	5	c8ec0efba	2026-09-29
+19_stdlib_par	native-rustc	2.17	2.18	232	5	c8ec0efba	2026-09-29
+19_stdlib_par	rust-rustc	0.52	1.10	143	5	c8ec0efba	2026-09-29
