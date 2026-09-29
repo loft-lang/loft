@@ -588,3 +588,60 @@ record on both backends.  Beside them, `bytes[pos] ?? 0` reads through the runti
 (`length_vector` 5.9 %, `get_vector` 5.3 %): a parameter read outside any loop holds no
 header, and the byte-range copies `for k in 0..arg { bs += [bytes[argpos + k] ?? 0] }` are
 the `(R-VecCopy)` shape with a RANGE, one `append_bytes` each if the rule takes it.
+
+## pluginabi `check_request` (2026-09-29) — the worst row, taken apart
+
+58.8× here (12.1 ms per op of 2 048 checks: 5.9 µs a check against the twin's 101 ns), 59.9×
+on the laptop.  A check decodes a three-entry CBOR map (`op` text, `state` 88 bytes, `arg`
+24 bytes) TWICE — `pa_decode_ok`, then `pa_decode` — walks the entries for `op`, copies its
+text out and compares it with six constants.  The twin does the same two decodes over
+borrowed slices and allocates nothing.
+
+**Counted** (`LOFT_ALLOC_REPORT=1`, one round of 2 048 checks minus the next): **26 store
+alloc/free cycles and 5.5 records per check**; live stores stay at 21 (reuse works), the
+CYCLES are the cost.  **Profiled** (`perf` over the `--native-release` child, symbols kept):
+store allocation and free 27 % (`claim_block`, `claim_best_fit`, `fl_insert`, `finish_claim`,
+`set_free_header`, `free_named`, `database_named`, `op_database_inner`, `OpFreeRef`), the
+claims walks 24 % (`copy_claims` 10.7 %, `remove_claims_mode` 5.8 %, `owned_walk` 4.9 %,
+`holds_no_heap` 2.6 %), the program's own code 11 %, vector reads 7.6 %, byte copies 4.9 %,
+the Rust heap the walks allocate 4.8 %.  `decode` is 55 % inclusive (two calls), the rest
+is the copy `pa_decode` makes, the entry walk, and the frees.
+
+**The structure, per CBOR node** (`n_read_value`'s map arm, read off the emission): the
+child's `Decoded` is built in a store of its own (`__ref_7` / `__ref_8`, one per key and
+value), its `value` deep-copied into the parent's entry (`OpCopyRecord` → `copy_claims`,
+recursing through the text or byte vector), the child's store cleared; the finished map
+deep-copied into the frame's return buffer (copy 2, the whole tree walked again); `decode`
+returns it; `pa_decode` copies `d.value` into a local (copy 3 — a workaround for loft#425,
+which is CLOSED); `check_request` frees.  Every payload byte is copied three times and
+every node's claims are walked three times and freed three times.  Eleven hidden buffers
+per `read_value` frame are freed on each of its return paths (187 `OpFreeRef` sites), and
+byte strings are pushed a byte at a time (`bs += [bytes[argpos + k] ?? 0]`, 2 ns a byte).
+
+**The six structural problems**, most costly first:
+1. *A heap-owning record that crosses a call boundary is a STORE.*  Each `read_value`
+   answer mints an arena (header, free tree, footer) for a three-field record, and frees it
+   after one read.  Twenty-six per check; the twin has zero.  The value-record rule
+   (`(R-ValueRecord)`) declines every record with a vector or text field, so the whole
+   decoder is outside it.
+2. *Composition copies where Rust moves.*  `items += [sub.value]`, `Decoded { value: CMap
+   {…} }` and `v = d.value` each deep-copy a tree between stores; a move would be a handle
+   write.  The destination-directed build (§ Order item 6 — the callee builds its answer in
+   the slot it will occupy) is the lever for both 1 and 2.
+3. *The claims walks allocate.*  `owned_walk` pushes a child per FIELD into a `Vec` per
+   record, scalars included, and `remove_claims` re-asks `holds_no_heap` per child.
+4. *Byte ranges are pushed one at a time.*  The `(R-VecCopy)` shape with a range is one
+   `append_bytes`.
+5. *Frees are per variable, per return path.*  A frame that mints nothing still tests
+   eleven buffers at every exit; a frame that did mint pays a store free each.
+6. *In the library:* the loft#425 workaround copy is dead weight now, `pa_get` discharges
+   each entry through a fresh record with two text fields (`entries[i] ?? CborEntry {…}`),
+   and `pa_text` copies the text out (`"{value}"`) where a borrow would do.
+
+**What 3× needs.**  3× is ≈ 300 ns a check here — at most two or three store cycles.  Items
+2, 4, 3 and 6 take the row to an estimated 1.5 µs (≈ 15×): the copies and their walks go,
+the byte loops become memcpys, the library stops copying.  The rest of the distance is
+item 1 — records that own heap answered as VALUES (a `Decoded` crossing the call as a tuple
+whose payload is a handle), so a decode allocates once for the tree, not once per node —
+and that is a rule extension of `(R-ValueRecord)`, not a site fix.  The double decode is
+the library's design and the twin's too; it does not move the ratio, only the absolute.
