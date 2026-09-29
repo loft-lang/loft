@@ -27,7 +27,7 @@ impl Parser {
         code: &mut Value,
     ) -> Option<Type> {
         if !self.lexer.peek_token("{")
-            || !matches!(self.data.def(dnr).returned(), Type::Enum(_, true, _))
+            || !matches!(self.data.def(dnr).returned().base(), Type::Enum(_, true, _))
         {
             return None;
         }

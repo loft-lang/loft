@@ -269,9 +269,50 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
-deviation of its own.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed
-2026-09-14; `D-match-4` closed 2026-09-12.
+OPEN: **4** — `D-match-10` to `D-match-13`, each a refusal of a program the pattern rules
+define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`,
+which it closed.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+`D-match-4` closed 2026-09-12.
+
+The walk's finding is one shape seven times: each rule held on its own and was refused where two
+of them COMPOSE — a guard or a field sub-pattern on a multi-pattern arm, a capture inside an
+alternation, a capture a later pattern alone binds, a heap field under a repetition, a tail after
+a scalar repetition, an iterator of tuples.  Every one was a refusal, none a wrong answer, and
+every one said *"not yet supported"* or named a plan phase, which is how the register read
+`OPEN: 0` over them: a refusal worded as pending work was never entered as a deviation.  The
+open four now say what holds and what to write instead.
+
+- **D-match-13 — OPEN (loft#1737).** A `match` over an `iterator<(τ, …)>` is refused and must be
+  collected first, where the iterator-input rule materialises its subject whatever the element
+  type and a `vector<(τ, …)>` subject matches tuple patterns.  Closes when the stream path takes
+  tuple elements (`stream_match_complex_deferred` in `tests/parse_errors.rs` is its pin).
+- **D-match-12 — OPEN (loft#1736).** A `..rest` or a non-literal element after a scalar
+  repetition `xs:T*` is refused.  It waits on a decision rather than on code: read as `(P-Rep)`'s
+  greedy run, `xs` takes every element and a rest is always empty; read as the literal-tail
+  lowering already does it — the run is the middle, the tail anchored at the end — a trailing
+  `last` is `v[len-1]` and a rest has no length of its own.
+- **D-match-11 — OPEN (loft#1735).** `(P-Rep-Ty)` collects a capture inside `(a)*` into a
+  `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) is refused, because each
+  inner store must be copied into the fresh vector (`(H-Alloc)`).  The workaround the message
+  names — capture the elements, `(g: Grp)*` — is exact.
+- **D-match-10 — OPEN (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm granularity, so a capture
+  only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when another pattern matched —
+  as a single-element alternation already answers.  Refused, because the first pattern's shared
+  slots exist before a later pattern shows the name is partial.
+- **D-match-9 — OPENED AND CLOSED 2026-09-29.** `(G-Pat-Prec)`'s own example, `a:V | b:W`, did
+  not parse: an alternation branch was read as a variant name and failed on the `:`.  A branch's
+  capture now joins the alternation's capture unification as a whole-element entry, typed by
+  `(P-Alt-Same)` / `(P-Alt-Diff)`.  Guard
+  `tests/scripts/an-alternation-branch-may-capture-the-element-it-matched.loft`.
+- **D-match-8 — OPENED AND CLOSED 2026-09-29.** `(P-Point)` lets a field be a pattern; in a
+  multi-pattern arm that was refused in the first listed pattern and failed to parse in a later
+  one.  Each listed pattern's sub-patterns are now its own branch condition; a sub-pattern in a
+  later pattern that BINDS a name is refused by name, since the shared body never reads it.
+  Guard `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
+- **D-match-7 — OPENED AND CLOSED 2026-09-29.** `(P-Guard)` × `(P-Multi)`: a guard on a
+  multi-pattern arm was refused.  Each listed pattern's arm now carries it beside its own
+  bindings, and a guarded arm covers nothing (`(M-Total)`).  Guard
+  `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
 
 - **D-match-6 — OPENED AND CLOSED 2026-09-25 (loft#1678).** `(P-IterBound)` promised a bound and
   a defined error; there was neither.  A `match` over an iterator MATERIALISES its subject before

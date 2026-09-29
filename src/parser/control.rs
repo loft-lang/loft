@@ -5775,7 +5775,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "streaming `match` over an `iterator<{en}>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
+                        "a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<{en}>` is none of those — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
                     );
                 }
                 let match_pos = self.lexer.pos().clone();
@@ -8340,7 +8340,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "a `..rest` after a scalar repetition `{cap_name}:{tname}*` is not yet supported"
+                        "a `..rest` cannot follow the scalar repetition `{cap_name}:{tname}*` — the repetition already takes every element the pattern leaves; drop the rest"
                     );
                 }
                 self.lexer.has_token("..");
@@ -8355,7 +8355,7 @@ impl Parser {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "only literal elements are supported after a scalar repetition `{cap_name}:{tname}*`"
+                        "only a literal can follow the scalar repetition `{cap_name}:{tname}*` — capture the tail with an arm of its own, or read it from `{cap_name}`'s end"
                     );
                 }
                 // Recover to the closing `]` so `token("]")` below succeeds and THIS diagnostic
@@ -8534,7 +8534,7 @@ impl Parser {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
-                                "per-iteration capture of the non-scalar field `{fname}` is not yet supported (only scalar/text fields project into a vector)"
+                                "a repetition collects the field `{fname}` only when it is a scalar or text — capture the elements instead, `(x: {real})*`, and read `{fname}` from each"
                             );
                         }
                         None if !self.first_pass => {
@@ -9619,7 +9619,7 @@ impl Parser {
                                 diagnostic!(
                                     self.lexer,
                                     Level::Error,
-                                    "multi-pattern arm: capture '{}' is not bound by the first pattern (partial overlap → option<T> is Phase 4)",
+                                    "multi-pattern arm: capture '{}' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own",
                                     field_name
                                 );
                             }

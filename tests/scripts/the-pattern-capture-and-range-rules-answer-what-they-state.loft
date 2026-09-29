@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The pattern rules the 2026-09-29 rule-led walk found with neither a code citation nor a
+// guard, each asked for the value it states, with the edge a wrong implementation would get:
+//
+//   `@FR-P-Alt-Same`  two branches binding one name at `u8` and `integer` join to `integer`
+//                     (a `u8` of 250 plus 1000 is 1250, not a wrapped byte)
+//   `@FR-P-Alt-Diff`  a name only one branch binds is null when the other matched
+//   `@FR-P-Opt-Ty`    a capture inside an absent `(…)?` is null, and the cursor did not move
+//   `@FR-P-Rep-Ty`    an EMPTY repetition is an empty vector, never null
+//   `@FR-P-Rest-Ty`   `..rest` is a fresh vector: appending to it leaves the subject's length
+//   `@FR-P-Atomic`    a guard that fails after its pattern bound `n` leaves no trace in the next
+//                     arm's own `n`; nor does a sequence that bound `n` and then failed
+//   `@FR-P-Range`     `a..=b` includes b and `a..b` excludes it, for negative bounds and for
+//                     `character` alike
+//   `@FR-M-Bool`      `true`/`false` unguarded is exhaustive; one guarded arm makes it nullable
+//
+// The refusal half of `@FR-P-Alt-Same` (incompatible types) is `tests/parse_errors.rs`
+// `alternation_capture_type_mismatch`.
+//
+// Axes this file MOVES:  one rule per function, each at its boundary.
+// Axes it HOLDS FIXED:   single-element groups; the compositions are in the files of D-match-7…9.
+
+enum Tok { Num { n: integer }, Byte { n: u8 }, Word { w: text }, Kw { k: integer }, Sep { s: integer } }
+
+fn alt_same(v: vector<Tok>) -> integer { match v { [(Num { n } | Byte { n })] => n + 1000, _ => -1 } }
+fn alt_diff(v: vector<Tok>) -> text { match v { [(Word { w } | Num { n })] => "{w == null}:{n ?? -1}", _ => "x" } }
+fn opt(v: vector<Tok>) -> text { match v { [(Kw { k })?, ..rest] => "{k == null}:{k ?? -1}:{len(rest)}", _ => "x" } }
+fn rep(v: vector<Tok>) -> text { match v { [(x: Num)*, ..rest] => "{x == null}:{len(x)}:{len(rest)}", _ => "x" } }
+fn rest_fresh(v: vector<Tok>) -> text {
+  match v {
+    [Num { n }, ..rest] => {
+      rest += [Sep { s: 9 }];
+      "{n}:{len(rest)}:{len(v)}"
+    },
+    _ => "x"
+  }
+}
+fn atomic(v: vector<Tok>) -> integer {
+  match v { [Num { n }, ..] if n > 50 => n * 10, [.., Num { n }] => n, _ => -1 }
+}
+fn atomic_seq(v: vector<Tok>) -> integer {
+  match v { [Num { n }, Word { w }] => n + len(w) * 100, [Num { n }, Sep { s }] => n * 1000 + s, _ => -1 }
+}
+fn rng(x: integer) -> text { match x { -5..=-1 => "neg", 0..3 => "low", 3..=5 => "mid", _ => "other" } }
+fn crng(c: character) -> text { match c { 'a'..='f' => "hex", '0'..'9' => "dig", _ => "no" } }
+fn mb(b: boolean) -> integer { x: integer = match b { true => 1, false => 2 }; x }
+fn mb_guarded(b: boolean, c: integer) -> text { r = match b { true if c > 0 => 1, false => 2 }; "{r == null}" }
+
+fn test_capture_typing() {
+  assert("{alt_same([Num { n: 5 }])} {alt_same([Byte { n: 250 }])}" == "1005 1250", "P-Alt-Same");
+  assert("{alt_diff([Word { w: \"hi\" }])} {alt_diff([Num { n: 4 }])}" == "false:-1 true:4", "P-Alt-Diff");
+  assert("{opt([Kw { k: 3 }, Sep { s: 1 }])} {opt([Sep { s: 1 }])}" == "false:3:1 true:-1:1", "P-Opt-Ty");
+  assert("{rep([Sep { s: 1 }])} {rep([Num { n: 1 }, Num { n: 2 }, Sep { s: 1 }])}" == "false:0:1 false:2:1", "P-Rep-Ty");
+  assert(rest_fresh([Num { n: 1 }, Num { n: 2 }]) == "1:2:2", "P-Rest-Ty: {rest_fresh([Num { n: 1 }, Num { n: 2 }])}");
+}
+
+fn test_a_failed_attempt_leaves_nothing() {
+  assert("{atomic([Num { n: 7 }, Num { n: 3 }])} {atomic([Num { n: 70 }])}" == "3 700", "P-Atomic guard");
+  assert("{atomic_seq([Num { n: 7 }, Sep { s: 3 }])} {atomic_seq([Num { n: 7 }, Word { w: \"ab\" }])}" == "7003 207", "P-Atomic sequence");
+}
+
+fn test_ranges_and_boolean_totality() {
+  got = "{rng(-5)} {rng(-1)} {rng(0)} {rng(2)} {rng(3)} {rng(5)} {rng(6)} {rng(-6)}";
+  assert(got == "neg neg low low mid mid other other", "P-Range integer: {got}");
+  got2 = "{crng('a')} {crng('f')} {crng('g')} {crng('0')} {crng('8')} {crng('9')}";
+  assert(got2 == "hex hex no dig dig no", "P-Range character: {got2}");
+  assert(mb(true) + mb(false) * 10 == 21, "M-Bool exhaustive");
+  assert("{mb_guarded(true, 0)} {mb_guarded(true, 1)} {mb_guarded(false, 0)}" == "true false false", "M-Bool guarded");
+}

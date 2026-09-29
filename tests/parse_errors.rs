@@ -3061,7 +3061,7 @@ fn multi_pattern_capture_type_mismatch() {
 #[test]
 fn multi_pattern_partial_overlap() {
     code!("enum Rec { Ra { u: integer }, Rb { w: integer } }\nfn f(r: Rec) -> integer { match r { Ra { u }, Rb { w } => u, _ => 0 } }")
-        .error("multi-pattern arm: capture 'w' is not bound by the first pattern (partial overlap → option<T> is Phase 4) at multi_pattern_partial_overlap:2:55")
+        .error("multi-pattern arm: capture 'w' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own at multi_pattern_partial_overlap:2:55")
         .error("multi-pattern arm: every listed pattern must bind the same captures (u) at multi_pattern_partial_overlap:2:58");
 }
 
@@ -3151,12 +3151,12 @@ fn scalar_rep_type_mismatch() {
         .error("a scalar repetition `xs:text*` must match the vector's element type integer at scalar_rep_type_mismatch:1:59");
 }
 
-// @PLN35 slice 1 — a `..rest` after a scalar repetition is not yet supported (a clean error,
+// @PLN35 slice 1 — a `..rest` after a scalar repetition is refused (a clean error,
 // not a silent mis-parse).
 #[test]
 fn scalar_rep_rest_unsupported() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, .. ] => xs.len(), _ => -1 } }")
-        .error("a `..rest` after a scalar repetition `xs:integer*` is not yet supported at scalar_rep_rest_unsupported:1:66");
+        .error("a `..rest` cannot follow the scalar repetition `xs:integer*` — the repetition already takes every element the pattern leaves; drop the rest at scalar_rep_rest_unsupported:1:66");
 }
 
 // @PLN35 slice 1 — a non-literal element after a scalar repetition is rejected (recovers to
@@ -3164,7 +3164,7 @@ fn scalar_rep_rest_unsupported() {
 #[test]
 fn scalar_rep_nonliteral_tail() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, y ] => xs.len(), _ => -1 } }")
-        .error("only literal elements are supported after a scalar repetition `xs:integer*` at scalar_rep_nonliteral_tail:1:65");
+        .error("only a literal can follow the scalar repetition `xs:integer*` — capture the tail with an arm of its own, or read it from `xs`'s end at scalar_rep_nonliteral_tail:1:65");
 }
 
 // @PLN35 slice 2 — a per-iteration capture of a NON-scalar field `( V { heap } )*` is deferred
@@ -3172,7 +3172,7 @@ fn scalar_rep_nonliteral_tail() {
 #[test]
 fn field_capture_nonscalar_deferred() {
     code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:60");
+        .error("a repetition collects the field `items` only when it is a scalar or text — capture the elements instead, `(x: B)*`, and read `items` from each at field_capture_nonscalar_deferred:2:60");
 }
 
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
@@ -3195,7 +3195,7 @@ fn tail_and_rest_rejected() {
 #[test]
 fn stream_match_complex_deferred() {
     code!("fn g() -> iterator<(integer, integer)> { yield (1, 2); }\nfn f() -> integer { match g() { [ _ ] => 1, _ => -1 } }")
-        .error("streaming `match` over an `iterator<(integer, integer)>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
+        .error("a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<(integer, integer)>` is none of those — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
 }
 
 // @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
