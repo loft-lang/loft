@@ -1,0 +1,65 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c3941ea57..8dd80552b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7463,36 +7463,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Does argument `nr` of a call to `callee` hand a top-level constant's view to a
+-    /// parameter the callee may WRITE, so that it must travel as a copy (loft#1729)?
+-    ///
+-    /// Asked on both passes with the same answer, because the copy mints its temporaries on
+-    /// both (`materialize_collection_value`): the callee's write fact is read only for a
+-    /// callee parsed BEFORE the caller — pass 1 has its body then, and pass 2 the same one —
+-    /// and a callee parsed at or after it (a forward call, a recursive one) is assumed to
+-    /// write.  A `const` or `&` parameter and a native callee never copy; a literal-bodied
+-    /// function's result already declines at a user call (`const_fn`).
+-    fn constant_arg_needs_copy(&self, callee: u32, nr: usize, arg: &Value, param: &Type) -> bool {
+-        if !matches!(arg.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef")) {
+-            return false;
+-        }
+-        if !matches!(param.base(), Type::Vector(_, _)) || self.context == u32::MAX {
+-            return false;
+-        }
+-        let def = self.data.def(callee);
+-        if !def.is_loft_defined() || def.attributes().get(nr).is_none_or(|a| a.value_const) {
+-            return false;
+-        }
+-        if callee >= self.context {
+-            return true;
+-        }
+-        let mut cache = crate::fxhash::FxHashMap::default();
+-        callee_param_writes(callee, &self.data, &mut cache)
+-            .get(nr)
+-            .copied()
+-            .unwrap_or(true)
+-    }
+-
+     /// The type of a call whose failure was reported (or whose callee's binding failed):
+     /// poisoned to `never` (@P376), so the operator or call it is an operand of reads a
+     /// value that is not there and does not report it again as a missing argument naming an
+@@ -15806,23 +15776,6 @@ impl Parser {
+             } else {
+                 self.convert_admitting(&mut actual_code, actual_type, &tp)
+             };
+-            // loft#1729, @FR-R-Const — a top-level constant's use site is a VIEW of the
+-            // write-locked constant store, and a callee that writes its by-value parameter
+-            // writes through it: `(R-Const)` makes that hand-off B-Copy's copy.
+-            if accepted && self.constant_arg_needs_copy(d_nr, nr, &actual_code, &tp) {
+-                let param = tp.base().without_deps();
+-                let tmp = self.materialize_collection_value(&mut actual_code, &param);
+-                // A VALUE, typed by the temp's own deps — the buffer the copy lives in — the
+-                // way a vector literal argument is a `Vector` block naming its buffer.  A bare
+-                // `Insert` gave the scope pass no owner for that buffer inside an `assert`'s
+-                // lazily built message, and it placed the buffer's free before its allocation.
+-                if tmp != u16::MAX
+-                    && let Value::Insert(ops) = &mut actual_code
+-                {
+-                    let ops = std::mem::take(ops);
+-                    actual_code = v_block(ops, self.vars.tp(tmp).clone(), "Vector");
+-                }
+-            }
+             if !accepted {
+                 if report {
+                     let context = format!(

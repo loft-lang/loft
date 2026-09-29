@@ -14,7 +14,7 @@
 //   WITNESS: on the control the program is refused `Unknown variable 'idf'`, then
 //     `Unknown function f`.
 //   HOLDS: the program is refused on both trees; only the message moves.
-// @EXPECT_ERROR: `idf` is a generic function, and a generic is not a function VALUE — it has no single body until a call fixes its type variables. Wrap one call of it in a lambda that names the types: `|x: integer| { idf(x) }`
+// @EXPECT_ERROR: `idf` is a generic function, and a generic is not a function VALUE — it has no single body until a call fixes its type variables. Wrap one call of it in a lambda that names the types: `fn(x: integer) -> integer { idf(x) }`
 
 fn idf<T>(x: T) -> T { x }
 

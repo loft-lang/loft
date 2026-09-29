@@ -4,7 +4,7 @@
 // import-library link + DLL staging of @PLN26 phase 4.  The hard-coded 42 is the
 // oracle, so a broken link (undefined symbol / wrong value) fails loudly rather
 // than passing vacuously.
-use native_scalar_pkg;
+use native_scalar_pkg::*;
 
 // @FTR-076 — a package's compiled cdylib linked and called at run time, with a NEGATIVE
 // return as the oracle that the C ABI was read at the right width

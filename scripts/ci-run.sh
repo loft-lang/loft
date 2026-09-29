@@ -32,6 +32,16 @@ case "${1:-status}" in
       cwd=$(readlink "/proc/$p/cwd" 2>/dev/null)
       [ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && echo "note: another gate is running in $cwd — expect ~2x wall time"
     done
+    # The seconds-long checks first (scripts/gate_preflight.sh): `make ci` reaches rustfmt only
+    # after rebuilding the native fixtures and both wasm rlibs, and a derived row after ~17
+    # minutes, so a failure either finds costs a whole restart.  `CI_NO_PREFLIGHT=1` skips it.
+    if [ -z "${CI_NO_PREFLIGHT:-}" ]; then
+      scripts/gate_preflight.sh || { echo "gate NOT started"; exit 1; }
+    fi
+    # What `recheck` builds on: the commit this gate measures (the working tree may be dirty,
+    # which `git diff <sha>` in `recheck` counts as part of the change since).
+    echo "$(git rev-parse HEAD) $(date +%s)" > .ci-gate-head
+    rm -f .ci-failed .ci-recheck
     # Three ways this ends, and each writes a verdict so the waiter never guesses:
     #   * make exits 0 / non-zero        → PASSED / FAILED
     #   * make is killed by a signal     → rc > 128, so the signal is rc-128 (the shape an
@@ -102,12 +112,23 @@ case "${1:-status}" in
         # retries of one test collapse under `sort -u`.
         ft=$(grep -oE "FAIL \[[^]]*\].*$" result.txt 2>/dev/null \
              | awk "{ print \$(NF-1) \"::\" \$NF }" | sort -u)
+        # The whole list, binary id and test name apart, for `ci-run.sh recheck` to re-run
+        # exactly these (the verdict line keeps only the first three).
+        grep -oE "FAIL \[[^]]*\].*$" result.txt 2>/dev/null \
+          | awk "{ print \$(NF-1) \" \" \$NF }" | sort -u > .ci-failed
         n=$(printf "%s" "$ft" | grep -c . || true)
         if [ "${n:-0}" -gt 0 ]; then
           note FAILED "$n test(s) — $(printf "%s" "$ft" | head -3 | tr "\n" " " | head -c 200)"
         elif grep -q "rust-clippy/.*index\.html#" result.txt 2>/dev/null; then
           lint=$(grep -oE "index\.html#[a-z_]+" result.txt 2>/dev/null | head -1 | sed "s/.*#//")
           note FAILED "0 tests — CLIPPY, so THE CODE (lint ${lint:-?}): $(grep -m1 -E "^error: " result.txt 2>/dev/null | head -c 100)"
+        elif grep -q "OVER BAR" result.txt 2>/dev/null; then
+          # The native/Rust RATIO gate runs LAST, after a green suite, and it is timing: a row
+          # over its bar under load is not the code until `make native-ratio-gate` run ALONE
+          # says so (the Makefile note beside it).  Reported as the box, it sent a green suite
+          # to be chased as a toolchain fault (2026-09-28).
+          rows=$(grep "OVER BAR" result.txt 2>/dev/null | awk "{ print \$2 \" \" \$5 \"/\" \$6 }" | sort -u | tr "\n" " ")
+          note FAILED "0 tests — RATIO GATE (timing, after a green suite): ${rows}over the bar; run make native-ratio-gate ALONE before believing it"
         elif grep -q "^Diff in " result.txt 2>/dev/null; then
           note FAILED "0 tests — RUSTFMT, so THE CODE: $(grep -c "^Diff in " result.txt 2>/dev/null) file(s) unformatted; run \`cargo fmt\`"
         else
@@ -169,6 +190,57 @@ case "${1:-status}" in
       else
         echo "$st $rest ($((age / 60))m ago)"
       fi
+      # A recheck that describes THIS commit is part of the answer (see `recheck`).
+      if [ -f .ci-recheck ] && read -r rst rhead repoch rrest < .ci-recheck \
+         && [ "$rhead" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+        echo "$rst on $(git rev-parse --short HEAD) $rrest ($(( ($(date +%s) - repoch) / 60 ))m ago)"
+      fi
+    fi
+    ;;
+  recheck)
+    # After a gate, re-verify only what changed since it, instead of restarting ~20 minutes of
+    # `make ci` for a fix whose reach is known.  Builds on the last gate in this tree:
+    #   * FAILED → re-run exactly its failed tests (.ci-failed) — the fix must turn them green;
+    #   * either → the pre-flight, both clippy variants when Rust changed since the gate, and
+    #     `find_problems.sh --changed <gate sha>`, which runs the subjects the change touches.
+    # A PASSED recheck says "full gate on <sha>, plus this delta, re-verified" — `status` shows
+    # it beside the gate verdict for as long as it describes HEAD.  It is not a new full gate:
+    # a change whose reach is not known (a new refusal, a type-inference change, a new op)
+    # still owes one — CI_BUDGET.md § After a red gate.
+    if [ -f $V ] && read -r st pid _ < $V && [ "$st" = RUNNING ] && kill -0 "$pid" 2>/dev/null; then
+      echo "a gate is RUNNING in this tree (pid $pid) — recheck shares its target dir; wait for it"; exit 1
+    fi
+    [ -f $V ] || { echo "no gate has run here — start one: ci-run.sh start"; exit 1; }
+    [ -f .ci-gate-head ] || { echo "the last gate predates recheck (no .ci-gate-head) — run one full gate"; exit 1; }
+    read -r st _ < $V; read -r base _ < .ci-gate-head
+    case "$st" in PASSED|FAILED) ;; *) echo "the last gate ended $st, which is no result to build on — run a full gate"; exit 1 ;; esac
+    head=$(git rev-parse HEAD)
+    echo "recheck $(git rev-parse --short HEAD) against the $st gate on $(git rev-parse --short "$base"):"
+    : > .ci-recheck.log
+    fails=()
+    run() {
+      local name=$1 t0=$SECONDS; shift
+      echo "== $name: $*" >> .ci-recheck.log
+      if "$@" >> .ci-recheck.log 2>&1; then printf "  ok    %-13s %4ss\n" "$name" $((SECONDS - t0))
+      else printf "  FAIL  %-13s %4ss  (.ci-recheck.log)\n" "$name" $((SECONDS - t0)); fails+=("$name"); fi
+    }
+    run pre-flight env CI_NO_PREFLIGHT= scripts/gate_preflight.sh
+    if ! git diff --quiet "$base" -- '*.rs' Cargo.toml Cargo.lock; then
+      run clippy cargo clippy -- -D warnings
+      run "clippy all" cargo clippy --all-targets --all-features -- -D warnings
+    fi
+    if [ "$st" = FAILED ] && [ -s .ci-failed ]; then
+      expr=$(awk '{ printf "%s(binary_id(=%s) & test(=%s))", (NR > 1 ? " | " : ""), $1, $2 }' .ci-failed)
+      run "failed tests" cargo nextest run --no-fail-fast -E "$expr"
+    fi
+    run "changed" scripts/find_problems.sh --changed "$base"
+    if [ ${#fails[@]} -eq 0 ]; then
+      dirty=""; git diff --quiet HEAD 2>/dev/null || dirty=" (over UNCOMMITTED edits — commit them and recheck again)"
+      echo "RECHECK-PASSED $head $(date +%s) over the $st gate on $(git rev-parse --short "$base")$dirty" > .ci-recheck
+      echo "recheck PASSED — push with: full gate $(git rev-parse --short "$base") + this recheck"
+    else
+      echo "RECHECK-FAILED $head $(date +%s) ${fails[*]}" > .ci-recheck
+      echo "recheck FAILED (${fails[*]}) — .ci-recheck.log"; exit 1
     fi
     ;;
   wait|notify)
@@ -191,5 +263,5 @@ case "${1:-status}" in
     # loft#1504 cost twice in one session.
     exec scripts/gate_lock.sh doctor
     ;;
-  *) echo "usage: ci-run.sh {start|status|wait|doctor}"; exit 1 ;;
+  *) echo "usage: ci-run.sh {start|status|recheck|wait|doctor}"; exit 1 ;;
 esac

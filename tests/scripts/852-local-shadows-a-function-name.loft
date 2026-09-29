@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C112 — a binding position mints a local; the function stays callable.
 //
 // Regression (GitHub #852, and the second half of #756): a local binding may
 // carry the name of a function, and the function stays reachable as a call.

@@ -8,8 +8,8 @@
 // with no diagnostic while `acct.balance = 1` was refused.  The same held for the elements of a
 // `const` collection handed to `map` / `count_if` / `reduce`'s callback.
 //
-// These cells land as C124's gating warning `const-to-plain-parameter`, the owner's rollout for the
-// whole plain-parameter rule.  Every spelling a reference reaches a call by is a cell: a local
+// @C124: these cells are refused as `const-to-plain-parameter`, the error of the whole
+// plain-parameter rule.  Every spelling a reference reaches a call by is a cell: a local
 // bound to a named function, a fn-typed parameter, a lambda, a struct field, a view handed on, a
 // local REASSIGNED from a `const`-parameter function to a plain one, a value `if`, a `match`, a
 // vector of functions, and the three callback builtins in both call spellings.  The reassignment
@@ -20,34 +20,24 @@
 // function converted into `fn(const T)`) are `a-const-value-is-not-written-through-a-const-lambda-or-a-closure.loft`;
 // the controls that stay legal are `a-const-value-through-a-const-function-type-is-legal.loft`.
 //
-// A `main` runs a reading call and asserts it: a warning compiles, so the file is a program and the
-// harness needs an entry point.  The cells are compiled — their warnings are pinned below — but not
-// run, because running them would write the values they were given.
+// Every cell is refused, so the file has no entry point and runs nothing.
 //
-// @falsified-at: 01893a542 — interpret and native both: the thirteen `@EXPECT_WARNING` pins match
-//   0/13 there (exit 0, no diagnostic at all: every cell compiles and would write the caller's
-//   value), and 13/13 here as `Warning[const-to-plain-parameter]` with no error.
-//   CHANNEL: expectations — measured by hand with the frozen control binary (`--path` its own
-//   tree), because `make falsify` scores exit, asserts, leak, panic and refusals and does not read
-//   warning pins (TESTING.md § falsify, "A guard whose subject is a WARNING").
-//   ARMED: nothing.
-//   WITNESS: the probe matrix these cells come from ran each one on the control's source: the
-//   reference spellings wrote 999 / 7 / 6, the joins 999, and the callbacks every element.
-//   HOLDS: `a-const-value-through-a-const-function-type-is-legal.loft` answers `fnref controls ok`
-//   on both backends with no warning.
-// @EXPECT_WARNING: Cannot pass const parameter 'a1' to parameter 1 of the function reference `op1`
-// @EXPECT_WARNING: Cannot pass const parameter 'a2' to parameter 1 of the function reference `op2`
-// @EXPECT_WARNING: Cannot pass const parameter 'a3' to parameter 1 of the function reference `op3`
-// @EXPECT_WARNING: Cannot pass const parameter 'a4' to parameter 1 of the function reference `g4`
-// @EXPECT_WARNING: Cannot pass 'f5', a view of const parameter 'ps5', to parameter 1 of the function reference `op5`
-// @EXPECT_WARNING: Cannot pass const parameter 'a6' to parameter 1 of the function reference `op6`
-// @EXPECT_WARNING: Cannot pass const parameter 'a7' to parameter 1 of the function reference `op7`
-// @EXPECT_WARNING: Cannot pass const parameter 'a8' to parameter 1 of the function reference `o8`
-// @EXPECT_WARNING: Cannot pass const parameter 'a9' to parameter 1 of the function reference `op9`
-// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps10' to `map`'s callback, whose parameter 1 is not `const`
-// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps11' to `map`'s callback, whose parameter 1 is not `const`
-// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps12' to `count_if`'s callback, whose parameter 1 is not `const`
-// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps13' to `reduce`'s callback, whose parameter 2 is not `const`
+// @falsified-by: tests/falsified/c124-the-plain-parameter-error.patch — interpret exit 1 -> 0, interpret expectations FAIL/13 -> 0/13 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/13 -> 0/13 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control is this tree with the three `const-to-plain-parameter`
+//   sites back at `Level::Warning`, where every pin is unmet because nothing is refused.
+// @EXPECT_ERROR: Cannot pass const parameter 'a1' to parameter 1 of the function reference `op1`
+// @EXPECT_ERROR: Cannot pass const parameter 'a2' to parameter 1 of the function reference `op2`
+// @EXPECT_ERROR: Cannot pass const parameter 'a3' to parameter 1 of the function reference `op3`
+// @EXPECT_ERROR: Cannot pass const parameter 'a4' to parameter 1 of the function reference `g4`
+// @EXPECT_ERROR: Cannot pass 'f5', a view of const parameter 'ps5', to parameter 1 of the function reference `op5`
+// @EXPECT_ERROR: Cannot pass const parameter 'a6' to parameter 1 of the function reference `op6`
+// @EXPECT_ERROR: Cannot pass const parameter 'a7' to parameter 1 of the function reference `op7`
+// @EXPECT_ERROR: Cannot pass const parameter 'a8' to parameter 1 of the function reference `o8`
+// @EXPECT_ERROR: Cannot pass const parameter 'a9' to parameter 1 of the function reference `op9`
+// @EXPECT_ERROR: Cannot pass the elements of const parameter 'ps10' to `map`'s callback, whose parameter 1 is not `const`
+// @EXPECT_ERROR: Cannot pass the elements of const parameter 'ps11' to `map`'s callback, whose parameter 1 is not `const`
+// @EXPECT_ERROR: Cannot pass the elements of const parameter 'ps12' to `count_if`'s callback, whose parameter 1 is not `const`
+// @EXPECT_ERROR: Cannot pass the elements of const parameter 'ps13' to `reduce`'s callback, whose parameter 2 is not `const`
 
 struct Acc1540 { balance: integer }
 struct Pt1540 { x: integer }
@@ -98,8 +88,3 @@ fn cell10(ps10: const vector<Pt1540>) -> integer { len(map(ps10, setx1540)) }
 fn cell11(ps11: const vector<Pt1540>) -> integer { len(ps11.map(setx1540)) }
 fn cell12(ps12: const vector<Pt1540>) -> integer { count_if(ps12, isx1540) }
 fn cell13(ps13: const vector<Pt1540>) -> integer { reduce(ps13, 0, addx1540) }
-
-fn main() {
-  acct = Acc1540 { balance: 500 };
-  assert(read1540(acct) == 500, "read {read1540(acct)}");
-}

@@ -1,5 +1,5 @@
 // Step 7 — see-through cone occlusion tests.
-use moros_render;
+use moros_render::*;
 use graphics;
 
 // ── Aabb helpers ──────────────────────────────────────────────────

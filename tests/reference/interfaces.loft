@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Interfaces and bounded generics — an interface is satisfied structurally,
+// a bound admits the operations the interface names, and an operator can be one of them.
+// The unbounded refusal is in interfaces-refused.loft.
+
+interface Comparable {
+  fn less_than(self: Self, other: Self) -> boolean
+}
+
+struct Priority { value: integer }
+fn less_than(self: Priority, other: Priority) -> boolean {
+  self.value < other.value
+}
+// Priority now satisfies Comparable — no explicit declaration.
+
+fn find_min<T: Comparable>(v: vector<T>) -> T {
+  result = v[0];
+  for item in v {
+    if item.less_than(result) { result = item; }
+  }
+  result
+}
+
+fn test_a_struct_satisfies_an_interface_by_shape() {
+  ps = [Priority { value: 5 }, Priority { value: 2 }, Priority { value: 9 }];
+  m = find_min(ps);
+  assert(m.value == 2, "the bound admitted `less_than`, and the minimum is 2");
+}
+
+interface Summable {
+  op + (self: Self, other: Self) -> Self
+}
+fn total<T: Summable>(a: T, b: T) -> T { a + b }
+
+fn show<T: Printable>(v: T) -> text { "{v}" }  // renders every kind
+
+fn test_an_operator_bound_and_a_printable_bound() {
+  assert(total(10, 20) == 30, "integer satisfies Summable automatically");
+  assert(total(1.5, 2.5) == 4.0, "so does float");
+  assert(show(42) == "42" and show("hi") == "hi", "Printable renders every kind");
+}

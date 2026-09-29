@@ -105,4 +105,7 @@ fn main() {
 
   assert(delete("loft_174_copy.tmp") && delete("loft_174_empty.tmp") && delete(ff_path()), "cleanup");
   println("foreign file ok");
+  // The run writes into the script's own directory, so it leaves nothing behind there.
+  delete(ff_path());
+  delete("loft_174_empty.tmp");
 }

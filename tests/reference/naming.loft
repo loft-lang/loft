@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Naming Conventions — the parser enforces the case of each construct:
+// `lower_case` functions and variables, `CamelCase` types and variants, `UPPER_CASE`
+// constants (`naming-refused.loft` is the lowercase constant the parser refuses).
+
+enum Format { Text, FileName }
+struct Terrain { height: integer }
+MAX_SIZE = 256;
+
+fn my_fn(t: Terrain) -> integer { t.height * 2 }
+
+fn test_each_construct_in_its_own_case() {
+  count = my_fn(Terrain { height: 3 });
+  f = Format.FileName;
+  assert(count == 6 and f == Format.FileName and MAX_SIZE == 256, "function, variable, type, variant, constant");
+}

@@ -78,7 +78,10 @@ The mechanics of rebasing onto a squash and of joining sibling checkouts are
 ### Opening a PR is the owner's call
 
 Do not propose a PR, hint that work is ready for one, or treat a finished issue as a milestone
-that wants one.  Fix, gate, push, and say what is done.  The cadence — one or two stable PRs a
+that wants one.  Fix, gate, push, and say what is done.  A PR is a GATHERING: when the work
+across the agents' active branches is stabilising, the owner asks for it, and it joins those
+branches in one.  Nothing that lands on one branch — a fix, a feature, a workflow that only
+works from `main` — is a reason to mention one.  The cadence — one or two stable PRs a
 day, arcs that finish inside it — is [CLAUDE.md § Branch policy](../../CLAUDE.md) rule 3, with
 the short list of what must hold before opening.
 
@@ -247,7 +250,7 @@ A survey that finds the siblings of the bug you are on:
 number of them.  Each is one coherent change:
 
 - a fix and its guard ship together; a guard records `@falsified-at:` — the run showing it
-  fails on the build it was written to catch ([TESTING.md](TESTING.md), `make falsify`);
+  fails on the build it was written to catch ([GUARDS.md](GUARDS.md), `make falsify`);
 - a test written before its implementation, in a separate commit, is marked
   `#[ignore = "<reason>"]` or `@EXPECT_FAIL` and enabled in the commit that makes it pass;
 - a behaviour-neutral refactor gets its own commit;
@@ -280,7 +283,7 @@ clearly does not affect:
 | `doc/claude/PLANNING.md`, `ROADMAP.md` | An item completed (remove it — completion history is git and the changelog) or a new one was found |
 | A GitHub issue | A bug found and NOT fixed ([ISSUE_TRACKING.md](ISSUE_TRACKING.md)); a fixed one gets `Fixes #N` in its commit |
 | `doc/claude/CAVEATS.md` | An edge case was fixed, or a workaround found (with its test) |
-| `doc/claude/TESTING.md` § Test Coverage Gaps | Coverage improved, or a gap was found |
+| `doc/claude/TESTING.md` § Open work | Coverage improved, or a gap was found |
 | `doc/claude/STDLIB.md` / `LOFT.md` | A stdlib function, or the language's syntax or semantics, changed |
 | `doc/claude/INTERNALS.md` / `INTERMEDIATE.md` | A new operator, runtime state or native function |
 | `doc/claude/INCONSISTENCIES.md` / `NATIVE.md` | A language quirk was found or resolved; a native design correction |
@@ -360,15 +363,25 @@ hides the next real regression.  Leave the gate cleaner than you found it.
 
 ### Local CI gate
 
-**`make ci` before every commit** — fmt, both clippy variants, the no-default-features and wasm
-builds, the native fixture cdylibs, then the suite; it stops at the first failure and writes
-`result.txt`.  It takes minutes, so iterate with the tight loop and run the full gate once
-before committing:
+**One full gate per change whose reach you cannot bound — not one per commit.**  `make ci` runs
+fmt, both clippy variants, the no-default-features and wasm builds, the native fixture cdylibs,
+then the suite (the stages before the suite stop at their first failure; the suite collects up
+to `CI_MAX_FAIL`, default 5).  It takes ~20 minutes, so the gate is used once and the cheap
+tools around it do the rest:
 
 ```bash
-./scripts/find_problems.sh --changed      # seconds: the subjects your diff touches
-make ci                                   # the full gate, before the commit
+./scripts/find_problems.sh --changed      # seconds: the subjects your diff touches, while iterating
+scripts/ci-run.sh start                   # the full gate; a ~15 s pre-flight refuses it first
+                                          #   when fmt, an audit row or doc drift would stop it
+scripts/ci-run.sh recheck                 # AFTER a gate: its failed tests + what changed since
 ```
+
+**After a red gate, `recheck` — do not restart it.**  Fix what it named, then `recheck` re-runs
+exactly the failed tests, the pre-flight, both clippy variants when Rust changed since the
+gate, and `find_problems.sh --changed <gate sha>`.  The gate plus a green recheck is the
+evidence for a push; name both.  A NEW full gate is owed only when the fix's reach is not known —
+the cases [CI_BUDGET.md § After a red gate](CI_BUDGET.md#after-a-red-gate-recheck-do-not-restart)
+lists — and never before opening a PR, whose own `ci.yml` is the full gate on the exact sha.
 
 Start a long gate with `scripts/ci-run.sh start` and wait on its recorded pid, never on a
 process name ([CLAUDE.md § Key commands](../../CLAUDE.md)).  When this box cannot run the gate
@@ -440,7 +453,9 @@ not resurface every session.
 - **Re-opening** requires new evidence (a use case, an incident, a measurement) not available
   at the decision; put it at the top of the revived entry.
 - **Adding** an entry requires the question, the evaluation, the decision with its date, and
-  a "revisit when" trigger.
+  a "revisit when" trigger: the compact entry goes in the register, the deliberation in
+  [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md) under the same heading
+  ([DESIGN_DECISIONS.md § Using the register](DESIGN_DECISIONS.md#using-the-register)).
 
 When declining a proposal, strike it (`~~…~~`) in its source doc and append a pointer to its
 DESIGN_DECISIONS.md entry.
@@ -452,7 +467,7 @@ DESIGN_DECISIONS.md entry.
 - [CODE.md](CODE.md) — naming, function length, clippy policy, null sentinels
 - [JOINING.md](JOINING.md) — rebasing onto a squash, joining sibling checkouts
 - [REVALIDATE_LIBS.md](REVALIDATE_LIBS.md) — checking the shipped libraries against this loft
-- [TESTING.md](TESTING.md) — the test framework, guards and `@falsified-at:`
+- [TESTING.md](TESTING.md) — the test framework; [GUARDS.md](GUARDS.md) — guards and `@falsified-at:`
 - [ISSUE_TRACKING.md](ISSUE_TRACKING.md) — where open work lives
 - [RELEASE.md](RELEASE.md) — gate criteria and the release checklist
 - [DEVELOPMENT-history.md](DEVELOPMENT-history.md) — the incidents behind these rules

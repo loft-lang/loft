@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Value structs — a `value struct` element is copied on bind, so a write
+// through the copy never reaches the container.
+
+value struct Point { x: integer, y: integer }
+
+struct Path { points: vector<Point> }
+
+fn test_a_value_struct_element_is_copied_on_bind() {
+  p = Path { points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }] };
+  q = p.points[0];   // q is a COPY of element 0
+  q.x = 99;          // p.points[0].x is still 1 — no aliasing
+  assert(q.x == 99 and (p.points[0].x ?? -1) == 1, "no aliasing through a value struct");
+}

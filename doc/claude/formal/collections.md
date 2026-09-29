@@ -95,7 +95,10 @@ owns their *operations + order*).
 **An absent destination is instantiated, not refused (`Col-Insert-Absent`).**  `s.items:
 vector<It>?` holding null and then `s.items += [x]` leaves `s.items` holding `[x]`; a local, an
 element or a parameter of a nullable collection type behaves the same, and so does every keyed
-kind (loft#1213 is the keyed FIELD half of it).  This is deliberately the opposite answer from
+kind (loft#1213 is the keyed FIELD half of it).  So does a LINK to a null local (a `&τ?`
+parameter, `c = &a`, a closure capture) and a local set back to `null`: each reaches the same
+slot, which the local is given, marked absent, before it is shared or re-nulled
+(`tests/scripts/c118-an-append-reaches-an-absent-collection-through-a-link.loft`).  This is deliberately the opposite answer from
 iteration: a `for` over a nullable collection is refused until discharged
 ([iteration.md](iteration.md)), because a loop body binds a dense element and the only way
 there is an unwrap, while an insert has no such binding — its only question is *which store*,
@@ -146,6 +149,31 @@ Two source shapes the rule deliberately does NOT license, each with its own answ
     bare element is ambiguous with a concat.  Asked unpeeled, `d.c += n` on an `integer?` was
     accepted where the dense `d.c += 9` is refused, which made the `?` spelling of a statement
     more permissive than the plain one (loft#1223).
+
+### 1.2a Keyed assignment — `Col-Assign` (the SUBSCRIPT names the key)
+
+```
+  (Col-Assign)  c: <keyed kind><T[k₁,…,kₙ]>,  c[s₁,…,sₙ] = v   (every key given)
+                ⟹  a COPY of v is placed under (s₁,…,sₙ): any record already there is
+                replaced, and the copy's key fields are written to s₁,…,sₙ before it is
+                linked.  Afterwards c[s₁,…,sₙ] reads the copy back; v itself is untouched.
+                v's own key fields do not choose the place — they are overwritten on the
+                copy.  So c[5] = c[30]; c[30] = null MOVES the record from 30 to 5.
+```
+*Anchor:* `database/search.rs::set_keyed` (`insert_keyed_copy_at`, `keys::set_key`), both
+backends — the subscript's keys ride the op exactly as `OpGetRecord`'s do.  Guard
+`tests/scripts/a-keyed-assignment-places-its-record-under-the-subscript.loft`.
+
+**Why the subscript, and not the record's own key field (owner ruling 2026-09-28,
+loft#1716).**  Until then the subscript was parsed and dropped: `c[5] = K { key: 9 }` landed
+under 9, left `c[5]` untouched, and the move spelling above DELETED the record — a write
+landing at a place other than the one it names, which no rule admits.  `(Col-Lookup)` makes
+`c[k]` the record whose key is `k`, and an assignment to a place must leave that place reading
+the value written, as `v[i] = x` does.  A refusal was not available: a mismatch depends on
+values, so it cannot be judged from the line, and C80 rules out a runtime error.  Re-keying
+the COPY re-keys nothing that exists, so this does not collide with `(B-Ref-Reshape)`, which
+refuses re-keying a LIVE element (`e = &c[30]; e.key = 5`).  A value that lives inside the
+collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves under it.
 
 ### 1.2b Removal — `Col-Remove` (a vector RENUMBERS; a keyed kind does not)
 
@@ -610,6 +638,16 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+- **`D-col-12`** — opened and CLOSED 2026-09-29 (loft#1728): **a slice at a method's RECEIVER was
+  not a vector.**  `(Slice-Value)` makes `v[a..b]` the fresh vector a bind would make at every
+  vector-typed position, and a receiver is one — but it is resolved by its TYPE before any
+  coercion sees it, so `len(v[a..b])` answered "Unknown function len" and `v[a..b].len()`
+  "Unknown field iterator<integer>.len", on both backends.  **Fix.**  Where resolution would
+  otherwise fail, the slice receiver goes through `iterator_as_vector`, the one home: the free
+  spelling in `Parser::call_with_slice_receiver`, the method spelling when the member is a
+  method a vector declares and no iterator does (`Parser::slice_receiver_method`).  A keyed
+  range slice stays `(Slice-KeyedIter)`'s refusal.  Guard
+  `tests/scripts/1728-a-slice-is-a-vector-as-a-methods-receiver.loft`.
 - **`D-col-11`** — opened and CLOSED 2026-09-28: **a comprehension over a keyed collection walked
   the collection, not its snapshot**, against `(Col-Order)`.  A `for` statement walks a `hash`,
   `spatial` or `trie` through the ordered snapshot `parse_for` built; a comprehension over the same

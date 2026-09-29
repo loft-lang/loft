@@ -11,8 +11,8 @@
 // "no implementation in any registered native crate".  Driven by
 // tests/native_pkg_codegen.rs.
 
-use imaging;
-use p269_native_b;
+use imaging::*;
+use p269_native_b::*;
 
 fn main() {
   p = Pixel { r: 10, g: 20, b: 30 };

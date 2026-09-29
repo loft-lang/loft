@@ -1483,6 +1483,7 @@ fn import_from_parsed(p: &Parsed) -> Result<crate::data::AppliedImport, TypeDeco
         } else {
             Some((name, as_str(field(p, "bind")?)?))
         },
+        public: matches!(field(p, "public"), Ok(v) if as_bool(v).unwrap_or(false)),
     })
 }
 

@@ -86,14 +86,12 @@ env:
   # of the Windows cache-SAVE step (~7m vs ~50s on Linux, where compressing that
   # many small NTFS files is an order of magnitude slower).  Off → a much
   # smaller cache, faster save/restore on every OS, negligible build impact.
-  # This keeps the deliberate `run_id` save-key (native-fixture persistence)
-  # intact — it only removes the incremental bloat from what gets compressed.
+  # It only removes the incremental bloat from what gets compressed.
   CARGO_INCREMENTAL: "0"
-  # BUILD2: keep loft's native-test binary cache inside target/ so
-  # actions/cache (which persists ~/.cargo + target/) carries it across runs.
-  # The in-run binary cache is keyed on the rlib's CONTENT hash (mtime-stable
-  # across the per-run `cargo build --release --lib` no-op rebuild), so warm
-  # runs skip the ~565s of native recompiles instead of redoing them.
+  # loft's native-test binary cache, inside target/ so it is one known path.  Its
+  # entries are keyed on the rlib's CONTENT hash, so within a run the binaries a
+  # test compiles are reused by the next; across runs only the Windows cargo cache
+  # carries them (see "Restore cargo registry and build" in the `test` job).
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
   # Side-channel ledger directory for environmental test skips (tests that
   # passed-by-skipping for a toolchain/OS reason — e.g. Windows LNK1181).
@@ -459,22 +457,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libsqlite3-0 binaryen
 
-      # The native-fixture binary cache lives in `target/loft-native-cache`
-      # (keyed INSIDE loft on the libloft.rlib content hash — see
-      # native_utils::native_cache_key).  Its persistence was broken: the
-      # actions/cache key was Cargo.lock-only, so a PR that changed lib SOURCE
-      # (not Cargo.lock) rebuilt every fixture (rlib bytes changed → loft
-      # correctly invalidated) but then could NOT save — the Cargo.lock key
-      # already existed, and actions/cache skips save on an existing key.  The
-      # rebuilt-and-validated binaries were discarded, so the NEXT run
-      # restored the stale cache and rebuilt again (~15m, every run).
+      # The repo's cache budget is 10 GB, evicted least-recently-used, and it is
+      # the binding constraint on everything below.  Measured 2026-09-28: one run
+      # SAVED 24.8 GB (a PR) and 39 GB (main) — the `Linux-cargo` entry alone was
+      # 13.8 GB on main — so every entry was evicted before the next run could
+      # restore it, and every leg compiled all 474 crates cold (Build 331 s).  So:
       #
-      # Fix: a unique save key per job per run (run_id + job-index — the two
-      # shards of one OS would otherwise collide on the same key).  Save now
-      # always happens; restore falls back through prefix keys — same OS+shard
-      # first (its own fixture set), then any same-OS, then any.  A run that
-      # rebuilds fixtures now persists them, so a re-run / the merge-to-main
-      # run / a follow-up non-rlib push restores them WARM.
+      #   - caches are SAVED on `main` only.  A branch can restore only its own
+      #     caches and main's, so a branch save helps that branch alone while
+      #     evicting main's, which every run restores.
+      #   - `target/loft-native-cache` (the compiled native test binaries, 9-13 GB)
+      #     is excluded from the Linux/macOS cargo cache.  Their key includes the
+      #     libloft.rlib content hash (tests/native.rs `cache_key`), so any commit
+      #     that touches loft's source misses every one of them anyway.
+      #   - the save KEY is the restore step's `cache-primary-key`, not a second
+      #     `hashFiles`: the warm-up step creates gitignored
+      #     `tests/fixtures/libs/*/native/Cargo.lock` files, so the hash taken at
+      #     save time never equalled the one the next restore looked for.
+      #
       # `~/.loft/build-cache` holds the built NATIVE cdylibs (graphics, glb,
       # mesh3d, …) — the actual native-phase bottleneck (graphics alone is
       # ~80-90s of cargo build, and on the cold suite run graphics rebuilds
@@ -529,42 +529,23 @@ jobs:
       # leg whose artifacts matter would be the one that never persists them, and
       # the serial floor this split exists to shorten would stay permanently cold.
       - name: Restore cargo registry and build (non-Windows — keeps target/)
+        id: cargo-cache
         if: runner.os != 'Windows'
         uses: actions/cache/restore@v4
         with:
+          # Restored read-only by `index-hygiene` and `viewer-smoke` too: a restore
+          # matches only a save with the IDENTICAL path list, so keep theirs in step.
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
             target
+            !target/loft-native-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-
-      # @PLN159 phase E2 — two caches that are SAVED by the shard that fills them, restored by
-      # every shard on top of the one above (a restore extracts over what is there, so the
-      # result is the union).  The native script corpus's binaries are filled by the `corpus`
-      # shard, the registry package builds by `heavy`; before this split both rode in the
-      # `target` cache and had to be saved from `heavy` — 3.7 min on the run's critical path.
-      - name: Restore the native-corpus binary cache (non-Windows)
-        if: runner.os != 'Windows'
-        uses: actions/cache/restore@v4
-        with:
-          path: target/loft-native-cache
-          key: ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-corpus-
-      - name: Restore the package build cache (non-Windows)
-        if: runner.os != 'Windows'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.loft/build-cache
-          key: ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-
-            ${{ runner.os }}-buildcache-
       # Drops target/'s BULK (the 4.5 GB dep/build artefacts + the ~9-min NTFS
       # save) but KEEPS `target/loft-native-cache` — loft's native-test binary
       # cache (`LOFT_TMPDIR`, env above), keyed on the libloft.rlib content hash.
@@ -574,6 +555,7 @@ jobs:
       # leg).  This sub-path is small, so the Windows cache still fits under the
       # 10 GB eviction budget AND the test phase restores warm on repeat runs.
       - name: Restore cargo registry and build (Windows — drops target/ bulk, keeps native-test cache)
+        id: cargo-cache-windows
         if: runner.os == 'Windows'
         uses: actions/cache/restore@v4
         with:
@@ -808,10 +790,19 @@ jobs:
           # from 1.2 % to 82 % out of balance in three weeks, and both halves then hit the
           # 20-minute cap).
           PART=""
+          #
+          # `slice:` deals the list ROUND-ROBIN across the three legs; `hash:` placed each test
+          # by its name's hash, and slow tests cluster in the list (one binary's dozens of
+          # 90-second `deliver_wasm` cases sit side by side), so a hash can land several on
+          # one leg.  Scored on one full run's per-test times, worst leg over the mean: hash
+          # 1.10, slice 1.04, `count:` 1.15 (it deals per BINARY, so every one-test binary
+          # lands on leg 1).  On #1712 the hash legs ran 732 / 445 / 329 s.  A split by
+          # measured duration would reach 1.00 but needs a baseline and per-test filters;
+          # the timing report (`scripts/ci_timing.py`) says whether the remaining gap earns it.
           case "${{ matrix.shard }}" in
-            rest-a) PART="--partition hash:1/3" ;;
-            rest-b) PART="--partition hash:2/3" ;;
-            rest-c) PART="--partition hash:3/3" ;;
+            rest-a) PART="--partition slice:1/3" ;;
+            rest-b) PART="--partition slice:2/3" ;;
+            rest-c) PART="--partition slice:3/3" ;;
           esac
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
           cargo nextest run --profile ci $FAILFAST $PART -E "$FILTER"
@@ -838,6 +829,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml
+
+      # Where this leg's time went: wall against summed test time, how many ran at once, the
+      # tail with at most two left, and the slowest tests — on the job's summary page.  The
+      # junit is also kept, so the PR's timing report (`advisory-failures.yml`) can set the
+      # legs side by side and against the default branch's last run.  Read here, before the
+      # later nextest steps overwrite it.
+      - name: Test timing summary
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        shell: bash
+        run: python3 scripts/ci_timing.py shard target/nextest/ci/junit.xml "${{ matrix.os }}${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the test junit
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-${{ matrix.os }}-${{ matrix.shard || 'full' }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
@@ -1039,50 +1048,19 @@ jobs:
           echo "===== loft timing (build-lock) ====="; echo "$all" | awk -F'\t' '$1=="lockwait"||$1=="lockheld"' | sort | uniq -c
           echo "===== loft timing (stale cdylib rebuilds, with fp) ====="; echo "$all" | awk -F'\t' '$1=="cdylibstale"{print $2}' | sort | uniq -c
 
-      # BUILD2: reap ABANDONED native-binary cache entries.  Each fixture keeps
-      # a single fixed-named binary (overwritten on change, not duplicated), so
-      # the live set is self-bounding (~300 binaries, ~300MB); the dir only
-      # creeps when a fixture is deleted/renamed and leaves an orphan.  The
-      # cache-HIT path touches each binary's mtime (see compile_native_job), so
-      # mtime = last-USE: a 30-day threshold reaps only genuinely-dead orphans
-      # and can never delete a binary the suite still hits (even fixtures that
-      # run on only one OS are touched well within 30 days).  Deliberately NOT
-      # an aggressive per-run prune — that would delete long-lived warm entries
-      # whose whole purpose is to survive across runs.  Best-effort; skipped on
-      # Windows (find(1) differs) — the Linux/macOS runs keep the shared dir
-      # trimmed for everyone.
-      - name: Reap abandoned native-binary cache entries
-        if: runner.os != 'Windows'
-        continue-on-error: true
-        run: find "${{ github.workspace }}/target/loft-native-cache" -type f -mtime +30 -delete || true
-
-      # The save half of the restore steps above.  Exactly ONE leg per (os, run)
-      # may write the run-scoped key, and on a sharded PR that leg is `heavy`: it
-      # holds the native-compile caches, and it is the long pole whose warmth is
-      # the whole point of the split.  An unsharded leg (`shard` unset — every
-      # push/nightly/dispatch leg, and every non-ubuntu one) saves as before.
-      # Accepted trade: native artifacts that only `rest` produces are not
-      # persisted, so those recompile each run.  One cache lineage is kept rather
-      # than two because `target/` is the bulk of it and a second copy competes
-      # for the repo's 10 GB eviction budget with seven other job caches.  If
-      # `rest` is later seen drifting slower run-over-run, that is the thing to
-      # revisit — measure it, do not assume it.
+      # The save half of the restore steps above — on `main` only (see the budget note
+      # above the restore steps).  Exactly ONE leg per (os, run) writes the run-scoped
+      # key: an unsharded leg (every ubuntu/macOS leg on main) or, where the OS is
+      # sharded (Windows), `rest-a` — every shard builds the same `target`, and
+      # `rest-a` is the one off the critical path (@PLN159 phase E2).  The package
+      # build cache (`~/.loft/build-cache`) rides in the same entry.
       #
       # Saves on RED as well as green — a failing test must not throw away a cold
-      # build, or every red PR pays the full rebuild on its next push.  But NOT on
-      # cancelled: `cancel-in-progress` kills the previous run on every new push,
-      # and that run's `target/` is mid-build.  The key is run-scoped, so a partial
-      # tree saved there becomes the newest prefix match and would be restored by
-      # everything after it — `always()` would quietly poison the cache lineage.
-      #
-      # @PLN159 phase E2 — the 3.7-min `target` save moves OFF the critical path: `rest-a` is
-      # the shortest PR shard (17.4 min against `heavy`'s 29.3 on the run that measured it)
-      # and every shard builds the same `target`, so its copy is as good as any.  What only
-      # one shard fills is saved by that shard under its own key: the corpus binaries by
-      # `corpus`, the package build cache by `heavy` (small — no `target` in it).  An
-      # unsharded leg (push, nightly, Windows) still saves everything in one go.
-      - name: Save cargo cache
-        if: "!cancelled() && (matrix.shard == '' || matrix.shard == 'rest-a')"
+      # build.  But NOT on cancelled: that run's `target/` may be mid-build, and the
+      # key is run-scoped, so a partial tree would become the newest prefix match
+      # and be restored by everything after it.
+      - name: Save cargo cache (non-Windows)
+        if: "!cancelled() && github.ref == 'refs/heads/main' && runner.os != 'Windows' && (matrix.shard == '' || matrix.shard == 'rest-a')"
         uses: actions/cache/save@v4
         with:
           path: |
@@ -1090,23 +1068,20 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ~/.loft/build-cache
-            ${{ runner.os == 'Windows' && 'target/loft-native-cache' || 'target' }}
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-      # Not on Windows: nothing there restores it (the restore step above is non-Windows), and
-      # uploading ~1300 compiled script binaries took 26 of the Windows corpus shard's 61 min
-      # (run 36001391398) for a cache no later run reads.
-      - name: Save the native-corpus binary cache
-        if: "!cancelled() && matrix.shard == 'corpus' && runner.os != 'Windows'"
+            target
+            !target/loft-native-cache
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save cargo cache (Windows)
+        if: "!cancelled() && github.ref == 'refs/heads/main' && runner.os == 'Windows' && (matrix.shard == '' || matrix.shard == 'rest-a')"
         uses: actions/cache/save@v4
         with:
-          path: target/loft-native-cache
-          key: ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
-      - name: Save the package build cache
-        if: "!cancelled() && matrix.shard == 'heavy'"
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.loft/build-cache
-          key: ${{ runner.os }}-buildcache-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target/loft-native-cache
+          key: ${{ steps.cargo-cache-windows.outputs.cache-primary-key }}
 
   # `Test (ubuntu-latest)` is a branch-protection REQUIRED context, and on a PR no
   # single job produces it any more — the leg is three shards (`[heavy]`, `[rest-a]`,
@@ -1158,8 +1133,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
+      # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1204,6 +1181,15 @@ jobs:
           --test tuple_matrix --test closure_matrix --test mut_closure_matrix
           --test template_matrix --test coroutine_matrix --test binary_io_matrix
           -E 'not test(library_suite)'
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Doc-index hygiene (plan-37) — `make index` + broken `@`-tag / markdown-link
   # checks.  Extracted from the per-platform `Test` job because it is whole-repo
@@ -1220,17 +1206,23 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
+      # Read-only, from the `test` job's cache (saved on main): this job builds the
+      # same release `loft`, so a cache of its own only competed for the 10 GB budget.
+      # The path list must stay IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
             target
-          key: ubuntu-hygiene-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            ubuntu-hygiene-cargo-${{ hashFiles('**/Cargo.lock') }}-
-            ubuntu-hygiene-cargo-
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       - name: Build host loft binary (required by `make index`)
@@ -1335,17 +1327,23 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
+      # Read-only, from the `test` job's cache (saved on main): this job builds the
+      # same release `loft`, so a cache of its own only competed for the 10 GB budget.
+      # The path list must stay IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
             target
-          key: ubuntu-viewer-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            ubuntu-viewer-cargo-${{ hashFiles('**/Cargo.lock') }}-
-            ubuntu-viewer-cargo-
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # The viewer test spawns `target/release/loft`; build it or the test skips.
@@ -1446,8 +1444,10 @@ jobs:
           toolchain: nightly-2026-05-28
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
+      # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1505,6 +1505,15 @@ jobs:
       # `asan-leak-gate` job in miri.yml — kept off the per-PR path (its slow
       # single-threaded pass would bloat PR CI).  Its red/green surfaces onto PRs via
       # the nightly-status mechanism below, same as the other nightly gates.
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   clippy:
     name: Clippy
@@ -1525,8 +1534,10 @@ jobs:
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
 
+      # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1542,6 +1553,15 @@ jobs:
 
       - name: Clippy (all targets, all features, deny warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   fmt:
     name: Format
@@ -1602,8 +1622,10 @@ jobs:
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1693,6 +1715,15 @@ jobs:
       # that both pipelines *build* and every asset loads — which
       # catches the common failure mode of a source change that
       # breaks the browser pipeline without the contributor noticing.
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Doc hygiene — blocking CI gate (promoted 2026-05-18).
   #

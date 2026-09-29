@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(N-Join)`: a branch that joins `null` with a value of type τ is `τ?` — for EVERY τ that has
+// a `τ?`, not only the scalars (loft#1714, formal/types.md `D-types-5`).
+//
+// The widening was scalar-only, on the premise that a struct or a collection already holds
+// null without a `?`.  `(N-Opt)` says the opposite, and the cost was concrete: `a = if c {
+// null } else { [n] }` typed `a` a non-null `vector<integer>`, so `(Col-Insert-Absent)` — which
+// is written for `<kind>?` — did not apply, and `a += [7]` wrote through the null handle: the
+// element was lost, silently, on both backends.  The tuple and vector `match` chains did not
+// widen at all, scalars included.
+//
+// What a `null` arm IS is read from the SOURCE (`null`, `{ null }`): by the time the join runs
+// the arm is its sibling's typed null, and on the first pass a comprehension arm is a
+// placeholder of the same shape — reading lowered code widened `if c { [for …] } else { … }`.
+//
+// Axes: construct (`if`, `match` over a scalar, an enum, a tuple, a vector) × kind (vector,
+// struct, enum variant, scalar) × arm order × the discharge (append, `??`, a declared `τ?`),
+// plus the controls a wrong widening would break: a comprehension arm and a variant into its
+// enum.  The sub-rule half is its own guard, a-sub-rule-may-answer-an-optional.loft, because
+// the tree before it refuses `-> N?` at compile time and would mask every cell here.
+//
+// @falsified-at: f37957702 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-branch-joining-null-is-optional-for-every-kind.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// HOLDS: the comprehension-arm control and the variant cell pass on both trees; the append cells are the ones that moved.
+
+enum Shape { Circle { r: integer }, Square { s: integer } }
+struct P { a: integer }
+
+// The filed shape: the append after a null arm.
+fn append_after_if(n: integer) -> text { a = if n == 0 { null } else { [n] }; a += [7]; "{a}" }
+fn append_after_if_swapped(n: integer) -> text { a = if n != 0 { [n] } else { null }; a += [7]; "{a}" }
+fn append_after_match(n: integer) -> text { a = match n { 0 => null, _ => [n] }; a += [7]; "{a}" }
+
+fn test_the_append_after_a_null_arm_lands() {
+  assert(append_after_if(0) == "[7]", "if, null taken: {append_after_if(0)}");
+  assert(append_after_if(3) == "[3,7]", "if, value taken: {append_after_if(3)}");
+  assert(append_after_if_swapped(0) == "[7]", "else-null, null taken: {append_after_if_swapped(0)}");
+  assert(append_after_match(0) == "[7]", "match, null taken: {append_after_match(0)}");
+  assert(append_after_match(4) == "[4,7]", "match, value taken: {append_after_match(4)}");
+}
+
+// Every kind's join discharges with `??` — which only type-checks on a `τ?`.
+fn vec_join(n: integer) -> integer { v = if n == 0 { null } else { [n, n] }; len(v ?? []) }
+fn struct_join(n: integer) -> integer { p = if n == 0 { null } else { P { a: n } }; (p ?? P { a: -1 }).a }
+fn tuple_chain(t: (integer, integer)) -> integer { a = match t { (0, _) => null, (x, _) => x }; a ?? -1 }
+fn vector_chain(v: vector<integer>) -> integer { a = match v { [0] => null, _ => 5 }; a ?? -1 }
+
+fn test_every_kind_is_optional() {
+  assert(vec_join(0) == 0 && vec_join(2) == 2, "vector: {vec_join(0)} {vec_join(2)}");
+  assert(struct_join(0) == -1 && struct_join(8) == 8, "struct: {struct_join(0)} {struct_join(8)}");
+  assert(tuple_chain((0, 1)) == -1 && tuple_chain((6, 1)) == 6, "tuple chain, scalar: {tuple_chain((0, 1))} {tuple_chain((6, 1))}");
+  assert(vector_chain([0]) == -1 && vector_chain([1]) == 5, "vector chain, scalar: {vector_chain([0])} {vector_chain([1])}");
+}
+
+// A variant joined with null is that variant, optional — and still admitted into its enum.
+fn variant_into_enum(i: integer) -> text {
+  s: Shape? = if i == 0 { null } else { Shape::Circle { r: i } };
+  if s == null { "none" } else { "some" }
+}
+
+fn test_the_consumers_of_a_wider_type() {
+  assert(variant_into_enum(0) == "none" && variant_into_enum(2) == "some", "variant: {variant_into_enum(0)} {variant_into_enum(2)}");
+}
+
+// The control a WRONG widening breaks: no `null` arm, so no `?` — and a `for` over a `τ?`
+// would be refused at compile time.
+fn comprehension_arm(c: boolean) -> integer {
+  a = if c { [for i in 0..3 { i }] } else { [5] };
+  t = 0;
+  for x in a { t += x; }
+  t
+}
+
+fn test_a_comprehension_arm_is_not_a_null_arm() {
+  assert(comprehension_arm(true) == 3 && comprehension_arm(false) == 5, "walk: {comprehension_arm(true)} {comprehension_arm(false)}");
+}

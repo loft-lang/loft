@@ -86,7 +86,8 @@ jobs:
         run: sudo apt-get update -y && sudo apt-get install -y mold
 
       - name: Cache cargo + loft build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -282,6 +283,15 @@ jobs:
           path: warn/
           if-no-files-found: ignore
           retention-days: 14
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Fail the workflow if any published library broke — that is a language change
   # retro-breaking a shipped lib, which the freeze forbids.

@@ -434,6 +434,7 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
             } else {
                 Some((name, ir.field_str(stores, ds::IMPORT_BIND).to_string()))
             },
+            public: ir.field_bool(stores, ds::IMPORT_PUBLIC),
         });
     }
     data.set_applied_imports(applied);

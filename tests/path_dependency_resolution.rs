@@ -59,11 +59,11 @@ fn build_tree(root: &Path, declare: bool) {
     );
     write(
         &root.join("src/consumer.loft"),
-        "use mylib;\n\npub fn doubled() -> integer { answer() * 2 }\n",
+        "pub use mylib::*;\n\npub fn doubled() -> integer { answer() * 2 }\n",
     );
     write(
         &root.join("tests/t2.loft"),
-        "use consumer;\n\nfn test_via_the_project_library() {\n    \
+        "use consumer::*;\n\nfn test_via_the_project_library() {\n    \
          assert(doubled() == 84, \"doubled {doubled()}\");\n}\n",
     );
     let manifest = if declare {
@@ -178,11 +178,11 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
     );
     write(
         &root.join("src/shadowp.loft"),
-        "use arguments;\n\npub fn probe() -> integer { arg_count() }\n",
+        "pub use arguments::*;\n\npub fn probe() -> integer { arg_count() }\n",
     );
     write(
         &root.join("run.loft"),
-        "use shadowp;\nfn main() { print(\"{probe()}\\n\"); }\n",
+        "use shadowp::*;\nfn main() { print(\"{probe()}\\n\"); }\n",
     );
 
     let out = Command::new(loft_bin())

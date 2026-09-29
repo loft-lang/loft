@@ -10,7 +10,7 @@
 //
 // Its sibling `a-whole-tuple-has-no-rendering-and-says-so.loft` holds the refusal, and they are
 // two files because a compile-time refusal stops the run before any test function beside it
-// executes (TESTING.md § How a guard reads green).  **Written as one file, these cells silently
+// executes (GUARDS.md § How a guard reads green).  **Written as one file, these cells silently
 // did not run** — the harness reported `1 expected error` and nothing else, which reads as a
 // pass.  That is the phase masking, met while writing the guard for it.
 //

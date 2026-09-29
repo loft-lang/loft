@@ -354,7 +354,8 @@ pub(crate) const IMPORT_LIB_SOURCE: u32 = 0;
 pub(crate) const IMPORT_INTO_SOURCE: u32 = 8;
 pub(crate) const IMPORT_NAME: u32 = 16; // "" = wildcard
 pub(crate) const IMPORT_BIND: u32 = 20;
-pub(crate) const IMPORT_STRIDE: u32 = 24;
+pub(crate) const IMPORT_PUBLIC: u32 = 24; // `pub use` (@C98)
+pub(crate) const IMPORT_STRIDE: u32 = 25;
 
 /// `UseName` record — a `use` short name or alias and its source number.
 pub(crate) const USENAME_NAME: u32 = 8;
@@ -1535,6 +1536,7 @@ mod tests {
         assert_eq!(pos(ids.applied_import, "into_source"), IMPORT_INTO_SOURCE);
         assert_eq!(pos(ids.applied_import, "name"), IMPORT_NAME);
         assert_eq!(pos(ids.applied_import, "bind"), IMPORT_BIND);
+        assert_eq!(pos(ids.applied_import, "public"), IMPORT_PUBLIC);
         assert_eq!(u32::from(stores.size(ids.applied_import)), IMPORT_STRIDE);
         assert_eq!(pos(ids.use_name, "name"), USENAME_NAME);
         assert_eq!(pos(ids.use_name, "source"), USENAME_SOURCE);

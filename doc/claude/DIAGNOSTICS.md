@@ -78,7 +78,7 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `linked-group-apart` | advice | A linked collection group's members are declared APART — an unrelated field sits between them, in a struct or a struct-enum variant (`{ entities: vector<E>, tick: integer, spawn_index: hash<E[id]> }`). The group is one record set either way; adjacency is the signal, because the idiom is written together while a group nobody intended is two fields added at different times. Quiet on adjacent members, on a pair with no keyed member, and on a library's struct (a consumer cannot rearrange it). | Give one field its own element type, or declare them next to each other. | C C · `@F7` |
 | `needless-reference-parameter` | warning | A `&` on a tuple parameter that is never written. | Drop the `&`. | M · `@F21` |
 | `needless-const-parameter` | warning | `const` on a primitive parameter that is never modified. | Drop the `const`. | M · `@F18` |
-| `const-to-plain-parameter` | warning | A `const` value (or a view of one) is passed to a record or collection parameter that is not declared `const` — of a declared function, of a function reference's type, or of a builtin's callback (the elements of a `const` collection); a plain heap parameter names the caller's value, so the callee could write it. | Declare the parameter `const` if the callee only reads it (`fn(const T)` for a function type), or pass a local copy. Becomes an error once the shipped libraries declare their read-only parameters (C124). | M · `@F18` |
+| `const-to-plain-parameter` | error | A `const` value (or a view of one) is passed to a record or collection parameter that is not declared `const` — of a declared function, of a function reference's type, or of a builtin's callback (the elements of a `const` collection); a plain heap parameter names the caller's value, so the callee could write it. | Declare the parameter `const` if the callee only reads it (`fn(const T)` for a function type), or pass a local copy (C124). | M · `@F18` |
 | `slow-reference-parameter` | advice | A `&` parameter that is only read — double-indirect on every access, and field mutation already propagates without it. | Drop the `&` unless you reassign the whole binding. | C · `@F21` |
 | `not-null-deprecated` | advice | `not null` is inert — a type is non-null by default now. | Delete it, or write `T?` if the type should allow null. | M C · `@F12` `@F1` |
 | `module-name-shadowed` | warning / advice | Two packages declare a module of the same file name and NEITHER of them ships one of its own for this `use`, so it binds whichever the search found and load order decides. Since loft#976 a package that DOES ship `src/<module>.loft` binds its own and never reaches here. **Warning** when the file that won belongs to the ROOT PROJECT and the one that lost to a DEPENDENCY: a published package then answers differently than it does on its own, which is a wrong result (loft#949). **Advice** the other way round. | Warning: rename the project's own `<module>.loft`, since a consumer cannot edit the dependency. Advice: give the package a `src/<module>.loft` of its own, or write `use self::<module>` to say so explicitly. Outside a package there is nothing to qualify with, so there the cure is to rename one file and its `use`. | M · `@F16` |
@@ -505,7 +505,7 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    read back with `at()` before that next token still sees the seek. Guard:
    `runtime_warnings.rs::a_seek_to_a_warning_site_does_not_shift_later_positions`; the
    corpus-wide re-measure is `LOFT_TRACE_ASSERTS`
-   ([TESTING.md](TESTING.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)),
+   ([GUARDS.md](GUARDS.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)),
    which reads exactly this injected line.
 
 6. **The cursor is one token AHEAD of what the parser has decided about, and `diagnostic!`
@@ -736,6 +736,96 @@ multi-byte text silently (the `cbor` encoder shipped this); advisory, use `for c
 bounded by `len(<one vector>)` indexes a DIFFERENT vector — `for i in 0..len(v) { w[i] }` types
 non-null yet reads C80-null on overrun; advisory, the type is unchanged) ·
 `LOFT_DEV_SOFT_HALT` (**opt-in**: demote dev raises to log-and-continue so one run surfaces every fault).
+
+## Diagnostic tiers — what `--deny-warnings` may fail on
+
+Two tiers, and the difference is contractual rather than cosmetic:
+
+| tier | renders | gates `--deny-warnings` | LSP severity |
+|---|---|---|---|
+| `Level::Warning` | `warning:` | **yes** | Warning (2) |
+| `Level::Advice` | `advice:` | **never** | Hint (4) |
+
+**The rule for choosing: a diagnostic gates if and only if ignoring it can produce a
+wrong result.** A lost write, `len(text)` indexed as bytes, a nullable reaching a
+non-null slot — those gate. A deprecation, a perf note, a preferred spelling — those
+advise.
+
+The split is not a convenience. With one tier the compatibility doctrine contradicted
+itself: `revalidate-libs.yml` states that a new deprecation must not fail an
+already-shipped library, while that library's own CI runs `LOFT_DENY_WARNINGS=1` and
+fails on any warning. `not null` — a deliberate no-op kept parseable so unrepublished
+libraries keep loading — therefore made those libraries unable to pass their own CI
+without editing code they never touched.
+
+**There is deliberately no `LOFT_DENY_ADVICE`.** The moment advice can gate, cosmetics
+block a release and the split has bought nothing.
+
+Writing tests against a tier:
+
+- `Test::warning("…")` / `Test::advice("…")` in `tests/testing.rs` assert the tier, not
+  just the text — that is what keeps the split from silently eroding.
+- `@EXPECT_WARNING` in a `.loft` script matches **either** tier: it asks whether a
+  diagnostic fired, not which tier it landed in.
+- `loft test` prints both; only the Warning bucket reaches the deny gate.
+
+### The complexity advice, and why it is counted at parse time
+
+`LOFT_NO_COMPLEXITY` opts out of a nudge when a function's **cognitive** complexity
+reaches `keys::COMPLEXITY_ADVICE_AT` (40).
+
+Cognitive, not cyclomatic: a construct costs `1 + nesting`, so depth is what is expensive.
+Eight sequential `if`s cost 8; three nested cost 6; a flat `match` costs 1 however many arms
+it has. "Many branches" and "hard to follow" are different properties, and a lint that
+confuses them fires on every wide dispatch and gets switched off.
+
+**It is counted as the source is parsed, and that is not an implementation detail.** loft has
+no AST between the parser and the Value IR, so any whole-program pass sees post-desugar code.
+Measured on the IR: five `??` discharges with no author-written branch score 10, and one plain
+`for x in v` scores 5 — a reading that charges people for using the null model and the loop
+forms idiomatically. An IR version was built and measured before being discarded; the numbers
+are in the commit that added `Parser::complexity`.
+
+Two calibration facts worth keeping:
+
+- The boundary is set from the corpus, not chosen: over 5,972 functions of real loft the
+  distribution runs p50 1, p90 15, p95 27, p98 47. 40 speaks for ~3%.
+- The score is charged on **pass 2 only** — the parser runs twice, and charging both doubles
+  every score (eight flat `if`s read 16). The nesting counter still tracks on both passes, or
+  pass-1 bodies are charged at a stale depth.
+
+Also discarded on evidence, so it is not re-derived: a live-interval "cut point" signal (no
+variable crosses a boundary ⇒ two independent halves). It fires on 45% of long functions and
+flags a one-line vector add, because the absence of a spanning variable is a property of
+sequential evaluation, not of separable logic.
+
+### The interface nudges — parameters and default values
+
+Two more advices sit beside the complexity one, deliberately SEPARATE from it and from each
+other, because they measure different burdens with different fixes.
+
+**`LOFT_NO_PARAM_COUNT`** — 8 or more REQUIRED parameters (`keys::PARAM_ADVICE_AT`).
+Parameters with a default do not count (they cost a caller nothing) and neither do
+compiler-injected hidden ones (`__retbuf`, work buffers). Folding this into the complexity
+score was measured and rejected: `th_subdiv` takes 12 required parameters with a complexity
+of **2** — trivial to read, hard to call — so at +1 per parameter it scores 14 and stays
+silent, missing the very case that motivates the check. It would also make the complexity
+message untrue, since most of such a score would not be control flow. 86% of real loft takes
+4 or fewer; `>=8` is 2.1%.
+
+**`LOFT_NO_DEFAULT_HINT`** — 2 or more TRAILING booleans, none defaulted
+(`keys::BOOL_FLAG_ADVICE_AT`). This one advertises a feature rather than reporting a fault,
+and the trigger is deliberately conservative: one trailing flag is idiomatic (1.0% of real
+loft), 96.9% of functions have none at all, and `>=2` covers 2.1%. A nudge that fired on the
+common shape would be suppressed, taking the feature it was advertising with it.
+
+It goes quiet the moment it is taken — a function whose trailing booleans already have
+defaults does not fire. That property is what separates a nudge from nagging, and it is
+asserted rather than assumed.
+
+The message states that adoption is free under the compatibility promise, because that is the
+part people do not know: giving an existing parameter a default is **additive**, so every call
+that passes it today keeps working unchanged and new calls may omit it.
 
 ## See also
 

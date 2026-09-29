@@ -371,6 +371,11 @@ pub struct Function {
     /// Set on pass 1 and read on pass 2, where such a local's own declaration
     /// (`a: text? = null`) stores into the buffer.
     nullable_text_buffers: std::collections::HashSet<u16>,
+    /// loft#1721 — a `??` temp (`__ncc_N`) mapped to the stores its DEFAULT arm may deliver.
+    /// The `??` result names the temp alone (its type deps; naming the default's store there
+    /// too made store confinement free that store at its own block's exit), so a closure
+    /// capture of the result learns the other arm here: `scopes::capture_join_candidates`.
+    join_owners: HashMap<u16, Vec<u16>>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -698,6 +703,7 @@ impl Function {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
+            join_owners: HashMap::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -901,6 +907,10 @@ impl Function {
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
         self.tuple_backings.clone_from(&other.tuple_backings);
+        // CARRIED for the same reason: `scopes::capture_join_candidates` reads it after
+        // parsing (loft#1721).
+        self.join_owners.clear();
+        self.join_owners.clone_from(&other.join_owners);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -976,6 +986,7 @@ impl Function {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
+            join_owners: other.join_owners.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -1084,6 +1095,16 @@ impl Function {
         // variable at some point in the function.  Used to distinguish
         // a sequential for-loop reuse (safe) from an outer-local shadow
         // (silent clobber) at parse-for time.
+        if (variable as usize) < self.variables.len() {
+            self.variables[variable as usize].was_loop_var = true;
+        }
+    }
+
+    /// Record that `variable` serves as a loop's variable WITHOUT making a loop current — the
+    /// compile-time `for f in x#fields` walk, which unrolls into one block per field and has no
+    /// run-time loop for a `break` to leave.  Unrecorded, a later `for f` over anything was
+    /// refused as shadowing "a local named 'f'" (loft#1717).
+    pub fn served_as_loop_var(&mut self, variable: u16) {
         if (variable as usize) < self.variables.len() {
             self.variables[variable as usize].was_loop_var = true;
         }
@@ -2786,6 +2807,23 @@ impl Function {
         }
     }
 
+    /// Record that `??` temp `tmp` may instead deliver the stores `owners` hold — its DEFAULT
+    /// arm's (loft#1721, see the field).
+    pub fn add_join_owners(&mut self, tmp: u16, owners: &[u16]) {
+        let entry = self.join_owners.entry(tmp).or_default();
+        for &o in owners {
+            if o != tmp && o != u16::MAX && !entry.contains(&o) {
+                entry.push(o);
+            }
+        }
+    }
+
+    /// The other stores `var_nr` — a `??` temp — may deliver; empty for every other local.
+    #[must_use]
+    pub fn join_owners(&self, var_nr: u16) -> &[u16] {
+        self.join_owners.get(&var_nr).map_or(&[], Vec::as_slice)
+    }
+
     /// Is `var_nr` a hidden work buffer promoted from a `text?` local (see
     /// [`Self::mark_nullable_text_buffer`])?
     #[must_use]
@@ -3177,8 +3215,12 @@ impl Function {
                 Type::RefVar(inner) => inner.base(),
                 other => other.base(),
             };
+            // Through the RIGHT side's `?` too: a branch joining `null` with a variant is that
+            // variant, optional (`(N-Join)`, loft#1714), and whether it may be absent says no
+            // more about which enum it belongs to than the left side's `?` did.  A non-null
+            // destination is still told by `(N-Store)` at the store.
             if let (Type::Enum(parent_d, true, _), Type::Reference(rhs_d, _)) =
-                (lhs_shape, type_def)
+                (lhs_shape, type_def.base())
                 && data.def(*rhs_d).parent == *parent_d
             {
                 return self.is_new(var_nr);
@@ -3203,10 +3245,46 @@ impl Function {
                         | Type::Character
                 )
             };
+            // The same transition for a HEAP type — a struct, a vector, a keyed collection —
+            // whose `τ?` is as declarable as a scalar's (`(N-Opt)`, `data::has_null`).  It was
+            // refused as a TYPE CHANGE instead, *"cannot change type from P to null; use a new
+            // variable name or cast with 'as'"*, naming two cures that do not work and not the
+            // one that does.  Kept apart from the scalar sentence so that wording stays as it is.
+            let is_null_heap = |t: &Type| {
+                !is_null_scalar(t)
+                    && crate::data::has_null(t)
+                    && !matches!(
+                        t,
+                        Type::Null
+                            | Type::Void
+                            | Type::Never
+                            | Type::Unknown(_)
+                            | Type::Optional(_)
+                            | Type::RefVar(_)
+                    )
+            };
+            let heap_mix = crate::keys::pln25_dn1_enabled()
+                && ((is_null_heap(var_tp) && matches!(type_def, Type::Null))
+                    || (matches!(var_tp, Type::Null) && is_null_heap(type_def)));
             let nullable_mix = crate::keys::pln25_dn1_enabled()
                 && ((is_null_scalar(var_tp) && matches!(type_def, Type::Null))
                     || (matches!(var_tp, Type::Null) && is_null_scalar(type_def)));
-            if nullable_mix {
+            if heap_mix {
+                let heap = if is_null_heap(var_tp) {
+                    var_tp
+                } else {
+                    type_def
+                };
+                let heap_name = heap.source_name(data);
+                diagnostic!(
+                    lexer,
+                    Level::Error,
+                    "Variable '{}' cannot hold both `null` and the non-null type `{}` — declare it `{}?` to allow null",
+                    self.name(var_nr),
+                    heap_name,
+                    heap_name
+                );
+            } else if nullable_mix {
                 let scalar = if is_null_scalar(var_tp) {
                     var_tp
                 } else {

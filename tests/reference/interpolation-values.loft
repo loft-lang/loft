@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Building a value instead of text — a format string assigned to a type
+// that defines `lit` plus `hole_…` methods BUILDS that type, and the type is told which
+// bytes the author wrote and which came from a value.
+
+struct Query {
+  const parts: vector<text>,      // the literal chunks
+  const values: vector<text>,     // what was interpolated
+}
+
+fn lit(self: Query, s: text) { self.parts += [s] }        // author bytes
+fn hole_text(self: Query, v: text?) { self.values += [v ?? ""] }
+fn hole_int(self: Query, v: integer) { self.values += ["{v}"] }
+
+fn where_name(name: text) -> Query { "SELECT * FROM t WHERE name = {name}" }
+
+// A hole of the builder's OWN type: a table name cannot be a bound parameter, so the
+// builder puts it in the statement itself — and only an `ident` can reach that hole.
+struct SqlIdent { name: text }
+fn ident(s: text) -> SqlIdent? {
+  for c in s { if !(c.is_alphabetic() or c == '_') { return null; } }
+  SqlIdent { name: s }
+}
+struct SqlText {
+  const parts: vector<text>,
+  const values: vector<text>,
+  const idents: vector<text>,
+}
+fn lit(self: SqlText, s: text) { self.parts += [s] }
+fn hole_text(self: SqlText, v: text?) { self.values += [v ?? ""] }
+fn hole_sql_ident(self: SqlText, v: SqlIdent?) { self.idents += [v.name ?? ""] }
+
+fn test_a_hole_of_the_builders_own_type_takes_only_that_type() {
+  n = "ada";
+  tbl = ident("orders");                              // null if it is not a name
+  q: SqlText = "SELECT id FROM {tbl} WHERE name = {n}";
+  assert((q.idents[0] ?? "") == "orders", "the identifier went to `hole_sql_ident`");
+  assert((q.values[0] ?? "") == "ada", "the text went to `hole_text`");
+  assert(ident("or ders") == null, "a non-name is null, so it can never become syntax");
+}
+
+fn test_a_format_string_builds_the_type_it_is_assigned_to() {
+  name = "ada";
+  q: Query = "SELECT * FROM t WHERE name = {name}";
+  // calls q.lit("SELECT * FROM t WHERE name = ") then q.hole_text(name)
+  assert(len(q.parts) == 1 and (q.parts[0] ?? "") == "SELECT * FROM t WHERE name = ", "the author's bytes went to `lit`");
+  assert(len(q.values) == 1 and (q.values[0] ?? "") == "ada", "the interpolated value went to `hole_text`");
+  r = where_name("bob");
+  assert((r.values[0] ?? "") == "bob", "a function returning the type builds it the same way");
+  n = 7;
+  w: Query = "LIMIT {n}";
+  assert((w.values[0] ?? "") == "7", "an integer hole goes to `hole_int`");
+}

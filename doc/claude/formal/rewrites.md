@@ -107,7 +107,7 @@ build in which its API keeps the promised representation for callers it cannot s
 bisect step for a native-only wrong answer; the falsifier is what makes "the values
 agree" a proof rather than a coincidence — a header-served read and a runtime read
 of an unmoved vector answer the same number, so agreement alone cannot tell a sound
-rewrite from a lucky one.  `PERFORMANCE.md § Design: P2` and `NATIVE.md` list the
+rewrite from a lucky one.  `PERFORMANCE-history.md § Design: P2` and `NATIVE.md` list the
 switches; `hoist_verify` in `Output` is the one flag every checking form reads.
 
 **The both-backend clause in words.**  `LOFT_STRICT_STORES` and `LOFT_POISON` catch a leak or
@@ -1364,7 +1364,7 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  always right.
 ```
 
-**The type clause, in words.** 2026-09-22, the C67/C120 discussion with the `cbor` library as
+**The type clause, in words.** 2026-09-22, the C129/C120 discussion with the `cbor` library as
 the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
 SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
 was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
@@ -3060,11 +3060,11 @@ to bisect to.
   constant store is write-locked and a program's copy must be its own; a wrong decline is
   the build the program already paid.  The second half of the rule as written — the bind
   of the view is B-Copy's copy the moment the local is written — lands as that decline:
-  the copy is the call's own store, so no copy road was added.  ⚠ Found on the way, NOT
-  fixed here: a plain local bound from a TOP-LEVEL constant and then written (`c = NAMES;
-  c[0] = 5`, `c += [7]`, `f(NAMES)` with `f` writing its parameter) has no copy road at all
-  and PANICS on both backends with "Write to read-only store" — the use site emits the view
-  and nothing places the copy this rule says the bind owes (deviation D-rw-6).  Measured on the
+  the copy is the call's own store, so no copy road was added.  Found on the way: a TOP-LEVEL
+  constant bound to a local and written (`c = NAMES; c[0] = 5`, `c += [7]`) or handed to a
+  parameter the callee writes (`f(NAMES)`) had no copy road and halted on the lock — the bind
+  was given its copy by loft#1686 and the argument by loft#1729 (deviation D-rw-6, closed).
+  Measured on the
   portal's text2d lane, same box: `write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of
   Rust (the hand-price said ~3.3×; the rest of the row is `set_pixel`, the call class), the
   other four rows unmoved.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`
@@ -3235,17 +3235,20 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 1** (2026-09-28).
+**OPEN: 0** (2026-09-28).
 
-- **D-rw-6 — OPEN 2026-09-28 (loft#1729).**  `(R-Const)` says a plain bind of a constant's
-  view is `(B-Copy)`'s copy the moment the local is written or handed to a parameter the callee
-  writes.  For a TOP-LEVEL constant the use site emits the view (`ConstRef; PutRef`) and no copy
-  road exists, so `c = NAMES; c[0] = 5`, `c += [7]` and `f(NAMES)` with `f` writing its by-value
-  parameter panic on both backends with "Write to read-only store" — `(H-WriteLocked)` is the
-  backstop that fires.  A store into a field, a record literal's member and a `return` do copy.
-  Until closed, the literal-bodied function (`fn names() -> vector<integer> { [32, 33] }`) is the
-  form, and `(R-Const)` makes it free where the result is only read.
-
+- **D-rw-6 — OPENED AND CLOSED 2026-09-28 (loft#1729).**  `(R-Const)` makes a constant's view
+  B-Copy's copy the moment it is "handed to a parameter the callee writes", and a top-level
+  vector constant handed there went through as the VIEW: the callee's first write reached the
+  write-locked constant store and a development run halted (*"write to a constant"*), on both
+  backends.  loft#1686 had covered the bind (`c = CODES` copies); the argument was the other
+  road.  **Fix.**  `Parser::constant_arg_needs_copy`: at a loft-defined callee's non-`const`,
+  non-`&` vector parameter, an `OpConstRef` argument travels as a copy
+  (`materialize_collection_value`) when the callee writes that parameter
+  (`callee_param_writes`) — read only for a callee parsed before the caller, since the copy
+  mints its temporaries on both parser passes and pass 1 has no later body; a forward or
+  recursive callee is assumed to write.  A callee that only reads still receives the view.
+  Guard `tests/scripts/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft`.
 - **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
   literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed
   before the store.  The re-init comes first, and #330 lifts an initialiser that reads the

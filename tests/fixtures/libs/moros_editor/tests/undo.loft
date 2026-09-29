@@ -1,5 +1,5 @@
 // Tests for the moros_editor undo/redo/batch stack and recording editors.
-use moros_editor;
+use moros_editor::*;
 
 // ── Core undo stack ───────────────────────────────────────────────
 

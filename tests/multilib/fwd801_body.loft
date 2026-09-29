@@ -8,7 +8,7 @@
 // It used to depend on the spelling: `r: F801Roofs = F801Roofs { … }` compiled and
 // the identical `r = F801Roofs { … }` did not, because only a written type left a
 // forward-reference stub for the entry's declaration to adopt.
-use fwd801;
+use fwd801::*;
 
 fn main() {
     assert(f801_holder() == 11, "field declaration (the control that always worked)");

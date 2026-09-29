@@ -374,6 +374,9 @@ pub struct AppliedImport {
     pub lib_source: u16,
     pub into_source: u16,
     pub name: Option<(String, String)>,
+    /// `pub use`: what this import binds passes on to whoever imports
+    /// `into_source`.  A plain `use` binds for `into_source`'s own use only (@C98).
+    pub public: bool,
 }
 
 /// Specification of an `integer`-family type — bounds, nullability,
@@ -2360,6 +2363,11 @@ impl Type {
     pub fn optional(inner: Type) -> Type {
         match inner {
             Type::Optional(_) | Type::Never | Type::Null => inner,
+            // `Rewritten` is a signal to the expression that parsed the value (built in place),
+            // peeled where the value lands — so it stays OUTERMOST.  A branch joining `null`
+            // with an in-place struct literal widened to `Optional(Rewritten(τ))`, which the
+            // landing site's peel no longer reached (loft#1714).
+            Type::Rewritten(t) => Type::Rewritten(Box::new(Type::optional(*t))),
             other => Type::Optional(Box::new(other)),
         }
     }
@@ -5997,6 +6005,22 @@ pub struct Data {
     /// is parsed as a fresh source that re-declares no `use`, and inheriting the
     /// program's imports is exactly what lets it name the frame's own vocabulary.
     applied: Vec<AppliedImport>,
+    /// Every bare `use lib;` as `(importing source, qualifier)`, noted when the statement
+    /// is parsed — before the library may even be loaded.  A bare `use` binds only the
+    /// qualifier (@C98), so a name of the library written bare does not resolve; this is
+    /// what lets that error name the library and the two cures.
+    bare_uses: Vec<(u16, String)>,
+    /// Names a plain `use` bound in a source, as `source → key → (the def it bound, the
+    /// library the import read it from)`: they
+    /// serve that source only and are not passed on to whoever imports it; a `pub use`
+    /// binding is absent here, so it is (@C98, the rustc rule).  Keyed by the def so a
+    /// later local definition of the same name is never hidden.  Rebuilt by
+    /// [`replay_imports`](Self::replay_imports) from the `public` flag of each import.
+    private_imports: HashMap<u16, HashMap<String, (u32, u16)>>,
+    /// The file each source was parsed from, as the parser met it.  A definition written
+    /// in a source's own file is never a private import there — adoption can leave a
+    /// declaration under the `source` of the file that first NAMED it (@C98).
+    source_files: HashMap<u16, std::sync::Arc<str>>,
     /// loft#788 — bare names that MORE THAN ONE import binds, and to different
     /// definitions: `(name, importing_source) → the losing def_nrs`.
     ///
@@ -6783,6 +6807,9 @@ impl Data {
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
             applied: Vec::new(),
+            bare_uses: Vec::new(),
+            private_imports: HashMap::new(),
+            source_files: HashMap::new(),
             ambiguous: HashMap::new(),
             unknown_key_fields: Vec::new(),
             adopted_stubs: Vec::new(),
@@ -9597,6 +9624,11 @@ impl Data {
     /// the whole stdlib down with `expected vector<text>, got vector<T>`.
     pub fn note_stub_adopted(&mut self, d_nr: u32) {
         self.adopted_stubs.push(d_nr);
+        // The declaring source now owns that definition: a private import that bound its
+        // stub must not hide the declaration from this source's importers (@C98).
+        if let Some(keys) = self.private_imports.get_mut(&self.source) {
+            keys.retain(|_, (def, _)| *def != d_nr);
+        }
     }
 
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
@@ -11467,6 +11499,140 @@ impl Data {
         Some((nr, own, reachable))
     }
 
+    /// Note a bare `use <qualifier>;` in `into_source`.
+    pub fn record_bare_use(&mut self, into_source: u16, qualifier: &str) {
+        let entry = (into_source, qualifier.to_string());
+        if !self.bare_uses.contains(&entry) {
+            self.bare_uses.push(entry);
+        }
+    }
+
+    /// The qualifier of a library `into_source` imported with a bare `use`, and that
+    /// declares a public `name` (a type, constant or function), or `None`.  A bare `use`
+    /// brings in only the qualifier (@C98), so this answers "is this unresolved name
+    /// one the program can reach as `<qualifier>::name`?".
+    #[must_use]
+    pub fn bare_use_provider(&self, name: &str, into_source: u16) -> Option<&str> {
+        // Asked for every unresolved name, forward references in pass 1 included, so a
+        // file with no bare `use` answers before anything is allocated.
+        if !self.bare_uses.iter().any(|(into, _)| *into == into_source) {
+            return None;
+        }
+        let fn_key = format!("n_{name}");
+        self.bare_uses
+            .iter()
+            .filter(|(into, _)| *into == into_source)
+            .find(|(_, q)| {
+                let lib = self.get_source(q);
+                lib != u16::MAX
+                    && [name, fn_key.as_str()]
+                        .iter()
+                        .any(|key| self.exported(key, lib).is_some())
+            })
+            .map(|(_, q)| q.as_str())
+    }
+
+    /// A library `into_source` imports that uses `name` without passing it on: `(the
+    /// library's qualifier, the qualifier it would `pub use` to pass the name on)`.  A
+    /// plain `use` binds for the importing file's own use only (@C98), so a facade that
+    /// wrote `use math;` where it meant `pub use math::*;` answers here — whether its
+    /// `use` was a wildcard that kept the name, or bare and never took it.
+    #[must_use]
+    pub fn hidden_import_provider(&self, name: &str, into_source: u16) -> Option<(String, String)> {
+        if !self.imports_into(into_source) {
+            return None;
+        }
+        let fn_key = format!("n_{name}");
+        let libs = self
+            .applied
+            .iter()
+            .filter(|imp| imp.into_source == into_source)
+            .map(|imp| imp.lib_source)
+            .chain(
+                self.bare_uses
+                    .iter()
+                    .filter(|(into, _)| *into == into_source)
+                    .map(|(_, q)| self.get_source(q)),
+            );
+        for lib in libs {
+            for key in [name, fn_key.as_str()] {
+                if let Some(&(_, from)) = self
+                    .private_imports
+                    .get(&lib)
+                    .and_then(|keys| keys.get(key))
+                    && let (Some(via), Some(from)) =
+                        (self.qualifier_of(lib), self.qualifier_of(from))
+                {
+                    return Some((via, from));
+                }
+            }
+            let bare_hit = self
+                .bare_uses
+                .iter()
+                .filter(|(into, _)| *into == lib)
+                .find(|(_, q)| {
+                    let from = self.get_source(q);
+                    from != u16::MAX
+                        && [name, fn_key.as_str()]
+                            .iter()
+                            .any(|key| self.exported(key, from).is_some())
+                });
+            if let (Some((_, from)), Some(via)) = (bare_hit, self.qualifier_of(lib)) {
+                return Some((via, from.clone()));
+            }
+        }
+        None
+    }
+
+    /// The `use` name a source is known by, shortest first, or `None`.
+    fn qualifier_of(&self, source: u16) -> Option<String> {
+        self.use_names
+            .iter()
+            .filter(|&(_, &s)| s == source)
+            .map(|(n, _)| n)
+            .min_by_key(|n| (n.contains("::"), n.len()))
+            .cloned()
+    }
+
+    /// The error for a name a library in between uses but does not pass on.
+    #[must_use]
+    pub fn hidden_import_cure(what: &str, name: &str, via: &str, from: &str) -> String {
+        format!(
+            "{what} {name} — `{via}` uses it from `{from}` but does not pass it on, because a \
+             plain `use` binds for its own file only: write `{from}::{name}`, or have `{via}` \
+             pass it on with `pub use {from}::({name});`"
+        )
+    }
+
+    /// Does `source` import anything — a `use` that bound names, or a bare one?
+    #[must_use]
+    pub fn imports_into(&self, source: u16) -> bool {
+        self.applied.iter().any(|imp| imp.into_source == source)
+            || self.bare_uses.iter().any(|(into, _)| *into == source)
+    }
+
+    /// The error for a name that does not resolve because of how it was imported (@C98),
+    /// or `None` when the imports do not explain it: a bare `use` that brings in only the
+    /// qualifier, or a library in between that uses the name without passing it on.
+    #[must_use]
+    pub fn import_cure(&self, what: &str, name: &str, source: u16) -> Option<String> {
+        if let Some(q) = self.bare_use_provider(name, source) {
+            return Some(Self::bare_use_cure(what, name, q));
+        }
+        self.hidden_import_provider(name, source)
+            .map(|(via, from)| Self::hidden_import_cure(what, name, &via, &from))
+    }
+
+    /// The error for a name a bare `use` did not bring in: `what` is the message's
+    /// head (`Unknown function`, `Undefined type`, …), `q` the library's qualifier.
+    #[must_use]
+    pub fn bare_use_cure(what: &str, name: &str, q: &str) -> String {
+        format!(
+            "{what} {name} — it is in `{q}`, and a bare `use {q};` brings in only the \
+             `{q}::` qualifier: write `{q}::{name}`, or import the name with `use {q}::({name});`"
+        )
+    }
+
     /// Retain one applied import for [`rebuild_indices`](Self::rebuild_indices) to
     /// replay.  Idempotent — re-applying the same `use` does not grow the list.
     fn remember_import(
@@ -11474,11 +11640,13 @@ impl Data {
         lib_source: u16,
         into_source: u16,
         name: Option<(String, String)>,
+        public: bool,
     ) {
         let entry = AppliedImport {
             lib_source,
             into_source,
             name,
+            public,
         };
         if !self.applied.contains(&entry) {
             self.applied.push(entry);
@@ -11493,29 +11661,96 @@ impl Data {
         // entry as they run — so the list is refilled by the replay itself and a LATER
         // rebuild still has it.  Load-bearing: without the re-record, only the first
         // rebuild would restore the aliases.
+        self.private_imports.clear();
         for imp in std::mem::take(&mut self.applied) {
             match &imp.name {
-                None => self.import_all(imp.lib_source, imp.into_source),
+                None => self.import_all(imp.lib_source, imp.into_source, imp.public),
                 Some((name, bind)) => {
-                    self.import_name(imp.lib_source, imp.into_source, name, bind);
+                    self.import_name(imp.lib_source, imp.into_source, name, bind, imp.public);
                 }
             }
         }
     }
 
-    pub fn import_all(&mut self, lib_source: u16, into_source: u16) {
-        self.remember_import(lib_source, into_source, None);
-        let names: Vec<(String, u32)> = self
-            .def_names
+    pub fn import_all(&mut self, lib_source: u16, into_source: u16, public: bool) {
+        self.remember_import(lib_source, into_source, None, public);
+        for (name, def_nr) in self.exported_names(lib_source) {
+            self.note_ambiguity(&name, into_source, def_nr);
+            self.bind_import(&name, (into_source, lib_source), def_nr, public, false);
+        }
+    }
+
+    /// Everything `lib_source` passes on to an importer: its own public definitions and
+    /// what it `pub use`s — not what a plain `use` bound there for its own use (@C98).
+    fn exported_names(&self, lib_source: u16) -> Vec<(String, u32)> {
+        self.def_names
             .iter()
-            .filter(|&(_, src, def_nr)| {
-                src == lib_source && self.definitions[def_nr as usize].pub_visible
+            .filter(|&(name, src, def_nr)| {
+                src == lib_source
+                    && self.definitions[def_nr as usize].pub_visible
+                    && !self.is_private_import(lib_source, name, def_nr)
             })
             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
-            .collect();
-        for (name, def_nr) in names {
-            self.note_ambiguity(&name, into_source, def_nr);
-            self.def_names.insert_if_absent(&name, into_source, def_nr);
+            .collect()
+    }
+
+    /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
+    fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
+        self.def_names.get(key, lib_source).filter(|&d| {
+            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
+        })
+    }
+
+    fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {
+        self.private_imports
+            .get(&source)
+            .and_then(|keys| keys.get(key))
+            .is_some_and(|&(d, _)| d == def_nr)
+            && self
+                .source_files
+                .get(&source)
+                .is_none_or(|f| *self.definitions[def_nr as usize].position.file != **f)
+    }
+
+    /// Record the file `source` is parsed from (see `source_files`).
+    pub fn note_source_file(&mut self, source: u16, file: &std::sync::Arc<str>) {
+        self.source_files
+            .entry(source)
+            .or_insert_with(|| std::sync::Arc::clone(file));
+    }
+
+    /// Bind an imported `def_nr` at `key` in `into_source` — only where the key is free,
+    /// or (`over_stub`) holds an unresolved stub — and record whether it passes on.  A
+    /// `pub use` of a name a plain `use` already bound makes that binding pass on.
+    fn bind_import(
+        &mut self,
+        key: &str,
+        (into_source, lib_source): (u16, u16),
+        def_nr: u32,
+        public: bool,
+        over_stub: bool,
+    ) {
+        let sitting = self.def_names.get(key, into_source);
+        let free = match sitting {
+            None => true,
+            Some(d) => {
+                over_stub && matches!(self.definitions[d as usize].def_type, DefType::Unknown)
+            }
+        };
+        if free {
+            self.def_names.insert(key, into_source, def_nr);
+        } else if sitting != Some(def_nr) {
+            return;
+        }
+        if public {
+            if let Some(keys) = self.private_imports.get_mut(&into_source) {
+                keys.remove(key);
+            }
+        } else if free {
+            self.private_imports
+                .entry(into_source)
+                .or_default()
+                .insert(key.to_string(), (def_nr, lib_source));
         }
     }
 
@@ -11591,23 +11826,34 @@ impl Data {
     #[must_use]
     pub fn declared_by_importer(&self, name: &str) -> Option<u32> {
         let me = self.source;
-        self.applied
+        // An importer is any file that `use`s this one — through an import that bound
+        // names, or a bare `use` that bound only the qualifier (@C98).
+        let importers: Vec<u16> = self
+            .applied
             .iter()
             .filter(|imp| imp.lib_source == me && imp.into_source != me)
-            .find_map(|imp| {
-                let d_nr = self.def_names.get(name, imp.into_source)?;
-                let def = &self.definitions[d_nr as usize];
-                if matches!(def.def_type(), DefType::Unknown) {
-                    return None;
-                }
-                // Is that definition written in the importer's own file?  A file
-                // is what the author sees, and it stays the right question even
-                // when adoption has moved the `source` underneath it.
-                self.definitions
+            .map(|imp| imp.into_source)
+            .chain(
+                self.bare_uses
                     .iter()
-                    .any(|d| d.source == imp.into_source && d.position.file == def.position.file)
-                    .then_some(d_nr)
-            })
+                    .filter(|(into, q)| *into != me && self.get_source(q) == me)
+                    .map(|(into, _)| *into),
+            )
+            .collect();
+        importers.into_iter().find_map(|into_source| {
+            let d_nr = self.def_names.get(name, into_source)?;
+            let def = &self.definitions[d_nr as usize];
+            if matches!(def.def_type(), DefType::Unknown) {
+                return None;
+            }
+            // Is that definition written in the importer's own file?  A file
+            // is what the author sees, and it stays the right question even
+            // when adoption has moved the `source` underneath it.
+            self.definitions
+                .iter()
+                .any(|d| d.source == into_source && d.position.file == def.position.file)
+                .then_some(d_nr)
+        })
     }
 
     /// Import a single name from `lib_source` into `into_source`, BINDING it
@@ -11622,23 +11868,19 @@ impl Data {
         into_source: u16,
         name: &str,
         bind: &str,
+        public: bool,
     ) -> bool {
         self.remember_import(
             lib_source,
             into_source,
             Some((name.to_string(), bind.to_string())),
+            public,
         );
         // Functions are stored under the `n_` prefix; try both forms.
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self
-            .def_names
-            .get(name, lib_source)
-            .filter(|&d| self.definitions[d as usize].pub_visible);
-        let found_fn = self
-            .def_names
-            .get(&fn_key, lib_source)
-            .filter(|&d| self.definitions[d as usize].pub_visible);
+        let found_plain = self.exported(name, lib_source);
+        let found_fn = self.exported(&fn_key, lib_source);
         // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
         // method of that name the library declares, each under its own key — exactly what a
@@ -11651,6 +11893,7 @@ impl Data {
                 .filter(|&(key, src, d)| {
                     src == lib_source
                         && self.definitions[d as usize].pub_visible
+                        && !self.is_private_import(lib_source, key, d)
                         && Self::method_name_of_key(key) == Some(name)
                 })
                 .map(|(key, _, d)| (key.to_string(), d))
@@ -11663,16 +11906,21 @@ impl Data {
         }
         for (key, def_nr) in methods {
             self.note_ambiguity(&key, into_source, def_nr);
-            self.def_names.insert_if_absent(&key, into_source, def_nr);
+            self.bind_import(&key, (into_source, lib_source), def_nr, public, false);
         }
         if let Some(def_nr) = found_plain {
             self.note_ambiguity(bind, into_source, def_nr);
-            self.def_names.insert_if_absent(bind, into_source, def_nr);
+            self.bind_import(bind, (into_source, lib_source), def_nr, public, false);
         }
         if let Some(def_nr) = found_fn {
             self.note_ambiguity(&bind_fn_key, into_source, def_nr);
-            self.def_names
-                .insert_if_absent(&bind_fn_key, into_source, def_nr);
+            self.bind_import(
+                &bind_fn_key,
+                (into_source, lib_source),
+                def_nr,
+                public,
+                false,
+            );
         }
         true
     }
@@ -11694,17 +11942,9 @@ impl Data {
     /// Unknown stub for a type that will come from file A's re-exported
     /// namespace, this variant is what makes B's later references resolve
     /// to A's real definition.
-    pub fn import_all_overwrite(&mut self, lib_source: u16, into_source: u16) {
-        let names: Vec<(String, u32)> = self
-            .def_names
-            .iter()
-            .filter(|&(_, src, def_nr)| {
-                src == lib_source && self.definitions[def_nr as usize].pub_visible
-            })
-            .map(|(name, _, def_nr)| (name.to_string(), def_nr))
-            .collect();
-        for (name, def_nr) in names {
-            self.insert_or_replace_stub(&name, into_source, def_nr);
+    pub fn import_all_overwrite(&mut self, lib_source: u16, into_source: u16, public: bool) {
+        for (name, def_nr) in self.exported_names(lib_source) {
+            self.bind_import(&name, (into_source, lib_source), def_nr, public, true);
         }
     }
 
@@ -11717,47 +11957,28 @@ impl Data {
         into_source: u16,
         name: &str,
         bind: &str,
+        public: bool,
     ) -> bool {
         let fn_key = format!("n_{name}");
         let bind_fn_key = format!("n_{bind}");
-        let found_plain = self
-            .def_names
-            .get(name, lib_source)
-            .filter(|&d| self.definitions[d as usize].pub_visible);
-        let found_fn = self
-            .def_names
-            .get(&fn_key, lib_source)
-            .filter(|&d| self.definitions[d as usize].pub_visible);
+        let found_plain = self.exported(name, lib_source);
+        let found_fn = self.exported(&fn_key, lib_source);
         if found_plain.is_none() && found_fn.is_none() {
             return false;
         }
         if let Some(def_nr) = found_plain {
-            self.insert_or_replace_stub(bind, into_source, def_nr);
+            self.bind_import(bind, (into_source, lib_source), def_nr, public, true);
         }
         if let Some(def_nr) = found_fn {
-            self.insert_or_replace_stub(&bind_fn_key, into_source, def_nr);
+            self.bind_import(
+                &bind_fn_key,
+                (into_source, lib_source),
+                def_nr,
+                public,
+                true,
+            );
         }
         true
-    }
-
-    /// Insert `def_nr` at `key`, or replace an existing binding when the
-    /// existing binding points to a `DefType::Unknown` stub.  Real local
-    /// bindings are preserved (local wins over imports).
-    fn insert_or_replace_stub(&mut self, name: &str, source: u16, def_nr: u32) {
-        match self.def_names.get(name, source) {
-            Some(existing)
-                if matches!(
-                    self.definitions[existing as usize].def_type,
-                    DefType::Unknown
-                ) =>
-            {
-                self.def_names.insert(name, source, def_nr);
-            }
-            None => {
-                self.def_names.insert(name, source, def_nr);
-            }
-            _ => {}
-        }
     }
 
     /// Rewrite every `Type::Unknown(stub_nr)` occurrence in any definition's

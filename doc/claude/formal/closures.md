@@ -220,9 +220,40 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
+
+- **D-clo-45** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1725)* — `(L-CapHeap)` with
+  `(O-Latest)` for a capture bound from a JOIN (`c = f() ?? []`, a value branch) and ASSIGNED
+  again after the build, in a closure that leaves the frame.  loft#1721 releases each arm by
+  identity against the capture LOCAL, which after the reassignment names another store, so the
+  shape was excluded — and the frame then freed every arm plainly: the escaped closure read a
+  released store (`[2]` / `[2,2]` for `[3,1,2]`) and the reassignment's own store was never
+  freed.  The local's deps cannot say which stores the build saw: a dep list is the whole
+  body's, and the reassignment's store is on it.  **Fix.**  The build scan records the arms of
+  the assignment that REACHED the build (`CaptureBuilds::join_arms_at_build`,
+  `join_arm_stores`); each arm is released unless the RECORD's capture slot holds it
+  (`reassigned_join_capture_slot`, guarded on the record having been built), and the later
+  store is the frame's (`backs_an_adopted_capture`).  Only for ONE record that adopts the
+  capture and leaves the frame: a record that stays is released by the frame, possibly before
+  the slot is read.  Guard
+  `tests/scripts/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft`.
+
+- **D-clo-44** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1715)* — `(L-CapHeap)` for a
+  `vector<τ>?` local that holds null because of a VALUE — a call that answered null, a reset to
+  null.  loft#1218 gives a null capture an ABSENT slot to share, but decided "does the local
+  hold a store?" by whether it had a backing, and such a local has one: the closure copied the
+  null handle and its appends were lost (`[1,3]` for `[1,2,3]`), and one built while the local
+  was null that then escaped read a released store (`null`).  **Fix.**  While the local holds
+  null at run time, the capture points it at an ABSENT slot in the backing it ALREADY names
+  (`Parser::null_backing_home`), spelled as a projection of that backing so `@FR-O-Latest`'s
+  walk records it — the record adopts the store the local holds on every run.  An append while
+  the local holds null keeps its own fresh mint: after a rebind detaches a captured local, the
+  backing IS the closure's store.  A mint in
+  a second variable (the first attempt, measured by loft2) fixed the local cells and broke the
+  escaping ones by exactly that: the dependency named the mint that parsed last.  Guard
+  `tests/scripts/1715-a-null-that-arrived-as-a-value-shares-its-backing-with-a-closure.loft`.
 
 - **D-clo-43** *(opened 2026-09-27, CLOSED 2026-09-27; found with loft#1700)* — `(L-CapScalar)` /
   `(L-CapHeap)` capture "the variable", which is the binding the name spells where the closure
@@ -602,6 +633,15 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
 > covers two adopters, and `1444-the-returned-closure-is-the-one-that-keeps-its-capture.loft`
 > moves the BUILD ORDER those two hold fixed — first, last and middle of three, delivered by a
 > tail, by an `if` over two closures, by an explicit `return`, and written straight out.
+> `an-escaping-capture-of-a-join-keeps-the-store-it-holds.loft` moves the CAPTURE'S SOURCE off a
+> single owner (loft#1721): a capture bound from a `??` or a value branch holds one of several
+> stores, and each arm's owner is released by store identity against it.  A join capture
+> reassigned after the build is released against the record's capture slot instead
+> (`1725-…loft`, loft#1725).
+> `a-sunk-branch-bind-captured-by-an-escaping-closure-keeps-its-arm.loft` does the same for a
+> bind written out per arm (`d = f(); c = d ?? [9]`, `c = d ?? e`, an `if` or `match` over a
+> local and a literal): each arm builds into a store of its own, and every one of them is the
+> local's join owner (loft#1726).
 
 `D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to

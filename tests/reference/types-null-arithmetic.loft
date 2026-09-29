@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Primitive types — arithmetic answers null, and a program keeps running.
+// The fences on that page are windows of the cells below (`rule_tags.py fences`).
+
+fn test_overflow_and_divide_by_zero_answer_null() {
+  a = 9223372036854775807;     // i64::MAX
+  b = a + 1;                   // b = null  (overflow → null, NOT a wrapped value)
+  c = a / 0;                   // c = null  (divide-by-zero → null, execution continues)
+  print("done");               // ALWAYS reached
+  assert(b == null, "overflow is null, not a wrapped value");
+  assert(c == null, "divide by zero is null, not a stop");
+}
+
+fn test_coalesce_discharges_the_null() {
+  a = 9223372036854775807;
+  b = 2;
+  total = 10;
+  count = 0;
+  x = (a * b) ?? 0;            // overflow → null → x = 0
+  y = total / count ?? 0;      // count == 0 → null → y = 0
+  assert(x == 0 and y == 0, "`??` names the fallback");
+}
+
+fn test_a_boolean_test_catches_false_and_null_but_an_integer_only_null() {
+  ran = 0;
+  skipped = 0;
+  flag: boolean = false;
+  if !flag { ran += 1; }       // catches both null and false
+
+  count: integer = 0;
+  if !count { skipped += 1; }  // catches only null; zero passes through
+  assert(ran == 1, "`!false` runs the branch");
+  assert(skipped == 0, "`!0` does not — zero is a value");
+}
+
+fn test_a_narrow_slot_that_did_not_fit_reads_its_default_and_tests_false() {
+  seen = "";
+  health: u8 = 250;
+  health += 10;
+  if !health { seen = "the boost did not fit — health is {health}"; }
+  assert(seen == "the boost did not fit — health is 0", "the slot took the type's default, and `!` on the line after the store still says it did not fit");
+  fits: u8 = 0;
+  if !fits { seen = "a stored zero reads as a value"; }
+  assert(seen == "the boost did not fit — health is 0", "a zero that was STORED is a value: `!` does not fire");
+}

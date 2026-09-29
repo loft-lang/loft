@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C95 — a definition a same-named method would shadow is refused.
 //
 // The name of a standard-library function that is not a method is reserved for it: a program
 // cannot define its own, whatever the parameters.  The refusal read "Cannot redefine 'log_info'

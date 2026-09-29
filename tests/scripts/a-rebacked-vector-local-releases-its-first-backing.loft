@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A vector local that starts null is given its backing by the append that first fills it —
+// a GUARDED mint, `skip_free`'d because the local releases what it names (loft#1486).  A
+// later whole-value write (`e = [...]`, and `e = null` since @C118) gives the local a NEW
+// backing, and from then on the local names that one: the first backing was released by
+// nobody.  One store per function on the interpreter, every value correct — the kind of
+// defect only the leak check sees, which is why this file is small and runs under it.
+//
+// The cure is where the local is re-backed: a guarded backing it leaves goes back to owning
+// its store, and is freed at scope exit like a backing minted unconditionally — so a view
+// of the old contents (the last cell) stays valid until then.
+//
+// @falsified-at: 011933e76 — interpret exit 1 -> 0, interpret leaked main_vector<Rb>×3 -> clean,
+//   native exit 1 -> 0, native leaked main_vector<Rb>×3 -> clean.
+// @falsified-by: tests/falsified/a-rebacked-vector-local-releases-its-first-backing.patch
+//   CHANNEL: the leak channel.
+//   ARMED: `LOFT_STRICT_STORES=1` — unarmed, the interpreter only warns and the exit holds.
+//   WITNESS: on the control `main_vector<Rb>×3` never freed, both backends.
+//   HOLDS: every assertion passes on both trees, and panic, free-refusal and expectations are
+//   equal on both.
+//   Score it with `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
+
+struct Rb { k: integer, v: integer }
+
+fn once_rb() -> integer {
+  e: vector<Rb>? = null;
+  e += [Rb { k: 1, v: 1 }];
+  e = [Rb { k: 2, v: 2 }, Rb { k: 3, v: 3 }];
+  len(e?)
+}
+
+fn looped_rb() -> integer {
+  e: vector<Rb>? = null;
+  for i in 0..3 { e += [Rb { k: i, v: i }]; e = [Rb { k: 9, v: 90 }]; }
+  e?[0].v
+}
+
+fn nulled_rb() -> boolean {
+  e: vector<Rb>? = null;
+  for i in 0..3 { e += [Rb { k: i, v: i }]; e = null; }
+  e == null
+}
+
+fn viewed_rb() -> integer {
+  e: vector<Rb>? = null;
+  e += [Rb { k: 5, v: 50 }];
+  first = e?[0];
+  e = [Rb { k: 6, v: 60 }];
+  first.v + e?[0].v
+}
+
+fn main() {
+  assert(once_rb() == 2, "the rebuilt local holds the new contents");
+  assert(looped_rb() == 90, "rebuilt on every pass");
+  assert(nulled_rb(), "nulled on every pass ends null");
+  assert(viewed_rb() == 110, "a view of the first contents survives the rebuild");
+}

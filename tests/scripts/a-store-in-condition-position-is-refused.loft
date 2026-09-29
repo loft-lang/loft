@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A STORE IN CONDITION POSITION IS REFUSED.  @C130 — a store stays a statement: it answers
+// nothing, so `if v[9] = 2 { … }` has no value to test and is refused at the ONE condition
+// coercion (`Parser::convert_condition_at`), not read as a flag.  It is the C `=`-for-`==`
+// typo, and before the refusal the two backends disagreed on whether it was a program: the
+// interpreter read a stack byte as the flag and `if x = 5 { … }` left `x` holding that
+// byte's neighbours (a pointer-sized number printed where 5 was written), while `--native`
+// failed in rustc (`expected bool, found ()`; `while` failed as `() as u8`).
+//
+// The two FILTER forms took their condition raw, past that coercion: `for x in r if n = x`
+// read a corrupt stack reference and panicked the interpreter, and `[for e in v if y = e
+// { e }]` compiled and answered `1 1`.  Both route through the same coercion now.
+//
+// The axes moved: the construct (`if`, `else if`, `while`, `assert`, a `for` filter, a
+// comprehension filter), the place (an element in range, an element out of range, a local,
+// a field), the store's spelling (plain and compound).  Every cell is a pass-2 diagnostic,
+// so one file holds them all and each `@EXPECT_ERROR` line below must be matched by its own
+// cell (an unmatched line fails the file, loft#929).  One function per cell and no `main`,
+// so the harness can isolate each refusing cell and the `assert` cell is not an assertion
+// that can never run (`a_refusal_file_carries_no_runtime_assertions`).
+//
+// @falsified-at: ef4fd49 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-store-in-condition-position-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not a count of matches)
+// CHANNEL: the exit code — before the fix the file compiles (and runs wrong); after it the
+//   ten refusals are the only diagnostics.
+// WITNESS: `f` then `94022662416040` from the `if x = 5` cell on the interpreter, 2026-09-28.
+// HOLDS: the asserts, leak and panic channels stay 0/none on both trees — the control
+//   COMPILES the file and runs it wrong, it does not crash on it; and every condition that
+//   answers a value keeps compiling — a heap handle (`if v`), `!v[i]`, a comparison in a
+//   `for` or comprehension filter — pinned by the corpus files that use those spellings.
+
+struct P { x: integer, y: integer }
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_out_of_range() {
+  v = [1, 2, 3];
+  if v[9] = 2 { println("landed"); } else { println("missed"); }
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_in_range() {
+  v = [1, 2, 3];
+  if v[1] = 2 { println("landed"); }
+  println("{v[1]}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_local() {
+  x = 4;
+  if x = 5 { println("t"); } else { println("f"); }
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_compound() {
+  x = 4;
+  if x += 1 { println("t"); }
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_if_field() {
+  p = P { x: 1, y: 2 };
+  if p.x = 3 { println("t"); }
+  println("{p.x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_else_if() {
+  v = [1, 2, 3];
+  x = 4;
+  if x == 9 { println("nine"); } else if v[2] = 7 { println("seven"); }
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_while() {
+  v = [1, 2, 3];
+  while v[1] = 2 { break; }
+  println("{v[1]}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_assert() {
+  v = [1, 2, 3];
+  assert(v[1] = 2, "a store is not a test");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_for_filter() {
+  x = 4;
+  for e in 1..=9 if x = e { x += 1; }
+  println("{x}");
+}
+
+// @EXPECT_ERROR: A condition needs a value, and this expression answers nothing
+fn cell_comprehension_filter() {
+  v = [1, 2, 3];
+  x = 4;
+  w = [for e in v if x = e { e }];
+  println("{w.len()}");
+}

@@ -66,14 +66,19 @@ make check-rlib                          # 1s pre-flight: is libloft.rlib curren
                                          #   codegen runtime store wasm packages lsp sql docs
                                          #   host (`--list-subjects` to see them + exclusions).
                                          #   Shape: --changed/--subject while iterating → the
-                                         #   two clippy variants + fmt → ONE `make ci` before
-                                         #   committing (it runs your diff's subjects FIRST, so
-                                         #   a red shows in its first minute; and it QUEUES
-                                         #   behind another checkout's gate — one at a time on
-                                         #   this box, LOFT_GATE_PARALLEL=1 to run beside it).
-                                         #   `make ci` is ~10 min and only that if the box is
-                                         #   idle — two checkouts running gates at once doubles
-                                         #   it (CI_BUDGET.md § A LOCAL `make ci`).
+                                         #   two clippy variants → ONE gate per change whose
+                                         #   reach you cannot bound, via `scripts/ci-run.sh
+                                         #   start` (a ~15 s pre-flight — fmt, audit rows, doc
+                                         #   drift — refuses a gate that would stop on them).
+                                         #   AFTER a gate, red or not: `ci-run.sh recheck` —
+                                         #   its failed tests + what changed since — NOT a
+                                         #   restart; the push names gate + recheck.  A new
+                                         #   gate only for a change of unknown reach (a new
+                                         #   refusal, inference, a new op) — CI_BUDGET.md § After
+                                         #   a red gate.  The gate runs your diff's subjects
+                                         #   FIRST and QUEUES behind another checkout's (one at a
+                                         #   time on this box, LOFT_GATE_PARALLEL=1 beside it);
+                                         #   ~20 min, twice that with two gates live.
 ./scripts/find_problems.sh --bg|--peek|--wait   # background full-suite run + inspect/block
 cargo test --release --test ir_schema_roundtrip   # the IR codec over the whole stdlib + every
                                          #   tests/scripts file; run it after an IR-schema/
@@ -87,7 +92,7 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   written to catch?  Compares exit/asserts/leak/
                                          #   panic apart and names the channel that moved.
                                          #   Every new tests/scripts file records its answer
-                                         #   (`@falsified-at:`, gated) — TESTING.md
+                                         #   (`@falsified-at:`, gated) — GUARDS.md
 make speed                               # what got slower/faster — a REPORT, never a gate
 make speed-gate                          # the one speed GATE: a test 3x and +5 s slower than on
                                          #   main (median speed divided out) that is STILL that slow
@@ -169,7 +174,7 @@ documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
 
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
 for `--native` (rustc can hang): `LOFT_TIMEOUT=60 loft --native p.loft` or `loft --timeout 60 p.loft`
-(0 = off). Hard-kills at `timeout+grace` (grace 2s, `LOFT_TIMEOUT_GRACE`). Ref: DEBUG.md, TESTING.md.
+(0 = off). Hard-kills at `timeout+grace` (grace 2s, `LOFT_TIMEOUT_GRACE`). Ref: DEBUG.md, RUN_BOUNDS.md.
 
 **A time bound does not bound MEMORY.** A corrupted length ends in a bad dereference on one run
 and an unbounded ALLOCATION on the next — loft#796 reached 59.6 GiB in seconds and the global OOM
@@ -178,7 +183,7 @@ carry a **2 GiB store-heap ceiling**; crossing it stops the run at that growth a
 that filled the heap, with a one-store-vs-many breakdown that tells a runaway length from a leak.
 `LOFT_MEMORY_LIMIT=<2G|512M|0>` overrides it; ordinary runs are never capped. When writing a
 repeat-run harness for a corruption repro, cap the process too (`ulimit -v`) — the runaway is not
-necessarily the process the kernel kills. TESTING.md § Store-memory ceiling.
+necessarily the process the kernel kills. RUN_BOUNDS.md § Store-memory ceiling.
 
 **Under debug assertions a third bound applies:** the interpreter stops after `LOFT_MAX_OPS`
 operations (default 4e9, `0` = off) and prints the last sixteen ops as `function+offset: OpName` —
@@ -186,10 +191,10 @@ reach for it, set LOW, when hunting a hang, because it names the loop a timeout 
 in. Absent from every release build. ⚠ **And absent from your ordinary debug build too** —
 `[profile.dev.package.loft] debug-assertions = false` in `Cargo.toml` strips it (and the other
 92 `#[cfg(debug_assertions)]` items in `src/`) from both `cargo build --bin loft` and the test
-binaries; flip that line and rebuild into a separate `--target-dir` to use it. TESTING.md § Hang
+binaries; flip that line and rebuild into a separate `--target-dir` to use it. RUN_BOUNDS.md § Hang
 guard has the recipe and the measurement. It is a count, so it cannot tell a long run from a hung one:
 at 100M it was tripping legitimate library tests and reporting them as infinite loops, which read
-the debug-assertions gate as known-red (loft#919). TESTING.md § Hang guard.
+the debug-assertions gate as known-red (loft#919). RUN_BOUNDS.md § Hang guard.
 
 For any multi-failure refactor, start `find_problems.sh --bg` before editing (detached
 `cargo test --release --no-fail-fast` → `/tmp/loft_problems.txt`).
@@ -204,6 +209,11 @@ GENERATED shadow (never edit them: edit the issue, then `make features-fetch && 
 the `features-check` drift guard fails on hand-edits).
 File a NEW plan as a `loft-lang/plans` issue with one `status:*` + one `subject:*` label. Look refs
 up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for queries).
+
+**A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of
+DESIGN_DECISIONS.md — code, doc, and at least one guard under `tests/` — cite it, and
+`./scripts/idx decisions` shows which entries nothing verifies.  A decision no site can keep is
+reopened, not documented.
 
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this
@@ -472,6 +482,11 @@ Neither blocks.
 rule set** (one line per rule, each pointing at its home).
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
+⚠ **a LIMITATION stated on either page is a claim, not a fact** — before repeating one ("loft
+cannot X", "X is not supported", a workaround), run the guard or issue repro it cites; a
+limitation with no citation is unverified, and a stale one routes every consumer around a
+feature that works (two of five sampled callouts were stale when measured; @PLN176 is the
+automatic check) ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
 [SUBJECTS.md](doc/claude/SUBJECTS.md) the axes loft made a choice on — one row per subject with its
@@ -513,7 +528,12 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 **Diagnostics:** [DIAGNOSTICS.md](doc/claude/DIAGNOSTICS.md) the code index (`advice[avoidable-copy]`)
 + `--explain` fix lines — a code is a FROZEN public surface, and a new one lands with its row.
 
-**Testing / debug:** [TESTING.md](doc/claude/TESTING.md) framework/`LOFT_LOG`/LogConfig ·
+**Testing / debug:** [TESTING.md](doc/claude/TESTING.md) where a test goes and how to write it (start here) ·
+[RUNNING_TESTS.md](doc/claude/RUNNING_TESTS.md) run the suite, read a failure, `LOFT_LOG`/LogConfig ·
+[GUARDS.md](doc/claude/GUARDS.md) does a guard catch its defect (`make falsify`) ·
+[RUN_BOUNDS.md](doc/claude/RUN_BOUNDS.md) memory/hang/timeout bounds + scratch ·
+[TEST_ENVIRONMENTS.md](doc/claude/TEST_ENVIRONMENTS.md) databases/valgrind/Xvfb/wasm traps ·
+[LOFT_TEST.md](doc/claude/LOFT_TEST.md) the `loft test` runner ·
 [DEBUG.md](doc/claude/DEBUG.md) tools + boundary-matrix runner · [CAVEATS.md](doc/claude/CAVEATS.md) edge cases ·
 the bisect switches: [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) (`--native` rewrites) /
 [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) (lowering + runtime store) ·
@@ -620,7 +640,7 @@ type the program never used — reach for **`LOFT_STRICT_SCHEMA_IDS=1`**: genera
 REPLAYS the parse-time type order, so one type created a position early renames every id
 after it, and this makes that drift fatal instead of a report (loft#739, NATIVE.md §
 Architecture). `LOFT_TRACE_MINT=1` is its companion — it names the lookup that minted the
-extra type. Full API: [TESTING.md § LogConfig](doc/claude/TESTING.md), [DEBUG.md](doc/claude/DEBUG.md).
+extra type. Full API: [RUNNING_TESTS.md § LogConfig](doc/claude/RUNNING_TESTS.md#logconfig--debug-logging-framework), [DEBUG.md](doc/claude/DEBUG.md).
 
 ### Two diagnostic tiers
 

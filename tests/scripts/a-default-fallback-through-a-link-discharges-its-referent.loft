@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Ref-Uniform — a `&τ?` parameter is used exactly like a `τ?` variable, so `c?` on one
+// discharges with the REFERENT's default.  `??` already peeled the link; `?` asked through
+// `base()` and refused a `&vector<T>?` with "`&vector<T>?` has no default — discharge with
+// `?? <default>` instead", while the same line on the plain parameter compiled.  Each
+// referent kind is a cell, with the caller's value read back after the call: the discharge
+// reads through the link and must not stand in for the write that went through it.
+//
+// @falsified-at: 011933e76 — interpret exit 1 -> 0, native exit 1 -> 0.
+// @falsified-by: tests/falsified/a-default-fallback-through-a-link-discharges-its-referent.patch
+//   CHANNEL: the exit channel — the control does not compile.
+//   WITNESS: on the control "`?` needs a default here, but `&vector<integer>?` has no default",
+//   once for each `&` parameter kind the file discharges.
+//   HOLDS: assertions, leak, panic, free-refusal and expectations are equal on BOTH trees;
+//   `falsify` requires HERE to be clean, so each is clean on both.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+
+struct Df { k: integer, v: integer }
+
+fn grow_df(c: &vector<integer>?) -> integer { c += [1]; len(c?) }
+fn maybe_df(c: &vector<Df>?, k: integer) -> integer {
+  if k > 0 { c += [Df { k: k, v: k }]; }
+  len(c?)
+}
+fn text_df(c: &text?) -> integer { c = "abc"; len(c?) }
+fn int_df(c: &integer?) -> integer { c = 3; c? + 1 }
+
+fn main() {
+  v: vector<integer>? = [5];
+  assert(grow_df(v) == 2, "a present vector: the callee counts two");
+  assert(len(v?) == 2, "and the caller holds both: {len(v?)}");
+  n: vector<integer>? = null;
+  assert(grow_df(n) == 1, "an absent vector the callee fills");
+  assert(len(n?) == 1 && n?[0] == 1, "and the caller sees it: {len(n?)}");
+  w: vector<Df>? = null;
+  assert(maybe_df(w, 0) == 0, "an absent vector discharges to empty");
+  assert(w == null, "and stays absent when nothing was appended");
+  t: text? = null;
+  assert(text_df(t) == 3 && t == "abc", "a text link: {t}");
+  i: integer? = null;
+  assert(int_df(i) == 4 && i == 3, "an integer link: {i}");
+}

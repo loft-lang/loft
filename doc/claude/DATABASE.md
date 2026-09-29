@@ -735,8 +735,10 @@ store is read-only, its bytes are described by the header contract every vector 
   with `Store::FOREIGN_ORIGIN` as its lock origin; `begin_write_inner` refuses the lock
   BEFORE computing the address (asked after, the bounds test would call the reference
   corrupt), and `refuse_locked_write` routes a foreign store beside the author's `#lock`
-  to the runtime error `write_to_locked_store`, whose advice for this origin is to copy
-  first.  Nothing can grow or move the block, which is exactly what every hoist needs.
+  to `write_to_locked_store`: a development run halts with the advice for this origin (copy
+  first), a production run logs it and discards the write.  Nothing can grow or move the
+  block, which is exactly what every hoist needs — a production claim or resize answers a
+  fresh record in the store's own buffer and never touches the mapped bytes.
 * **Lifetime is the handle's.**  `Stores::foreign_vector` mints it; `Stores::free_named`
   drops the owner (`Store::release_foreign`) before the slot is recycled, so the mapping
   is released with the handle and the slot reinitialises as any other.  The bytes are the

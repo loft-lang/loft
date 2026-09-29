@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C86 — a view materialises when its container is reassigned.
 // @catches: LOFT_NO_CALLEE_DISTURB — the switch stops a callee's growth from disturbing the caller's view, which is what this program checks.
 //
 // @PLN130 F8 (loft#774) — a view must not outlive the store its container named.

@@ -1152,7 +1152,7 @@ nearly went wrong: the switches are read at GENERATION time and a `use`d library
 cdylib cached under its `native-auto/`, so `LOFT_NO_SCALAR_HOIST=1` on the consumer's run
 regenerates the program and leaves the library untouched — 394 ms vs 393 ms on a probe whose whole
 hot loop is inside `drawing`, which reads as "no effect" and is not one.  Rebuild the cdylib under
-the switch in a SCRATCH COPY of the package.  PERFORMANCE.md § Native vs Rust carries this.
+the switch in a SCRATCH COPY of the package.  PERFORMANCE-history.md § Native vs Rust carries this.
 Design in [DESIGN.md](DESIGN.md).  Implements
 [loft#1426](https://github.com/loft-lang/loft/issues/1426): loft-native runs
 10–50× behind plain Rust on the drawing library's routines, measured by a
@@ -1766,7 +1766,7 @@ store-root vector resets its store).  Each has cells, an emission or IR pin, a v
 a switch and a falsification; each was measured against its own switch on one binary.
 
 *The direction changed mid-session and it is written down:*
-[PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md) — the remaining speed is loft
+[PERFORMANCE-history.md § Native vs Rust 3e](../../PERFORMANCE-history.md) — the remaining speed is loft
 knowing what a store is FOR, not what LLVM can be told.  § 3d bounds the LLVM side (four
 reachable levers; the best is measured at −20 % on `composite` and is unbuilt).  Three store
 rules the rewrites already stood on were missing and are now written: `@FR-H-RootExtent`,
@@ -1846,7 +1846,7 @@ test, since the compiler folds `if <vector local>` to true and no program can cu
 **The next question this row asks is a different unit:** the free tree is still there for
 the stores that genuinely need one.
 
-**2026-09-14 — the direction, and it is not LLVM: PERFORMANCE.md § Native vs Rust 3e.**
+**2026-09-14 — the direction, and it is not LLVM: PERFORMANCE-history.md § Native vs Rust 3e.**
 The LLVM levers are bounded and one of them is now measured (3d below); the remaining
 factor comes from loft knowing what a store is FOR and spending that itself.  Read against
 the arc's own results this is what already happened: every unit that moved a row by more
@@ -1863,7 +1863,7 @@ lifetime work that has no design doc yet.  Note that step 1 of the 3d ranking co
 the same principle by itself: its content is not a hint to LLVM but a loft-level decision,
 check the extent once where the header is derived.
 
-**2026-09-14 — the LLVM question, evaluated and written up: PERFORMANCE.md § Native vs
+**2026-09-14 — the LLVM question, evaluated and written up: PERFORMANCE-history.md § Native vs
 Rust 3d.**  Whether `rustc` can be told enough about loft's memory to hoist for us, and
 which regions can carry which claim.  The short answer is that region marking is worth
 doing but is not the route to the loop hoists — 3c already measured the guard, not
@@ -2222,7 +2222,7 @@ unless said otherwise.
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **P0** — the pass runs from this tree; baseline table lands in PERFORMANCE.md | [DESIGN.md § P0](DESIGN.md) | `make native-ratio`: a hash mismatch always fails; `--gate` fails a ratio over `bench/ratio_oracle.tsv`'s bar | **Shipped 2026-09-07** — `bench/12_drawing/` (`hash`+`lock`, hashes asserted, all three lanes agree), `scripts/native_ratio.sh` (median-of-runs; both red arms falsified), PERFORMANCE.md § The drawing-pass baseline |
+| **P0** — the pass runs from this tree; baseline table lands in PERFORMANCE.md | [DESIGN.md § P0](DESIGN.md) | `make native-ratio`: a hash mismatch always fails; `--gate` fails a ratio over `bench/ratio_oracle.tsv`'s bar | **Shipped 2026-09-07** — `bench/12_drawing/` (`hash`+`lock`, hashes asserted, all three lanes agree), `scripts/native_ratio.sh` (median-of-runs; both red arms falsified), PERFORMANCE-history.md § The drawing-pass baseline |
 | **P1** — the per-call shadow-stack push made cheap (M1): `Cell` depth + `UnsafeCell` frame array replace the `RefCell<Vec>`, all five consumers kept in every tier, emitted prelude unchanged | [DESIGN.md § P1](DESIGN.md) | A/B min-of-runs cuts `hash` ≥ 25 %; depth-cap, stack-trace and the `i1058` balance guard (falsified) stay green | **Shipped 2026-09-07** — `hash` A/B 0.73×; consumer pass: all 14 hashes agree, `hash` 10.9→8.9× |
 | **P2** — `#[inline]` on the write path; embed-bitcode in the rlib + thin LTO in `--native-release` (M4) | [DESIGN.md § P2](DESIGN.md) | the issue's by-hand rebuild table does not move; `-C lto=thin` still errors on a bitcode-free rlib | **Step 1 measured 2026-09-07**: `store_mut` `#[inline]` kept (−2 % `lock`); the other two candidates DECLINED (+1.5 % regression — cold raise paths duplicate).  LTO probe open; also the lean tier's 8.5→6.4 ns gap |
 | **P3** — plain ops when operands are provably non-sentinel: float compares, counted `for`, then the `_nn` integer wiring (M3) | [DESIGN.md § P3](DESIGN.md) | `LOFT_NN_VERIFY` sweep clean; the 16-cell for-matrix byte-identical on both backends; nullable-operand cells keep the sentinel forms | **In-flight** — P3a (float compares), P3b (counted `for`, `conv_bool` 34→11) and P3c (`_nn` integer wiring, N3/N5 — 40 sites on the bench) shipped 2026-09-07, all falsified; open: interprocedural param facts |
@@ -2302,7 +2302,7 @@ What remains, ranked by measured value per unit of work:
 |---|---|---|---|---|
 | 1 | **bound-via-header** — the loop bound re-reads the vector length through the runtime on every iteration even where the header was hoisted (`length_vector` beside `get_elem_hoisted` in `n_fnv`) | every `for` over a vector | `hash` and every element loop | S |
 | 2 | **constant shift amounts need no range check** — `x >> 8` emits a `(0..64).contains` test on a literal | `n_fnv` | XS, folds into 1 | XS |
-| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md C67) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null — but the third of the row charged to the checks (553–584k → 370–396k ns/op) was the un-inlined fault note BESIDE them: with it inlined the fully checked row sits at its plain-arithmetic floor (219–287k vs 225–272k, DESIGN.md § The out-of-line calls), LLVM compiling each overflow test to `imul` + `jo` and each sentinel test to one `cmp`/`je` | none measured yet — re-rank when a checks-only loop with no helper call beside it shows as hot | M–L |
+| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md C129) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null — but the third of the row charged to the checks (553–584k → 370–396k ns/op) was the un-inlined fault note BESIDE them: with it inlined the fully checked row sits at its plain-arithmetic floor (219–287k vs 225–272k, DESIGN.md § The out-of-line calls), LLVM compiling each overflow test to `imul` + `jo` and each sentinel test to one `cmp`/`je` | none measured yet — re-rank when a checks-only loop with no helper call beside it shows as hot | M–L |
 | 4 | **`fronds`' deep-copy class as a MOVE** — SHIPPED 2026-09-11 (the § V-j move row above): ceiling re-measured at −11.3 % on the § V-t runtime and reached exactly | DESIGN.md § V-j (SHIPPED addendum) | `fronds` −11 % (done) | shipped |
 | 4b | **`fronds`' allocation class** — the sides literal, the two builders, the per-sub-array spec; CEILING MEASURED at −9 % by a source-level variant (−64 % stores, hash exact) — small emitter items, not the half the census suggested | DESIGN.md § fronds | `fronds` −9 % | S each |
 | 5 | **frame-local record temporaries** — 12 of `smooth`'s 14 remaining stores are `pt(…)` results bound to locals; the scalar-tangent probe gained 11 % while DOUBLING the helper calls, so a temporary that lives in the frame takes at least that | § V-g's ceiling probe | `smooth` 19× → ~14×; the same class in every routine that names a struct temporary | M–L |

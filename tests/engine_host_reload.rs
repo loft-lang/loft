@@ -127,7 +127,7 @@ fn program(body: &str, sig: &str) -> String {
     let port = common::bind_port(PORT_BASE);
     format!(
         r#"
-use engine_host;
+use engine_host::*;
 
 
 fn reply({sig}) -> text {{
@@ -284,7 +284,7 @@ fn live_reload_module_file_with_lib_and_cross_file_calls() {
     let module = src.join("viewmod.loft");
     std::fs::write(
         &module,
-        "use engine_host;\nuse mathmod;\n\npub fn view_msg(n: integer) -> text {\n    \"view {n}\"\n}\n",
+        "pub use engine_host::*;\npub use mathmod::*;\n\npub fn view_msg(n: integer) -> text {\n    \"view {n}\"\n}\n",
     )
     .unwrap();
     std::fs::write(
@@ -295,8 +295,8 @@ fn live_reload_module_file_with_lib_and_cross_file_calls() {
     let main = src.join("main.loft");
     std::fs::write(
         &main,
-        r#"use viewmod;
-use engine_host;
+        r#"use viewmod::*;
+use engine_host::*;
 
 fn main() {
     frames = 0;
@@ -349,7 +349,7 @@ fn main() {
     // The MODULE edit: lib-qualified + cross-file calls in the new body.
     std::fs::write(
         &module,
-        "use engine_host;\nuse mathmod;\n\npub fn view_msg(n: integer) -> text {\n    \"VIEW c={engine_host::clients()} d={double(n)}\"\n}\n",
+        "pub use engine_host::*;\npub use mathmod::*;\n\npub fn view_msg(n: integer) -> text {\n    \"VIEW c={engine_host::clients()} d={double(n)}\"\n}\n",
     )
     .unwrap();
     assert!(

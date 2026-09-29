@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Closures and § Closure capture — a lambda copies the scalars it captures
+// at definition time, and a returned closure keeps working after its maker's frame is gone.
+
+fn test_a_capture_is_taken_at_definition_time() {
+  greeting = "Hello";
+  greet = fn(name: text) -> text { "{greeting}, {name}!" };
+  greeting = "Bye";       // does NOT affect the closure
+  assert(greet("world") == "Hello, world!", "captured at definition time");
+}
+
+fn make_adder(n: integer) -> fn(integer) -> integer {
+    fn(x: integer) -> integer { n + x }
+}
+
+fn test_a_returned_closure_outlives_its_maker() {
+  add5 = make_adder(5);
+  assert(add5(10) == 15, "the captured `n` survives the return");
+}
+
+fn test_a_closures_write_to_a_captured_scalar_reaches_the_outer_variable() {
+  counter = 0;
+  inc = fn() -> integer { counter += 1; counter };
+  assert(inc() == 1, "1");
+  assert(inc() == 2, "2");
+  assert(inc() == 3, "3 — each call sees what the previous one wrote");
+  assert(counter == 3, "3 — the closure's write landed in the outer variable (L-CapWrite)");
+}

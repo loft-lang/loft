@@ -50,7 +50,7 @@ pub fn save_png(self: const Image, path: text) -> boolean {
 // Decodes a PNG file and returns an Image.
 // Returns null if the file is not in text format.
 // Use to load sprite sheets or textures.
-pub fn png(self: File) -> Image {
+pub fn png(self: File) -> Image? {
   if self.format == Format.TextFile {
     result = Image { };
     load_png(self.path, result);

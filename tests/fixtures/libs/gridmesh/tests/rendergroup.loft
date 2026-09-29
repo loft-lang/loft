@@ -8,7 +8,7 @@
 // its member chunks (so the consumer reassembles the group from cached chunk
 // meshes).  group_dim is a tunable dial: G=1 = per-chunk, G large = one VBO.
 
-use gridmesh;
+use gridmesh::*;
 
 // Four chunks in a row (cx 0..3 at shift 3 = 8 cells/axis), one INTERIOR cell
 // each (chunk-local 4,4 → no halo border spill into neighbour chunks).

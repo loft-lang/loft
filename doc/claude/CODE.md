@@ -316,6 +316,6 @@ Three shapes that read as correct and are not, each measured in this repo's own 
 ---
 
 ## See also
-- [TESTING.md](TESTING.md) — Test framework, LogConfig debug-logging presets, suite files
+- [TESTING.md](TESTING.md) — Test framework, suite files; [RUNNING_TESTS.md](RUNNING_TESTS.md) — LogConfig debug-logging presets
 - [COMPILER.md](COMPILER.md) — Lexer, parser, two-pass design, IR, type system, scope analysis, bytecode
 - [DEVELOPMENT.md](DEVELOPMENT.md) — Contribution workflow and validation against CODE.md

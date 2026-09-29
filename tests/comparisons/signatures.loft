@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: signatures
+// @CLAIM: a parameter may carry a default, and a call may name an argument to skip the ones before it.
+// @SEEN-FROM: 00-vs-python.html#signatures
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-python.html#signatures (a verbatim window: `rule_tags.py fences`) ---
+fn connect(host: text, port: integer = 80, tls: boolean = true) -> text { "{host}:{port} tls={tls}" }
+
+connect("localhost");                // uses defaults
+connect("localhost", tls: false);    // named arg — skips port
+connect("localhost", 443, false);    // positional — all explicit
+assert(connect("localhost") == "localhost:80 tls=true", "defaults");
+assert(connect("localhost", tls: false) == "localhost:80 tls=false", "a named argument skips the one before it");
+assert(connect("localhost", 443, false) == "localhost:443 tls=false", "all positional");

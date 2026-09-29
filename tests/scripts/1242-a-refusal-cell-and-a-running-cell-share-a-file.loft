@@ -37,7 +37,7 @@
 //   Re-validate through the corpus runner's own behaviour, by hand, as the receipt records.
 // @EXPECT_ERROR: cannot change type from hash
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 
 struct E1242 { k: integer }
 

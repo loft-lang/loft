@@ -1610,11 +1610,11 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
 // `tp`'s `0x8000` bit frees the source store after the copy, as it does for OpReplaceKeyed.
 fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
 #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
-// @P305 — `coll[key] = value` insert-or-replace into a keyed collection
-// (hash/sorted/index), deduped by value's key.  Updates an existing key
-// in place OR inserts a new one (the plain `OpCopyRecord` lowering could
-// only update — it no-op'd into the null lookup when the key was absent).
-fn OpSetKeyed(coll: reference, value: reference, tp: const u16);
+// `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
+// (`Col-Assign`): the subscript's `no_keys` values trail the parameters as `OpGetRecord`'s
+// do, and the copy is placed under them with its key fields set to them, so `c[k] = v`
+// reads back as `c[k]` whatever key `value` carried.
+fn OpSetKeyed(coll: reference, value: reference, tp: const u16, no_keys: const u8);
 type iterator;
 // Forward-declared builtin collection type-keywords: reserved names whose full
 // implementation lands with the crawler/moros/dryopea library work.  Declaring

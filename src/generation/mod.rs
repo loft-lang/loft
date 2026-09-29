@@ -7186,7 +7186,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -7227,7 +7227,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -7985,6 +7985,14 @@ extern crate loft;"
             }
             let attrs = def.attributes().to_vec();
             for a in &attrs {
+                // A `virtual(…)` field is computed on every read and has NO store slot —
+                // `fill_database` (src/typedef.rs) skips it, and `init()` must register the
+                // same table or every field NUMBER after the interpreter's differs from the
+                // emitted offsets (an append to a vector field then targets the wrong slot
+                // or panics on a non-structure — the second reference walk of @PLN176).
+                if a.constant {
+                    continue;
+                }
                 // Resolve field's content dep and recurse inline
                 // before the field is emitted — parse-time
                 // `fill_database` does the same via recursive content
@@ -8908,6 +8916,10 @@ extern crate loft;"
             writeln!(w, "    db.field({s_var}, \"enum\", byte_enum);")?;
         }
         for a in def.attributes() {
+            // Computed (`virtual`) fields have no slot — see `emit_def_create_recurse_fields`.
+            if a.constant {
+                continue;
+            }
             let is_coll = is_collection_field(&a.typedef);
             let emit = match phase {
                 FieldPhase::AllFields => true,

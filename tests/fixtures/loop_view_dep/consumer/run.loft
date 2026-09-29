@@ -6,7 +6,7 @@
 //
 // Prints three lines so a failure says WHICH call went wrong rather than only
 // that the run differed.
-use holderlib;
+use holderlib::*;
 
 struct V1 { vx: float }
 struct Sink { sk_vs: vector<V1> }

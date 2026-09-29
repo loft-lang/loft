@@ -41,29 +41,31 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 19. Four questions, four tiers: what is there, how do I start, what is the signature, where is the source. — [USER_DOCS](USER_DOCS.md) § The design (Tiers 0–3)
 20. A library's user-facing text has one home: the library. — USER_DOCS § The one-home rule
 21. A topic page states `@NAME`/`@TITLE`, asserts something, and renders no directive as prose. — DOC § Adding a new topic page · gate: `every_doc_page_asserts_something`
-22. Every example runs on both backends; an indented `$ ` line is executed and its output checked. — [RELEASE](RELEASE.md) § 0b · gate: the docs suite, `tests/doc_commands.rs`
-23. No temporal or hedge words (currently, planned, for now, not yet, TODO); a fault claim cites a live issue. — API_SURFACE S7 · report: `doc_review.py`
+22. Every example runs on both backends; an indented `$ ` line is executed and its output checked; a `loft` fence in a hand-written reference doc (LOFT.md, STDLIB.md, the comparison pages) is a verbatim window of the program named on the line above it (`<!-- from tests/reference/<file>.loft -->`, `tests/comparisons/<subject>.loft` for a page), a shape that is not a program is a ```grammar fence, and a sample that needs a library is marked `<!-- from library:<name> -->`. — [RELEASE](RELEASE.md) § 0b, `tests/reference/README.md` · gate: the docs suite, `tests/doc_commands.rs`, `wrap::reference`; report: `rule_tags.py fences` (@PLN176)
+23. No temporal or hedge words (currently, planned, for now, not yet, TODO); a fault claim cites a live issue or the rule that makes it a decision; a limitation the language has since lost leaves the page — the page states the behaviour with its guard, and the record (what it was, the issue, the guard) goes to `<doc>-history.md`. — API_SURFACE S7 · report: `doc_review.py`; `rule_tags.py claims --issues` (the `stale-claims` nightly, @PLN176)
 24. Every `make` target or flag named in prose resolves. — RELEASE § 0d · report: `doc_review.py`
 25. A comparison claim is a program in `tests/comparisons/`; its rationale is a link, never a restatement. — [SUBJECTS](SUBJECTS.md) · gate: `wrap::comparisons`
 26. A library ships a guide, `docs/01-getting-started.loft`, whose numbers are measured. — [LIBRARY_AUTHORING](LIBRARY_AUTHORING.md) § 2c
 27. CHANGELOG.md is plain language under `## YYYY-MM`; CHANGELOG_TECHNICAL.md records every change. — DEVELOPMENT § Documentation updates
+28. Every section of LOFT.md / STDLIB.md carries something in the repo that would MOVE when the language does — a sourced sample (rule 22), the `@FR-`/`(Rule)` or `@F` it restates, a signature table the stdlib source resolves, a guard path or a `loft#N`; a section with none is prose nothing would contradict when it goes stale, and a signature row must name a routine `default/*.loft` declares. — `tests/reference/README.md` · gate: `rule_tags.py sections --gate` in `make ci` (@PLN176 phase 3)
 
 ## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
 
-28. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
-29. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
-30. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
-31. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
-32. Commit the goal and the command that reports the position, never the position. — rule 5
-33. Prose beside a gated number carries the reason, not the value. — rule 6
-34. Search a doc before adding to it; read the code before stating what it does. — rules 7–8
-35. Name the tree a fact is about; a cure ships with its signpost and is read back against its cause. — rules 9–11
-36. Docs ship in the branch of the code they describe, in their own commit; a small edit gets no PR of its own. — rule 13, DEVELOPMENT § Documentation commit
-37. A formal register's `OPEN: n` is a claim to re-measure, and each open entry names its issue. — formal/README · gate: `register_entries_name_their_tracking_issue`
-38. A diagnostic code is frozen once shipped and lands with its DIAGNOSTICS.md row. — [DIAGNOSTICS](DIAGNOSTICS.md) · gate: `every_pinned_code_is_documented`
-39. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`. — [plans/README](plans/README.md)
-40. A new guard records `@falsified-at:` and how to score it again. — [TESTING](TESTING.md) · gate: `every_new_guard_records_its_control`
-41. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
+29. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
+30. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
+31. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
+32. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
+33. Commit the goal and the command that reports the position, never the position. — rule 5
+34. Prose beside a gated number carries the reason, not the value. — rule 6
+35. Search a doc before adding to it; read the code before stating what it does. — rules 7–8
+36. Name the tree a fact is about; a cure ships with its signpost and is read back against its cause. — rules 9–11
+37. Docs ship in the branch of the code they describe, in their own commit; a small edit gets no PR of its own. — rule 13, DEVELOPMENT § Documentation commit
+38. A formal register's `OPEN: n` is a claim to re-measure, and each open entry names its issue. — formal/README · gate: `register_entries_name_their_tracking_issue`
+39. A diagnostic code is frozen once shipped and lands with its DIAGNOSTICS.md row. — [DIAGNOSTICS](DIAGNOSTICS.md) · gate: `every_pinned_code_is_documented`
+40. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`, and its docs are its own agent's to keep under this contract — the report and `make file-sizes` leave `plans/` out. — [plans/README](plans/README.md), DOC_QUALITY § Maintainer docs rule 14
+41. A new guard records `@falsified-at:` and how to score it again. — [GUARDS](GUARDS.md) · gate: `every_new_guard_records_its_control`
+42. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
+43. A design decision names the sites that keep it with `@C<n>`, a guard under `tests/` among them; one nothing can keep is reopened. — [DESIGN_DECISIONS](DESIGN_DECISIONS.md) § Using the register · gate: `index_hygiene_clean` (every `@C` resolves; a guard from C130 on) · report: `./scripts/idx decisions`
 
 ## Reviewer pass
 

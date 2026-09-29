@@ -1,3 +1,7 @@
+// @EXPECT_WARNING: is stored into the return value of the non-null type
+// ↑ This file covers a function declared NON-null whose branch returns `null` — still legal,
+// and `(N-Join)` + `(N-Store)` warn it (loft#1714).  The declaration stays non-null on purpose:
+// the `-> T?` spelling lowers through a different return path, which is not what this covers.
 // A `vector<boolean>` or `vector<Enum>` append in a loop goes through the loop's push header
 // on native, and a loop that pushes ONE invariant boolean or enum is one fill of the tail.
 //

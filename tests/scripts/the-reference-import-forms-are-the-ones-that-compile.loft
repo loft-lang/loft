@@ -35,9 +35,10 @@
 //   for a lock: the declared refusal matched, and a file that refuses on every build cannot
 //   move against a control.
 
-use pubvis;
+use pubvis::*;
 
-// A `pub` name is in this file's namespace, so both spellings reach it.  The prefixed form is
+// `use pubvis::*;` brings every `pub` name into this file's namespace, so both spellings reach
+// it; a bare `use pubvis;` would bring in only the prefix (@C98).  The prefixed form is
 // what the chapter used to teach exclusively; the bare form is what it now says also works.
 fn a_pub_name_answers_to_both_spellings() {
   pv_bare = pubvis_shown(3, 4);

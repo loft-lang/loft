@@ -1,0 +1,159 @@
+diff --git b/src/main.rs a/src/main.rs
+index ce08537cc..92adc9313 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -7291,8 +7291,6 @@ fn main() {
+     // `tests/` directory; these two say which case a leftover positional is.
+     let mut test_subcommand = false;
+     let mut test_target_given = false;
+-    // The `--tests` FLAG spelling of the same runner, for the leftover-positional rule below.
+-    let mut tests_flag = false;
+     // Plan-08 phase 01: --introspect mode collects per-section
+     // selectors, output paths, and filters into one Options bundle.
+     // The flag itself only toggles the mode; sub-flags accumulate
+@@ -7634,9 +7632,7 @@ fn main() {
+             if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
+                 path.clone_from(&argv[i]);
+                 i += 1;
+-                test_target_given = true;
+             }
+-            tests_flag = true;
+             tests_dir = Some(path);
+             // The test runner defaults to the interpreter; an explicit --native
+             // (anywhere on the line) opts into native compilation per file.
+@@ -8828,12 +8824,7 @@ fn main() {
+     // A leftover positional is therefore adopted as the target when none was given,
+     // and refused when one was — the same either/or the leading-positional check
+     // makes, so the two orderings cannot disagree about what two targets mean.
+-    //
+-    // The `--tests` FLAG had the same hole one flag earlier: it skips only the three flags
+-    // it knows before its path, so `loft --tests --interpret t.loft` left the path to
+-    // `file_name` and swept every `.loft` under the working directory — from the repo root,
+-    // `target/` included, until the watchdog's SIGABRT read as the guard crashing.
+-    if (test_subcommand || tests_flag) && !file_name.is_empty() {
++    if test_subcommand && !file_name.is_empty() {
+         if test_target_given {
+             eprintln!(
+                 "loft test: one target per run, but two were given (`{}`, `{file_name}`).\n\
+@@ -8842,13 +8833,7 @@ fn main() {
+             );
+             std::process::exit(1);
+         }
+-        // The subcommand joins a bare test NAME onto `tests/`; the flag takes its path as
+-        // written, which is what it does with a path it consumed itself.
+-        tests_dir = Some(if test_subcommand {
+-            resolve_test_target(&file_name)
+-        } else {
+-            file_name.clone()
+-        });
++        tests_dir = Some(resolve_test_target(&file_name));
+         file_name.clear();
+     }
+ 
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 315d5f286..ee51bf461 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -4165,8 +4165,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             } else {
+                 ls.extend(db_ops);
+             }
+-        } else if let Some(mint) = self.absent_append_mint(in_t, vec, substituted) {
+-            ls.push(mint);
+         }
+         // O8.1a: pre-allocate vector capacity when the element count is known
+         // at compile time.  This eliminates resize calls in vector_append.  A keyed
+@@ -7273,45 +7271,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         }
+     }
+ 
+-    /// `@FR-Col-Insert-Absent` for a nullable vector LOCAL that already has a backing: an
+-    /// append onto it while it holds null builds the empty vector first, at runtime.
+-    ///
+-    /// The mint above covers only the local with NO dependency yet — the parse-time stand-in
+-    /// for "does it hold a store?".  A `vector<τ>?` that got its dependency from an earlier
+-    /// value (`c = f()`, `c = [1]; c = null`, `c = if … { null } else { … }`) answers "yes"
+-    /// to that stand-in while holding null, and the append wrote through the null handle —
+-    /// a no-op — so `c += [7]` left `c` null, silently, on both backends.  A struct field
+-    /// was always right: the runtime materialises it in place (`collection_rec`).
+-    ///
+-    /// The store goes into a FRESH backing that the scope pass frees like any other `__vdb`
+-    /// (the local's own free is its backings', never the local's), whose entry null-init is
+-    /// the non-allocating sentinel because the mint is conditional.  `None` for every other
+-    /// append: a replace (`v = [..]` rebuilds, and a guard would turn it into an append), an
+-    /// argument (the caller's store), a keyed local (its own `keyed_local_materialise`), or a
+-    /// non-nullable local.
+-    fn absent_append_mint(&mut self, in_t: &Type, vec: u16, substituted: bool) -> Option<Value> {
+-        if self.first_pass
+-            || substituted
+-            || vec == u16::MAX
+-            || self.assign_replaces
+-            || self.assign_target != vec
+-            || self.vars.is_argument(vec)
+-            || self.keyed_local(vec)
+-            || !matches!(self.vars.tp(vec), Type::Optional(_))
+-        {
+-            return None;
+-        }
+-        let db_ops = self.vector_db(in_t, vec);
+-        let &db = self.vars.tp(vec).depend().last()?;
+-        self.vars.mark_inline_ref(db);
+-        // `OpRefIsNull`, not `OpVectorIsNull`: the question is whether the local has a STORE.
+-        // A local shared with a closure holds a store whose slot says ABSENT (loft#1218), and
+-        // the ordinary append builds the collection in that slot, in place; minting a fresh
+-        // backing there split the local off the closure's store and lost its elements.
+-        let absent = self.cl("OpRefIsNull", &[Value::Var(vec)]);
+-        Some(v_if(absent, Value::Insert(db_ops), Value::Null))
+-    }
+-
+     pub(crate) fn insert_new(
+         &mut self,
+         vec: u16,
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index a088f79a5..5da6b85bf 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -3203,42 +3203,10 @@ impl Function {
+                         | Type::Character
+                 )
+             };
+-            // The same transition for a HEAP type — a struct, a vector, a keyed collection —
+-            // whose `τ?` is as declarable as a scalar's (`(N-Opt)`, `data::has_null`).  It was
+-            // refused as a TYPE CHANGE instead, *"cannot change type from P to null; use a new
+-            // variable name or cast with 'as'"*, naming two cures that do not work and not the
+-            // one that does.  Kept apart from the scalar sentence so that wording stays as it is.
+-            let is_null_heap = |t: &Type| {
+-                !is_null_scalar(t)
+-                    && crate::data::has_null(t)
+-                    && !matches!(
+-                        t,
+-                        Type::Null
+-                            | Type::Void
+-                            | Type::Never
+-                            | Type::Unknown(_)
+-                            | Type::Optional(_)
+-                            | Type::RefVar(_)
+-                    )
+-            };
+-            let heap_mix = crate::keys::pln25_dn1_enabled()
+-                && ((is_null_heap(var_tp) && matches!(type_def, Type::Null))
+-                    || (matches!(var_tp, Type::Null) && is_null_heap(type_def)));
+             let nullable_mix = crate::keys::pln25_dn1_enabled()
+                 && ((is_null_scalar(var_tp) && matches!(type_def, Type::Null))
+                     || (matches!(var_tp, Type::Null) && is_null_scalar(type_def)));
+-            if heap_mix {
+-                let heap = if is_null_heap(var_tp) { var_tp } else { type_def };
+-                let heap_name = heap.source_name(data);
+-                diagnostic!(
+-                    lexer,
+-                    Level::Error,
+-                    "Variable '{}' cannot hold both `null` and the non-null type `{}` — declare it `{}?` to allow null",
+-                    self.name(var_nr),
+-                    heap_name,
+-                    heap_name
+-                );
+-            } else if nullable_mix {
++            if nullable_mix {
+                 let scalar = if is_null_scalar(var_tp) {
+                     var_tp
+                 } else {

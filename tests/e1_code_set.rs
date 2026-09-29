@@ -290,8 +290,8 @@ const CODES: &[(&str, &str)] = &[
         "fn f(a: const integer) -> integer { a }\n\
          fn main() { print(\"{f(1)}\"); }",
     ),
-    // C124 — a `const` record handed to a plain record parameter (a warning while the shipped
-    // libraries migrate; the code stays when it becomes an error).
+    // @C124 — a `const` record handed to a plain record parameter (an error; the code stayed
+    // when the rollout warning became one).
     (
         "const-to-plain-parameter",
         "struct S { a: integer }\n\

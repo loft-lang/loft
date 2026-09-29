@@ -87,14 +87,10 @@ pub enum RuntimeErrorKind {
     IndexOutOfBounds { idx: i64, len: u32 },
     /// Vector / text index < 0.
     NegativeIndex { idx: i64 },
-    /// Field / method access through a null `DbRef`.
-    NullDereference,
     /// A write to a store the author locked with `d#lock = true`.  Only the USER lock
     /// reaches here: the const store and a worker borrow share `Store::read_only` but
     /// are the compiler's to get right, and keep their assert.
     WriteToLockedStore { rec: u32, fld: u32 },
-    /// Narrowing cast (e.g. `i64 -> i32`) overflowed the target range.
-    NarrowCastOverflow { value: i64, target: &'static str },
     /// A `<<` / `>>` whose amount is outside `[0, 64)`, or whose result is the
     /// reserved `i64::MIN` null sentinel (@PLN102 null-model keystone,
     /// D-op-null-2): the shift cannot produce a representable non-null value, so
@@ -139,8 +135,6 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::DivideByZero => "divide_by_zero",
             RuntimeErrorKind::IndexOutOfBounds { .. } => "index_out_of_bounds",
             RuntimeErrorKind::NegativeIndex { .. } => "negative_index",
-            RuntimeErrorKind::NullDereference => "null_dereference",
-            RuntimeErrorKind::NarrowCastOverflow { .. } => "narrow_cast_overflow",
             RuntimeErrorKind::ShiftOutOfRange => "shift_out_of_range",
             RuntimeErrorKind::CastOutOfRange => "cast_out_of_range",
             RuntimeErrorKind::RangeDefaulted { .. } => "range_defaulted",
@@ -163,10 +157,6 @@ impl RuntimeErrorKind {
             }
             RuntimeErrorKind::NegativeIndex { idx } => {
                 format!("negative index {idx}")
-            }
-            RuntimeErrorKind::NullDereference => "null dereference".to_string(),
-            RuntimeErrorKind::NarrowCastOverflow { value, target } => {
-                format!("value {value} overflows target type {target}")
             }
             RuntimeErrorKind::RangeDefaulted { value, lo, hi } => {
                 format!(
@@ -526,6 +516,44 @@ impl RuntimeError {
 /// Takes the position in pieces because the generated Rust must be able to call this and
 /// `crate::lexer` is not part of the public surface — and because building the `Position`
 /// here is one fewer thing for three call sites to spell the same way.
+/// The run's logger, when the run is a PRODUCTION one — recorded by
+/// [`crate::database::Stores::set_logger`] so a fault raised below `Stores`, inside one
+/// `Store`, can tell a production run from a development one and log there.
+static PRODUCTION_LOGGER: std::sync::RwLock<
+    Option<std::sync::Arc<std::sync::Mutex<crate::logger::Logger>>>,
+> = std::sync::RwLock::new(None);
+
+/// How many locked-store writes a production run has discarded.
+static LOCKED_WRITES_DISCARDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record the run's logger; only a production logger is kept.
+pub fn register_run_logger(logger: &std::sync::Arc<std::sync::Mutex<crate::logger::Logger>>) {
+    let production = logger.lock().is_ok_and(|l| l.config.production);
+    if let Ok(mut slot) = PRODUCTION_LOGGER.write() {
+        *slot = production.then(|| logger.clone());
+    }
+}
+
+/// `@FR-H-WriteLocked` in a PRODUCTION run: the write is discarded and logged, and the
+/// program continues on the store's old bytes (C80 — nothing stops a production program).
+/// Answers `false` outside production, where the caller halts with the report instead.
+///
+/// Logged at the first discard and then at every doubling of the count, so a loop that
+/// writes a locked vector a million times leaves twenty lines, not a million.
+pub fn discard_locked_write_in_production(rec: u32, fld: u32) -> bool {
+    let logger = PRODUCTION_LOGGER.read().ok().and_then(|slot| slot.clone());
+    let Some(logger) = logger else {
+        return false;
+    };
+    let n = LOCKED_WRITES_DISCARDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n.is_power_of_two()
+        && let Ok(mut lg) = logger.lock()
+    {
+        lg.log_runtime_kind(&RuntimeErrorKind::WriteToLockedStore { rec, fld }, None);
+    }
+    true
+}
+
 pub fn logged_in_production(
     stores: &mut crate::database::Stores,
     kind: &RuntimeErrorKind,
@@ -601,12 +629,7 @@ mod tests {
             RuntimeErrorKind::DivideByZero,
             RuntimeErrorKind::IndexOutOfBounds { idx: 5, len: 3 },
             RuntimeErrorKind::NegativeIndex { idx: -1 },
-            RuntimeErrorKind::NullDereference,
             RuntimeErrorKind::WriteToLockedStore { rec: 1, fld: 8 },
-            RuntimeErrorKind::NarrowCastOverflow {
-                value: 99_999,
-                target: "i8",
-            },
             RuntimeErrorKind::RangeDefaulted {
                 value: 300,
                 lo: 0,

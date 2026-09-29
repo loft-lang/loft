@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A KEYED ASSIGNMENT PLACES ITS RECORD UNDER THE SUBSCRIPT (`@FR-Col-Assign`, loft#1716).
+// `c[k] = v` puts a copy of `v` under `k` — replacing what was there — with the copy's key
+// fields set to `k`, so `c[k]` reads it back and `v` is untouched.  `c[5] = c[30]; c[30] =
+// null` is therefore a MOVE.
+//
+// The subscript used to be parsed and dropped: the copy landed under `v`'s own key, `c[5]`
+// stayed empty, a replace overwrote the record at `v`'s key instead, and the move spelling
+// deleted the record.  Now the subscript's keys ride `OpSetKeyed` exactly as they ride
+// `OpGetRecord`, and `set_keyed` places the copy under them (`keys::set_key` writes them in).
+//
+// Axes: kind (hash, sorted, a descending sorted, a sorted promoted to Ordered by an `index` over
+// the same element, index with two keys, trie, spatial) × key width (integer, text — literal and
+// formatted —, float, u8) × the value's source (a literal, a local, a call, an element of the
+// SAME collection, the same element — `c[30] = c[30]` —, an ABSENT element) × the collection's
+// root (local, struct field, `&` parameter) × the target key (absent, present) × a loop of
+// inserts.  Controls: a subscript equal to the key, and the value's own record after the write.
+// The absent-element cell is a pre-existing crash the same path owned: `c[5] = c[99]` panicked in
+// a store accessor, where the `K?`-into-`K` warning promises the store is skipped.
+//
+// @falsified-at: be2c6fe54 — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native exit 1 -> 0, native 12 assertion failures -> 0
+// @falsified-by: tests/falsified/a-keyed-assignment-places-its-record-under-the-subscript.patch — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native exit 1 -> 0, native 12 assertion failures -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; the absent-value
+// cell's panic sits behind the first failed assertion on the control, so only asserts moved.
+
+struct K { key: integer, n: integer }
+struct T { key: text, n: integer }
+struct M { a: integer, b: integer, n: integer }
+struct P { x: integer, y: integer, n: integer }
+struct V { key: integer, tags: vector<integer>, label: text }
+struct F { f: float, n: integer }
+struct N { k: u8, n: integer }
+struct W { m: hash<K[key]> }
+struct Z { o: index<K[key]> }
+
+fn kn(k: K?) -> text { if k == null { "-" } else { "{k.key}:{k.n}" } }
+fn put(h: &hash<K[key]>) { h[6] = K { key: 1, n: 8 }; }
+fn mk(k: integer) -> K { K { key: k, n: k * 2 } }
+
+fn test_the_subscript_names_the_key_on_every_kind() {
+  u: hash<K[key]> = [];
+  u[5] = K { key: 9, n: 1 };
+  assert("{len(u)} {kn(u[5])} {kn(u[9])}" == "1 5:1 -", "hash: {len(u)} {kn(u[5])} {kn(u[9])}");
+  d: sorted<K[-key]> = [K { key: 1, n: 0 }];
+  d[5] = K { key: 9, n: 1 };
+  assert("{len(d)} {kn(d[5])} {kn(d[9])}" == "2 5:1 -", "descending sorted: {len(d)} {kn(d[5])} {kn(d[9])}");
+  o: sorted<K[key]> = [];
+  o[5] = K { key: 9, n: 1 };
+  assert("{len(o)} {kn(o[5])} {kn(o[9])}" == "1 5:1 -", "ordered sorted: {len(o)} {kn(o[5])} {kn(o[9])}");
+  m: index<M[a, b]> = [];
+  m[1, 2] = M { a: 7, b: 8, n: 3 };
+  x = m[1, 2];
+  assert("{len(m)} {x.a}/{x.b}/{x.n} {m[7, 8] == null}" == "1 1/2/3 true", "two-key index: {len(m)} {x.a}/{x.b}/{x.n}");
+  sp: spatial<P[x, y]> = [];
+  sp[3, 4] = P { x: 9, y: 9, n: 5 };
+  p = sp[3, 4];
+  assert("{len(sp)} {p.x},{p.y}:{p.n} {sp[9, 9] == null}" == "1 3,4:5 true", "spatial: {len(sp)} {p.x},{p.y}:{p.n}");
+}
+
+fn test_every_key_width() {
+  h: hash<T[key]> = [];
+  h["a"] = T { key: "z", n: 4 };
+  assert("{len(h)} {h[\"a\"].key}:{h[\"a\"].n} {h[\"z\"] == null}" == "1 a:4 true", "text hash: {h[\"a\"].key}");
+  t: trie<T[key]> = [];
+  t["b"] = T { key: "y", n: 6 };
+  assert("{len(t)} {t[\"b\"].key}:{t[\"b\"].n} {t[\"y\"] == null}" == "1 b:6 true", "text trie: {t[\"b\"].key}");
+  g: hash<T[key]> = [];
+  for i in 0..3 { g["k{i}"] = T { key: "zz", n: i }; }
+  assert("{len(g)} {g[\"k1\"].key}:{g[\"k1\"].n} {g[\"zz\"] == null}" == "3 k1:1 true", "formatted text subscript: {len(g)}");
+  f: sorted<F[f]> = [];
+  f[1.5] = F { f: 9.5, n: 2 };
+  assert("{len(f)} {f[1.5].f}:{f[1.5].n} {f[9.5] == null}" == "1 1.5:2 true", "float key: {len(f)}");
+  b: hash<N[k]> = [];
+  b[5] = N { k: 9, n: 3 };
+  assert("{len(b)} {b[5].k}:{b[5].n} {b[9] == null}" == "1 5:3 true", "u8 key: {len(b)}");
+}
+
+fn test_a_move_and_a_replace() {
+  s: sorted<K[key]> = [K { key: 30, n: 7 }];
+  s[5] = s[30];
+  s[30] = null;
+  assert("{len(s)} {kn(s[5])} {kn(s[30])}" == "1 5:7 -", "move: {len(s)} {kn(s[5])} {kn(s[30])}");
+  r: sorted<K[key]> = [K { key: 5, n: 1 }, K { key: 9, n: 2 }];
+  r[5] = K { key: 9, n: 3 };
+  assert("{len(r)} {kn(r[5])} {kn(r[9])}" == "2 5:3 9:2", "replace keeps the record at the value's key: {kn(r[5])} {kn(r[9])}");
+  a: sorted<K[key]> = [K { key: 30, n: 7 }, K { key: 40, n: 8 }];
+  a[30] = a[30];
+  a[40] = a[40];
+  assert("{len(a)} {kn(a[30])} {kn(a[40])}" == "2 30:7 40:8", "an element assigned to itself: {len(a)} {kn(a[30])} {kn(a[40])}");
+  e: sorted<K[key]> = [K { key: 5, n: 1 }];
+  e[5] = e[99];
+  e[6] = e[99];
+  assert("{len(e)} {kn(e[5])} {kn(e[6])}" == "1 5:1 -", "an absent value stores nothing: {len(e)} {kn(e[5])} {kn(e[6])}");
+}
+
+fn test_the_value_is_copied_and_untouched() {
+  h: hash<K[key]> = [];
+  src = K { key: 9, n: 1 };
+  h[5] = src;
+  assert("{len(h)} {kn(h[5])} {src.key} {kn(h[9])}" == "1 5:1 9 -", "a local's record: {kn(h[5])} {src.key}");
+  c: hash<K[key]> = [];
+  c[5] = mk(9);
+  assert("{len(c)} {kn(c[5])} {kn(c[9])}" == "1 5:18 -", "a call's record: {kn(c[5])}");
+  v: hash<V[key]> = [];
+  heap = V { key: 9, tags: [1, 2], label: "x" };
+  for i in 0..50 { v[i] = heap; }
+  heap.tags += [3];
+  el = v[7];
+  assert("{len(v)} {el.key} {el.tags} {el.label} {heap.key} {heap.tags} {v[9] == null}" == "50 7 [1,2] x 9 [1,2,3] false", "heap fields: {el.tags} {heap.tags}");
+}
+
+fn test_every_collection_root() {
+  w = W { m: [] };
+  w.m[5] = K { key: 9, n: 1 };
+  put(w.m);
+  assert("{len(w.m)} {kn(w.m[5])} {kn(w.m[6])} {kn(w.m[9])} {kn(w.m[1])}" == "2 5:1 6:8 - -", "field and & parameter: {kn(w.m[5])} {kn(w.m[6])}");
+}
+
+fn test_the_controls_and_a_loop() {
+  h: hash<K[key]> = [];
+  h[4] = K { key: 4, n: 6 };
+  assert("{len(h)} {kn(h[4])}" == "1 4:6", "subscript equal to the key: {kn(h[4])}");
+  l: hash<K[key]> = [];
+  for i in 0..100 { l[i] = K { key: i + 1000, n: i }; }
+  assert("{len(l)} {kn(l[50])} {kn(l[1050])}" == "100 50:50 -", "a loop of inserts: {len(l)} {kn(l[50])}");
+}

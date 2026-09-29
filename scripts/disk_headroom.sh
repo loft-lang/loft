@@ -11,7 +11,7 @@
 # order of what it costs to lose, until --min-gb (20) is free, re-measuring after each step:
 #
 #   1. loft's own dead or aged scratch      scripts/sweep_scratch.sh — the standing rules
-#                                           (TESTING.md § Scratch hygiene), nothing newer
+#                                           (RUN_BOUNDS.md § Scratch hygiene), nothing newer
 #   2. cargo's incremental caches           target/*/incremental — costs a rebuild's time
 #   3. THIS checkout's gate scratch, whole   only when no gate of this checkout is ALIVE (the
 #                                           gate's pid file and `.ci-running`, liveness-tested,

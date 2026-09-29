@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Vectors — a bind to an element is a VIEW of that slot, so a swap through a
+// temp loses one record, and a view used after the vector changed is a copy taken first.
+// The refusal of `&` to a keyed element is in vector-views-refused.loft.
+
+struct Box { n: integer }
+struct Keyed { key: integer, n: integer }
+
+fn test_a_swap_through_a_temp_duplicates_one_record() {
+  v = [Box { n: 10 }, Box { n: 20 }, Box { n: 30 }];
+  j = 0;
+  k = 2;
+  tmp = v[j];     // a view of slot j
+  v[j] = v[k];    // copies k's record INTO slot j — tmp now reads k's record
+  v[k] = tmp;     // writes k's record back: j's record is LOST, k's DUPLICATED
+  assert((v[0].n ?? -1) == 30 and (v[2].n ?? -1) == 30, "slot j's record is lost and k's is duplicated");
+}
+
+fn test_a_view_finished_before_the_change_writes_through() {
+  v = [Box { n: 1 }, Box { n: 2 }, Box { n: 3 }];
+  c = v[0];  c.n = 99;  v.remove(2);   // no copy — `c` is done before `v` changes
+  assert((v[0].n ?? -1) == 99 and len(v) == 2, "the write through the view reached the slot");
+}
+
+fn test_a_view_used_after_the_change_is_a_copy() {
+  v = [Box { n: 1 }, Box { n: 2 }, Box { n: 3 }];
+  c = v[0];  v.remove(2);  c.n = 99;   // copied — `c` is used after `v` changed
+  assert(c.n == 99 and (v[0].n ?? -1) == 1, "the late write lands in `c`'s own copy, not the slot");
+}
+
+fn shift(idx: integer, all: &vector<Box>) { all.remove(0); all[idx - 1].n = 99; }
+
+fn test_a_reference_parameter_indexes_the_live_vector() {
+  v = [Box { n: 1 }, Box { n: 2 }, Box { n: 3 }];
+  shift(2, v);
+  assert(len(v) == 2 and (v[1].n ?? -1) == 99 and (v[0].n ?? -1) == 2, "after the remove, index 1 is the old element 3, and it took the write");
+}
+
+fn test_moving_a_keyed_element_is_an_assignment_under_the_new_key() {
+  s: sorted<Keyed[key]> = [Keyed { key: 30, n: 7 }];
+  s[5] = s[30];  s[30] = null; // the subscript names the key: a copy under 5, then 30 removed
+  assert((s[5].n ?? -1) == 7 and (s[5].key ?? -1) == 5 and s[30] == null and len(s) == 1, "the record is now under key 5");
+}

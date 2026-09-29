@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# @PLN117 — headless gate for the INTEGRAL half of browser threading: a
+# @PLN117 (@C3) — headless gate for the INTEGRAL half of browser threading: a
 # `loft --html` page, which embeds its wasm as base64 in a plain <script> and
 # knows nothing about wasm-bindgen, runs `par` on real Web Worker threads.
 #

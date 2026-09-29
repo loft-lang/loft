@@ -4,7 +4,7 @@
 // drain used to fire while the lexer sat inside `pkg714_c`, abandoning it after
 // it was already marked loaded, so the tuple destructure in a sibling failed as
 // `Unknown variable` — inside library code that is perfectly valid.
-use pkg714_wrap;
+use pkg714_wrap::*;
 
 fn main() {
   assert(wrap_sum(3) == 7, "resolved through the directory package");

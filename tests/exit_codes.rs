@@ -1584,14 +1584,14 @@ fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// loft#1686 — a callee writing through a PARAMETER handed a top-level vector constant is
-/// the one route to the constant store that is not a bind (a bind copies, `(B-Copy)`): a
-/// parameter aliases its argument, so the write reaches the write-locked constant store.
-/// `(H-WriteLocked)` asks for a defined runtime fault there, never a silent write and never
-/// the internal "Write to read-only store" assert — both backends exit 1 with a message
-/// that names a constant and the cure.
+/// loft#1729, `(R-Const)` — a top-level vector constant handed to a parameter the callee
+/// WRITES travels as B-Copy's copy for that call, as a bind of it does (loft#1686).  Before,
+/// the parameter aliased the write-locked constant store and the write halted the run
+/// (`(H-WriteLocked)`'s backstop).  Now the program runs on both backends, the callee grows
+/// its own copy, the constant keeps its two elements, and neither the lock nor an internal
+/// assert is the face of it.
 #[test]
-fn a_write_through_a_parameter_to_a_constant_is_a_defined_fault() {
+fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     let dir = std::env::temp_dir().join(format!("loft_constparam_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let p = dir.join("constparam.loft");
@@ -1599,7 +1599,7 @@ fn a_write_through_a_parameter_to_a_constant_is_a_defined_fault() {
         &p,
         "NUMS: vector<integer> = [1, 2];\n\
          fn grow(v: vector<integer>) -> integer { v += [3]; len(v) }\n\
-         fn main() { n = grow(NUMS); print(\"grew {n}\\n\"); }\n",
+         fn main() { n = grow(NUMS); print(\"grew {n} kept {len(NUMS)}\\n\"); }\n",
     )
     .expect("write");
     for mode in ["--interpret", "--native"] {
@@ -1617,20 +1617,16 @@ fn a_write_through_a_parameter_to_a_constant_is_a_defined_fault() {
         );
         assert_eq!(
             out.status.code(),
-            Some(1),
+            Some(0),
             "{mode}: exit code — output:\n{all}"
         );
         assert!(
-            all.contains("write to a constant"),
-            "{mode}: the fault must name a constant — output:\n{all}"
+            all.contains("grew 3 kept 2"),
+            "{mode}: the callee grows its own copy and the constant is untouched — output:\n{all}"
         );
         assert!(
-            !all.contains("panicked") && !all.contains("read-only store"),
-            "{mode}: the internal assert must not be the face of it — output:\n{all}"
-        );
-        assert!(
-            !all.contains("grew"),
-            "{mode}: the write must not land — output:\n{all}"
+            !all.contains("panicked") && !all.contains("read-only") && !all.contains("constant is"),
+            "{mode}: neither the lock nor an internal assert may surface — output:\n{all}"
         );
     }
     let _ = std::fs::remove_dir_all(&dir);

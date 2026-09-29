@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Three forms loft declined are refused by name, with the spelling to write instead.  Each was
+// refused before only as a bare `Expect token …` that named neither the rule nor the cure:
+//   @C54.D — no numeric literal suffixes: `34u8` (width comes from the binding, or `as`);
+//   @C89   — no positional enum variants: `A(integer)` (a payload is named fields);
+//   @C110  — no `hash<K, V>`: a keyed collection holds records keyed on a named field.
+//
+// @falsified-by: tests/falsified/a-declined-form-is-refused-with-its-cure.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches)
+
+// @EXPECT_ERROR: `34u8`: an integer literal takes no suffix — its width comes from where it goes: write `34 as u8`
+fn test_a_literal_suffix() { x = 34u8; assert(x == 34, "unreached"); }
+
+// @EXPECT_ERROR: a variant's payload is named fields — write `DcA { value: <type> }` and read it as `e.value`
+enum DcE { DcA(integer), DcB }
+
+// @EXPECT_ERROR: a keyed collection holds records keyed on a named field, not a key type and a value type
+fn test_a_key_value_hash() { h: hash<integer, text> = []; assert(len(h) == 0, "unreached"); }

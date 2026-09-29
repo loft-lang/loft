@@ -1,4 +1,4 @@
-use sql;
+pub use sql::*;
 
 fn pq_connect(conninfo: text) -> integer;      #c "PQconnectdb" "void*(const char*)"
 fn pq_status(c: integer) -> integer;           #c "PQstatus" "int(void*)"

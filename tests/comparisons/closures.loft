@@ -6,8 +6,8 @@
 //         and are decisions: a mutated scalar may be captured by exactly ONE closure, and a
 //         capturing closure cannot be stored in a collection.
 // @SEEN-FROM: 00-vs-rust.html#closures · 00-vs-python.html#closures
-// @RATIONALE: DESIGN_DECISIONS.md C38 (copy-at-definition), C74 (one closure per mutated
-//         scalar), C75 (closure-carrying struct values are frame-bound), C115, C116
+// @RATIONALE: DESIGN_DECISIONS.md @C38 (copy-at-definition), @C74 (one closure per mutated
+//         scalar), @C75 (closure-carrying struct values are frame-bound), @C115, @C116
 //
 // Rust:   let add = |b| a + b;             // borrows or moves, checked
 // Python: add = lambda b: a + b           # captures the CELL, so a later `a = …` is seen
@@ -16,7 +16,41 @@
 // write to the captured variable is not seen by the closure.  Python's late binding is the
 // classic loop-variable surprise; loft does not have it, and that is the trade for not being
 // able to observe a caller's later state.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-rust.html#closures (a verbatim window: `rule_tags.py fences`) ---
+// Capture works when called in the same scope:
+offset = 10;
+shift = fn(x: integer) -> integer { x + offset };
+assert(shift(5) == 15, "shift");
+
+// Capturing and non-capturing lambdas both work with map/filter/reduce:
+shifted = map([1, 2, 3], shift);   // carries `offset` with it
+evens   = filter([1, 2, 3, 4], |x| { x % 2 == 0 });
+
+// Cross-scope: returning a capturing lambda works:
+fn make_adder(n: integer) -> fn(integer) -> integer {
+    fn(x: integer) -> integer { x + n }
+}
+assert("{shifted}" == "[11,12,13]" and "{evens}" == "[2,4]", "the lambdas ran");
+add3 = make_adder(3);
+assert(add3(4) == 7, "the returned closure kept `n`");
+
+// --- as shown on 00-vs-python.html#closures (a verbatim window: `rule_tags.py fences`) ---
+nums = [1, 2, 3];
+// Capture works when called in the same scope:
+offset = 10;
+shift = fn(x: integer) -> integer { x + offset };
+assert(shift(5) == 15, "shift");
+
+// Lambdas work with map/filter/reduce, capturing or not:
+doubled = map([1, 2, 3], fn(x: integer) -> integer { x * 2 });
+evens   = filter([1, 2, 3, 4], |x| { x % 2 == 0 });
+
+// Capturing lambda with map:
+offset = 10;
+shifted = map(nums, fn(x: integer) -> integer { x + offset });
+assert("{doubled}" == "[2,4,6]" and "{shifted}" == "[11,12,13]", "both lambda forms ran");
 fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }
 
 fn test_capture_is_copy_at_definition() {
@@ -66,3 +100,8 @@ fn test_a_plain_fn_ref_is_what_a_collection_holds() {
 
 fn double(v: integer) -> integer { v * 2 }
 fn negate(v: integer) -> integer { -v }
+
+// The cells, run in order (a script runs nothing by itself).
+test_capture_is_copy_at_definition();
+test_same_scope_capture_works();
+test_a_plain_fn_ref_is_what_a_collection_holds();

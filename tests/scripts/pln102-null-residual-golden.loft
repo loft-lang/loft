@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C85 @C90 — each nullable scalar reserves one bit-pattern for null.
 //
-// @PLN102 keystone step 5 — GOLDEN pin for the accepted null-model residual (C89).
+// @PLN102 keystone step 5 — GOLDEN pin for the accepted null-model residual (C90).
 //
 // The null-model keystone chose option B: keep the zero-overhead in-band sentinel
 // and confront its one cost — a nullable scalar type reserves exactly ONE specific

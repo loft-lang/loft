@@ -24,13 +24,15 @@ counts equally.
 | `@PLN\d+` | A `loft-lang/plans` issue — the CANONICAL plan tag | "where is PLN157 referenced?" |
 | `@GH\d+` | A `loft-lang/loft` issue or PR | "where is GH247 referenced?" |
 | `@FR-<Rule>` | A formal-rule citation | "which sites enforce this rule?" |
+| `@C\d+(\.[A-Z])?` | A design-decision citation (DESIGN_DECISIONS.md) | "where does loft keep decision C98, and what guards it?" |
 | `@F\d+`, `@I\d+` | `loft-lang/features` feature / infrastructure | "where is F7 referenced?" |
 | `@AAA-\d\d\d` | Worked-example tag | "which fn demonstrates STD-011?" |
 | `legacy:P\d+`, `legacy:plan-NN` | Bare-name (no `@`) forms | Track adoption progress |
 
-Only `@P` and `@PLAN` are VALIDATED against something local (PROBLEMS.md row
-ids and plan directories); the rest name ids in other trackers, so they are
-indexed and URL-resolved without a network call and never appear in `broken`.
+`@P`, `@PLAN` and `@C` are VALIDATED against something local (PROBLEMS.md row
+ids, plan directories, the register's `## C<n>` headings); the rest name ids in
+other trackers, so they are indexed and URL-resolved without a network call and
+never appear in `broken`.
 
 ⚠ **Keep this table complete.** It listed two families for long enough that
 `@PLN` — by then the canonical plan tag — was neither in it nor in the scanner,

@@ -11,8 +11,8 @@
 // @PLN9: CLI tool — its <map.json> / <out.glb> path args are cwd-relative;
 // #cwd opts out of the program-relative default.
 #cwd
-use moros_map;
-use moros_render;
+use moros_map::*;
+use moros_render::*;
 
 fn main() {
   cli_args = arguments();

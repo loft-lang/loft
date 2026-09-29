@@ -377,6 +377,9 @@ pub(crate) fn run_tests(
         expect_fail_file: Vec<String>,
         /// Per-function `@EXPECT_FAIL`: `fn_name` → required substrings.
         expect_fail_fn: std::collections::BTreeMap<String, Vec<String>>,
+        /// Each top-level function's source lines, 1-based and inclusive — up to the next
+        /// `fn`/`struct`/`enum` — so a claim prefers a diagnostic its own function produced.
+        fn_spans: std::collections::BTreeMap<String, (usize, usize)>,
         /// Extra --lib dirs from @ARGS.
         extra_lib_dirs: Vec<String>,
         /// --project from @ARGS.
@@ -402,9 +405,20 @@ pub(crate) fn run_tests(
         let mut pending_ignore = false;
         // True until we see the first fn/struct/enum definition.
         let mut in_header = true;
+        // The function whose span is open, with its first line.
+        let mut open_fn: Option<(String, usize)> = None;
 
-        for line in src.lines() {
+        for (idx, line) in src.lines().enumerate() {
             let trimmed = line.trim();
+            let line_nr = idx + 1;
+            if trimmed.starts_with("fn ")
+                || trimmed.starts_with("struct ")
+                || trimmed.starts_with("enum ")
+            {
+                if let Some((name, start)) = open_fn.take() {
+                    ann.fn_spans.insert(name, (start, line_nr - 1));
+                }
+            }
 
             // Check for fn definition — bind pending annotations.
             if trimmed.starts_with("fn ") {
@@ -415,6 +429,7 @@ pub(crate) fn run_tests(
                 {
                     let name = name.trim();
                     if !name.is_empty() {
+                        open_fn = Some((name.to_string(), line_nr));
                         if !pending_fail.is_empty() {
                             ann.expect_fail_fn
                                 .entry(name.to_string())
@@ -520,6 +535,9 @@ pub(crate) fn run_tests(
             } else if let Some(rest) = comment.strip_prefix("@ARGS:") {
                 parse_args_annotation(rest.trim(), &mut ann);
             }
+        }
+        if let Some((name, start)) = open_fn.take() {
+            ann.fn_spans.insert(name, (start, src.lines().count()));
         }
         // Any pending annotations not followed by a fn → file-level.
         ann.expect_fail_file.append(&mut pending_fail);
@@ -638,19 +656,88 @@ pub(crate) fn run_tests(
         "native run failed".to_string()
     }
 
-    /// The declared substrings that no produced error contains.
+    /// Which declared expectations no diagnostic of their OWN answers.
     ///
-    /// This is the whole of TESTING.md's **"Every expectation must match"**: an
-    /// `@EXPECT_ERROR` names a diagnostic the file owes, so an empty result is the only
-    /// passing answer.  Both the file-level and the per-function checks ask exactly this
-    /// question, and it lives here once so the two cannot answer it differently — the
-    /// per-function site used to settle it with "does the file have SOME error?", an
-    /// existential standing in for a universal, which credited every annotation in a file
-    /// that produced one error anywhere (loft#1261).
-    fn unmatched_expect<'a>(subs: &'a [String], errors: &[String]) -> Vec<&'a str> {
-        subs.iter()
-            .filter(|sub| !errors.iter().any(|e| e.contains(sub.as_str())))
-            .map(String::as_str)
+    /// This is the whole of TESTING.md's **"Every expectation must match"**, and one diagnostic
+    /// answers ONE expectation — the rule the corpus harness (`tests/wrap.rs`
+    /// `check_diagnostics`) has always kept.  Answering each expectation from every diagnostic
+    /// of the file let two cells expecting one message both pass on a single report, so a
+    /// guard whose cells share a rule's one message only ever checked that SOME cell fired
+    /// (loft#1727); before that the per-function check settled for "does the file have some
+    /// error?" (loft#1261).  Claims are `(owner, substring)` with `owner` `None` for a
+    /// file-level one; the longest substring is assigned first, so a short expectation cannot
+    /// take the one diagnostic a more specific one needs (`u_eq` beside `u_eq_right`).
+    ///
+    /// A per-function claim first takes a matching diagnostic located inside its OWN function
+    /// (`spans`, against the `at <file>:<line>:<col>` a diagnostic ends in), so the report
+    /// names the cell that went quiet rather than whichever came first; only then does any
+    /// matching diagnostic answer it.
+    fn unanswered_claims<'a>(
+        claims: &[(Option<&'a str>, &'a str)],
+        diagnostics: &[String],
+        spans: &std::collections::BTreeMap<String, (usize, usize)>,
+        file_name: &str,
+    ) -> Vec<(Option<&'a str>, &'a str)> {
+        let line_of = |d: &str| -> Option<usize> {
+            let (_, at) = d.rsplit_once(" at ")?;
+            let mut parts = at.trim().rsplitn(3, ':');
+            let _col = parts.next()?;
+            let line = parts.next()?.parse().ok()?;
+            parts
+                .next()
+                .filter(|p| p.ends_with(file_name))
+                .map(|_| line)
+        };
+        let lines: Vec<Option<usize>> = diagnostics.iter().map(|d| line_of(d)).collect();
+        let mut order: Vec<usize> = (0..claims.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(claims[i].1.len()));
+        let mut taken = vec![false; diagnostics.len()];
+        let mut open: Vec<usize> = Vec::new();
+        for &i in &order {
+            let (owner, sub) = claims[i];
+            let span = owner.and_then(|f| spans.get(f));
+            let own = span.and_then(|&(lo, hi)| {
+                (0..diagnostics.len()).find(|&d| {
+                    !taken[d]
+                        && diagnostics[d].contains(sub)
+                        && lines[d].is_some_and(|l| l >= lo && l <= hi)
+                })
+            });
+            match own {
+                Some(d) => taken[d] = true,
+                None => open.push(i),
+            }
+        }
+        let mut missing: Vec<usize> = Vec::new();
+        for i in open {
+            let sub = claims[i].1;
+            match (0..diagnostics.len()).find(|&d| !taken[d] && diagnostics[d].contains(sub)) {
+                Some(d) => taken[d] = true,
+                None => missing.push(i),
+            }
+        }
+        missing.sort_unstable();
+        missing.into_iter().map(|i| claims[i]).collect()
+    }
+
+    /// The last path component of `path`, which is how a diagnostic's location names the file
+    /// whatever directory the run started in.
+    fn file_name_of(path: &str) -> String {
+        std::path::Path::new(path)
+            .file_name()
+            .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+    }
+
+    /// Every `@EXPECT_…` claim of a file as `(owner, substring)`: the per-function ones under
+    /// their function's name, then the file-level ones under `None`.
+    fn claims_of<'a>(
+        per_fn: &'a std::collections::BTreeMap<String, Vec<String>>,
+        file: &'a [String],
+    ) -> Vec<(Option<&'a str>, &'a str)> {
+        per_fn
+            .iter()
+            .flat_map(|(f, subs)| subs.iter().map(move |s| (Some(f.as_str()), s.as_str())))
+            .chain(file.iter().map(|s| (None, s.as_str())))
             .collect()
     }
 
@@ -1060,13 +1147,6 @@ pub(crate) fn run_tests(
             }
             let has_fn_errors = !ann.expect_errors_fn.is_empty();
             let has_fn_warnings = !ann.expect_warnings_fn.is_empty();
-            let all_warnings = file_result
-                .warnings
-                .iter()
-                .chain(file_result.advice.iter())
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n");
 
             // Per-function @EXPECT_ERROR: consume errors matching each function's
             // expected substrings.  Track which functions had their errors satisfied.
@@ -1074,22 +1154,32 @@ pub(crate) fn run_tests(
             let mut fn_error_fail: Vec<String> = Vec::new();
             // Substrings a function declared that nothing matched, as `fn: substring`.
             let mut fn_error_unmatched: Vec<String> = Vec::new();
+            // One diagnostic answers one claim, file-level and per-function alike
+            // (`unanswered_claims`).  `unexpected_errors` below walks the other direction — it
+            // rejects an error no annotation claims.  It cannot see an annotation that claims
+            // no error, which is why that filter is not the validation this needs.
+            let unanswered_errors = unanswered_claims(
+                &claims_of(&ann.expect_errors_fn, &ann.expect_errors),
+                &file_result.errors,
+                &ann.fn_spans,
+                &file_name_of(&abs_file),
+            );
             if has_fn_errors {
-                for (fn_name, subs) in &ann.expect_errors_fn {
+                for fn_name in ann.expect_errors_fn.keys() {
                     if file_result.errors.is_empty() {
                         fn_error_fail.push(fn_name.clone());
                         continue;
                     }
-                    // `unexpected_errors` below walks the other direction — it rejects an
-                    // error no annotation claims.  It cannot see an annotation that claims
-                    // no error, which is why that filter is not the validation this needs.
-                    let missing = unmatched_expect(subs, &file_result.errors);
-                    if missing.is_empty() {
+                    let mut answered = true;
+                    for (_, sub) in unanswered_errors
+                        .iter()
+                        .filter(|(owner, _)| *owner == Some(fn_name.as_str()))
+                    {
+                        answered = false;
+                        fn_error_unmatched.push(format!("{fn_name}: {sub}"));
+                    }
+                    if answered {
                         fn_error_pass.push(fn_name.clone());
-                    } else {
-                        for sub in missing {
-                            fn_error_unmatched.push(format!("{fn_name}: {sub}"));
-                        }
                     }
                 }
             }
@@ -1097,13 +1187,27 @@ pub(crate) fn run_tests(
             // Per-function @EXPECT_WARNING: same logic.
             let mut fn_warning_pass: Vec<String> = Vec::new();
             let mut fn_warning_fail: Vec<String> = Vec::new();
+            let warning_lines: Vec<String> = file_result
+                .warnings
+                .iter()
+                .chain(file_result.advice.iter())
+                .cloned()
+                .collect();
+            let unanswered_warnings = unanswered_claims(
+                &claims_of(&ann.expect_warnings_fn, &ann.expect_warnings),
+                &warning_lines,
+                &ann.fn_spans,
+                &file_name_of(&abs_file),
+            );
             if has_fn_warnings {
-                for (fn_name, subs) in &ann.expect_warnings_fn {
-                    let matched = subs.iter().all(|s| all_warnings.contains(s.as_str()));
-                    if matched {
-                        fn_warning_pass.push(fn_name.clone());
-                    } else {
+                for fn_name in ann.expect_warnings_fn.keys() {
+                    if unanswered_warnings
+                        .iter()
+                        .any(|(owner, _)| *owner == Some(fn_name.as_str()))
+                    {
                         fn_warning_fail.push(fn_name.clone());
+                    } else {
+                        fn_warning_pass.push(fn_name.clone());
                     }
                 }
             }
@@ -1171,11 +1275,11 @@ pub(crate) fn run_tests(
             // expectation could be reworded out of existence and nothing would say so —
             // the `loft test` side of loft#929, where the same shape left 56 of the
             // harness's 167 annotations inert.
-            let mut never_emitted: Vec<String> =
-                unmatched_expect(&ann.expect_errors, &file_result.errors)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect();
+            let mut never_emitted: Vec<String> = unanswered_errors
+                .iter()
+                .filter(|(owner, _)| owner.is_none())
+                .map(|(_, sub)| (*sub).to_string())
+                .collect();
             never_emitted.extend(fn_error_unmatched);
             if !never_emitted.is_empty() {
                 for e in &file_result.errors {
@@ -1203,17 +1307,12 @@ pub(crate) fn run_tests(
             // Check @EXPECT_WARNING (file-level): all substrings must match.
             let has_expect_warning = !ann.expect_warnings.is_empty();
             if has_expect_warning {
-                let all_matched = ann
-                    .expect_warnings
+                let missing: Vec<&str> = unanswered_warnings
                     .iter()
-                    .all(|sub| all_warnings.contains(sub.as_str()));
-                if !all_matched {
-                    let missing: Vec<&str> = ann
-                        .expect_warnings
-                        .iter()
-                        .filter(|sub| !all_warnings.contains(sub.as_str()))
-                        .map(String::as_str)
-                        .collect();
+                    .filter(|(owner, _)| owner.is_none())
+                    .map(|(_, sub)| *sub)
+                    .collect();
+                if !missing.is_empty() {
                     for w in &file_result.warnings {
                         println!("  {w}");
                     }
@@ -1380,7 +1479,7 @@ pub(crate) fn run_tests(
             // program at all.
             //
             // Deliberately NOT the wrap harness's rule ("if `main` exists, only `main`
-            // runs") — see TESTING.md § the two runners.  That one answers a different
+            // runs") — see TESTING.md § `tests/wrap.rs` — shared runner for docs and scripts tests.  That one answers a different
             // question: the harness drives whole SCRIPTS, where `main` is the program.
             if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
                 test_fns.retain(|(_, n)| n.starts_with("test_"));

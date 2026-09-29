@@ -7,7 +7,7 @@
 //   - crystal_mesh_to_lines — SegMesh → stride-10 GL line vertices
 // plus the incremental paint→rebuild→mesh loop the editor drives.
 use audience_crystal::*;
-use gridmesh;
+use gridmesh::*;
 
 // @ACR-001 — hex_at_world is the INVERSE of cell_wx/cell_wz: a world (x,z) back
 // to the hex (x,y) that owns it, exact across the odd-row shift — the call the

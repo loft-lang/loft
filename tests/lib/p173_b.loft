@@ -1,6 +1,6 @@
 // P173 regression fixture — file B of an intra-package `use` cycle.
 // See p173_a.loft for context.
-use p173_a;
+use p173_a::*;
 
 pub struct TypeB { y: integer }
 

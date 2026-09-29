@@ -1,0 +1,62 @@
+﻿2026-09-28T11:30:27.9216547Z Current runner version: '2.337.0'
+2026-09-28T11:30:27.9252770Z ##[group]Runner Image Provisioner
+2026-09-28T11:30:27.9254086Z Hosted Compute Agent
+2026-09-28T11:36:51.3979219Z store loader: refusing /tmp/loft947_lazy2_1790595411397_20318278.store — its recorded layout differs from this program's (verdict: Changed(LayoutDiff { added: ["Part947z", "hash<Part947z[id]>"], dropped: ["Widget947z", "hash<Widget947z[code]>"], changed: [] })); not range-reading foreign bytes; loaded NOTHING (a refusal, not an absent key)
+2026-09-28T11:36:51.4477780Z 978 branch join OK
+2026-09-28T11:36:51.4732050Z a-boolean-operator-answers-a-definite-boolean ok
+2026-09-28T11:36:51.4917958Z done
+2026-09-28T11:36:51.5291705Z test loft_suite_01 ... FAILED
+2026-09-28T11:36:51.6221302Z arguments: 0 args
+2026-09-28T11:36:51.6221728Z arguments: ok (empty)
+2026-09-28T11:37:32.1660152Z ---- loft_suite_01 stdout ----
+2026-09-28T11:37:32.1660807Z run "tests/scripts/02-floats.loft"
+2026-09-28T11:37:32.1661251Z run "tests/scripts/10-match.loft"
+2026-09-28T11:37:32.1661739Z run "tests/scripts/1005-tuple-text-parameter.loft"
+2026-09-28T11:37:32.1662363Z run "tests/scripts/1015-omitted-null-default-argument.loft"
+2026-09-28T11:37:32.1663074Z run "tests/scripts/1021-null-argument-covers-the-witness-set.loft"
+2026-09-28T11:37:32.1664112Z Warning[never-read]: Variable i is never read at tests/scripts/1021-null-argument-covers-the-witness-set.loft:54:18
+2026-09-28T11:37:32.1665050Z run "tests/scripts/102b-pass1-expected-errors.loft"
+2026-09-28T11:37:32.1666611Z expected @EXPECT_ERROR matched: Error: Misplaced '_' in number literal — separators go between digits at tests/scripts/102b-pass1-expected-errors.loft:27:9
+2026-09-28T11:37:32.1668743Z expected @EXPECT_ERROR matched: Error: Misplaced '_' in number literal — separators go between digits at tests/scripts/102b-pass1-expected-errors.loft:33:9
+2026-09-28T11:37:32.1671802Z expected @EXPECT_ERROR matched: Error: Misplaced '_' in number literal — separators go between digits at tests/scripts/102b-pass1-expected-errors.loft:39:10
+2026-09-28T11:37:32.2151483Z expected @EXPECT_WARNING matched: Warning: a nullable `text?` is stored into the return value of the non-null type `text` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended at tests/scripts/947-feature-worked-examples.loft:841:26
+2026-09-28T11:37:32.2152559Z run "tests/scripts/96-slot-assign.loft"
+2026-09-28T11:37:32.2152940Z run "tests/scripts/978-branch-join-carries-both-arms-borrows.loft"
+2026-09-28T11:37:32.2153363Z run "tests/scripts/988-par-worker-declared-below.loft"
+2026-09-28T11:37:32.2153806Z run "tests/scripts/a-boolean-operator-answers-a-definite-boolean.loft"
+2026-09-28T11:37:32.2155045Z Warning[redundant-null-check]: Redundant null check — 'on' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at tests/scripts/a-boolean-operator-answers-a-definite-boolean.loft:115:25
+2026-09-28T11:37:32.2156121Z run "tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft"
+2026-09-28T11:37:32.2156653Z run "tests/scripts/a-capture-copies-a-scalar-and-shares-a-collection.loft"
+2026-09-28T11:37:32.2157262Z run "tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft"
+2026-09-28T11:37:32.2157645Z 
+2026-09-28T11:37:32.2157800Z thread 'loft_suite_01' (7882) panicked at src/store.rs:4081:9:
+2026-09-28T11:37:32.2158125Z Unknown record 39
+2026-09-28T11:37:32.2158328Z stack backtrace:
+2026-09-28T11:37:32.2158552Z    0: __rustc::rust_begin_unwind
+2026-09-28T11:37:32.2158804Z    1: core::panicking::panic_fmt
+2026-09-28T11:37:32.2159056Z    2: <loft::store::Store>::record_words
+2026-09-28T11:37:32.2159334Z    3: loft::vector::is_scratch_header
+2026-09-28T11:37:32.2159630Z    4: <loft::database::Stores>::free_iteration_scratch
+2026-09-28T11:37:32.2159932Z    5: loft::fill::free_scratch
+2026-09-28T11:37:32.2160176Z    6: <loft::state::State>::execute_argv
+2026-09-28T11:37:32.2160547Z    7: wrap::run_test_inner
+2026-09-28T11:37:32.2160998Z    8: wrap::run_test
+2026-09-28T11:37:32.2161220Z    9: wrap::loft_suite_run
+2026-09-28T11:37:32.2161572Z   10: <wrap::loft_suite_01::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+2026-09-28T11:37:32.2162112Z note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+2026-09-28T11:37:32.2162944Z   FAIL tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft::test_spatial — Unknown record 39
+2026-09-28T11:37:32.2164050Z Error: Custom { kind: Other, error: "1 of 5 functions failed in tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft: test_spatial: Unknown record 39" }
+2026-09-28T11:37:32.2164746Z 
+2026-09-28T11:37:32.2164750Z 
+2026-09-28T11:37:32.2164828Z failures:
+2026-09-28T11:37:32.2165011Z     loft_suite_01
+2026-09-28T11:37:32.2165133Z 
+2026-09-28T11:37:32.2165407Z test result: FAILED. 62 passed; 1 failed; 1 ignored; 0 measured; 1 filtered out; finished in 61.09s
+2026-09-28T11:37:32.2165783Z 
+2026-09-28T11:37:32.2175960Z ##[error]Process completed with exit code 101.
+2026-09-28T11:37:32.2292445Z Post job cleanup.
+2026-09-28T11:37:32.3175317Z [command]/usr/bin/git version
+2026-09-28T11:37:32.3219418Z git version 2.55.0
+2026-09-28T11:37:32.3258825Z Temporarily overriding HOME='/home/runner/work/_temp/97db14b7-8659-489d-ac84-96bc25f942ea' before making global git config changes
+2026-09-28T11:37:32.3260583Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T11:37:32.3264840Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/loft/loft

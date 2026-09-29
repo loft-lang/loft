@@ -13,7 +13,7 @@
 // (a forward-referenced enum VALUE did not resolve, and said so as `Unknown type
 // null — did you mean 'JNull'?', naming two things nobody wrote).  If `todo_files`
 // is ever abandoned again, `Colour` stops registering and this exits non-zero.
-use fwd;
+use fwd::*;
 fn main() {
   s = mk();
   println("{s.s_a}");

@@ -1550,7 +1550,11 @@ impl Parser {
                 }
                 _ => None,
             };
-            let set = self.cl("OpSetKeyed", &[coll, val.clone(), Value::Int(tp_val)]);
+            // loft#1716 (`@FR-Col-Assign`) — the subscript names the key: its values ride along
+            // exactly as the lookup's did, and the runtime places the copy under them.
+            let mut set_args = vec![coll, val.clone(), Value::Int(tp_val)];
+            set_args.extend(get_args.iter().skip(2).cloned());
+            let set = self.cl("OpSetKeyed", &set_args);
             return match materialise {
                 Some(guard) => Value::Insert(vec![guard, set]),
                 None => set,
@@ -3338,7 +3342,15 @@ use #count instead"
         }
         let if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
-            self.expression(&mut if_expr);
+            let at = self.lexer.peek().position.clone();
+            let tp = self.expression(&mut if_expr);
+            // The filter is a CONDITION, and it took the expression raw: a store there
+            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+            // interpreter, and a comprehension's filter answered wrong on the same
+            // spelling.  Routed through the one condition coercion so it is refused
+            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+            // present-or-absent here as it is there.
+            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
             if_expr
         } else {
             Value::Null
@@ -3432,6 +3444,24 @@ use #count instead"
             return Some((scratch_var, fill));
         }
         None
+    }
+
+    /// Release a walk's snapshot scratch as the walk ends, and NULL the handle so the
+    /// scope-exit release (`scopes.rs`, every `hash_scratch` local — it catches the `return`
+    /// out of the loop that skips this epilogue) finds nothing left to release.  The one home
+    /// for the epilogue: a `for` statement, a comprehension and the frame-release walk.
+    ///
+    /// The null is the TYPED sentinel, not `Value::Null`: the scope pass elides a
+    /// `Set(v, Null)` on an in-scope local as a redundant re-init, so the bare spelling was
+    /// deleted and every snapshot was released twice — the second time through a handle
+    /// whose block the next claim had reused, which the debug build's store guard reports as
+    /// `Unknown record` and the release build survived only by the tolerance checks in
+    /// `Stores::free_iteration_scratch`.
+    pub(crate) fn release_scratch(&mut self, scratch: u16) -> [Value; 2] {
+        [
+            self.cl("OpFreeScratch", &[Value::Var(scratch)]),
+            v_set(scratch, self.cl("OpNullRefSentinel", &[])),
+        ]
     }
 
     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
@@ -4257,11 +4287,7 @@ use #count instead"
             // no-op.  A `return` out of the loop still bypasses this — a bounded residual
             // (expose-iteration-scratch.md Open question A).
             if hash_scratch_var != u16::MAX {
-                for_steps.push(self.cl("OpFreeScratch", &[Value::Var(hash_scratch_var)]));
-                // Null the scratch var so the scope-exit OpFreeScratch (emitted by
-                // get_free_vars, which catches the `return`-out-of-loop path) is a no-op
-                // here — its rec==0 guard skips a nulled ref, so the two never double-free.
-                for_steps.push(v_set(hash_scratch_var, Value::Null));
+                for_steps.extend(self.release_scratch(hash_scratch_var));
             }
             *code = v_block(for_steps, Type::Void, "For block");
         } else {
@@ -6467,7 +6493,13 @@ use #count instead"
     ) {
         let field_def_nr = self.data.def_nr("StructField");
         let field_type = Type::Reference(field_def_nr, crate::data::Deps::none());
-        let loop_var = self.create_var(loop_var_name, &field_type);
+        // loft#1717, @FR-B-Scope — keyed per LOOP, as every other loop binding is
+        // (`create_loop_var`, loft#915).  `create_var` reuses by name, and pass 1 leaves `f` naming the LAST
+        // `for f in x#fields`, so pass 2's first walk took the second walk's slot: the body's
+        // pass-1 deps then named a binding pass 2 never set, and `--native` declared it in
+        // one field's block and freed it outside (`cannot find value var_f`).
+        let loop_var = self.create_loop_var(loop_var_name, &field_type);
+        self.vars.served_as_loop_var(loop_var);
         if loop_var_name != src_var_name {
             self.vars.set_name(src_var_name, loop_var);
         }

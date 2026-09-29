@@ -434,6 +434,18 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-68** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1717)* — `(B-Scope)`: a `for f in
+  x#fields` walk is unrolled at compile time and created its variable BY NAME, so it missed
+  loft#915's per-loop binding twice over.  Pass 1 leaves the name naming the LAST walk's
+  variable, so pass 2's first of two same-name walks took the second's slot; the body's pass-1
+  deps then named a binding pass 2 never set, and `--native` declared it inside one field's
+  block and freed it outside (`cannot find value var_f`) while `--interpret` ran.  And the walk
+  never registered its variable as a loop's (it ends its loop before the body, which has no
+  run-time loop for a `break`), so a later `for f` over anything was refused as shadowing "a
+  local named 'f'".  **Fix.**  `Parser::create_loop_var`, keyed per loop, and
+  `Variables::served_as_loop_var`, which records the fact without making a loop current.  Guards
+  `tests/scripts/1717-two-fields-walks-spelling-one-name-are-two-bindings.loft` (native),
+  `tests/scripts/1717b-a-loop-beside-a-fields-walk-may-reuse-its-name.loft`.
 * **D-bind-67** *(opened 2026-09-27, CLOSED 2026-09-27; loft#1700)* — `(B-Scope)`: a bind after
   the block that bound its name had ended was refused when it had another type (`if c { w = 1 }
   w = "x"` — *"cannot change type from integer to text"*), because the parser keeps one
@@ -865,7 +877,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
   declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
   the line and the signatures it names (C121), and a proof about a body stays an optimisation's
-  (C122).  **Built, as a WARNING first** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  (C122).  **Built, as a WARNING first — an error since 2026-09-28, when every shipped library had declared its read-only parameters** (`const-to-plain-parameter`, the owner's rollout: 102 call
   sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
   C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
   gate, reading the parameter's `const` from

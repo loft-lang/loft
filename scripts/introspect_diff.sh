@@ -24,7 +24,7 @@
 # binary living outside `target/` (cached) read as different from one inside it (never cached).
 # The corpus is the repo this script lives in (`--root` overrides); an EMPTY corpus is a
 # usage error, never a verdict — a copy run from outside the tree once read `IDENTICAL 0/0`
-# with exit 0, the vacuous pass TESTING.md § a no-output cell warns about.
+# with exit 0, the vacuous pass GUARDS.md § How a guard reads green while the defect stands warns about.
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
 before="${1:?before binary}"; after="${2:?after binary}"; shift 2

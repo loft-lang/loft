@@ -44,7 +44,8 @@ jobs:
       # build starts warm.  restore-keys lets it fall back to any recent
       # Windows cargo cache when the exact Cargo.lock hash hasn't been seen yet.
       - name: Restore cargo registry and build cache
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -72,6 +73,15 @@ jobs:
         env:
           FILTER: ${{ github.event.inputs.filter || 'binary(n2_cdylib) or binary(n3_use_native) or binary(n3_parity) or binary(native)' }}
         run: cargo nextest run --profile ci -E "$FILTER"
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # @PLN26 phase 4 — the Windows C-ABI link path (import-library linking, no
   # RPATH, DLL staged beside the binary), now the DEFAULT.  `LOFT_NATIVE_CABI=1`
@@ -92,7 +102,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Restore cargo registry and build cache
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -112,3 +123,12 @@ jobs:
         env:
           FILTER: ${{ github.event.inputs.filter || 'binary(n2_cdylib) or binary(n3_use_native) or binary(n3_parity) or binary(native)' }}
         run: cargo nextest run --profile ci -E "$FILTER"
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Interfaces and bounded generics — an unbounded `T` cannot be rendered,
+// and the refusal says why.
+// @EXPECT_ERROR: Printable
+
+fn show<T>(v: T) -> text { "{v}" }             // refused, and says why
+
+fn refused() {
+  show(42);
+}

@@ -371,7 +371,7 @@ library. Sub-flags select one section (`--show-bytecode`, `--show-rust`,
 `--show-slots`, `--show-types`) or write a section to a file (`--bytecode-out`,
 `--rust-out`, …). This replaces the older `LOFT_LOG=…` dump route for everyday
 use; `LOFT_LOG` still works for live execution traces (see
-[TESTING.md](TESTING.md) § LogConfig).
+[RUNNING_TESTS.md](RUNNING_TESTS.md) § LogConfig).
 
 ## How session state works (and its limits)
 

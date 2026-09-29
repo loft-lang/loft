@@ -56,3 +56,12 @@ what rustc may inline ACROSS a probe, so it tells you WHICH code runs and roughl
 time concentrates — confirm a ratio with `compare.py` or `profile.sh`. It is not the normal
 route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
 `LOFT_NATIVE_CHECKPOINTS`.
+
+## Resident size of a `--native` run
+
+`/usr/bin/time -f %M` on `loft --native p.loft` reports the largest RSS of any process in the
+tree, and a first run includes rustc compiling the program: about 220 MB, whatever the program
+does. loft#1723 filed that peak as a retention of 1 MiB bridge answers. Measured, the program
+peaked at 11 MB, below the interpreter's 22 MB. Time a second run, which hits the cache under
+`.loft/cache/`, or run that cached binary directly. A peak that stays the same with a loop
+count of 1 is the compiler, not the program.

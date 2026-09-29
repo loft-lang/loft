@@ -50,7 +50,7 @@ fn build_package(root: &Path) {
     );
     write(
         &root.join("fwd/src/fwd.loft"),
-        "use inner;\npub struct Roofs { items: vector<integer> }\n",
+        "pub use inner::*;\npub struct Roofs { items: vector<integer> }\n",
     );
     write(
         &root.join("fwd/src/inner.loft"),
@@ -67,7 +67,7 @@ fn the_reported_package_reads_its_fields_where_they_live() {
     let prog = root.join("use_it.loft");
     write(
         &prog,
-        "use fwd;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
+        "use fwd::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
     let out = Command::new(loft_bin())
@@ -118,16 +118,19 @@ fn an_ordinary_cross_module_field_still_compiles() {
         &root.join("okp/src/roofs.loft"),
         "pub struct Roofs { items: vector<integer> }\n",
     );
-    write(&root.join("okp/src/okp.loft"), "use roofs;\nuse inner;\n");
+    write(
+        &root.join("okp/src/okp.loft"),
+        "pub use roofs::*;\npub use inner::*;\n",
+    );
     write(
         &root.join("okp/src/inner.loft"),
-        "use roofs;\npub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
+        "pub use roofs::*;\npub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
          pub fn mk() -> Sess { return Sess { s_a: 1, s_roofs: Roofs { items: [] }, s_b: 2 }; }\n",
     );
     let prog = root.join("use_it.loft");
     write(
         &prog,
-        "use okp;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
+        "use okp::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
     let out = Command::new(loft_bin())

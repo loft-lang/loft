@@ -1,4 +1,4 @@
-use sql;
+pub use sql::*;
 
 // --- the C surface, bound verbatim -----------------------------------------
 fn s3_open(path: text, out: integer) -> integer;   #c "sqlite3_open" "int(const char*, void*)"

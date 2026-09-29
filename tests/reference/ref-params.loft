@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Methods and function calls and § Ref-param vector append — through a `&`
+// vector parameter an append and a field write reach the caller.
+
+struct Item { value: integer }
+
+fn total(v: &vector<integer>) -> integer {
+  v += [9];        // the append reaches the caller's vector
+  len(v)           // …and the length is the vector's, not a reference's
+}
+
+fn test_an_append_through_a_ref_parameter_reaches_the_caller() {
+  v = [1, 2];
+  n = total(v);
+  assert(n == 3 and len(v) == 3 and (v[2] ?? -1) == 9, "the caller's vector grew");
+}
+
+fn fill(v: &vector<Item>, extra: vector<Item>) {
+    v += extra;          // appended elements are visible to the caller
+}
+
+fn add_one(v: &vector<Item>, x: Item) {
+    v += [x];            // bracket-form also works
+}
+
+fn ok_mutate(v: &vector<Item>, idx: integer, val: integer) {
+    v[idx].value = val;  // field mutation via ref-param is visible
+}
+
+fn test_both_append_spellings_and_a_field_write_are_visible() {
+  v: vector<Item> = [];
+  fill(v, [Item { value: 1 }, Item { value: 2 }]);
+  add_one(v, Item { value: 3 });
+  ok_mutate(v, 0, 10);
+  assert(len(v) == 3 and (v[0].value ?? -1) == 10 and (v[2].value ?? -1) == 3, "three appends and a write, all visible");
+}

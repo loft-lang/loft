@@ -653,7 +653,7 @@ pub fn native_strip_symbols() -> bool {
 /// Used only by the parallel test suite (`tests/native.rs`); the binary's own
 /// native paths compile serially, so it reads as dead in the binary view of
 /// this dual lib+bin module.  The suppression goes away once the lib/bin
-/// double compilation is removed — see PERFORMANCE.md § Design: BUILD1.
+/// double compilation is removed — see PERFORMANCE-history.md § Design: BUILD1.
 #[must_use]
 #[allow(dead_code)]
 pub fn native_worker_count(

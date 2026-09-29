@@ -1,5 +1,5 @@
 // Tests for slope + wall-direction recording editors.
-use moros_editor;
+use moros_editor::*;
 
 fn test_wall_dir_with_undo_local() {
   m = map_empty();

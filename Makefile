@@ -95,7 +95,7 @@
 #
 #   make sweep-scratch   Reclaim loft's temp scratch: dead-process native artefacts,
 #                        aged test caches, agent sessions older than two weeks.
-#                        Run when `df` says so — TESTING.md § Scratch hygiene.
+#                        Run when `df` says so — RUN_BOUNDS.md § Scratch hygiene.
 #   make sweep-target    Drop cargo artefacts no build in two weeks has used.
 #
 # =========================================================================
@@ -549,10 +549,10 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate
+.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
-	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
+	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
 	@# Safe by construction: only loft's own names, only dead pids or aged entries, and a
 	@# sibling checkout's gate scratch is never touched (each checkout has its own).
 	@scripts/sweep_scratch.sh --sessions $(TEST_SCRATCH) "$${TMPDIR:-$$HOME/.cache/tmp}" /tmp
@@ -576,6 +576,12 @@ profile-corpus:  ## Check the profilers against bench/profile_oracle.tsv, then r
 	@scripts/profile_corpus.sh $(PROFILE_FLAGS)
 speed:  ## Report how the slow tests' speed has drifted (never fails)
 	python3 scripts/test_speed.py run
+claims:  ## The reference docs' limitation sentences whose cited issue has CLOSED (@PLN176; asks the tracker)
+	python3 scripts/rule_tags.py claims --issues
+fences:  ## Every code sample on LOFT.md / STDLIB.md / the comparison pages, and the program it is cut from (@PLN176; gated in ci)
+	python3 scripts/rule_tags.py fences
+sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sample, a rule, a feature, a stdlib name (@PLN176; gated in ci)
+	python3 scripts/rule_tags.py sections
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
@@ -1159,7 +1165,7 @@ view: view-refresh
 	# Default to --native-release (rustc -O).  Bare --native runs
 	# unoptimised generated Rust — for an HTTP server that handles
 	# repeated requests, the per-request cost difference is large
-	# (10× on hot loops; see PERFORMANCE.md § Open work).  Cold
+	# (10× on hot loops; see PERFORMANCE.md § Measuring native code).  Cold
 	# compile is ~6s; cached binary survives across restarts via
 	# tools/viewer/src/.loft/cache/.
 	# @P274 closed 2026-05-14 (use-after-free in
@@ -2304,14 +2310,19 @@ ci: ci-guard
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
-	( $(MAKE) rebuild-native-cdylibs >> result.txt 2>&1 && \
-	cargo fmt -- --check >> result.txt 2>&1 && \
+	( cargo fmt -- --check >> result.txt 2>&1 && \
+	$(MAKE) rebuild-native-cdylibs >> result.txt 2>&1 && \
 	cargo clippy -- -D warnings >> result.txt 2>&1 && \
 	cargo clippy --all-targets --all-features -- -D warnings >> result.txt 2>&1 && \
 	scripts/check_doc_drift.sh >> result.txt 2>&1 && \
+	python3 scripts/rule_tags.py claims >> result.txt 2>&1 && \
+	python3 scripts/rule_tags.py fences --gate >> result.txt 2>&1 && \
+	python3 scripts/rule_tags.py sections --gate >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
+	python3 scripts/ci_failure_digest.py selftest >> result.txt 2>&1 && \
+	python3 scripts/ci_timing.py selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/unreleased-work.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
@@ -2586,7 +2597,8 @@ pdf-doc:
 test-native:
 	@cargo build --release -q
 	@failed=0; \
-	for f in tests/docs/*.loft; do \
+	for f in tests/docs/*.loft tests/reference/*.loft tests/comparisons/*.loft; do \
+		case "$$f" in tests/reference/*) grep -q '@EXPECT_ERROR' "$$f" && continue;; esac; \
 		printf "  %-45s" "$$f"; \
 		out=$$(./target/release/loft --native "$$f" 2>&1); \
 		code=$$?; \

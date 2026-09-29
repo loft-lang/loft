@@ -65,7 +65,7 @@ fn run_consumer(tag: &str, manifest: &str, with_lock: bool) -> (String, i32) {
     }
     write(
         &proj.join("consumer.loft"),
-        "use probepkg;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
+        "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
 
     let out = Command::new(loft_bin())
@@ -166,7 +166,7 @@ fn a_script_with_no_manifest_hears_nothing() {
     );
     write(
         &proj.join("script.loft"),
-        "use probepkg;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
+        "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
 
     let out = Command::new(loft_bin())
@@ -223,7 +223,7 @@ fn the_off_switch_silences_it() {
     );
     write(
         &proj.join("consumer.loft"),
-        "use probepkg;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
+        "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
     let run = |off: bool| {
         let mut cmd = Command::new(loft_bin());

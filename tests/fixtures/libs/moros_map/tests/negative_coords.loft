@@ -1,4 +1,4 @@
-use moros_map;
+use moros_map::*;
 
 fn test_negative_q() {
   m = map_empty();

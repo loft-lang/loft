@@ -1,4 +1,4 @@
-use p144_entry;
+use p144_entry::*;
 
 fn main() {
   b = Box { items: [] };

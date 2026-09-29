@@ -168,7 +168,7 @@ fn ws_recv(stream: &TcpStream) -> String {
 /// broken.
 fn consumer_source(port: u16) -> String {
     format!(
-        "use engine_host;\n\
+        "use engine_host::*;\n\
          fn main() {{\n\
          \x20   if !listen({port}, 5000) {{ println(\"listen-failed\"); return; }}\n\
          \x20   println(\"ready\");\n\

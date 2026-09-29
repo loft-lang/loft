@@ -46,9 +46,14 @@ fn main() {
   b = s2 ?? DT { ms: 99 };
   assert(b.ms == 5, "coalesce keeps the present value");
 
-  // ref == ref (both present) must NOT be hijacked by the null-sentinel test
-  s3: DT? = d;
-  assert(s2 == s3, "two refs to the same store compare equal");
+  // ref == ref (both present) must NOT be hijacked by the null-sentinel test, which answers
+  // "both present" — true for ANY two present refs.  Each cell holds under an identity `==` and
+  // under the content `==` of @C91 alike, and fails only under that hijack: a ref equals itself,
+  // and two present refs to records of different content are not equal.
+  assert(s2 == s2, "a present ref equals itself");
+  s4: DT? = DT { ms: 6 };
+  assert(!(s2 == s4), "two present refs to records of different content are not equal");
+  assert(s2 != s4, "and `!=` says so");
 
   // --- hash LOOKUP membership: bare Reference, rec==0 miss (the over-reach guard) ---
   box = Box { items: [] };

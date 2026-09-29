@@ -71,14 +71,15 @@ impl Parser {
     /// The refusal for a GENERIC function named where a value is wanted (`f = idf`), or
     /// `None` when `name` names no generic.  A template has a body only once a call has
     /// fixed its type variables, so there is no one function to bind; one call of it
-    /// wrapped in a lambda is.
+    /// wrapped in a lambda is.  The cure is the `fn(…)` form, because naming a type inside
+    /// the `|x|` shorthand is refused (@C62).
     pub(crate) fn generic_value_refusal(&self, name: &str) -> Option<String> {
         let g = self.data.def_nr(&format!("n_{name}"));
         (g != u32::MAX && self.data.def_type(g) == DefType::Generic).then(|| {
             format!(
                 "`{name}` is a generic function, and a generic is not a function VALUE — it has \
                  no single body until a call fixes its type variables. Wrap one call of it in a \
-                 lambda that names the types: `|x: integer| {{ {name}(x) }}`"
+                 lambda that names the types: `fn(x: integer) -> integer {{ {name}(x) }}`"
             )
         })
     }
@@ -1238,7 +1239,20 @@ impl Parser {
                     // — emitting only on pass 2 would never fire.  Diagnostics
                     // dedupe by position, so a both-pass emit still shows once.
                     let enum_name = self.data.def(e_nr).name().to_string();
-                    if variant_enums.len() == 1 {
+                    // A generic enum's instance is named `Slot<integer>`; the name a program
+                    // imports or qualifies is the declaration's, `Slot`.  This recovery also
+                    // runs in pass 1, so the message is built only for a file that imports.
+                    let declared = enum_name.split('<').next().unwrap_or(&enum_name);
+                    let import_cure =
+                        if variant_enums.len() == 1 && self.data.imports_into(self.data.source) {
+                            let what = format!("bare variant '{name}' has no type here; its enum");
+                            self.data.import_cure(&what, declared, self.data.source)
+                        } else {
+                            None
+                        };
+                    if let Some(msg) = import_cure {
+                        diagnostic!(self.lexer, Level::Error, "{msg}");
+                    } else if variant_enums.len() == 1 {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
@@ -2536,7 +2550,12 @@ impl Parser {
             // recover by consuming the balanced `{ … }`, so pass-1 never
             // cascades while it waits for pass-2 to resolve the forward ref.
             if !self.first_pass {
-                if let Some(s) = self.suggest_type_name(name) {
+                if let Some(msg) = self
+                    .data
+                    .import_cure("unknown type", name, self.data.source)
+                {
+                    diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                } else if let Some(s) = self.suggest_type_name(name) {
                     diagnostic_at!(
                         self.lexer,
                         name_pos,
@@ -2698,7 +2717,12 @@ impl Parser {
                 } else {
                     crate::diagnostics::suggest_similar(&name, &candidates)
                 };
-                if let Some(s) = suggestion {
+                if let Some(msg) =
+                    self.data
+                        .import_cure("Unknown variable", &name, self.data.source)
+                {
+                    diagnostic_at!(self.lexer, pos, Level::Error, "{msg}");
+                } else if let Some(s) = suggestion {
                     diagnostic_at!(
                         self.lexer,
                         pos,
@@ -4234,7 +4258,7 @@ impl Parser {
     /// arrives through the TYPED accessors (`bx.tag` is `OpGetText(bx, 28)`), whose second
     /// argument is a field offset for some and a SIZE for others (`OpGetVector(v, size,
     /// index)`) — telling them apart needs a list of ops that reads offsets, and a list like
-    /// that drifts silently against a new op, which is the failure mode PERFORMANCE.md § Design
+    /// that drifts silently against a new op, which is the failure mode PERFORMANCE-history.md § Design
     /// P8 records for the five mutation deny-lists.  So a sibling read spelled with a typed
     /// accessor stages a temp it does not need.  That is the cheap mistake, it is bounded by
     /// the literal's own field count, and closing it wants the field's declared SPAN rather

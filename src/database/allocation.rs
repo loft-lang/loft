@@ -2115,26 +2115,36 @@ impl Stores {
     /// the whole release — no cascade, and the elements the loop yielded are
     /// records in the SOURCE store, untouched by this.
     ///
-    /// **Idempotent, and it has to be.** Two sites free the same scratch — the
-    /// loop epilogue and the scope exit that catches a `return` out of the loop
-    /// — and only the interpreter nulls the variable between them; the native
-    /// emitter drops that store, so both calls arrive carrying the same live
-    /// `DbRef`. The dedicated case is idempotent through [`Self::free`]'s
-    /// already-freed no-op; the co-located case is idempotent through
-    /// `is_claimed_record`, which reads the block header a `delete` has just
-    /// made negative. A second call is a no-op, not a double free.
+    /// **Called once per scratch.** Two sites can release the same scratch — the loop
+    /// epilogue and the scope exit that catches a `return` out of the loop — and the epilogue
+    /// nulls the handle after releasing (`Parser::release_scratch`), so the scope exit sees
+    /// the sentinel and returns at the first test.  That null store used to be spelled
+    /// `Set(s, Null)`, which the scope pass elides, so on BOTH backends every scratch arrived
+    /// here twice; the tolerance below made the second call a no-op until a later walk reused
+    /// the block (loft#1713).  It stays as the defence, and a second release is now named by
+    /// the store instruments instead of passing silently.
     ///
     /// Declines, leaving the scratch where it is, when the store cannot take a
     /// delete: freed, or pinned read-only / free-protected inside the loop body
     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
     /// behaviour for those cases, never worse.
+    ///
+    /// # Panics
+    /// Under debug assertions, `LOFT_STRICT_STORES` or `LOFT_POISON`, when a live store's handle
+    /// names no claimed record — a scratch released twice.
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
         self.live_scratches.retain(|(_, live)| live != scratch);
-        if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
+        // A store's PRIMARY record is never a scratch — `build_rec_scratch` claims a fresh one —
+        // while a keyed field walked IN PLACE of a store's root hands exactly that record here,
+        // `pos` at the field.  Declined before a single word of it is read: the tag test below
+        // would read a field of the walked record that nothing wrote (measured under Valgrind).
+        if scratch.rec <= crate::store::PRIMARY
+            || scratch.store_nr as usize >= self.allocations.len()
+        {
             return;
         }
         let store = &self.allocations[scratch.store_nr as usize];
-        if store.free || !store.is_claimed_record(scratch.rec) {
+        if store.free {
             return;
         }
         // The record must still BE this scratch's header before a single one of its
@@ -2153,6 +2163,28 @@ impl Stores {
         // So the header is self-identifying, and a record that does not carry the tag
         // is left alone. Refusing costs at most the scratch's own two blocks, once;
         // acting on a foreign record costs the store.
+        //
+        // A LIVE store whose handle names no claimed record is a handle released before:
+        // every walk releases its scratch once and nulls the handle
+        // (`Parser::release_scratch`), so reaching here with one is a defect upstream.  It is
+        // declined in a plain run, for the reason above — but the store
+        // instruments and the debug build say so, because declining is exactly what kept a
+        // second release of EVERY keyed walk's scratch silent (the handle's null store was
+        // elided).
+        let stale = !store.claims_record(scratch.rec);
+        if stale {
+            assert!(
+                !(cfg!(debug_assertions)
+                    || crate::keys::strict_stores()
+                    || crate::keys::poison_enabled()),
+                "a walk's snapshot scratch {scratch:?} was released twice — its handle names \
+                 a record that is no longer the scratch"
+            );
+            return;
+        }
+        // A claimed record without the tag is not a scratch at all: a keyed FIELD walked in
+        // place hands its own record here (`pos` is the field's offset), and this release is a
+        // no-op for it by design.
         if !crate::vector::is_scratch_header(store, scratch) {
             return;
         }
@@ -7061,7 +7093,7 @@ mod p318_hash_deepcopy {
             let e = stores.database(cell_words);
             stores.store_mut(&e).set_int(e.rec, e.pos, k);
             stores.store_mut(&e).set_int(e.rec, e.pos + 8, k + 100);
-            stores.set_keyed(&h, &e, hash_tp, false);
+            stores.set_keyed(&h, &e, hash_tp, &[], false);
         }
 
         // Sound to start — no false positive.
@@ -7108,7 +7140,7 @@ mod p318_hash_deepcopy {
             let v = stores.database(cell_words);
             stores.store_mut(&v).set_int(v.rec, v.pos, k); // ck = k
             stores.store_mut(&v).set_int(v.rec, v.pos + 8, k + 1000); // payload
-            stores.set_keyed(&src_h, &v, hash_tp, false);
+            stores.set_keyed(&src_h, &v, hash_tp, &[], false);
         }
         let cur = stores.store(&src_h).get_u32_raw(src_h.rec, src_h.pos);
         let room = stores.store(&src_h).record_words(cur);

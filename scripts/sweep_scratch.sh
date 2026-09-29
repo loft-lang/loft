@@ -3,7 +3,7 @@
 #
 #   scripts/sweep_scratch.sh [--sessions] [--days N] [--falsify-days N] <dir>...
 #
-# What loft writes to a temp directory, and the rule that removes each (TESTING.md § Scratch
+# What loft writes to a temp directory, and the rule that removes each (RUN_BOUNDS.md § Scratch
 # hygiene):
 #
 #   loft_native_bin_<pid>, loft_native_<pid>.rs   a `--native` run's artefacts; a run that ends

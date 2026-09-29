@@ -6,7 +6,7 @@
 // cross-file `use`.  Before PR #171 this SIGSEGV'd on the fallback
 // (`Hex {}`) return.  Now passes interpreter + native.
 
-use p143_entry;
+use p143_entry::*;
 
 fn main() {
   // (1) Fallback path — empty map, loop falls through, returns default Hex {}.

@@ -12,7 +12,30 @@
 //
 // loft has no opt-in and no argument list: the braces are part of every literal, which is why
 // `{{` escapes one.  That is the cost side of the trade and it is asserted below.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-rust.html#formatting (a verbatim window: `rule_tags.py fences`) ---
+name = "Ann";
+score = 3.14159;
+n = 42;
+value = 2.5;
+msg  = "Hi {name}, score: {score:6.2}";   // width.precision
+rank = "seed {n:+}";                      // sign shows on integers: "seed +42"
+prec = "{value:.2}";                      // precision only
+hex  = "{n:#x}";
+list = "{for x in 1..4 {x*2}}";          // [2,4,6]
+nest = "{\"hello\"}";                     // nested string literal — works
+assert(msg == "Hi Ann, score:   3.14" and rank == "seed +42" and prec == "2.50", "width, sign, precision: {msg}|{rank}|{prec}");
+assert(hex == "0x2a" and list == "[2,4,6]" and nest == "hello", "hex, a for-expression, a nested literal: {hex}|{list}|{nest}");
+
+// --- as shown on 00-vs-python.html#formatting (a verbatim window: `rule_tags.py fences`) ---
+count = 7;
+msg  = "Hi {name}, score: {score:8.2}";
+sign = "seed {n:+}";              // sign shows on integers: "seed +42"
+hex  = "{n:#x}";
+list = "{for x in 1..4 {x*2}}";   // [2,4,6]
+pad  = "{count:08}";              // zero-padded (integers)
+assert(sign == "seed +42" and pad == "00000007", "sign and zero padding: {sign}|{pad}");
 struct P { x: integer, y: integer }
 
 fn test_an_expression_in_braces_is_evaluated_in_place() {
@@ -45,3 +68,8 @@ fn test_a_call_is_a_hole_too() {
   v: vector<integer> = [1, 2, 3];
   assert("{len(v)}" == "3", "a call evaluates inside the literal");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_an_expression_in_braces_is_evaluated_in_place();
+test_a_brace_must_be_escaped_because_every_literal_is_a_format();
+test_a_call_is_a_hole_too();

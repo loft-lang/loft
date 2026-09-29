@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Primitive types — a bare `as` on text is an assertion, so `?`
+// after it has nothing nullable to discharge.
+// @EXPECT_ERROR: as
+
+fn refused() {
+  s = "12x";
+  n = (s as integer)?;     // COMPILE ERROR — a bare `as` on text is an assertion
+}

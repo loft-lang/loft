@@ -58,7 +58,7 @@ fn registry_fn_hint(name: &str, resolved: &[String]) -> Option<String> {
         format!("the {} packages provide it", names.join(" / "))
     };
     Some(format!(
-        "Unknown function {name} — {provider}; call `{first}::{name}(…)`, or add `use {first};` and call it bare"
+        "Unknown function {name} — {provider}; call `{first}::{name}(…)`, or add `use {first}::({name});` and call it bare"
     ))
 }
 
@@ -127,6 +127,8 @@ struct PendingImport {
     for_source: u16,
     lib_source: u16,
     spec: ImportSpec,
+    /// `pub use`: the names pass on to whoever imports `for_source` (@C98).
+    public: bool,
 }
 
 /// Pure-resolution result from [`Parser::lib_path_manifest_resolve`].
@@ -493,6 +495,16 @@ pub struct Parser {
     /// see a narrowing), so it stays silent for an arm the conversion already named
     /// rather than reporting the same mistake twice.
     pub(crate) arm_convert_reported: bool,
+    /// How many arms of the `match` being parsed are written `null` or `{ null }` — read from
+    /// the SOURCE by `parse_match_arm_body`, because on the first pass a comprehension arm is a
+    /// placeholder that looks like a null arm in the lowered code (`D-types-5`).  Each chain
+    /// saves and zeroes it at its start, so a nested match cannot count into its parent.
+    pub(crate) null_literal_arms: u32,
+    /// Whether the block `parse_block` just parsed ENDS in the source token `null` — the `if`
+    /// arm `{ null }`.  Read by the `(N-Join)` widening straight after the parse: the lowered
+    /// arm no longer says null (it is its sibling's typed null by then), and on the first pass
+    /// a comprehension arm is a placeholder of the same shape, so only the source can tell.
+    pub(crate) block_tail_null_literal: bool,
     /// loft#1382 — the arms currently being parsed belong to a construct in STATEMENT
     /// position, so their types need not agree with each other.
     ///
@@ -917,6 +929,11 @@ pub struct Parser {
     line: u32,
     /// Wildcard and selective imports waiting to be applied once the target source is fully parsed.
     pending_imports: Vec<PendingImport>,
+    /// The `use` statement being parsed was written `pub use` (@C98).
+    use_public: bool,
+    /// The use region consumed a `pub` that opens a definition rather than a `pub use`;
+    /// the definitions loop takes it.  Cleared when the lexer switches files.
+    pub_taken: bool,
     /// every (for_source, lib_source, ImportSpec) pair that
     /// `apply_pending_imports` applied during this parse pass.  Retained so
     /// that `resolve_deferred_unknowns` can re-apply them with overwrite
@@ -1228,6 +1245,10 @@ pub struct Parser {
     /// context — parsing it standalone leaks).  `build_null_coalesce_default` swaps the
     /// lexer to this source at its own parse site, so `x?` matches `x ?? []` exactly.
     pub(crate) pending_default_src: Option<String>,
+    /// @C118 — the slot a NULL collection local is given before a `c = &a` bind shares its
+    /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
+    /// placed before its statement by `parse_assign_op`; empty between binds.
+    pub(crate) pending_link_slot: Vec<Value>,
     /// loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion
     /// span.  Set as the default is parsed and consumed by `handle_null_coalesce`, because
     /// the notice fires before the default exists and the caller's cursor has moved past
@@ -1623,6 +1644,8 @@ impl Parser {
             fit_in_condition: false,
             pending_arm_mismatch: None,
             arm_convert_reported: false,
+            null_literal_arms: 0,
+            block_tail_null_literal: false,
             arms_of_statement_construct: false,
             match_void_arm: false,
             amp_head: AmpHead::default(),
@@ -1702,6 +1725,8 @@ impl Parser {
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
+            use_public: false,
+            pub_taken: false,
             applied_imports: Vec::new(),
             deferred_unknown: Vec::new(),
             record_resolutions: false,
@@ -1758,6 +1783,7 @@ impl Parser {
             admit_unwrap: 0,
             pending_default_rhs: None,
             pending_default_src: None,
+            pending_link_slot: Vec::new(),
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
@@ -3317,8 +3343,14 @@ impl Parser {
         if let Some(key) =
             Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
         {
+            // The template may live only under its library's source: a qualified call
+            // (`lib::f(…)`) instantiates it without the caller importing the name (@C98).
             let g = self.data.def_nr(key.rest);
-            return g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic);
+            return (g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic))
+                || (0..self.data.definitions()).any(|d| {
+                    matches!(self.data.def_type(d), DefType::Generic)
+                        && self.data.def(d).name() == key.rest
+                });
         }
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
@@ -3487,12 +3519,18 @@ impl Parser {
         for pi in &applied {
             match &pi.spec {
                 ImportSpec::Wildcard => {
-                    self.data.import_all_overwrite(pi.lib_source, pi.for_source);
+                    self.data
+                        .import_all_overwrite(pi.lib_source, pi.for_source, pi.public);
                 }
                 ImportSpec::Names(names) => {
                     for (name, bind) in names {
-                        self.data
-                            .import_name_overwrite(pi.lib_source, pi.for_source, name, bind);
+                        self.data.import_name_overwrite(
+                            pi.lib_source,
+                            pi.for_source,
+                            name,
+                            bind,
+                            pi.public,
+                        );
                     }
                 }
             }
@@ -3563,6 +3601,8 @@ impl Parser {
             self.data.source = saved_source;
             let msg = if let Some(note) = boundary {
                 note
+            } else if let Some(msg) = self.data.import_cure("Undefined type", &stub_name, source) {
+                msg
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
             } else {
@@ -3761,6 +3801,35 @@ impl Parser {
     /// # Errors
     /// With filesystem problems.
     pub fn parse_dir(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
+        self.parse_dir_inner(dir, default, debug)?;
+        // The stdlib is checked ONCE, here at the top-level call and never inside the
+        // recursion below, where the list is still being filled: its operator declarations
+        // must be, slot for slot, the ones this binary's dispatch table was generated from,
+        // or the refusal is the ONLY thing standing between the run and a corrupt
+        // reference (`stdlib_ops`).
+        if default && let Err(msg) = crate::stdlib_ops::verify(&self.data, dir) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        }
+        Ok(())
+    }
+
+    /// [`Self::parse_dir`] WITHOUT the stdlib check, for the one caller that must read a
+    /// `default/` the dispatch table does not match yet: the `src/fill.rs` generator, whose
+    /// job is to repair exactly that mismatch.  Checked, it refused the parse and the cure
+    /// the refusal names (`make fill`) could not run — found joining two branches that each
+    /// changed the operator list.  Every program load goes through [`Self::parse_dir`].
+    /// # Errors
+    /// With filesystem problems.
+    pub fn parse_dir_unchecked(
+        &mut self,
+        dir: &str,
+        default: bool,
+        debug: bool,
+    ) -> std::io::Result<()> {
+        self.parse_dir_inner(dir, default, debug)
+    }
+
+    fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
         let paths = read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();
         for path in paths {
@@ -3780,7 +3849,7 @@ impl Parser {
             let from = self.data.definitions();
             let data = metadata(&f)?;
             if data.is_dir() {
-                self.parse_dir(&f, default, debug)?;
+                self.parse_dir_inner(&f, default, debug)?;
             } else {
                 self.parse(&f, default);
                 // Errors stop the load; warnings and advice do not.  `parse`
@@ -4236,8 +4305,9 @@ impl Parser {
     /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
     /// judged from the call and the declaration it names (C121), while a proof that a body does
     /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
-    /// (plan 40's rule 4); a plain one is the gating warning `const-to-plain-parameter`, C124's
-    /// rollout (owner, 2026-09-15), whose cure is in the message.
+    /// (plan 40's rule 4), and so is a plain one, `const-to-plain-parameter` (@C124): the
+    /// warning that rolled it out ended once every shipped library declared its read-only
+    /// parameters `const`.  The cure is in the message.
     ///
     /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
     /// links exactly as its dense twin does, so it is asked through `base()`.
@@ -4284,7 +4354,7 @@ impl Parser {
                 let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
                      `const`: its value is read-only, and a plain parameter names the caller's \
@@ -4316,7 +4386,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to parameter {} of {label}, whose function type does not \
                      declare it `const`: its value is read-only, and a plain parameter names the \
@@ -4343,7 +4413,7 @@ impl Parser {
                 }
                 diagnostic!(
                     self.lexer,
-                    Level::Warning,
+                    Level::Error,
                     code = "const-to-plain-parameter",
                     "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
                      `const`: their value is read-only, and a plain parameter names the caller's \
@@ -5055,6 +5125,22 @@ impl Parser {
         at: Option<&Position>,
         never_error: bool,
     ) -> bool {
+        self.nstore_unwrap_report_as(inner, target_tp, what, at, never_error, None)
+    }
+
+    /// [`Parser::nstore_unwrap_report`] with the CONSEQUENCE clause supplied by the caller,
+    /// for the reason [`Parser::nstore_null_report_as`] gives: *"it becomes null there"* is
+    /// what a handle or a scalar slot does, and a dense record slot has no null to hold — the
+    /// store does not happen.  The position knows which; `None` keeps the pinned wording.
+    fn nstore_unwrap_report_as(
+        &mut self,
+        inner: &Type,
+        target_tp: &Type,
+        what: &str,
+        at: Option<&Position>,
+        never_error: bool,
+        consequence: Option<&str>,
+    ) -> bool {
         // `τ?` has a THIRD spelling, and this gate has to ask all three of one face.
         // A `&` parameter carries its nullability INSIDE the reference: `&integer?` is
         // `RefVar(Optional(Integer))`, so asking `Type::Optional` of the OUTER type answers
@@ -5100,8 +5186,9 @@ impl Parser {
             let msg = diagnostic_format(
                 Level::Warning,
                 format_args!(
-                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
-                    target_tp.source_name(&self.data)
+                    "a nullable `{nm}?` is stored into {what} of the non-null type `{}` — {}; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended",
+                    target_tp.source_name(&self.data),
+                    consequence.unwrap_or("it becomes null there")
                 ),
             );
             self.nstore_diag(at, Level::Warning, &msg);
@@ -5218,6 +5305,39 @@ impl Parser {
     /// next argument off its slot and ended a run in a SIGSEGV.  The type list is the one
     /// [`coalesce_not_null`](Parser::coalesce_not_null) uses, for the same reason.
     pub(crate) fn convert_condition(&mut self, code: &mut Value, tp: &Type) -> bool {
+        self.convert_condition_at(code, tp, None)
+    }
+
+    /// [`convert_condition`](Parser::convert_condition) anchored at the condition's own
+    /// start, so the refusal below names the expression and not the `{` after it.
+    ///
+    /// **A store stays a statement (@C130).**  `if v[9] = 2 { … }` is the C `=`-for-`==`
+    /// typo, and it is refused here rather than read as a flag: the expression answers
+    /// NOTHING, so there is no value to test.  Nothing is wrong with the pair of types —
+    /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
+    /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
+    /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
+    /// ()`): one program, two drivers disagreeing whether it is a program (measured on
+    /// both `if` and `while`).  A `Never` condition (a `return` in it) is not
+    /// this case and keeps its own path.
+    pub(crate) fn convert_condition_at(
+        &mut self,
+        code: &mut Value,
+        tp: &Type,
+        at: Option<&Position>,
+    ) -> bool {
+        if matches!(tp.base(), Type::Void) {
+            if !self.first_pass {
+                let msg = "A condition needs a value, and this expression answers nothing \
+                           — write `==` to compare, or move the store to its own line";
+                if let Some(at) = at {
+                    diagnostic_at!(self.lexer, at, Level::Error, "{msg}");
+                } else {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
+            }
+            return false;
+        }
         if Self::is_heap_handle(tp) {
             if !self.first_pass {
                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
@@ -5463,6 +5583,7 @@ impl Parser {
         } else {
             Self::is_narrowing_int_store(is_type, should)
         } && !self.is_null_source(code);
+        // A value that may not fit a narrow slot is refused where the author can choose (@C127).
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);
@@ -5999,7 +6120,16 @@ impl Parser {
                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
                     // field encoding from here on (`Variable::linked_narrow`).
                     self.vars.set_linked_narrow(v);
-                    *code = self.cl("OpCreateStack", &[orig]);
+                    // @C118 — a null collection local is given its slot before the callee
+                    // links to it, or an append in the callee has no place to land.
+                    let mut ls = self.null_local_slot(v);
+                    let create = self.cl("OpCreateStack", &[orig]);
+                    *code = if ls.is_empty() {
+                        create
+                    } else {
+                        ls.push(create);
+                        Value::Insert(ls)
+                    };
                 } else if crate::data::is_scalar(ref_tp)
                     && Self::is_amp_place(&orig, &self.data)
                     && let Some(place) = self.scalar_place_ref(&orig)
@@ -6876,7 +7006,7 @@ impl Parser {
         if d_nr == u32::MAX {
             if self.first_pass {
                 let predicted = if method_template == u32::MAX {
-                    self.predict_generic_return_type(name, types)
+                    self.predict_generic_return_type(source, name, types)
                 } else {
                     self.predict_template_return(method_template, name, types)
                 };
@@ -6886,7 +7016,7 @@ impl Parser {
                 }
             } else {
                 d_nr = if method_template == u32::MAX {
-                    self.try_generic_instantiation(name, types)
+                    self.try_generic_instantiation(source, name, types)
                 } else {
                     self.instantiate_template(method_template, name, types)
                 };
@@ -6895,7 +7025,7 @@ impl Parser {
                 // author at the call instead.  Answer the declared return, so the rest of the
                 // expression types as written.
                 let g_nr = if method_template == u32::MAX {
-                    self.data.def_nr(&format!("n_{name}"))
+                    self.data.source_nr(source, &format!("n_{name}"))
                 } else {
                     method_template
                 };
@@ -6967,6 +7097,10 @@ impl Parser {
             }
         } else if self.first_pass && !self.default {
             Type::Unknown(0)
+        } else if let Some(tp) = self.call_with_slice_receiver(
+            code, source, name, list, types, named_args, arg_pos, name_pos,
+        ) {
+            tp
         } else if name == "len"
             && types.len() == 1
             && named_args.is_empty()
@@ -7027,7 +7161,7 @@ impl Parser {
                     "Unknown function {name}"
                 );
             }
-            Type::Unknown(0)
+            self.reported_call(code)
         } else if name == "size"
             && types.len() == 1
             && named_args.is_empty()
@@ -7088,7 +7222,7 @@ impl Parser {
                 Level::Error,
                 "Unknown function {name}"
             );
-            Type::Unknown(0)
+            self.reported_call(code)
         } else if name == "size"
             && types.len() == 1
             && named_args.is_empty()
@@ -7211,7 +7345,7 @@ impl Parser {
             // A local whose binding already failed holds no value (its type is poisoned
             // `never`, the way an errored assignment's is): the binding's diagnostic names
             // the cause, and "Unknown function" for calling it would name a second one.
-            Type::Unknown(0)
+            self.reported_call(code)
         } else {
             // A name with an overload set, called at a generic's type VARIABLE, where no member
             // takes it (@PLN165 B3b: only a template member can take a variable, through its
@@ -7281,6 +7415,11 @@ impl Parser {
                         );
                     } else if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
                         diagnostic_at!(self.lexer, name_pos, Level::Error, "{note}");
+                    } else if let Some(msg) =
+                        self.data
+                            .import_cure("Unknown function", name, self.data.source)
+                    {
+                        diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                     } else if let Some(hint) =
                         registry_fn_hint(name, &self.data.resolved_libraries())
                     {
@@ -7340,7 +7479,86 @@ impl Parser {
                     );
                 }
             }
+            self.reported_call(code)
+        }
+    }
+
+    /// loft#1728, @FR-Slice-Value — a call whose RECEIVER is a vector slice (`len(v[a..b])`)
+    /// and which resolves for no definition at the iterator: the receiver is a vector-typed
+    /// position like any other, so it is materialised as one (`iterator_as_vector`, the one
+    /// home) and the call resolved again.  Asked only where resolution would otherwise report
+    /// an unknown function, so no call that resolved before resolves differently.
+    #[allow(clippy::too_many_arguments)]
+    fn call_with_slice_receiver(
+        &mut self,
+        code: &mut Value,
+        source: u16,
+        name: &str,
+        list: &[Value],
+        types: &[Type],
+        named_args: &[(String, Value, Type)],
+        arg_pos: &[Position],
+        name_pos: &Position,
+    ) -> Option<Type> {
+        let first = types.first()?;
+        let Type::Iterator(elm, _) = first.base() else {
+            return None;
+        };
+        let want = Type::Vector(elm.clone(), Deps::none());
+        let mut args = list.to_vec();
+        let vec_tp = self.iterator_as_vector(args.first_mut()?, &types[0], &want)?;
+        let mut arg_types = types.to_vec();
+        arg_types[0] = vec_tp;
+        Some(self.call(
+            code, source, name, &args, &arg_types, named_args, arg_pos, name_pos,
+        ))
+    }
+
+    /// Does argument `nr` of a call to `callee` hand a top-level constant's view to a
+    /// parameter the callee may WRITE, so that it must travel as a copy (loft#1729)?
+    ///
+    /// Asked on both passes with the same answer, because the copy mints its temporaries on
+    /// both (`materialize_collection_value`): the callee's write fact is read only for a
+    /// callee parsed BEFORE the caller — pass 1 has its body then, and pass 2 the same one —
+    /// and a callee parsed at or after it (a forward call, a recursive one) is assumed to
+    /// write.  A `const` or `&` parameter and a native callee never copy; a literal-bodied
+    /// function's result already declines at a user call (`const_fn`).
+    fn constant_arg_needs_copy(&self, callee: u32, nr: usize, arg: &Value, param: &Type) -> bool {
+        if !matches!(arg.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef")) {
+            return false;
+        }
+        if !matches!(param.base(), Type::Vector(_, _)) || self.context == u32::MAX {
+            return false;
+        }
+        let def = self.data.def(callee);
+        if !def.is_loft_defined() || def.attributes().get(nr).is_none_or(|a| a.value_const) {
+            return false;
+        }
+        if callee >= self.context {
+            return true;
+        }
+        let mut cache = crate::fxhash::FxHashMap::default();
+        callee_param_writes(callee, &self.data, &mut cache)
+            .get(nr)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// The type of a call whose failure was reported (or whose callee's binding failed):
+    /// poisoned to `never`, as every reporting site leaves it, so the operator or call it is an operand of reads a
+    /// value that is not there and does not report it again as a missing argument naming an
+    /// internal opcode (loft#1719): the slot IS filled, by an expression that errored, and
+    /// @FR-F-Arity refuses only an unfilled one.  Its code is cleared too: a failed call writes none, and
+    /// the buffer still holds what the caller put there — an assignment's own target, so
+    /// `x = nofn(v) + 1` lowered to `x + 1`, typed as an integer, and escaped the poison.
+    /// The first pass reports nothing and keeps `unknown`, so a function declared further
+    /// down still types there.
+    fn reported_call(&self, code: &mut Value) -> Type {
+        if self.first_pass {
             Type::Unknown(0)
+        } else {
+            *code = Value::Null;
+            Type::Never
         }
     }
 
@@ -7821,9 +8039,12 @@ impl Parser {
     /// receiving variable would "change type" between passes — #395).  Registers
     /// the synthetic struct on first encounter (idempotent via `tuple_def`);
     /// otherwise side-effect-free and safe to call repeatedly.
-    fn predict_generic_return_type(&mut self, name: &str, types: &[Type]) -> Type {
+    /// `source` is the library a qualified call names (`lib::f`), or `u16::MAX` for a
+    /// bare one: a qualified call reaches the library's generic whether or not the caller
+    /// imported its name (@C98).
+    fn predict_generic_return_type(&mut self, source: u16, name: &str, types: &[Type]) -> Type {
         let generic_name = format!("n_{name}");
-        let g_nr = self.data.def_nr(&generic_name);
+        let g_nr = self.data.source_nr(source, &generic_name);
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return Type::Unknown(0);
         }
@@ -8035,9 +8256,10 @@ impl Parser {
     /// Also the gate for @FR-G-Gen's bound half: the `bindings` computed here are handed to
     /// [`Self::check_satisfaction`], so a type that does not satisfy the declared bounds is
     /// rejected at the instantiation rather than inside the specialised body.
-    fn try_generic_instantiation(&mut self, name: &str, types: &[Type]) -> u32 {
+    /// `source` as in [`Self::predict_generic_return_type`].
+    fn try_generic_instantiation(&mut self, source: u16, name: &str, types: &[Type]) -> u32 {
         let generic_name = format!("n_{name}");
-        let g_nr = self.data.def_nr(&generic_name);
+        let g_nr = self.data.source_nr(source, &generic_name);
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return u32::MAX;
         }
@@ -9017,7 +9239,8 @@ impl Parser {
                     .strip_prefix("n_")
                     .unwrap_or_default()
                     .to_string();
-                let inst = self.try_generic_instantiation(&name, std::slice::from_ref(&elem_tp));
+                let inst =
+                    self.try_generic_instantiation(u16::MAX, &name, std::slice::from_ref(&elem_tp));
                 if inst == u32::MAX { plan.worker } else { inst }
             } else {
                 plan.worker
@@ -12735,6 +12958,9 @@ impl Parser {
     /// them and an edited library keeps executing from the stale
     /// cached program.
     fn switch_to_dep(&mut self, f: &str) {
+        // A `pub` the use region consumed belongs to the file being left; that file is
+        // re-parsed from its start when it resumes.
+        self.pub_taken = false;
         if std::env::var("LOFT_LIB_ORDER").is_ok() {
             eprintln!(
                 "[liborder] switch {} -> {}",
@@ -15016,6 +15242,22 @@ impl Parser {
                 *code = eq;
                 return Type::Boolean;
             }
+            // Two references to one struct type compare the records they name, absent ones
+            // included (`OpEqRef` answers two absent as equal).  With either side optional no
+            // `OpEqRef` candidate matched, and the loop below took `OpEqBool` over two
+            // presence tests — so two present references to DIFFERENT records compared equal.
+            // The presence test is right only against the `null` literal, whose type is
+            // `Null`, not `Reference` (@C91).
+            if (op == "==" || op == "!=")
+                && list.len() == 2
+                && let (Type::Reference(da, _), Type::Reference(db, _)) =
+                    (types[0].base(), types[1].base())
+                && da == db
+                && (matches!(types[0], Type::Optional(_)) || matches!(types[1], Type::Optional(_)))
+            {
+                *code = self.cl(if op == "==" { "OpEqRef" } else { "OpNeRef" }, list);
+                return Type::Boolean;
+            }
             let mut possible = Vec::new();
             for pos in self
                 .data
@@ -15631,6 +15873,23 @@ impl Parser {
             } else {
                 self.convert_admitting(&mut actual_code, actual_type, &tp)
             };
+            // loft#1729, @FR-R-Const — a top-level constant's use site is a VIEW of the
+            // write-locked constant store, and a callee that writes its by-value parameter
+            // writes through it: `(R-Const)` makes that hand-off B-Copy's copy.
+            if accepted && self.constant_arg_needs_copy(d_nr, nr, &actual_code, &tp) {
+                let param = tp.base().without_deps();
+                let tmp = self.materialize_collection_value(&mut actual_code, &param);
+                // A VALUE, typed by the temp's own deps — the buffer the copy lives in — the
+                // way a vector literal argument is a `Vector` block naming its buffer.  A bare
+                // `Insert` gave the scope pass no owner for that buffer inside an `assert`'s
+                // lazily built message, and it placed the buffer's free before its allocation.
+                if tmp != u16::MAX
+                    && let Value::Insert(ops) = &mut actual_code
+                {
+                    let ops = std::mem::take(ops);
+                    actual_code = v_block(ops, self.vars.tp(tmp).clone(), "Vector");
+                }
+            }
             if !accepted {
                 if report {
                     let context = format!(
@@ -16514,6 +16773,7 @@ impl Parser {
         // libraries by hand, so a `lib::` to an un-`use`d library is a forgotten
         // `use`, not a request to auto-load.  Skip the pre-scan for those files.
         let mut had_use = self.default;
+        self.pub_taken = false;
         // Use-region fixpoint.  Pre-scan explicit `use`s, then load manifest
         // `[dependencies]`.  Loading a manifest dep `switch_to_dep`s the lexer
         // ONTO it; a MULTI-FILE dependency lands on an entry file that still has
@@ -16523,7 +16783,7 @@ impl Parser {
         // parses has had its uses processed (otherwise a dependency's legitimate
         // top `use` is misread as "use after definitions" — and never imported).
         loop {
-            while self.lexer.has_token("use") {
+            while self.use_keyword() {
                 if let Some(id) = self.lexer.has_identifier() {
                     had_use = true;
                     // loft#949 — `use self::<module>` binds THIS package's own module,
@@ -16546,6 +16806,12 @@ impl Parser {
                     // the flat top-level comma list (`use lib::a, b`) is dropped (it
                     // read poorly — `b` didn't visually bind to `lib::`).
                     let spec = self.parse_import_spec(&id);
+                    if spec.is_none() && lib_alias.is_none() {
+                        self.data.record_bare_use(self.data.source, &id);
+                    }
+                    if spec.is_none() {
+                        self.refuse_bare_pub_use(&id);
+                    }
                     // loft#976 — a package's OWN module wins its own `use`.
                     //
                     // A module's file name is one global name across the whole
@@ -16597,20 +16863,17 @@ impl Parser {
                         if let Some(alias) = &lib_alias {
                             self.data.use_alias(alias, lib_source);
                         }
-                        // Plain `use foo` (no spec) wildcard-imports all pub defs.
-                        // `use foo as m;` (alias, no spec) does NOT — it only provides
-                        // the `m::` qualifier (the disambiguation escape hatch).  An
-                        // explicit `::` spec is honoured in either case.
-                        let import_spec = match spec {
-                            Some(s) => Some(s),
-                            None if lib_alias.is_some() => None,
-                            None => Some(ImportSpec::Wildcard),
-                        };
+                        // A bare `use foo;` binds only the `foo::` qualifier, and so does
+                        // `use foo as m;` (`m::`): names come in unqualified only through
+                        // an explicit `::*` or `::(…)` spec, so a library growing a name
+                        // can never collide with the program's own (@C98).
+                        let import_spec = spec;
                         if let Some(import_spec) = import_spec {
                             self.pending_imports.push(PendingImport {
                                 for_source: self.data.source,
                                 lib_source,
                                 spec: import_spec,
+                                public: self.use_public,
                             });
                         }
                         if !self.lexer.has_token(";") {
@@ -16844,7 +17107,7 @@ impl Parser {
         self.file += 1;
         self.line = 0;
         loop {
-            let is_pub = self.lexer.has_token("pub");
+            let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
             let before = self.data.definitions();
             if self.lexer.diagnostics().level() == Level::Fatal
                 || (!self.parse_capability()
@@ -16959,6 +17222,12 @@ impl Parser {
             }
         }
         self.pending_imports = remaining;
+        if !to_apply.is_empty() {
+            // The file these imports serve: a definition written in it is never one of its
+            // private imports (see `Data::note_source_file`).
+            let here_file = std::sync::Arc::clone(&self.lexer.pos().file);
+            self.data.note_source_file(cur, &here_file);
+        }
         for pi in to_apply {
             // retain a copy so `resolve_deferred_unknowns` can re-apply
             // with overwrite semantics after a cyclic `use` has finished
@@ -16966,11 +17235,14 @@ impl Parser {
             self.applied_imports.push(pi.clone());
             match pi.spec {
                 ImportSpec::Wildcard => {
-                    self.data.import_all(pi.lib_source, cur);
+                    self.data.import_all(pi.lib_source, cur, pi.public);
                 }
                 ImportSpec::Names(names) => {
                     for (name, bind) in &names {
-                        if !self.data.import_name(pi.lib_source, cur, name, bind) {
+                        if !self
+                            .data
+                            .import_name(pi.lib_source, cur, name, bind, pi.public)
+                        {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
@@ -17353,6 +17625,37 @@ impl Parser {
     /// first encounter loads the file and switches the lexer onto it, and the import is
     /// recorded on the second, when this file is re-parsed off `todo_files` and the key
     /// already exists.
+    /// Consume the keyword of the next `use` statement, `use` or `pub use`, recording
+    /// which in `use_public`.  A `pub` that turns out to open a definition is put back.
+    /// A `pub` that does not open a `pub use` opens the file's first definition; it is
+    /// left in `pub_taken` for the definitions loop rather than put back, because putting
+    /// a token back costs a lexer link on every file (the stdlib's included).
+    fn use_keyword(&mut self) -> bool {
+        self.use_public = self.lexer.has_token("pub");
+        if self.lexer.has_token("use") {
+            return true;
+        }
+        if self.use_public {
+            self.pub_taken = true;
+            self.use_public = false;
+        }
+        false
+    }
+
+    /// `pub use lib;` would pass nothing on: a bare `use` binds only the `lib::`
+    /// qualifier, and a qualifier is not a name an importer can receive (@C98).
+    fn refuse_bare_pub_use(&mut self, target: &str) {
+        if self.use_public {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`pub use {target};` passes nothing on — a bare `use` binds only the \
+                 `{target}::` qualifier.  Write `pub use {target}::*;` to pass on all its \
+                 names, or `pub use {target}::(…);` for some"
+            );
+        }
+    }
+
     fn parse_use_self(&mut self) {
         if !self.lexer.has_token("::") {
             diagnostic!(
@@ -17378,6 +17681,21 @@ impl Parser {
             None
         };
         let spec = self.parse_import_spec(&format!("self::{module}"));
+        if spec.is_none() && self.use_public {
+            self.refuse_bare_pub_use(&format!("self::{module}"));
+        } else if spec.is_none() && alias.is_none() {
+            // A bare `use` binds only a qualifier (@C98), and a package's own module has
+            // none (loft#976: the short qualifier is one slot shared by every package), so
+            // this form would bind nothing at all.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`use self::{module};` binds nothing — a bare `use` brings in only a qualifier, \
+                 and a package's own module has none.  Write `use self::{module}::*;` for its \
+                 names, `use self::{module}::(…);` for some, or `use self::{module} as <alias>;` \
+                 for a qualifier"
+            );
+        }
         let Some(pkg) = self.own_package_name() else {
             diagnostic!(
                 self.lexer,
@@ -17465,20 +17783,16 @@ impl Parser {
             } else if bare_qualifier {
                 self.data.use_alias(module, lib_source);
             }
-            // Same rule as a bare `use`: a plain one wildcard-imports, an explicit
-            // `::` spec is honoured, and an alias with neither gives ONLY the
-            // qualifier — the disambiguation escape hatch, which would be pointless
-            // if it also poured the names in bare.
-            let import_spec = match spec {
-                Some(s) => Some(s),
-                None if alias.is_some() => None,
-                None => Some(ImportSpec::Wildcard),
-            };
+            // Same rule as a bare `use`: only an explicit `::` spec brings names in
+            // unqualified; without one the module is reached through its qualifier
+            // (@C98).
+            let import_spec = spec;
             if let Some(import_spec) = import_spec {
                 self.pending_imports.push(PendingImport {
                     for_source: self.data.source,
                     lib_source,
                     spec: import_spec,
+                    public: self.use_public,
                 });
             }
             if !self.lexer.has_token(";") {

@@ -57,13 +57,13 @@ fn home_with_package(tag: &str) -> PathBuf {
     );
     write(
         &home.join("libs/probepkg/src/probepkg.loft"),
-        "use probedep;\n\
+        "pub use probedep::*;\n\
          pub fn probe_id() -> text { return \"probepkg-0.1.0\"; }\n\
          pub fn probe_sum(n: integer) -> integer { dep_sum(n) }\n",
     );
     write(
         &home.join("proj/s.loft"),
-        "use probepkg;\nfn main() { println(\"{probe_id()} {probe_sum(10)}\"); }\n",
+        "use probepkg::*;\nfn main() { println(\"{probe_id()} {probe_sum(10)}\"); }\n",
     );
     home
 }
@@ -127,6 +127,7 @@ fn recorded_artifacts(home: &Path) -> Vec<String> {
 /// c2 — that cdylib removed: a named miss, the same answer, and the run after warms again.
 /// c3 — `LOFT_NO_NATIVE_LIBS=1` over a bundle marked native: a miss and the
 /// same answer, never a replay of the native marks.
+/// @C70 — no per-library IR snapshot; a library is recorded as its artifacts.
 #[test]
 fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     let home = home_with_package("warm");

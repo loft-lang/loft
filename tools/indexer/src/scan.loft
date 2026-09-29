@@ -9,7 +9,7 @@
 // reference in indexable files, and prints one JSON-Lines record
 // per match to stdout.  The families are `@P<n>`,
 // `@PLAN<n>(-<seg>)*`, `@PLN<n>` (the CANONICAL plan tag),
-// `@GH<n>`, `@FR-<Rule>`, `@F<n>` / `@I<n>` and `@AAA-###`.
+// `@GH<n>`, `@FR-<Rule>`, `@C<n>`, `@F<n>` / `@I<n>` and `@AAA-###`.
 //
 // Keeping that list right is load-bearing rather than tidy: this
 // sentence claimed `@P` and `@PLAN` alone while `@PLN` had become
@@ -211,6 +211,25 @@ fn read_valid_plans() -> vector<text> {
     out
 }
 
+// Build the set of design-decision ids from the register's headings: every
+// `## C<digits>[.<Upper>] — …` line of DESIGN_DECISIONS.md defines one, so an
+// `@C<n>` citation resolves exactly when its entry exists.  Returned bare (`98`,
+// `54.D`), the shape `tag_is_valid` compares against.
+fn read_valid_decisions() -> vector<text> {
+    out: vector<text> = [];
+    f = file("doc/claude/DESIGN_DECISIONS.md");
+    if f.format == Format.NotExists { return out; }
+    for line in f.content().split('\n')? {
+        ll = line.size();
+        if ll < 5 || !line.starts_with("## C") || !is_digit_leaf(line[4]) { continue; }
+        j = 4;
+        while j < ll && is_digit_leaf(line[j]) { j = j + 1; }
+        if j + 2 < ll && line[j] == '.' && line[j + 1] >= 'A' && line[j + 1] <= 'Z' { j = j + 2; }
+        if j < ll && line[j] == ' ' { out += [line[4..j]]; }
+    }
+    out
+}
+
 fn walk_plan_dirs(root: text, out: vector<text>) {
     f = file(root);
     if f.format == Format.NotExists { return; }
@@ -255,11 +274,13 @@ fn set_contains(valid_set: vector<text>, needle: text) -> boolean {
 // rule" of parent-plan-only validation).  Legacy bare-name
 // refs (`legacy:P<n>`, `legacy:plan-<n>`) are accepted as-is
 // (the migration index doesn't gate them — same as scan.sh).
-fn tag_is_valid(tag: text, valid_pids: vector<text>, valid_plans: vector<text>) -> boolean {
+fn tag_is_valid(tag: text, valid_pids: vector<text>, valid_plans: vector<text>,
+                valid_decisions: vector<text>) -> boolean {
     tlen = tag.size();
     if tlen == 0 { return true; }
     // Legacy refs are never marked broken.
     if tag.starts_with("legacy:") { return true; }
+    if tlen > 2 && tag.starts_with("@C") && is_digit_leaf(tag[2]) { return set_contains(valid_decisions, tag[2..tlen]); }
     if tag.starts_with("@PLAN") {
         // Extract the digit prefix immediately after @PLAN.
         i = 5;
@@ -394,6 +415,7 @@ const BYTE_H_UPPER  = 72;   // 'H'
 const BYTE_F_UPPER  = 70;   // 'F'  (@F<n> — loft-lang/features feature)
 const BYTE_R_UPPER  = 82;   // 'R'  (@FR-<Rule> — a formal-rule citation)
 const BYTE_I_UPPER  = 73;   // 'I'  (@I<n> — loft-lang/features infrastructure)
+const BYTE_C_UPPER  = 67;   // 'C'  (@C<n> — a design decision in DESIGN_DECISIONS.md)
 const BYTE_P_LOWER  = 112;  // 'p'
 const BYTE_L        = 76;   // 'L'
 const BYTE_A        = 65;   // 'A'
@@ -559,6 +581,31 @@ fn scan_line(file_path: text, line_no: integer, line: text, out: vector<RawRef>)
             }
             // Trailing boundary failed; skip past `@GH` and resume.
             i = i + 3;
+            continue;
+        }
+        // @C<digits>[.<Upper>] — a DESIGN-DECISION citation (@PLN175): a code, doc or
+        // test site that keeps a decision of DESIGN_DECISIONS.md cites it, so
+        // `idx tag:@C98` answers "where does loft hold this decision?".  Boundary-exact  <!--noindex-->
+        // like the others: `@C3` never matches inside `@C38`.  The dotted form exists for  <!--noindex-->
+        // one id (`C54.D`) and is taken only when a non-word byte follows the letter, so
+        // a sentence ending `@C98.` stays `@C98`.  Local, so validated (`tag_is_valid`).  <!--noindex-->
+        if i + 3 <= n && line.byte_at(i + 1) == BYTE_C_UPPER
+            && is_digit_b(line.byte_at(i + 2)) {
+            j = i + 2;
+            while j < n && is_digit_b(line.byte_at(j)) { j = j + 1; }
+            if j + 1 < n && line.byte_at(j) == BYTE_DOT && is_upper_b(line.byte_at(j + 1))
+                && (j + 2 == n || !is_word_char_b(line.byte_at(j + 2))) {
+                j = j + 2;
+            }
+            if j == n || !is_word_char_b(line.byte_at(j)) {
+                tag = line[i..j];
+                if !ctx_escaped { ctx_esc = json_escape(line); ctx_escaped = true; }
+                out += [RawRef{tag: tag, file: file_path, line: line_no, ctx_escaped: ctx_esc}];
+                i = j;
+                continue;
+            }
+            // Trailing boundary failed (`@C98x`); skip past `@C` and resume.  <!--noindex-->
+            i = i + 2;
             continue;
         }
         // @FR-<Rule> — a FORMAL-RULE citation (CLAUDE.md § Tracker tags;
@@ -1127,7 +1174,7 @@ fn emit_summary(s: Summary) {
 // the loft output via `jq +` when the full pipeline is wired.
 fn emit_bucketed(rows: vector<RawRef>, links: vector<LinkRef>,
                  valid_pids: vector<text>, valid_plans: vector<text>,
-                 s: Summary) {
+                 valid_decisions: vector<text>, s: Summary) {
     sets = DistinctSets {};
     for r in rows {
         if sets.tags[r.tag] == null {
@@ -1188,7 +1235,7 @@ fn emit_bucketed(rows: vector<RawRef>, links: vector<LinkRef>,
     if !first { println(","); }
     first = false;
     println("  \"broken\": [");
-    s.broken_refs = emit_broken_array(rows, valid_pids, valid_plans);
+    s.broken_refs = emit_broken_array(rows, valid_pids, valid_plans, valid_decisions);
     println("");
     println("  ]");
     // Broken markdown links.  Same always-emit discipline.
@@ -1278,8 +1325,10 @@ fn emit_link_bucket(target: text, links: vector<LinkRef>) {
 // treats both symmetrically (mirrors scan.sh's REF_PIDS / REF_PLANS
 // extraction, which strips the optional `legacy:` prefix before
 // the set-diff against VALID_PIDS / VALID_PLANS).
-fn tag_is_broken(tag: text, valid_pids: vector<text>, valid_plans: vector<text>) -> boolean {
+fn tag_is_broken(tag: text, valid_pids: vector<text>, valid_plans: vector<text>,
+                 valid_decisions: vector<text>) -> boolean {
     tlen = tag.size();
+    if tlen > 2 && tag.starts_with("@C") && is_digit_leaf(tag[2]) { return !set_contains(valid_decisions, tag[2..tlen]); }
     work = tag;
     wlen = tlen;
     if tag.starts_with("legacy:") {
@@ -1314,10 +1363,10 @@ fn tag_is_broken(tag: text, valid_pids: vector<text>, valid_plans: vector<text>)
 // `"broken": [ ... ]` brackets so this prints only the inner
 // objects, comma-separated.  Mirrors scan.sh's BROKEN_JSON shape.
 fn emit_broken_array(rows: vector<RawRef>, valid_pids: vector<text>,
-                     valid_plans: vector<text>) -> integer {
+                     valid_plans: vector<text>, valid_decisions: vector<text>) -> integer {
     distinct = DistinctSets {};
     for r in rows {
-        if !tag_is_broken(r.tag, valid_pids, valid_plans) { continue; }
+        if !tag_is_broken(r.tag, valid_pids, valid_plans, valid_decisions) { continue; }
         // scan.sh's broken bucket lists only the canonical `@P*` /
         // `@PLAN*` keys.  Legacy `legacy:P*` / `legacy:plan-*` refs
         // are tracked in their own buckets and the migration metering
@@ -1766,6 +1815,7 @@ fn main() {
     if profile { t_now = ticks(); eprintln("  perf: read_valid_pids {(t_now - t_prev) / 1000}ms"); t_prev = t_now; }
     valid_plans = read_valid_plans();
     if profile { t_now = ticks(); eprintln("  perf: read_valid_plans {(t_now - t_prev) / 1000}ms"); t_prev = t_now; }
+    valid_decisions = read_valid_decisions();
 
     rows: vector<RawRef> = [];
     links: vector<LinkRef> = [];
@@ -1789,7 +1839,7 @@ fn main() {
     bucketed = env_variable("LOFT_INDEX_BUCKETED");
     if bucketed == "1" {
         s = Summary {};
-        emit_bucketed(rows, links, valid_pids, valid_plans, s);
+        emit_bucketed(rows, links, valid_pids, valid_plans, valid_decisions, s);
         if profile { t_now = ticks(); eprintln("  perf: emit_bucketed {(t_now - t_prev) / 1000}ms"); t_prev = t_now; }
         emit_summary(s);
         if profile { t_end = ticks(); eprintln("  perf: total {(t_end - t_start) / 1000}ms"); }
@@ -1800,7 +1850,7 @@ fn main() {
     // (~270 pids + ~50 plans).  ~1.3M comparisons on the loft
     // suite — well under a second on the warm-cache path.
     for r in rows {
-        v = tag_is_valid(r.tag, valid_pids, valid_plans);
+        v = tag_is_valid(r.tag, valid_pids, valid_plans, valid_decisions);
         println(emit_row(r.tag, r.file, r.line, r.ctx_escaped, v));
     }
     // Emit markdown link rows after the tag rows.  Downstream

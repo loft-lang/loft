@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C128 — a yielded lambda over a droppable is refused.
 //
 // The REFUSED half of `1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft`: a yielded
 // lambda takes a copy of every heap value it captures (loft#1676), and a value that owns a

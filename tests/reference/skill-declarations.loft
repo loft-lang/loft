@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Field modifiers, § Variable declarations, § `const` variables,
+// § Structs, § Enums, § Hash collections — the declaration forms the cheat sheet lists.
+
+struct Cell { id: integer }
+struct Coord { q: integer, r: integer }
+
+struct Point {
+    const id: integer,           // binding-const PREFIX: write-once at construction
+    const cells: vector<Cell>,   // BUILDER: slot write-once, `cells += […]` still grows it
+    coord: const Coord,          // value-const on the TYPE: frozen value (contents read-only)
+    x: float,                    // non-null by default (DN1) — no `not null` needed
+    r: integer limit(0, 255),
+    label: text = "default",
+    area: float virtual($.x * 2.0),
+    note: text?,                 // append `?` to ALLOW null
+}
+
+fn test_the_field_modifiers_declare() {
+  p = Point { id: 1, coord: Coord { q: 0, r: 0 }, x: 1.5, r: 200 };
+  p.cells += [Cell { id: 9 }];
+  assert(p.label == "default" and p.note == null and p.area == 3.0 and len(p.cells) == 1, "defaults, null, virtual, builder");
+}
+
+fn test_a_first_assignment_declares() {
+  x = 5;
+  s = "hello";
+  f = 3.14;
+  v: vector<integer> = [];
+  n: integer? = null;             // a null needs a NULLABLE type; `null as integer` is a
+                                  // compile error (cannot cast null to non-null integer)
+  assert(x == 5 and s == "hello" and f == 3.14 and len(v) == 0 and n == null, "five declarations");
+}
+
+fn test_a_const_local_holds_any_type() {
+  const x = 5;       // immutable local — reassignment is a compile error
+  const t = "hello";  // works for any type
+  assert(x == 5 and t == "hello", "const locals");
+}
+
+struct Item { name: text, count: integer }
+
+fn test_a_struct_literal_and_a_field_write() {
+  item = Item { name: "foo", count: 0 };
+  item.count += 1;
+  assert(item.count == 1, "the write landed");
+}
+
+enum Color { Red, Green, Blue }
+
+fn test_a_variant_is_qualified_when_it_defines_a_variable() {
+  c = Color.Red;                 // qualify when DEFINING a new variable
+  // ordering follows declaration order: Red < Green < Blue
+  assert(c == Color.Red and Color.Red < Color.Green and Color.Green < Color.Blue, "qualified, and ordered");
+}
+
+enum Shape {
+    Circle { radius: float },
+    Rect   { w: float, h: float },
+}
+fn area(self: Circle) -> float { 3.14159 * self.radius * self.radius }
+fn area(self: Rect)   -> float { self.w * self.h }
+
+fn test_a_variant_method_dispatches() {
+  s = Circle { radius: 2.0 };
+  a = area(s);   // dispatches to correct variant
+  assert(a > 12.56 and a < 12.57, "the Circle arm");
+  assert(area(Rect { w: 2.0, h: 3.0 }) == 6.0, "the Rect arm");
+}
+
+struct Entry  { key: text, value: integer }
+struct Table  { data: hash<Entry[key]> }
+
+fn test_a_hash_field_is_keyed_by_its_declaration() {
+  seen = "";
+  t = Table { data: [] };
+  t.data += [Entry { key: "x", value: 1 }];
+  e = t.data["x"];
+  if e == null { seen = "not found"; }
+  else { e.value += 1; }
+  assert((t.data["x"].value ?? -1) == 2 and seen == "", "found, and written through the view");
+  t.data["x"] = null;   // remove entry
+  t.data += [Entry { key: "b", value: 2 }, Entry { key: "a", value: 1 }];
+  for row in t.data { seen += row.key; }  // iterates in key order (C60)
+  assert(seen == "ab" and t.data["x"] == null, "removed, then walked in key order");
+}

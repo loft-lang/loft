@@ -122,6 +122,7 @@ fn pln22_phase3_use_as_aliasing() {
 /// @PLN22 Phase 4 — grouped selective import `use lib::(a as x, b);`.  Parses a
 /// main file that imports two names from `enumlib` in one parenthesised group,
 /// with per-name aliases, and asserts both bind.
+/// @C76 — selective imports group with `()`.
 #[test]
 fn pln22_phase4_grouped_import() {
     let s = sep_str();
@@ -139,6 +140,7 @@ fn pln22_phase4_grouped_import() {
 
 /// @PLN22 Phase 4 — the flat comma list `use lib::a, b` is dropped; multiple
 /// names must be parenthesised.  Parsing the flat form must produce an error.
+/// @C76 — the flat comma list is refused.
 #[test]
 fn pln22_phase4_flat_list_rejected() {
     let s = sep_str();
@@ -164,6 +166,7 @@ fn pln22_phase4_flat_list_rejected() {
 /// it is module-scoped (reached as `c97_shadowlib::clamp`) and does NOT trigger the C95
 /// "Cannot redefine" error, while the bare name stays the stdlib's.  This is the fix that
 /// lets the stdlib grow without breaking a shipped library (the shapes/time break).
+/// @C97 — a library's public symbols live under its module.
 #[test]
 fn pln102_c97_library_may_define_a_stdlib_name() {
     let s = sep_str();
@@ -291,6 +294,7 @@ fn issue940_the_lint_has_an_opt_out() {
 /// @PLN13 C101 — `std`/`core` are reserved package names (a library may not claim a
 /// language-namespace name), and `std::name` is the stdlib's qualified form — the escape
 /// hatch that still reaches a stdlib symbol shadowed by a user def or a `use lib::*`.
+/// @C101 — `std`/`core` are reserved; `std::name` is the stdlib's qualified form.
 #[test]
 fn pln13_c101_reserved_names_and_std_qualifier() {
     // The canonical reserved list refuses the namespace names, admits ordinary ones.
@@ -480,6 +484,7 @@ fn an_unresolvable_call_names_the_package_that_declares_the_method() {
 /// Run on BOTH backends through the binary rather than parsed in-process: the
 /// resolution is the parser's, but the values are what a consumer sees, and
 /// only running proves the call did not silently answer the local.
+/// @C112 — a local may shadow a library function.
 #[test]
 fn pln102_c98_a_local_may_shadow_a_library_function() {
     let s = sep_str();
@@ -640,14 +645,14 @@ fn issue1080_two_different_files_of_one_name_are_still_distinct() {
 ///
 /// The issue reported the check as unreliable: it fires in a minimal package and not in a
 /// real one "with the same ingredients". The ingredients differ in exactly one axis, and
-/// it is the IMPORT FORM. A bare `use dep;` puts every public name into this source's
-/// namespace, so declaring one of them again is a genuine redefinition and is refused; a
-/// SELECTIVE `use dep::(a, b);` imports only what it names, so the name is not in this
-/// source at all and a local declaration of it is an ordinary, unambiguous definition —
-/// which is the coexistence @PLN102 C97 blessed. Both behaviours are right; the reporting
-/// package used the selective form, which the issue transcribed as the bare one.
+/// it is the IMPORT FORM. A wildcard `use dep::*;` puts every public name into this
+/// source's namespace, so declaring one of them again is a genuine redefinition and is
+/// refused; a SELECTIVE `use dep::(a, b);` imports only what it names, and a bare
+/// `use dep;` imports no name at all — only the `dep::` qualifier (@C98) — so a local
+/// declaration of any other name is an ordinary, unambiguous definition, which is the
+/// coexistence @PLN102 C97 blessed.
 ///
-/// The first two cells pin that axis so neither regime can drift into the other. The
+/// The first three cells pin that axis so no regime can drift into another. The
 /// third is the defect the investigation did turn up: when two live types share a name,
 /// `expected Frame, got Frame` named them identically and left the reader nothing to go
 /// on. Naming both DECLARATION sites is the one case where the position of a type, rather
@@ -688,14 +693,26 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
         )
     };
 
-    // A — the bare import puts `Frame` in this source, so declaring it again is refused.
+    // A — the wildcard puts `Frame` in this source, so declaring it again is refused.
     let wildcard = run(
         "wildcard.loft",
-        "use depa;\nstruct Frame { fm_x: float }\nfn main() { print(\"{depa_helper()}\") }\n",
+        "use depa::*;\nstruct Frame { fm_x: float }\nfn main() { print(\"{depa_helper()}\") }\n",
     );
     assert!(
         wildcard.contains("conflicts with"),
-        "a bare `use depa;` imports `Frame`, so a local one is a redefinition: {wildcard}"
+        "`use depa::*;` imports `Frame`, so a local one is a redefinition: {wildcard}"
+    );
+
+    // A2 — the bare import brings in only the `depa::` qualifier (@C98), so the local
+    // `Frame` is ordinary and the library is reached through its qualifier.
+    let bare = run(
+        "bare.loft",
+        "use depa;\nstruct Frame { fm_x: float }\n\
+         fn main() { f = Frame { fm_x: 6.0 }; print(\"local={f.fm_x} dep={depa::depa_helper()}\") }\n",
+    );
+    assert!(
+        bare.contains("local=6 dep=1"),
+        "a bare `use depa;` leaves every name free, so the LOCAL `Frame` is used: {bare}"
     );
 
     // B — the selective import does not, so the local `Frame` is ordinary and is USED.
@@ -717,9 +734,9 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
     // C — two live `Frame`s meeting at a call must be told apart by their declarations.
     let clash = run(
         "clash.loft",
-        // `Frame` here is depa's (bare import); `takes_frame` is imported by NAME only,
-        // so depb's `Frame` never enters this source — the two types meet at the call.
-        "use depa;\nuse depb::(takes_frame);\n\
+        // `Frame` here is depa's (wildcard import); `takes_frame` is imported by NAME
+        // only, so depb's `Frame` never enters this source — the two types meet at the call.
+        "use depa::*;\nuse depb::(takes_frame);\n\
          fn main() { print(\"{takes_frame(Frame { fa_x: 1.0 })}\") }\n",
     );
     assert!(
@@ -758,7 +775,7 @@ fn a_library_s_bounded_generic_does_not_swallow_a_same_named_struct() {
     let main = dir.join("main.loft");
     std::fs::write(
         &main,
-        "use tvboundlib;\nstruct T { z: integer }\nfn main() { println(\"[{T{z:9}}] {render(4)}\"); }\n",
+        "use tvboundlib::*;\nstruct T { z: integer }\nfn main() { println(\"[{T{z:9}}] {render(4)}\"); }\n",
     )
     .expect("write main");
     let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
@@ -815,8 +832,8 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
     let main = dir.join("main.loft");
     std::fs::write(
         &main,
-        "use holdera;\n\
-         use holderb;\n\
+        "use holdera::*;\n\
+         use holderb::*;\n\
          struct T { z: integer }\n\
          fn OpEq(self: T, other: T) -> boolean { self.z == other.z }\n\
          fn to_text(self: T) -> text { \"T<{self.z}>\" }\n\

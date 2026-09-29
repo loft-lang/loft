@@ -24,7 +24,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column
 > showed the stdlib being re-parsed under memcheck in every one of 1 753 runs and a handful of
 > store-ceiling guards running into the per-run limit.  Parsing once (a warm bundle) and planning
-> the runs from a plain pre-pass took the work from 20 046 s to 11 913 s — TESTING.md § Recipe
+> the runs from a plain pre-pass took the work from 20 046 s to 11 913 s — TEST_ENVIRONMENTS.md § Recipe
 > (valgrind).  Profiling the slow files also found four defects, a quadratic interpreter path
 > among them, which a longer limit would have kept hidden.
 >
@@ -172,7 +172,7 @@ several ad-hoc lint checks and a dozen full-gate runs before anything reported i
 Run `cargo clippy --release --all-targets -- -D warnings` when you want the answer `make ci`
 will give.
 
-This is the gate-level twin of TESTING.md § How a guard reads green: a channel that reports
+This is the gate-level twin of GUARDS.md § How a guard reads green: a channel that reports
 success while measuring nothing. It cost nothing on the day it was noticed because the two lints
 were cosmetic — but nothing about the mechanism was limited to cosmetic lints, and for as long as
 it stood, a green `make ci` was evidence about the test suite and about nothing else.
@@ -237,6 +237,12 @@ binary and the artefact it links have to come from one source state.
 This document is about the CI runner. A developer's complaint is different — *a local
 `make ci` costs ten minutes and blocks iteration* — and it has a different answer, so it is
 recorded separately rather than folded in.
+
+**A red gate is not re-run to verify its fix (owner, 2026-09-28).** Once a gate has named the
+tests it failed, what is left to check is those tests: rerun them alone
+(`cargo test --release --test <binary> <name>`, or `find_problems.sh --changed`) and push.  A
+test whose own retry passed in the gate (`TRY 2 PASS`) is rerun alone too, never by
+restarting the gate.
 
 **Measured on 24 cores.** Full run: **572 s**, of which `cargo nextest` is ~478–572 s and the
 three builds ~130 s. So the test step is the whole question.
@@ -422,7 +428,7 @@ main checkout stays free to iterate.
 unknown-mode` after `low space` lines and the linker with `cannot find lib<dep>.rlib`, both of
 which read as code faults; every gate therefore runs `scripts/disk_headroom.sh` first, which
 reclaims loft's own scratch, the incremental caches and — with no gate alive — this checkout's
-gate scratch until 20 GB is free, and refuses below 2 GB (TESTING.md § Scratch hygiene).  By
+gate scratch until 20 GB is free, and refuses below 2 GB (RUN_BOUNDS.md § Scratch hygiene).  By
 hand: `make disk-headroom`.
 
 **Run a 19-second triple FIRST when the change touches parser diagnostics, guards or docs.**
@@ -497,9 +503,11 @@ one test. The two levers that follow are behavioural, not code:
 1. **Do not run two gates at once.** A second checkout's `make ci` took this one from ~10 min to
    **19 min** (load 42 on 24 cores) and, the same morning, triggered the `systemd-oomd` kill that
    ended a session. Check `pgrep -af "make ci"` and its cwd first.
-2. **Do not use `make ci` as the iteration loop.** `./scripts/find_problems.sh --subject <name>`
-   is seconds; the full gate is the pre-commit check. Measured cost of getting this wrong: six
-   full gates in one day on a three-line change.
+2. **Do not use `make ci` as the iteration loop — nor as the answer to its own red.**
+   `./scripts/find_problems.sh --subject <name>` is seconds; the full gate runs once per change
+   whose reach you cannot bound, and a red one is followed by `scripts/ci-run.sh recheck`, not a
+   restart (§ After a red gate).  Measured cost of getting this wrong: six full gates in one day
+   on a three-line change, and on 2026-09-28 four in one afternoon on fixes to constants.
 
 ⚠ The general lesson is the one this document already teaches about JUnit `time` and did not
 apply to itself: **a recorded measurement is a claim with a date on it.** Re-measure before
@@ -540,6 +548,42 @@ Against 572 s that is noise, and it re-opens the starvation flake the group exis
 
 ⚠ 2 and 3 are not equivalent: 2 reduces what is checked, 3 does not. Prefer 3 if the
 serialiser turns out to be the cost, and measure it before choosing.
+
+### A cloud session: the disk is the limit, not the CPU (2026-09-28)
+
+A Claude Code on the web session runs on a fresh container with four cores, 15 GB of memory
+and a FIXED writable allowance, and every gate that died there died of the disk.  Measured
+in one session: the machine idle (load 0.02), a release build of `loft` in 2–3 minutes —
+and three runs killed mid-link, each leaving a log that ended without a verdict because the
+`echo exit` that would have written one failed too.  The symptoms to recognise, all of them
+disk: `ld terminated with signal 7 [Bus error]`, `No space left on device`, loft's own *low
+space in /var/tmp/loft-test-scratch* warning, a `--native` cell failing with a code-shaped
+message (CLAUDE.md § `make sweep-scratch`).  What filled it:
+
+| consumer | measured |
+|---|---|
+| `target/debug/deps` — every test binary of every dependency hash, 382 of them | 16 GB (`issues`: 225 MB, 96 MB of it debug sections) |
+| `target/debug/incremental` — rebuilt by every `cargo check`/`clippy` pass | 5 GB per pass |
+| `make falsify`'s control build, one full release target per ref | ~2 GB each, kept under `~/.cache/loft-falsify` |
+| `/tmp/loft_native_*`, the test scratch, `.loft/` caches beside probe files | hundreds of MB |
+
+Three things make it reliable, and the first two need nothing from the person:
+
+1. **The session-start hook** (`.claude/hooks/session-start.sh`, web sessions only): sets
+   `CARGO_INCREMENTAL=0` (each target is built once per session, so the cache is pure
+   cost), removes the previous session's incremental cache and falsify control builds,
+   runs `make sweep-scratch`, and prints the headroom.
+2. **`find_problems.sh` refuses a run that would not fit.**  A curated or full run needs
+   about 20 GB free (`LOFT_GATE_MIN_FREE_GB`, `0` switches it off); short of that it exits 2
+   before building anything and names what fits: a `--subject` run, the space to reclaim,
+   or the GitHub gate.  Note the trap that reaches this guard: `--changed` widens to the
+   whole curated set whenever the diff touches `src/main.rs` or `src/lib.rs`, which every
+   test binary depends on — a two-line edit there is a 16 GB run.
+3. **The full gate runs on GitHub, not here.**  The section below has the dispatch; a
+   session without `gh` uses the GitHub MCP tool (`actions_run_trigger`, `run_workflow`
+   on `ci.yml` with `os=ubuntu-latest`, then `actions_get` on the run).  Locally, keep to
+   `--subject <name>` and single `cargo test --test <name>` runs, and read `df -h /`
+   before each — the allowance never grows back except by deleting.
 
 ### When the local gate is unreliable, run the same gate on GitHub (2026-09-08)
 
@@ -588,6 +632,43 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `release-checklist` can read by sha.  Local tooling (`scripts/ci-run.sh`,
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
+
+## After a red gate: recheck, do not restart
+
+**The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
+it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A recheck builds on the
+last gate in this tree (`.ci-gate-head`, written by `start`) and runs, each timed:
+
+* the pre-flight — `cargo fmt --check`, QUALITY.md's audit rows against
+  `ir_walker_audit.py`, `check_doc_drift.sh` (`scripts/gate_preflight.sh`, ~15 s);
+* both clippy variants the gate runs, when Rust changed since the gate;
+* EXACTLY the tests the gate failed (`.ci-failed`, nextest `binary_id(=…) & test(=…)`);
+* `find_problems.sh --changed <gate sha>` — the subjects the change since the gate touches.
+
+A green recheck writes `.ci-recheck`, and `ci-run.sh status` shows it beside the gate verdict
+for as long as it describes HEAD.  The push then names both: *full gate on `<sha>`, and a
+recheck of the change since.*
+
+**When a new full gate IS owed** — the fix's reach is not known, so `--changed` cannot map it:
+a new refusal or warning, a type-inference or coercion change, a new op or builtin, a change to
+shared lifetime/codegen machinery.  `--changed` maps a PATH to a subject, and a change to what the
+compiler ACCEPTS can break a cell in a subject it never names (a new refusal broke three tests
+in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
+fixture, a derived row, formatting or a lint attribute is not that.
+
+**Why it had to be written down.** Every instruction on this box tied the gate to an EVENT —
+"before committing", "before every commit", "the pre-commit check" — and none said what to do
+after it went red, so each fixup commit read as a new tree owing a new gate.  Measured
+2026-09-28: four consecutive gates on one change, ended by rustfmt (after 279 s, because the
+gate rebuilt the native fixtures and wasm rlibs before running fmt — fmt now runs first), by
+clippy's `too_many_lines`, then by a derived audit row and a fixture test.  The pre-flight
+catches the first and the third before a gate is queued; `recheck` covers the fourth in the
+time of its two tests.
+
+**The pre-flight** runs in `ci-run.sh start` and refuses to queue a gate that would stop on one
+of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygiene` and
+`frontend_counts` through nextest — seconds of tests, minutes of compiling when the release
+test binaries are stale, so not the default).
 
 ## Where the 31 minutes actually are (2026-08-10) — measured, and one axis untried
 
@@ -1051,8 +1132,13 @@ required check keeps its exact meaning with no settings change.
 
 ### B. Sharding by HASH — tried, measured not to work
 
-**Do not reach for `nextest --partition`.** It was implemented and reverted, and
-the reason is recorded in `ci.yml`'s matrix comment:
+**Do not partition a set that holds a single-slot test group.** Hash partitioning of the
+WHOLE suite was implemented and reverted, and the reason is recorded in `ci.yml`'s matrix
+comment.  The `rest` legs are the exception that proves it: every single-slot group lives
+whole in `heavy`, so `rest` has none to scatter, and it is split `--partition slice:i/3` —
+a ROUND-ROBIN deal of the list, because slow tests cluster (one binary's cases sit side by
+side) and a hash can land a cluster on one leg.  `scripts/ci_timing.py` reports each leg's
+balance on every PR.  The original finding:
 
 > *Hash-partitioning was measured to NOT help: it balances by test COUNT not
 > duration and can't split a single slow test, so the few slow integration tests
@@ -1136,6 +1222,50 @@ library health, stale-plan audit, `lib-branch-report`.
 macOS spends 8m20s building before a test runs. `scripts/sccache_env.sh` exists
 and is unused in CI. Worth measuring after A–D; it is the next constraint once the
 suite stops dominating, not before.
+
+### F. The cache budget — a cache that is never restored is a cost, not a cache (2026-09-28)
+
+**Rule: everything `ci.yml` saves in one run must fit GitHub's 10 GB per-repo cache
+budget, with room for the nightlies — and it is saved on `main` only.** Over the budget,
+GitHub evicts least-recently-used entries, so an over-budget run evicts its own caches
+before the next run restores them. A branch can restore only its own caches and
+main's, so a branch save helps that branch alone and evicts main's, which every run uses.
+
+Measured on run 36421513313 and main's 36420537678: a PR run saved **24.8 GB**, a main
+run **39 GB** (`Linux-cargo` 13.8, `macOS-cargo` 9.8, the corpus binaries 9.1, three
+advisory jobs' own `target` caches ~3.5 each). No run restored a cargo cache — every
+leg's `Build` compiled all 474 crates cold (331 s), and the release, wasm-rlib and
+warm-up steps rebuilt on top of that, **~14 of the ~24 min per leg before a test ran**.
+
+What `ci.yml` does since:
+
+- **Saves on `main` only** (`github.ref == 'refs/heads/main'`); every other run restores.
+- **`target/loft-native-cache` is out of the Linux/macOS cargo cache.** The compiled
+  native test binaries are 9–13 GB, and their key includes the `libloft.rlib` content
+  hash (`tests/native.rs` `cache_key`), so any commit touching loft's source misses
+  all of them. The `corpus` shard's own cache of them is gone for the same reason.
+  Windows keeps its copy: that cache holds nothing else large.
+- **`index-hygiene` and `viewer-smoke` restore the `test` job's cache read-only.** They
+  build the same release `loft`; their own 3.5 GB caches only competed for the budget.
+  A restore matches only a save with the identical `path:` list, so theirs is a copy.
+- **The save key is the restore step's `cache-primary-key`.** A second
+  `hashFiles('**/Cargo.lock')` at save time also hashed the gitignored
+  `tests/fixtures/libs/*/native/Cargo.lock` the warm-up step creates, so the saved key
+  never matched the next run's exact-prefix restore key.
+
+**The other workflows follow the same rule.** Every cache step is a `restore` plus a
+`save` that runs on `main` only and not after an exact hit, so a nightly refreshes its
+cache and a PR, a tag or a probe branch reads it without writing. `branch-gates`
+(never on main), `api-compat` (PR only) and the nightly `index-hygiene` in `miri.yml`
+restore ci.yml's `test` cache read-only instead. The measured offenders were the
+nightly hygiene cache (3.3 GB), `macOS-v2-cargo` (6.1 GB from a branch push) and one
+357 MB `branchgate` entry per pushed branch. Two exceptions: `ci-probe.yml` measures
+a cold→warm pair on its own `probe-*` namespace and still saves from its branch, and
+`library-ci-reusable.yml` runs in the calling library's repository, against its budget.
+
+To check it holds: `gh api repos/loft-lang/loft/actions/cache/usage` after a main run, and
+the `Restore cargo registry and build` step of the NEXT PR run reading `Cache restored
+from key`, not `Cache not found`.
 
 ## The daily overview
 
@@ -1236,6 +1366,6 @@ best ratio, because macOS duplicates ubuntu exactly and costs ~50 % more to do i
 
 ## See also
 
-- [TESTING.md](TESTING.md) — the test framework, `LOFT_LOG`, targeted-suite map
+- [TESTING.md](TESTING.md) — the test framework; [RUNNING_TESTS.md](RUNNING_TESTS.md) — `LOFT_LOG`, targeted-suite map
 - [DEVELOPMENT.md](DEVELOPMENT.md) — workflow and where changes land
 - [PERFORMANCE.md](PERFORMANCE.md) — runtime benchmarks (not CI cost)

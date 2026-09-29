@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C127 — a narrow type without `?` has no null, so a value that may not fit is either refused,
+// where the author can be made to choose (`?? d`, `as u8?`), or takes the type's default with a
+// report.  This file is the first half: every route by which a plain `integer` can reach a `u8`
+// slot — a local, a parameter, a field, a vector element, and an explicit `as` — is refused.  The
+// compound step, the one shape the language cannot ask about, is
+// c127-a-compound-step-takes-the-default-and-says-so.loft.
+//
+// @falsified-at: none — a LOCK.  Each refusal predates this file; it records where the boundary
+//   is (every route refused), so a route that starts compiling in silence is caught.
+
+struct C127S { b: u8 }
+
+fn c127_big() -> integer { 300 }
+fn c127_take(b: u8) -> integer { b }
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+fn test_a_local() { x: u8 = c127_big(); assert(x == 0, "unreached"); }
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+fn test_a_parameter() { assert(c127_take(c127_big()) == 0, "unreached"); }
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+fn test_a_field() { s = C127S { b: c127_big() }; assert(s.b == 0, "unreached"); }
+
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+fn test_an_element() { v: vector<u8> = []; v += [c127_big()]; assert(len(v) == 1, "unreached"); }
+
+// @EXPECT_ERROR: narrowing cast from integer to u8 may not fit
+fn test_an_explicit_cast() { x = c127_big() as u8; assert(x == 0, "unreached"); }

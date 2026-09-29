@@ -3,7 +3,7 @@
 //
 // The pack round-trip: what is written comes back, byte for byte, and a key can be
 // read out of the bulk half without reading the rest of it.
-use assets;
+use assets::*;
 
 /// A deterministic byte pattern.  A run of zeroes would pass a loader that returned
 /// nothing, so every fixture byte depends on its own index.

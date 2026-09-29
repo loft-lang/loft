@@ -84,7 +84,7 @@ fn a_function_the_tests_never_call_is_named() {
         "pos",
         "pub fn used(a: integer) -> integer { a + 1 }\n\
          pub fn never_called(a: integer) -> integer { a + 2 }\n",
-        "use pos;\nfn test_one() { assert(used(1) == 2, \"used\"); }\n",
+        "use pos::*;\nfn test_one() { assert(used(1) == 2, \"used\"); }\n",
     );
     assert!(
         out.contains("never_called"),
@@ -109,7 +109,7 @@ fn a_fully_covered_package_says_so() {
     let out = coverage_of(
         "full",
         "pub fn a(x: integer) -> integer { x + 1 }\npub fn b(x: integer) -> integer { x + 2 }\n",
-        "use full;\nfn test_all() { assert(a(1) == 2 && b(1) == 3, \"both\"); }\n",
+        "use full::*;\nfn test_all() { assert(a(1) == 2 && b(1) == 3, \"both\"); }\n",
     );
     assert!(
         out.contains("all") && out.contains("functions were entered"),
@@ -131,7 +131,7 @@ fn methods_are_counted_and_named_readably() {
         "meth",
         "pub fn touched(self: integer) -> integer { self + 1 }\n\
          pub fn untouched(self: integer) -> integer { self + 2 }\n",
-        "use meth;\nfn test_m() { x = 1; assert(x.touched() == 2, \"touched\"); }\n",
+        "use meth::*;\nfn test_m() { x = 1; assert(x.touched() == 2, \"touched\"); }\n",
     );
     assert!(
         out.contains("untouched"),
@@ -151,7 +151,7 @@ fn an_iterated_generator_counts_as_entered() {
     let out = coverage_of(
         "gen",
         "pub fn counter(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }\n",
-        "use gen;\nfn test_g() { t = 0; for v in counter(3) { t = t + v; } assert(t == 3, \"sum\"); }\n",
+        "use gen::*;\nfn test_g() { t = 0; for v in counter(3) { t = t + v; } assert(t == 3, \"sum\"); }\n",
     );
     assert!(
         !out.contains("counter"),
@@ -168,7 +168,7 @@ fn a_generator_that_is_never_iterated_stays_uncovered() {
         "genq",
         "pub fn made(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }\n\
          pub fn other(x: integer) -> integer { x }\n",
-        "use genq;\nfn test_q() { assert(other(1) == 1, \"other\"); }\n",
+        "use genq::*;\nfn test_q() { assert(other(1) == 1, \"other\"); }\n",
     );
     assert!(
         out.contains("made"),

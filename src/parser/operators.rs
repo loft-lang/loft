@@ -3667,6 +3667,18 @@ impl Parser {
             // `@FR-N-Store` exists to refuse.  Keeping the members makes that conversion the
             // unbox the arm above already names, whose equality now holds on both sides.
             Type::Tuple(members)
+        } else if let Some(joined) = self
+            .variant_parent_enum(lhs_type.base())
+            .filter(|e| self.joins_to_enum(e, lhs_type.base(), &rhs_type.unrewritten()))
+        {
+            // @FR-C-Var — a default that is ANOTHER variant of the value's enum, or the enum
+            // itself, joins the two to the enum, as `if`/`else` joins them: `mc(i) ??
+            // Shape::Square {…}` is a `Shape`.  Typed as the value's own variant, the default
+            // was asked to convert between two siblings, which nothing licenses, and a
+            // correct discharge was refused (loft#1720 — the workaround that issue names).
+            // `unrewritten`: a struct-literal default carries the built-in-place marker on
+            // pass 1, and both passes must pick the same type.
+            joined
         } else {
             lhs_type.clone()
         };
@@ -3864,7 +3876,15 @@ impl Parser {
             // heap subject keep the skip_free hand-off, so their result stays the
             // bare owner.
             if owned_vector && let Type::Vector(elm, _) = &result_type {
+                // loft#1721 — the result is whichever arm ran, so a closure that captures it
+                // may hold the DEFAULT arm's store, not `__ncc_N`'s: recorded as the temp's join
+                // owners, which the capture analysis reads (`scopes::capture_join_candidates`).
+                // Not in the view's deps: naming the default's store there made store
+                // confinement free it at its own block's exit while a plain bind still held it.
                 let view = Type::Vector(elm.clone(), crate::data::Deps::frame(vec![tmp]));
+                if !self.first_pass {
+                    self.vars.add_join_owners(tmp, &rhs_type.depend());
+                }
                 *code = v_block(vec![set_tmp, if_expr], view.clone(), "ncc");
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;
@@ -3990,7 +4010,10 @@ impl Parser {
             *ctp = base;
             return;
         }
-        let base = ctp.base().clone();
+        // @FR-B-Ref-Uniform — a `&τ?` parameter discharges like its `τ?` twin, so the default
+        // is the REFERENT's: through `peel_link`, as `??` peels the link.  Asked through
+        // `base()`, `c?` on a `&vector<T>?` was refused with "`&vector<T>?` has no default".
+        let base = ctp.peel_link().clone();
         // The single well-definedness check (the home `S{}` shares): a bare reference,
         // or a record with an un-defaulted non-null field or a bare enum field with no
         // explicit choice, has no default.  `x?` needing one there is a COMPILE error —

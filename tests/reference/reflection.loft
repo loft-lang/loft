@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § Reflection — `type_of` describes a value's type, `field_value` reads a
+// field by position, and `x#fields` walks the fields with their values.
+
+struct Row { id: integer, name: text }
+struct Person { id: integer, name: text }
+
+fn test_type_of_names_the_type_and_its_fields() {
+  row = Row { id: 1, name: "a" };
+  t = type_of(row);
+  println("{t.name} ({t.size} bytes)");
+  for f in t.fields { println("  {f.name}: {f.type_name} @{f.position}") }
+  fields = "";
+  for f in t.fields { fields += " {f.name}: {f.type_name} @{f.position}"; }
+  assert("{t.name} ({t.size} bytes)" == "Row (12 bytes)", "the name and the size");
+  assert(fields == " id: integer @0 name: text @8", "each field with its type and offset");
+}
+
+fn test_type_of_a_keyed_collection_names_its_keys() {
+  people: hash<Person[id]> = [];
+  keys = "";
+  t = type_of(people);                       // hash<Person[id]>
+  if t.collection == KeyedHash {
+    for k in t.keys { println("key {k.name} @{k.position}") }
+  }
+  for k in t.keys { keys += "key {k.name} @{k.position}"; }
+  assert(t.collection == KeyedHash and keys == "key id @0", "a hash, keyed on id");
+}
+
+fn test_field_value_reads_by_position() {
+  row = Row { id: 1, name: "a" };
+  out = "";
+  t = type_of(row);
+  for f in t.fields {
+    v = field_value(row, f.position);
+    if v.is_null { println("{f.name} is null") }
+    else if v.kind == TextKind { println("{f.name}={v.t}") }
+    else { println("{f.name}={v.i}") }
+  }
+  for f in t.fields {
+    v = field_value(row, f.position);
+    if v.kind == TextKind { out += "{f.name}={v.t};"; } else { out += "{f.name}={v.i};"; }
+  }
+  assert(out == "id=1;name=a;", "each field read back through its position");
+}
+
+fn test_fields_walks_values_with_their_kinds() {
+  m = Row { id: 1, name: "a" };
+  out = "";
+  for f in m#fields {
+    if f.value is FvText { v } { println("{f.name} = {v}") }
+    if f.value is FvInt  { v } { println("{f.name} = {v}") }
+  }
+  // A second walk under the SAME loop-variable name is its own binding (loft#1717).
+  for f in m#fields {
+    if f.value is FvText { v } { out += "{f.name} = {v};"; }
+    if f.value is FvInt  { v } { out += "{f.name} = {v};"; }
+  }
+  assert(out == "id = 1;name = a;", "the walk yields each field with its value");
+}

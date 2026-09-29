@@ -10,8 +10,8 @@
 // name that identifies nothing here, since it is exactly what several packages
 // declare — and to assert that the *stdlib* had made the method/free choice,
 // sending the reader to a file that never mentions `go`.
-use dupname_a;
-use dupmethod_b;
+use dupname_a::*;
+use dupmethod_b::*;
 
 fn main() {
   c = Chunk { ck_cx: 1, ck_cz: 2, ck_cells: 9 };

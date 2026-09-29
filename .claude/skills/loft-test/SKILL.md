@@ -218,7 +218,7 @@ specific `fn`.
 | `// @EXPECT_WARNING: <substring>` | Anywhere | Like `@EXPECT_ERROR` but for warnings — execution proceeds. |
 | `// @EXPECT_FAIL` | File-level (header) **or** fn-level (the comment block immediately above a `fn`) | Tolerate a panic.  File-level: parse / scope-check / runtime failures are accepted anywhere.  Fn-level: only the named fn's panic is tolerated; sibling fns still must pass.  Add a colon-trailing reason when known: `// @EXPECT_FAIL: native function not loaded`.  Native runs skip the file only for a FILE-LEVEL `@EXPECT_FAIL`; a fn-level one skips just that fn and the siblings still run natively (loft#1311). |
 | `// #warn <text>` | Anywhere | Older-style expected warning.  Still supported; `@EXPECT_WARNING:` is preferred for new tests. |
-| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft` | The falsification receipt: `make falsify GUARD=<file> REF=<commit>` proves the guard FAILS on the build it was written to catch, and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  TESTING.md § falsification. |
+| `// @falsified-at: <ref>` | Header — **GATED** for every `tests/scripts/*.loft` | The falsification receipt: `make falsify GUARD=<file> REF=<commit>` proves the guard FAILS on the build it was written to catch, and this records the answer (`@falsified-at: none — <reason>` when no such build exists).  `tests/doc_hygiene.rs` fails any scripts file without it (pre-existing files ride `tests/falsified.baseline`, a shrink-only ratchet).  GUARDS.md § A guard that never failed is not a guard. |
 
 **Diagnostic-format rule:** the `<substring>` for `@EXPECT_ERROR` and
 `@EXPECT_WARNING` is a substring match against the rendered diagnostic.
@@ -410,7 +410,7 @@ plans crossing parser+codegen+runtime), use the background full-run:
 `/tmp/loft_problems.txt` gets a structured summary (FAILED list,
 stdout blocks, SIGSEGV context, wrap-suite `--nocapture` re-run if
 a crash masks a `.loft` filename).  See
-[TESTING.md § Preferred shape](../../../doc/claude/TESTING.md) for the
+[RUNNING_TESTS.md § Preferred shape](../../../doc/claude/RUNNING_TESTS.md) for the
 full rationale.
 
 ---
@@ -499,7 +499,7 @@ adding a category (field, initialiser, macro arm) are documented in
 
 ### When NOT to use `LOFT_TRACE`
 
-- Runtime/bytecode debugging — use `LOFT_LOG` (TESTING.md).
+- Runtime/bytecode debugging — use `LOFT_LOG` (RUNNING_TESTS.md § LogConfig).
 - Loft-program-level logging — use `log_info` / `log_warn` /
   `log_error` from inside loft programs (STDLIB.md § Logging).
 - One-time diagnostic probes — temporary `eprintln!` is fine
@@ -509,7 +509,7 @@ adding a category (field, initialiser, macro arm) are documented in
 
 ## Cross-references
 
-- [TESTING.md](../../../doc/claude/TESTING.md) — runtime debugging knobs:
+- [RUNNING_TESTS.md](../../../doc/claude/RUNNING_TESTS.md) — runtime debugging knobs:
   `LogConfig`, `LOFT_LOG`, dump file format, `LOFT_DUMP_DEPTH`.
 - [ISSUE_TRACKING.md](../../../doc/claude/ISSUE_TRACKING.md) — where bugs
   live (open → GitHub Issues, closed → PROBLEMS.md archive) + the item

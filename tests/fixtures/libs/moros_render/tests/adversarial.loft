@@ -4,7 +4,7 @@
 // dispatch, match-on-struct-enum returning a value, deep chaining on
 // vector element fields).  If anything fails, the minimal reproducer
 // is exactly the test body.
-use moros_render;
+use moros_render::*;
 
 // ── Probe 1: unary `-f` on float in vertex coordinates ────────────
 

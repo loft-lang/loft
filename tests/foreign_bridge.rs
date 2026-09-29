@@ -40,7 +40,7 @@ fn fixture_built() -> bool {
 }
 
 const WRITE_REFUSED: &str = "\
-use native_pkg;
+use native_pkg::*;
 fn main() {
   f = ext_make_bytes_foreign(4);
   assert(f[1] == 1, \"read {f[1]}\");
@@ -52,7 +52,7 @@ fn main() {
 /// A grow of a foreign answer given beside a vector ARGUMENT (the answer took a store of
 /// its own, since the argument pinned the bridge's store).
 const GROW_REFUSED: &str = "\
-use native_pkg;
+use native_pkg::*;
 fn main() {
   c = ext_make_bytes(4);
   r = ext_reverse_foreign(c);

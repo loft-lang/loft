@@ -572,8 +572,41 @@ impl Stores {
     /// sequence (so it shares its deep-copy + linking machinery) plus a
     /// preceding remove.  `free_source` frees `value`'s store after the copy
     /// when it is a caller temp (the `0x8000` bit, as in `copy_record`).
-    pub fn set_keyed(&mut self, coll: &DbRef, value: &DbRef, db: u16, free_source: bool) {
-        self.insert_keyed_copy(coll, value, db, coll, db, u16::MAX);
+    ///
+    /// loft#1716 (`@FR-Col-Assign`) — `sub` is the SUBSCRIPT's key: the copy is placed under it and
+    /// its key fields are written to it, so `c[k] = v` reads back as `c[k]` whatever `v`'s own
+    /// key said.  A value that may live inside the collection (`s[5] = s[30]`) is snapshotted
+    /// first: the removal and the insert below move and grow that storage.  An empty `sub`
+    /// keeps the value's own key.
+    pub fn set_keyed(
+        &mut self,
+        coll: &DbRef,
+        value: &DbRef,
+        db: u16,
+        sub: &[Content],
+        free_source: bool,
+    ) {
+        // An absent value stores nothing and the slot keeps what it had — the promise the
+        // `K?`-into-`K` warning makes at `c[k] = c[absent]`.  It panicked in a store accessor.
+        if value.is_null() || value.store_nr == u16::MAX {
+            return;
+        }
+        let full = !sub.is_empty() && sub.len() == self.types[db as usize].keys.len();
+        let snapshot = if full && value.store_nr == coll.store_nr {
+            let content_tp = self.content(db);
+            let size = u32::from(self.size(content_tp));
+            let tmp = self.database(size);
+            self.copy_block(value, &tmp, size);
+            self.copy_claims(value, &tmp, content_tp);
+            Some(tmp)
+        } else {
+            None
+        };
+        let source = snapshot.unwrap_or(*value);
+        self.insert_keyed_copy_at(coll, &source, db, coll, db, u16::MAX, full.then_some(sub));
+        if let Some(tmp) = snapshot {
+            self.free(&tmp);
+        }
         if free_source
             && value.store_nr != coll.store_nr
             // Sentinel guard: the `allocations[..]` prechecks below index by store_nr, so a null
@@ -609,6 +642,22 @@ impl Stores {
         parent_tp: u16,
         field: u16,
     ) {
+        self.insert_keyed_copy_at(coll, value, db, parent, parent_tp, field, None);
+    }
+
+    /// [`Self::insert_keyed_copy`] under the key `sub` when one is given (loft#1716), written
+    /// into the copy's key fields before it is linked.
+    #[allow(clippy::too_many_arguments)]
+    fn insert_keyed_copy_at(
+        &mut self,
+        coll: &DbRef,
+        value: &DbRef,
+        db: u16,
+        parent: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        sub: Option<&[Content]>,
+    ) {
         let content_tp = match self.types[db as usize].parts {
             Parts::Hash(c, _)
             | Parts::Sorted(c, _)
@@ -619,7 +668,10 @@ impl Stores {
             _ => return,
         };
         let keys = self.types[db as usize].keys.clone();
-        let key = keys::get_key(value, &self.allocations, &keys);
+        let key = match sub {
+            Some(k) => k.to_vec(),
+            None => keys::get_key(value, &self.allocations, &keys),
+        };
         let existing = self.find(coll, db, &key);
         if existing.rec != 0 {
             // dedup: free the old record's nested heap, then unlink it.
@@ -649,6 +701,9 @@ impl Stores {
         let size = u32::from(self.size(content_tp));
         self.copy_block(value, &new, size);
         self.copy_claims(value, &new, content_tp);
+        if let Some(k) = sub {
+            keys::set_key(&new, &mut self.allocations, &keys, k);
+        }
         self.record_finish(parent, &new, parent_tp, field);
         // @P317 — LOFT_LOG=copy_check: warn if the keyed deep copy changed any
         // nested collection length (before the source-free below).

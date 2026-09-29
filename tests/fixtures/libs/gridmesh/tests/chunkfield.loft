@@ -6,7 +6,7 @@
 // relying on the plan-44 keyed-collection primitives: `+=` dedup-insert
 // (@P306), `if h[k]` membership, `f.dirty = []` clear (@P307 OpClearKeyed).
 
-use gridmesh;
+use gridmesh::*;
 
 // chunk_of partitions offset coords by `1 << shift` (shift 3 → 8/axis),
 // flooring correctly across the origin (negative coords).

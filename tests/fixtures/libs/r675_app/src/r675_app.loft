@@ -1,5 +1,5 @@
 // loft#675 — one more level, mirroring input → graphics → glb → mesh3d: the package
 // that RETURNS the dependency's struct sits in the middle of the chain, not at its head.
-use r675_use;
+use r675_use::*;
 
 pub fn app675(v: integer) -> P675 { return pick675(v); }

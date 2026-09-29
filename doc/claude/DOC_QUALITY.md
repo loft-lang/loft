@@ -608,6 +608,12 @@ gate here.  What is:
 13. **A small doc edit rides the branch it belongs to.**  Documentation ships in the same branch
     as the code it describes, in its own commit; a few lines of docs never get a PR, a cycle,
     or a question of their own ([DEVELOPMENT.md § Documentation updates](DEVELOPMENT.md)).
+14. **A plan's docs belong to its own agent.**  `doc/claude/plans/` and `lib_plans/` are kept
+    under this contract by the agent working that plan, not by the reviewer's burn-down: the
+    `make docs-lint` report, its baseline and worklist, and `make file-sizes` leave them out.
+    The edit hook and the PR gate still apply, because there the one reading a finding is the
+    plan's own agent.  Another stream edits a plan doc only to keep a link or pointer into a
+    moved section resolving.
 
 ---
 

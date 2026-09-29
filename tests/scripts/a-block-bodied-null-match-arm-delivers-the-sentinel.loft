@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: is stored into the return value of the non-null type
+// ↑ This file covers a function declared NON-null whose branch returns `null` — still legal,
+// and `(N-Join)` + `(N-Store)` warn it (loft#1714).  The declaration stays non-null on purpose:
+// the `-> T?` spelling lowers through a different return path, which is not what this covers.
 //
 // A `null` arm of a COLLECTION-valued `match` must deliver the typed sentinel whether it is
 // written bare (`0 => null`) or as a BLOCK (`0 => { null }`).
@@ -60,20 +64,7 @@ fn test_many_calls_neither_leak_nor_accumulate() {
   }
   assert(t == 20, "ten null arms and twenty one-element vectors sum to 20, got {t}");
 }
-// ⚠ NOT FIXED HERE, and deliberately not guarded: the VECTOR and TUPLE lowerings have the
-// same symptom from a DIFFERENT cause, and the fix for them is not settled.  They promote
-// `result_type` out of `Void` but not out of `Null`, so a first `null` arm pins the chain to
-// `Null` and every later arm's type is ignored:
-//
-//     fn f(t: (integer, integer)) -> vector<integer> { match t { (0,_) => { null }, (a,_) => { [a] } } }
-//     f((4, 9))   // null — should be [4]
-//
-// Adding `|| result_type == Type::Null` there fixes the wrong VALUE and simultaneously
-// changes what the NULL arm delivers, from the null sentinel to an allocated empty vector.
-// Which of those two is right is NOT obvious, and both readings I tried first were wrong.
-// `(H-RefNull)` calls a collection-typed null the per-type sentinel; but
-// `materialize_null_slice_arms` (@PLN85) deliberately rewrites a null slice-match arm to a
-// FRESH empty vector, "so a `[]` arm bound to a local … is a real `DbRef`, not a bare `null`
-// native emits as `()`".  So today's sentinel answer here is the BUG bypassing that
-// materialisation, not the rule being honoured.  Reconciling the two is an owner call with
-// two documented mechanisms behind it — filed as loft#1711 rather than forced.
+// The VECTOR and TUPLE lowerings had the same symptom from a different cause (a first `null`
+// arm pinned their chain to `Null`), and the vector chain rewrote a null arm into `[]`: both
+// are guarded, with every chain kind side by side, in
+// a-null-or-empty-match-arm-answers-alike-in-every-chain.loft (loft#1711).

@@ -1,0 +1,46 @@
+diff --git a/src/data.rs b/src/data.rs
+index 2d4efccce..430bfac11 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -11669,9 +11669,8 @@ impl Data {
+     }
+ 
+     fn is_private_import(&self, source: u16, key: &str, def_nr: u32) -> bool {
+-        self.private_imports
+-            .get(&(source, key.to_string()))
+-            .is_some_and(|&(d, _)| d == def_nr)
++        let _ = (&self.private_imports, source, key, def_nr);
++        false
+     }
+ 
+     /// Bind an imported `def_nr` at `key` in `into_source` — only where the key is free,
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9b22501fb..404fd0491 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -16523,7 +16523,11 @@ impl Parser {
+                         // `use foo as m;` (`m::`): names come in unqualified only through
+                         // an explicit `::*` or `::(…)` spec, so a library growing a name
+                         // can never collide with the program's own (@C98).
+-                        let import_spec = spec;
++                        let import_spec = match spec {
++                            Some(s) => Some(s),
++                            None if lib_alias.is_some() => None,
++                            None => Some(ImportSpec::Wildcard),
++                        };
+                         if let Some(import_spec) = import_spec {
+                             self.pending_imports.push(PendingImport {
+                                 for_source: self.data.source,
+@@ -17422,7 +17426,11 @@ impl Parser {
+             // Same rule as a bare `use`: only an explicit `::` spec brings names in
+             // unqualified; without one the module is reached through its qualifier
+             // (@C98).
+-            let import_spec = spec;
++            let import_spec = match spec {
++                Some(s) => Some(s),
++                None if alias.is_some() => None,
++                None => Some(ImportSpec::Wildcard),
++            };
+             if let Some(import_spec) = import_spec {
+                 self.pending_imports.push(PendingImport {
+                     for_source: self.data.source,

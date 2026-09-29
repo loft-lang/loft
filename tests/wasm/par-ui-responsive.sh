@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
-# @PLN117 E1 — off-main-thread UI-responsiveness gate.  A requestAnimationFrame
+# @PLN117 E1 (@C3) — off-main-thread UI-responsiveness gate.  A requestAnimationFrame
 # loop runs one heavy par() per frame; with the Web Worker pool each frame's par
 # finishes faster, so the main thread is BLOCKED for less of every frame.  That
 # shorter block IS "the UI is not blocked", and it is what this gate asserts:

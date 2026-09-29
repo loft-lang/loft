@@ -114,7 +114,7 @@ Net: coverage is essentially complete; the only required code change is **A.1**.
   `lib_plans` 08-server / 10-game-client (its real consumer); the soundness floor
   already shipped.
 - **C.12** nightly backend-parity sweep (#3) — confirm it's tracked in
-  TESTING.md § Backend divergence as the Goal-D standing detector.
+  GUARDS.md § Backend divergence as the Goal-D standing detector.
 
 ---
 

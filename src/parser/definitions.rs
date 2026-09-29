@@ -668,6 +668,32 @@ impl Parser {
                     "Expect enum values to be in camel case style"
                 );
             }
+            // A positional payload (`Ok(a)`) is declined (@C89): a variant carries NAMED
+            // fields, read as `e.field`.  Said by name, then the parenthesised list is skipped
+            // so the rest of the enum still parses.
+            if self.lexer.peek_token("(") {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a variant's payload is named fields — write `{value_name} {{ value: <type> }}` \
+                     and read it as `e.value`; loft has no positional variants"
+                );
+                let mut depth = 0;
+                loop {
+                    if self.lexer.has_token("(") {
+                        depth += 1;
+                    } else if self.lexer.has_token(")") {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else if self.lexer.peek().has == crate::lexer::LexItem::None {
+                        break;
+                    } else {
+                        self.lexer.cont();
+                    }
+                }
+            }
             let v_nr = if self.first_pass {
                 // A forward reference may already have left a stub under this name:
                 // `Circle{ r: 2 }` written ABOVE `enum Shape { Circle { r: integer } }`
@@ -4575,6 +4601,25 @@ impl Parser {
     }
 
     pub(crate) fn parse_fields(&mut self, directions: bool, result: &mut Vec<(String, bool)>) {
+        // A second type argument (`hash<integer, text>`) is a key and a value, which a keyed
+        // collection does not have (@C110): it holds records keyed on a named field.
+        if self.lexer.peek_token(",") {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a keyed collection holds records keyed on a named field, not a key type and a \
+                 value type — declare `struct Row {{ key: …, value: … }}` and write \
+                 `hash<Row[key]>`; there is no `hash<K, V>`"
+            );
+            while !self.lexer.peek_token(">")
+                && !self.lexer.peek_token(">>")
+                && self.lexer.peek().has != crate::lexer::LexItem::None
+            {
+                self.lexer.cont();
+            }
+            self.lexer.closing_angle();
+            return;
+        }
         self.lexer.token("[");
         loop {
             let desc = self.lexer.has_token("-");

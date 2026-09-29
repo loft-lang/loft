@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91 — two references compare the records they name, and an absent one only equals another
+// absent one.  With either side optional, `==` lowered to `OpEqBool` over two presence tests, so
+// two PRESENT references to different records compared equal — `n.next == m.next` answered true
+// for nodes 10 and 20 on both backends, with no diagnostic.  The presence test is right only
+// against the `null` literal.  Each cell varies one thing: the targets, their presence, the
+// operator, the `null` literal, and a nullable struct local instead of a `reference<T>?` field.
+//
+// @falsified-by: tests/falsified/a-nullable-reference-compares-the-record-it-names.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+
+struct NrNode { v: integer, next: reference<NrNode>? }
+struct NrS { x: integer }
+
+fn nr_pick(flag: boolean, s: NrS) -> NrS? { if flag { s } else { null } }
+
+fn main() {
+  a = NrNode { v: 10, next: null };
+  b = NrNode { v: 20, next: null };
+  n = NrNode { v: 1, next: a };
+  m = NrNode { v: 2, next: b };
+  k = NrNode { v: 3, next: a };
+  z = NrNode { v: 4, next: null };
+  y = NrNode { v: 5, next: null };
+  assert(!(n.next == m.next), "two present references to different records are not equal");
+  assert(n.next == k.next, "two references to one record are equal");
+  assert(z.next == y.next, "two absent references are equal");
+  assert(!(n.next == z.next), "present is not absent");
+  assert(n.next != m.next, "`!=` on different records");
+  assert(!(n.next != k.next), "`!=` on one record");
+  assert(!(z.next != y.next), "`!=` on two absent");
+  assert(n.next != z.next, "`!=` present against absent");
+  assert(!(n.next == null) && z.next == null && n.next != null, "the null literal still tests presence");
+  s1 = NrS { x: 7 };
+  p = nr_pick(true, s1);
+  q = nr_pick(false, s1);
+  r = nr_pick(false, s1);
+  assert(!(p == q), "a present struct is not an absent one");
+  assert(q == r, "two absent structs are equal");
+}

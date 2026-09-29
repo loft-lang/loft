@@ -7,7 +7,7 @@
 // `graphics::save_png` returned `false` under `--native` and `true` under
 // `--interpret`, with no error on either.  Both assertions below therefore name
 // the wrong answer, so a regression says which resolution path was taken.
-use native_remap_pkg;
+use native_remap_pkg::*;
 
 fn main() {
   a = remap_answer();

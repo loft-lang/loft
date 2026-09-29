@@ -2,6 +2,8 @@
 # Loft Standard Library Reference
 
 This document describes all public functions, constants, and types available in the loft standard library.
+It states the library as it stands; a limitation the library has since lost is recorded in
+[STDLIB-history.md](STDLIB-history.md), not here.
 
 ## Contents
 - [Implementation notes](#implementation-notes)
@@ -34,7 +36,7 @@ See [INTERNALS.md](INTERNALS.md) for the full list of native functions, their Ru
 
 ## Types
 
-The primitive types built into loft.
+The primitive types built into loft — their widths are [formal/layout.md](formal/layout.md) `(L-Scalar)`, and a ranged integer's `(L-Narrow)`.
 
 | Type        | Size   | Description |
 |-------------|--------|-------------|
@@ -147,10 +149,11 @@ Functions for working with `text` (UTF-8 strings) and `character` values.
 loft has no `substr` or `substring` function. A part of a text is a **slice**, written with
 a range:
 
+<!-- from tests/reference/text-slices.loft -->
 ```loft
 s = "abcdef";
-s[1..3]                 // "bc" — from byte 1 up to, not including, byte 3
-s.char_slice(1, 3)      // "bc" — the same, counting CHARACTERS instead of bytes
+a = s[1..3];                // "bc" — from byte 1 up to, not including, byte 3
+b = s.char_slice(1, 3);     // "bc" — the same, counting CHARACTERS instead of bytes
 ```
 
 Which one you want depends on where the numbers came from:
@@ -187,7 +190,7 @@ Both ends clamp, a reversed range gives `""`, and a negative bound counts from t
 them, and the character at each position is the same value `s[…]` reads there.  The
 count is a fact about the text, never about the characters in it: a text carrying a
 NUL (`text_from_bytes([65, 0, 66])`) yields all three, with the NUL position reading
-as `null` (loft#755 — it used to end the loop there).  A NUL therefore round-trips
+as `null` (guard `tests/scripts/text-nul-iteration-755.loft`).  A NUL therefore round-trips
 through `byte_at`, not through iteration; see
 [CAVEATS.md](CAVEATS.md#accepted-trade-offs-not-scheduled-for-change).
 
@@ -245,12 +248,6 @@ subject line and both verb slots, green the whole time because every one of its
 tests is ASCII. Two independent hand-rolls is this project's admission test for a
 primitive belonging one level down; three is late.
 
-> `text_from_bytes` and `byte_at` existed for two releases and were reported
-> missing (loft#748) because the generated reference filed them under Environment
-> — a keyword sweep of the Text page came back empty and was read as a language
-> gap. Check an instrument against something it *should* find before trusting it
-> to report an absence; `grep default/*.loft` answers in one call.
-
 ### Character Classification
 
 These functions return true only if **every character** in the text satisfies the condition.
@@ -306,6 +303,7 @@ with `store_persist_bind` carries the claimed capacity, not the length, so on th
 interleaved shape the file went from 1.65× its payload to 1.13× for identical
 data.
 
+<!-- from tests/reference/reserve.loft -->
 ```loft
 for tile in tiles { reserve(tile.points, expected_count(tile)); }
 for feature in stream { tiles[feature.tile].points += [feature.point]; }
@@ -319,6 +317,7 @@ of an element block. Here it pays on the plain shape — no interleaving needed 
 because a hash rebuilds its whole table every time it is half full, re-bucketing
 every entry it already holds:
 
+<!-- from tests/reference/reserve.loft -->
 ```loft
 cache: hash<Entry[key]> = [];
 reserve(cache, expected_rows);
@@ -372,15 +371,23 @@ without recursion and returns the visitation order — breadth-first (level
 order): every parent before its children, siblings left to right.  A type
 opts in by satisfying `Walkable`:
 
+<!-- from default/01_code.loft -->
 ```loft
-interface Walkable {
+pub interface Walkable {
   fn children(self: Self) -> vector<Self>
 }
+```
 
+A type with a `children` method satisfies it, and `tree_walk` walks it breadth-first, capped:
+
+<!-- from tests/reference/tree-walk.loft -->
+```loft
 struct Node { val: integer, kids: vector<Node> }
 fn children(self: Node) -> vector<Node> { return self.kids; }
-
-for n in tree_walk(root, 1000) { visit(n.val); }
+```
+<!-- from tests/reference/tree-walk.loft -->
+```loft
+for n in tree_walk(root, 1000) { seen += "{n.val} "; }
 ```
 
 `cap` bounds the visited-node count, so the walk is total on any input —
@@ -423,17 +430,16 @@ coordinate key fields (@PLN48):
 | `for m in xs { … }` | Iterate in the tree's natural Morton/Z-order — no sort (unlike `hash`, which sorts via its internal ordered index). |
 | `xs.len()` | Element count — O(1), reads the tree's cached length word. |
 | `m = xs[x, y]` | Look up the record at exactly that point; `null` when nothing sits there. Note the coordinates are separate subscripts (`xs[3, 6]`), not the parenthesised pair the range forms use. |
-| `xs[x, y] = mob` | Insert-or-replace at that point (the key comes from `mob`'s own coordinate fields, as for `hash`/`sorted`/`index`). |
+| `xs[x, y] = mob` | Insert-or-replace a copy of `mob` at that point: the subscript names the place, and the copy's coordinate fields are set to it, as for `hash`/`sorted`/`index` (`Col-Assign`). |
 | `xs[x, y] = null` | Remove the record at that point; a no-op when the point is empty. |
 | `xs[(x,y)..]` | Walk OUTWARD from that point, nearest first; caller `break`s to stop. Approximate — ordered by Morton distance, so a truly-near point can arrive a little late. |
-| `xs[(x,y)..:n]` | Same, capped at `n` records. Answers `n` from any origin (it used to answer the Morton TAIL, so it under-delivered near the end of the curve — loft#1002). |
+| `xs[(x,y)..:n]` | Same, capped at `n` records. Answers `n` from any origin (guard `tests/scripts/48b-spatial-slice.loft`). |
 | `xs[(x1,y1)..(x2,y2)]` | Bounding-box range — exactly what is inside the box. |
 
 There are no `.near`/`.within`/`.nearest` methods — proximity is ordinary
 range slicing. The BOX form gives exactly the records inside the box and
-nothing outside it, in the collection's own order (loft#800 — it used to
-answer the raw code interval between the corners, a strict superset, because
-Z-order threads out of the box and back). A corner-swapped axis names the
+nothing outside it, in the collection's own order (guard
+`tests/scripts/800-spatial-box-containment.loft`). A corner-swapped axis names the
 same box.
 
 The two OPEN forms walk outward from the query point in both directions, so
@@ -448,8 +454,7 @@ slices. See [DATABASE.md § Spatial Index](DATABASE.md#spatial-index-srcradix_tr
 for the implementation.
 
 A text key is refused here — `spatial<Word[w]>` names `trie<Word[w]>` instead
-(loft#799).  Before that, it compiled and then answered `null` for a key just
-inserted.
+(guard `tests/parse_errors.rs`).
 
 ### `trie<T[k]>` — text-keyed collection
 
@@ -499,7 +504,7 @@ wanted by reading the expression back. `assert_eq` reports both, on any type tha
 `Equatable` (defines `op ==`) and `Printable` (defines `to_text`) — every built-in scalar, and
 a user type defining the two:
 
-```loft
+```grammar
 assert_eq(total, 42, "the running total");
 // error: assertion failed: the running total: got 41, want 42
 //   --> game.loft:12:3
@@ -536,12 +541,13 @@ non-text value is printed through a format string, which interpolates *any* `Pri
 via its `to_text` (every scalar, and a user type once it defines `fn to_text(self: T) ->
 text`):
 
+<!-- from tests/reference/print-values.loft -->
 ```loft
-count = 41
-print("{count + 1}\n")        // 42 — a single value
-print("{a} {b} {c}\n")        // several values, separators written in place
-p = Point { x: 3, y: 4 }
-print("{p}\n")                // a user type via its to_text
+count = 41;
+print("{count + 1}\n");        // 42 — a single value
+print("{a} {b} {c}\n");        // several values, separators written in place
+p = Point { x: 3, y: 4 };
+print("{p}\n");                // a user type via its to_text
 ```
 
 This one tool covers printing a value, separating several values, and appending strings
@@ -597,7 +603,7 @@ and image loads — so they all agree on where a relative path points.
 relative path (`loft tidy.loft data.csv` — `data.csv` is in the user's cwd, not
 beside the script) declares the file-top directive:
 
-```loft
+```grammar
 #cwd
 fn main(args: vector<text>) { ... }   // relative paths now resolve against the cwd
 ```
@@ -652,11 +658,10 @@ call; the stdlib does not, and did not meaningfully do so before.
 | `content(self: File) -> text?` | Reads the entire file as a UTF-8 text value. **Null** when there is no text to read: the file is missing, the path is a directory, or the bytes are not valid UTF-8. `""` means the file really is empty. |
 | `lines(self: File) -> vector<text>` | Reads the file and splits it into lines. **Empty** wherever `content()` is null — a missing file, a directory, or bytes that are not UTF-8 — so a loop over it runs zero times and reads exactly like a loop over an empty file. `lines()` has no null of its own to carry the distinction; ask `content()` when it matters. |
 
-`content()` is nullable because `""` cannot carry three different meanings.  A
-non-UTF-8 file used to answer `""`, indistinguishable from an empty one, so a
-gate of the shape *"write bytes, read them back, compare"* passed **vacuously**
-on binary data — both sides were `""` (loft#829).  Discharge with `?? ""` to
-keep the old shape where the distinction does not matter.
+`content()` is nullable because `""` cannot carry three different meanings — a
+missing file, a directory and non-UTF-8 bytes are each `null`, never an empty text
+(guard `tests/binary_io_matrix.rs`).  Discharge with `?? ""` where the distinction
+does not matter.
 
 Reading such a file is not the failure — asking for it as *text* is.  Use
 [`read_bytes(path) -> vector<u8>?`](#filesystem-operations), which is
@@ -672,14 +677,10 @@ and read it a field at a time (see [Binary Files](#binary-files)).  A non-UTF-8
 
 ### Binary Files
 
-Binary mode must be activated before reading or writing raw data. Use `f.format = Format.LittleEndian` or `f.format = Format.BigEndian` to enable binary mode.
+Binary mode must be activated before reading or writing raw data. Use `f#format = LittleEndian` or `f#format = BigEndian` to enable binary mode (`tests/reference/skill-files.loft`).
 
 | Function | Description |
 |----------|-------------|
-| `little_endian(self: File)` | Switches the file to little-endian binary mode. |
-| `big_endian(self: File)` | Switches the file to big-endian binary mode. |
-| `write_bin(self: File, v: reference)` | Writes a struct value as raw binary data. File must be in binary mode first. |
-| `read(self: File, v: reference)` | Reads binary data into a struct value. File must be in binary mode first. |
 | `seek(self: File, pos: integer) -> boolean` | Moves the read/write position to `pos` bytes from the start — random access into a binary file. `false` (a no-op) for a directory, an absent file, a negative `pos`, or a file this process has not read from or written to yet (the OS handle opens on first I/O). Seeking PAST the end is allowed: a following write extends the file. Operator form: `f#next = pos`. |
 | `position(self: File) -> integer` | The byte offset the next read or write will land at — the read side of `seek`. Operator form: `f#next`. Distinct from `f#index`, which is where the LAST read *started*: after one `f#read as i32` on a fresh file, `position` is 4 and `f#index` is 0. **Null** for a file this process has not opened yet (0 is a real position, so it is not used to mean "no position"). |
 
@@ -692,7 +693,7 @@ Binary mode must be activated before reading or writing raw data. Use `f.format 
 | `s.field = f#read` | **LHS-inferred** — width comes from `s.field`'s declared type; symmetric with `f += s.field`. No `as T` needed. |
 | `f#read(n) as T` | Legacy explicit form — reads exactly `n` bytes and interprets as `T`. `n` MUST match `T`'s storage width or the runtime panics. |
 | `f#read(n) as text` | Reads exactly `n` bytes (or fewer at EOF) as a UTF-8 string. The `(n)` is REQUIRED for text — variable-width types have no inferable count. |
-| `f#size` | Returns the current file size in bytes as `integer`. |
+| `f#size` | The file size in bytes as `integer`, as it was when the handle was opened — a handle's own `+=` writes are not counted until the file is reopened (both backends; `tests/reference/skill-files.loft`). |
 | `f#index` | Returns the byte offset where the last read started (the `current` field). |
 | `f#next` | Returns the current byte position (after last read). |
 | `f#next = pos` | Seeks the file to `pos` (integer). Only works after the file has been opened by a prior read or write. |
@@ -702,7 +703,7 @@ Binary mode must be activated before reading or writing raw data. Use `f.format 
 
 **Notes:**
 - `f += "text"` writes raw UTF-8 bytes; supported for TextFile, LittleEndian, and BigEndian modes.
-- For new files (format=NotExists), `f += value` defaults to TextFile mode and creates the file.
+- For new files (format=NotExists), `f += value` defaults to TextFile mode and creates the file.  An EXISTING file is opened without truncation, so `f += value` appends after its last byte; `delete(path)` or `f.set_file_size(0)` first to start over.
 - `f#next = pos` (and the `seek` method above) is a no-op if called before the first read or write — the OS file handle does not exist until first I/O. Always perform a read or write before seeking. `seek` returns `false` in that case; the operator form reports nothing, which is why the method is the better choice when the position matters.
 
 #### Struct and vector binary round-trip (@PLN47 — shipped 2026-07-09)
@@ -819,18 +820,17 @@ image sealed by `--native` loads byte-identically on wasm.
 
 Usage pattern:
 
+<!-- from tests/reference/durable-stores.loft -->
 ```loft
-fn main() {
-  path = "data.bin";
-  if !store_durable_check(path) {
-    rebuild_from_source(path);  // consumer-defined
-  }
-  // ... use the database that lives in `path` ...
-
-  // graceful shutdown
-  flush_database();
-  store_durable_seal(path);
+path = "{temp_dir()}/loft-reference-data.bin";
+if !store_durable_check(path) {
+  rebuild_from_source(path);  // consumer-defined
 }
+// ... use the database that lives in `path` ...
+
+// graceful shutdown
+flush_database();
+store_durable_seal(path);
 ```
 
 If the program crashes between the last write and the seal, the
@@ -860,18 +860,17 @@ also the canonical pattern for any single-collection on-disk state.
 
 Usage pattern:
 
+<!-- from tests/reference/durable-stores.loft -->
 ```loft
-fn main() {
-  h: hash<Entry[key]> = [];
+h: hash<Entry[key]> = [];
 
-  // Bind first — on fresh path the empty hash is serialised; on
-  // existing path the on-disk contents are loaded into this slot.
-  store_persist_bind(h, "world.store");
+// Bind first — on a fresh path the empty hash is serialised; on an
+// existing path the on-disk contents are loaded into this slot.
+store_persist_bind(h, "{temp_dir()}/loft-reference-world.store");
 
-  // Subsequent mutations hit the mmap'd buffer.  No explicit save.
-  h += Entry { key: 7, value: 700 };
-  // ... OS msyncs on idle / clean exit ...
-}
+// Subsequent mutations hit the mmap'd buffer.  No explicit save.
+h += Entry { key: 7, value: 700 };
+// ... OS msyncs on idle / clean exit ...
 ```
 
 **Semantics in detail:**
@@ -924,16 +923,21 @@ Stores, freed at the return boundary (see [LIFETIME.md](LIFETIME.md)), so
 their growth never lands in the Store that survives as the return value.
 Bind *that* returned hash:
 
+<!-- from tests/reference/durable-stores.loft -->
 ```loft
 fn build_world() -> hash<Hex[q, r]> {
   w: hash<Hex[q, r]> = [];
   // fill w; any transient collections here are freed on return
+  w += Hex { q: 0, r: 0, kind: "plain" };
   return w;
-}
-fn main() {
-  world = build_world();                 // carries only the live result
-  store_persist_bind(world, "world.store");
-}
+```
+
+and bind the result once it is built:
+
+<!-- from tests/reference/durable-stores.loft -->
+```loft
+world = build_world();                 // carries only the live result
+store_persist_bind(world, "{temp_dir()}/loft-reference-hexes.store");
 ```
 
 Whether a top-level build actually bloats depends on the pattern
@@ -966,7 +970,7 @@ resident count, and what a binding refuses — is [LAZY_STORES.md](LAZY_STORES.m
 
 | Function | Description |
 |----------|-------------|
-| `store_bind_lazy(c: reference, source: text) -> boolean` | Bind collection `c` to `source` — an IMAGE (a local `.store` file or an `http(s)://` URL served with Range, i.e. whatever `store_load_key` accepts) or a DATABASE (`sqlite:<path>`), where the `SELECT` is derived from `c`'s own type: table = the element type's name lowercased, columns = its fields, `WHERE` = its key.  Read-only; the database source serves a keyed lookup on any ordered or hashed kind, and a binding it cannot turn into a query is refused through `store_lazy_error` rather than served wrongly.  Per COLLECTION, not per store: two collections of one type may bind differently.  Binding replaces any previous binding, and may be done before `c` holds anything.  **`false` is worth checking**: besides a null collection, an IMAGE is read a page at a time and only a `hash` or a `trie` supports that, so a `sorted`/`index`/`spatial` bound to one is refused HERE rather than answering `null` at every later lookup (loft#802) — those kinds load whole, with `store_load` / `store_load_url_trusted`.  A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. |
+| `store_bind_lazy(c: reference, source: text) -> boolean` | Bind collection `c` to `source` — an IMAGE (a local `.store` file or an `http(s)://` URL served with Range, i.e. whatever `store_load_key` accepts) or a DATABASE (`sqlite:<path>`), where the `SELECT` is derived from `c`'s own type: table = the element type's name lowercased, columns = its fields, `WHERE` = its key.  Read-only; the database source serves a keyed lookup on any ordered or hashed kind, and a binding it cannot turn into a query is refused through `store_lazy_error` rather than served wrongly.  Per COLLECTION, not per store: two collections of one type may bind differently.  Binding replaces any previous binding, and may be done before `c` holds anything.  **`false` is worth checking**: besides a null collection, an IMAGE is read a page at a time and only a `hash` or a `trie` supports that, so a `sorted`/`index`/`spatial` bound to one is refused HERE rather than answering `null` at every later lookup (guard `tests/scripts/802-lazy-refusal-visible.loft`) — those kinds load whole, with `store_load` / `store_load_url_trusted`.  A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. |
 | `store_lazy_range(c: reference, lo: integer, hi: integer) -> integer` | Pull a whole KEY RANGE from `c`'s bound DATABASE source in ONE query (bounds inclusive, in the collection's own key order); answers how many records `c` gained.  The cure for N+1: 500 records fetched one lookup at a time is 500 round trips, and the same 500 as a range is one.  `c` must be ORDERED (`sorted`/`index`) and keyed on one column — a `hash` has no order to range over and a composite key needs `store_lazy_query`.  A record already resident is left alone. |
 | `store_lazy_query(c: reference, condition: text) -> integer` | Run an explicit SQL `condition` against `c`'s bound DATABASE source and pull every matching row INTO `c`; answers how many records `c` gained.  The escape hatch for what the key cannot express (`name LIKE 'Ada%'`, a predicate on another column) — derived queries need no call, this one cannot be derived, so it is written down and visible.  Rows land in the collection rather than in a detached result, and a row already resident is left alone: a person found this way and the same person found by key are ONE record.  Answers `0` both for "nothing matched" and for "the query could not run"; `store_lazy_error` tells those apart. |
 | `store_lazy_error(c: reference) -> text` | Why a fetch could not REACH the source, or `""` when healthy.  The FIRST failure's reason, kept — it names the original cause, so a later and often more actionable one reaches stderr but not this call.  Nothing clears it but `store_lazy_clear`: neither a genuine absence nor a later success is an acknowledgement, because reaching the source now says nothing about what an earlier failure already lost. |
@@ -978,11 +982,12 @@ resident count, and what a binding refuses — is [LAZY_STORES.md](LAZY_STORES.m
 raises, so a miss answers `null` whether the key is genuinely absent or the source
 was unreachable — two different facts, one stable and one not:
 
+<!-- from tests/reference/lazy-error.loft -->
 ```loft
 p = persons[42];
 if p == null {
   why = store_lazy_error(persons);
-  if why == "" { /* really no such person */ } else { /* could not reach: {why} */ }
+  if why == "" { verdict = "really no such person"; } else { verdict = "could not reach: {why}"; }
 }
 ```
 
@@ -1022,6 +1027,7 @@ does not cover methods yet.
 | `value(self: Pixel) -> integer` | Returns the pixel colour as a packed 24-bit integer (`0xRRGGBB`). Use for fast colour comparison or storage. |
 
 **Example — read a PNG's dimensions:**
+<!-- from library:imaging -->
 ```loft
 use imaging;
 fn main() {
@@ -1041,17 +1047,24 @@ JSON support has two layers:
 
 ### JsonValue surface
 
+<!-- from default/06_json.loft -->
 ```loft
 pub enum JsonValue {
   JNull,
-  JBool    { value: boolean },
-  JNumber  { value: float not null },
-  JString  { value: text },
-  JArray   { items: vector<JsonValue> },
-  JObject  { fields: vector<JsonField> },
-  JInteger { value: integer }   // @PLN109 — integer-shaped number, exact i64
+  JBool { value: boolean },
+  JNumber { value: float },
+  JString { value: text },
+  JArray { items: vector<JsonValue> },
+  JObject { fields: vector<JsonField> },
+  JInteger { value: integer },
 }
-pub struct JsonField { name: text, value: JsonValue }
+```
+<!-- from default/06_json.loft -->
+```loft
+pub struct JsonField {
+  name: text,
+  value: JsonValue,
+}
 ```
 
 **Number semantics (@PLN109).** A JSON number with **no fraction and no exponent**
@@ -1087,30 +1100,33 @@ in both cases. `json_number(x)` always builds a `JNumber` (it takes a `float`).
 
 #### Reading
 
+<!-- from tests/reference/json-values.loft -->
 ```loft
 v = json_parse(`{{"users":[{{"name":"Alice"}}]}}`);
 name = v.field("users").item(0).field("name").as_text();   // "Alice"
 // every intermediate failure produces JNull, never a trap
 
 match v {
-  JObject _ => for f in v.fields() { handle(f) },
-  JArray _  => for elm in v.items() { handle(elm) },
-  _         => log_warn("expected container: {json_errors()}")
+  JObject { fields } => { kind = "object with {len(fields)} field"; },
+  JArray { items }   => { kind = "array of {len(items)}"; },
+  _                  => { kind = "other"; }
 }
 ```
 
 #### Building
 
+<!-- from tests/reference/json-values.loft -->
 ```loft
 reply = json_object([
   JsonField { name: "ok",    value: json_bool(true) },
   JsonField { name: "count", value: json_number(3.0) }
 ]);
-text = reply.to_json();   // {"ok":true,"count":3}
+body = reply.to_json();   // {"ok":true,"count":3}
 ```
 
 #### Forwarding a captured subtree
 
+<!-- from tests/reference/json-values.loft -->
 ```loft
 inbox = json_parse(request_body);
 response = json_object([
@@ -1128,14 +1144,13 @@ return response.to_json_pretty();
 | `vector<T>.parse(text)` | Parse a JSON array into an iterable vector |
 | `record#errors` | The last `Type.parse()` call's errors as ONE text (newline-separated), cleared by the read |
 
+<!-- from tests/reference/json-values.loft -->
 ```loft
 user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 
 // A failed parse leaves the record at its type's zeros, so ask whether it failed.
-if json_errors() != "" { log_warn(json_errors()); }
-errs = user#errors;              // TEXT, not a collection — and the read clears it, so
-if errs != "" { log_warn(errs); } // `for e in user#errors` iterates nothing
+errs = user#errors;              // TEXT, not a collection — and the read clears it
 ```
 
 Reach for this form when you KNOW the document's shape and it maps onto a struct you have
@@ -1150,27 +1165,34 @@ its peers, which are gone.)
 
 ## Higher-order functions
 
-`map`, `filter`, and `reduce` are compiler special-cases (like `parallel_for`) — they take a `fn <name>` function reference and a vector and produce a new vector or scalar.
+`map`, `filter`, and `reduce` are compiler special-cases (like `parallel_for`) — they take a function by its bare name (or a lambda) and a vector and produce a new vector or scalar.
 
 | Signature | Description |
 |---|---|
 | `map(v: vector<T>, f: fn(T) -> U) -> vector<U>` | Applies `f` to each element and collects the results |
 | `filter(v: vector<T>, pred: fn(T) -> boolean) -> vector<T>` | Keeps only elements for which `pred` returns `true` |
-| `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | Left-folds `v` starting from `init`, applying `f(acc, elm)` at each step. `U` may be a scalar or `text`; a COLLECTION accumulator is refused for now (loft#956). Write the loop instead: `acc = <init>; for x in v { acc = f(acc, x); }` |
+| `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | Left-folds `v` starting from `init`, applying `f(acc, elm)` at each step. `U` may be a scalar, `text` or a COLLECTION; `U` is read off `f`'s first parameter, so `v.reduce([], f)` and an init spelled `vector<integer>` are the same fold |
 
+<!-- from tests/reference/higher-order.loft -->
 ```loft
 fn double(x: integer) -> integer { x * 2 }
 fn is_pos(x: integer) -> boolean { x > 0 }
 fn add(a: integer, b: integer) -> integer { a + b }
+```
 
-doubled  = map(nums, fn double);         // [2, 4, 6, ...]
-positive = filter(nums, fn is_pos);      // only positive elements
-total    = reduce(nums, 0, fn add);      // sum of all elements
+passed by their bare names:
+
+<!-- from tests/reference/higher-order.loft -->
+```loft
+doubled  = map(nums, double);            // [2, -4, 6]
+positive = filter(nums, is_pos);         // only positive elements
+total    = reduce(nums, 0, add);         // sum of all elements
 ```
 
 `U` really is free in `map` — the callback's return type is what the result vector holds, and
 an inline lambda takes its return type from its own body:
 
+<!-- from tests/reference/higher-order.loft -->
 ```loft
 labels = map(nums, |x| { "n{x}" });      // vector<text> from a vector<integer>
 sizes  = words.map(|w| { len(w) });      // vector<integer> from a vector<text>
@@ -1179,16 +1201,18 @@ pairs  = nums.map(|x| { [x, x + 1] });   // vector<vector<integer>>
 
 `reduce` folds into `text` as well as a scalar:
 
+<!-- from tests/reference/higher-order.loft -->
 ```loft
 joined = words.reduce("", |a, w| { "{a}{w}" });   // one string from a vector<text>
 ```
 
-A COLLECTION accumulator (`v.reduce([], f)`) is refused with a message pointing at the
-loop to write instead — it reads back empty and is an internal compiler error on
-`--native`, tracked as loft#956.
+A COLLECTION accumulator (`v.reduce([], f)`) works, and its type is the fold's: `f: fn(U, T)
+-> U` names `U`, and the init only has to be assignable to it, so a bare `[]` is not asked
+what it is.  Guard `tests/scripts/956-reduce-untyped-accumulator.loft`.
 
-All three accept either a named function reference (`fn <name>`) or a lambda expression:
+All three accept either a function's bare name or a lambda expression:
 
+<!-- from tests/reference/higher-order.loft -->
 ```loft
 doubled = map(nums, fn(x: integer) -> integer { x * 2 });
 evens   = filter(nums, fn(x: integer) -> boolean { x % 2 == 0 });
@@ -1197,6 +1221,7 @@ total   = reduce(nums, 0, fn(acc: integer, x: integer) -> integer { acc + x });
 
 Lambdas that capture variables from the enclosing scope (closures) also work:
 
+<!-- from tests/reference/higher-order.loft -->
 ```loft
 factor = 3;
 scaled = map(nums, fn(x: integer) -> integer { x * factor });
@@ -1211,11 +1236,11 @@ affect the lambda.  See [LOFT.md § Closures](LOFT.md) for details.
 
 The public parallel API is the `par(...)` for-loop clause. The internal functions `parallel_for` and `parallel_for_int` are not part of the user API.
 
-Function references (`fn <name>`, type `fn(T) -> R`) are first-class callable values — they can be stored in variables, passed as parameters, and called directly (`f(args)`), not only as `par(...)` worker arguments. See [LOFT.md](LOFT.md) § Literals for the full syntax.
+Function references (a function's bare name, type `fn(T) -> R`) are first-class callable values — they can be stored in variables, passed as parameters, and called directly (`f(args)`), not only as `par(...)` worker arguments. See [LOFT.md](LOFT.md) § Literals for the full syntax.
 
 ### `par(...)` Parallel For-Loop
 
-```loft
+```grammar
 for a in <vector> par(b=<worker_call>, <threads>) {
     // body — b holds the worker result for this element
 }
@@ -1232,27 +1257,33 @@ Supported return types: `integer`, `float`, `single`, `boolean`, inline `enum`, 
 Extra context arguments are forwarded: `par(b=scale(a, mult), N)`.
 Input must be a `vector<T>`.
 
+<!-- from tests/reference/par-loop.loft -->
 ```loft
 struct Score { value: integer }
-
+struct Scores { items: vector<Score> }
+```
+<!-- from tests/reference/par-loop.loft -->
+```loft
 fn double_score(r: const Score) -> integer { r.value * 2 }
 fn get_value(self: const Score) -> integer { self.value }
+```
 
-fn main() {
-    q = make_scores();   // vector of Score
+Both forms deliver each worker's value to the body, in the original order:
 
-    // Form 1: global function
-    sum = 0;
-    for a in q.items par(b=double_score(a), 4) {
-        sum += b;
-    }
+<!-- from tests/reference/par-loop.loft -->
+```loft
+q = make_scores();   // vector of Score
 
-    // Form 2: method
-    total = 0;
-    for a in q.items par(b=a.get_value(), 1) {
-        total += b;
-    }
+// Form 1: global function
+sum = 0;
+for a in q.items par(b=double_score(a), 4) {
+    sum += b;
 }
+
+// Form 2: method
+total = 0;
+for a in q.items par(b=a.get_value(), 1) {
+    total += b;
 ```
 
 **Worker function rules:**
@@ -1284,6 +1315,7 @@ record and a struct-enum variant have `fields`, only an enum has `variants`, and
 only a vector or a keyed collection names an `element`.  Empty is the honest
 answer for a kind that has no such thing.
 
+<!-- from tests/reference/reflection.loft -->
 ```loft
 t = type_of(row);
 println("{t.name} ({t.size} bytes)");
@@ -1303,6 +1335,7 @@ to derive a query FROM.  `collection` says which of the five it is —
 `NotKeyed` for every other type — and `keys` lists its key fields **in key
 order**, each a `KeyInfo` of `name`, `position` and `ascending`.
 
+<!-- from tests/reference/reflection.loft -->
 ```loft
 t = type_of(people);                       // hash<Person[id]>
 if t.collection == KeyedHash {
@@ -1375,6 +1408,7 @@ it would be a pointer chase rather than a field read. An empty path answers
 boolean as 1/0, character as its code point), `f` (float, single) and `t` (text).
 Match `kind` to know which one carries the answer.
 
+<!-- from tests/reference/reflection.loft -->
 ```loft
 t = type_of(row);
 for f in t.fields {
@@ -1423,6 +1457,7 @@ fills it.
 one block per field, and `f` is a `StructField` carrying `name`, `value` and
 `nullable`.
 
+<!-- from tests/reference/reflection.loft -->
 ```loft
 for f in m#fields {
   if f.value is FvText { v } { println("{f.name} = {v}") }
@@ -1497,7 +1532,7 @@ Functions for interacting with the host operating system.
 |----------|-------------|
 | `store_memory() -> text` | Returns a multi-line snapshot of all LIVE heap stores' internal utilisation — total capacity vs actual claimed data vs free space, record + free-block counts, **mergeable adjacent-free pairs** (free neighbours that should have coalesced), **`tail%` / `inner%`** (see below), and the largest stores by capacity with their type name and creation site (`bc:<pos>` — a bytecode position on the interpreter, mapping to source via `LOFT_LOG=static`; `0` on `--native`). Use to watch memory growth / fragmentation in a running program. See also `LOFT_STORES=log\|warn` (alloc/free trace). |
 | `store_reclaim(collection) -> integer` | Give back the free space at the END of a store-rooted collection's store, and answer with the BYTES handed back (`0` when there was nothing). For a collection bound with `store_persist_bind` that is the **file** shrinking; otherwise it is memory returned to the allocator. Records never move, so every reference stays valid. It keeps an eighth of the live content as slack — the store stays in use, and one trimmed to the byte would pay a 2.33× re-grow on its next claim — so a store already at that size answers `0`, and asking twice is free. Returns `0` and changes nothing for a store that is read-only, shares another store's memory, or carries a `store_durable_seal` sidecar. |
-| `store_release(collection) -> integer` | Say "everything I have written so far is finished": start writing it out to the bound file and stop holding it in memory, answering the BYTES dropped from the resident set (`0` when there was nothing to drop, when the collection is not bound to a file, or when the TARGET cannot honour the hint — the drop is `madvise(MADV_DONTNEED)`, so a build without `mmap` and any non-unix target answer `0` by construction; the call is a residency hint, and a program running where it cannot be honoured is not a program that is wrong). For a GENERATOR streaming a large collection into a store bound with `store_persist_bind` — measured on a 20 000-record build, one call per record: peak memory **44.3 MB → 2.2 MB (20×) at no cost in wall clock**. Content is untouched and every reference stays valid; reading a released record re-reads it from the file at the cost of one page fault, so this is a hint that can cost speed and never an answer. **It pays when records are written in KEY ORDER and not returned to** — a build that keeps many records open at once scatters the arena with free blocks (3 691 against 10) and the allocator then keeps re-reading them, giving 1.0× instead of 20×. Not `store_reclaim`, which changes the file's LENGTH; this never does. Not a durability barrier — it asks for writeback to *start*, and `store_durable_seal` is what promises it landed. |
+| `store_release(collection) -> integer` | Say "everything I have written so far is finished": start writing it out to the bound file and stop holding it in memory, answering the BYTES dropped from the resident set (`0` when there was nothing to drop, when the collection is not bound to a file, or when the TARGET cannot honour the hint — the drop is `madvise` (MADV_DONTNEED), so a build without `mmap` and any non-unix target answer `0` by construction; the call is a residency hint, and a program running where it cannot be honoured is not a program that is wrong). For a GENERATOR streaming a large collection into a store bound with `store_persist_bind` — measured on a 20 000-record build, one call per record: peak memory **44.3 MB → 2.2 MB (20×) at no cost in wall clock**. Content is untouched and every reference stays valid; reading a released record re-reads it from the file at the cost of one page fault, so this is a hint that can cost speed and never an answer. **It pays when records are written in KEY ORDER and not returned to** — a build that keeps many records open at once scatters the arena with free blocks (3 691 against 10) and the allocator then keeps re-reading them, giving 1.0× instead of 20×. Not `store_reclaim`, which changes the file's LENGTH; this never does. Not a durability barrier — it asks for writeback to *start*, and `store_durable_seal` is what promises it landed. |
 
 **`tail%` and `inner%` say WHERE a store's free space sits**, which is the
 difference between free space you get back and free space you do not.
@@ -1577,6 +1612,7 @@ when reproducibility matters.
 | `rand_indices(n: integer) -> vector<integer>` | Returns a vector of `n` integers `[0, 1, ..., n-1]` in a random order. Empty when `n ≤ 0`. Useful for random iteration or sampling without replacement. |
 
 **Example — pick 3 distinct items at random:**
+<!-- from library:random -->
 ```loft
 use random;
 fn main() {

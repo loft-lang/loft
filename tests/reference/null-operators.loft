@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § The `??` operator and § The `x?` operator — absence is discharged at the
+// point of use: `??` names the fallback, `?` takes the type's default.
+
+struct Record { optional_field: text?, n: integer }
+struct Row { label: text? }
+struct Point { x: integer, y: integer }
+enum Colour { Plain, Tinted }
+struct Pixel { tint: Colour? }
+struct Entry { key: text, value: integer }
+
+fn test_coalesce_names_the_fallback_and_chains() {
+  record = Record { n: 1 };
+  lookup: hash<Entry[key]> = [Entry { key: "here", value: 7 }];
+  map_lookup = lookup["absent"].value;
+  a: integer? = null;
+  b: integer? = null;
+  c = 3;
+  name = record.optional_field ?? "unknown";
+  count = map_lookup ?? 0;
+  first = a ?? b ?? c;    // chains: first non-null of a, b, c
+  assert(name == "unknown", "a null field takes the fallback");
+  assert(count == 0, "a missed lookup takes the fallback");
+  assert(first == 3, "a chain answers the first non-null");
+}
+
+fn test_the_question_mark_takes_the_types_default() {
+  a = 7;
+  b = 0;
+  row = Row { };
+  points: vector<Point> = [Point { x: 1, y: 2 }];
+  i = 5;
+  pixel = Pixel { };
+  x = (a / b)?;                // integer? → 0 on divide-by-zero
+  name = row.label?;           // text?    → "" when the field is null
+  first = points[i]?;          // Point?   → Point{} (every field defaulted) on out-of-bounds
+  colour = pixel.tint?;        // Colour?  → the first-defined enum variant
+  assert(x == 0, "integer's default is 0");
+  assert(name == "", "text's default is empty");
+  assert(first.x == 0 and first.y == 0, "a struct's default has every field defaulted");
+  assert(colour == Colour.Plain, "an enum's default is its first variant");
+}
+
+fn test_the_question_mark_on_the_left_reads_the_default_and_writes_the_slot() {
+  hits: integer? = null;
+  hits? += 1;                 // 1     — the `?` read the zero, the write landed in `hits`
+  misses: integer? = null;
+  misses += 1;                // null  — no `?`, so the null propagates through `+`
+  assert(hits == 1, "`hits? += 1` reads 0 and writes 1");
+  assert(misses == null, "without `?` the null propagates");
+}

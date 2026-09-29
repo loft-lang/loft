@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C120 — the non-null proof does not close over a by-reference argument.
 //
 // loft#1534 — a local handed to a `&integer` parameter ESCAPES the native non-sentinel
 // proof (@PLN157 P3c): the parser spells the argument `OpCreateStack(k)`, not a bare `k`,

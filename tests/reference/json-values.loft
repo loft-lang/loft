@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § JsonValue surface and § The struct-shaped API — a parsed document is
+// walked by name, a reply is built from fields, and a struct parses itself.
+
+struct User { id: integer, name: text }
+struct Score { value: integer }
+
+fn handle(v: JsonValue) { }
+
+fn test_a_document_is_walked_by_name_and_every_miss_is_jnull() {
+  kind = "";
+  v = json_parse(`{{"users":[{{"name":"Alice"}}]}}`);
+  name = v.field("users").item(0).field("name").as_text();   // "Alice"
+  // every intermediate failure produces JNull, never a trap
+
+  match v {
+    JObject { fields } => { kind = "object with {len(fields)} field"; },
+    JArray { items }   => { kind = "array of {len(items)}"; },
+    _                  => { kind = "other"; }
+  }
+  assert(name == "Alice", "the path found the name");
+  assert(v.field("nope").item(3).as_text() == null, "a miss answers null, not a stop");
+  assert(kind == "object with 1 field", "the top level is an object, and the arm bound its fields");
+}
+
+fn test_a_reply_is_built_from_fields() {
+  reply = json_object([
+    JsonField { name: "ok",    value: json_bool(true) },
+    JsonField { name: "count", value: json_number(3.0) }
+  ]);
+  body = reply.to_json();   // {"ok":true,"count":3}
+  assert(body == `{{"ok":true,"count":3}}`, "compact JSON");
+}
+
+fn echo(request_body: text) -> text {
+  inbox = json_parse(request_body);
+  response = json_object([
+    JsonField { name: "echo", value: inbox.field("payload") }
+  ]);
+  return response.to_json_pretty();
+}
+
+fn test_a_field_is_carried_from_one_document_into_another() {
+  out = echo(`{{"payload":7}}`);
+  assert(out.contains("\"echo\": 7") or out.contains("\"echo\":7"), "the payload came through: {out}");
+}
+
+fn test_a_struct_parses_itself_and_reports_its_own_errors() {
+  user = User.parse(`{{"id":42,"name":"Alice"}}`);
+  scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
+
+  // A failed parse leaves the record at its type's zeros, so ask whether it failed.
+  errs = user#errors;              // TEXT, not a collection — and the read clears it
+  assert(user.name == "Alice" and len(scores) == 2, "both shapes parsed");
+  assert(errs == "", "a clean parse has no errors");
+  bad = User.parse(`{{"id":"not a number"}}`);
+  assert(bad.id == 0, "a failed field is at its type's zero");
+  assert(bad#errors != "", "and the record says so once");
+}

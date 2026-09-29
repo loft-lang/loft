@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Both call spellings, one definition and § Polymorphic text methods — a
+// `self` function is callable as a method and as a free function, and one name may be
+// defined per variant of an enum.
+
+struct Doc { format: text }
+
+pub fn exists(self: Doc) -> boolean {
+  self.format != "missing"
+}
+
+fn test_a_self_function_has_both_call_spellings() {
+  f = Doc { format: "text" };
+  // Can be called as:
+  a = f.exists();      // method syntax
+  b = exists(f);       // free function syntax
+  assert(a and b, "both spellings call the same definition");
+  assert(!Doc { format: "missing" }.exists(), "and the body is what decides");
+}
+
+enum Shape {
+    Circle { radius: float },
+    Rect   { width: float, height: float }
+}
+fn describe(self: Circle) -> text { "r={self.radius}" }
+fn describe(self: Rect)   -> text { "{self.width}x{self.height}" }
+
+fn test_one_name_per_variant_dispatches_on_the_variant() {
+  c = Circle { radius: 1.5 };
+  r = Rect { width: 2.0, height: 3.0 };
+  assert(c.describe() == "r=1.5", "the Circle's describe");
+  assert(r.describe() == "2x3", "the Rect's describe");
+}
+
+enum Mark { Dot { size: float }, Cross { size: float } }
+fn name(self: Dot) -> text { }   // stub: answers the type's default (""), no warning
+fn name(self: Cross) -> text { "cross" }
+
+fn test_an_empty_body_is_a_stub_that_answers_the_default() {
+  d = Dot { size: 1.0 };
+  assert(d.name() == "", "a stub answers the type's default");
+  assert(Cross { size: 1.0 }.name() == "cross", "beside a sibling that answers");
+}

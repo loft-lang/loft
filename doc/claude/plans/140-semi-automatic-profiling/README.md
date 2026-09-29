@@ -95,4 +95,4 @@ profiling plan.
 
 - [STACKTRACE.md](../../STACKTRACE.md) — `call_stack` / `CallFrame`, the vector arc B samples.
 - [DEBUG.md](../../DEBUG.md) — the per-op debugger hook arc B piggybacks on.
-- [TESTING.md § Store-memory ceiling](../../TESTING.md) — the at-peak trigger arc A copies.
+- [RUN_BOUNDS.md § Store-memory ceiling](../../RUN_BOUNDS.md) — the at-peak trigger arc A copies.
