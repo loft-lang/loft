@@ -377,6 +377,20 @@ the from-scratch size, @PLN123; a builder written in its element keeps the size 
 had).  First bisect step for a wrong element or a size change out of such an append;
 `store_rebuild_b1` / `store_compact_b3` are the falsifiers.
 
+**`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON since 2026-09-29)
+routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the
+library idiom — through the general record dispatch again.  With it off, `record_new` and
+`record_finish` serve the shape the way they already served a bare vector's: the field's
+vector resolved by its position, the element the inline slot `vector_append` claims, the
+finish a length bump — where the general path asked the nullable-parent redirect and the
+`__nullable<` name test twice, dispatched `insert_record`, and walked an empty sibling list
+and an empty displaced list, 27 % of mesh3d's `sphere` on both backends.  The shape is
+`Stores::plain_vector_field`'s (`@FR-R-Mint`'s field clause): a `Parts::Struct` parent, a
+`Parts::Vector` field, no sibling sharing its records; a struct-enum variant, a `__nullable<S>`
+element's field, a keyed field and a linked group keep the general path.  First bisect step for
+a wrong or missing element out of an append to a struct's vector field; guard
+`tests/scripts/a-record-appended-to-a-struct-field-vector-takes-the-plain-path.loft`.
+
 ## Runtime: keyed collections
 
 **`LOFT_NO_FAST_ORDER=1`** (@PLN158 keyed class, runtime, BOTH backends) makes every search

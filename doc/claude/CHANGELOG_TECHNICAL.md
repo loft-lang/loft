@@ -9,6 +9,25 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A record appended to a struct's vector field takes the plain path (2026-09-29)
+
+`Stores::record_new` / `record_finish` had a short path for `field == u16::MAX` only (a bare
+vector, @PLN157 § V-k); `self.items += [x]` — `OpNewRecord(self, Mesh, vertices)` — took the
+general dispatch: `nullable_field_parent` (a `__nullable<` NAME test through `key_owner`,
+twice), `sub_record_type`, `field_ref`, then `insert_record`'s kind dispatch, `link_siblings`
+over an empty sibling list and `settle_displaced` over nothing — 27 % of mesh3d's `sphere`
+in `perf`.  `plain_field_vector` (over `Stores::plain_vector_field`, `@FR-R-Mint`'s field
+clause: a `Parts::Struct` parent, a `Parts::Vector` field, no sibling) now answers the
+field's vector and its element type, and the two halves serve it as they serve a bare
+vector.  Beside it, `Type::nullable_wrapper` records the `__nullable<` fact once at the
+type's creation, so `nullable_some_variant` tests a bool before it formats a name.
+`LOFT_NO_PLAIN_FIELD_APPEND=1` keeps the general dispatch (BOTH backends).  `sphere`
+1.70 → 1.22 ms per op on `--native` (10.0× → 7.1× of Rust); the interpreter shares the
+path (its sphere run 0.22 → 0.20 s, inside its noise); guard
+`tests/scripts/a-record-appended-to-a-struct-field-vector-takes-the-plain-path.loft` (seven
+hand-computed cells incl. the four shapes that must keep the general path; falsified by an
+eight-byte shift of the field position — a store panic on both backends).
+
 ### The native test cache is per checkout and forgets an older build by itself (2026-09-29)
 
 `tests/native.rs` keeps its generated `.rs`, binaries and keys in `platform::native_cache_dir`

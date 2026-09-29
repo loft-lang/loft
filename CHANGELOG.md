@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Appending a record to a struct's vector field is as cheap as appending to a plain vector.**
+`self.items += [x]`, the way every library grows its collections, went through the runtime's
+general record dispatch — two type walks and three empty bookkeeping steps per element, on
+both backends.  It now takes the short path a bare vector always had.  mesh3d's `sphere` runs
+1.4× faster on `--native`, same output; the interpreter shares the path.
+
 **A loop over a small list of scalars builds no list.**  `for i in [tri.a, tri.b, tri.c]`
 used to build a three-element vector on every pass and read it back; it now evaluates the
 three values once and walks them directly, on both backends.  mesh3d's `mesh_to_floats` runs

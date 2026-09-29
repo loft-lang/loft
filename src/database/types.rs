@@ -973,9 +973,9 @@ impl Stores {
     pub(crate) fn nullable_some_variant(&self, content: u16) -> Option<u16> {
         // Guard `content == u16::MAX` / out-of-range (an unbuilt or first-pass type id reaches
         // `key_owner` from `new_record_field_op`); identity-resolve such ids rather than OOB-panic.
-        let name = &self.types.get(content as usize)?.name;
-        if name.starts_with("__nullable<") {
-            return self.names.get(&format!("{name}::Some")).copied();
+        let t = self.types.get(content as usize)?;
+        if t.nullable_wrapper {
+            return self.names.get(&format!("{}::Some", t.name)).copied();
         }
         None
     }
@@ -3410,6 +3410,10 @@ impl std::fmt::Debug for PrefillImage {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
+    /// Is this the synth `__nullable<S>` wrapper — the one fact its NAME carries?  Read
+    /// once here instead of a prefix test per record operation: `key_owner` asked it
+    /// twice per `v.f += [x]` and it was 15 % of a mesh build.
+    pub(super) nullable_wrapper: bool,
     pub parts: Parts,
     pub keys: Vec<crate::keys::Key>,
     pub(super) parents: std::collections::BTreeSet<u16>,
@@ -3466,8 +3470,10 @@ impl Type {
         align: u8,
         field_groups: Vec<crate::data::LinkedFieldGroup>,
     ) -> Type {
+        let nullable_wrapper = name.starts_with("__nullable<");
         Type {
             name,
+            nullable_wrapper,
             parts,
             keys,
             parents: std::collections::BTreeSet::new(),
@@ -3490,6 +3496,7 @@ impl Type {
     pub(super) fn new(name: &str, parts: Parts, size: u16) -> Type {
         Type {
             name: name.to_string(),
+            nullable_wrapper: name.starts_with("__nullable<"),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),
@@ -3506,6 +3513,7 @@ impl Type {
     pub(super) fn data(name: &str, parts: Parts) -> Type {
         Type {
             name: name.to_string(),
+            nullable_wrapper: name.starts_with("__nullable<"),
             parts,
             keys: Vec::new(),
             parents: std::collections::BTreeSet::new(),

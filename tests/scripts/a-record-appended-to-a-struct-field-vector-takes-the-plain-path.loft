@@ -1,0 +1,142 @@
+// A record appended to a plain `vector` FIELD of a plain struct (`self.items += [x]`, the
+// library idiom) takes the runtime's short path: the field's vector is resolved by its
+// position and the element is the inline slot `vector_append` claims — no nullable-parent
+// redirect, no sibling link, no key placement, which for this shape were two type walks and
+// three no-ops per element on BOTH backends.  The cells hold the shapes the short path must
+// LEAVE ALONE beside the one it takes: a keyed field, a struct-enum variant's field, a field
+// inside a nullable element, and a linked group (two fields over one record set).  Every
+// value is hand-computed; the interpreter and native must agree with the numbers here.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-29) — the short path's field position
+// shifted by eight bytes (`pos + 8`): both backends stop at c1's first append with a store
+// panic (`Store access out of bounds: rec=4294967200 … the reference is corrupt`) — the
+// element was claimed at a slot that is not the field's vector; `LOFT_NO_PLAIN_FIELD_APPEND=1`
+// kept every cell green, the switch's receipt.  Restored byte-identically.
+
+struct Ent { id: integer, q: integer }
+struct Bag { items: vector<Ent>, tag: integer }
+struct Outer { bag: Bag, n: integer }
+struct Kid { n: integer }
+struct Par { name: text, kids: vector<Kid> }
+struct Keyed { by_id: sorted<Ent[id]>, tag: integer }
+enum Shape { Poly { k: integer, pts: vector<Ent> }, Dot { d: integer } }
+struct Two { xs: vector<Ent>, bs: vector<Kid> }
+
+// c1 — the idiom: a method appends to its struct's vector field, 250 records.
+pub fn add(self: Bag, id: integer) {
+  self.items += [Ent { id: id, q: id % 7 }];
+}
+
+fn c1() -> integer {
+  b = Bag { items: [], tag: 3 };
+  for i in 0..250 { b.add(i); }
+  s = 0;
+  for e in b.items { s += e.id * 2 + e.q; }
+  s * 1000 + len(b.items)
+}
+
+// c2 — the field of a nested struct: parent type is the inner struct.
+fn c2() -> integer {
+  o = Outer { bag: Bag { items: [], tag: 1 }, n: 9 };
+  for i in 0..40 { o.bag.items += [Ent { id: i * 3, q: 1 }]; }
+  s = 0;
+  for e in o.bag.items { s += e.id; }
+  s + o.n + o.bag.tag
+}
+
+// c3 — growth: 5000 records reallocate the field's vector several times.
+fn c3() -> integer {
+  b = Bag { items: [], tag: 0 };
+  for i in 0..5000 { b.add(i); }
+  b.items[0]?.id * 10 + b.items[4999]?.id + len(b.items) * 100000
+}
+
+// c4 — a keyed field keeps the key placement: appended 3, 1, 2 reads back in key order.
+fn c4() -> integer {
+  k = Keyed { by_id: [], tag: 0 };
+  k.by_id += [Ent { id: 3, q: 30 }];
+  k.by_id += [Ent { id: 1, q: 10 }];
+  k.by_id += [Ent { id: 2, q: 20 }];
+  s = 0;
+  q = 0;
+  for e in k.by_id { s = s * 10 + e.id; q += e.q; }
+  s * 100 + q
+}
+
+// c5 — a struct-enum variant's vector field keeps the general path (its fields sit
+// behind a tag).
+fn c5() -> integer {
+  sh = Poly { k: 2, pts: [] };
+  sh.pts += [Ent { id: 4, q: 0 }];
+  sh.pts += [Ent { id: 5, q: 0 }];
+  t = 0;
+  match sh {
+    Poly { k, pts } => {
+      s = 0;
+      for p in pts {
+        s += p.id;
+      }
+      t = k * 100 + s * 10 + len(pts);
+    },
+    Dot { d } => { t = d; }
+  }
+  t
+}
+
+// c6 — a field inside a NULLABLE element: the parent redirect stays.
+fn c6() -> integer {
+  ps: vector<Par?> = [Par { name: "a", kids: [] }, null, Par { name: "c", kids: [] }];
+  for p in ps {
+    if p != null {
+      p.kids += [Kid { n: p#index + 1 }];
+      p.kids += [Kid { n: 10 }];
+    }
+  }
+  s = 0;
+  for p in ps {
+    if p != null {
+      for k in p.kids? {
+        s += k.n;
+      }
+    }
+  }
+  s
+}
+
+// c7 — two record vector fields of one struct, interleaved.
+fn c7() -> integer {
+  t = Two { xs: [], bs: [] };
+  for i in 0..30 {
+    t.xs += [Ent { id: i, q: 0 }];
+    if i % 3 == 0 { t.bs += [Kid { n: i }]; }
+  }
+  sa = 0;
+  for e in t.xs { sa += e.id; }
+  sb = 0;
+  for k in t.bs { sb += k.n; }
+  sa * 1000 + sb * 10 + len(t.bs)
+}
+
+fn main() {
+  r1 = c1();
+  println("c1 {r1}");
+  assert(r1 == 62995250, "c1");
+  r2 = c2();
+  println("c2 {r2}");
+  assert(r2 == 2350, "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == 500004999, "c3");
+  r4 = c4();
+  println("c4 {r4}");
+  assert(r4 == 12360, "c4");
+  r5 = c5();
+  println("c5 {r5}");
+  assert(r5 == 292, "c5");
+  r6 = c6();
+  println("c6 {r6}");
+  assert(r6 == 24, "c6");
+  r7 = c7();
+  println("c7 {r7}");
+  assert(r7 == 435 * 1000 + 135 * 10 + 10, "c7");
+}

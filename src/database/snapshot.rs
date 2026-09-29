@@ -472,8 +472,10 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         .collect::<Result<_, SchemaDecodeError>>()?;
     let parents: BTreeSet<u16> = u16_vec(field(p, "parents")?)?.into_iter().collect();
     let field_groups = field_groups_from(field(p, "field_groups")?)?;
+    let name = as_str(field(p, "name")?)?;
     Ok(Type {
-        name: as_str(field(p, "name")?)?,
+        nullable_wrapper: name.starts_with("__nullable<"),
+        name,
         parts: parts_from(field(p, "parts")?)?,
         keys,
         parents,
