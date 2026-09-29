@@ -415,7 +415,20 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  derives it once before the loop, and every element read, element
                  write and len(P) in the body uses it (R-State).  A rebind of P's root
                  inside the body removes P; a nested loop's prelude skips a path an
-                 outer one already holds.
+                 outer one already holds.  The FUNCTION clause: a body that reads a
+                 vector PARAMETER twice or more through an element address, and
+                 leaves that parameter as it found it — never rebinds it, never
+                 hands it to a native that is not a reader, never frees it, and
+                 hands it (or a heap value that may name its store: a parameter, a
+                 view, a link — never a local's own fresh store or a work buffer)
+                 only to callees of which the same holds at that position, a
+                 recursive call answering for itself — binds its header once at
+                 entry, and every read in the body, loops included, serves from it.
+                 Growth of OTHER stores is no concern of a header (its record and
+                 length are the vector's own), so a body that builds its result
+                 beside the reads keeps them; only a BASE would need the store's
+                 memory still, and the clause binds none — a loop inside that is
+                 growth-free derives its base off the held header.
 ```
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto

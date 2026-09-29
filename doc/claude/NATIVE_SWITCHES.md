@@ -31,7 +31,15 @@ native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the h
 but leaves the scalar element read UNFUSED, one bisect step finer, and is the middle rung that
 showed stage 2 is worth ~3.2× on top of stage 1 (projected ~1.4×) — more than the hoist itself,
 because the second store resolution it removes costs more than the arithmetic it saves;
-`LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.
+`LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.  **`LOFT_NO_FN_HEADER=1`**
+keeps `(R-Header)`'s FUNCTION clause off: a body that reads a vector parameter twice or more
+and leaves it as it found it (`hoist::param_untouched`, a callee asked the same of the position
+the parameter reaches, a recursion answering for itself) derives the header at every read
+again instead of once at entry — the first bisect step for a wrong element read OUTSIDE any
+loop under `--native`; `LOFT_TRACE_HOIST_DECLINE=1` names the parameter declined and the op
+that touches it.  Measured on cbor's `read_value` (the byte reads of a decoder's head): the
+runtime vector lookup fell from 7 % of the check profile to 2 %, decode 2.65 → 2.53 s per 60
+driver rounds.
 **`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
 again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
 (record type, offset) over the body's typed write set — and is the bisect step for a wrong

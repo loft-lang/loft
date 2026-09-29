@@ -2711,6 +2711,23 @@ impl Output<'_> {
         if let Some(prefix) = self.call_stack_prefix.take() {
             writeln!(w, "{prefix}")?;
         }
+        // `(R-Header)`'s FUNCTION clause — the body itself as the frame: a body that writes
+        // no store and reads a vector path twice or more holds the path's header from here,
+        // exactly as a loop body would, and a loop inside re-uses it.  Opened after the
+        // prologue, because the header reads `stores`; closed before the block's brace so a
+        // tail value flows out of the wrapper.
+        let fn_frame = if is_fn_body && !self.fn_header_disabled && !self.hoist_disabled {
+            let mut memo = std::mem::take(&mut self.fn_header_memo);
+            let paths = super::hoist::fn_header_params(bl, self.data, self.def_nr, &mut memo);
+            self.fn_header_memo = memo;
+            if paths.is_empty() {
+                false
+            } else {
+                self.begin_fn_headers(w, paths)?
+            }
+        } else {
+            false
+        };
         // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
         // call's buffer as a record in the destination's own store, and arm the loop
         // variable so the append's OpCopyRecord emits the move.  The destination's
@@ -3733,6 +3750,9 @@ impl Output<'_> {
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;
+        }
+        if fn_frame {
+            self.end_vector_hoist(w, true)?;
         }
         self.indent(w)?;
         write!(

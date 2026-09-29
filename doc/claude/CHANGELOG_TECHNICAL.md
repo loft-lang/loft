@@ -10,6 +10,25 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-Header)`'s function clause — a parameter's header bound once at entry (2026-09-30)
+
+A function reading a vector parameter outside any loop paid the runtime's vector lookup at
+every `v[i]` (`get_vector` + `length_vector`, ~9 ns a read: 37 % of pluginabi's check profile
+once the tree copies were gone).  `hoist::fn_header_params` binds one header at entry for
+every parameter read twice or more that `hoist::param_untouched` finds left as it was: no
+rebind, no native op on it that is not a reader, no free, and every loft callee it reaches
+asked the same of that position (a heap argument that is not the frame's own may name the
+parameter's store and is asked too; a recursion assumes the answer it computes).  Headers
+only, no base: growth of other stores cannot move a header's record or length, and the
+memory a base points into is not provably the parameter's own once a placed buffer may share
+its store.  `Output::begin_fn_headers` opens the frame after the prologue (the header reads
+`stores`) and `end_vector_hoist` closes it before the block's brace, so a loop inside re-uses
+the header and a tail value flows out.  Cells f1–f10 with the emission pin `tests/fn_header.rs`
+(`LOFT_NO_FN_HEADER=1`); falsified: a native write let through keeps a stale header, which
+`LOFT_HOIST_VERIFY=1` names on f10.  Two findings on the way: `Function::is_argument` is true
+for every scope-0 local, so a parameter is `index < attributes().len()` (a work buffer's
+promoted local included); and `OpVectorIsNull` was missing from the hoist's reader list.
+
 ### `text_from_byte_range(bytes, lo, hi)` — a text from a byte range, read in place (2026-09-30)
 
 `text_from_bytes(bytes[lo..hi])` builds the slice as a fresh vector (`(Slice-Value)` at an

@@ -1,0 +1,88 @@
+// `(R-Header)`'s FUNCTION clause: a function body that writes no store and reads a vector
+// path twice or more binds the path's header once at entry, and every element read and
+// `len` in the body serves from it — the loop clause's argument at the scope of a body
+// that has no loop, admitted by what the PARAMETER meets (`hoist::param_untouched`), not
+// by what the body does to other stores.  Hand-computed cells, both backends: f1 a
+// parameter read three times (one header); f2 read once (nothing to gain: none); f3 a
+// body that pushes to a LOCAL vector while reading the parameter (the pushes grow another
+// store: hoisted); f4 a recursive reader (the recursion answers for itself: hoisted); f5 a
+// nullable parameter read twice (hoisted; a null header has length 0); f6 a read behind a
+// branch; f7 two parameters, both hoisted; f8 a local built then read (not a parameter:
+// none); f9 a parameter REBOUND before its reads (declined); f10 a parameter PUSHED to before
+// a read past its entry length (declined: the push is a write through the parameter).  `--native-emit` pins the
+// emission in tests/fn_header.rs.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-30) — `param_untouched` letting every
+// native op through (`reads = true`): f10's push keeps its header, and `LOFT_HOIST_VERIFY=1
+// loft --native <this>` panics "hoisted vector header is stale — the loop wrote the vector it
+// was hoisted for"; the plain build still answered 10, because the hoisted read serves the
+// address off the variable and only the LENGTH off the header, and 4 is in range of the
+// pushed vector too — the verify channel is the one that moved.  A first sabotage on the
+// rebind (f9 reading within the old length) moved nothing on either channel; f9 now reads
+// past it.  Restored byte-identically.
+fn f1(b: const vector<u8>) -> integer {
+  if len(b) < 3 { return -1; }
+  return ((b[0] ?? 0) * 256 + (b[1] ?? 0)) * 256 + (b[2] ?? 0);
+}
+fn f2(b: const vector<u8>) -> integer { return (b[1] ?? 7) + 1; }
+fn f3(b: const vector<u8>) -> integer {
+  out: vector<u8> = [];
+  out += [b[0] ?? 0];
+  out += [b[1] ?? 0];
+  return len(out) * 10 + (out[1] ?? 0);
+}
+fn f4(b: const vector<u8>, pos: integer) -> integer {
+  if pos >= len(b) { return 0; }
+  return (b[pos] ?? 0) + (b[pos + 1] ?? 0) + f4(b, pos + 1);
+}
+fn f5(b: const vector<u8>?) -> integer {
+  if b == null { return -5; }
+  return (b[0] ?? 0) + (b[2] ?? 0);
+}
+fn f6(b: const vector<u8>, k: integer) -> integer {
+  if k > 0 { return (b[k] ?? 0) * 2; }
+  return (b[0] ?? 0) + len(b);
+}
+fn f7(a: const vector<u8>, c: const vector<integer>) -> integer {
+  return (a[0] ?? 0) + (a[1] ?? 0) + (c[0] ?? 0) + (c[1] ?? 0);
+}
+fn f8(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3]; }
+  return (v[0] ?? -1) + (v[1] ?? -1) + len(v);
+}
+fn f9(b: vector<u8>, c: vector<u8>) -> integer {
+  b = c;
+  return (b[0] ?? 0) + (b[5] ?? 0);   // past the OLD length: a stale header answers absent
+}
+fn f10(b: vector<u8>) -> integer {
+  b += [9 as u8];
+  return (b[0] ?? 0) + (b[4] ?? 0);   // past the length at entry: a stale header answers absent
+}
+fn main() {
+  b: vector<u8> = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
+  c: vector<integer> = [10, 20];
+  short: vector<u8> = [9 as u8];
+  c8: vector<u8> = [7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8];
+  println("f1 {f1(b)} {f1(short)}");
+  assert(f1(b) == 66051 && f1(short) == -1, "f1");       // 1*65536 + 2*256 + 3
+  println("f2 {f2(b)} {f2(short)}");
+  assert(f2(b) == 3 && f2(short) == 8, "f2");
+  println("f3 {f3(b)}");
+  assert(f3(b) == 22, "f3");
+  println("f4 {f4(b, 0)} {f4(b, 3)}");
+  assert(f4(b, 0) == 19 && f4(b, 3) == 4, "f4");                 // (1+2)+(2+3)+(3+4)+(4+0)
+  println("f5 {f5(b)} {f5(null)}");
+  assert(f5(b) == 4 && f5(null) == -5, "f5");
+  println("f6 {f6(b, 2)} {f6(b, 0)}");
+  assert(f6(b, 2) == 6 && f6(b, 0) == 5, "f6");
+  println("f7 {f7(b, c)}");
+  assert(f7(b, c) == 33, "f7");
+  println("f9 {f9(b, c8)}");
+  assert(f9(b, c8) == 19, "f9");
+  b10: vector<u8> = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
+  println("f10 {f10(b10)} {len(b10)}");
+  assert(f10(b10) == 10 && len(b10) == 6, "f10");
+  println("f8 {f8(4)} {f8(1)}");
+  assert(f8(4) == 7 && f8(1) == 0, "f8");                 // 0+3+4 ; 0 + (-1) + 1
+}

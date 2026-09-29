@@ -1072,6 +1072,13 @@ pub struct Output<'a> {
     /// loft#885. The before-half of an A/B on one binary, and the first thing to try when
     /// a program answers differently under `--native` than under `--interpret`.
     pub hoist_disabled: bool,
+    /// `LOFT_NO_FN_HEADER=1` — `(R-Header)`'s FUNCTION clause off: a body that writes no
+    /// store and reads a vector path twice or more keeps deriving the path's header at every
+    /// read instead of once at entry.  The first bisect step for a wrong element read
+    /// outside any loop under `--native`.
+    pub fn_header_disabled: bool,
+    /// [`hoist::param_untouched`]'s memo: `(function, parameter)` → left as found.
+    pub fn_header_memo: HashMap<(u32, u16), bool>,
     /// `LOFT_NO_FILL_HOIST=1` — a filling loop keeps its per-element form (@PLN157 § V-ae,
     /// `@FR-R-Fill`): the bisect step for a wrong element or a missed write out of
     /// `for i in lo..hi { v[base + i] = c }`.
@@ -2299,6 +2306,8 @@ impl<'a> Output<'a> {
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
             hoist_disabled: std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0"),
+            fn_header_disabled: std::env::var("LOFT_NO_FN_HEADER").is_ok_and(|v| v != "0"),
+            fn_header_memo: HashMap::new(),
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
             nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
@@ -4185,6 +4194,48 @@ impl Output<'_> {
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
+    /// `(R-Header)`'s FUNCTION clause — one header per admitted parameter, bound at entry
+    /// (after the prologue, which the header reads `stores` through), and a frame for the
+    /// whole body: every element read serves from it and a loop inside re-uses it.  Answers
+    /// whether a frame was pushed; [`Self::end_vector_hoist`] closes it.
+    fn begin_fn_headers(
+        &mut self,
+        w: &mut dyn Write,
+        paths: Vec<(hoist::PathKey, Value)>,
+    ) -> std::io::Result<bool> {
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        let mut lines: Vec<String> = Vec::new();
+        for (path, expr) in paths {
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__vh_{}", self.hoist_counter);
+            let operand = self.expr_string(&expr)?;
+            lines.push(format!(
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@FR-R-Header function clause"
+            ));
+            frame.insert(path, name);
+        }
+        if frame.is_empty() {
+            return Ok(false);
+        }
+        writeln!(w, "{{ //(R-Header) function headers")?;
+        for line in lines {
+            self.indent(w)?;
+            writeln!(w, "{line}")?;
+        }
+        crate::rewrite_census::fired("R-FnHeader", frame.len());
+        self.vec_headers.push(frame);
+        self.vec_bases.push(HashMap::new());
+        self.vec_bounds.push(HashMap::new());
+        self.scalar_hoists.push(HashMap::new());
+        self.invariant_hoists.push(HashMap::new());
+        self.push_headers.push(HashMap::new());
+        self.mint_push_headers.push(HashMap::new());
+        Ok(true)
+    }
+
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
         self.vec_bases.pop();

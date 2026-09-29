@@ -72,7 +72,8 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 35] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 36] = [
+    "OpVectorIsNull",
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
     // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer);
@@ -5953,6 +5954,246 @@ pub fn parameters_declared(data: &Data, d_nr: u32) -> usize {
 
 /// True when `d_nr` is one of the element-address ops a header serves.
 #[must_use]
+/// `(R-Header)`'s FUNCTION clause — the vector PARAMETERS whose header the body may hold
+/// from entry: read twice or more through an element address, and left as they were found
+/// — never written, freed or rebound by the body, nor by any call it makes, a callee asked
+/// the same question of the position the parameter reaches and a recursive call answering
+/// for itself ([`param_untouched`]).  Growth of OTHER stores is no concern of a header (its
+/// `rec` and `len` are the vector's own, addressed through the store), so a body that
+/// builds its result beside the reads keeps them; only a BASE would need the store's
+/// memory still, and the clause binds none.  One read gains nothing: deriving the header
+/// is that read's own work.
+pub fn fn_header_params(
+    body: &Block,
+    data: &Data,
+    def_nr: u32,
+    memo: &mut HashMap<(u32, u16), bool>,
+) -> Vec<(PathKey, Value)> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let Ok(params) = u16::try_from(def.attributes().len()) else {
+        return Vec::new();
+    };
+    let mut counts: Vec<(u16, usize, Value)> = Vec::new();
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && args.len() == 3
+                && is_element_address(data, *d)
+                && let Some((root, offs)) = vector_path(data, &args[0])
+                && offs.is_empty()
+                && root < params
+                && matches!(vars.tp(root).base(), Type::Vector(_, _))
+            {
+                match counts.iter_mut().find(|(r, _, _)| *r == root) {
+                    Some(e) => e.1 += 1,
+                    None => counts.push((root, 1, args[0].clone())),
+                }
+            }
+            false
+        });
+    }
+    let trace = std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
+    let mut out = Vec::new();
+    for (root, n, expr) in counts {
+        if n < 2 {
+            continue;
+        }
+        if param_untouched(data, def_nr, root, memo, &mut HashSet::new()) {
+            out.push(((root, Vec::new()), expr));
+        } else if trace {
+            eprintln!(
+                "hoist: {} function header for {} declined: the body or a call may write it (params {:?})",
+                def.name(),
+                vars.name(root),
+                def.attributes()
+                    .iter()
+                    .map(|a| a.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    out
+}
+
+/// Does function `d_nr` leave the vector its parameter `p` names as it found it — the same
+/// record, the same length — on every path?  A rebind of `p`, a native op that is not a
+/// reader with `p` as an operand, a free, a fn-ref call, a parallel arm and a `yield` answer
+/// no.  A loft-defined callee is asked the same of every position `p` reaches — and of
+/// every position a heap value that is not this frame's own reaches, since that value may
+/// name `p`'s store — with a recursion assuming the answer it is computing: a body whose
+/// only writes to `p` would come through its own recursion has none.  Memoised per
+/// `(function, parameter)`.
+pub fn param_untouched(
+    data: &Data,
+    d_nr: u32,
+    p: u16,
+    memo: &mut HashMap<(u32, u16), bool>,
+    active: &mut HashSet<(u32, u16)>,
+) -> bool {
+    if let Some(&known) = memo.get(&(d_nr, p)) {
+        return known;
+    }
+    if !active.insert((d_nr, p)) {
+        return true;
+    }
+    let def = data.def(d_nr);
+    let vars = def.variables();
+    let params = u16::try_from(def.attributes().len()).unwrap_or(u16::MAX);
+    let answer = match def.code().unspan() {
+        Value::Block(body) => {
+            let mut ok = true;
+            for op in &body.operators {
+                op.any_node(&mut |n| {
+                    if !ok {
+                        return true;
+                    }
+                    match n {
+                        Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == p => ok = false,
+                        Value::Call(d, args) => {
+                            ok = call_leaves_param(
+                                data, d_nr, *d, args, p, params, vars, memo, active,
+                            );
+                            if !ok && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+                                eprintln!(
+                                    "hoist: {} parameter {} touched by {}",
+                                    def.name(),
+                                    vars.name(p),
+                                    if (*d as usize) < data.definitions.len() {
+                                        data.def(*d).name()
+                                    } else {
+                                        "?"
+                                    }
+                                );
+                            }
+                        }
+                        Value::CallRef(..) | Value::Parallel(_) | Value::Yield(_) => ok = false,
+                        _ => {}
+                    }
+                    !ok
+                });
+                if !ok {
+                    break;
+                }
+            }
+            ok
+        }
+        _ => false,
+    };
+    active.remove(&(d_nr, p));
+    memo.insert((d_nr, p), answer);
+    answer
+}
+
+/// A LOCAL — not one of the first `params` variables, the parameters, unless a work buffer
+/// (`@FR-R-WorkBuffer`: a local promoted to a scratch store the caller hands this call
+/// alone) — that owns the store it names: its deps name its own `__vdb_` witness, it is no
+/// link and no closure capture.  Its store is fresh to this frame, so it cannot be a
+/// parameter's.
+fn local_owns_store(
+    data: &Data,
+    d_nr: u32,
+    vars: &crate::variables::Function,
+    params: u16,
+    x: u16,
+) -> bool {
+    (x >= params || work_buffer_arg(data, d_nr, x))
+        && !matches!(vars.tp(x).base(), Type::RefVar(_))
+        && !vars.is_captured(x)
+        && vars
+            .tp(x)
+            .depend()
+            .iter()
+            .all(|d| vars.name(*d).starts_with("__vdb"))
+}
+
+/// Is `a` the vector `p` names, or a place inside its record (`OpGetField(p, …)`)?  A
+/// VALUE computed from `p` — an element read, a length — is not: it reaches no one who
+/// could write the vector.
+fn is_path_of(data: &Data, a: &Value, p: u16) -> bool {
+    vector_path(data, a).is_some_and(|(root, _)| root == p)
+}
+
+/// [`param_untouched`]'s verdict for one call: a loft-defined callee answers for the
+/// positions `p` — or a heap value that may name `p`'s store — reaches; a native reads `p`
+/// only when it is a listed reader, a copy FROM `p`, or a routine whose every collection
+/// parameter is `const`.
+#[allow(clippy::too_many_arguments)]
+fn call_leaves_param(
+    data: &Data,
+    d_nr: u32,
+    d: u32,
+    args: &[Value],
+    p: u16,
+    params: u16,
+    vars: &crate::variables::Function,
+    memo: &mut HashMap<(u32, u16), bool>,
+    active: &mut HashSet<(u32, u16)>,
+) -> bool {
+    if (d as usize) >= data.definitions.len() {
+        return false;
+    }
+    let callee = data.def(d);
+    if callee.is_loft_defined() {
+        for (i, a) in args.iter().enumerate() {
+            let Ok(pos) = u16::try_from(i) else {
+                return false;
+            };
+            // A heap value that is not this frame's own may name `p`'s store: a parameter, a
+            // view, a link.  A path over an OWNED local names that local's fresh store.
+            let reaches = is_path_of(data, a, p)
+                || match (a.unspan(), vector_path(data, a)) {
+                    (_, Some((root, _))) => {
+                        !is_scalar(vars.tp(root))
+                            && !matches!(vars.tp(root).base(), Type::Text(_))
+                            && !local_owns_store(data, d_nr, vars, params, root)
+                    }
+                    (Value::Var(x), None) => {
+                        !is_scalar(vars.tp(*x))
+                            && !matches!(vars.tp(*x).base(), Type::Text(_))
+                            && !local_owns_store(data, d_nr, vars, params, *x)
+                    }
+                    _ => callee.attributes().get(i).is_none_or(|at| {
+                        !is_scalar(&at.typedef) && !matches!(at.typedef.base(), Type::Text(_))
+                    }),
+                };
+            if reaches && !param_untouched(data, d, pos, memo, active) {
+                if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+                    let shown = format!("{:?}", a.unspan());
+                    eprintln!(
+                        "hoist:   arg {i} of {} reaches it: {} (argument={})",
+                        callee.name(),
+                        &shown[..shown.len().min(160)],
+                        match a.unspan() {
+                            Value::Var(x) => vars.is_argument(*x),
+                            _ => false,
+                        }
+                    );
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+    let name = callee.name();
+    let const_collections = !callee.attributes().is_empty()
+        && callee.attributes().iter().all(|at| {
+            is_scalar(&at.typedef) || matches!(at.typedef.base(), Type::Text(_)) || at.value_const
+        });
+    for (i, a) in args.iter().enumerate() {
+        if !is_path_of(data, a, p) {
+            continue;
+        }
+        let reads = READ_ONLY_COLLECTION_OPS.contains(&name)
+            || (i > 0 && name == "OpAppendVector")
+            || const_collections;
+        if !reads {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn is_element_address(data: &Data, d_nr: u32) -> bool {
     (d_nr as usize) < data.definitions.len() && ELEMENT_ADDRESS_OPS.contains(&data.def(d_nr).name())
 }
