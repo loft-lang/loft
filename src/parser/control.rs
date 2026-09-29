@@ -14502,8 +14502,8 @@ impl Parser {
         };
         // Through `Rewritten`, as `variant_parent_enum` reads it, and through `?`
         // (`@FR-N-Shape`).
-        let (t, f) = (true_type.unrewritten(), false_type.unrewritten());
-        match (t.base(), f.base()) {
+        let (then_tp, else_tp) = (true_type.unrewritten(), false_type.unrewritten());
+        match (then_tp.base(), else_tp.base()) {
             // A sibling variant, and only a sibling: the arm's def must belong to THIS
             // enum.  The acceptance sites read this predicate too (`arm_joins_to_enum`),
             // so an unrelated struct reaching it would be waved past the conversion it
