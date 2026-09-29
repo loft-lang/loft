@@ -3814,6 +3814,14 @@ use #count instead"
                 // reused name keeps the first type, so a field access on the
                 // second loop var fails to resolve and yields no iterator.
                 self.vars.finish_loop(loop_nr);
+                // And stand in for the statement the loop would have been: its body consumed,
+                // an empty block as its code.  Left unread, the body's `{` met the enclosing
+                // parse, and a `Null` statement asked for a `;` a loop never needs — "Expect
+                // token ;" and a block typed from wherever the parse landed, two errors about
+                // the parser's own state behind a message that had already named the fault
+                // (loft#1453's second half).
+                self.skip_braced();
+                *code = v_block(Vec::new(), Type::Void, "for");
                 return;
             }
             // P235 step 2: with for_var resolved, define each destructured

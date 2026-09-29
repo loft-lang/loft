@@ -3186,14 +3186,25 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let src_coll = expr.clone();
         let mut create_iter = expr;
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
+        let errors_before_iterable = self.lexer.diagnostics().error_count();
         let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
         if !self.first_pass && iter_next == Value::Null {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Need an iterable expression in a for statement"
-            );
-            return Type::Null;
+            // The `for` statement's two recovery rules (loft#1453): the fallback line only
+            // when `iterator` reported nothing of its own — a nullable source is refused
+            // there, naming the `?` and both discharges — and the body consumed, so the
+            // literal's `]` is where the parse resumes.  Without them a refused source
+            // cascaded into six errors about the parser's own state.
+            if self.lexer.diagnostics().error_count() == errors_before_iterable {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Need an iterable expression in a for statement"
+                );
+            }
+            self.skip_braced();
+            // The poison (@P376), not `null`: a `null` element made the literal a
+            // `vector<…>?` and every later use of it warned about an absence nobody wrote.
+            return Type::Never;
         }
         let for_next = v_set(for_var, iter_next);
         self.vars.loop_var(for_var);
