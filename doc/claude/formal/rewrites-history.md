@@ -86,6 +86,19 @@ this is where it is written down.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **D-rw-7 — OPENED AND CLOSED 2026-09-29 (loft#1741).**  `(R-MoveLast)`'s build-into-the-
+  field form: a vector local whose last use is a field store was built INTO that field where
+  the local was declared, and a binding of the field's root between the two — `m9 = mo`, a
+  call result, an arm of an `if` — replaced the record the elements were built in.  The store
+  then answered an empty or stale vector on both backends with no diagnostic, and a FRESH root
+  was used before its `let` on `--native` (E0425).  Both lowerings carried it, the replace
+  (`m9.b = rsl`) and the append (`m9.b += rsl`): each guarded that the root EXISTS at the build
+  by the absence of a later `OpDatabase`, and a binding by assignment allocates nothing, while
+  their read guard counted `Var` reads and a rebind names its target as an id.  **Fix.**  A
+  binding of the root in the source's build region declines the rewrite (`binds_var`, the
+  `Set` twin of `refs_var`), and the append path's prescan records each binding's order.  The
+  rewrite census holds its admissions.  Guard
+  `tests/scripts/a-field-store-lands-in-the-record-bound-at-the-store.loft`.
 - **D-rw-6 — OPENED AND CLOSED 2026-09-28 (loft#1729).**  `(R-Const)` makes a constant's view
   B-Copy's copy the moment it is "handed to a parameter the callee writes", and a top-level
   vector constant handed there went through as the VIEW: the callee's first write reached the

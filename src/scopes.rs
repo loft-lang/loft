@@ -8030,6 +8030,7 @@ fn construct_move_rewrite(
         ambiguous,
         vdb,
         container,
+        last_bind,
         ..
     } = sc;
 
@@ -8078,6 +8079,14 @@ fn construct_move_rewrite(
                     // element (`[Chunk { … }]` → `_elm_N.field += src`) has no `OpDatabase` but is
                     // NOT pre-existing — it is defined later, so retargeting there is use-before-def.
                     if bad_containers.contains(&cvar) {
+                        return false;
+                    }
+                    // `@FR-R-MoveLast` — a container BOUND after the source's backing exists is
+                    // not the record the retargeted build lands in: a rebind allocates nothing,
+                    // so the order check below read it as a parameter (loft#1741).
+                    if let (Some(&bound), Some(&v)) = (last_bind.get(&cvar), db_order.get(&vdb[s]))
+                        && bound > v
+                    {
                         return false;
                     }
                     // container built before the source's backing (both locals), or a real param.
@@ -8144,6 +8153,9 @@ struct ConstructScan {
     vdb: HashMap<u16, u16>,
     /// Source → the destination's container var, when the destination is a field read.
     container: HashMap<u16, Option<u16>>,
+    /// Per var, the `OpDatabase` count at its LATEST binding (`Set`) — a container bound after
+    /// a source's backing is allocated is not the one the source's build would land in.
+    last_bind: HashMap<u16, usize>,
     /// Walk state: the `OpDatabase` counter, the region-id counter, and the current path.
     idx: usize,
     next_region: u32,
@@ -8194,6 +8206,10 @@ fn construct_prescan(node: &Value, co: &ConstructOps, con: &HashSet<u16>, sc: &m
             }
         }
         _ => {}
+    }
+    if let Value::Set(v, _) = node.unspan() {
+        let at = sc.last_bind.entry(*v).or_insert(sc.idx);
+        *at = (*at).max(sc.idx);
     }
     // A node whose children do NOT run exactly once with it opens a region, so everything
     // below carries a path the statements outside cannot match.  Scoped to the whole node
@@ -8698,6 +8714,15 @@ fn try_replace_one(
     if (bs..c2).any(|i| !chain.contains(&i) && refs_var(&b.operators[i], a)) {
         return false;
     }
+    // `@FR-R-MoveLast` — nor may the region BIND `a`: the build lands in the `a.field` that exists
+    // at `bs`, and a rebind before the store (`m9 = mo`, a call result, an arm of an `if`) puts a
+    // different record there, so the built elements were lost with no diagnostic on both
+    // backends — and on `--native` a FRESH `a` was used before its `let` (loft#1741).  An
+    // `OpDatabase` of `a` after `bs` is refused above; a binding by assignment allocates nothing,
+    // which is how it passed as "pre-existing".
+    if (bs..c2).any(|i| !chain.contains(&i) && binds_var(&b.operators[i], a)) {
+        return false;
+    }
 
     let clear = b.operators[c2 - 1].clone();
     let ops = std::mem::take(&mut b.operators);
@@ -8773,6 +8798,21 @@ fn append_temp_src(op: &Value, rhs: u16, co: &ConstructOps) -> Option<u16> {
 fn refs_var(op: &Value, v: u16) -> bool {
     fn walk(node: &Value, v: u16, found: &mut bool) {
         if matches!(node.unspan(), Value::Var(x) if *x == v) {
+            *found = true;
+        }
+        node.for_each_child(&mut |c| walk(c, v, found));
+    }
+    let mut found = false;
+    walk(op, v, &mut found);
+    found
+}
+
+/// Does `op` BIND `v` anywhere inside it — a `Set(v, …)`, at any depth?  `refs_var`'s twin for
+/// the other half of a variable's life: a rebind names `v` as a target id, not as a `Var` node,
+/// so a read-only walk passes over it (loft#1741).
+fn binds_var(op: &Value, v: u16) -> bool {
+    fn walk(node: &Value, v: u16, found: &mut bool) {
+        if matches!(node.unspan(), Value::Set(x, _) if *x == v) {
             *found = true;
         }
         node.for_each_child(&mut |c| walk(c, v, found));

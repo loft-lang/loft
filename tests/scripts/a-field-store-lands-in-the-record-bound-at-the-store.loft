@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-MoveLast` — a vector local whose last use is a field store may be BUILT INTO that field,
+// but only into the record the field belongs to AT THE STORE.  The rewrite built the local's
+// elements into `m9.b` where the local was DECLARED, and a binding of `m9` between the two — a
+// copy (`m9 = mo`), a call result, an arm of an `if` — replaced the record they were built in:
+// the store answered an empty or stale vector on both backends, with no diagnostic, and a FRESH
+// `m9` was used before its `let` on `--native` (loft#1741, hit-by:planets — a whole mechanism
+// that was a no-op for as long as it existed).  Both paths carried it: the replace (`m9.b = rsl`)
+// and the append (`m9.b += rsl`).  A root bound BEFORE the local, or never rebound, keeps the
+// rewrite (the rewrite census holds its admissions).
+//
+// Axes this file MOVES:  how the root is bound after the local (copy, call result, rebind of an
+//                        existing root, inside an `if`); how the local is built (literal,
+//                        comprehension); replace vs append; a root bound before the local; no
+//                        rebind; the root a returned value.
+// Axes it HOLDS FIXED:   a `vector<integer>` / `vector<boolean>` field one level down.
+
+struct M { b: vector<integer>, k: integer }
+struct R { b: vector<integer>, c: vector<boolean> }
+
+fn ident(x: M) -> M { x }
+fn with_b(mo: R, b: vector<integer>) -> R { m = mo; m.b = b; m }
+
+fn after_copy() -> integer {
+  mo = M { b: [9], k: 0 };
+  rsl: vector<integer> = [1, 2, 3];
+  m9 = mo;
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn after_call() -> integer {
+  mo = M { b: [9], k: 0 };
+  rsl: vector<integer> = [1, 2, 3];
+  m9 = ident(mo);
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn rebind_existing() -> integer {
+  mo = M { b: [9], k: 0 };
+  m9 = M { b: [], k: 1 };
+  rsl: vector<integer> = [1, 2, 3];
+  m9 = mo;
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn in_a_branch() -> integer {
+  mo = M { b: [9], k: 0 };
+  m9 = M { b: [], k: 1 };
+  rsl: vector<integer> = [1, 2, 3];
+  if mo.k == 0 { m9 = mo; }
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn append_after_copy() -> integer {
+  mo = M { b: [9], k: 0 };
+  rsl: vector<integer> = [1, 2, 3];
+  m9 = mo;
+  m9.b += rsl;
+  len(m9.b)
+}
+
+fn bound_before() -> integer {
+  mo = M { b: [9], k: 0 };
+  m9 = mo;
+  rsl: vector<integer> = [1, 2, 3];
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn never_rebound() -> integer {
+  m9 = M { b: [9], k: 0 };
+  rsl: vector<integer> = [1, 2, 3];
+  m9.b = rsl;
+  len(m9.b)
+}
+
+fn shape_returned(mo: R, n: integer) -> R {
+  rsl: vector<boolean> = [for i in 0..n { i > 0 }];
+  m9 = with_b(mo, [5]);
+  m9.c = rsl;
+  m9
+}
+
+fn test_a_root_bound_after_the_local_receives_it() {
+  got = "{after_copy()} {after_call()} {rebind_existing()} {in_a_branch()}";
+  assert(got == "3 3 3 3", "replace after a binding: {got}");
+  a = append_after_copy();
+  assert(a == 4, "append after a binding: {a}");
+}
+
+fn test_a_comprehension_into_a_returned_root() {
+  r = shape_returned(R { b: [], c: [] }, 3);
+  assert("{r.c}" == "[false,true,true]", "returned: {r.c}");
+  assert("{r.b}" == "[5]", "the call's own field: {r.b}");
+}
+
+fn test_the_rewrite_still_serves_a_stable_root() {
+  got = "{bound_before()} {never_rebound()}";
+  assert(got == "3 3", "stable root: {got}");
+}
