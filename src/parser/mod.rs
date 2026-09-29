@@ -168,6 +168,15 @@ struct DeferredPar {
     count: u16,
 }
 
+/// A `&<operand>` that may be one side of `&a == &b` (`@FR-E-Eq`): its source span, and whether
+/// the operand is a place (`&` names a record only through one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct AmpIdentity {
+    pub(crate) start: (u32, u32),
+    pub(crate) end: (u32, u32),
+    pub(crate) place: bool,
+}
+
 /// Which binding position a leading `&` may occupy at the point the operand parser
 /// reaches it, and therefore which token ENDS the operand the `&` annotates.
 ///
@@ -530,6 +539,18 @@ pub struct Parser {
     /// could only peek the NEXT token, which cannot tell the whole RHS from the LAST
     /// operand of one — the hole that let `b = 1 + &a;` compile.
     pub(crate) amp_head: AmpHead,
+    /// `@FR-E-Eq` / @C91 — a `&<place>` written as a WHOLE operand of `==` / `!=`, which asks
+    /// identity (`&a == &b`).  The prefix-`&` parse cannot tell a whole operand from the last
+    /// operand of a wider one (`x + &a == y`), so it records the operand's span here and the
+    /// comparison claims it only when the span is exactly its operand; anything unclaimed is
+    /// refused as the sub-expression `&` it is.
+    pub(crate) amp_identity: Option<AmpIdentity>,
+    /// Where the right operand of the `==` / `!=` being parsed begins, so a `&` that opens it
+    /// is recognised as an identity operand (see [`Parser::amp_identity`]).
+    pub(crate) eq_rhs_at: Option<(u32, u32)>,
+    /// The left operand of the `==` / `!=` about to be handled was a whole `&<place>` — set by
+    /// the operator loop, read once by `handle_operator`.
+    pub(crate) eq_amp_left: Option<AmpIdentity>,
     /// The local an assignment is writing, for the duration of that assignment's right-hand
     /// side; `u16::MAX` outside one.  Paired with [`Parser::assign_replaces`], which says
     /// whether the write REPLACES the target (`=`, which repoints it at a fresh store) or
@@ -1659,6 +1680,9 @@ impl Parser {
             arms_of_statement_construct: false,
             match_void_arm: false,
             amp_head: AmpHead::default(),
+            amp_identity: None,
+            eq_rhs_at: None,
+            eq_amp_left: None,
             assign_target: u16::MAX,
             assign_replaces: false,
             build_snapshot_len: 0,

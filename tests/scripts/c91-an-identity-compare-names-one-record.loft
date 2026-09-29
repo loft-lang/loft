@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq` — `&a == &b` ASKS IDENTITY.  `==` compares what two values hold; whether two
+// names are ONE record is asked in the source, with `&` on both sides.  Every variable is its
+// own value (C86), so `b = a` is another record and `&a == &b` is false, while a link `c = &a`
+// names `a`'s record and `&a == &c` is true.  Before, every `&` in a comparison was refused, so
+// identity had no spelling at all (deviation D-op-21).
+//
+// Every expected value is worked out by hand from that rule: a copy is another record, a link
+// and a field read twice are the same one, and two absent references name the same nothing.
+//
+// @falsified-at: a57dfed9d — interpret exit 1 -> 0, native exit 1 -> 0
+//   (the control refuses every `&` in a comparison, so the program does not compile there).
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.
+//   Score it again with `scripts/falsify.sh <this file> a57dfed9d`.
+
+struct P { x: integer }
+struct H { p: P, q: reference<P>? }
+
+fn test_a_copy_is_another_record() {
+  a = P { x: 1 };
+  b = a;
+  assert(!(&a == &b), "b = a copies, so it is another record");
+  assert(&a != &b, "!= is the complement");
+  assert(&a == &a, "a record is itself");
+}
+
+fn test_a_link_names_its_target() {
+  a = P { x: 1 };
+  c = &a;
+  assert(&a == &c, "a link names a's record");
+  assert(&c == &a, "in either order");
+  assert(!(&a != &c), "!= is the complement");
+  c.x = 7;
+  assert(a.x == 7, "and a write through it lands in a");
+}
+
+fn test_vectors_and_fields() {
+  v = [1, 2];
+  w = v;
+  u = &v;
+  assert(!(&v == &w), "a copied vector is another record");
+  assert(&v == &u, "a linked vector is the same one");
+  h = H { p: P { x: 3 }, q: null };
+  assert(&h.p == &h.p, "one field read twice is one record");
+  e = [P { x: 1 }];
+  f = P { x: 1 };
+  assert(!(&e[0] == &f), "an element and an equal local are two records");
+}
+
+fn test_two_absent_references() {
+  a: P? = null;
+  b: P? = null;
+  assert(&a == &b, "two absent references name the same nothing");
+  c: P? = P { x: 1 };
+  assert(&a != &c, "an absent and a present reference differ");
+}
+
+fn test_in_a_condition() {
+  a = P { x: 1 };
+  c = &a;
+  v = [1];
+  u = &v;
+  n = 0;
+  if &a == &c && &v == &u {
+    n = 1;
+  }
+  assert(n == 1, "both sides of && ask identity");
+}

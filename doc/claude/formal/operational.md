@@ -460,7 +460,7 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 11.**
+**OPEN: 10.**
 - **D-op-14** (opened 2026-09-29, @PLN175 step 7) — `struct == struct` compares identity:
   `c = a; a == c` is `false`.
 - **D-op-15** (opened 2026-09-29, @PLN175 step 7) — a struct holding a struct compares identity.
@@ -473,8 +473,6 @@ drift apart; verified both backends —
 - **D-op-19** (opened 2026-09-29, @PLN175 step 6) — `hash` / `sorted` / `index` `==` compares
   identity.
 - **D-op-20** (opened 2026-09-29, @PLN175 step 6) — a struct-enum `==` compares identity.
-- **D-op-21** (opened 2026-09-29, @PLN175 step 2) — `&a == &b` is refused, so identity has no
-  spelling.
 - **D-op-22** (opened 2026-09-29, @PLN175 step 3) — a float or single key holds `0.0` and
   `-0.0` as two entries while `0.0 == -0.0` is `true`, against (E-Eq-Key).
 
