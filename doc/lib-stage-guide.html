@@ -27,7 +27,7 @@
 <p>A game is a <strong>tree you mutate</strong>, not a frame loop you draw. <code>stage</code> holds that tree: nodes with a parent, a transform and a sprite rect, one pass that derives every world transform from them, and then the questions a frame actually asks — where did this land, what is under the pointer, what do I hand the renderer.</p>
 <p>It is not the renderer: <code>graphics</code> owns the canvas, and <code>stage</code> hands it a <code>draw_list()</code> or calls <code>render_stage(canvas)</code>. It is not a physics engine or a layout engine — nothing here moves a node on its own except the tween and animation clocks you start yourself.</p>
 <p>Everything below is pure computation over the tree, so this guide needs no window and no display, exactly like the package's own suite.</p>
-<pre><code><span class="kw">use</span> stage;</code></pre>
+<pre><code><span class="kw">use</span> stage::*;</code></pre>
 <pre><code><span class="en">EPS</span> = <span class="nm">0.0001</span>;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>

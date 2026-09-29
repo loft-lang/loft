@@ -31,7 +31,7 @@
 </code></pre>
 <h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
 <p>Parse an ISO date, read a field off it, print it back:</p>
-<pre><code><span class="kw">use</span> time;</code></pre>
+<pre><code><span class="kw">use</span> time::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   d = time::<span class="fn-call">parse</span>(<span class="st">"2026-05-25"</span>) ?? <span class="nm">0</span>;
   <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"{time::format_date(d)} is a {time::weekday_name(d)}"</span>);

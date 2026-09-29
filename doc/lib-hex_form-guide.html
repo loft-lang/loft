@@ -27,7 +27,7 @@
 <p><code>hex_form</code> is the turtle model of a shape on the hex lattice: a start heading, then a length and a turn per side, exact in <code>ℤ²</code>. A form that closes bounds a region you can fill, and every form has a canonical text it writes and reads back byte-for-byte — which is what makes a project file diffable and an undo history exact.</p>
 <p>It is not the cell set and not the lattice. <code>hex_field</code> holds occupancy and traces outlines back out of it; <code>hex_grid</code> owns coordinates and neighbours. Reach for <code>hex_form</code> when the shape is the thing you want to store, compare or transform — a house plan, a footprint, an authored outline — rather than the cells it happens to cover.</p>
 <p>Headings live on <code>H₁₂</code>: twelve directions, 30° apart, counter-clockwise from due east. EVEN headings step to an edge neighbour, ODD ones point at a vertex.</p>
-<pre><code><span class="kw">use</span> hex_form;</code></pre>
+<pre><code><span class="kw">use</span> hex_form::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
 <p>Six sides, turning two twelfths (60°) at each — a hexagon.</p>
 <pre><code>  hexa = hex_form::<span class="fn-call">form_new</span>(<span class="nm">0</span>, [<span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">1</span>], [<span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">2</span>]);

@@ -23,29 +23,29 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_world source</h1>
 <article>
-<p><a href="lib-hex_world.html">← hex_world</a> · <a href="lib-hex_world-api.html">API reference</a> · version 0.2.0</p>
-<p class="lib-legend">5 file(s), 1504 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_world.html">← hex_world</a> · <a href="lib-hex_world-api.html">API reference</a> · version 0.2.1</p>
+<p class="lib-legend">6 file(s), 1709 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L34">34</a></td><td>—</td><td><a href="#src-hex-world-loft-L46">46</a> <a href="#src-hex-world-loft-L81">81</a> <a href="#src-hex-world-loft-L82">82</a> <a href="#src-hex-world-loft-L88">88</a> <a href="#src-hex-world-loft-L131">131</a> <a href="#src-hex-world-loft-L150">150</a> … (43 total)</td></tr>
-<tr><td><code>Chunk</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L43">43</a></td><td>—</td><td><a href="#src-hex-world-loft-L53">53</a> <a href="#src-hex-world-loft-L87">87</a> <a href="#src-hex-world-loft-L90">90</a> <a href="#src-hex-world-loft-L299">299</a></td></tr>
-<tr><td><code>World</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L52">52</a></td><td>—</td><td><a href="#src-hex-world-loft-L94">94</a> <a href="#src-hex-world-loft-L95">95</a> <a href="#src-hex-world-loft-L108">108</a> <a href="#src-hex-world-loft-L119">119</a> <a href="#src-hex-world-loft-L131">131</a> <a href="#src-hex-world-loft-L150">150</a> … (11 total)</td></tr>
-<tr><td><code>chunk_idx_32</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L66">66</a></td><td>—</td><td><a href="#src-hex-world-loft-L109">109</a> <a href="#src-hex-world-loft-L110">110</a> <a href="#src-hex-world-loft-L120">120</a> <a href="#src-hex-world-loft-L121">121</a> <a href="#src-hex-world-loft-L132">132</a> <a href="#src-hex-world-loft-L133">133</a> … (24 total)</td></tr>
-<tr><td><code>hex_idx_32</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L72">72</a></td><td>—</td><td><a href="#src-hex-world-loft-L134">134</a> <a href="#src-hex-world-loft-L135">135</a> <a href="#src-hex-world-loft-L154">154</a> <a href="#src-hex-world-loft-L155">155</a> <a href="#tests-02-persist-loft-L43">43</a> <a href="#tests-02-persist-loft-L44">44</a> … (15 total)</td></tr>
-<tr><td><code>cell_empty</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L81">81</a></td><td>—</td><td><a href="#src-hex-world-loft-L89">89</a> <a href="#src-hex-world-loft-L141">141</a> <a href="#src-hex-world-loft-L144">144</a> <a href="#src-hex-world-loft-L262">262</a> <a href="#src-hex-world-loft-L339">339</a></td></tr>
-<tr><td><code>build_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L87">87</a></td><td>—</td><td><a href="#src-hex-world-loft-L125">125</a></td></tr>
-<tr><td><code>world_empty</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L94">94</a></td><td>—</td><td><a href="#tests-02-persist-loft-L55">55</a> <a href="#tests-02-persist-loft-L60">60</a> <a href="#tests-02-persist-loft-L75">75</a> <a href="#tests-02-persist-loft-L82">82</a> <a href="#tests-02-persist-loft-L97">97</a> <a href="#tests-02-persist-loft-L99">99</a> … (23 total)</td></tr>
-<tr><td><code>has_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L108">108</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>ensure_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L119">119</a></td><td>—</td><td><a href="#src-hex-world-loft-L151">151</a> <a href="#src-hex-world-loft-L379">379</a></td></tr>
-<tr><td><code>get_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L131">131</a></td><td>—</td><td><a href="#src-hex-world-loft-L184">184</a> <a href="#src-hex-world-loft-L185">185</a> <a href="#src-hex-world-loft-L186">186</a> <a href="#src-hex-world-loft-L187">187</a> <a href="#src-hex-world-loft-L188">188</a> <a href="#src-hex-world-loft-L189">189</a> … (20 total)</td></tr>
-<tr><td><code>set_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L150">150</a></td><td>—</td><td><a href="#src-hex-world-loft-L262">262</a> <a href="#tests-02-persist-loft-L61">61</a> <a href="#tests-02-persist-loft-L63">63</a> <a href="#tests-02-persist-loft-L64">64</a> <a href="#tests-02-persist-loft-L67">67</a> <a href="#tests-02-persist-loft-L70">70</a> … (36 total)</td></tr>
-<tr><td><code>cell_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L169">169</a></td><td>—</td><td><a href="#tests-02-persist-loft-L56">56</a> <a href="#tests-02-persist-loft-L62">62</a> <a href="#tests-02-persist-loft-L65">65</a> <a href="#tests-02-persist-loft-L68">68</a> <a href="#tests-02-persist-loft-L71">71</a> <a href="#tests-02-persist-loft-L103">103</a> … (14 total)</td></tr>
-<tr><td><code>neighbour_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L182">182</a></td><td>—</td><td><a href="#src-hex-world-loft-L223">223</a> <a href="#tests-02-persist-loft-L78">78</a> <a href="#tests-02-persist-loft-L91">91</a> <a href="#tests-hex-world-loft-L58">58</a> <a href="#tests-hex-world-loft-L84">84</a> <a href="#tests-hex-world-loft-L85">85</a></td></tr>
-<tr><td><code>tick_and_decay</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L205">205</a></td><td>—</td><td><a href="#tests-02-persist-loft-L146">146</a> <a href="#tests-02-persist-loft-L147">147</a> <a href="#tests-02-persist-loft-L148">148</a> <a href="#tests-hex-world-loft-L61">61</a> <a href="#tests-hex-world-loft-L64">64</a> <a href="#tests-hex-world-loft-L86">86</a> … (8 total)</td></tr>
-<tr><td><code>world_save</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L308">308</a></td><td>—</td><td><a href="#tests-02-persist-loft-L98">98</a> <a href="#tests-02-persist-loft-L109">109</a> <a href="#tests-02-persist-loft-L127">127</a> <a href="#tests-02-persist-loft-L150">150</a> <a href="#tests-02-persist-loft-L161">161</a> <a href="#tests-hex-world-loft-L105">105</a></td></tr>
-<tr><td><code>world_load</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L356">356</a></td><td>—</td><td><a href="#tests-02-persist-loft-L100">100</a> <a href="#tests-02-persist-loft-L111">111</a> <a href="#tests-02-persist-loft-L129">129</a> <a href="#tests-02-persist-loft-L152">152</a> <a href="#tests-02-persist-loft-L163">163</a> <a href="#tests-02-persist-loft-L175">175</a> … (10 total)</td></tr>
+<tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L38">38</a></td><td><a href="#tests-worked-examples-loft-L146">HXW-005</a></td><td><a href="#src-hex-world-loft-L50">50</a> <a href="#src-hex-world-loft-L97">97</a> <a href="#src-hex-world-loft-L98">98</a> <a href="#src-hex-world-loft-L104">104</a> <a href="#src-hex-world-loft-L154">154</a> <a href="#src-hex-world-loft-L174">174</a> … (48 total)</td></tr>
+<tr><td><code>Chunk</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L47">47</a></td><td>—</td><td><a href="#src-hex-world-loft-L62">62</a> <a href="#src-hex-world-loft-L103">103</a> <a href="#src-hex-world-loft-L106">106</a> <a href="#src-hex-world-loft-L328">328</a></td></tr>
+<tr><td><code>World</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-world-loft-L61">61</a></td><td><a href="#tests-worked-examples-loft-L110">HXW-004</a></td><td><a href="#src-hex-world-loft-L110">110</a> <a href="#src-hex-world-loft-L111">111</a> <a href="#src-hex-world-loft-L127">127</a> <a href="#src-hex-world-loft-L140">140</a> <a href="#src-hex-world-loft-L154">154</a> <a href="#src-hex-world-loft-L174">174</a> … (12 total)</td></tr>
+<tr><td><code>chunk_idx_32</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L78">78</a></td><td><a href="#tests-worked-examples-loft-L83">HXW-003</a></td><td><a href="#src-hex-world-loft-L128">128</a> <a href="#src-hex-world-loft-L129">129</a> <a href="#src-hex-world-loft-L141">141</a> <a href="#src-hex-world-loft-L142">142</a> <a href="#src-hex-world-loft-L155">155</a> <a href="#src-hex-world-loft-L156">156</a> … (26 total)</td></tr>
+<tr><td><code>hex_idx_32</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L86">86</a></td><td><a href="#tests-worked-examples-loft-L83">HXW-003</a></td><td><a href="#src-hex-world-loft-L157">157</a> <a href="#src-hex-world-loft-L158">158</a> <a href="#src-hex-world-loft-L178">178</a> <a href="#src-hex-world-loft-L179">179</a> <a href="#tests-02-persist-loft-L43">43</a> <a href="#tests-02-persist-loft-L44">44</a> … (17 total)</td></tr>
+<tr><td><code>cell_empty</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L97">97</a></td><td><a href="#tests-worked-examples-loft-L16">HXW-001</a></td><td><a href="#src-hex-world-loft-L105">105</a> <a href="#src-hex-world-loft-L164">164</a> <a href="#src-hex-world-loft-L167">167</a> <a href="#src-hex-world-loft-L291">291</a> <a href="#src-hex-world-loft-L368">368</a> <a href="#tests-worked-examples-loft-L124">124</a></td></tr>
+<tr><td><code>build_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L103">103</a></td><td>—</td><td><a href="#src-hex-world-loft-L146">146</a></td></tr>
+<tr><td><code>world_empty</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L110">110</a></td><td>—</td><td><a href="#tests-02-persist-loft-L55">55</a> <a href="#tests-02-persist-loft-L60">60</a> <a href="#tests-02-persist-loft-L75">75</a> <a href="#tests-02-persist-loft-L82">82</a> <a href="#tests-02-persist-loft-L97">97</a> <a href="#tests-02-persist-loft-L99">99</a> … (29 total)</td></tr>
+<tr><td><code>has_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L127">127</a></td><td><a href="#tests-worked-examples-loft-L16">HXW-001</a></td><td><a href="#tests-worked-examples-loft-L30">30</a> <a href="#tests-worked-examples-loft-L35">35</a> <a href="#tests-worked-examples-loft-L132">132</a> <a href="#tests-worked-examples-loft-L133">133</a></td></tr>
+<tr><td><code>ensure_chunk</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L140">140</a></td><td><a href="#tests-worked-examples-loft-L16">HXW-001</a></td><td><a href="#src-hex-world-loft-L175">175</a> <a href="#src-hex-world-loft-L408">408</a> <a href="#tests-worked-examples-loft-L33">33</a> <a href="#tests-worked-examples-loft-L34">34</a></td></tr>
+<tr><td><code>get_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L154">154</a></td><td><a href="#tests-worked-examples-loft-L16">HXW-001</a></td><td><a href="#src-hex-world-loft-L213">213</a> <a href="#src-hex-world-loft-L214">214</a> <a href="#src-hex-world-loft-L215">215</a> <a href="#src-hex-world-loft-L216">216</a> <a href="#src-hex-world-loft-L217">217</a> <a href="#src-hex-world-loft-L218">218</a> … (24 total)</td></tr>
+<tr><td><code>set_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L174">174</a></td><td><a href="#tests-worked-examples-loft-L16">HXW-001</a></td><td><a href="#src-hex-world-loft-L291">291</a> <a href="#tests-02-persist-loft-L61">61</a> <a href="#tests-02-persist-loft-L63">63</a> <a href="#tests-02-persist-loft-L64">64</a> <a href="#tests-02-persist-loft-L67">67</a> <a href="#tests-02-persist-loft-L70">70</a> … (42 total)</td></tr>
+<tr><td><code>cell_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L195">195</a></td><td><a href="#tests-worked-examples-loft-L146">HXW-005</a></td><td><a href="#tests-02-persist-loft-L56">56</a> <a href="#tests-02-persist-loft-L62">62</a> <a href="#tests-02-persist-loft-L65">65</a> <a href="#tests-02-persist-loft-L68">68</a> <a href="#tests-02-persist-loft-L71">71</a> <a href="#tests-02-persist-loft-L103">103</a> … (19 total)</td></tr>
+<tr><td><code>neighbour_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L211">211</a></td><td><a href="#tests-worked-examples-loft-L44">HXW-002</a></td><td><a href="#src-hex-world-loft-L252">252</a> <a href="#tests-02-persist-loft-L78">78</a> <a href="#tests-02-persist-loft-L91">91</a> <a href="#tests-hex-world-loft-L58">58</a> <a href="#tests-hex-world-loft-L84">84</a> <a href="#tests-hex-world-loft-L85">85</a> … (11 total)</td></tr>
+<tr><td><code>tick_and_decay</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L234">234</a></td><td>—</td><td><a href="#tests-02-persist-loft-L146">146</a> <a href="#tests-02-persist-loft-L147">147</a> <a href="#tests-02-persist-loft-L148">148</a> <a href="#tests-hex-world-loft-L61">61</a> <a href="#tests-hex-world-loft-L64">64</a> <a href="#tests-hex-world-loft-L86">86</a> … (11 total)</td></tr>
+<tr><td><code>world_save</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L337">337</a></td><td>—</td><td><a href="#tests-02-persist-loft-L98">98</a> <a href="#tests-02-persist-loft-L109">109</a> <a href="#tests-02-persist-loft-L127">127</a> <a href="#tests-02-persist-loft-L150">150</a> <a href="#tests-02-persist-loft-L161">161</a> <a href="#tests-hex-world-loft-L105">105</a> … (7 total)</td></tr>
+<tr><td><code>world_load</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-world-loft-L385">385</a></td><td>—</td><td><a href="#tests-02-persist-loft-L100">100</a> <a href="#tests-02-persist-loft-L111">111</a> <a href="#tests-02-persist-loft-L129">129</a> <a href="#tests-02-persist-loft-L152">152</a> <a href="#tests-02-persist-loft-L163">163</a> <a href="#tests-02-persist-loft-L175">175</a> … (11 total)</td></tr>
 </table>
 <h2 id="src-hex-world-loft">src/hex_world.loft</h2>
 <pre class="src"><code><span id="src-hex-world-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -80,374 +80,403 @@
 <span id="src-hex-world-loft-L30"><span class="cm">// surface in chunk-major order.</span></span>
 <span id="src-hex-world-loft-L31"><span class="cm">//</span></span>
 <span id="src-hex-world-loft-L32"><span class="cm">// c_color = 0 means "empty" (no crystal, no TTT mark).  Both clients</span></span>
-<span id="src-hex-world-loft-L33"><span class="cm">// treat 0 as background; non-zero as live content.</span></span>
-<span id="src-hex-world-loft-L34"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Cell</span> {</span>
-<span id="src-hex-world-loft-L35">  c_color:  <span class="ty"><a href="stdlib-types.html">u8</a></span>,</span>
-<span id="src-hex-world-loft-L36">  c_height: <span class="ty"><a href="stdlib-types.html">u8</a></span>,</span>
-<span id="src-hex-world-loft-L37">  c_age:    <span class="ty"><a href="stdlib-types.html">u16</a></span>,</span>
-<span id="src-hex-world-loft-L38">}</span>
-<span id="src-hex-world-loft-L39"></span>
-<span id="src-hex-world-loft-L40"><span class="cm">// 32x32 grid at chunk coords (ck_cx, ck_cz).  Index into ck_cells:</span></span>
-<span id="src-hex-world-loft-L41"><span class="cm">// hx * 32 + hz where hx, hz ∈ [0, 31].  Same shape as moros_map's</span></span>
-<span id="src-hex-world-loft-L42"><span class="cm">// Chunk minus the cy layer (this world is single-layer).</span></span>
-<span id="src-hex-world-loft-L43"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Chunk</span> {</span>
-<span id="src-hex-world-loft-L44">  ck_cx:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-world-loft-L45">  ck_cz:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-world-loft-L46">  ck_cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Cell</span>&gt;,</span>
-<span id="src-hex-world-loft-L47">}</span>
-<span id="src-hex-world-loft-L48"></span>
-<span id="src-hex-world-loft-L49"><span class="cm">// Top-level container.  Sparse: only chunks with at least one</span></span>
-<span id="src-hex-world-loft-L50"><span class="cm">// non-empty cell live in `chunks`; empty chunks are removed by the</span></span>
-<span id="src-hex-world-loft-L51"><span class="cm">// tick loop's GC pass.  `tick` is monotonic per server lifetime.</span></span>
-<span id="src-hex-world-loft-L52"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">World</span> {</span>
-<span id="src-hex-world-loft-L53">  chunks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Chunk</span>&gt;,</span>
-<span id="src-hex-world-loft-L54">  tick:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-world-loft-L55">}</span>
-<span id="src-hex-world-loft-L56"></span>
-<span id="src-hex-world-loft-L57"><span class="cm">// ── Addressing helpers ────────────────────────────────────────────</span></span>
-<span id="src-hex-world-loft-L58"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L59"><span class="cm">// Public so packing / unpacking code in TTT v5 + plan-36 can route</span></span>
-<span id="src-hex-world-loft-L60"><span class="cm">// world (q, r) coordinates to the right chunk + intra-chunk slot</span></span>
-<span id="src-hex-world-loft-L61"><span class="cm">// without re-implementing the floor-division dance for negatives.</span></span>
-<span id="src-hex-world-loft-L62"></span>
-<span id="src-hex-world-loft-L63"><span class="cm">// floor(v / 32) — handles negative v correctly (C-style `/` rounds</span></span>
-<span id="src-hex-world-loft-L64"><span class="cm">// toward zero, which silently maps cell (-1, 0) to chunk 0 instead</span></span>
-<span id="src-hex-world-loft-L65"><span class="cm">// of chunk -1).</span></span>
-<span id="src-hex-world-loft-L66"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L67">  vr = v % <span class="nm">32</span>;</span>
-<span id="src-hex-world-loft-L68">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { (v - vr - <span class="nm">32</span>) / <span class="nm">32</span> } <span class="kw">else</span> { (v - vr) / <span class="nm">32</span> }</span>
-<span id="src-hex-world-loft-L69">}</span>
-<span id="src-hex-world-loft-L70"></span>
-<span id="src-hex-world-loft-L71"><span class="cm">// v mod 32, always in [0, 31].</span></span>
-<span id="src-hex-world-loft-L72"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L73">  vr = v % <span class="nm">32</span>;</span>
-<span id="src-hex-world-loft-L74">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { vr + <span class="nm">32</span> } <span class="kw">else</span> { vr }</span>
-<span id="src-hex-world-loft-L75">}</span>
-<span id="src-hex-world-loft-L76"></span>
-<span id="src-hex-world-loft-L77"><span class="cm">// ── Constructors ──────────────────────────────────────────────────</span></span>
-<span id="src-hex-world-loft-L78"></span>
-<span id="src-hex-world-loft-L79"><span class="cm">// Default empty cell.  All fields zero; serialises to four 0x00</span></span>
-<span id="src-hex-world-loft-L80"><span class="cm">// bytes on the wire.</span></span>
-<span id="src-hex-world-loft-L81"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_empty</span>() -&gt; <span class="en">Cell</span> {</span>
-<span id="src-hex-world-loft-L82">  <span class="en">Cell</span> { c_color: <span class="nm">0</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span> }</span>
-<span id="src-hex-world-loft-L83">}</span>
-<span id="src-hex-world-loft-L84"></span>
-<span id="src-hex-world-loft-L85"><span class="cm">// Build a 32x32 chunk filled with empty cells at chunk coords</span></span>
-<span id="src-hex-world-loft-L86"><span class="cm">// (cx, cz).</span></span>
-<span id="src-hex-world-loft-L87"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">build_chunk</span>(cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cz: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Chunk</span> {</span>
-<span id="src-hex-world-loft-L88">  cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Cell</span>&gt; = [];</span>
-<span id="src-hex-world-loft-L89">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..1024</span> { cells += [<span class="fn-call">cell_empty</span>()]; }</span>
-<span id="src-hex-world-loft-L90">  <span class="en">Chunk</span> { ck_cx: cx, ck_cz: cz, ck_cells: cells }</span>
-<span id="src-hex-world-loft-L91">}</span>
+<span id="src-hex-world-loft-L33"><span class="cm">// treat 0 as background; non-zero as live content.  It is a SENTINEL, not a</span></span>
+<span id="src-hex-world-loft-L34"><span class="cm">// colour: a colour-0 cell stores its other fields but is invisible to</span></span>
+<span id="src-hex-world-loft-L35"><span class="cm">// cell_count, neighbour_count, the decay pass and world_save.  Start a palette</span></span>
+<span id="src-hex-world-loft-L36"><span class="cm">// at 1.</span></span>
+<span id="src-hex-world-loft-L37"><span class="cm">// Example: @HXW-005</span></span>
+<span id="src-hex-world-loft-L38"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Cell</span> {</span>
+<span id="src-hex-world-loft-L39">  c_color:  <span class="ty"><a href="stdlib-types.html">u8</a></span>,</span>
+<span id="src-hex-world-loft-L40">  c_height: <span class="ty"><a href="stdlib-types.html">u8</a></span>,</span>
+<span id="src-hex-world-loft-L41">  c_age:    <span class="ty"><a href="stdlib-types.html">u16</a></span>,</span>
+<span id="src-hex-world-loft-L42">}</span>
+<span id="src-hex-world-loft-L43"></span>
+<span id="src-hex-world-loft-L44"><span class="cm">// 32x32 grid at chunk coords (ck_cx, ck_cz).  Index into ck_cells:</span></span>
+<span id="src-hex-world-loft-L45"><span class="cm">// hx * 32 + hz where hx, hz ∈ [0, 31].  Same shape as moros_map's</span></span>
+<span id="src-hex-world-loft-L46"><span class="cm">// Chunk minus the cy layer (this world is single-layer).</span></span>
+<span id="src-hex-world-loft-L47"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Chunk</span> {</span>
+<span id="src-hex-world-loft-L48">  ck_cx:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-world-loft-L49">  ck_cz:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-world-loft-L50">  ck_cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Cell</span>&gt;,</span>
+<span id="src-hex-world-loft-L51">}</span>
+<span id="src-hex-world-loft-L52"></span>
+<span id="src-hex-world-loft-L53"><span class="cm">// Top-level container.  Sparse: only chunks with at least one</span></span>
+<span id="src-hex-world-loft-L54"><span class="cm">// non-empty cell live in `chunks`; empty chunks are removed by the</span></span>
+<span id="src-hex-world-loft-L55"><span class="cm">// tick loop's GC pass — that pass is the CALLER's.  Nothing in this</span></span>
+<span id="src-hex-world-loft-L56"><span class="cm">// library frees a chunk: `set_cell` says so, `tick_and_decay` empties cells</span></span>
+<span id="src-hex-world-loft-L57"><span class="cm">// without touching `chunks`, and the only reclaim it offers is a</span></span>
+<span id="src-hex-world-loft-L58"><span class="cm">// `world_save` / `world_load` round trip, which writes non-empty chunks only.</span></span>
+<span id="src-hex-world-loft-L59"><span class="cm">// `tick` is monotonic per server lifetime.</span></span>
+<span id="src-hex-world-loft-L60"><span class="cm">// Example: @HXW-004</span></span>
+<span id="src-hex-world-loft-L61"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">World</span> {</span>
+<span id="src-hex-world-loft-L62">  chunks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Chunk</span>&gt;,</span>
+<span id="src-hex-world-loft-L63">  tick:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-world-loft-L64">}</span>
+<span id="src-hex-world-loft-L65"></span>
+<span id="src-hex-world-loft-L66"><span class="cm">// ── Addressing helpers ────────────────────────────────────────────</span></span>
+<span id="src-hex-world-loft-L67"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L68"><span class="cm">// Public so packing / unpacking code in TTT v5 + plan-36 can route</span></span>
+<span id="src-hex-world-loft-L69"><span class="cm">// world (q, r) coordinates to the right chunk + intra-chunk slot</span></span>
+<span id="src-hex-world-loft-L70"><span class="cm">// without re-implementing the floor-division dance for negatives.</span></span>
+<span id="src-hex-world-loft-L71"></span>
+<span id="src-hex-world-loft-L72"><span class="cm">// floor(v / 32) — handles negative v correctly (C-style `/` rounds</span></span>
+<span id="src-hex-world-loft-L73"><span class="cm">// toward zero, which silently maps cell (-1, 0) to chunk 0 instead</span></span>
+<span id="src-hex-world-loft-L74"><span class="cm">// of chunk -1).  Use this rather than `v / 32` for any coordinate that</span></span>
+<span id="src-hex-world-loft-L75"><span class="cm">// can go west or north of the origin, which in a world that grows both</span></span>
+<span id="src-hex-world-loft-L76"><span class="cm">// ways is half of them.</span></span>
+<span id="src-hex-world-loft-L77"><span class="cm">// Example: @HXW-003</span></span>
+<span id="src-hex-world-loft-L78"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L79">  vr = v % <span class="nm">32</span>;</span>
+<span id="src-hex-world-loft-L80">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { (v - vr - <span class="nm">32</span>) / <span class="nm">32</span> } <span class="kw">else</span> { (v - vr) / <span class="nm">32</span> }</span>
+<span id="src-hex-world-loft-L81">}</span>
+<span id="src-hex-world-loft-L82"></span>
+<span id="src-hex-world-loft-L83"><span class="cm">// v mod 32, always in [0, 31].  `v % 32` is NOT this: it answers a negative</span></span>
+<span id="src-hex-world-loft-L84"><span class="cm">// slot for a negative v, which then indexes nothing.</span></span>
+<span id="src-hex-world-loft-L85"><span class="cm">// Example: @HXW-003</span></span>
+<span id="src-hex-world-loft-L86"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L87">  vr = v % <span class="nm">32</span>;</span>
+<span id="src-hex-world-loft-L88">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { vr + <span class="nm">32</span> } <span class="kw">else</span> { vr }</span>
+<span id="src-hex-world-loft-L89">}</span>
+<span id="src-hex-world-loft-L90"></span>
+<span id="src-hex-world-loft-L91"><span class="cm">// ── Constructors ──────────────────────────────────────────────────</span></span>
 <span id="src-hex-world-loft-L92"></span>
-<span id="src-hex-world-loft-L93"><span class="cm">// New empty world, tick 0, no chunks.</span></span>
-<span id="src-hex-world-loft-L94"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_empty</span>() -&gt; <span class="en">World</span> {</span>
-<span id="src-hex-world-loft-L95">  <span class="en">World</span> { chunks: [], tick: <span class="nm">0</span> }</span>
-<span id="src-hex-world-loft-L96">}</span>
-<span id="src-hex-world-loft-L97"></span>
-<span id="src-hex-world-loft-L98"><span class="cm">// ── Cell access ───────────────────────────────────────────────────</span></span>
-<span id="src-hex-world-loft-L99"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L100"><span class="cm">// Linear scan through `chunks` for the matching (cx, cz).  Sparse</span></span>
-<span id="src-hex-world-loft-L101"><span class="cm">// worlds keep `chunks` small (typically &lt;100), so the scan is cheap</span></span>
-<span id="src-hex-world-loft-L102"><span class="cm">// — matches moros_map's design choice and avoids a separate</span></span>
-<span id="src-hex-world-loft-L103"><span class="cm">// hash-by-chunk-coord index.  If profiling shows a hot site, the</span></span>
-<span id="src-hex-world-loft-L104"><span class="cm">// indexed variant lives in moros_map's pattern and can be lifted</span></span>
-<span id="src-hex-world-loft-L105"><span class="cm">// here.</span></span>
-<span id="src-hex-world-loft-L106"></span>
-<span id="src-hex-world-loft-L107"><span class="cm">// True iff a chunk exists at the global (q, r).</span></span>
-<span id="src-hex-world-loft-L108"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_chunk</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hex-world-loft-L109">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L110">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L111">  <span class="kw">for</span> hc_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L112">    <span class="kw">if</span> hc_c.ck_cx == cx &amp;&amp; hc_c.ck_cz == cz { <span class="kw">return</span> <span class="kw">true</span>; }</span>
-<span id="src-hex-world-loft-L113">  }</span>
-<span id="src-hex-world-loft-L114">  <span class="kw">false</span></span>
-<span id="src-hex-world-loft-L115">}</span>
-<span id="src-hex-world-loft-L116"></span>
-<span id="src-hex-world-loft-L117"><span class="cm">// Ensure a chunk exists at the global (q, r); creates a 32x32 of</span></span>
-<span id="src-hex-world-loft-L118"><span class="cm">// empty cells if absent.</span></span>
-<span id="src-hex-world-loft-L119"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ensure_chunk</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-world-loft-L120">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L121">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L122">  <span class="kw">for</span> ec_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L123">    <span class="kw">if</span> ec_c.ck_cx == cx &amp;&amp; ec_c.ck_cz == cz { <span class="kw">return</span>; }</span>
-<span id="src-hex-world-loft-L124">  }</span>
-<span id="src-hex-world-loft-L125">  self.chunks += [<span class="fn-call">build_chunk</span>(cx, cz)];</span>
-<span id="src-hex-world-loft-L126">}</span>
-<span id="src-hex-world-loft-L127"></span>
-<span id="src-hex-world-loft-L128"><span class="cm">// Read the cell at global (q, r).  Returns `cell_empty()` when the</span></span>
-<span id="src-hex-world-loft-L129"><span class="cm">// chunk does not exist (sparse-world convention — empty chunks are</span></span>
-<span id="src-hex-world-loft-L130"><span class="cm">// implicitly all-empty).</span></span>
-<span id="src-hex-world-loft-L131"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_cell</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Cell</span> {</span>
-<span id="src-hex-world-loft-L132">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L133">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L134">  hx = <span class="fn-call">hex_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L135">  hz = <span class="fn-call">hex_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L136">  idx = hx * <span class="nm">32</span> + hz;</span>
-<span id="src-hex-world-loft-L137">  <span class="kw">for</span> gc_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L138">    <span class="kw">if</span> gc_c.ck_cx == cx &amp;&amp; gc_c.ck_cz == cz {</span>
-<span id="src-hex-world-loft-L139">      cells = gc_c.ck_cells;</span>
-<span id="src-hex-world-loft-L140">      <span class="kw">if</span> idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) { <span class="kw">return</span> cells[idx]; }</span>
-<span id="src-hex-world-loft-L141">      <span class="kw">return</span> <span class="fn-call">cell_empty</span>();</span>
-<span id="src-hex-world-loft-L142">    }</span>
-<span id="src-hex-world-loft-L143">  }</span>
-<span id="src-hex-world-loft-L144">  <span class="fn-call">cell_empty</span>()</span>
-<span id="src-hex-world-loft-L145">}</span>
-<span id="src-hex-world-loft-L146"></span>
-<span id="src-hex-world-loft-L147"><span class="cm">// Write a cell at global (q, r).  Creates the containing chunk on</span></span>
-<span id="src-hex-world-loft-L148"><span class="cm">// demand; does NOT GC empty chunks (the tick loop's end-of-tick</span></span>
-<span id="src-hex-world-loft-L149"><span class="cm">// pass owns that).</span></span>
-<span id="src-hex-world-loft-L150"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_cell</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, value: <span class="en">Cell</span>) {</span>
-<span id="src-hex-world-loft-L151">  <span class="fn-call">ensure_chunk</span>(self, q, r);</span>
-<span id="src-hex-world-loft-L152">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L153">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L154">  hx = <span class="fn-call">hex_idx_32</span>(q);</span>
-<span id="src-hex-world-loft-L155">  hz = <span class="fn-call">hex_idx_32</span>(r);</span>
-<span id="src-hex-world-loft-L156">  idx = hx * <span class="nm">32</span> + hz;</span>
-<span id="src-hex-world-loft-L157">  <span class="kw">for</span> sc_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L158">    <span class="kw">if</span> sc_c.ck_cx == cx &amp;&amp; sc_c.ck_cz == cz {</span>
-<span id="src-hex-world-loft-L159">      cells = sc_c.ck_cells;</span>
-<span id="src-hex-world-loft-L160">      <span class="kw">if</span> idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) { cells[idx] = value; }</span>
-<span id="src-hex-world-loft-L161">      <span class="kw">return</span>;</span>
-<span id="src-hex-world-loft-L162">    }</span>
-<span id="src-hex-world-loft-L163">  }</span>
-<span id="src-hex-world-loft-L164">}</span>
-<span id="src-hex-world-loft-L165"></span>
-<span id="src-hex-world-loft-L166"><span class="cm">// ── Aggregates + neighbour counting ────────────────────────────────</span></span>
-<span id="src-hex-world-loft-L167"></span>
-<span id="src-hex-world-loft-L168"><span class="cm">// Total number of non-empty cells across every chunk.</span></span>
-<span id="src-hex-world-loft-L169"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_count</span>(self: <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L170">  cct_total = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L171">  <span class="kw">for</span> cct_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L172">    <span class="kw">for</span> cct_cell <span class="kw">in</span> cct_c.ck_cells {</span>
-<span id="src-hex-world-loft-L173">      <span class="kw">if</span> cct_cell.c_color != <span class="nm">0</span> { cct_total += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L174">    }</span>
-<span id="src-hex-world-loft-L175">  }</span>
-<span id="src-hex-world-loft-L176">  cct_total</span>
-<span id="src-hex-world-loft-L177">}</span>
-<span id="src-hex-world-loft-L178"></span>
-<span id="src-hex-world-loft-L179"><span class="cm">// Count filled axial-hex neighbours of the cell at global (q, r).</span></span>
-<span id="src-hex-world-loft-L180"><span class="cm">// Returns 0..=6.  Empty centre cell is fine — neighbours are read</span></span>
-<span id="src-hex-world-loft-L181"><span class="cm">// independently of the centre's state.</span></span>
-<span id="src-hex-world-loft-L182"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">neighbour_count</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L183">  nc_count = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L184">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q + <span class="nm">1</span>, r    ).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L185">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q - <span class="nm">1</span>, r    ).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L186">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q,     r + <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L187">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q,     r - <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L188">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q + <span class="nm">1</span>, r - <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L189">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q - <span class="nm">1</span>, r + <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L190">  nc_count</span>
-<span id="src-hex-world-loft-L191">}</span>
-<span id="src-hex-world-loft-L192"></span>
-<span id="src-hex-world-loft-L193"><span class="cm">// ── Tick + decay ───────────────────────────────────────────────────</span></span>
-<span id="src-hex-world-loft-L194"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L195"><span class="cm">// One world step: advances `tick`, ages every non-empty cell by 1,</span></span>
-<span id="src-hex-world-loft-L196"><span class="cm">// then removes any cell whose `c_age` has crossed</span></span>
-<span id="src-hex-world-loft-L197"><span class="cm">// `effective_lifetime + decay_window` where</span></span>
-<span id="src-hex-world-loft-L198"><span class="cm">// `effective_lifetime = base_lifetime + neighbour_lease *</span></span>
-<span id="src-hex-world-loft-L199"><span class="cm">// filled_neighbour_count`.  Neighbour counts are computed against</span></span>
-<span id="src-hex-world-loft-L200"><span class="cm">// the PRE-TICK state — a single tick can remove a connected blob</span></span>
-<span id="src-hex-world-loft-L201"><span class="cm">// of cells, but the cascade (centre losing its neighbour support)</span></span>
-<span id="src-hex-world-loft-L202"><span class="cm">// only fires on the NEXT tick.  This keeps the simulation</span></span>
-<span id="src-hex-world-loft-L203"><span class="cm">// deterministic per-step and prevents one-tick complete collapse</span></span>
-<span id="src-hex-world-loft-L204"><span class="cm">// of large clusters.</span></span>
-<span id="src-hex-world-loft-L205"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tick_and_decay</span>(self: &amp;<span class="en">World</span>, base_lifetime: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-world-loft-L206">                       neighbour_lease: <span class="ty"><a href="stdlib-types.html">integer</a></span>, decay_window: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-hex-world-loft-L207">  self.tick += <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L208"></span>
-<span id="src-hex-world-loft-L209">  <span class="cm">// Pass 1 — decide removals using PRE-TICK state.  Two parallel</span></span>
-<span id="src-hex-world-loft-L210">  <span class="cm">// vectors record (q, r) pairs to flush; using parallel vectors</span></span>
-<span id="src-hex-world-loft-L211">  <span class="cm">// sidesteps the tuple-vector codegen path that's still fragile</span></span>
-<span id="src-hex-world-loft-L212">  <span class="cm">// across some loft compiler shapes.</span></span>
-<span id="src-hex-world-loft-L213">  rm_q: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hex-world-loft-L214">  rm_r: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-hex-world-loft-L215">  <span class="kw">for</span> tc <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L216">    <span class="kw">for</span> thx <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="src-hex-world-loft-L217">      <span class="kw">for</span> thz <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="src-hex-world-loft-L218">        tidx = thx * <span class="nm">32</span> + thz;</span>
-<span id="src-hex-world-loft-L219">        tcell = tc.ck_cells[tidx];</span>
-<span id="src-hex-world-loft-L220">        <span class="kw">if</span> tcell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L221">        tq = tc.ck_cx * <span class="nm">32</span> + thx;</span>
-<span id="src-hex-world-loft-L222">        tr = tc.ck_cz * <span class="nm">32</span> + thz;</span>
-<span id="src-hex-world-loft-L223">        tnbr = <span class="fn-call">neighbour_count</span>(self, tq, tr);</span>
-<span id="src-hex-world-loft-L224">        teff = base_lifetime + neighbour_lease * tnbr;</span>
-<span id="src-hex-world-loft-L225">        tnew_age = tcell.c_age + <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L226">        <span class="kw">if</span> tnew_age &gt; <span class="nm">65535</span> { tnew_age = <span class="nm">65535</span>; }</span>
-<span id="src-hex-world-loft-L227">        <span class="kw">if</span> tnew_age &gt;= teff + decay_window {</span>
-<span id="src-hex-world-loft-L228">          rm_q += [tq];</span>
-<span id="src-hex-world-loft-L229">          rm_r += [tr];</span>
-<span id="src-hex-world-loft-L230">        }</span>
-<span id="src-hex-world-loft-L231">      }</span>
-<span id="src-hex-world-loft-L232">    }</span>
-<span id="src-hex-world-loft-L233">  }</span>
-<span id="src-hex-world-loft-L234"></span>
-<span id="src-hex-world-loft-L235">  <span class="cm">// Pass 2 — increment c_age on every non-empty cell.  Cells</span></span>
-<span id="src-hex-world-loft-L236">  <span class="cm">// scheduled for removal still get their age bumped here so a</span></span>
-<span id="src-hex-world-loft-L237">  <span class="cm">// post-mortem peek (debugging hooks) sees a coherent number;</span></span>
-<span id="src-hex-world-loft-L238">  <span class="cm">// the immediate `set_cell(... cell_empty())` below clears them.</span></span>
-<span id="src-hex-world-loft-L239">  <span class="kw">for</span> ic <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L240">    <span class="kw">for</span> ihx <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="src-hex-world-loft-L241">      icells = ic.ck_cells;</span>
-<span id="src-hex-world-loft-L242">      <span class="kw">for</span> ihz <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="src-hex-world-loft-L243">        iidx = ihx * <span class="nm">32</span> + ihz;</span>
-<span id="src-hex-world-loft-L244">        <span class="kw">if</span> iidx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(icells) {</span>
-<span id="src-hex-world-loft-L245">          icell = icells[iidx];</span>
-<span id="src-hex-world-loft-L246">          <span class="kw">if</span> icell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L247">          inew_age = icell.c_age + <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L248">          <span class="kw">if</span> inew_age &gt; <span class="nm">65535</span> { inew_age = <span class="nm">65535</span>; }</span>
-<span id="src-hex-world-loft-L249">          icells[iidx] = <span class="en">Cell</span> {</span>
-<span id="src-hex-world-loft-L250">            c_color:  icell.c_color,</span>
-<span id="src-hex-world-loft-L251">            c_height: icell.c_height,</span>
-<span id="src-hex-world-loft-L252">            c_age:    (inew_age &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>,</span>
-<span id="src-hex-world-loft-L253">          };</span>
-<span id="src-hex-world-loft-L254">        }</span>
-<span id="src-hex-world-loft-L255">      }</span>
-<span id="src-hex-world-loft-L256">    }</span>
-<span id="src-hex-world-loft-L257">  }</span>
-<span id="src-hex-world-loft-L258"></span>
-<span id="src-hex-world-loft-L259">  <span class="cm">// Pass 3 — apply removals.</span></span>
-<span id="src-hex-world-loft-L260">  rm_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(rm_q);</span>
-<span id="src-hex-world-loft-L261">  <span class="kw">for</span> rm_i <span class="kw">in</span> <span class="nm">0..</span>rm_n {</span>
-<span id="src-hex-world-loft-L262">    <span class="fn-call">set_cell</span>(self, rm_q[rm_i], rm_r[rm_i], <span class="fn-call">cell_empty</span>());</span>
-<span id="src-hex-world-loft-L263">  }</span>
-<span id="src-hex-world-loft-L264">}</span>
-<span id="src-hex-world-loft-L265"></span>
-<span id="src-hex-world-loft-L266"><span class="cm">// ── Persistence — binary snapshot save / load ──────────────────────</span></span>
-<span id="src-hex-world-loft-L267"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L268"><span class="cm">// Whole-world dump.  Single-shot full-state snapshot; the file is</span></span>
-<span id="src-hex-world-loft-L269"><span class="cm">// truncated on each save.  Append-only change-log support is a future</span></span>
-<span id="src-hex-world-loft-L270"><span class="cm">// extension that needs an "open without truncate" file primitive (see</span></span>
-<span id="src-hex-world-loft-L271"><span class="cm">// `doc/claude/plans/36-audience-generative-art/01-server-state.md`</span></span>
-<span id="src-hex-world-loft-L272"><span class="cm">// § Persistence — language-level blockers).</span></span>
-<span id="src-hex-world-loft-L273"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L274"><span class="cm">// File layout (little-endian, version 1):</span></span>
-<span id="src-hex-world-loft-L275"><span class="cm">//   [4B u32  : magic 0x57524C44 'WRLD']</span></span>
-<span id="src-hex-world-loft-L276"><span class="cm">//   [4B u32  : format version = 1]</span></span>
-<span id="src-hex-world-loft-L277"><span class="cm">//   [4B i32  : tick]</span></span>
-<span id="src-hex-world-loft-L278"><span class="cm">//   [4B u32  : chunk count N]</span></span>
-<span id="src-hex-world-loft-L279"><span class="cm">//   N × {</span></span>
-<span id="src-hex-world-loft-L280"><span class="cm">//     [4B i32: ck_cx]</span></span>
-<span id="src-hex-world-loft-L281"><span class="cm">//     [4B i32: ck_cz]</span></span>
-<span id="src-hex-world-loft-L282"><span class="cm">//     [4B u32: filled-cell count K in this chunk]</span></span>
-<span id="src-hex-world-loft-L283"><span class="cm">//     K × {</span></span>
-<span id="src-hex-world-loft-L284"><span class="cm">//       [2B u16: cell idx within chunk (0..1023)]</span></span>
-<span id="src-hex-world-loft-L285"><span class="cm">//       [1B u8 : c_color]</span></span>
-<span id="src-hex-world-loft-L286"><span class="cm">//       [1B u8 : c_height]</span></span>
-<span id="src-hex-world-loft-L287"><span class="cm">//       [2B u16: c_age]</span></span>
-<span id="src-hex-world-loft-L288"><span class="cm">//     }</span></span>
-<span id="src-hex-world-loft-L289"><span class="cm">//   }</span></span>
-<span id="src-hex-world-loft-L290"><span class="cm">//</span></span>
-<span id="src-hex-world-loft-L291"><span class="cm">// Costs: O(total cells) per save, ~6 bytes per filled cell + 12 bytes</span></span>
-<span id="src-hex-world-loft-L292"><span class="cm">// per non-empty chunk + 16 bytes header.  A 1000-cell world fits in</span></span>
-<span id="src-hex-world-loft-L293"><span class="cm">// ~6 KB.</span></span>
+<span id="src-hex-world-loft-L93"><span class="cm">// Default empty cell.  All fields zero; serialises to four 0x00</span></span>
+<span id="src-hex-world-loft-L94"><span class="cm">// bytes on the wire.  Also what `get_cell` answers for a cell that is not</span></span>
+<span id="src-hex-world-loft-L95"><span class="cm">// there at all — the two are deliberately indistinguishable.</span></span>
+<span id="src-hex-world-loft-L96"><span class="cm">// Example: @HXW-001, @HXW-005</span></span>
+<span id="src-hex-world-loft-L97"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_empty</span>() -&gt; <span class="en">Cell</span> {</span>
+<span id="src-hex-world-loft-L98">  <span class="en">Cell</span> { c_color: <span class="nm">0</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span> }</span>
+<span id="src-hex-world-loft-L99">}</span>
+<span id="src-hex-world-loft-L100"></span>
+<span id="src-hex-world-loft-L101"><span class="cm">// Build a 32x32 chunk filled with empty cells at chunk coords</span></span>
+<span id="src-hex-world-loft-L102"><span class="cm">// (cx, cz).</span></span>
+<span id="src-hex-world-loft-L103"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">build_chunk</span>(cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cz: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Chunk</span> {</span>
+<span id="src-hex-world-loft-L104">  cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Cell</span>&gt; = [];</span>
+<span id="src-hex-world-loft-L105">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..1024</span> { cells += [<span class="fn-call">cell_empty</span>()]; }</span>
+<span id="src-hex-world-loft-L106">  <span class="en">Chunk</span> { ck_cx: cx, ck_cz: cz, ck_cells: cells }</span>
+<span id="src-hex-world-loft-L107">}</span>
+<span id="src-hex-world-loft-L108"></span>
+<span id="src-hex-world-loft-L109"><span class="cm">// New empty world, tick 0, no chunks.</span></span>
+<span id="src-hex-world-loft-L110"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_empty</span>() -&gt; <span class="en">World</span> {</span>
+<span id="src-hex-world-loft-L111">  <span class="en">World</span> { chunks: [], tick: <span class="nm">0</span> }</span>
+<span id="src-hex-world-loft-L112">}</span>
+<span id="src-hex-world-loft-L113"></span>
+<span id="src-hex-world-loft-L114"><span class="cm">// ── Cell access ───────────────────────────────────────────────────</span></span>
+<span id="src-hex-world-loft-L115"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L116"><span class="cm">// Linear scan through `chunks` for the matching (cx, cz).  Sparse</span></span>
+<span id="src-hex-world-loft-L117"><span class="cm">// worlds keep `chunks` small (typically &lt;100), so the scan is cheap</span></span>
+<span id="src-hex-world-loft-L118"><span class="cm">// — matches moros_map's design choice and avoids a separate</span></span>
+<span id="src-hex-world-loft-L119"><span class="cm">// hash-by-chunk-coord index.  If profiling shows a hot site, the</span></span>
+<span id="src-hex-world-loft-L120"><span class="cm">// indexed variant lives in moros_map's pattern and can be lifted</span></span>
+<span id="src-hex-world-loft-L121"><span class="cm">// here.</span></span>
+<span id="src-hex-world-loft-L122"></span>
+<span id="src-hex-world-loft-L123"><span class="cm">// True iff a chunk exists at the global (q, r).  The only way to distinguish</span></span>
+<span id="src-hex-world-loft-L124"><span class="cm">// "no chunk here" from "chunk here, cell empty" — `get_cell` answers the same</span></span>
+<span id="src-hex-world-loft-L125"><span class="cm">// thing for both, on purpose.</span></span>
+<span id="src-hex-world-loft-L126"><span class="cm">// Example: @HXW-001</span></span>
+<span id="src-hex-world-loft-L127"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_chunk</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-world-loft-L128">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L129">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L130">  <span class="kw">for</span> hc_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L131">    <span class="kw">if</span> hc_c.ck_cx == cx &amp;&amp; hc_c.ck_cz == cz { <span class="kw">return</span> <span class="kw">true</span>; }</span>
+<span id="src-hex-world-loft-L132">  }</span>
+<span id="src-hex-world-loft-L133">  <span class="kw">false</span></span>
+<span id="src-hex-world-loft-L134">}</span>
+<span id="src-hex-world-loft-L135"></span>
+<span id="src-hex-world-loft-L136"><span class="cm">// Ensure a chunk exists at the global (q, r); creates a 32x32 of</span></span>
+<span id="src-hex-world-loft-L137"><span class="cm">// empty cells if absent — 1024 cells per first touch, and never freed again</span></span>
+<span id="src-hex-world-loft-L138"><span class="cm">// by this library.</span></span>
+<span id="src-hex-world-loft-L139"><span class="cm">// Example: @HXW-001, @HXW-004</span></span>
+<span id="src-hex-world-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ensure_chunk</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-world-loft-L141">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L142">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L143">  <span class="kw">for</span> ec_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L144">    <span class="kw">if</span> ec_c.ck_cx == cx &amp;&amp; ec_c.ck_cz == cz { <span class="kw">return</span>; }</span>
+<span id="src-hex-world-loft-L145">  }</span>
+<span id="src-hex-world-loft-L146">  self.chunks += [<span class="fn-call">build_chunk</span>(cx, cz)];</span>
+<span id="src-hex-world-loft-L147">}</span>
+<span id="src-hex-world-loft-L148"></span>
+<span id="src-hex-world-loft-L149"><span class="cm">// Read the cell at global (q, r).  Returns `cell_empty()` when the</span></span>
+<span id="src-hex-world-loft-L150"><span class="cm">// chunk does not exist (sparse-world convention — empty chunks are</span></span>
+<span id="src-hex-world-loft-L151"><span class="cm">// implicitly all-empty).  Reading never allocates, so a read sweep over any</span></span>
+<span id="src-hex-world-loft-L152"><span class="cm">// region is free however wide; ask `has_chunk` if you need the difference.</span></span>
+<span id="src-hex-world-loft-L153"><span class="cm">// Example: @HXW-001</span></span>
+<span id="src-hex-world-loft-L154"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_cell</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Cell</span> {</span>
+<span id="src-hex-world-loft-L155">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L156">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L157">  hx = <span class="fn-call">hex_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L158">  hz = <span class="fn-call">hex_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L159">  idx = hx * <span class="nm">32</span> + hz;</span>
+<span id="src-hex-world-loft-L160">  <span class="kw">for</span> gc_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L161">    <span class="kw">if</span> gc_c.ck_cx == cx &amp;&amp; gc_c.ck_cz == cz {</span>
+<span id="src-hex-world-loft-L162">      cells = gc_c.ck_cells;</span>
+<span id="src-hex-world-loft-L163">      <span class="kw">if</span> idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) { <span class="kw">return</span> cells[idx]; }</span>
+<span id="src-hex-world-loft-L164">      <span class="kw">return</span> <span class="fn-call">cell_empty</span>();</span>
+<span id="src-hex-world-loft-L165">    }</span>
+<span id="src-hex-world-loft-L166">  }</span>
+<span id="src-hex-world-loft-L167">  <span class="fn-call">cell_empty</span>()</span>
+<span id="src-hex-world-loft-L168">}</span>
+<span id="src-hex-world-loft-L169"></span>
+<span id="src-hex-world-loft-L170"><span class="cm">// Write a cell at global (q, r).  Creates the containing chunk on</span></span>
+<span id="src-hex-world-loft-L171"><span class="cm">// demand; does NOT GC empty chunks (the tick loop's end-of-tick</span></span>
+<span id="src-hex-world-loft-L172"><span class="cm">// pass owns that — and it is the caller's loop, not this library's).</span></span>
+<span id="src-hex-world-loft-L173"><span class="cm">// Example: @HXW-001, @HXW-004</span></span>
+<span id="src-hex-world-loft-L174"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_cell</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, value: <span class="en">Cell</span>) {</span>
+<span id="src-hex-world-loft-L175">  <span class="fn-call">ensure_chunk</span>(self, q, r);</span>
+<span id="src-hex-world-loft-L176">  cx = <span class="fn-call">chunk_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L177">  cz = <span class="fn-call">chunk_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L178">  hx = <span class="fn-call">hex_idx_32</span>(q);</span>
+<span id="src-hex-world-loft-L179">  hz = <span class="fn-call">hex_idx_32</span>(r);</span>
+<span id="src-hex-world-loft-L180">  idx = hx * <span class="nm">32</span> + hz;</span>
+<span id="src-hex-world-loft-L181">  <span class="kw">for</span> sc_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L182">    <span class="kw">if</span> sc_c.ck_cx == cx &amp;&amp; sc_c.ck_cz == cz {</span>
+<span id="src-hex-world-loft-L183">      cells = sc_c.ck_cells;</span>
+<span id="src-hex-world-loft-L184">      <span class="kw">if</span> idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(cells) { cells[idx] = value; }</span>
+<span id="src-hex-world-loft-L185">      <span class="kw">return</span>;</span>
+<span id="src-hex-world-loft-L186">    }</span>
+<span id="src-hex-world-loft-L187">  }</span>
+<span id="src-hex-world-loft-L188">}</span>
+<span id="src-hex-world-loft-L189"></span>
+<span id="src-hex-world-loft-L190"><span class="cm">// ── Aggregates + neighbour counting ────────────────────────────────</span></span>
+<span id="src-hex-world-loft-L191"></span>
+<span id="src-hex-world-loft-L192"><span class="cm">// Total number of non-empty cells across every chunk.  "Non-empty" is</span></span>
+<span id="src-hex-world-loft-L193"><span class="cm">// `c_color != 0`, so this can answer 0 for a world holding heights and ages.</span></span>
+<span id="src-hex-world-loft-L194"><span class="cm">// Example: @HXW-005</span></span>
+<span id="src-hex-world-loft-L195"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_count</span>(self: <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L196">  cct_total = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L197">  <span class="kw">for</span> cct_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L198">    <span class="kw">for</span> cct_cell <span class="kw">in</span> cct_c.ck_cells {</span>
+<span id="src-hex-world-loft-L199">      <span class="kw">if</span> cct_cell.c_color != <span class="nm">0</span> { cct_total += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L200">    }</span>
+<span id="src-hex-world-loft-L201">  }</span>
+<span id="src-hex-world-loft-L202">  cct_total</span>
+<span id="src-hex-world-loft-L203">}</span>
+<span id="src-hex-world-loft-L204"></span>
+<span id="src-hex-world-loft-L205"><span class="cm">// Count filled axial-hex neighbours of the cell at global (q, r).</span></span>
+<span id="src-hex-world-loft-L206"><span class="cm">// Returns 0..=6.  Empty centre cell is fine — neighbours are read</span></span>
+<span id="src-hex-world-loft-L207"><span class="cm">// independently of the centre's state.  AXIAL: the six deltas carry no parity</span></span>
+<span id="src-hex-world-loft-L208"><span class="cm">// term, so these (q, r) are not the odd-r offset pair `hex_grid` uses, though</span></span>
+<span id="src-hex-world-loft-L209"><span class="cm">// both are `(integer, integer)` spelled q and r.  "Filled" is `c_color != 0`.</span></span>
+<span id="src-hex-world-loft-L210"><span class="cm">// Example: @HXW-002, @HXW-005</span></span>
+<span id="src-hex-world-loft-L211"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">neighbour_count</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L212">  nc_count = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L213">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q + <span class="nm">1</span>, r    ).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L214">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q - <span class="nm">1</span>, r    ).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L215">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q,     r + <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L216">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q,     r - <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L217">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q + <span class="nm">1</span>, r - <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L218">  <span class="kw">if</span> <span class="fn-call">get_cell</span>(self, q - <span class="nm">1</span>, r + <span class="nm">1</span>).c_color != <span class="nm">0</span> { nc_count += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L219">  nc_count</span>
+<span id="src-hex-world-loft-L220">}</span>
+<span id="src-hex-world-loft-L221"></span>
+<span id="src-hex-world-loft-L222"><span class="cm">// ── Tick + decay ───────────────────────────────────────────────────</span></span>
+<span id="src-hex-world-loft-L223"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L224"><span class="cm">// One world step: advances `tick`, ages every non-empty cell by 1,</span></span>
+<span id="src-hex-world-loft-L225"><span class="cm">// then removes any cell whose `c_age` has crossed</span></span>
+<span id="src-hex-world-loft-L226"><span class="cm">// `effective_lifetime + decay_window` where</span></span>
+<span id="src-hex-world-loft-L227"><span class="cm">// `effective_lifetime = base_lifetime + neighbour_lease *</span></span>
+<span id="src-hex-world-loft-L228"><span class="cm">// filled_neighbour_count`.  Neighbour counts are computed against</span></span>
+<span id="src-hex-world-loft-L229"><span class="cm">// the PRE-TICK state — a single tick can remove a connected blob</span></span>
+<span id="src-hex-world-loft-L230"><span class="cm">// of cells, but the cascade (centre losing its neighbour support)</span></span>
+<span id="src-hex-world-loft-L231"><span class="cm">// only fires on the NEXT tick.  This keeps the simulation</span></span>
+<span id="src-hex-world-loft-L232"><span class="cm">// deterministic per-step and prevents one-tick complete collapse</span></span>
+<span id="src-hex-world-loft-L233"><span class="cm">// of large clusters.</span></span>
+<span id="src-hex-world-loft-L234"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tick_and_decay</span>(self: &amp;<span class="en">World</span>, base_lifetime: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-world-loft-L235">                       neighbour_lease: <span class="ty"><a href="stdlib-types.html">integer</a></span>, decay_window: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-world-loft-L236">  self.tick += <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L237"></span>
+<span id="src-hex-world-loft-L238">  <span class="cm">// Pass 1 — decide removals using PRE-TICK state.  Two parallel</span></span>
+<span id="src-hex-world-loft-L239">  <span class="cm">// vectors record (q, r) pairs to flush; using parallel vectors</span></span>
+<span id="src-hex-world-loft-L240">  <span class="cm">// sidesteps the tuple-vector codegen path that's still fragile</span></span>
+<span id="src-hex-world-loft-L241">  <span class="cm">// across some loft compiler shapes.</span></span>
+<span id="src-hex-world-loft-L242">  rm_q: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-world-loft-L243">  rm_r: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-world-loft-L244">  <span class="kw">for</span> tc <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L245">    <span class="kw">for</span> thx <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="src-hex-world-loft-L246">      <span class="kw">for</span> thz <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="src-hex-world-loft-L247">        tidx = thx * <span class="nm">32</span> + thz;</span>
+<span id="src-hex-world-loft-L248">        tcell = tc.ck_cells[tidx];</span>
+<span id="src-hex-world-loft-L249">        <span class="kw">if</span> tcell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L250">        tq = tc.ck_cx * <span class="nm">32</span> + thx;</span>
+<span id="src-hex-world-loft-L251">        tr = tc.ck_cz * <span class="nm">32</span> + thz;</span>
+<span id="src-hex-world-loft-L252">        tnbr = <span class="fn-call">neighbour_count</span>(self, tq, tr);</span>
+<span id="src-hex-world-loft-L253">        teff = base_lifetime + neighbour_lease * tnbr;</span>
+<span id="src-hex-world-loft-L254">        tnew_age = tcell.c_age + <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L255">        <span class="kw">if</span> tnew_age &gt; <span class="nm">65535</span> { tnew_age = <span class="nm">65535</span>; }</span>
+<span id="src-hex-world-loft-L256">        <span class="kw">if</span> tnew_age &gt;= teff + decay_window {</span>
+<span id="src-hex-world-loft-L257">          rm_q += [tq];</span>
+<span id="src-hex-world-loft-L258">          rm_r += [tr];</span>
+<span id="src-hex-world-loft-L259">        }</span>
+<span id="src-hex-world-loft-L260">      }</span>
+<span id="src-hex-world-loft-L261">    }</span>
+<span id="src-hex-world-loft-L262">  }</span>
+<span id="src-hex-world-loft-L263"></span>
+<span id="src-hex-world-loft-L264">  <span class="cm">// Pass 2 — increment c_age on every non-empty cell.  Cells</span></span>
+<span id="src-hex-world-loft-L265">  <span class="cm">// scheduled for removal still get their age bumped here so a</span></span>
+<span id="src-hex-world-loft-L266">  <span class="cm">// post-mortem peek (debugging hooks) sees a coherent number;</span></span>
+<span id="src-hex-world-loft-L267">  <span class="cm">// the immediate `set_cell(... cell_empty())` below clears them.</span></span>
+<span id="src-hex-world-loft-L268">  <span class="kw">for</span> ic <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L269">    <span class="kw">for</span> ihx <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="src-hex-world-loft-L270">      icells = ic.ck_cells;</span>
+<span id="src-hex-world-loft-L271">      <span class="kw">for</span> ihz <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="src-hex-world-loft-L272">        iidx = ihx * <span class="nm">32</span> + ihz;</span>
+<span id="src-hex-world-loft-L273">        <span class="kw">if</span> iidx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(icells) {</span>
+<span id="src-hex-world-loft-L274">          icell = icells[iidx];</span>
+<span id="src-hex-world-loft-L275">          <span class="kw">if</span> icell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L276">          inew_age = icell.c_age + <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L277">          <span class="kw">if</span> inew_age &gt; <span class="nm">65535</span> { inew_age = <span class="nm">65535</span>; }</span>
+<span id="src-hex-world-loft-L278">          icells[iidx] = <span class="en">Cell</span> {</span>
+<span id="src-hex-world-loft-L279">            c_color:  icell.c_color,</span>
+<span id="src-hex-world-loft-L280">            c_height: icell.c_height,</span>
+<span id="src-hex-world-loft-L281">            c_age:    (inew_age &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>,</span>
+<span id="src-hex-world-loft-L282">          };</span>
+<span id="src-hex-world-loft-L283">        }</span>
+<span id="src-hex-world-loft-L284">      }</span>
+<span id="src-hex-world-loft-L285">    }</span>
+<span id="src-hex-world-loft-L286">  }</span>
+<span id="src-hex-world-loft-L287"></span>
+<span id="src-hex-world-loft-L288">  <span class="cm">// Pass 3 — apply removals.</span></span>
+<span id="src-hex-world-loft-L289">  rm_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(rm_q);</span>
+<span id="src-hex-world-loft-L290">  <span class="kw">for</span> rm_i <span class="kw">in</span> <span class="nm">0..</span>rm_n {</span>
+<span id="src-hex-world-loft-L291">    <span class="fn-call">set_cell</span>(self, rm_q[rm_i], rm_r[rm_i], <span class="fn-call">cell_empty</span>());</span>
+<span id="src-hex-world-loft-L292">  }</span>
+<span id="src-hex-world-loft-L293">}</span>
 <span id="src-hex-world-loft-L294"></span>
-<span id="src-hex-world-loft-L295"><span class="en">WORLD_FILE_MAGIC</span>   = <span class="nm">0x57524C44</span>;       <span class="cm">// 'WRLD'</span></span>
-<span id="src-hex-world-loft-L296"><span class="en">WORLD_FILE_VERSION</span> = <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L297"></span>
-<span id="src-hex-world-loft-L298"><span class="cm">// Count the filled (c_color != 0) cells in a single chunk.</span></span>
-<span id="src-hex-world-loft-L299"><span class="kw">fn</span> <span class="fn-call">chunk_filled_count</span>(c: <span class="en">Chunk</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L300">  cfc_k = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L301">  <span class="kw">for</span> cfc_cell <span class="kw">in</span> c.ck_cells {</span>
-<span id="src-hex-world-loft-L302">    <span class="kw">if</span> cfc_cell.c_color != <span class="nm">0</span> { cfc_k += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L303">  }</span>
-<span id="src-hex-world-loft-L304">  cfc_k</span>
-<span id="src-hex-world-loft-L305">}</span>
-<span id="src-hex-world-loft-L306"></span>
-<span id="src-hex-world-loft-L307"><span class="cm">// Save the world to `path`, replacing whatever was there.</span></span>
-<span id="src-hex-world-loft-L308"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_save</span>(self: <span class="en">World</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-hex-world-loft-L309">  <span class="cm">// Pre-count non-empty chunks so the header is correct without a</span></span>
-<span id="src-hex-world-loft-L310">  <span class="cm">// second pass over `chunks` after the file is open.</span></span>
-<span id="src-hex-world-loft-L311">  ws_n_chunks = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L312">  <span class="kw">for</span> ws_pc <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L313">    <span class="kw">if</span> <span class="fn-call">chunk_filled_count</span>(ws_pc) &gt; <span class="nm">0</span> { ws_n_chunks += <span class="nm">1</span>; }</span>
-<span id="src-hex-world-loft-L314">  }</span>
-<span id="src-hex-world-loft-L315">  {</span>
-<span id="src-hex-world-loft-L316">    f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
-<span id="src-hex-world-loft-L317">    f#format = <span class="en">LittleEndian</span>;</span>
-<span id="src-hex-world-loft-L318">    <span class="cm">// Snapshot semantics: each save replaces the previous file.  Make</span></span>
-<span id="src-hex-world-loft-L319">    <span class="cm">// the truncation explicit so the sequence keeps working once `+=`</span></span>
-<span id="src-hex-world-loft-L320">    <span class="cm">// is append-only (rather than truncating on first reopen).</span></span>
-<span id="src-hex-world-loft-L321">    f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
-<span id="src-hex-world-loft-L322">    <span class="cm">// Explicit `as i32` casts force 4-byte writes — without them, a</span></span>
-<span id="src-hex-world-loft-L323">    <span class="cm">// bare `integer` value writes 8 bytes (loft stores integers as</span></span>
-<span id="src-hex-world-loft-L324">    <span class="cm">// i64 internally; the file API takes the storage width unless</span></span>
-<span id="src-hex-world-loft-L325">    <span class="cm">// overridden by a cast).  c_color/c_height/c_age are written at</span></span>
-<span id="src-hex-world-loft-L326">    <span class="cm">// their declared u8/u16 widths automatically because they're</span></span>
-<span id="src-hex-world-loft-L327">    <span class="cm">// strongly typed struct fields.</span></span>
-<span id="src-hex-world-loft-L328">    f += (<span class="en">WORLD_FILE_MAGIC</span>   <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L329">    f += (<span class="en">WORLD_FILE_VERSION</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L330">    f += (self.tick          <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L331">    f += (ws_n_chunks        <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L332">    <span class="kw">for</span> ws_c <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L333">      ws_k = <span class="fn-call">chunk_filled_count</span>(ws_c);</span>
-<span id="src-hex-world-loft-L334">      <span class="kw">if</span> ws_k == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L335">      f += (ws_c.ck_cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L336">      f += (ws_c.ck_cz <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L337">      f += (ws_k       <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
-<span id="src-hex-world-loft-L338">      <span class="kw">for</span> ws_i <span class="kw">in</span> <span class="nm">0..1024</span> {</span>
-<span id="src-hex-world-loft-L339">        ws_cell = ws_c.ck_cells[ws_i] ?? <span class="fn-call">cell_empty</span>();</span>
-<span id="src-hex-world-loft-L340">        <span class="kw">if</span> ws_cell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L341">        f += ((ws_i &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>);</span>
-<span id="src-hex-world-loft-L342">        f += ws_cell.c_color <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
-<span id="src-hex-world-loft-L343">        f += ws_cell.c_height <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
-<span id="src-hex-world-loft-L344">        f += ws_cell.c_age <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;</span>
-<span id="src-hex-world-loft-L345">      }</span>
-<span id="src-hex-world-loft-L346">    }</span>
-<span id="src-hex-world-loft-L347">    f.<span class="fn-call"><a href="stdlib-file-system.html">sync</a></span>();</span>
-<span id="src-hex-world-loft-L348">  }</span>
-<span id="src-hex-world-loft-L349">}</span>
-<span id="src-hex-world-loft-L350"></span>
-<span id="src-hex-world-loft-L351"><span class="cm">// Load the world from `path`.  Mutates `self` in place; pre-existing</span></span>
-<span id="src-hex-world-loft-L352"><span class="cm">// cells in `self` are left untouched unless the snapshot overwrites</span></span>
-<span id="src-hex-world-loft-L353"><span class="cm">// the same (q, r).  Returns the number of cells loaded.  Returns 0 if</span></span>
-<span id="src-hex-world-loft-L354"><span class="cm">// the file does not exist, has the wrong magic, or carries an</span></span>
-<span id="src-hex-world-loft-L355"><span class="cm">// unsupported version — never panics.</span></span>
-<span id="src-hex-world-loft-L356"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_load</span>(self: &amp;<span class="en">World</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hex-world-loft-L357">  <span class="cm">// `f#read as T` reads exactly T's byte width — no size argument</span></span>
-<span id="src-hex-world-loft-L358">  <span class="cm">// needed.  For the per-cell payload reads, the LHS-driven form</span></span>
-<span id="src-hex-world-loft-L359">  <span class="cm">// is even shorter: the field's declared type (`u8` / `u16`) IS the</span></span>
-<span id="src-hex-world-loft-L360">  <span class="cm">// width, so no `as T` at all.</span></span>
-<span id="src-hex-world-loft-L361">  <span class="kw">if</span> !<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(path) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-world-loft-L362">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
-<span id="src-hex-world-loft-L363">  f#format = <span class="en">LittleEndian</span>;</span>
-<span id="src-hex-world-loft-L364">  wl_magic = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L365">  <span class="kw">if</span> wl_magic != (<span class="en">WORLD_FILE_MAGIC</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-world-loft-L366">  wl_version = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L367">  <span class="kw">if</span> wl_version != (<span class="en">WORLD_FILE_VERSION</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hex-world-loft-L368">  self.tick = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L369">  wl_n_chunks = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L370">  wl_total = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L371">  wl_i_chunk = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L372">  while wl_i_chunk &lt; wl_n_chunks {</span>
-<span id="src-hex-world-loft-L373">    wl_cx = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L374">    wl_cz = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L375">    wl_k  = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-hex-world-loft-L376">    <span class="cm">// Ensure the target chunk exists, then locate it for direct</span></span>
-<span id="src-hex-world-loft-L377">    <span class="cm">// index-into-ck_cells writes.  We pass a global (q, r) inside</span></span>
-<span id="src-hex-world-loft-L378">    <span class="cm">// the chunk's footprint so chunk_idx_32 reproduces (wl_cx, wl_cz).</span></span>
-<span id="src-hex-world-loft-L379">    <span class="fn-call">ensure_chunk</span>(self, wl_cx * <span class="nm">32</span>, wl_cz * <span class="nm">32</span>);</span>
-<span id="src-hex-world-loft-L380">    <span class="kw">for</span> wl_target <span class="kw">in</span> self.chunks {</span>
-<span id="src-hex-world-loft-L381">      <span class="kw">if</span> wl_target.ck_cx != wl_cx { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L382">      <span class="kw">if</span> wl_target.ck_cz != wl_cz { <span class="kw">continue</span>; }</span>
-<span id="src-hex-world-loft-L383">      wl_j = <span class="nm">0</span>;</span>
-<span id="src-hex-world-loft-L384">      wl_cells = wl_target.ck_cells;</span>
-<span id="src-hex-world-loft-L385">      while wl_j &lt; wl_k {</span>
-<span id="src-hex-world-loft-L386">        wl_idx = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;     <span class="cm">// explicit — `wl_idx` is a local with no type hint</span></span>
-<span id="src-hex-world-loft-L387">        wl_cell = <span class="en">Cell</span>{c_color: <span class="nm">0</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span>};</span>
-<span id="src-hex-world-loft-L388">        wl_cell.c_color  = f#read;   <span class="cm">// LHS-driven: c_color is u8 → 1 byte</span></span>
-<span id="src-hex-world-loft-L389">        wl_cell.c_height = f#read;   <span class="cm">//             c_height is u8 → 1 byte</span></span>
-<span id="src-hex-world-loft-L390">        wl_cell.c_age    = f#read;   <span class="cm">//             c_age is u16 → 2 bytes</span></span>
-<span id="src-hex-world-loft-L391">        <span class="kw">if</span> wl_idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(wl_cells) { wl_cells[wl_idx] = wl_cell; }</span>
-<span id="src-hex-world-loft-L392">        wl_total += <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L393">        wl_j += <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L394">      }</span>
-<span id="src-hex-world-loft-L395">      <span class="kw">break</span>;</span>
-<span id="src-hex-world-loft-L396">    }</span>
-<span id="src-hex-world-loft-L397">    wl_i_chunk += <span class="nm">1</span>;</span>
-<span id="src-hex-world-loft-L398">  }</span>
-<span id="src-hex-world-loft-L399">  wl_total</span>
-<span id="src-hex-world-loft-L400">}</span>
+<span id="src-hex-world-loft-L295"><span class="cm">// ── Persistence — binary snapshot save / load ──────────────────────</span></span>
+<span id="src-hex-world-loft-L296"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L297"><span class="cm">// Whole-world dump.  Single-shot full-state snapshot; the file is</span></span>
+<span id="src-hex-world-loft-L298"><span class="cm">// truncated on each save.  Append-only change-log support is a future</span></span>
+<span id="src-hex-world-loft-L299"><span class="cm">// extension that needs an "open without truncate" file primitive (see</span></span>
+<span id="src-hex-world-loft-L300"><span class="cm">// `doc/claude/plans/36-audience-generative-art/01-server-state.md`</span></span>
+<span id="src-hex-world-loft-L301"><span class="cm">// § Persistence — language-level blockers).</span></span>
+<span id="src-hex-world-loft-L302"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L303"><span class="cm">// File layout (little-endian, version 1):</span></span>
+<span id="src-hex-world-loft-L304"><span class="cm">//   [4B u32  : magic 0x57524C44 'WRLD']</span></span>
+<span id="src-hex-world-loft-L305"><span class="cm">//   [4B u32  : format version = 1]</span></span>
+<span id="src-hex-world-loft-L306"><span class="cm">//   [4B i32  : tick]</span></span>
+<span id="src-hex-world-loft-L307"><span class="cm">//   [4B u32  : chunk count N]</span></span>
+<span id="src-hex-world-loft-L308"><span class="cm">//   N × {</span></span>
+<span id="src-hex-world-loft-L309"><span class="cm">//     [4B i32: ck_cx]</span></span>
+<span id="src-hex-world-loft-L310"><span class="cm">//     [4B i32: ck_cz]</span></span>
+<span id="src-hex-world-loft-L311"><span class="cm">//     [4B u32: filled-cell count K in this chunk]</span></span>
+<span id="src-hex-world-loft-L312"><span class="cm">//     K × {</span></span>
+<span id="src-hex-world-loft-L313"><span class="cm">//       [2B u16: cell idx within chunk (0..1023)]</span></span>
+<span id="src-hex-world-loft-L314"><span class="cm">//       [1B u8 : c_color]</span></span>
+<span id="src-hex-world-loft-L315"><span class="cm">//       [1B u8 : c_height]</span></span>
+<span id="src-hex-world-loft-L316"><span class="cm">//       [2B u16: c_age]</span></span>
+<span id="src-hex-world-loft-L317"><span class="cm">//     }</span></span>
+<span id="src-hex-world-loft-L318"><span class="cm">//   }</span></span>
+<span id="src-hex-world-loft-L319"><span class="cm">//</span></span>
+<span id="src-hex-world-loft-L320"><span class="cm">// Costs: O(total cells) per save, ~6 bytes per filled cell + 12 bytes</span></span>
+<span id="src-hex-world-loft-L321"><span class="cm">// per non-empty chunk + 16 bytes header.  A 1000-cell world fits in</span></span>
+<span id="src-hex-world-loft-L322"><span class="cm">// ~6 KB.</span></span>
+<span id="src-hex-world-loft-L323"></span>
+<span id="src-hex-world-loft-L324"><span class="en">WORLD_FILE_MAGIC</span>   = <span class="nm">0x57524C44</span>;       <span class="cm">// 'WRLD'</span></span>
+<span id="src-hex-world-loft-L325"><span class="en">WORLD_FILE_VERSION</span> = <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L326"></span>
+<span id="src-hex-world-loft-L327"><span class="cm">// Count the filled (c_color != 0) cells in a single chunk.</span></span>
+<span id="src-hex-world-loft-L328"><span class="kw">fn</span> <span class="fn-call">chunk_filled_count</span>(c: <span class="en">Chunk</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L329">  cfc_k = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L330">  <span class="kw">for</span> cfc_cell <span class="kw">in</span> c.ck_cells {</span>
+<span id="src-hex-world-loft-L331">    <span class="kw">if</span> cfc_cell.c_color != <span class="nm">0</span> { cfc_k += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L332">  }</span>
+<span id="src-hex-world-loft-L333">  cfc_k</span>
+<span id="src-hex-world-loft-L334">}</span>
+<span id="src-hex-world-loft-L335"></span>
+<span id="src-hex-world-loft-L336"><span class="cm">// Save the world to `path`, replacing whatever was there.</span></span>
+<span id="src-hex-world-loft-L337"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_save</span>(self: <span class="en">World</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-hex-world-loft-L338">  <span class="cm">// Pre-count non-empty chunks so the header is correct without a</span></span>
+<span id="src-hex-world-loft-L339">  <span class="cm">// second pass over `chunks` after the file is open.</span></span>
+<span id="src-hex-world-loft-L340">  ws_n_chunks = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L341">  <span class="kw">for</span> ws_pc <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L342">    <span class="kw">if</span> <span class="fn-call">chunk_filled_count</span>(ws_pc) &gt; <span class="nm">0</span> { ws_n_chunks += <span class="nm">1</span>; }</span>
+<span id="src-hex-world-loft-L343">  }</span>
+<span id="src-hex-world-loft-L344">  {</span>
+<span id="src-hex-world-loft-L345">    f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
+<span id="src-hex-world-loft-L346">    f#format = <span class="en">LittleEndian</span>;</span>
+<span id="src-hex-world-loft-L347">    <span class="cm">// Snapshot semantics: each save replaces the previous file.  Make</span></span>
+<span id="src-hex-world-loft-L348">    <span class="cm">// the truncation explicit so the sequence keeps working once `+=`</span></span>
+<span id="src-hex-world-loft-L349">    <span class="cm">// is append-only (rather than truncating on first reopen).</span></span>
+<span id="src-hex-world-loft-L350">    f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
+<span id="src-hex-world-loft-L351">    <span class="cm">// Explicit `as i32` casts force 4-byte writes — without them, a</span></span>
+<span id="src-hex-world-loft-L352">    <span class="cm">// bare `integer` value writes 8 bytes (loft stores integers as</span></span>
+<span id="src-hex-world-loft-L353">    <span class="cm">// i64 internally; the file API takes the storage width unless</span></span>
+<span id="src-hex-world-loft-L354">    <span class="cm">// overridden by a cast).  c_color/c_height/c_age are written at</span></span>
+<span id="src-hex-world-loft-L355">    <span class="cm">// their declared u8/u16 widths automatically because they're</span></span>
+<span id="src-hex-world-loft-L356">    <span class="cm">// strongly typed struct fields.</span></span>
+<span id="src-hex-world-loft-L357">    f += (<span class="en">WORLD_FILE_MAGIC</span>   <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L358">    f += (<span class="en">WORLD_FILE_VERSION</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L359">    f += (self.tick          <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L360">    f += (ws_n_chunks        <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L361">    <span class="kw">for</span> ws_c <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L362">      ws_k = <span class="fn-call">chunk_filled_count</span>(ws_c);</span>
+<span id="src-hex-world-loft-L363">      <span class="kw">if</span> ws_k == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L364">      f += (ws_c.ck_cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L365">      f += (ws_c.ck_cz <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L366">      f += (ws_k       <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>);</span>
+<span id="src-hex-world-loft-L367">      <span class="kw">for</span> ws_i <span class="kw">in</span> <span class="nm">0..1024</span> {</span>
+<span id="src-hex-world-loft-L368">        ws_cell = ws_c.ck_cells[ws_i] ?? <span class="fn-call">cell_empty</span>();</span>
+<span id="src-hex-world-loft-L369">        <span class="kw">if</span> ws_cell.c_color == <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L370">        f += ((ws_i &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>);</span>
+<span id="src-hex-world-loft-L371">        f += ws_cell.c_color <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="src-hex-world-loft-L372">        f += ws_cell.c_height <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="src-hex-world-loft-L373">        f += ws_cell.c_age <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;</span>
+<span id="src-hex-world-loft-L374">      }</span>
+<span id="src-hex-world-loft-L375">    }</span>
+<span id="src-hex-world-loft-L376">    f.<span class="fn-call"><a href="stdlib-file-system.html">sync</a></span>();</span>
+<span id="src-hex-world-loft-L377">  }</span>
+<span id="src-hex-world-loft-L378">}</span>
+<span id="src-hex-world-loft-L379"></span>
+<span id="src-hex-world-loft-L380"><span class="cm">// Load the world from `path`.  Mutates `self` in place; pre-existing</span></span>
+<span id="src-hex-world-loft-L381"><span class="cm">// cells in `self` are left untouched unless the snapshot overwrites</span></span>
+<span id="src-hex-world-loft-L382"><span class="cm">// the same (q, r).  Returns the number of cells loaded.  Returns 0 if</span></span>
+<span id="src-hex-world-loft-L383"><span class="cm">// the file does not exist, has the wrong magic, or carries an</span></span>
+<span id="src-hex-world-loft-L384"><span class="cm">// unsupported version — never panics.</span></span>
+<span id="src-hex-world-loft-L385"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">world_load</span>(self: &amp;<span class="en">World</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-world-loft-L386">  <span class="cm">// `f#read as T` reads exactly T's byte width — no size argument</span></span>
+<span id="src-hex-world-loft-L387">  <span class="cm">// needed.  For the per-cell payload reads, the LHS-driven form</span></span>
+<span id="src-hex-world-loft-L388">  <span class="cm">// is even shorter: the field's declared type (`u8` / `u16`) IS the</span></span>
+<span id="src-hex-world-loft-L389">  <span class="cm">// width, so no `as T` at all.</span></span>
+<span id="src-hex-world-loft-L390">  <span class="kw">if</span> !<span class="fn-call"><a href="stdlib-file-system.html">exists</a></span>(path) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-world-loft-L391">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
+<span id="src-hex-world-loft-L392">  f#format = <span class="en">LittleEndian</span>;</span>
+<span id="src-hex-world-loft-L393">  wl_magic = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L394">  <span class="kw">if</span> wl_magic != (<span class="en">WORLD_FILE_MAGIC</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-world-loft-L395">  wl_version = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L396">  <span class="kw">if</span> wl_version != (<span class="en">WORLD_FILE_VERSION</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-world-loft-L397">  self.tick = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L398">  wl_n_chunks = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L399">  wl_total = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L400">  wl_i_chunk = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L401">  while wl_i_chunk &lt; wl_n_chunks {</span>
+<span id="src-hex-world-loft-L402">    wl_cx = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L403">    wl_cz = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L404">    wl_k  = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-hex-world-loft-L405">    <span class="cm">// Ensure the target chunk exists, then locate it for direct</span></span>
+<span id="src-hex-world-loft-L406">    <span class="cm">// index-into-ck_cells writes.  We pass a global (q, r) inside</span></span>
+<span id="src-hex-world-loft-L407">    <span class="cm">// the chunk's footprint so chunk_idx_32 reproduces (wl_cx, wl_cz).</span></span>
+<span id="src-hex-world-loft-L408">    <span class="fn-call">ensure_chunk</span>(self, wl_cx * <span class="nm">32</span>, wl_cz * <span class="nm">32</span>);</span>
+<span id="src-hex-world-loft-L409">    <span class="kw">for</span> wl_target <span class="kw">in</span> self.chunks {</span>
+<span id="src-hex-world-loft-L410">      <span class="kw">if</span> wl_target.ck_cx != wl_cx { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L411">      <span class="kw">if</span> wl_target.ck_cz != wl_cz { <span class="kw">continue</span>; }</span>
+<span id="src-hex-world-loft-L412">      wl_j = <span class="nm">0</span>;</span>
+<span id="src-hex-world-loft-L413">      wl_cells = wl_target.ck_cells;</span>
+<span id="src-hex-world-loft-L414">      while wl_j &lt; wl_k {</span>
+<span id="src-hex-world-loft-L415">        wl_idx = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;     <span class="cm">// explicit — `wl_idx` is a local with no type hint</span></span>
+<span id="src-hex-world-loft-L416">        wl_cell = <span class="en">Cell</span>{c_color: <span class="nm">0</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span>};</span>
+<span id="src-hex-world-loft-L417">        wl_cell.c_color  = f#read;   <span class="cm">// LHS-driven: c_color is u8 → 1 byte</span></span>
+<span id="src-hex-world-loft-L418">        wl_cell.c_height = f#read;   <span class="cm">//             c_height is u8 → 1 byte</span></span>
+<span id="src-hex-world-loft-L419">        wl_cell.c_age    = f#read;   <span class="cm">//             c_age is u16 → 2 bytes</span></span>
+<span id="src-hex-world-loft-L420">        <span class="kw">if</span> wl_idx &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(wl_cells) { wl_cells[wl_idx] = wl_cell; }</span>
+<span id="src-hex-world-loft-L421">        wl_total += <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L422">        wl_j += <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L423">      }</span>
+<span id="src-hex-world-loft-L424">      <span class="kw">break</span>;</span>
+<span id="src-hex-world-loft-L425">    }</span>
+<span id="src-hex-world-loft-L426">    wl_i_chunk += <span class="nm">1</span>;</span>
+<span id="src-hex-world-loft-L427">  }</span>
+<span id="src-hex-world-loft-L428">  wl_total</span>
+<span id="src-hex-world-loft-L429">}</span>
 </code></pre>
 <h2 id="src-overland-loft">src/overland.loft</h2>
 <pre class="src"><code><span id="src-overland-loft-L1"><span class="kw">enum</span> <span class="en">OverlandMap</span> {</span>
@@ -1235,7 +1264,7 @@
 <span id="tests-02-persist-loft-L18"><span class="cm">// gitignored.  Each test re-creates its tmp file, so leftover</span></span>
 <span id="tests-02-persist-loft-L19"><span class="cm">// artefacts from a previous run are harmless.</span></span>
 <span id="tests-02-persist-loft-L20"></span>
-<span id="tests-02-persist-loft-L21"><span class="kw">use</span> hex_world;</span>
+<span id="tests-02-persist-loft-L21"><span class="kw">use</span> hex_world::*;</span>
 <span id="tests-02-persist-loft-L22"></span>
 <span id="tests-02-persist-loft-L23"><span class="cm">// ── chunk addressing ─────────────────────────────────────────────</span></span>
 <span id="tests-02-persist-loft-L24"></span>
@@ -1437,7 +1466,7 @@
 <span id="tests-hex-world-loft-L4"><span class="cm">// world: smoke test for the sparse 32x32-chunk World data model.</span></span>
 <span id="tests-hex-world-loft-L5"><span class="cm">// Validates that get/set round-trips, chunks are created on demand,</span></span>
 <span id="tests-hex-world-loft-L6"><span class="cm">// and the floor-division addressing handles negative coordinates.</span></span>
-<span id="tests-hex-world-loft-L7"><span class="kw">use</span> hex_world;</span>
+<span id="tests-hex-world-loft-L7"><span class="kw">use</span> hex_world::*;</span>
 <span id="tests-hex-world-loft-L8"></span>
 <span id="tests-hex-world-loft-L9"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
 <span id="tests-hex-world-loft-L10">  <span class="cm">// Empty world has no chunks.</span></span>
@@ -1560,6 +1589,184 @@
 <span id="tests-hex-world-loft-L127"></span>
 <span id="tests-hex-world-loft-L128">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"world smoke ok"</span>);</span>
 <span id="tests-hex-world-loft-L129">}</span>
+</code></pre>
+<h2 id="tests-worked-examples-loft">tests/worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L4"><span class="cm">// Worked examples for `hex_world` (@PLN141).  Each `test_*` below is a REAL,</span></span>
+<span id="tests-worked-examples-loft-L5"><span class="cm">// run-every-CI demonstration of a contract the signature cannot state; the</span></span>
+<span id="tests-worked-examples-loft-L6"><span class="cm">// function documents itself by CITING the tag with `// Example: @HXW-00N`.</span></span>
+<span id="tests-worked-examples-loft-L7"><span class="cm">// Teaching examples, distinct from the assertion suite in `hex_world.loft`.</span></span>
+<span id="tests-worked-examples-loft-L8"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L9"><span class="cm">// This is a SPARSE container, and every contract it has comes from that one</span></span>
+<span id="tests-worked-examples-loft-L10"><span class="cm">// word.  A sparse store has to answer three questions a dense one never faces —</span></span>
+<span id="tests-worked-examples-loft-L11"><span class="cm">// what a read of an absent region means, when a region starts existing, and when</span></span>
+<span id="tests-worked-examples-loft-L12"><span class="cm">// it stops — and none of the three is visible in a signature that says</span></span>
+<span id="tests-worked-examples-loft-L13"><span class="cm">// `get_cell(self, q, r) -&gt; Cell`.</span></span>
+<span id="tests-worked-examples-loft-L14"><span class="kw">use</span> hex_world::*;</span>
+<span id="tests-worked-examples-loft-L15"></span>
+<span id="tests-worked-examples-loft-L16"><span class="cm">// @HXW-001 — `get_cell` cannot tell you "there is no chunk here".  It answers</span></span>
+<span id="tests-worked-examples-loft-L17"><span class="cm">// `cell_empty()` both for a cell that was never written and for a chunk that</span></span>
+<span id="tests-worked-examples-loft-L18"><span class="cm">// does not exist, which is the sparse-world convention working as intended: an</span></span>
+<span id="tests-worked-examples-loft-L19"><span class="cm">// absent chunk IS all-empty.  The consequence is the part a caller has to know:</span></span>
+<span id="tests-worked-examples-loft-L20"><span class="cm">// reading never allocates, so a read loop over a large region stays free, while</span></span>
+<span id="tests-worked-examples-loft-L21"><span class="cm">// `set_cell` allocates a whole 32x32 chunk on first touch.  `has_chunk` is the</span></span>
+<span id="tests-worked-examples-loft-L22"><span class="cm">// only way to ask the question `get_cell` is deliberately not answering.</span></span>
+<span id="tests-worked-examples-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_reading_an_absent_chunk_is_not_an_error_and_not_a_read</span>() {</span>
+<span id="tests-worked-examples-loft-L24">  w = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L25"></span>
+<span id="tests-worked-examples-loft-L26">  <span class="cm">// An absent chunk reads as empty and stays absent — no allocation, no error.</span></span>
+<span id="tests-worked-examples-loft-L27">  c = hex_world::<span class="fn-call">get_cell</span>(w, <span class="nm">5</span>, <span class="nm">5</span>);</span>
+<span id="tests-worked-examples-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.c_color == <span class="nm">0</span>, <span class="st">"an absent chunk reads as an empty cell"</span>);</span>
+<span id="tests-worked-examples-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">0</span>, <span class="st">"…and reading did NOT create it"</span>);</span>
+<span id="tests-worked-examples-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">has_chunk</span>(w, <span class="nm">5</span>, <span class="nm">5</span>) == <span class="kw">false</span>, <span class="st">"has_chunk is the real question"</span>);</span>
+<span id="tests-worked-examples-loft-L31"></span>
+<span id="tests-worked-examples-loft-L32">  <span class="cm">// Existence is a separate act, and it does not change what `get_cell` answers.</span></span>
+<span id="tests-worked-examples-loft-L33">  w.<span class="fn-call">ensure_chunk</span>(<span class="nm">5</span>, <span class="nm">5</span>);</span>
+<span id="tests-worked-examples-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">1</span>, <span class="st">"ensure_chunk allocates the 32x32"</span>);</span>
+<span id="tests-worked-examples-loft-L35">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">has_chunk</span>(w, <span class="nm">5</span>, <span class="nm">5</span>), <span class="st">"now it exists"</span>);</span>
+<span id="tests-worked-examples-loft-L36">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">get_cell</span>(w, <span class="nm">5</span>, <span class="nm">5</span>).c_color == <span class="nm">0</span>, <span class="st">"and reads exactly the same"</span>);</span>
+<span id="tests-worked-examples-loft-L37"></span>
+<span id="tests-worked-examples-loft-L38">  <span class="cm">// So a sweep that only reads is cheap however wide it is, and a sweep that</span></span>
+<span id="tests-worked-examples-loft-L39">  <span class="cm">// writes is 1024 cells per chunk touched.  Neither call site says so.</span></span>
+<span id="tests-worked-examples-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">get_cell</span>(w, <span class="nm">4000</span>, <span class="nm">4000</span>).c_color == <span class="nm">0</span>, <span class="st">"far away: still free"</span>);</span>
+<span id="tests-worked-examples-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">1</span>, <span class="st">"…and still one chunk"</span>);</span>
+<span id="tests-worked-examples-loft-L42">}</span>
+<span id="tests-worked-examples-loft-L43"></span>
+<span id="tests-worked-examples-loft-L44"><span class="cm">// @HXW-002 — the `(q, r)` here are AXIAL, and `hex_grid`'s `(q, r)` in this same</span></span>
+<span id="tests-worked-examples-loft-L45"><span class="cm">// repository are ODD-R OFFSET.  `neighbour_count` walks the six axial deltas</span></span>
+<span id="tests-worked-examples-loft-L46"><span class="cm">// with no parity term at all — which is correct for axial and wrong for offset,</span></span>
+<span id="tests-worked-examples-loft-L47"><span class="cm">// where four of the six shift by a column between even and odd rows.  Both are</span></span>
+<span id="tests-worked-examples-loft-L48"><span class="cm">// `(integer, integer)` named `q` and `r`, in one monorepo, so nothing catches a</span></span>
+<span id="tests-worked-examples-loft-L49"><span class="cm">// coordinate handed from one to the other.</span></span>
+<span id="tests-worked-examples-loft-L50"><span class="kw">fn</span> <span class="fn-call">test_the_q_r_here_are_axial_not_the_offset_pair_hex_grid_uses</span>() {</span>
+<span id="tests-worked-examples-loft-L51">  w = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L52">  <span class="cm">// The six axial neighbours of the origin.</span></span>
+<span id="tests-worked-examples-loft-L53">  <span class="fn-call">fill</span>(w, <span class="nm">1</span>, <span class="nm">0</span>);</span>
+<span id="tests-worked-examples-loft-L54">  <span class="fn-call">fill</span>(w, -<span class="nm">1</span>, <span class="nm">0</span>);</span>
+<span id="tests-worked-examples-loft-L55">  <span class="fn-call">fill</span>(w, <span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L56">  <span class="fn-call">fill</span>(w, <span class="nm">0</span>, -<span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L57">  <span class="fn-call">fill</span>(w, <span class="nm">1</span>, -<span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L58">  <span class="fn-call">fill</span>(w, -<span class="nm">1</span>, <span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L59">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">neighbour_count</span>(w, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">6</span>, <span class="st">"all six axial neighbours"</span>);</span>
+<span id="tests-worked-examples-loft-L60"></span>
+<span id="tests-worked-examples-loft-L61">  <span class="cm">// (1,1) and (-1,-1) are NOT among them — in axial coordinates those are two</span></span>
+<span id="tests-worked-examples-loft-L62">  <span class="cm">// steps away.  Fill them and the count does not move.</span></span>
+<span id="tests-worked-examples-loft-L63">  <span class="fn-call">fill</span>(w, <span class="nm">1</span>, <span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L64">  <span class="fn-call">fill</span>(w, -<span class="nm">1</span>, -<span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">neighbour_count</span>(w, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">6</span>,</span>
+<span id="tests-worked-examples-loft-L66">         <span class="st">"(1,1) and (-1,-1) are two steps away in AXIAL, so they do not count"</span>);</span>
+<span id="tests-worked-examples-loft-L67"></span>
+<span id="tests-worked-examples-loft-L68">  <span class="cm">// And the deltas do not depend on the row's parity, which is the giveaway.</span></span>
+<span id="tests-worked-examples-loft-L69">  <span class="cm">// An offset lattice needs a parity term; this one has none, on any row.</span></span>
+<span id="tests-worked-examples-loft-L70">  ok = <span class="kw">true</span>;</span>
+<span id="tests-worked-examples-loft-L71">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="tests-worked-examples-loft-L72">    v = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L73">    v.<span class="fn-call">set_cell</span>(<span class="nm">0</span>, r + <span class="nm">1</span>, hex_world::<span class="en">Cell</span> { c_color: <span class="nm">1</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span> });</span>
+<span id="tests-worked-examples-loft-L74">    <span class="kw">if</span> hex_world::<span class="fn-call">neighbour_count</span>(v, <span class="nm">0</span>, r) != <span class="nm">1</span> { ok = <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L75">  }</span>
+<span id="tests-worked-examples-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"(q, r+1) is a neighbour on EVERY row — an offset lattice cannot say that"</span>);</span>
+<span id="tests-worked-examples-loft-L77">}</span>
+<span id="tests-worked-examples-loft-L78"></span>
+<span id="tests-worked-examples-loft-L79"><span class="kw">fn</span> <span class="fn-call">fill</span>(fl_w: hex_world::<span class="en">World</span>, fl_q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fl_r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="tests-worked-examples-loft-L80">  fl_w.<span class="fn-call">set_cell</span>(fl_q, fl_r, hex_world::<span class="en">Cell</span> { c_color: <span class="nm">1</span>, c_height: <span class="nm">0</span>, c_age: <span class="nm">0</span> });</span>
+<span id="tests-worked-examples-loft-L81">}</span>
+<span id="tests-worked-examples-loft-L82"></span>
+<span id="tests-worked-examples-loft-L83"><span class="cm">// @HXW-003 — `chunk_idx_32` and `hex_idx_32` are not conveniences, they are the</span></span>
+<span id="tests-worked-examples-loft-L84"><span class="cm">// contract.  loft's `/` and `%` round toward ZERO, so the obvious `q / 32` and</span></span>
+<span id="tests-worked-examples-loft-L85"><span class="cm">// `q % 32` put every negative coordinate in the wrong chunk and then index it</span></span>
+<span id="tests-worked-examples-loft-L86"><span class="cm">// with a NEGATIVE slot.  West and north of the origin is not an edge case in a</span></span>
+<span id="tests-worked-examples-loft-L87"><span class="cm">// world that grows in all four directions — it is half of it.</span></span>
+<span id="tests-worked-examples-loft-L88"><span class="kw">fn</span> <span class="fn-call">test_negative_coordinates_need_the_helpers_not_slash_and_percent</span>() {</span>
+<span id="tests-worked-examples-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">chunk_idx_32</span>(-<span class="nm">1</span>) == -<span class="nm">1</span>, <span class="st">"cell -1 lives in chunk -1"</span>);</span>
+<span id="tests-worked-examples-loft-L90">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((-<span class="nm">1</span>) / <span class="nm">32</span> == <span class="nm">0</span>, <span class="st">"…but plain division says chunk 0 — the wrong chunk"</span>);</span>
+<span id="tests-worked-examples-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">hex_idx_32</span>(-<span class="nm">1</span>) == <span class="nm">31</span>, <span class="st">"and it is slot 31 of that chunk"</span>);</span>
+<span id="tests-worked-examples-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((-<span class="nm">1</span>) % <span class="nm">32</span> == -<span class="nm">1</span>, <span class="st">"…where plain modulo hands back a negative index"</span>);</span>
+<span id="tests-worked-examples-loft-L93"></span>
+<span id="tests-worked-examples-loft-L94">  <span class="cm">// The floor/mod pair is what makes the addressing continuous across zero:</span></span>
+<span id="tests-worked-examples-loft-L95">  <span class="cm">// stepping one cell west must step one slot, never jump a chunk boundary twice.</span></span>
+<span id="tests-worked-examples-loft-L96">  ok = <span class="kw">true</span>;</span>
+<span id="tests-worked-examples-loft-L97">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..64</span> {</span>
+<span id="tests-worked-examples-loft-L98">    v = i - <span class="nm">32</span>;</span>
+<span id="tests-worked-examples-loft-L99">    cx = hex_world::<span class="fn-call">chunk_idx_32</span>(v);</span>
+<span id="tests-worked-examples-loft-L100">    hx = hex_world::<span class="fn-call">hex_idx_32</span>(v);</span>
+<span id="tests-worked-examples-loft-L101">    <span class="kw">if</span> cx * <span class="nm">32</span> + hx != v { ok = <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L102">  }</span>
+<span id="tests-worked-examples-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ok, <span class="st">"chunk*32 + slot reconstructs the coordinate, for negatives too"</span>);</span>
+<span id="tests-worked-examples-loft-L104"></span>
+<span id="tests-worked-examples-loft-L105">  <span class="cm">// Which the naive pair does not do:</span></span>
+<span id="tests-worked-examples-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(((-<span class="nm">1</span>) / <span class="nm">32</span>) * <span class="nm">32</span> + ((-<span class="nm">1</span>) % <span class="nm">32</span>) == -<span class="nm">1</span>, <span class="st">"the naive pair happens to reconstruct…"</span>);</span>
+<span id="tests-worked-examples-loft-L107">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(((-<span class="nm">1</span>) % <span class="nm">32</span>) &lt; <span class="nm">0</span>, <span class="st">"…but only by carrying a negative slot no vector can index"</span>);</span>
+<span id="tests-worked-examples-loft-L108">}</span>
+<span id="tests-worked-examples-loft-L109"></span>
+<span id="tests-worked-examples-loft-L110"><span class="cm">// @HXW-004 — nothing in this library ever removes an empty chunk.  The doc</span></span>
+<span id="tests-worked-examples-loft-L111"><span class="cm">// comment on `World` says empty chunks are removed by "the tick loop's GC pass",</span></span>
+<span id="tests-worked-examples-loft-L112"><span class="cm">// and that pass belongs to the CALLER: `set_cell` says it does not GC, and</span></span>
+<span id="tests-worked-examples-loft-L113"><span class="cm">// `tick_and_decay` empties cells without touching `chunks`.  So an in-memory</span></span>
+<span id="tests-worked-examples-loft-L114"><span class="cm">// world grows monotonically — a cell written once and erased leaves its 32x32</span></span>
+<span id="tests-worked-examples-loft-L115"><span class="cm">// behind forever, and `has_chunk` keeps answering true over a region that is</span></span>
+<span id="tests-worked-examples-loft-L116"><span class="cm">// entirely empty.  `world_save` is what compacts, because it writes only the</span></span>
+<span id="tests-worked-examples-loft-L117"><span class="cm">// non-empty chunks; a save/load round trip is the library's only reclaim.</span></span>
+<span id="tests-worked-examples-loft-L118"><span class="kw">fn</span> <span class="fn-call">test_an_emptied_chunk_stays_until_a_save_load_round_trip</span>() {</span>
+<span id="tests-worked-examples-loft-L119">  w = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L120">  <span class="fn-call">fill</span>(w, <span class="nm">100</span>, <span class="nm">100</span>);</span>
+<span id="tests-worked-examples-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">1</span> &amp;&amp; hex_world::<span class="fn-call">cell_count</span>(w) == <span class="nm">1</span>, <span class="st">"one chunk, one cell"</span>);</span>
+<span id="tests-worked-examples-loft-L122"></span>
+<span id="tests-worked-examples-loft-L123">  <span class="cm">// Erase the only cell.  The chunk remains.</span></span>
+<span id="tests-worked-examples-loft-L124">  w.<span class="fn-call">set_cell</span>(<span class="nm">100</span>, <span class="nm">100</span>, hex_world::<span class="fn-call">cell_empty</span>());</span>
+<span id="tests-worked-examples-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">cell_count</span>(w) == <span class="nm">0</span>, <span class="st">"no cells left"</span>);</span>
+<span id="tests-worked-examples-loft-L126">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">1</span>, <span class="st">"…and the chunk is still there"</span>);</span>
+<span id="tests-worked-examples-loft-L127"></span>
+<span id="tests-worked-examples-loft-L128">  <span class="cm">// Ticking does not collect it either, however many times you tick.</span></span>
+<span id="tests-worked-examples-loft-L129">  w.<span class="fn-call">tick_and_decay</span>(<span class="nm">1</span>, <span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L130">  w.<span class="fn-call">tick_and_decay</span>(<span class="nm">1</span>, <span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-worked-examples-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(w.chunks) == <span class="nm">1</span>, <span class="st">"tick_and_decay empties cells; it does not free chunks"</span>);</span>
+<span id="tests-worked-examples-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">has_chunk</span>(w, <span class="nm">100</span>, <span class="nm">100</span>),</span>
+<span id="tests-worked-examples-loft-L133">         <span class="st">"has_chunk still says yes over a wholly empty region"</span>);</span>
+<span id="tests-worked-examples-loft-L134"></span>
+<span id="tests-worked-examples-loft-L135">  <span class="cm">// The save path counts non-empty chunks for its header, so the round trip is</span></span>
+<span id="tests-worked-examples-loft-L136">  <span class="cm">// what actually reclaims.</span></span>
+<span id="tests-worked-examples-loft-L137">  path = <span class="st">"zz-hxw-004.world"</span>;</span>
+<span id="tests-worked-examples-loft-L138">  hex_world::<span class="fn-call">world_save</span>(w, path);</span>
+<span id="tests-worked-examples-loft-L139">  v = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L140">  v.<span class="fn-call">world_load</span>(path);</span>
+<span id="tests-worked-examples-loft-L141">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(v.chunks) == <span class="nm">0</span>, <span class="st">"a save/load round trip drops the empty chunk"</span>);</span>
+<span id="tests-worked-examples-loft-L142">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">cell_count</span>(v) == <span class="nm">0</span>, <span class="st">"with no cells lost — there were none"</span>);</span>
+<span id="tests-worked-examples-loft-L143">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(path);</span>
+<span id="tests-worked-examples-loft-L144">}</span>
+<span id="tests-worked-examples-loft-L145"></span>
+<span id="tests-worked-examples-loft-L146"><span class="cm">// @HXW-005 — `c_color == 0` is the EMPTY sentinel, not a colour.  A cell whose</span></span>
+<span id="tests-worked-examples-loft-L147"><span class="cm">// colour is 0 stores its other fields faithfully and is invisible to every</span></span>
+<span id="tests-worked-examples-loft-L148"><span class="cm">// aggregate in the library: `cell_count` skips it, `neighbour_count` does not</span></span>
+<span id="tests-worked-examples-loft-L149"><span class="cm">// see it, `tick_and_decay` never ages it, and `world_save` will not write the</span></span>
+<span id="tests-worked-examples-loft-L150"><span class="cm">// chunk it is alone in.  So a palette whose entry 0 is a real colour has an</span></span>
+<span id="tests-worked-examples-loft-L151"><span class="cm">// eraser for its first swatch, and the write that looks like it worked is the</span></span>
+<span id="tests-worked-examples-loft-L152"><span class="cm">// one that removed the cell.</span></span>
+<span id="tests-worked-examples-loft-L153"><span class="kw">fn</span> <span class="fn-call">test_colour_zero_is_the_empty_sentinel_not_a_colour</span>() {</span>
+<span id="tests-worked-examples-loft-L154">  w = hex_world::<span class="fn-call">world_empty</span>();</span>
+<span id="tests-worked-examples-loft-L155"></span>
+<span id="tests-worked-examples-loft-L156">  <span class="cm">// The write lands — the height comes back — and the cell counts for nothing.</span></span>
+<span id="tests-worked-examples-loft-L157">  w.<span class="fn-call">set_cell</span>(<span class="nm">2</span>, <span class="nm">2</span>, hex_world::<span class="en">Cell</span> { c_color: <span class="nm">0</span>, c_height: <span class="nm">9</span>, c_age: <span class="nm">0</span> });</span>
+<span id="tests-worked-examples-loft-L158">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">get_cell</span>(w, <span class="nm">2</span>, <span class="nm">2</span>).c_height == <span class="nm">9</span>, <span class="st">"the other fields are stored"</span>);</span>
+<span id="tests-worked-examples-loft-L159">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">cell_count</span>(w) == <span class="nm">0</span>, <span class="st">"…but the cell is not counted"</span>);</span>
+<span id="tests-worked-examples-loft-L160"></span>
+<span id="tests-worked-examples-loft-L161">  <span class="cm">// Nor seen as a neighbour, so a colour-0 cell cannot support the ones around it.</span></span>
+<span id="tests-worked-examples-loft-L162">  w.<span class="fn-call">set_cell</span>(<span class="nm">3</span>, <span class="nm">2</span>, hex_world::<span class="en">Cell</span> { c_color: <span class="nm">0</span>, c_height: <span class="nm">9</span>, c_age: <span class="nm">0</span> });</span>
+<span id="tests-worked-examples-loft-L163">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">neighbour_count</span>(w, <span class="nm">2</span>, <span class="nm">2</span>) == <span class="nm">0</span>, <span class="st">"a colour-0 neighbour is no neighbour"</span>);</span>
+<span id="tests-worked-examples-loft-L164"></span>
+<span id="tests-worked-examples-loft-L165">  <span class="cm">// One non-zero colour is all it takes for the same cell to become real.</span></span>
+<span id="tests-worked-examples-loft-L166">  w.<span class="fn-call">set_cell</span>(<span class="nm">3</span>, <span class="nm">2</span>, hex_world::<span class="en">Cell</span> { c_color: <span class="nm">1</span>, c_height: <span class="nm">9</span>, c_age: <span class="nm">0</span> });</span>
+<span id="tests-worked-examples-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">neighbour_count</span>(w, <span class="nm">2</span>, <span class="nm">2</span>) == <span class="nm">1</span>, <span class="st">"colour 1 is a neighbour"</span>);</span>
+<span id="tests-worked-examples-loft-L168">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hex_world::<span class="fn-call">cell_count</span>(w) == <span class="nm">1</span>, <span class="st">"and counts"</span>);</span>
+<span id="tests-worked-examples-loft-L169"></span>
+<span id="tests-worked-examples-loft-L170">  <span class="cm">// The rule to carry: reserve 0, and start a palette at 1 — which is what the</span></span>
+<span id="tests-worked-examples-loft-L171">  <span class="cm">// TTT and demo consumers both do (1 = X, 2 = O; 1-9 = palette colours).</span></span>
+<span id="tests-worked-examples-loft-L172">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">live_colour</span>(<span class="nm">0</span>) == <span class="kw">false</span>, <span class="st">"0 never means a colour"</span>);</span>
+<span id="tests-worked-examples-loft-L173">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">live_colour</span>(<span class="nm">1</span>), <span class="st">"a palette starts at 1"</span>);</span>
+<span id="tests-worked-examples-loft-L174">}</span>
+<span id="tests-worked-examples-loft-L175"></span>
+<span id="tests-worked-examples-loft-L176"><span class="kw">fn</span> <span class="fn-call">live_colour</span>(lc_c: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { lc_c != <span class="nm">0</span> }</span>
 </code></pre>
 
   </article>

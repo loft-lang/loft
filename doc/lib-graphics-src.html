@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>graphics source</h1>
 <article>
-<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.3</p>
+<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.4</p>
 <p class="lib-legend">16 file(s), 3756 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -204,8 +204,8 @@
 <span id="src-graphics-loft-L32"><span class="cm">// surface below them mirrors the OpenGL calls it wraps, and `stage` is the</span></span>
 <span id="src-graphics-loft-L33"><span class="cm">// retained scene that drives either half.</span></span>
 <span id="src-graphics-loft-L34"></span>
-<span id="src-graphics-loft-L35"><span class="kw">use</span> mesh3d;</span>
-<span id="src-graphics-loft-L36"><span class="kw">use</span> glb;</span>
+<span id="src-graphics-loft-L35"><span class="kw">use</span> mesh3d::*;</span>
+<span id="src-graphics-loft-L36"><span class="kw">use</span> glb::*;</span>
 <span id="src-graphics-loft-L37"></span>
 <span id="src-graphics-loft-L38"><span class="cm">// RGBA color packed as a single integer: 0xAARRGGBB.</span></span>
 <span id="src-graphics-loft-L39"><span class="cm">// Alpha: 255 = fully opaque, 0 = fully transparent.</span></span>
@@ -2063,8 +2063,8 @@
 <span id="src-render-loft-L3"><span class="cm">// High-level renderer — scene-driven PBR with shadows.</span></span>
 <span id="src-render-loft-L4"><span class="cm">// One call to render_frame() handles shadow pass, color pass, and buffer swap.</span></span>
 <span id="src-render-loft-L5"><span class="cm">// Design: doc/claude/RENDERER.md</span></span>
-<span id="src-render-loft-L6"><span class="kw">use</span> graphics;</span>
-<span id="src-render-loft-L7"><span class="kw">use</span> mesh3d;</span>
+<span id="src-render-loft-L6"><span class="kw">use</span> graphics::*;</span>
+<span id="src-render-loft-L7"><span class="kw">use</span> mesh3d::*;</span>
 <span id="src-render-loft-L8"></span>
 <span id="src-render-loft-L9"><span class="cm">// ── Built-in shaders ─────────────────────────────────────────────────────</span></span>
 <span id="src-render-loft-L10"></span>
@@ -2391,7 +2391,7 @@
 <span id="tests-bicubic-loft-L16"><span class="cm">// ⚠ The first case is the one the corpus actually walks, and it is an</span></span>
 <span id="tests-bicubic-loft-L17"><span class="cm">// ENLARGEMENT: bicubic has negative lobes, so it overshoots the source's range.</span></span>
 <span id="tests-bicubic-loft-L18"><span class="cm">// A resampler that clamps that away passes a smoothness eyeball and fails here.</span></span>
-<span id="tests-bicubic-loft-L19"><span class="kw">use</span> graphics;</span>
+<span id="tests-bicubic-loft-L19"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-bicubic-loft-L20"></span>
 <span id="tests-bicubic-loft-L21"><span class="kw">fn</span> <span class="fn-call">from_rgba</span>(fr: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, fw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; graphics::<span class="en">Canvas</span> {</span>
 <span id="tests-bicubic-loft-L22">  c = graphics::<span class="fn-call">canvas</span>(fw, fh, <span class="nm">0</span>);</span>
@@ -2513,7 +2513,7 @@
 <pre class="src"><code><span id="tests-canvas-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-canvas-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-canvas-loft-L3"><span class="cm">// Tests for the graphics library canvas and pixel operations.</span></span>
-<span id="tests-canvas-loft-L4"><span class="kw">use</span> graphics;</span>
+<span id="tests-canvas-loft-L4"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-canvas-loft-L5"></span>
 <span id="tests-canvas-loft-L6"><span class="kw">fn</span> <span class="fn-call">test_rgba_pack_unpack</span>() {</span>
 <span id="tests-canvas-loft-L7">  c = graphics::<span class="fn-call">rgba</span>(<span class="nm">255</span>, <span class="nm">128</span>, <span class="nm">0</span>, <span class="nm">200</span>);</span>
@@ -2920,7 +2920,7 @@
 <span id="tests-font-ascent-loft-L2"><span class="cm">// callers can baseline-align mixed-size text.  Before the fix there was no</span></span>
 <span id="tests-font-ascent-loft-L3"><span class="cm">// ascent accessor at all (only a hardcoded `size * 0.8` approximation inside</span></span>
 <span id="tests-font-ascent-loft-L4"><span class="cm">// rasterize_text).  gl_font_ascent reads fontdue's horizontal_line_metrics.</span></span>
-<span id="tests-font-ascent-loft-L5"><span class="kw">use</span> graphics;</span>
+<span id="tests-font-ascent-loft-L5"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-font-ascent-loft-L6"></span>
 <span id="tests-font-ascent-loft-L7"><span class="kw">fn</span> <span class="fn-call">test_font_ascent_is_positive_and_scales</span>() {</span>
 <span id="tests-font-ascent-loft-L8">  <span class="cm">// #255: the path is program-relative (resolved against THIS test file's dir),</span></span>
@@ -2946,8 +2946,8 @@
 <span id="tests-glb-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-glb-loft-L3"><span class="cm">// Tests for the GLB 2.0 binary writer (GL5: save_glb).</span></span>
 <span id="tests-glb-loft-L4"><span class="cm">// Run with: cargo run --bin loft -- --lib lib/graphics/src --tests lib/graphics/tests/glb.loft</span></span>
-<span id="tests-glb-loft-L5"><span class="kw">use</span> mesh3d;</span>
-<span id="tests-glb-loft-L6"><span class="kw">use</span> glb;</span>
+<span id="tests-glb-loft-L5"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-glb-loft-L6"><span class="kw">use</span> glb::*;</span>
 <span id="tests-glb-loft-L7"></span>
 <span id="tests-glb-loft-L8"><span class="cm">// Verify that save_glb produces a non-empty file.</span></span>
 <span id="tests-glb-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_glb_creates_file</span>() {</span>
@@ -3045,7 +3045,7 @@
 <span id="tests-input-events-loft-L5"><span class="cm">// without a GL window (gl_next_event / gl_event_* touch only the event queue,</span></span>
 <span id="tests-input-events-loft-L6"><span class="cm">// not GL), so this validates the loft&lt;-&gt;native binding, constant exports, and</span></span>
 <span id="tests-input-events-loft-L7"><span class="cm">// return marshalling on both interpreter and --native — no display needed.</span></span>
-<span id="tests-input-events-loft-L8"><span class="kw">use</span> graphics;</span>
+<span id="tests-input-events-loft-L8"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-input-events-loft-L9"></span>
 <span id="tests-input-events-loft-L10"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
 <span id="tests-input-events-loft-L11">  <span class="cm">// With no input, the queue is empty: next_event returns EV_NONE and the</span></span>
@@ -3071,7 +3071,7 @@
 <span id="tests-kerning-loft-L2"><span class="cm">// Before the fix, `gl_measure_text("AV")` == `measure("A")+measure("V")`</span></span>
 <span id="tests-kerning-loft-L3"><span class="cm">// exactly (no kern table consulted in measure_text / rasterize_text); A–V is</span></span>
 <span id="tests-kerning-loft-L4"><span class="cm">// a textbook negative-kern pair, so the kerned measure must be strictly less.</span></span>
-<span id="tests-kerning-loft-L5"><span class="kw">use</span> graphics;</span>
+<span id="tests-kerning-loft-L5"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-kerning-loft-L6"></span>
 <span id="tests-kerning-loft-L7"><span class="kw">fn</span> <span class="fn-call">test_kerning_pair_narrows_measure</span>() {</span>
 <span id="tests-kerning-loft-L8">  <span class="cm">// #255: the path is program-relative (resolved against THIS test file's dir),</span></span>
@@ -3104,7 +3104,7 @@
 <span id="tests-lanczos-loft-L13"><span class="cm">// The eight cases exercise the axes that break a resampler: the oracle's exact 3x</span></span>
 <span id="tests-lanczos-loft-L14"><span class="cm">// downscale, non-integer ratios, a non-square image, a single-pixel axis, a</span></span>
 <span id="tests-lanczos-loft-L15"><span class="cm">// degenerate 3x1 output, and an UPSCALE (where the filter must not widen).</span></span>
-<span id="tests-lanczos-loft-L16"><span class="kw">use</span> graphics;</span>
+<span id="tests-lanczos-loft-L16"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-lanczos-loft-L17"></span>
 <span id="tests-lanczos-loft-L18"><span class="kw">fn</span> <span class="fn-call">from_rgba</span>(fr: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, fw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, fh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; graphics::<span class="en">Canvas</span> {</span>
 <span id="tests-lanczos-loft-L19">  c = graphics::<span class="fn-call">canvas</span>(fw, fh, <span class="nm">0</span>);</span>
@@ -3223,7 +3223,7 @@
 <pre class="src"><code><span id="tests-math-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-math-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-math-loft-L3"><span class="cm">// Tests for the math module.</span></span>
-<span id="tests-math-loft-L4"><span class="kw">use</span> mesh3d;</span>
+<span id="tests-math-loft-L4"><span class="kw">use</span> mesh3d::*;</span>
 <span id="tests-math-loft-L5"></span>
 <span id="tests-math-loft-L6"><span class="kw">fn</span> <span class="fn-call">test_vec3_create</span>() {</span>
 <span id="tests-math-loft-L7">  mv = math::<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">2.0</span>, <span class="nm">3.0</span>);</span>
@@ -3306,7 +3306,7 @@
 <pre class="src"><code><span id="tests-mesh-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-mesh-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-mesh-loft-L3"><span class="cm">// Tests for the mesh module.</span></span>
-<span id="tests-mesh-loft-L4"><span class="kw">use</span> mesh3d;</span>
+<span id="tests-mesh-loft-L4"><span class="kw">use</span> mesh3d::*;</span>
 <span id="tests-mesh-loft-L5"></span>
 <span id="tests-mesh-loft-L6"><span class="kw">fn</span> <span class="fn-call">test_mesh_create</span>() {</span>
 <span id="tests-mesh-loft-L7">  mc_m = mesh::<span class="fn-call">mesh</span>(<span class="st">"test"</span>);</span>
@@ -3374,7 +3374,7 @@
 <span id="tests-polygon-loft-L8"><span class="cm">// through.  And a triangle drawn through the polygon path must be pixel-identical</span></span>
 <span id="tests-polygon-loft-L9"><span class="cm">// to `fill_triangle` — the primitive that already shipped — because two fills</span></span>
 <span id="tests-polygon-loft-L10"><span class="cm">// that disagree about a triangle are two different rasterisers.</span></span>
-<span id="tests-polygon-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-polygon-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-polygon-loft-L12"></span>
 <span id="tests-polygon-loft-L13"><span class="kw">fn</span> <span class="fn-call">filled</span>(fc: const graphics::<span class="en">Canvas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="tests-polygon-loft-L14">  n = <span class="nm">0</span>;</span>
@@ -3484,7 +3484,7 @@
 <pre class="src"><code><span id="tests-scene-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-scene-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-scene-loft-L3"><span class="cm">// Tests for the scene module.</span></span>
-<span id="tests-scene-loft-L4"><span class="kw">use</span> mesh3d;</span>
+<span id="tests-scene-loft-L4"><span class="kw">use</span> mesh3d::*;</span>
 <span id="tests-scene-loft-L5"></span>
 <span id="tests-scene-loft-L6"><span class="kw">fn</span> <span class="fn-call">test_scene_create</span>() {</span>
 <span id="tests-scene-loft-L7">  sc = scene::<span class="fn-call">scene</span>(<span class="st">"test scene"</span>);</span>
@@ -3535,8 +3535,8 @@
 <span id="tests-scene-glb-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-scene-glb-loft-L3"><span class="cm">// Tests for save_scene_glb — scene-level GLB 2.0 export.</span></span>
 <span id="tests-scene-glb-loft-L4"><span class="cm">// Run with: cargo run --bin loft -- --lib lib/graphics/src --tests lib/graphics/tests/scene_glb.loft</span></span>
-<span id="tests-scene-glb-loft-L5"><span class="kw">use</span> mesh3d;</span>
-<span id="tests-scene-glb-loft-L6"><span class="kw">use</span> glb;</span>
+<span id="tests-scene-glb-loft-L5"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-scene-glb-loft-L6"><span class="kw">use</span> glb::*;</span>
 <span id="tests-scene-glb-loft-L7"></span>
 <span id="tests-scene-glb-loft-L8"><span class="cm">// Verify save_scene_glb produces a non-empty file for a single-mesh scene.</span></span>
 <span id="tests-scene-glb-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_scene_glb_creates_file</span>() {</span>
@@ -3752,7 +3752,7 @@
 <span id="tests-text-height-loft-L3"><span class="cm">// `size * 1.2` approximation baked into loft_text_height.  Paired with</span></span>
 <span id="tests-text-height-loft-L4"><span class="cm">// gl_font_ascent — a font's line height is sensibly larger than its ascent and</span></span>
 <span id="tests-text-height-loft-L5"><span class="cm">// scales with the requested size.</span></span>
-<span id="tests-text-height-loft-L6"><span class="kw">use</span> graphics;</span>
+<span id="tests-text-height-loft-L6"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-text-height-loft-L7"></span>
 <span id="tests-text-height-loft-L8"><span class="kw">fn</span> <span class="fn-call">test_text_height_uses_real_metrics</span>() {</span>
 <span id="tests-text-height-loft-L9">  f = graphics::<span class="fn-call">gl_load_font</span>(<span class="st">"examples/DejaVuSans-Bold.ttf"</span>);</span>
@@ -3790,7 +3790,7 @@
 <span id="tests-worked-examples-loft-L15"><span class="cm">// and where a span ends are all conventions a caller can only get from a call</span></span>
 <span id="tests-worked-examples-loft-L16"><span class="cm">// site.  The `gl_*` half needs a window and has no CI demonstrator; it is a</span></span>
 <span id="tests-worked-examples-loft-L17"><span class="cm">// recorded coverage gap rather than a tag against a test that cannot run.</span></span>
-<span id="tests-worked-examples-loft-L18"><span class="kw">use</span> graphics;</span>
+<span id="tests-worked-examples-loft-L18"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-worked-examples-loft-L19"></span>
 <span id="tests-worked-examples-loft-L20"><span class="cm">// The PNG IHDR colour-type byte sits at offset 25: 8 signature bytes, a 4-byte</span></span>
 <span id="tests-worked-examples-loft-L21"><span class="cm">// chunk length, "IHDR", width, height, then one bit-depth byte.  2 = RGB,</span></span>

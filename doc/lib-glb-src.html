@@ -23,14 +23,14 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>glb source</h1>
 <article>
-<p><a href="lib-glb.html">← glb</a> · <a href="lib-glb-api.html">API reference</a> · version 0.1.2</p>
-<p class="lib-legend">4 file(s), 825 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-glb.html">← glb</a> · <a href="lib-glb-api.html">API reference</a> · version 0.1.3</p>
+<p class="lib-legend">5 file(s), 1061 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>save_glb</code> <span class="search-kind">fn</span></td><td><a href="#src-glb-loft-L137">137</a></td><td>—</td><td><a href="#tests-glb-loft-L11">11</a> <a href="#tests-glb-loft-L19">19</a> <a href="#tests-glb-loft-L36">36</a> <a href="#tests-glb-loft-L65">65</a> <a href="#tests-glb-loft-L84">84</a></td></tr>
-<tr><td><code>save_scene_glb</code> <span class="search-kind">fn</span></td><td><a href="#src-glb-loft-L445">445</a></td><td>—</td><td><a href="#tests-light-glb-loft-L13">13</a> <a href="#tests-light-glb-loft-L21">21</a> <a href="#tests-scene-glb-loft-L14">14</a> <a href="#tests-scene-glb-loft-L25">25</a> <a href="#tests-scene-glb-loft-L43">43</a> <a href="#tests-scene-glb-loft-L72">72</a> … (11 total)</td></tr>
+<tr><td><code>save_glb</code> <span class="search-kind">fn</span></td><td><a href="#src-glb-loft-L140">140</a></td><td><a href="#tests-worked-examples-loft-L187">GLB-004</a></td><td><a href="#tests-glb-loft-L11">11</a> <a href="#tests-glb-loft-L19">19</a> <a href="#tests-glb-loft-L36">36</a> <a href="#tests-glb-loft-L65">65</a> <a href="#tests-glb-loft-L84">84</a> <a href="#tests-worked-examples-loft-L61">61</a> … (10 total)</td></tr>
+<tr><td><code>save_scene_glb</code> <span class="search-kind">fn</span></td><td><a href="#src-glb-loft-L449">449</a></td><td><a href="#tests-worked-examples-loft-L83">GLB-002</a></td><td><a href="#tests-light-glb-loft-L13">13</a> <a href="#tests-light-glb-loft-L22">22</a> <a href="#tests-scene-glb-loft-L14">14</a> <a href="#tests-scene-glb-loft-L25">25</a> <a href="#tests-scene-glb-loft-L43">43</a> <a href="#tests-scene-glb-loft-L72">72</a> … (13 total)</td></tr>
 </table>
 <h2 id="src-glb-loft">src/glb.loft</h2>
 <pre class="src"><code><span id="src-glb-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -42,7 +42,7 @@
 <span id="src-glb-loft-L7"><span class="cm">// Pulls Mesh / Scene / Mat4 / Vec3 types from the `mesh3d` package</span></span>
 <span id="src-glb-loft-L8"><span class="cm">// (the standalone home for those types as of 2026-05-31; previously</span></span>
 <span id="src-glb-loft-L9"><span class="cm">// they were sub-modules inside `graphics`).</span></span>
-<span id="src-glb-loft-L10"><span class="kw">use</span> mesh3d;</span>
+<span id="src-glb-loft-L10"><span class="kw">use</span> mesh3d::*;</span>
 <span id="src-glb-loft-L11"></span>
 <span id="src-glb-loft-L12"><span class="cm">// Build the float32 position buffer (3 × f32 per vertex, x y z).</span></span>
 <span id="src-glb-loft-L13"><span class="kw">fn</span> <span class="fn-call">glb_pos_buf</span>(verts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Vertex</span>&gt;) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt; {</span>
@@ -169,372 +169,376 @@
 <span id="src-glb-loft-L134"><span class="cm">// Export a Mesh as a GLB 2.0 file.</span></span>
 <span id="src-glb-loft-L135"><span class="cm">// The output file will contain POSITION, NORMAL, and TEXCOORD_0 vertex attributes</span></span>
 <span id="src-glb-loft-L136"><span class="cm">// plus triangle indices.  Readable by Blender, three.js, gltf-validator.</span></span>
-<span id="src-glb-loft-L137"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_glb</span>(m: <span class="en">Mesh</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-glb-loft-L138">  nv = m.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L139">  nt = m.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L140">  ni = nt * <span class="nm">3</span>;</span>
-<span id="src-glb-loft-L141"></span>
-<span id="src-glb-loft-L142">  pos_bytes  = nv * <span class="nm">12</span>;</span>
-<span id="src-glb-loft-L143">  norm_bytes = nv * <span class="nm">12</span>;</span>
-<span id="src-glb-loft-L144">  uv_bytes   = nv * <span class="nm">8</span>;</span>
-<span id="src-glb-loft-L145">  idx_bytes  = ni * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L146">  bin_bytes  = pos_bytes + norm_bytes + uv_bytes + idx_bytes;</span>
-<span id="src-glb-loft-L147"></span>
-<span id="src-glb-loft-L148">  pmin = <span class="fn-call">glb_pos_min</span>(m.vertices);</span>
-<span id="src-glb-loft-L149">  pmax = <span class="fn-call">glb_pos_max</span>(m.vertices);</span>
+<span id="src-glb-loft-L137"><span class="cm">// Example: @GLB-001</span></span>
+<span id="src-glb-loft-L138"><span class="cm">// Example: @GLB-003</span></span>
+<span id="src-glb-loft-L139"><span class="cm">// Example: @GLB-004</span></span>
+<span id="src-glb-loft-L140"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_glb</span>(m: <span class="en">Mesh</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-glb-loft-L141">  nv = m.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L142">  nt = m.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L143">  ni = nt * <span class="nm">3</span>;</span>
+<span id="src-glb-loft-L144"></span>
+<span id="src-glb-loft-L145">  pos_bytes  = nv * <span class="nm">12</span>;</span>
+<span id="src-glb-loft-L146">  norm_bytes = nv * <span class="nm">12</span>;</span>
+<span id="src-glb-loft-L147">  uv_bytes   = nv * <span class="nm">8</span>;</span>
+<span id="src-glb-loft-L148">  idx_bytes  = ni * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L149">  bin_bytes  = pos_bytes + norm_bytes + uv_bytes + idx_bytes;</span>
 <span id="src-glb-loft-L150"></span>
-<span id="src-glb-loft-L151">  json      = <span class="fn-call">glb_json</span>(m, pmin, pmax);</span>
-<span id="src-glb-loft-L152">  json_len  = json.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L153">  json_pad  = <span class="fn-call">glb_pad4</span>(json_len);</span>
-<span id="src-glb-loft-L154">  json_chunk = json_len + json_pad;</span>
-<span id="src-glb-loft-L155"></span>
-<span id="src-glb-loft-L156">  <span class="cm">// Total file size: 12 (header) + 8 (json chunk hdr) + json_chunk + 8 (bin chunk hdr) + bin_bytes</span></span>
-<span id="src-glb-loft-L157">  total_len = <span class="nm">12</span> + <span class="nm">8</span> + json_chunk + <span class="nm">8</span> + bin_bytes;</span>
+<span id="src-glb-loft-L151">  pmin = <span class="fn-call">glb_pos_min</span>(m.vertices);</span>
+<span id="src-glb-loft-L152">  pmax = <span class="fn-call">glb_pos_max</span>(m.vertices);</span>
+<span id="src-glb-loft-L153"></span>
+<span id="src-glb-loft-L154">  json      = <span class="fn-call">glb_json</span>(m, pmin, pmax);</span>
+<span id="src-glb-loft-L155">  json_len  = json.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L156">  json_pad  = <span class="fn-call">glb_pad4</span>(json_len);</span>
+<span id="src-glb-loft-L157">  json_chunk = json_len + json_pad;</span>
 <span id="src-glb-loft-L158"></span>
-<span id="src-glb-loft-L159">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
-<span id="src-glb-loft-L160">  f#format = <span class="en">LittleEndian</span>;</span>
-<span id="src-glb-loft-L161">  <span class="cm">// `+=` is append-only — truncate explicitly so successive saves of</span></span>
-<span id="src-glb-loft-L162">  <span class="cm">// the same path replace the previous file instead of appending.</span></span>
-<span id="src-glb-loft-L163">  f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
-<span id="src-glb-loft-L164"></span>
-<span id="src-glb-loft-L165">  <span class="cm">// GLB header (12 bytes — each u32 is 4 bytes).  Post-2c `integer`</span></span>
-<span id="src-glb-loft-L166">  <span class="cm">// is 8 bytes; cast each scalar header field to `i32` so the file</span></span>
-<span id="src-glb-loft-L167">  <span class="cm">// lands the expected GLB 2.0 layout.</span></span>
-<span id="src-glb-loft-L168">  f += <span class="nm">0x46546C67</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// magic 'glTF'</span></span>
-<span id="src-glb-loft-L169">  f += <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;           <span class="cm">// version 2</span></span>
-<span id="src-glb-loft-L170">  f += total_len <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;   <span class="cm">// total file length</span></span>
-<span id="src-glb-loft-L171"></span>
-<span id="src-glb-loft-L172">  <span class="cm">// JSON chunk (8-byte header + padded JSON)</span></span>
-<span id="src-glb-loft-L173">  f += json_chunk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk data length (padded)</span></span>
-<span id="src-glb-loft-L174">  f += <span class="nm">0x4E4F534A</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk type 'JSON'</span></span>
-<span id="src-glb-loft-L175">  f += json;               <span class="cm">// JSON bytes (raw UTF-8)</span></span>
-<span id="src-glb-loft-L176">  <span class="cm">// Pad JSON to 4-byte boundary with ASCII spaces</span></span>
-<span id="src-glb-loft-L177">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>json_pad {</span>
-<span id="src-glb-loft-L178">    f += <span class="nm">32</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
-<span id="src-glb-loft-L179">  }</span>
-<span id="src-glb-loft-L180"></span>
-<span id="src-glb-loft-L181">  <span class="cm">// BIN chunk (8-byte header + binary buffers)</span></span>
-<span id="src-glb-loft-L182">  f += bin_bytes <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;   <span class="cm">// chunk data length</span></span>
-<span id="src-glb-loft-L183">  f += <span class="nm">0x004E4942</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk type 'BIN\0'</span></span>
-<span id="src-glb-loft-L184">  f += <span class="fn-call">glb_pos_buf</span>(m.vertices);</span>
-<span id="src-glb-loft-L185">  f += <span class="fn-call">glb_norm_buf</span>(m.vertices);</span>
-<span id="src-glb-loft-L186">  f += <span class="fn-call">glb_uv_buf</span>(m.vertices);</span>
-<span id="src-glb-loft-L187">  f += <span class="fn-call">glb_idx_buf</span>(m.triangles);</span>
-<span id="src-glb-loft-L188">}</span>
-<span id="src-glb-loft-L189"></span>
-<span id="src-glb-loft-L190"><span class="cm">// ─── Scene-level GLB export ───────────────────────────────────────────────────</span></span>
-<span id="src-glb-loft-L191"></span>
-<span id="src-glb-loft-L192"><span class="cm">// Build a JSON material entry for glTF 2.0 pbrMetallicRoughness.</span></span>
-<span id="src-glb-loft-L193"><span class="kw">fn</span> <span class="fn-call">glb_material_json</span>(mat: <span class="en">Material</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-glb-loft-L194">  mn = mat.name;</span>
-<span id="src-glb-loft-L195">  cr = mat.base_color_r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L196">  cg = mat.base_color_g <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L197">  cb = mat.base_color_b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L198">  ca = mat.base_color_a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L199">  me = mat.metallic <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L200">  ro = mat.roughness <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L201">  result = <span class="st">"{{\"</span>name\<span class="st">":\"</span>{mn}\<span class="st">","</span>;</span>
-<span id="src-glb-loft-L202">  result += <span class="st">"\"</span>pbrMetallicRoughness\<span class="st">":{{"</span>;</span>
-<span id="src-glb-loft-L203">  result += <span class="st">"\"</span>baseColorFactor\<span class="st">":[{cr:.6},{cg:.6},{cb:.6},{ca:.6}],"</span>;</span>
-<span id="src-glb-loft-L204">  result += <span class="st">"\"</span>metallicFactor\<span class="st">":{me:.6},"</span>;</span>
-<span id="src-glb-loft-L205">  result += <span class="st">"\"</span>roughnessFactor\<span class="st">":{ro:.6}"</span>;</span>
-<span id="src-glb-loft-L206">  result += <span class="st">"}}}}"</span>;</span>
-<span id="src-glb-loft-L207">  result</span>
-<span id="src-glb-loft-L208">}</span>
-<span id="src-glb-loft-L209"></span>
-<span id="src-glb-loft-L210"><span class="cm">// True if a Mat4 is the identity matrix (within exact float equality).</span></span>
-<span id="src-glb-loft-L211"><span class="kw">fn</span> <span class="fn-call">glb_is_identity_mat4</span>(tr: <span class="en">Mat4</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-glb-loft-L212">  mm = tr.m;</span>
-<span id="src-glb-loft-L213">  <span class="cm">// `?? 0.0` is OOB-lint suppression — `Mat4.m` is always 16 floats by</span></span>
-<span id="src-glb-loft-L214">  <span class="cm">// construction (see mat4_identity et al.); the fallback path is</span></span>
-<span id="src-glb-loft-L215">  <span class="cm">// unreachable.</span></span>
-<span id="src-glb-loft-L216">  (mm[<span class="nm">0</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">1</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">2</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">3</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
-<span id="src-glb-loft-L217">  (mm[<span class="nm">4</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">5</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">6</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">7</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
-<span id="src-glb-loft-L218">  (mm[<span class="nm">8</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">9</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">10</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">11</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
-<span id="src-glb-loft-L219">  (mm[<span class="nm">12</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">13</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">14</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">15</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span></span>
-<span id="src-glb-loft-L220">}</span>
-<span id="src-glb-loft-L221"></span>
-<span id="src-glb-loft-L222"><span class="cm">// Build a glTF "matrix" JSON property from a column-major Mat4.</span></span>
-<span id="src-glb-loft-L223"><span class="cm">// glTF 2.0 also uses column-major order, so emit elements directly.</span></span>
-<span id="src-glb-loft-L224"><span class="kw">fn</span> <span class="fn-call">glb_mat4_json</span>(tr: <span class="en">Mat4</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-glb-loft-L225">  mm = tr.m;</span>
-<span id="src-glb-loft-L226">  c0  = mm[<span class="nm">0</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c1  = mm[<span class="nm">1</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c2  = mm[<span class="nm">2</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c3  = mm[<span class="nm">3</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L227">  c4  = mm[<span class="nm">4</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c5  = mm[<span class="nm">5</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c6  = mm[<span class="nm">6</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c7  = mm[<span class="nm">7</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L228">  c8  = mm[<span class="nm">8</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c9  = mm[<span class="nm">9</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c10 = mm[<span class="nm">10</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c11 = mm[<span class="nm">11</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L229">  c12 = mm[<span class="nm">12</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c13 = mm[<span class="nm">13</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c14 = mm[<span class="nm">14</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c15 = mm[<span class="nm">15</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L230">  result = <span class="st">"\"</span>matrix\<span class="st">":[{c0:.6},{c1:.6},{c2:.6},{c3:.6},"</span>;</span>
-<span id="src-glb-loft-L231">  result += <span class="st">"{c4:.6},{c5:.6},{c6:.6},{c7:.6},"</span>;</span>
-<span id="src-glb-loft-L232">  result += <span class="st">"{c8:.6},{c9:.6},{c10:.6},{c11:.6},"</span>;</span>
-<span id="src-glb-loft-L233">  result += <span class="st">"{c12:.6},{c13:.6},{c14:.6},{c15:.6}]"</span>;</span>
-<span id="src-glb-loft-L234">  result</span>
-<span id="src-glb-loft-L235">}</span>
-<span id="src-glb-loft-L236"></span>
-<span id="src-glb-loft-L237"><span class="kw">fn</span> <span class="fn-call">glb_light_node_json</span>(lt: <span class="en">Light</span>, li: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-glb-loft-L238">  lname = lt.name;</span>
-<span id="src-glb-loft-L239">  result = <span class="st">"{{\"</span>name\<span class="st">":\"</span>{lname}\<span class="st">",\"</span>extensions\<span class="st">":{{\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">":{{\"</span>light\<span class="st">":{li}}}}}"</span>;</span>
-<span id="src-glb-loft-L240">  <span class="kw">if</span> lt.light_type == <span class="en">Point</span> {</span>
-<span id="src-glb-loft-L241">    px = lt.position.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L242">    py = lt.position.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L243">    pz = lt.position.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L244">    result += <span class="st">",\"</span>translation\<span class="st">":[{px:.6},{py:.6},{pz:.6}]"</span>;</span>
-<span id="src-glb-loft-L245">  } <span class="kw">else</span> {</span>
-<span id="src-glb-loft-L246">    dir = <span class="fn-call">normalize3</span>(lt.direction);</span>
-<span id="src-glb-loft-L247">    dx = dir.x; dy = dir.y; dz = dir.z;</span>
-<span id="src-glb-loft-L248">    dot_val = -dz;</span>
-<span id="src-glb-loft-L249">    <span class="kw">if</span> dot_val &lt; -<span class="nm">0.9999</span> {</span>
-<span id="src-glb-loft-L250">      qx = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qy = <span class="nm">1.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qz = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qw = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L251">    } <span class="kw">else</span> <span class="kw">if</span> dot_val &gt; <span class="nm">0.9999</span> {</span>
-<span id="src-glb-loft-L252">      qx = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qy = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qz = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qw = <span class="nm">1.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L253">    } <span class="kw">else</span> {</span>
-<span id="src-glb-loft-L254">      half = <span class="nm">1.0</span> + dot_val;</span>
-<span id="src-glb-loft-L255">      ax = dy; ay = -dx; az = <span class="nm">0.0</span>;</span>
-<span id="src-glb-loft-L256">      inv_len = <span class="nm">1.0</span> / <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(ax * ax + ay * ay + az * az + half * half) ?? <span class="nm">0.0</span>;</span>
-<span id="src-glb-loft-L257">      qx = (ax * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L258">      qy = (ay * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L259">      qz = (az * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L260">      qw = (half * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L261">    }</span>
-<span id="src-glb-loft-L262">    result += <span class="st">",\"</span>rotation\<span class="st">":[{qx:.6},{qy:.6},{qz:.6},{qw:.6}]"</span>;</span>
-<span id="src-glb-loft-L263">  }</span>
-<span id="src-glb-loft-L264">  result += <span class="st">"}}"</span>;</span>
-<span id="src-glb-loft-L265">  result</span>
-<span id="src-glb-loft-L266">}</span>
-<span id="src-glb-loft-L267"></span>
-<span id="src-glb-loft-L268"><span class="cm">// Build the full glTF JSON for a Scene.</span></span>
-<span id="src-glb-loft-L269"><span class="cm">// BIN layout: for each mesh in order — pos, norm, uv, idx (no padding between meshes).</span></span>
-<span id="src-glb-loft-L270"><span class="cm">// accessor base = mesh_idx * 4; bufferView base = mesh_idx * 4.</span></span>
-<span id="src-glb-loft-L271"><span class="kw">fn</span> <span class="fn-call">glb_scene_json</span>(sc: <span class="en">Scene</span>, bin_offset: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
-<span id="src-glb-loft-L272">  sn = sc.name;</span>
-<span id="src-glb-loft-L273"></span>
-<span id="src-glb-loft-L274">  <span class="cm">// Build per-mesh material index: for each mesh, the material used by the</span></span>
-<span id="src-glb-loft-L275">  <span class="cm">// first node that references it.  In glTF 2.0, material lives on the mesh</span></span>
-<span id="src-glb-loft-L276">  <span class="cm">// primitive (not on the node).  Two-pass build so the indexed-assignment</span></span>
-<span id="src-glb-loft-L277">  <span class="cm">// OOB lint stays quiet: first pre-fill a node→mesh lookup, then emit one</span></span>
-<span id="src-glb-loft-L278">  <span class="cm">// entry per mesh by scanning the lookup.</span></span>
-<span id="src-glb-loft-L279">  mesh_mat: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-glb-loft-L280">  mm_i = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L281">  <span class="kw">for</span> _ <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L282">    found = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L283">    <span class="kw">for</span> nd <span class="kw">in</span> sc.nodes {</span>
-<span id="src-glb-loft-L284">      <span class="kw">if</span> nd.mesh_idx == mm_i {</span>
-<span id="src-glb-loft-L285">        found = nd.material_idx;</span>
-<span id="src-glb-loft-L286">      }</span>
-<span id="src-glb-loft-L287">    }</span>
-<span id="src-glb-loft-L288">    mesh_mat += [found];</span>
-<span id="src-glb-loft-L289">    mm_i = mm_i + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L290">  }</span>
-<span id="src-glb-loft-L291"></span>
-<span id="src-glb-loft-L292">  n_lights = sc.lights.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L293">  n_nodes = sc.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L294">  total_nodes = n_nodes + n_lights;</span>
-<span id="src-glb-loft-L295"></span>
-<span id="src-glb-loft-L296">  <span class="cm">// --- asset / extensions ---</span></span>
-<span id="src-glb-loft-L297">  result = <span class="st">"{{\"</span>asset\<span class="st">":{{\"</span>version\<span class="st">":\"</span><span class="nm">2.0</span>\<span class="st">",\"</span>generator\<span class="st">":\"</span>loft\<span class="st">"}},"</span>;</span>
-<span id="src-glb-loft-L298">  <span class="kw">if</span> n_lights &gt; <span class="nm">0</span> {</span>
-<span id="src-glb-loft-L299">    result += <span class="st">"\"</span>extensionsUsed\<span class="st">":[\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L300">    result += <span class="st">"\"</span>extensionsRequired\<span class="st">":[\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L301">    result += <span class="st">"\"</span>extensions\<span class="st">":{{\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">":{{\"</span>lights\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L302">    li = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L303">    <span class="kw">for</span> lt <span class="kw">in</span> sc.lights {</span>
-<span id="src-glb-loft-L304">      <span class="kw">if</span> li &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L305">      ltname = lt.name;</span>
-<span id="src-glb-loft-L306">      cr = lt.color_r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L307">      cg = lt.color_g <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L308">      cb = lt.color_b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L309">      inten = lt.intensity <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L310">      <span class="kw">if</span> lt.light_type == <span class="en">Point</span> {</span>
-<span id="src-glb-loft-L311">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>point\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
-<span id="src-glb-loft-L312">      } <span class="kw">else</span> <span class="kw">if</span> lt.light_type == <span class="en">Directional</span> {</span>
-<span id="src-glb-loft-L313">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>directional\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
-<span id="src-glb-loft-L314">      } <span class="kw">else</span> {</span>
-<span id="src-glb-loft-L315">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>spot\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
-<span id="src-glb-loft-L316">      }</span>
-<span id="src-glb-loft-L317">      li = li + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L318">    }</span>
-<span id="src-glb-loft-L319">    result += <span class="st">"]}}}},"</span>;</span>
-<span id="src-glb-loft-L320">  }</span>
-<span id="src-glb-loft-L321"></span>
-<span id="src-glb-loft-L322">  <span class="cm">// --- scene / scenes ---</span></span>
-<span id="src-glb-loft-L323">  result += <span class="st">"\"</span>scene\<span class="st">":0,\"</span>scenes\<span class="st">":[{{\"</span>name\<span class="st">":\"</span>{sn}\<span class="st">",\"</span>nodes\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L324">  ni = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L325">  <span class="kw">for</span> _sn_idx <span class="kw">in</span> <span class="nm">0..</span>total_nodes {</span>
-<span id="src-glb-loft-L326">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L327">    result += <span class="st">"{ni}"</span>;</span>
-<span id="src-glb-loft-L328">    ni = ni + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L329">  }</span>
-<span id="src-glb-loft-L330">  result += <span class="st">"]}}],"</span>;</span>
-<span id="src-glb-loft-L331"></span>
-<span id="src-glb-loft-L332">  <span class="cm">// --- nodes: reference mesh; include "matrix" only for non-identity transforms ---</span></span>
-<span id="src-glb-loft-L333">  result += <span class="st">"\"</span>nodes\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L334">  ni = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L335">  <span class="kw">for</span> nd <span class="kw">in</span> sc.nodes {</span>
-<span id="src-glb-loft-L336">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L337">    mid = nd.mesh_idx;</span>
-<span id="src-glb-loft-L338">    ndname = nd.name;</span>
-<span id="src-glb-loft-L339">    <span class="kw">if</span> <span class="fn-call">glb_is_identity_mat4</span>(nd.transform) {</span>
-<span id="src-glb-loft-L340">      result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ndname}\<span class="st">",\"</span>mesh\<span class="st">":{mid}}}"</span>;</span>
-<span id="src-glb-loft-L341">    } <span class="kw">else</span> {</span>
-<span id="src-glb-loft-L342">      mat_str = <span class="fn-call">glb_mat4_json</span>(nd.transform);</span>
-<span id="src-glb-loft-L343">      result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ndname}\<span class="st">",\"</span>mesh\<span class="st">":{mid},{mat_str}}}"</span>;</span>
-<span id="src-glb-loft-L344">    }</span>
-<span id="src-glb-loft-L345">    ni = ni + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L346">  }</span>
-<span id="src-glb-loft-L347">  <span class="cm">// --- light nodes ---</span></span>
-<span id="src-glb-loft-L348">  li = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L349">  <span class="kw">for</span> lt <span class="kw">in</span> sc.lights {</span>
-<span id="src-glb-loft-L350">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L351">    result += <span class="fn-call">glb_light_node_json</span>(lt, li);</span>
-<span id="src-glb-loft-L352">    ni = ni + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L353">    li = li + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L354">  }</span>
-<span id="src-glb-loft-L355">  result += <span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L356"></span>
-<span id="src-glb-loft-L357">  <span class="cm">// --- meshes: material reference lives on the primitive ---</span></span>
-<span id="src-glb-loft-L358">  result += <span class="st">"\"</span>meshes\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L359">  mi = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L360">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L361">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L362">    mename = me.name;</span>
-<span id="src-glb-loft-L363">    acc_pos  = mi * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L364">    acc_norm = mi * <span class="nm">4</span> + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L365">    acc_uv   = mi * <span class="nm">4</span> + <span class="nm">2</span>;</span>
-<span id="src-glb-loft-L366">    acc_idx  = mi * <span class="nm">4</span> + <span class="nm">3</span>;</span>
-<span id="src-glb-loft-L367">    mat_idx  = mesh_mat[mi] ?? <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L368">    result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{mename}\<span class="st">",\"</span>primitives\<span class="st">":[{{\"</span>attributes\<span class="st">":{{\"</span><span class="en">POSITION</span>\<span class="st">":{acc_pos},\"</span><span class="en">NORMAL</span>\<span class="st">":{acc_norm},\"</span><span class="en">TEXCOORD_0</span>\<span class="st">":{acc_uv}}},\"</span>indices\<span class="st">":{acc_idx},\"</span>material\<span class="st">":{mat_idx}}}]}}"</span>;</span>
-<span id="src-glb-loft-L369">    mi = mi + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L370">  }</span>
-<span id="src-glb-loft-L371">  result += <span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L372"></span>
-<span id="src-glb-loft-L373">  <span class="cm">// --- accessors ---</span></span>
-<span id="src-glb-loft-L374">  result += <span class="st">"\"</span>accessors\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L375">  mi = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L376">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L377">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L378">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L379">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L380">    nidx = nt * <span class="nm">3</span>;</span>
-<span id="src-glb-loft-L381">    pmin = <span class="fn-call">glb_pos_min</span>(me.vertices);</span>
-<span id="src-glb-loft-L382">    pmax = <span class="fn-call">glb_pos_max</span>(me.vertices);</span>
-<span id="src-glb-loft-L383">    minx = pmin.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; miny = pmin.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; minz = pmin.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L384">    maxx = pmax.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; maxy = pmax.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; maxz = pmax.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
-<span id="src-glb-loft-L385">    bv_pos  = mi * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L386">    bv_norm = mi * <span class="nm">4</span> + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L387">    bv_uv   = mi * <span class="nm">4</span> + <span class="nm">2</span>;</span>
-<span id="src-glb-loft-L388">    bv_idx  = mi * <span class="nm">4</span> + <span class="nm">3</span>;</span>
-<span id="src-glb-loft-L389">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_pos},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC3</span>\<span class="st">",\"</span><span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>\<span class="st">":[{minx:.6},{miny:.6},{minz:.6}],\"</span><span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>\<span class="st">":[{maxx:.6},{maxy:.6},{maxz:.6}]}},"</span>;</span>
-<span id="src-glb-loft-L390">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_norm},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC3</span>\<span class="st">"}},"</span>;</span>
-<span id="src-glb-loft-L391">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_uv},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC2</span>\<span class="st">"}},"</span>;</span>
-<span id="src-glb-loft-L392">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_idx},\"</span>componentType\<span class="st">":5125,\"</span>count\<span class="st">":{nidx},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">SCALAR</span>\<span class="st">"}}"</span>;</span>
-<span id="src-glb-loft-L393">    mi = mi + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L394">  }</span>
-<span id="src-glb-loft-L395">  result += <span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L396"></span>
-<span id="src-glb-loft-L397">  <span class="cm">// --- bufferViews ---</span></span>
-<span id="src-glb-loft-L398">  result += <span class="st">"\"</span>bufferViews\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L399">  mi = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L400">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L401">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L402">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L403">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L404">    nidx = nt * <span class="nm">3</span>;</span>
-<span id="src-glb-loft-L405">    pos_bytes  = nv * <span class="nm">12</span>;</span>
-<span id="src-glb-loft-L406">    norm_bytes = nv * <span class="nm">12</span>;</span>
-<span id="src-glb-loft-L407">    uv_bytes   = nv * <span class="nm">8</span>;</span>
-<span id="src-glb-loft-L408">    idx_bytes  = nidx * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L409">    base = bin_offset[mi] ?? <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L410">    off_norm = base + pos_bytes;</span>
-<span id="src-glb-loft-L411">    off_uv   = base + pos_bytes + norm_bytes;</span>
-<span id="src-glb-loft-L412">    off_idx  = base + pos_bytes + norm_bytes + uv_bytes;</span>
-<span id="src-glb-loft-L413">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{base},\"</span>byteLength\<span class="st">":{pos_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
-<span id="src-glb-loft-L414">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_norm},\"</span>byteLength\<span class="st">":{norm_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
-<span id="src-glb-loft-L415">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_uv},\"</span>byteLength\<span class="st">":{uv_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
-<span id="src-glb-loft-L416">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_idx},\"</span>byteLength\<span class="st">":{idx_bytes},\"</span>target\<span class="st">":34963}}"</span>;</span>
-<span id="src-glb-loft-L417">    mi = mi + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L418">  }</span>
-<span id="src-glb-loft-L419">  result += <span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L420"></span>
-<span id="src-glb-loft-L421">  <span class="cm">// --- materials ---</span></span>
-<span id="src-glb-loft-L422">  result += <span class="st">"\"</span>materials\<span class="st">":["</span>;</span>
-<span id="src-glb-loft-L423">  mi = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L424">  <span class="kw">for</span> mat <span class="kw">in</span> sc.materials {</span>
-<span id="src-glb-loft-L425">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
-<span id="src-glb-loft-L426">    result += <span class="fn-call">glb_material_json</span>(mat);</span>
-<span id="src-glb-loft-L427">    mi = mi + <span class="nm">1</span>;</span>
-<span id="src-glb-loft-L428">  }</span>
-<span id="src-glb-loft-L429">  result += <span class="st">"],"</span>;</span>
-<span id="src-glb-loft-L430"></span>
-<span id="src-glb-loft-L431">  <span class="cm">// --- buffer ---</span></span>
-<span id="src-glb-loft-L432">  <span class="cm">// Total bin size = sum of all mesh bin sizes</span></span>
-<span id="src-glb-loft-L433">  total_bin = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L434">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L435">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L436">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L437">    total_bin = total_bin + nv * <span class="nm">12</span> + nv * <span class="nm">12</span> + nv * <span class="nm">8</span> + nt * <span class="nm">3</span> * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L438">  }</span>
-<span id="src-glb-loft-L439">  result += <span class="st">"\"</span>buffers\<span class="st">":[{{\"</span>byteLength\<span class="st">":{total_bin}}}]}}"</span>;</span>
-<span id="src-glb-loft-L440">  result</span>
-<span id="src-glb-loft-L441">}</span>
-<span id="src-glb-loft-L442"></span>
-<span id="src-glb-loft-L443"><span class="cm">// Export a Scene as a GLB 2.0 file.</span></span>
-<span id="src-glb-loft-L444"><span class="cm">// All meshes are packed into one BIN chunk; materials use pbrMetallicRoughness.</span></span>
-<span id="src-glb-loft-L445"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_scene_glb</span>(sc: <span class="en">Scene</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-glb-loft-L446">  <span class="cm">// Compute per-mesh byte offsets in the BIN chunk.</span></span>
-<span id="src-glb-loft-L447">  bin_offset = [];</span>
-<span id="src-glb-loft-L448">  cur_offset = <span class="nm">0</span>;</span>
-<span id="src-glb-loft-L449">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L450">    bin_offset += [cur_offset];</span>
-<span id="src-glb-loft-L451">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L452">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L453">    cur_offset = cur_offset + nv * <span class="nm">12</span> + nv * <span class="nm">12</span> + nv * <span class="nm">8</span> + nt * <span class="nm">3</span> * <span class="nm">4</span>;</span>
-<span id="src-glb-loft-L454">  }</span>
-<span id="src-glb-loft-L455">  total_bin = cur_offset;</span>
-<span id="src-glb-loft-L456"></span>
-<span id="src-glb-loft-L457">  json      = <span class="fn-call">glb_scene_json</span>(sc, bin_offset);</span>
-<span id="src-glb-loft-L458">  json_len  = json.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
-<span id="src-glb-loft-L459">  json_pad  = <span class="fn-call">glb_pad4</span>(json_len);</span>
-<span id="src-glb-loft-L460">  json_chunk = json_len + json_pad;</span>
-<span id="src-glb-loft-L461"></span>
-<span id="src-glb-loft-L462">  total_len = <span class="nm">12</span> + <span class="nm">8</span> + json_chunk + <span class="nm">8</span> + total_bin;</span>
-<span id="src-glb-loft-L463"></span>
-<span id="src-glb-loft-L464">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
-<span id="src-glb-loft-L465">  f#format = <span class="en">LittleEndian</span>;</span>
-<span id="src-glb-loft-L466">  <span class="cm">// `+=` is append-only — truncate explicitly so successive saves of</span></span>
-<span id="src-glb-loft-L467">  <span class="cm">// the same path replace the previous file instead of appending.</span></span>
-<span id="src-glb-loft-L468">  f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
-<span id="src-glb-loft-L469"></span>
-<span id="src-glb-loft-L470">  <span class="cm">// GLB header — each u32 field is 4 bytes per spec.  Post-2c</span></span>
-<span id="src-glb-loft-L471">  <span class="cm">// `integer` is 8 bytes; cast each scalar to `i32` so writes land</span></span>
-<span id="src-glb-loft-L472">  <span class="cm">// the expected GLB 2.0 header layout.</span></span>
-<span id="src-glb-loft-L473">  f += <span class="nm">0x46546C67</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L474">  f += <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L475">  f += total_len <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L476"></span>
-<span id="src-glb-loft-L477">  <span class="cm">// JSON chunk</span></span>
-<span id="src-glb-loft-L478">  f += json_chunk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L479">  f += <span class="nm">0x4E4F534A</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L480">  f += json;</span>
-<span id="src-glb-loft-L481">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>json_pad {</span>
-<span id="src-glb-loft-L482">    f += <span class="nm">32</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
-<span id="src-glb-loft-L483">  }</span>
-<span id="src-glb-loft-L484"></span>
-<span id="src-glb-loft-L485">  <span class="cm">// BIN chunk</span></span>
-<span id="src-glb-loft-L486">  f += total_bin <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L487">  f += <span class="nm">0x004E4942</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
-<span id="src-glb-loft-L488">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
-<span id="src-glb-loft-L489">    f += <span class="fn-call">glb_pos_buf</span>(me.vertices);</span>
-<span id="src-glb-loft-L490">    f += <span class="fn-call">glb_norm_buf</span>(me.vertices);</span>
-<span id="src-glb-loft-L491">    f += <span class="fn-call">glb_uv_buf</span>(me.vertices);</span>
-<span id="src-glb-loft-L492">    f += <span class="fn-call">glb_idx_buf</span>(me.triangles);</span>
-<span id="src-glb-loft-L493">  }</span>
-<span id="src-glb-loft-L494">}</span>
+<span id="src-glb-loft-L159">  <span class="cm">// Total file size: 12 (header) + 8 (json chunk hdr) + json_chunk + 8 (bin chunk hdr) + bin_bytes</span></span>
+<span id="src-glb-loft-L160">  total_len = <span class="nm">12</span> + <span class="nm">8</span> + json_chunk + <span class="nm">8</span> + bin_bytes;</span>
+<span id="src-glb-loft-L161"></span>
+<span id="src-glb-loft-L162">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
+<span id="src-glb-loft-L163">  f#format = <span class="en">LittleEndian</span>;</span>
+<span id="src-glb-loft-L164">  <span class="cm">// `+=` is append-only — truncate explicitly so successive saves of</span></span>
+<span id="src-glb-loft-L165">  <span class="cm">// the same path replace the previous file instead of appending.</span></span>
+<span id="src-glb-loft-L166">  f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
+<span id="src-glb-loft-L167"></span>
+<span id="src-glb-loft-L168">  <span class="cm">// GLB header (12 bytes — each u32 is 4 bytes).  Post-2c `integer`</span></span>
+<span id="src-glb-loft-L169">  <span class="cm">// is 8 bytes; cast each scalar header field to `i32` so the file</span></span>
+<span id="src-glb-loft-L170">  <span class="cm">// lands the expected GLB 2.0 layout.</span></span>
+<span id="src-glb-loft-L171">  f += <span class="nm">0x46546C67</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// magic 'glTF'</span></span>
+<span id="src-glb-loft-L172">  f += <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;           <span class="cm">// version 2</span></span>
+<span id="src-glb-loft-L173">  f += total_len <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;   <span class="cm">// total file length</span></span>
+<span id="src-glb-loft-L174"></span>
+<span id="src-glb-loft-L175">  <span class="cm">// JSON chunk (8-byte header + padded JSON)</span></span>
+<span id="src-glb-loft-L176">  f += json_chunk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk data length (padded)</span></span>
+<span id="src-glb-loft-L177">  f += <span class="nm">0x4E4F534A</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk type 'JSON'</span></span>
+<span id="src-glb-loft-L178">  f += json;               <span class="cm">// JSON bytes (raw UTF-8)</span></span>
+<span id="src-glb-loft-L179">  <span class="cm">// Pad JSON to 4-byte boundary with ASCII spaces</span></span>
+<span id="src-glb-loft-L180">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>json_pad {</span>
+<span id="src-glb-loft-L181">    f += <span class="nm">32</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="src-glb-loft-L182">  }</span>
+<span id="src-glb-loft-L183"></span>
+<span id="src-glb-loft-L184">  <span class="cm">// BIN chunk (8-byte header + binary buffers)</span></span>
+<span id="src-glb-loft-L185">  f += bin_bytes <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;   <span class="cm">// chunk data length</span></span>
+<span id="src-glb-loft-L186">  f += <span class="nm">0x004E4942</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;  <span class="cm">// chunk type 'BIN\0'</span></span>
+<span id="src-glb-loft-L187">  f += <span class="fn-call">glb_pos_buf</span>(m.vertices);</span>
+<span id="src-glb-loft-L188">  f += <span class="fn-call">glb_norm_buf</span>(m.vertices);</span>
+<span id="src-glb-loft-L189">  f += <span class="fn-call">glb_uv_buf</span>(m.vertices);</span>
+<span id="src-glb-loft-L190">  f += <span class="fn-call">glb_idx_buf</span>(m.triangles);</span>
+<span id="src-glb-loft-L191">}</span>
+<span id="src-glb-loft-L192"></span>
+<span id="src-glb-loft-L193"><span class="cm">// ─── Scene-level GLB export ───────────────────────────────────────────────────</span></span>
+<span id="src-glb-loft-L194"></span>
+<span id="src-glb-loft-L195"><span class="cm">// Build a JSON material entry for glTF 2.0 pbrMetallicRoughness.</span></span>
+<span id="src-glb-loft-L196"><span class="kw">fn</span> <span class="fn-call">glb_material_json</span>(mat: <span class="en">Material</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-glb-loft-L197">  mn = mat.name;</span>
+<span id="src-glb-loft-L198">  cr = mat.base_color_r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L199">  cg = mat.base_color_g <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L200">  cb = mat.base_color_b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L201">  ca = mat.base_color_a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L202">  me = mat.metallic <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L203">  ro = mat.roughness <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L204">  result = <span class="st">"{{\"</span>name\<span class="st">":\"</span>{mn}\<span class="st">","</span>;</span>
+<span id="src-glb-loft-L205">  result += <span class="st">"\"</span>pbrMetallicRoughness\<span class="st">":{{"</span>;</span>
+<span id="src-glb-loft-L206">  result += <span class="st">"\"</span>baseColorFactor\<span class="st">":[{cr:.6},{cg:.6},{cb:.6},{ca:.6}],"</span>;</span>
+<span id="src-glb-loft-L207">  result += <span class="st">"\"</span>metallicFactor\<span class="st">":{me:.6},"</span>;</span>
+<span id="src-glb-loft-L208">  result += <span class="st">"\"</span>roughnessFactor\<span class="st">":{ro:.6}"</span>;</span>
+<span id="src-glb-loft-L209">  result += <span class="st">"}}}}"</span>;</span>
+<span id="src-glb-loft-L210">  result</span>
+<span id="src-glb-loft-L211">}</span>
+<span id="src-glb-loft-L212"></span>
+<span id="src-glb-loft-L213"><span class="cm">// True if a Mat4 is the identity matrix (within exact float equality).</span></span>
+<span id="src-glb-loft-L214"><span class="kw">fn</span> <span class="fn-call">glb_is_identity_mat4</span>(tr: <span class="en">Mat4</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-glb-loft-L215">  mm = tr.m;</span>
+<span id="src-glb-loft-L216">  <span class="cm">// `?? 0.0` is OOB-lint suppression — `Mat4.m` is always 16 floats by</span></span>
+<span id="src-glb-loft-L217">  <span class="cm">// construction (see mat4_identity et al.); the fallback path is</span></span>
+<span id="src-glb-loft-L218">  <span class="cm">// unreachable.</span></span>
+<span id="src-glb-loft-L219">  (mm[<span class="nm">0</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">1</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">2</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">3</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
+<span id="src-glb-loft-L220">  (mm[<span class="nm">4</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">5</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">6</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">7</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
+<span id="src-glb-loft-L221">  (mm[<span class="nm">8</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">9</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">10</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span> &amp;&amp; (mm[<span class="nm">11</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp;</span>
+<span id="src-glb-loft-L222">  (mm[<span class="nm">12</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">13</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">14</span>] ?? <span class="nm">0.0</span>) == <span class="nm">0.0</span> &amp;&amp; (mm[<span class="nm">15</span>] ?? <span class="nm">0.0</span>) == <span class="nm">1.0</span></span>
+<span id="src-glb-loft-L223">}</span>
+<span id="src-glb-loft-L224"></span>
+<span id="src-glb-loft-L225"><span class="cm">// Build a glTF "matrix" JSON property from a column-major Mat4.</span></span>
+<span id="src-glb-loft-L226"><span class="cm">// glTF 2.0 also uses column-major order, so emit elements directly.</span></span>
+<span id="src-glb-loft-L227"><span class="kw">fn</span> <span class="fn-call">glb_mat4_json</span>(tr: <span class="en">Mat4</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-glb-loft-L228">  mm = tr.m;</span>
+<span id="src-glb-loft-L229">  c0  = mm[<span class="nm">0</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c1  = mm[<span class="nm">1</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c2  = mm[<span class="nm">2</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c3  = mm[<span class="nm">3</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L230">  c4  = mm[<span class="nm">4</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c5  = mm[<span class="nm">5</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c6  = mm[<span class="nm">6</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c7  = mm[<span class="nm">7</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L231">  c8  = mm[<span class="nm">8</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c9  = mm[<span class="nm">9</span>]  <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c10 = mm[<span class="nm">10</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c11 = mm[<span class="nm">11</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L232">  c12 = mm[<span class="nm">12</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c13 = mm[<span class="nm">13</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c14 = mm[<span class="nm">14</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; c15 = mm[<span class="nm">15</span>] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L233">  result = <span class="st">"\"</span>matrix\<span class="st">":[{c0:.6},{c1:.6},{c2:.6},{c3:.6},"</span>;</span>
+<span id="src-glb-loft-L234">  result += <span class="st">"{c4:.6},{c5:.6},{c6:.6},{c7:.6},"</span>;</span>
+<span id="src-glb-loft-L235">  result += <span class="st">"{c8:.6},{c9:.6},{c10:.6},{c11:.6},"</span>;</span>
+<span id="src-glb-loft-L236">  result += <span class="st">"{c12:.6},{c13:.6},{c14:.6},{c15:.6}]"</span>;</span>
+<span id="src-glb-loft-L237">  result</span>
+<span id="src-glb-loft-L238">}</span>
+<span id="src-glb-loft-L239"></span>
+<span id="src-glb-loft-L240"><span class="kw">fn</span> <span class="fn-call">glb_light_node_json</span>(lt: <span class="en">Light</span>, li: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-glb-loft-L241">  lname = lt.name;</span>
+<span id="src-glb-loft-L242">  result = <span class="st">"{{\"</span>name\<span class="st">":\"</span>{lname}\<span class="st">",\"</span>extensions\<span class="st">":{{\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">":{{\"</span>light\<span class="st">":{li}}}}}"</span>;</span>
+<span id="src-glb-loft-L243">  <span class="kw">if</span> lt.light_type == <span class="en">Point</span> {</span>
+<span id="src-glb-loft-L244">    px = lt.position.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L245">    py = lt.position.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L246">    pz = lt.position.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L247">    result += <span class="st">",\"</span>translation\<span class="st">":[{px:.6},{py:.6},{pz:.6}]"</span>;</span>
+<span id="src-glb-loft-L248">  } <span class="kw">else</span> {</span>
+<span id="src-glb-loft-L249">    dir = <span class="fn-call">normalize3</span>(lt.direction);</span>
+<span id="src-glb-loft-L250">    dx = dir.x; dy = dir.y; dz = dir.z;</span>
+<span id="src-glb-loft-L251">    dot_val = -dz;</span>
+<span id="src-glb-loft-L252">    <span class="kw">if</span> dot_val &lt; -<span class="nm">0.9999</span> {</span>
+<span id="src-glb-loft-L253">      qx = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qy = <span class="nm">1.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qz = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qw = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L254">    } <span class="kw">else</span> <span class="kw">if</span> dot_val &gt; <span class="nm">0.9999</span> {</span>
+<span id="src-glb-loft-L255">      qx = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qy = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qz = <span class="nm">0.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; qw = <span class="nm">1.0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L256">    } <span class="kw">else</span> {</span>
+<span id="src-glb-loft-L257">      half = <span class="nm">1.0</span> + dot_val;</span>
+<span id="src-glb-loft-L258">      ax = dy; ay = -dx; az = <span class="nm">0.0</span>;</span>
+<span id="src-glb-loft-L259">      inv_len = <span class="nm">1.0</span> / <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(ax * ax + ay * ay + az * az + half * half) ?? <span class="nm">0.0</span>;</span>
+<span id="src-glb-loft-L260">      qx = (ax * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L261">      qy = (ay * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L262">      qz = (az * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L263">      qw = (half * inv_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L264">    }</span>
+<span id="src-glb-loft-L265">    result += <span class="st">",\"</span>rotation\<span class="st">":[{qx:.6},{qy:.6},{qz:.6},{qw:.6}]"</span>;</span>
+<span id="src-glb-loft-L266">  }</span>
+<span id="src-glb-loft-L267">  result += <span class="st">"}}"</span>;</span>
+<span id="src-glb-loft-L268">  result</span>
+<span id="src-glb-loft-L269">}</span>
+<span id="src-glb-loft-L270"></span>
+<span id="src-glb-loft-L271"><span class="cm">// Build the full glTF JSON for a Scene.</span></span>
+<span id="src-glb-loft-L272"><span class="cm">// BIN layout: for each mesh in order — pos, norm, uv, idx (no padding between meshes).</span></span>
+<span id="src-glb-loft-L273"><span class="cm">// accessor base = mesh_idx * 4; bufferView base = mesh_idx * 4.</span></span>
+<span id="src-glb-loft-L274"><span class="kw">fn</span> <span class="fn-call">glb_scene_json</span>(sc: <span class="en">Scene</span>, bin_offset: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-glb-loft-L275">  sn = sc.name;</span>
+<span id="src-glb-loft-L276"></span>
+<span id="src-glb-loft-L277">  <span class="cm">// Build per-mesh material index: for each mesh, the material used by the</span></span>
+<span id="src-glb-loft-L278">  <span class="cm">// first node that references it.  In glTF 2.0, material lives on the mesh</span></span>
+<span id="src-glb-loft-L279">  <span class="cm">// primitive (not on the node).  Two-pass build so the indexed-assignment</span></span>
+<span id="src-glb-loft-L280">  <span class="cm">// OOB lint stays quiet: first pre-fill a node→mesh lookup, then emit one</span></span>
+<span id="src-glb-loft-L281">  <span class="cm">// entry per mesh by scanning the lookup.</span></span>
+<span id="src-glb-loft-L282">  mesh_mat: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-glb-loft-L283">  mm_i = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L284">  <span class="kw">for</span> _ <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L285">    found = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L286">    <span class="kw">for</span> nd <span class="kw">in</span> sc.nodes {</span>
+<span id="src-glb-loft-L287">      <span class="kw">if</span> nd.mesh_idx == mm_i {</span>
+<span id="src-glb-loft-L288">        found = nd.material_idx;</span>
+<span id="src-glb-loft-L289">      }</span>
+<span id="src-glb-loft-L290">    }</span>
+<span id="src-glb-loft-L291">    mesh_mat += [found];</span>
+<span id="src-glb-loft-L292">    mm_i = mm_i + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L293">  }</span>
+<span id="src-glb-loft-L294"></span>
+<span id="src-glb-loft-L295">  n_lights = sc.lights.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L296">  n_nodes = sc.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L297">  total_nodes = n_nodes + n_lights;</span>
+<span id="src-glb-loft-L298"></span>
+<span id="src-glb-loft-L299">  <span class="cm">// --- asset / extensions ---</span></span>
+<span id="src-glb-loft-L300">  result = <span class="st">"{{\"</span>asset\<span class="st">":{{\"</span>version\<span class="st">":\"</span><span class="nm">2.0</span>\<span class="st">",\"</span>generator\<span class="st">":\"</span>loft\<span class="st">"}},"</span>;</span>
+<span id="src-glb-loft-L301">  <span class="kw">if</span> n_lights &gt; <span class="nm">0</span> {</span>
+<span id="src-glb-loft-L302">    result += <span class="st">"\"</span>extensionsUsed\<span class="st">":[\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L303">    result += <span class="st">"\"</span>extensionsRequired\<span class="st">":[\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L304">    result += <span class="st">"\"</span>extensions\<span class="st">":{{\"</span><span class="en">KHR_lights_punctual</span>\<span class="st">":{{\"</span>lights\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L305">    li = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L306">    <span class="kw">for</span> lt <span class="kw">in</span> sc.lights {</span>
+<span id="src-glb-loft-L307">      <span class="kw">if</span> li &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L308">      ltname = lt.name;</span>
+<span id="src-glb-loft-L309">      cr = lt.color_r <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L310">      cg = lt.color_g <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L311">      cb = lt.color_b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L312">      inten = lt.intensity <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L313">      <span class="kw">if</span> lt.light_type == <span class="en">Point</span> {</span>
+<span id="src-glb-loft-L314">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>point\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
+<span id="src-glb-loft-L315">      } <span class="kw">else</span> <span class="kw">if</span> lt.light_type == <span class="en">Directional</span> {</span>
+<span id="src-glb-loft-L316">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>directional\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
+<span id="src-glb-loft-L317">      } <span class="kw">else</span> {</span>
+<span id="src-glb-loft-L318">        result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ltname}\<span class="st">",\"</span><span class="kw">type</span>\<span class="st">":\"</span>spot\<span class="st">",\"</span>color\<span class="st">":[{cr:.6},{cg:.6},{cb:.6}],\"</span>intensity\<span class="st">":{inten:.6}}}"</span>;</span>
+<span id="src-glb-loft-L319">      }</span>
+<span id="src-glb-loft-L320">      li = li + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L321">    }</span>
+<span id="src-glb-loft-L322">    result += <span class="st">"]}}}},"</span>;</span>
+<span id="src-glb-loft-L323">  }</span>
+<span id="src-glb-loft-L324"></span>
+<span id="src-glb-loft-L325">  <span class="cm">// --- scene / scenes ---</span></span>
+<span id="src-glb-loft-L326">  result += <span class="st">"\"</span>scene\<span class="st">":0,\"</span>scenes\<span class="st">":[{{\"</span>name\<span class="st">":\"</span>{sn}\<span class="st">",\"</span>nodes\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L327">  ni = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L328">  <span class="kw">for</span> _sn_idx <span class="kw">in</span> <span class="nm">0..</span>total_nodes {</span>
+<span id="src-glb-loft-L329">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L330">    result += <span class="st">"{ni}"</span>;</span>
+<span id="src-glb-loft-L331">    ni = ni + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L332">  }</span>
+<span id="src-glb-loft-L333">  result += <span class="st">"]}}],"</span>;</span>
+<span id="src-glb-loft-L334"></span>
+<span id="src-glb-loft-L335">  <span class="cm">// --- nodes: reference mesh; include "matrix" only for non-identity transforms ---</span></span>
+<span id="src-glb-loft-L336">  result += <span class="st">"\"</span>nodes\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L337">  ni = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L338">  <span class="kw">for</span> nd <span class="kw">in</span> sc.nodes {</span>
+<span id="src-glb-loft-L339">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L340">    mid = nd.mesh_idx;</span>
+<span id="src-glb-loft-L341">    ndname = nd.name;</span>
+<span id="src-glb-loft-L342">    <span class="kw">if</span> <span class="fn-call">glb_is_identity_mat4</span>(nd.transform) {</span>
+<span id="src-glb-loft-L343">      result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ndname}\<span class="st">",\"</span>mesh\<span class="st">":{mid}}}"</span>;</span>
+<span id="src-glb-loft-L344">    } <span class="kw">else</span> {</span>
+<span id="src-glb-loft-L345">      mat_str = <span class="fn-call">glb_mat4_json</span>(nd.transform);</span>
+<span id="src-glb-loft-L346">      result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{ndname}\<span class="st">",\"</span>mesh\<span class="st">":{mid},{mat_str}}}"</span>;</span>
+<span id="src-glb-loft-L347">    }</span>
+<span id="src-glb-loft-L348">    ni = ni + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L349">  }</span>
+<span id="src-glb-loft-L350">  <span class="cm">// --- light nodes ---</span></span>
+<span id="src-glb-loft-L351">  li = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L352">  <span class="kw">for</span> lt <span class="kw">in</span> sc.lights {</span>
+<span id="src-glb-loft-L353">    <span class="kw">if</span> ni &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L354">    result += <span class="fn-call">glb_light_node_json</span>(lt, li);</span>
+<span id="src-glb-loft-L355">    ni = ni + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L356">    li = li + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L357">  }</span>
+<span id="src-glb-loft-L358">  result += <span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L359"></span>
+<span id="src-glb-loft-L360">  <span class="cm">// --- meshes: material reference lives on the primitive ---</span></span>
+<span id="src-glb-loft-L361">  result += <span class="st">"\"</span>meshes\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L362">  mi = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L363">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L364">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L365">    mename = me.name;</span>
+<span id="src-glb-loft-L366">    acc_pos  = mi * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L367">    acc_norm = mi * <span class="nm">4</span> + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L368">    acc_uv   = mi * <span class="nm">4</span> + <span class="nm">2</span>;</span>
+<span id="src-glb-loft-L369">    acc_idx  = mi * <span class="nm">4</span> + <span class="nm">3</span>;</span>
+<span id="src-glb-loft-L370">    mat_idx  = mesh_mat[mi] ?? <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L371">    result += <span class="st">"{{\"</span>name\<span class="st">":\"</span>{mename}\<span class="st">",\"</span>primitives\<span class="st">":[{{\"</span>attributes\<span class="st">":{{\"</span><span class="en">POSITION</span>\<span class="st">":{acc_pos},\"</span><span class="en">NORMAL</span>\<span class="st">":{acc_norm},\"</span><span class="en">TEXCOORD_0</span>\<span class="st">":{acc_uv}}},\"</span>indices\<span class="st">":{acc_idx},\"</span>material\<span class="st">":{mat_idx}}}]}}"</span>;</span>
+<span id="src-glb-loft-L372">    mi = mi + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L373">  }</span>
+<span id="src-glb-loft-L374">  result += <span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L375"></span>
+<span id="src-glb-loft-L376">  <span class="cm">// --- accessors ---</span></span>
+<span id="src-glb-loft-L377">  result += <span class="st">"\"</span>accessors\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L378">  mi = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L379">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L380">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L381">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L382">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L383">    nidx = nt * <span class="nm">3</span>;</span>
+<span id="src-glb-loft-L384">    pmin = <span class="fn-call">glb_pos_min</span>(me.vertices);</span>
+<span id="src-glb-loft-L385">    pmax = <span class="fn-call">glb_pos_max</span>(me.vertices);</span>
+<span id="src-glb-loft-L386">    minx = pmin.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; miny = pmin.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; minz = pmin.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L387">    maxx = pmax.x <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; maxy = pmax.y <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>; maxz = pmax.z <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>;</span>
+<span id="src-glb-loft-L388">    bv_pos  = mi * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L389">    bv_norm = mi * <span class="nm">4</span> + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L390">    bv_uv   = mi * <span class="nm">4</span> + <span class="nm">2</span>;</span>
+<span id="src-glb-loft-L391">    bv_idx  = mi * <span class="nm">4</span> + <span class="nm">3</span>;</span>
+<span id="src-glb-loft-L392">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_pos},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC3</span>\<span class="st">",\"</span><span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>\<span class="st">":[{minx:.6},{miny:.6},{minz:.6}],\"</span><span class="bi"><a href="stdlib-min-max-clamp.html">max</a></span>\<span class="st">":[{maxx:.6},{maxy:.6},{maxz:.6}]}},"</span>;</span>
+<span id="src-glb-loft-L393">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_norm},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC3</span>\<span class="st">"}},"</span>;</span>
+<span id="src-glb-loft-L394">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_uv},\"</span>componentType\<span class="st">":5126,\"</span>count\<span class="st">":{nv},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">VEC2</span>\<span class="st">"}},"</span>;</span>
+<span id="src-glb-loft-L395">    result += <span class="st">"{{\"</span>bufferView\<span class="st">":{bv_idx},\"</span>componentType\<span class="st">":5125,\"</span>count\<span class="st">":{nidx},\"</span><span class="kw">type</span>\<span class="st">":\"</span><span class="en">SCALAR</span>\<span class="st">"}}"</span>;</span>
+<span id="src-glb-loft-L396">    mi = mi + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L397">  }</span>
+<span id="src-glb-loft-L398">  result += <span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L399"></span>
+<span id="src-glb-loft-L400">  <span class="cm">// --- bufferViews ---</span></span>
+<span id="src-glb-loft-L401">  result += <span class="st">"\"</span>bufferViews\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L402">  mi = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L403">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L404">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L405">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L406">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L407">    nidx = nt * <span class="nm">3</span>;</span>
+<span id="src-glb-loft-L408">    pos_bytes  = nv * <span class="nm">12</span>;</span>
+<span id="src-glb-loft-L409">    norm_bytes = nv * <span class="nm">12</span>;</span>
+<span id="src-glb-loft-L410">    uv_bytes   = nv * <span class="nm">8</span>;</span>
+<span id="src-glb-loft-L411">    idx_bytes  = nidx * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L412">    base = bin_offset[mi] ?? <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L413">    off_norm = base + pos_bytes;</span>
+<span id="src-glb-loft-L414">    off_uv   = base + pos_bytes + norm_bytes;</span>
+<span id="src-glb-loft-L415">    off_idx  = base + pos_bytes + norm_bytes + uv_bytes;</span>
+<span id="src-glb-loft-L416">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{base},\"</span>byteLength\<span class="st">":{pos_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
+<span id="src-glb-loft-L417">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_norm},\"</span>byteLength\<span class="st">":{norm_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
+<span id="src-glb-loft-L418">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_uv},\"</span>byteLength\<span class="st">":{uv_bytes},\"</span>target\<span class="st">":34962}},"</span>;</span>
+<span id="src-glb-loft-L419">    result += <span class="st">"{{\"</span>buffer\<span class="st">":0,\"</span>byteOffset\<span class="st">":{off_idx},\"</span>byteLength\<span class="st">":{idx_bytes},\"</span>target\<span class="st">":34963}}"</span>;</span>
+<span id="src-glb-loft-L420">    mi = mi + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L421">  }</span>
+<span id="src-glb-loft-L422">  result += <span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L423"></span>
+<span id="src-glb-loft-L424">  <span class="cm">// --- materials ---</span></span>
+<span id="src-glb-loft-L425">  result += <span class="st">"\"</span>materials\<span class="st">":["</span>;</span>
+<span id="src-glb-loft-L426">  mi = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L427">  <span class="kw">for</span> mat <span class="kw">in</span> sc.materials {</span>
+<span id="src-glb-loft-L428">    <span class="kw">if</span> mi &gt; <span class="nm">0</span> { result += <span class="st">","</span>; }</span>
+<span id="src-glb-loft-L429">    result += <span class="fn-call">glb_material_json</span>(mat);</span>
+<span id="src-glb-loft-L430">    mi = mi + <span class="nm">1</span>;</span>
+<span id="src-glb-loft-L431">  }</span>
+<span id="src-glb-loft-L432">  result += <span class="st">"],"</span>;</span>
+<span id="src-glb-loft-L433"></span>
+<span id="src-glb-loft-L434">  <span class="cm">// --- buffer ---</span></span>
+<span id="src-glb-loft-L435">  <span class="cm">// Total bin size = sum of all mesh bin sizes</span></span>
+<span id="src-glb-loft-L436">  total_bin = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L437">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L438">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L439">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L440">    total_bin = total_bin + nv * <span class="nm">12</span> + nv * <span class="nm">12</span> + nv * <span class="nm">8</span> + nt * <span class="nm">3</span> * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L441">  }</span>
+<span id="src-glb-loft-L442">  result += <span class="st">"\"</span>buffers\<span class="st">":[{{\"</span>byteLength\<span class="st">":{total_bin}}}]}}"</span>;</span>
+<span id="src-glb-loft-L443">  result</span>
+<span id="src-glb-loft-L444">}</span>
+<span id="src-glb-loft-L445"></span>
+<span id="src-glb-loft-L446"><span class="cm">// Export a Scene as a GLB 2.0 file.</span></span>
+<span id="src-glb-loft-L447"><span class="cm">// All meshes are packed into one BIN chunk; materials use pbrMetallicRoughness.</span></span>
+<span id="src-glb-loft-L448"><span class="cm">// Example: @GLB-002</span></span>
+<span id="src-glb-loft-L449"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">save_scene_glb</span>(sc: <span class="en">Scene</span>, path: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-glb-loft-L450">  <span class="cm">// Compute per-mesh byte offsets in the BIN chunk.</span></span>
+<span id="src-glb-loft-L451">  bin_offset = [];</span>
+<span id="src-glb-loft-L452">  cur_offset = <span class="nm">0</span>;</span>
+<span id="src-glb-loft-L453">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L454">    bin_offset += [cur_offset];</span>
+<span id="src-glb-loft-L455">    nv = me.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L456">    nt = me.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L457">    cur_offset = cur_offset + nv * <span class="nm">12</span> + nv * <span class="nm">12</span> + nv * <span class="nm">8</span> + nt * <span class="nm">3</span> * <span class="nm">4</span>;</span>
+<span id="src-glb-loft-L458">  }</span>
+<span id="src-glb-loft-L459">  total_bin = cur_offset;</span>
+<span id="src-glb-loft-L460"></span>
+<span id="src-glb-loft-L461">  json      = <span class="fn-call">glb_scene_json</span>(sc, bin_offset);</span>
+<span id="src-glb-loft-L462">  json_len  = json.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="src-glb-loft-L463">  json_pad  = <span class="fn-call">glb_pad4</span>(json_len);</span>
+<span id="src-glb-loft-L464">  json_chunk = json_len + json_pad;</span>
+<span id="src-glb-loft-L465"></span>
+<span id="src-glb-loft-L466">  total_len = <span class="nm">12</span> + <span class="nm">8</span> + json_chunk + <span class="nm">8</span> + total_bin;</span>
+<span id="src-glb-loft-L467"></span>
+<span id="src-glb-loft-L468">  f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
+<span id="src-glb-loft-L469">  f#format = <span class="en">LittleEndian</span>;</span>
+<span id="src-glb-loft-L470">  <span class="cm">// `+=` is append-only — truncate explicitly so successive saves of</span></span>
+<span id="src-glb-loft-L471">  <span class="cm">// the same path replace the previous file instead of appending.</span></span>
+<span id="src-glb-loft-L472">  f.<span class="fn-call"><a href="stdlib-file-system.html">set_file_size</a></span>(<span class="nm">0</span>);</span>
+<span id="src-glb-loft-L473"></span>
+<span id="src-glb-loft-L474">  <span class="cm">// GLB header — each u32 field is 4 bytes per spec.  Post-2c</span></span>
+<span id="src-glb-loft-L475">  <span class="cm">// `integer` is 8 bytes; cast each scalar to `i32` so writes land</span></span>
+<span id="src-glb-loft-L476">  <span class="cm">// the expected GLB 2.0 header layout.</span></span>
+<span id="src-glb-loft-L477">  f += <span class="nm">0x46546C67</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L478">  f += <span class="nm">2</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L479">  f += total_len <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L480"></span>
+<span id="src-glb-loft-L481">  <span class="cm">// JSON chunk</span></span>
+<span id="src-glb-loft-L482">  f += json_chunk <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L483">  f += <span class="nm">0x4E4F534A</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L484">  f += json;</span>
+<span id="src-glb-loft-L485">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>json_pad {</span>
+<span id="src-glb-loft-L486">    f += <span class="nm">32</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="src-glb-loft-L487">  }</span>
+<span id="src-glb-loft-L488"></span>
+<span id="src-glb-loft-L489">  <span class="cm">// BIN chunk</span></span>
+<span id="src-glb-loft-L490">  f += total_bin <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L491">  f += <span class="nm">0x004E4942</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="src-glb-loft-L492">  <span class="kw">for</span> me <span class="kw">in</span> sc.meshes {</span>
+<span id="src-glb-loft-L493">    f += <span class="fn-call">glb_pos_buf</span>(me.vertices);</span>
+<span id="src-glb-loft-L494">    f += <span class="fn-call">glb_norm_buf</span>(me.vertices);</span>
+<span id="src-glb-loft-L495">    f += <span class="fn-call">glb_uv_buf</span>(me.vertices);</span>
+<span id="src-glb-loft-L496">    f += <span class="fn-call">glb_idx_buf</span>(me.triangles);</span>
+<span id="src-glb-loft-L497">  }</span>
+<span id="src-glb-loft-L498">}</span>
 </code></pre>
 <h2 id="tests-glb-loft">tests/glb.loft</h2>
 <pre class="src"><code><span id="tests-glb-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-glb-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-glb-loft-L3"><span class="cm">// Tests for the GLB 2.0 binary writer (save_glb).</span></span>
 <span id="tests-glb-loft-L4"><span class="cm">// Run with: loft --interpret --tests tests</span></span>
-<span id="tests-glb-loft-L5"><span class="kw">use</span> mesh3d;</span>
-<span id="tests-glb-loft-L6"><span class="kw">use</span> glb;</span>
+<span id="tests-glb-loft-L5"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-glb-loft-L6"><span class="kw">use</span> glb::*;</span>
 <span id="tests-glb-loft-L7"></span>
 <span id="tests-glb-loft-L8"><span class="cm">// Verify that save_glb produces a non-empty file.</span></span>
 <span id="tests-glb-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_glb_creates_file</span>() {</span>
@@ -630,8 +634,8 @@
 <span id="tests-light-glb-loft-L3"><span class="cm">// Exercises the directional-light export path (glb_light_node_json), which</span></span>
 <span id="tests-light-glb-loft-L4"><span class="cm">// computes a quaternion from the light direction — the only place glb reads</span></span>
 <span id="tests-light-glb-loft-L5"><span class="cm">// Vec3 components through normalize3.  Guards that path on both backends.</span></span>
-<span id="tests-light-glb-loft-L6"><span class="kw">use</span> mesh3d;</span>
-<span id="tests-light-glb-loft-L7"><span class="kw">use</span> glb;</span>
+<span id="tests-light-glb-loft-L6"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-light-glb-loft-L7"><span class="kw">use</span> glb::*;</span>
 <span id="tests-light-glb-loft-L8"></span>
 <span id="tests-light-glb-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_directional_light_exports</span>() {</span>
 <span id="tests-light-glb-loft-L10">  dls = scene::<span class="fn-call">scene</span>(<span class="st">"lit"</span>);</span>
@@ -639,23 +643,25 @@
 <span id="tests-light-glb-loft-L12">  dls.<span class="fn-call">add_light</span>(scene::<span class="fn-call">directional_light</span>(<span class="st">"sun"</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, math::<span class="fn-call">vec3</span>(<span class="nm">0.3</span>, -<span class="nm">1.0</span>, <span class="nm">0.2</span>)));</span>
 <span id="tests-light-glb-loft-L13">  glb::<span class="fn-call">save_scene_glb</span>(dls, <span class="st">"test_dir_light.glb"</span>);</span>
 <span id="tests-light-glb-loft-L14">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"test_dir_light.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"directional-light scene exported"</span>);</span>
-<span id="tests-light-glb-loft-L15">}</span>
-<span id="tests-light-glb-loft-L16"></span>
-<span id="tests-light-glb-loft-L17"><span class="kw">fn</span> <span class="fn-call">test_point_light_exports</span>() {</span>
-<span id="tests-light-glb-loft-L18">  pls = scene::<span class="fn-call">scene</span>(<span class="st">"plit"</span>);</span>
-<span id="tests-light-glb-loft-L19">  pls.<span class="fn-call">add_mesh</span>(mesh::<span class="fn-call">cube</span>());</span>
-<span id="tests-light-glb-loft-L20">  pls.<span class="fn-call">add_light</span>(scene::<span class="fn-call">point_light</span>(<span class="st">"bulb"</span>, <span class="nm">1.0</span>, <span class="nm">0.8</span>, <span class="nm">0.6</span>, <span class="nm">2.0</span>, math::<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">2.0</span>, <span class="nm">3.0</span>)));</span>
-<span id="tests-light-glb-loft-L21">  glb::<span class="fn-call">save_scene_glb</span>(pls, <span class="st">"test_point_light.glb"</span>);</span>
-<span id="tests-light-glb-loft-L22">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"test_point_light.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"point-light scene exported"</span>);</span>
-<span id="tests-light-glb-loft-L23">}</span>
+<span id="tests-light-glb-loft-L15">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"test_dir_light.glb"</span>);</span>
+<span id="tests-light-glb-loft-L16">}</span>
+<span id="tests-light-glb-loft-L17"></span>
+<span id="tests-light-glb-loft-L18"><span class="kw">fn</span> <span class="fn-call">test_point_light_exports</span>() {</span>
+<span id="tests-light-glb-loft-L19">  pls = scene::<span class="fn-call">scene</span>(<span class="st">"plit"</span>);</span>
+<span id="tests-light-glb-loft-L20">  pls.<span class="fn-call">add_mesh</span>(mesh::<span class="fn-call">cube</span>());</span>
+<span id="tests-light-glb-loft-L21">  pls.<span class="fn-call">add_light</span>(scene::<span class="fn-call">point_light</span>(<span class="st">"bulb"</span>, <span class="nm">1.0</span>, <span class="nm">0.8</span>, <span class="nm">0.6</span>, <span class="nm">2.0</span>, math::<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">2.0</span>, <span class="nm">3.0</span>)));</span>
+<span id="tests-light-glb-loft-L22">  glb::<span class="fn-call">save_scene_glb</span>(pls, <span class="st">"test_point_light.glb"</span>);</span>
+<span id="tests-light-glb-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"test_point_light.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"point-light scene exported"</span>);</span>
+<span id="tests-light-glb-loft-L24">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"test_point_light.glb"</span>);</span>
+<span id="tests-light-glb-loft-L25">}</span>
 </code></pre>
 <h2 id="tests-scene-glb-loft">tests/scene_glb.loft</h2>
 <pre class="src"><code><span id="tests-scene-glb-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-scene-glb-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
 <span id="tests-scene-glb-loft-L3"><span class="cm">// Tests for save_scene_glb — scene-level GLB 2.0 export.</span></span>
 <span id="tests-scene-glb-loft-L4"><span class="cm">// Run with: loft --interpret --tests tests</span></span>
-<span id="tests-scene-glb-loft-L5"><span class="kw">use</span> mesh3d;</span>
-<span id="tests-scene-glb-loft-L6"><span class="kw">use</span> glb;</span>
+<span id="tests-scene-glb-loft-L5"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-scene-glb-loft-L6"><span class="kw">use</span> glb::*;</span>
 <span id="tests-scene-glb-loft-L7"></span>
 <span id="tests-scene-glb-loft-L8"><span class="cm">// Verify save_scene_glb produces a non-empty file for a single-mesh scene.</span></span>
 <span id="tests-scene-glb-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_scene_glb_creates_file</span>() {</span>
@@ -864,6 +870,238 @@
 <span id="tests-scene-glb-loft-L212">  }</span>
 <span id="tests-scene-glb-loft-L213">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"test_sglb_f.glb"</span>);</span>
 <span id="tests-scene-glb-loft-L214">}</span>
+</code></pre>
+<h2 id="tests-worked-examples-loft">tests/worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L4"><span class="cm">// One test per non-obvious contract, and each one is that contract's</span></span>
+<span id="tests-worked-examples-loft-L5"><span class="cm">// worked EXAMPLE.</span></span>
+<span id="tests-worked-examples-loft-L6"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L7"><span class="cm">// ⚠⚠ **The pair is the deliverable.**  A snippet in a doc comment rots</span></span>
+<span id="tests-worked-examples-loft-L8"><span class="cm">// silently — nothing compiles it, so it goes stale at the first</span></span>
+<span id="tests-worked-examples-loft-L9"><span class="cm">// signature change and the reader finds out.  A test nobody links to is</span></span>
+<span id="tests-worked-examples-loft-L10"><span class="cm">// correct and invisible.  So every function below carries an</span></span>
+<span id="tests-worked-examples-loft-L11"><span class="cm">// `// Example: @GLB-0NN` line pointing here, and every tag here is</span></span>
+<span id="tests-worked-examples-loft-L12"><span class="cm">// reachable from the functions it demonstrates.</span></span>
+<span id="tests-worked-examples-loft-L13"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L14"><span class="cm">// ⚠ These are examples FIRST and assertions second.  `glb.loft` and</span></span>
+<span id="tests-worked-examples-loft-L15"><span class="cm">// `scene_glb.loft` already pin the byte layout the writer produces; what</span></span>
+<span id="tests-worked-examples-loft-L16"><span class="cm">// these pin is the shape of a CORRECT CALL.</span></span>
+<span id="tests-worked-examples-loft-L17"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L18"><span class="cm">// Why this library owes them: **its whole public surface is two</span></span>
+<span id="tests-worked-examples-loft-L19"><span class="cm">// functions that return NOTHING.**  `save_glb(mesh, path)` and</span></span>
+<span id="tests-worked-examples-loft-L20"><span class="cm">// `save_scene_glb(scene, path)` are statements — there is no success</span></span>
+<span id="tests-worked-examples-loft-L21"><span class="cm">// value, no error, no null.  The only evidence a save happened is the</span></span>
+<span id="tests-worked-examples-loft-L22"><span class="cm">// file, and the writer is happy to produce a well-formed GLB container</span></span>
+<span id="tests-worked-examples-loft-L23"><span class="cm">// holding a glTF no reader will accept.</span></span>
+<span id="tests-worked-examples-loft-L24"><span class="kw">use</span> mesh3d::*;</span>
+<span id="tests-worked-examples-loft-L25"><span class="kw">use</span> glb::*;</span>
+<span id="tests-worked-examples-loft-L26"></span>
+<span id="tests-worked-examples-loft-L27"><span class="cm">// A three-vertex mesh, wound counter-clockwise, used by the examples below.</span></span>
+<span id="tests-worked-examples-loft-L28"><span class="kw">fn</span> <span class="fn-call">one_triangle</span>(ot_name: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Mesh</span> {</span>
+<span id="tests-worked-examples-loft-L29">  ot_m = mesh::<span class="fn-call">mesh</span>(ot_name);</span>
+<span id="tests-worked-examples-loft-L30">  ot_n = math::<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-worked-examples-loft-L31">  ot_uv = math::<span class="fn-call">vec2</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-worked-examples-loft-L32">  ot_m.<span class="fn-call">add_vertex</span>(mesh::<span class="fn-call">vertex</span>(math::<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>), ot_n, ot_uv));</span>
+<span id="tests-worked-examples-loft-L33">  ot_m.<span class="fn-call">add_vertex</span>(mesh::<span class="fn-call">vertex</span>(math::<span class="fn-call">vec3</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>), ot_n, ot_uv));</span>
+<span id="tests-worked-examples-loft-L34">  ot_m.<span class="fn-call">add_vertex</span>(mesh::<span class="fn-call">vertex</span>(math::<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>), ot_n, ot_uv));</span>
+<span id="tests-worked-examples-loft-L35">  ot_m</span>
+<span id="tests-worked-examples-loft-L36">}</span>
+<span id="tests-worked-examples-loft-L37"></span>
+<span id="tests-worked-examples-loft-L38"><span class="cm">// Read the glTF JSON chunk back out of a written GLB.</span></span>
+<span id="tests-worked-examples-loft-L39"><span class="kw">fn</span> <span class="fn-call">glb_json_of</span>(gj_path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-worked-examples-loft-L40">  gj_f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(gj_path);</span>
+<span id="tests-worked-examples-loft-L41">  gj_f#format = <span class="en">LittleEndian</span>;</span>
+<span id="tests-worked-examples-loft-L42">  gj_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;                   <span class="cm">// magic</span></span>
+<span id="tests-worked-examples-loft-L43">  gj_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;                   <span class="cm">// version</span></span>
+<span id="tests-worked-examples-loft-L44">  gj_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;                   <span class="cm">// total length</span></span>
+<span id="tests-worked-examples-loft-L45">  gj_len = gj_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;          <span class="cm">// JSON chunk data length</span></span>
+<span id="tests-worked-examples-loft-L46">  gj_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;                   <span class="cm">// chunk type 'JSON'</span></span>
+<span id="tests-worked-examples-loft-L47">  gj_f#<span class="fn-call">read</span>(gj_len) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">text</a></span></span>
+<span id="tests-worked-examples-loft-L48">}</span>
+<span id="tests-worked-examples-loft-L49"></span>
+<span id="tests-worked-examples-loft-L50"><span class="cm">// Saving a mesh.</span></span>
+<span id="tests-worked-examples-loft-L51"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L52"><span class="cm">// ⚠⚠ **`save_glb` answers nothing at all.**  Not a boolean, not a null —</span></span>
+<span id="tests-worked-examples-loft-L53"><span class="cm">// the call is a statement.  So a save is not something a program can</span></span>
+<span id="tests-worked-examples-loft-L54"><span class="cm">// check; it is something a program has to go and LOOK at afterwards.</span></span>
+<span id="tests-worked-examples-loft-L55"><span class="cm">// @GLB-001 — the save has no return value, so the file is the only evidence</span></span>
+<span id="tests-worked-examples-loft-L56"><span class="kw">fn</span> <span class="fn-call">test_saving_a_mesh_and_checking_it</span>() {</span>
+<span id="tests-worked-examples-loft-L57">  sm_m = <span class="fn-call">one_triangle</span>(<span class="st">"wedge"</span>);</span>
+<span id="tests-worked-examples-loft-L58">  sm_m.<span class="fn-call">add_triangle</span>(<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">2</span>);</span>
+<span id="tests-worked-examples-loft-L59"></span>
+<span id="tests-worked-examples-loft-L60">  <span class="cm">// The whole call site.  Nothing is bound, because there is nothing to bind.</span></span>
+<span id="tests-worked-examples-loft-L61">  glb::<span class="fn-call">save_glb</span>(sm_m, <span class="st">"wex_glb_a.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L62"></span>
+<span id="tests-worked-examples-loft-L63">  <span class="cm">// ⚠ The check a caller has to write, because the library cannot say it:</span></span>
+<span id="tests-worked-examples-loft-L64">  <span class="cm">// the file exists, is non-empty, and starts with the GLB magic.</span></span>
+<span id="tests-worked-examples-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_a.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"a file appeared"</span>);</span>
+<span id="tests-worked-examples-loft-L66">  {sm_f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_a.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L67">   sm_f#format = <span class="en">LittleEndian</span>;</span>
+<span id="tests-worked-examples-loft-L68">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">0x46546C67</span>, <span class="st">"magic is 'glTF'"</span>);</span>
+<span id="tests-worked-examples-loft-L69">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">2</span>, <span class="st">"GLB version 2"</span>);</span>
+<span id="tests-worked-examples-loft-L70">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((sm_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> == <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_a.glb"</span>).size,</span>
+<span id="tests-worked-examples-loft-L71">          <span class="st">"the header's total length is the real file size"</span>);</span>
+<span id="tests-worked-examples-loft-L72">  }</span>
+<span id="tests-worked-examples-loft-L73"></span>
+<span id="tests-worked-examples-loft-L74">  <span class="cm">// ⚠ And a save TRUNCATES rather than appends, so writing the same path</span></span>
+<span id="tests-worked-examples-loft-L75">  <span class="cm">// twice replaces it — the size is the answer, not double it.</span></span>
+<span id="tests-worked-examples-loft-L76">  sm_once = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_a.glb"</span>).size;</span>
+<span id="tests-worked-examples-loft-L77">  glb::<span class="fn-call">save_glb</span>(sm_m, <span class="st">"wex_glb_a.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_a.glb"</span>).size == sm_once,</span>
+<span id="tests-worked-examples-loft-L79">         <span class="st">"a second save replaced the file ({file(\"</span>wex_glb_a.glb\<span class="st">").size} vs {sm_once})"</span>);</span>
+<span id="tests-worked-examples-loft-L80">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_a.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L81">}</span>
+<span id="tests-worked-examples-loft-L82"></span>
+<span id="tests-worked-examples-loft-L83"><span class="cm">// Which door to save through.</span></span>
+<span id="tests-worked-examples-loft-L84"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L85"><span class="cm">// ⚠⚠ **`save_glb` writes ONE mesh and nothing else.**  No material, no</span></span>
+<span id="tests-worked-examples-loft-L86"><span class="cm">// node transform, no camera, no light — a scene handed in one mesh at a</span></span>
+<span id="tests-worked-examples-loft-L87"><span class="cm">// time arrives grey, at the origin, unlit, and nothing reports the loss.</span></span>
+<span id="tests-worked-examples-loft-L88"><span class="cm">// `save_scene_glb` is the door that carries them.</span></span>
+<span id="tests-worked-examples-loft-L89"><span class="cm">// @GLB-002 — the mesh door drops everything that is not geometry</span></span>
+<span id="tests-worked-examples-loft-L90"><span class="kw">fn</span> <span class="fn-call">test_choosing_the_save_door</span>() {</span>
+<span id="tests-worked-examples-loft-L91">  cd_m = <span class="fn-call">one_triangle</span>(<span class="st">"solo"</span>);</span>
+<span id="tests-worked-examples-loft-L92">  cd_m.<span class="fn-call">add_triangle</span>(<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">2</span>);</span>
+<span id="tests-worked-examples-loft-L93"></span>
+<span id="tests-worked-examples-loft-L94">  <span class="cm">// The mesh door, on a mesh that is part of a richer scene:</span></span>
+<span id="tests-worked-examples-loft-L95">  glb::<span class="fn-call">save_glb</span>(cd_m, <span class="st">"wex_glb_b.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L96">  cd_j1 = <span class="fn-call">glb_json_of</span>(<span class="st">"wex_glb_b.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j1.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>meshes\<span class="st">""</span>) != <span class="kw">null</span>, <span class="st">"the geometry is there"</span>);</span>
+<span id="tests-worked-examples-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j1.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>materials\<span class="st">""</span>) == <span class="kw">null</span>, <span class="st">"and no material"</span>);</span>
+<span id="tests-worked-examples-loft-L99">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j1.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>matrix\<span class="st">""</span>) == <span class="kw">null</span>, <span class="st">"no node transform"</span>);</span>
+<span id="tests-worked-examples-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j1.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>cameras\<span class="st">""</span>) == <span class="kw">null</span>, <span class="st">"no camera"</span>);</span>
+<span id="tests-worked-examples-loft-L101">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_b.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L102"></span>
+<span id="tests-worked-examples-loft-L103">  <span class="cm">// ⚠ The same mesh through the scene door, with what it belongs to:</span></span>
+<span id="tests-worked-examples-loft-L104">  cd_s = scene::<span class="fn-call">scene</span>(<span class="st">"lit"</span>);</span>
+<span id="tests-worked-examples-loft-L105">  cd_s.<span class="fn-call">add_mesh</span>(cd_m);</span>
+<span id="tests-worked-examples-loft-L106">  cd_mat = cd_s.<span class="fn-call">add_material</span>(scene::<span class="fn-call">material_color</span>(<span class="st">"red"</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>));</span>
+<span id="tests-worked-examples-loft-L107">  cd_s.<span class="fn-call">add_node</span>(scene::<span class="fn-call">node_at</span>(<span class="st">"moved"</span>, <span class="nm">0</span>, cd_mat, math::<span class="fn-call">mat4_translate</span>(<span class="nm">2.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>)));</span>
+<span id="tests-worked-examples-loft-L108">  glb::<span class="fn-call">save_scene_glb</span>(cd_s, <span class="st">"wex_glb_c.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L109">  cd_j2 = <span class="fn-call">glb_json_of</span>(<span class="st">"wex_glb_c.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L110">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j2.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>materials\<span class="st">""</span>) != <span class="kw">null</span>, <span class="st">"the material travelled"</span>);</span>
+<span id="tests-worked-examples-loft-L111">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cd_j2.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>matrix\<span class="st">""</span>) != <span class="kw">null</span>, <span class="st">"and so did the transform"</span>);</span>
+<span id="tests-worked-examples-loft-L112">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_c.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L113"></span>
+<span id="tests-worked-examples-loft-L114">  <span class="cm">// ⚠ A node's transform is compared to the identity by EXACT float</span></span>
+<span id="tests-worked-examples-loft-L115">  <span class="cm">// equality, so a full-turn rotation — mathematically the identity —</span></span>
+<span id="tests-worked-examples-loft-L116">  <span class="cm">// still emits a matrix.  Harmless, but it means "no matrix in the</span></span>
+<span id="tests-worked-examples-loft-L117">  <span class="cm">// JSON" is a statement about the bits, not about the geometry.</span></span>
+<span id="tests-worked-examples-loft-L118">  cd_spun = scene::<span class="fn-call">scene</span>(<span class="st">"spun"</span>);</span>
+<span id="tests-worked-examples-loft-L119">  cd_spun.<span class="fn-call">add_mesh</span>(cd_m);</span>
+<span id="tests-worked-examples-loft-L120">  cd_smat = cd_spun.<span class="fn-call">add_material</span>(scene::<span class="fn-call">material</span>(<span class="st">"m"</span>));</span>
+<span id="tests-worked-examples-loft-L121">  cd_spun.<span class="fn-call">add_node</span>(scene::<span class="fn-call">node_at</span>(<span class="st">"turned"</span>, <span class="nm">0</span>, cd_smat,</span>
+<span id="tests-worked-examples-loft-L122">                                  math::<span class="fn-call">mat4_rotate_y</span>(<span class="nm">6.283185307179586</span>)));</span>
+<span id="tests-worked-examples-loft-L123">  glb::<span class="fn-call">save_scene_glb</span>(cd_spun, <span class="st">"wex_glb_d.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glb_json_of</span>(<span class="st">"wex_glb_d.glb"</span>).<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>matrix\<span class="st">""</span>) != <span class="kw">null</span>,</span>
+<span id="tests-worked-examples-loft-L125">         <span class="st">"a 360-degree turn is not bit-identical to the identity"</span>);</span>
+<span id="tests-worked-examples-loft-L126">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_d.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L127">}</span>
+<span id="tests-worked-examples-loft-L128"></span>
+<span id="tests-worked-examples-loft-L129"><span class="cm">// What a broken mesh does on the way out.</span></span>
+<span id="tests-worked-examples-loft-L130"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L131"><span class="cm">// ⚠⚠ **A triangle index is copied into the file unchecked.**  The same</span></span>
+<span id="tests-worked-examples-loft-L132"><span class="cm">// out-of-range index that `mesh3d`'s `mesh_to_floats` silently SKIPS is</span></span>
+<span id="tests-worked-examples-loft-L133"><span class="cm">// written verbatim here — so the two export paths fail differently for</span></span>
+<span id="tests-worked-examples-loft-L134"><span class="cm">// one defect: the GL buffer comes out short and sheared, while the GLB</span></span>
+<span id="tests-worked-examples-loft-L135"><span class="cm">// comes out structurally perfect and semantically invalid, an index of 5</span></span>
+<span id="tests-worked-examples-loft-L136"><span class="cm">// against an accessor that declares 3 vertices.</span></span>
+<span id="tests-worked-examples-loft-L137"><span class="cm">// @GLB-003 — an out-of-range index is written straight into the file</span></span>
+<span id="tests-worked-examples-loft-L138"><span class="kw">fn</span> <span class="fn-call">test_a_bad_index_reaches_the_file</span>() {</span>
+<span id="tests-worked-examples-loft-L139">  bi_m = <span class="fn-call">one_triangle</span>(<span class="st">"bad"</span>);</span>
+<span id="tests-worked-examples-loft-L140">  bi_m.<span class="fn-call">add_triangle</span>(<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">5</span>);           <span class="cm">// there is no vertex 5</span></span>
+<span id="tests-worked-examples-loft-L141"></span>
+<span id="tests-worked-examples-loft-L142">  glb::<span class="fn-call">save_glb</span>(bi_m, <span class="st">"wex_glb_e.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_e.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"the file is written anyway"</span>);</span>
+<span id="tests-worked-examples-loft-L144"></span>
+<span id="tests-worked-examples-loft-L145">  <span class="cm">// The JSON still declares three vertices...</span></span>
+<span id="tests-worked-examples-loft-L146">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glb_json_of</span>(<span class="st">"wex_glb_e.glb"</span>).<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>count\<span class="st">":3"</span>) != <span class="kw">null</span>,</span>
+<span id="tests-worked-examples-loft-L147">         <span class="st">"POSITION accessor count is 3"</span>);</span>
+<span id="tests-worked-examples-loft-L148"></span>
+<span id="tests-worked-examples-loft-L149">  <span class="cm">// ...and the BIN chunk carries the index 5 next to them.  BIN layout is</span></span>
+<span id="tests-worked-examples-loft-L150">  <span class="cm">// pos(3*12) + norm(3*12) + uv(3*8) + idx(3*4) = 108 bytes.</span></span>
+<span id="tests-worked-examples-loft-L151">  {bi_f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_e.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L152">   bi_f#format = <span class="en">LittleEndian</span>;</span>
+<span id="tests-worked-examples-loft-L153">   bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>; bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L154">   bi_jlen = bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L155">   bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L156">   bi_f#next = (<span class="nm">20</span> + bi_jlen) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="tests-worked-examples-loft-L157">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">108</span>, <span class="st">"BIN chunk is the expected 108 bytes"</span>);</span>
+<span id="tests-worked-examples-loft-L158">   bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;                              <span class="cm">// chunk type 'BIN\0'</span></span>
+<span id="tests-worked-examples-loft-L159">   bi_f#next = (<span class="nm">20</span> + bi_jlen + <span class="nm">8</span> + <span class="nm">36</span> + <span class="nm">36</span> + <span class="nm">24</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;   <span class="cm">// past pos, norm, uv</span></span>
+<span id="tests-worked-examples-loft-L160">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">0</span>, <span class="st">"index 0"</span>);</span>
+<span id="tests-worked-examples-loft-L161">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">1</span>, <span class="st">"index 1"</span>);</span>
+<span id="tests-worked-examples-loft-L162">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bi_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">5</span>, <span class="st">"and index 5, which no vertex answers to"</span>);</span>
+<span id="tests-worked-examples-loft-L163">  }</span>
+<span id="tests-worked-examples-loft-L164">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_e.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L165"></span>
+<span id="tests-worked-examples-loft-L166">  <span class="cm">// ⚠ So validate before saving.  Nothing downstream will: the writer</span></span>
+<span id="tests-worked-examples-loft-L167">  <span class="cm">// does not look, and the first report is a validator or a renderer.</span></span>
+<span id="tests-worked-examples-loft-L168">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">exportable</span>(bi_m), <span class="st">"the broken mesh is not exportable"</span>);</span>
+<span id="tests-worked-examples-loft-L169">  bi_ok = <span class="fn-call">one_triangle</span>(<span class="st">"good"</span>);</span>
+<span id="tests-worked-examples-loft-L170">  bi_ok.<span class="fn-call">add_triangle</span>(<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">2</span>);</span>
+<span id="tests-worked-examples-loft-L171">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">exportable</span>(bi_ok), <span class="st">"a whole one is"</span>);</span>
+<span id="tests-worked-examples-loft-L172">}</span>
+<span id="tests-worked-examples-loft-L173"></span>
+<span id="tests-worked-examples-loft-L174"><span class="cm">// The pre-save check the examples recommend: a mesh reaches a reader</span></span>
+<span id="tests-worked-examples-loft-L175"><span class="cm">// intact only if it has geometry at all and every index names a vertex.</span></span>
+<span id="tests-worked-examples-loft-L176"><span class="kw">fn</span> <span class="fn-call">exportable</span>(ex_m: const <span class="en">Mesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-worked-examples-loft-L177">  ex_n = ex_m.vertices.<span class="bi"><a href="stdlib-text.html">len</a></span>();</span>
+<span id="tests-worked-examples-loft-L178">  <span class="kw">if</span> ex_n == <span class="nm">0</span> || ex_m.triangles.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L179">  <span class="kw">for</span> ex_t <span class="kw">in</span> ex_m.triangles {</span>
+<span id="tests-worked-examples-loft-L180">    <span class="kw">if</span> ex_t.a &lt; <span class="nm">0</span> || ex_t.a &gt;= ex_n { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L181">    <span class="kw">if</span> ex_t.b &lt; <span class="nm">0</span> || ex_t.b &gt;= ex_n { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L182">    <span class="kw">if</span> ex_t.c &lt; <span class="nm">0</span> || ex_t.c &gt;= ex_n { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="tests-worked-examples-loft-L183">  }</span>
+<span id="tests-worked-examples-loft-L184">  <span class="kw">true</span></span>
+<span id="tests-worked-examples-loft-L185">}</span>
+<span id="tests-worked-examples-loft-L186"></span>
+<span id="tests-worked-examples-loft-L187"><span class="cm">// Saving nothing.</span></span>
+<span id="tests-worked-examples-loft-L188"><span class="cm">//</span></span>
+<span id="tests-worked-examples-loft-L189"><span class="cm">// ⚠⚠ **An empty mesh writes a complete, well-formed GLB file that is not</span></span>
+<span id="tests-worked-examples-loft-L190"><span class="cm">// a valid glTF.**  The container is right — magic, version, both chunk</span></span>
+<span id="tests-worked-examples-loft-L191"><span class="cm">// headers, a total length that matches the file — and the accessors it</span></span>
+<span id="tests-worked-examples-loft-L192"><span class="cm">// declares have `"count":0`, which glTF 2.0 forbids.  The save reports</span></span>
+<span id="tests-worked-examples-loft-L193"><span class="cm">// success the only way it can: by not saying anything.</span></span>
+<span id="tests-worked-examples-loft-L194"><span class="cm">// @GLB-004 — an empty mesh writes a valid container around an invalid glTF</span></span>
+<span id="tests-worked-examples-loft-L195"><span class="kw">fn</span> <span class="fn-call">test_saving_an_empty_mesh</span>() {</span>
+<span id="tests-worked-examples-loft-L196">  sn_m = mesh::<span class="fn-call">mesh</span>(<span class="st">"nothing"</span>);         <span class="cm">// no vertices, no triangles</span></span>
+<span id="tests-worked-examples-loft-L197">  glb::<span class="fn-call">save_glb</span>(sn_m, <span class="st">"wex_glb_f.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L198"></span>
+<span id="tests-worked-examples-loft-L199">  <span class="cm">// The container is impeccable:</span></span>
+<span id="tests-worked-examples-loft-L200">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_f.glb"</span>).size &gt; <span class="nm">0</span>, <span class="st">"a file was written"</span>);</span>
+<span id="tests-worked-examples-loft-L201">  {sn_f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_f.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L202">   sn_f#format = <span class="en">LittleEndian</span>;</span>
+<span id="tests-worked-examples-loft-L203">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">0x46546C67</span>, <span class="st">"magic is 'glTF'"</span>);</span>
+<span id="tests-worked-examples-loft-L204">   sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L205">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span> == <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"wex_glb_f.glb"</span>).size,</span>
+<span id="tests-worked-examples-loft-L206">          <span class="st">"total length matches"</span>);</span>
+<span id="tests-worked-examples-loft-L207">   sn_jlen = sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L208">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_jlen % <span class="nm">4</span> == <span class="nm">0</span>, <span class="st">"the JSON chunk is padded to 4 bytes"</span>);</span>
+<span id="tests-worked-examples-loft-L209">   sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>;</span>
+<span id="tests-worked-examples-loft-L210">   sn_f#next = (<span class="nm">20</span> + sn_jlen) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="tests-worked-examples-loft-L211">   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_f#<span class="fn-call">read</span>(<span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span> == <span class="nm">0</span>, <span class="st">"and the BIN chunk is empty"</span>);</span>
+<span id="tests-worked-examples-loft-L212">  }</span>
+<span id="tests-worked-examples-loft-L213"></span>
+<span id="tests-worked-examples-loft-L214">  <span class="cm">// ⚠ ...and the glTF inside it is not loadable: an accessor may not</span></span>
+<span id="tests-worked-examples-loft-L215">  <span class="cm">// declare zero elements.</span></span>
+<span id="tests-worked-examples-loft-L216">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">glb_json_of</span>(<span class="st">"wex_glb_f.glb"</span>).<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"\"</span>count\<span class="st">":0"</span>) != <span class="kw">null</span>,</span>
+<span id="tests-worked-examples-loft-L217">         <span class="st">"the accessors declare count 0"</span>);</span>
+<span id="tests-worked-examples-loft-L218">  <span class="fn-call"><a href="stdlib-file-system.html">delete</a></span>(<span class="st">"wex_glb_f.glb"</span>);</span>
+<span id="tests-worked-examples-loft-L219"></span>
+<span id="tests-worked-examples-loft-L220">  <span class="cm">// The same guard as @GLB-003 catches it, which is why it tests both:</span></span>
+<span id="tests-worked-examples-loft-L221">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">exportable</span>(sn_m), <span class="st">"an empty mesh is not exportable"</span>);</span>
+<span id="tests-worked-examples-loft-L222">}</span>
+<span id="tests-worked-examples-loft-L223"></span>
+<span id="tests-worked-examples-loft-L224"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-worked-examples-loft-L225">  <span class="fn-call">test_saving_a_mesh_and_checking_it</span>();</span>
+<span id="tests-worked-examples-loft-L226">  <span class="fn-call">test_choosing_the_save_door</span>();</span>
+<span id="tests-worked-examples-loft-L227">  <span class="fn-call">test_a_bad_index_reaches_the_file</span>();</span>
+<span id="tests-worked-examples-loft-L228">  <span class="fn-call">test_saving_an_empty_mesh</span>();</span>
+<span id="tests-worked-examples-loft-L229">  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"glb worked examples passed"</span>);</span>
+<span id="tests-worked-examples-loft-L230">}</span>
 </code></pre>
 
   </article>

@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>stage source</h1>
 <article>
-<p><a href="lib-stage.html">← stage</a> · <a href="lib-stage-api.html">API reference</a> · version 0.18.3</p>
+<p><a href="lib-stage.html">← stage</a> · <a href="lib-stage-api.html">API reference</a> · version 0.18.5</p>
 <p class="lib-legend">20 file(s), 6279 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -236,8 +236,8 @@
 <span id="src-stage-loft-L50"><span class="cm">// P6 several views over the one scene, L1-L3 light and atmosphere.  Each section</span></span>
 <span id="src-stage-loft-L51"><span class="cm">// header below says what its own group is for.</span></span>
 <span id="src-stage-loft-L52"></span>
-<span id="src-stage-loft-L53"><span class="kw">use</span> graphics;</span>
-<span id="src-stage-loft-L54"><span class="kw">use</span> tween;</span>
+<span id="src-stage-loft-L53"><span class="kw">use</span> graphics::*;</span>
+<span id="src-stage-loft-L54"><span class="kw">use</span> tween::*;</span>
 <span id="src-stage-loft-L55"></span>
 <span id="src-stage-loft-L56"><span class="cm">// A node's local placement, plus the world affine `compose` derives for it.</span></span>
 <span id="src-stage-loft-L57"><span class="cm">//</span></span>
@@ -933,7 +933,7 @@
 <span id="src-stage-loft-L747">                   <span class="kw">and</span> b.b_cx1 == n.nd_cx1 <span class="kw">and</span> b.b_cy1 == n.nd_cy1;</span>
 <span id="src-stage-loft-L748">        }</span>
 <span id="src-stage-loft-L749">        <span class="kw">if</span> same {</span>
-<span id="src-stage-loft-L750">            out[last].b_count = out[last].b_count + <span class="nm">1</span>;</span>
+<span id="src-stage-loft-L750">            out[last].b_count += <span class="nm">1</span>;</span>
 <span id="src-stage-loft-L751">        } <span class="kw">else</span> {</span>
 <span id="src-stage-loft-L752">            out += [<span class="en">Batch</span> { b_layer: n.nd_layer, b_atlas: n.nd_atlas, b_first: idx, b_count: <span class="nm">1</span>,</span>
 <span id="src-stage-loft-L753">                            b_clipped: n.nd_clipped, b_cx0: n.nd_cx0,</span>
@@ -3024,8 +3024,8 @@
 <span id="tests-ambient-loft-L6"><span class="cm">// The phase comes from POSITION and the animation from one clock, so five hundred</span></span>
 <span id="tests-ambient-loft-L7"><span class="cm">// swaying tufts are a buffer uploaded once and a uniform that changes.  Everything</span></span>
 <span id="tests-ambient-loft-L8"><span class="cm">// below asserts that property rather than describing it.</span></span>
-<span id="tests-ambient-loft-L9"><span class="kw">use</span> stage;</span>
-<span id="tests-ambient-loft-L10"><span class="kw">use</span> graphics;</span>
+<span id="tests-ambient-loft-L9"><span class="kw">use</span> stage::*;</span>
+<span id="tests-ambient-loft-L10"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-ambient-loft-L11"></span>
 <span id="tests-ambient-loft-L12"><span class="kw">fn</span> <span class="fn-call">grass</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, sway: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; stage::<span class="en">Place</span> {</span>
 <span id="tests-ambient-loft-L13">  stage::<span class="en">Place</span> { pl_x: x, pl_y: <span class="nm">10.0</span>, pl_w: <span class="nm">2.0</span>, pl_h: <span class="nm">6.0</span>, pl_sway: sway,</span>
@@ -3150,7 +3150,7 @@
 <span id="tests-animation-loft-L5"><span class="cm">// three cells that matter are the ones that are wrong in most implementations:</span></span>
 <span id="tests-animation-loft-L6"><span class="cm">// a loop that returns to 0 EXACTLY, two frame rates agreeing, and a ping-pong that</span></span>
 <span id="tests-animation-loft-L7"><span class="cm">// does not stutter at its ends.</span></span>
-<span id="tests-animation-loft-L8"><span class="kw">use</span> stage;</span>
+<span id="tests-animation-loft-L8"><span class="kw">use</span> stage::*;</span>
 <span id="tests-animation-loft-L9"></span>
 <span id="tests-animation-loft-L10"><span class="kw">fn</span> <span class="fn-call">walker</span>(st: stage::<span class="en">Stage</span>, seq: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="tests-animation-loft-L11">  st.<span class="fn-call">node_add</span>(-<span class="nm">1</span>, stage::<span class="en">Place</span> { pl_w: <span class="nm">8.0</span>, pl_h: <span class="nm">8.0</span>, pl_seq: seq, pl_cols: <span class="nm">4</span> })</span>
@@ -3308,8 +3308,8 @@
 <span id="tests-atmosphere-loft-L6"><span class="cm">// A layer already carries a parallax factor (P2).  Give it a fog colour, a</span></span>
 <span id="tests-atmosphere-loft-L7"><span class="cm">// density and a blur radius, and *distant, hazy, out-of-focus* becomes LAYER</span></span>
 <span id="tests-atmosphere-loft-L8"><span class="cm">// DATA rather than an effects pipeline.</span></span>
-<span id="tests-atmosphere-loft-L9"><span class="kw">use</span> stage;</span>
-<span id="tests-atmosphere-loft-L10"><span class="kw">use</span> graphics;</span>
+<span id="tests-atmosphere-loft-L9"><span class="kw">use</span> stage::*;</span>
+<span id="tests-atmosphere-loft-L10"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-atmosphere-loft-L11"></span>
 <span id="tests-atmosphere-loft-L12"><span class="en">EPS</span> = <span class="nm">0.000001</span>;</span>
 <span id="tests-atmosphere-loft-L13"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>
@@ -3533,7 +3533,7 @@
 <span id="tests-batching-loft-L8"><span class="cm">// picture; a stride or offset off by one fails as garbage geometry rather than as</span></span>
 <span id="tests-batching-loft-L9"><span class="cm">// an error.  So every expected value below is hand-computed, and the interleave</span></span>
 <span id="tests-batching-loft-L10"><span class="cm">// case asserts the COST rather than hiding it.</span></span>
-<span id="tests-batching-loft-L11"><span class="kw">use</span> stage;</span>
+<span id="tests-batching-loft-L11"><span class="kw">use</span> stage::*;</span>
 <span id="tests-batching-loft-L12"></span>
 <span id="tests-batching-loft-L13"><span class="en">EPS</span> = <span class="nm">0.0001</span>;</span>
 <span id="tests-batching-loft-L14"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">single</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
@@ -3668,8 +3668,8 @@
 <span id="tests-camera-loft-L6"><span class="cm">// Riding left and right across a world is a camera pan; a background that lags is</span></span>
 <span id="tests-camera-loft-L7"><span class="cm">// the same pan at a smaller factor.  Flat scrolling is every factor at 1.0, and</span></span>
 <span id="tests-camera-loft-L8"><span class="cm">// that is proved here as a degenerate case rather than maintained as a second path.</span></span>
-<span id="tests-camera-loft-L9"><span class="kw">use</span> stage;</span>
-<span id="tests-camera-loft-L10"><span class="kw">use</span> graphics;</span>
+<span id="tests-camera-loft-L9"><span class="kw">use</span> stage::*;</span>
+<span id="tests-camera-loft-L10"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-camera-loft-L11"></span>
 <span id="tests-camera-loft-L12"><span class="kw">fn</span> <span class="fn-call">shot</span>(st: const stage::<span class="en">Stage</span>) -&gt; graphics::<span class="en">Canvas</span> {</span>
 <span id="tests-camera-loft-L13">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0xff000000</span>);</span>
@@ -3785,8 +3785,8 @@
 <span id="tests-clipping-loft-L6"><span class="cm">// Every count below is hand-computed from the rectangles, and the classification</span></span>
 <span id="tests-clipping-loft-L7"><span class="cm">// checks the `other` bucket is 0 — a pixel of a third colour would mean the clip</span></span>
 <span id="tests-clipping-loft-L8"><span class="cm">// half-applied, which a total count alone would hide.</span></span>
-<span id="tests-clipping-loft-L9"><span class="kw">use</span> stage;</span>
-<span id="tests-clipping-loft-L10"><span class="kw">use</span> graphics;</span>
+<span id="tests-clipping-loft-L9"><span class="kw">use</span> stage::*;</span>
+<span id="tests-clipping-loft-L10"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-clipping-loft-L11"></span>
 <span id="tests-clipping-loft-L12"><span class="kw">fn</span> <span class="fn-call">count_of</span>(cv: const graphics::<span class="en">Canvas</span>, want: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="tests-clipping-loft-L13">  n = <span class="nm">0</span>;</span>
@@ -3931,8 +3931,8 @@
 <span id="tests-compositing-loft-L5"><span class="cm">// hand.  Premultiplied throughout: `over` is `src + dst*(1-a)` with `src` already</span></span>
 <span id="tests-compositing-loft-L6"><span class="cm">// multiplied, because straight alpha darkens an anti-aliased edge under linear</span></span>
 <span id="tests-compositing-loft-L7"><span class="cm">// filtering and this stack is made of overlapping soft-edged sprites.</span></span>
-<span id="tests-compositing-loft-L8"><span class="kw">use</span> stage;</span>
-<span id="tests-compositing-loft-L9"><span class="kw">use</span> graphics;</span>
+<span id="tests-compositing-loft-L8"><span class="kw">use</span> stage::*;</span>
+<span id="tests-compositing-loft-L9"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-compositing-loft-L10"></span>
 <span id="tests-compositing-loft-L11"><span class="cm">// Classify a canvas by EXACT colour, dryopea's RENDERER.md R0 technique: a</span></span>
 <span id="tests-compositing-loft-L12"><span class="cm">// byte-diff says *different*, a classification says *what*.  `other` must read 0.</span></span>
@@ -4063,8 +4063,8 @@
 <span id="tests-depth-loft-L7"><span class="cm">// footprint, with mobs, workers and a player as sprites that must sort correctly</span></span>
 <span id="tests-depth-loft-L8"><span class="cm">// against them.  A sprite standing in front of a wall covers it; one standing</span></span>
 <span id="tests-depth-loft-L9"><span class="cm">// behind it does not; and neither may flicker between frames.</span></span>
-<span id="tests-depth-loft-L10"><span class="kw">use</span> stage;</span>
-<span id="tests-depth-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-depth-loft-L10"><span class="kw">use</span> stage::*;</span>
+<span id="tests-depth-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-depth-loft-L12"></span>
 <span id="tests-depth-loft-L13"><span class="kw">fn</span> <span class="fn-call">at</span>(depth: <span class="ty"><a href="stdlib-types.html">float</a></span>, layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; stage::<span class="en">Place</span> {</span>
 <span id="tests-depth-loft-L14">  stage::<span class="en">Place</span> { pl_w: <span class="nm">8.0</span>, pl_h: <span class="nm">8.0</span>, pl_depth: depth, pl_layer: layer,</span>
@@ -4249,8 +4249,8 @@
 <span id="tests-draw-list-loft-L7"><span class="cm">// exist and are compared exactly, pixel for pixel, rather than one being swapped</span></span>
 <span id="tests-draw-list-loft-L8"><span class="cm">// in and eyeballed.  A software `Canvas` is the comparison surface because it is</span></span>
 <span id="tests-draw-list-loft-L9"><span class="cm">// headless and deterministic — no window, no driver, no timing.</span></span>
-<span id="tests-draw-list-loft-L10"><span class="kw">use</span> stage;</span>
-<span id="tests-draw-list-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-draw-list-loft-L10"><span class="kw">use</span> stage::*;</span>
+<span id="tests-draw-list-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-draw-list-loft-L12"></span>
 <span id="tests-draw-list-loft-L13"><span class="kw">fn</span> <span class="fn-call">canvas_equal</span>(a: const graphics::<span class="en">Canvas</span>, b: const graphics::<span class="en">Canvas</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
 <span id="tests-draw-list-loft-L14">  <span class="kw">if</span> a.width != b.width <span class="kw">or</span> a.height != b.height { <span class="kw">return</span> <span class="kw">false</span>; }</span>
@@ -4369,7 +4369,7 @@
 <span id="tests-facing-loft-L9"><span class="cm">// an atlas cell for doing it; side-on cannot rotate a standing sprite into</span></span>
 <span id="tests-facing-loft-L10"><span class="cm">// another facing, so it picks from an (action, facing) table and mirrors at</span></span>
 <span id="tests-facing-loft-L11"><span class="cm">// most, and a facing change mid-walk must not snap the legs back to frame 0.</span></span>
-<span id="tests-facing-loft-L12"><span class="kw">use</span> stage;</span>
+<span id="tests-facing-loft-L12"><span class="kw">use</span> stage::*;</span>
 <span id="tests-facing-loft-L13"></span>
 <span id="tests-facing-loft-L14"><span class="en">EPS</span> = <span class="nm">0.000001</span>;</span>
 <span id="tests-facing-loft-L15"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>
@@ -4665,8 +4665,8 @@
 <span id="tests-light-loft-L7"><span class="cm">// A5's tint attribute, so it costs no pass, needs no framebuffer, and cannot</span></span>
 <span id="tests-light-loft-L8"><span class="cm">// disturb draw order.  L2 is only worth its pass when light must fall ACROSS the</span></span>
 <span id="tests-light-loft-L9"><span class="cm">// scene rather than across the sprites.</span></span>
-<span id="tests-light-loft-L10"><span class="kw">use</span> stage;</span>
-<span id="tests-light-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-light-loft-L10"><span class="kw">use</span> stage::*;</span>
+<span id="tests-light-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-light-loft-L12"></span>
 <span id="tests-light-loft-L13"><span class="en">EPS</span> = <span class="nm">0.000001</span>;</span>
 <span id="tests-light-loft-L14"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>
@@ -4926,8 +4926,8 @@
 <span id="tests-lightmap-loft-L11"><span class="cm">// is not a gate anyone maintains, so these read the falloff from the SAME symbol</span></span>
 <span id="tests-lightmap-loft-L12"><span class="cm">// the renderer and the shader use.  What is hand-computed is the floor, the</span></span>
 <span id="tests-lightmap-loft-L13"><span class="cm">// ceiling and the shape — monotonic, bounded, and never under its floor.</span></span>
-<span id="tests-lightmap-loft-L14"><span class="kw">use</span> stage;</span>
-<span id="tests-lightmap-loft-L15"><span class="kw">use</span> graphics;</span>
+<span id="tests-lightmap-loft-L14"><span class="kw">use</span> stage::*;</span>
+<span id="tests-lightmap-loft-L15"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-lightmap-loft-L16"></span>
 <span id="tests-lightmap-loft-L17"><span class="en">EPS</span> = <span class="nm">0.000001</span>;</span>
 <span id="tests-lightmap-loft-L18"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>
@@ -5187,8 +5187,8 @@
 <span id="tests-nodetween-loft-L11"><span class="cm">// over 800 000 us sampled every 100 000 us is exactly 8 px per frame, and every</span></span>
 <span id="tests-nodetween-loft-L12"><span class="cm">// progress `k/8` is exact in binary.  A hand path that reached for `lerp` or</span></span>
 <span id="tests-nodetween-loft-L13"><span class="cm">// `ease` would be comparing the tween against itself.</span></span>
-<span id="tests-nodetween-loft-L14"><span class="kw">use</span> stage;</span>
-<span id="tests-nodetween-loft-L15"><span class="kw">use</span> graphics;</span>
+<span id="tests-nodetween-loft-L14"><span class="kw">use</span> stage::*;</span>
+<span id="tests-nodetween-loft-L15"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-nodetween-loft-L16"></span>
 <span id="tests-nodetween-loft-L17">const <span class="en">DUR</span>  = <span class="nm">800000</span>;     <span class="cm">// us</span></span>
 <span id="tests-nodetween-loft-L18">const <span class="en">STEP</span> = <span class="nm">100000</span>;     <span class="cm">// us — eight frames</span></span>
@@ -5389,7 +5389,7 @@
 <span id="tests-picking-loft-L6"><span class="cm">// Two things here are not what a rect test gives you, and both are the point: a</span></span>
 <span id="tests-picking-loft-L7"><span class="cm">// point over a sprite's HOLE resolves to what is behind it, and a release goes to</span></span>
 <span id="tests-picking-loft-L8"><span class="cm">// the node that took the PRESS wherever the pointer has drifted to.</span></span>
-<span id="tests-picking-loft-L9"><span class="kw">use</span> stage;</span>
+<span id="tests-picking-loft-L9"><span class="kw">use</span> stage::*;</span>
 <span id="tests-picking-loft-L10"></span>
 <span id="tests-picking-loft-L11"><span class="kw">fn</span> <span class="fn-call">solid</span>(x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; stage::<span class="en">Place</span> {</span>
 <span id="tests-picking-loft-L12">  stage::<span class="en">Place</span> { pl_x: x, pl_y: y, pl_w: w, pl_h: h }</span>
@@ -5492,7 +5492,7 @@
 <span id="tests-stage-loft-L8"><span class="cm">// entries checks a convention while comparing transformed points checks the</span></span>
 <span id="tests-stage-loft-L9"><span class="cm">// thing a renderer needs.  Every expected value below is worked out by hand and</span></span>
 <span id="tests-stage-loft-L10"><span class="cm">// written as a literal; agreement between two runs of the same code is not a pass.</span></span>
-<span id="tests-stage-loft-L11"><span class="kw">use</span> stage;</span>
+<span id="tests-stage-loft-L11"><span class="kw">use</span> stage::*;</span>
 <span id="tests-stage-loft-L12"></span>
 <span id="tests-stage-loft-L13"><span class="en">EPS</span> = <span class="nm">0.0001</span>;</span>
 <span id="tests-stage-loft-L14"></span>
@@ -5598,8 +5598,8 @@
 <span id="tests-textfield-loft-L8"><span class="cm">// slices BYTES, so a caret kept as a byte offset puts that trap inside the edit</span></span>
 <span id="tests-textfield-loft-L9"><span class="cm">// loop.  Every index here is a character count, and the gates say so in text</span></span>
 <span id="tests-textfield-loft-L10"><span class="cm">// where the two differ.</span></span>
-<span id="tests-textfield-loft-L11"><span class="kw">use</span> stage;</span>
-<span id="tests-textfield-loft-L12"><span class="kw">use</span> graphics;</span>
+<span id="tests-textfield-loft-L11"><span class="kw">use</span> stage::*;</span>
+<span id="tests-textfield-loft-L12"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-textfield-loft-L13"></span>
 <span id="tests-textfield-loft-L14">const <span class="en">NOMOD</span> = <span class="nm">0</span>;</span>
 <span id="tests-textfield-loft-L15">const <span class="en">SHIFT</span> = <span class="nm">1</span>;      <span class="cm">// graphics::MOD_SHIFT</span></span>
@@ -5857,8 +5857,8 @@
 <span id="tests-views-loft-L7"><span class="cm">// shared, the PRESENTATION is local and free.  Two players may look at one scene</span></span>
 <span id="tests-views-loft-L8"><span class="cm">// from two cameras through two viewports, and neither may perturb the other —</span></span>
 <span id="tests-views-loft-L9"><span class="cm">// not its pixels, not its picking, and not the single instance upload they share.</span></span>
-<span id="tests-views-loft-L10"><span class="kw">use</span> stage;</span>
-<span id="tests-views-loft-L11"><span class="kw">use</span> graphics;</span>
+<span id="tests-views-loft-L10"><span class="kw">use</span> stage::*;</span>
+<span id="tests-views-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-views-loft-L12"></span>
 <span id="tests-views-loft-L13"><span class="en">EPS</span> = <span class="nm">0.000001</span>;</span>
 <span id="tests-views-loft-L14"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>
@@ -6125,7 +6125,7 @@
 <span id="tests-widgetstate-loft-L11"><span class="cm">// take coordinates and read no device, which is the constraint @PLN144 `A4` was</span></span>
 <span id="tests-widgetstate-loft-L12"><span class="cm">// built under.  (The KEY half is the `input` package's `input_tick_from_state`,</span></span>
 <span id="tests-widgetstate-loft-L13"><span class="cm">// cleared by `D0b`.)</span></span>
-<span id="tests-widgetstate-loft-L14"><span class="kw">use</span> stage;</span>
+<span id="tests-widgetstate-loft-L14"><span class="kw">use</span> stage::*;</span>
 <span id="tests-widgetstate-loft-L15"></span>
 <span id="tests-widgetstate-loft-L16">const <span class="en">MOVE</span> = <span class="nm">0</span>;</span>
 <span id="tests-widgetstate-loft-L17">const <span class="en">DOWN</span> = <span class="nm">1</span>;</span>
@@ -6333,8 +6333,8 @@
 <span id="tests-worked-examples-loft-L11"><span class="cm">// it.  What a caller gets wrong is WHICH POINT a node is anchored by, that the</span></span>
 <span id="tests-worked-examples-loft-L12"><span class="cm">// tree is an ordered array rather than a graph, and that reading a world</span></span>
 <span id="tests-worked-examples-loft-L13"><span class="cm">// transform before composing answers a stale one rather than an error.</span></span>
-<span id="tests-worked-examples-loft-L14"><span class="kw">use</span> stage;</span>
-<span id="tests-worked-examples-loft-L15"><span class="kw">use</span> graphics;</span>
+<span id="tests-worked-examples-loft-L14"><span class="kw">use</span> stage::*;</span>
+<span id="tests-worked-examples-loft-L15"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-worked-examples-loft-L16"></span>
 <span id="tests-worked-examples-loft-L17"><span class="en">EPS</span> = <span class="nm">0.0001</span>;</span>
 <span id="tests-worked-examples-loft-L18"><span class="kw">fn</span> <span class="fn-call">close</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="en">EPS</span> <span class="kw">and</span> b - a &lt; <span class="en">EPS</span> }</span>

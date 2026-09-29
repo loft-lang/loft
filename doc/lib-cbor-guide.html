@@ -26,7 +26,7 @@
 <p><a href="lib-cbor.html">← cbor</a> · <a href="lib-cbor-api.html">API reference</a> · <a href="lib-cbor-src.html">source</a></p>
 <p><code>cbor</code> is canonical CBOR (RFC 8949) in pure loft: build a <code>CborValue</code>, <code>encode</code> it to bytes, <code>decode</code> bytes back. Canonical is the whole point — the same record always produces the same bytes, on any target, however it was assembled — which is what makes a signature over those bytes mean something.</p>
 <p>It is not a JSON codec and not a schema system: there is no mapping from your structs to the wire and no validation beyond well-formedness. You build the value; the codec makes its bytes deterministic. Pure loft with no native crate, so it behaves identically on every target by construction.</p>
-<pre><code><span class="kw">use</span> cbor;</code></pre>
+<pre><code><span class="kw">use</span> cbor::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">hex</span>(b: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   s = <span class="st">""</span>;
   <span class="kw">for</span> x <span class="kw">in</span> b { s += <span class="st">"{x:02x}"</span>; }
