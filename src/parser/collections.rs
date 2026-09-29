@@ -2882,7 +2882,6 @@ use #count instead"
         // L9: escalate format-specifier mismatches to compile errors.
         // A specifier that can never have any effect on the value type is always a bug.
         if !self.first_pass {
-            let is_text = matches!(tp, Type::Text(_));
             // @FR-F-Spec — a precision reaches here in two spellings: a bare `.P` sets
             // `float` and leaves `P` in the width slot, and the dotted `W.P` — the only
             // spelling that gives both at once — arrives as one `Value::Float`.
@@ -2923,11 +2922,22 @@ use #count instead"
                     Self::radix_letter(state.radix),
                     tp.source_name(&self.data)
                 );
-            } else if is_text && state.token == "0" && state.width != Value::Int(0) {
+            } else if state.token == "0"
+                && state.width != Value::Int(0)
+                && matches!(
+                    tp.base(),
+                    Type::Text(_) | Type::Boolean | Type::Character | Type::Enum(_, false, _)
+                )
+            {
+                // @FR-F-Spec — `0N` zero-pads a NUMBER, and `@FR-F-Spec-Exec` refuses a spec
+                // part the type cannot execute.  Only `text` was refused: a `boolean` rendered
+                // `{b:06}` as `true00`, the zeros on the wrong side of a word.  A container is
+                // not judged here: an iterator applies the spec to each element.
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Zero-padding has no effect on text"
+                    "Zero-padding has no effect on {}",
+                    tp.source_name(&self.data)
                 );
             } else if has_precision && !matches!(tp, Type::Float | Type::Single) {
                 // @FR-F-Spec — `.P` asks for fractional digits, and only `float` and
