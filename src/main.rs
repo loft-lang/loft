@@ -191,6 +191,10 @@ fn print_help() {
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
+    println!(
+        "                                and preserve the generated .rs on disk; combine with"
+    );
+    println!("                                --native-release for optimised + debug-info");
     println!("  --lean                        strip the live/debug tier — smallest binary, no");
     println!("                                live-flip/breakpoints");
     println!("  --dev-soft-halt               demote dev-mode runtime raises to log-and-continue");
@@ -198,10 +202,6 @@ fn print_help() {
     println!(
         "                                site in a single run instead of halting on the first"
     );
-    println!(
-        "                                and preserve the generated .rs on disk; combine with"
-    );
-    println!("                                --native-release for optimised + debug-info");
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
