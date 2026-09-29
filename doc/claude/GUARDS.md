@@ -160,8 +160,9 @@ tree.
 
 **The control builds are cached and pruned.**  Each ref costs about 2 GB under
 `~/.cache/loft-falsify/<ref>` and `<ref>-target` — on disk, never in `TMPDIR` (often a RAM
-tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside a `head-target`
-and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4) most recently used controls are kept.
+tmpfs; the native leg links `libloft.rlib` and its dependency rlibs) — beside a
+`head-target-<checkout>` (one per checkout: shared, a sibling's run rebuilt it from its own tree
+between this run's two legs) and a `shared-target`.  `LOFT_FALSIFY_KEEP` (default 4) most recently used controls are kept.
 A `--patch` control is cached under `patch-<patch content>-<HEAD>`, so a rebased HEAD never
 reuses a stale control.  A gate that fails on an unrelated suite right after `low space`
 lines is the disk: `df -h /`, then [RUN_BOUNDS.md § Scratch hygiene](RUN_BOUNDS.md).

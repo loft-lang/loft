@@ -15,6 +15,12 @@
 //                        (empty, exactly the fixed count, one more), the element type (integer,
 //                        text).
 // Axes it HOLDS FIXED:   a vector subject (not an iterator, not a cursor); one arm per function.
+//
+// @falsified-at: 3d4aeb5e3 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused every non-literal tail, so no assertion ran on it; the values were
+//   hand-checked cell by cell on both backends.
+// @falsified-by: tests/falsified/a-scalar-repetition-is-a-typed-rest.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 fn lit(v: vector<integer>) -> text { match v { [xs: integer*, 9] => "{xs}", _ => "none" } }
 fn last(v: vector<integer>) -> text { match v { [xs: integer*, l] => "{xs} {l}", _ => "none" } }
