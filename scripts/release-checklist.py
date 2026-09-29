@@ -652,7 +652,7 @@ def check_ignored_tests():
     RELEASE.md's zero-ignore gate: an ignored test is a known failure pulled out of CI,
     so "all green" means less than it looks.  The machine can check that the set is
     small and every entry gives a reason; whether each reason is still ACCEPTABLE is the
-    owner's sign-off (M-ignores), and no script can do that half.
+    release agent's `M-ignores` pass, which runs what each reason names.
     """
     p = os.path.join(ROOT, "tests", "ignored_tests.baseline")
     if not os.path.isfile(p):
@@ -1386,11 +1386,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         # A manual re-run of a suite assertion is a row that gets ticked, not a gate.
         Item(
             "M-ignores",
-            "Owner sign-off on every ignore AND every skip-list entry",
+            "Every ignore AND every skip-list entry still earns its place",
             "read tests/ignored_tests.baseline, then grep SKIP / NATIVE_SKIP / "
             "SCRIPTS_NATIVE_SKIP / ignored_scripts() in tests/",
-            "each traces to a named open blocker.  `A-ignores` checks the rationales "
-            "exist; whether they are still acceptable is a judgement",
+            "the release agent verifies each: the job or command its reason names exists "
+            "and passes (run it), nothing ignored hides a known failure, and each skip "
+            "entry's issue is still open.  `A-ignores` checks the rationales exist; this "
+            "checks they are TRUE — tick with the runs as the note",
             cadence="mid pre",
         ),
         Item(

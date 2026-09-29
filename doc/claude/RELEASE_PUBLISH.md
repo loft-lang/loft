@@ -131,7 +131,8 @@ so the tag run is the only place they can be checked.
   private economy model) on both backends — the same file that answers "main, tonight" on the
   schedule, so the two cannot drift.  It does not gate the draft: a red consumer is either loft
   moving under it or the consumer's own tip, and which it is decides whether the release ships.
-  `A-consumers` reads the run per consumer and the owner decides on the record.
+  `A-consumers` reads the run per consumer; a red one holds the release unless the record names
+  a cause outside loft (RELEASE.md § Explicitly out of scope here).
 - **Installing from the zip.**  The hands-on path is the release ZIP, never a fresh git clone:
   the clone is not what users take.  `scripts/install.sh` — the documented `curl | sh` path —
   runs end to end in `tests/self_update_swap.rs` against a bundle built the way
