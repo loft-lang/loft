@@ -726,3 +726,44 @@ wrappers typed `main_vector<vector<integer>>` over `vector<integer>` (loft#1757)
 while a wrapper is a store released whole, fatal once released as a block by its type.  The
 clause declines such a wrapper (54 sites in hex_shape); the typing itself stays open.
 
+## `check_request` on the library AS WRITTEN — the copies and claims per check (2026-09-30)
+
+Owner's rule (`(Perf-Teach)`): the row is measured on cbor and pluginabi exactly as they are
+written, and the code generation earns the speed.  After the loop clause, the exit vector and
+`(R-Header)`'s function clause, the check driver runs 0.38 s per 40 rounds (49.6× calibrated)
+and the profile is these, in order:
+
+| share | what | where it is decided |
+|---:|---|---|
+| 13.9 % | `OpCopyRecord` in the caller: `pa_text(pa_decode(frame), "op")` LIFTS the call result into `__lift_1`, and a lifted bind takes the adopt-or-copy protocol with an unconditional free of the passed buffer — so the first bind always deep-copies the tree.  A NAMED bind `z = f(…)` adopts the callee's store with a witnessed free (`OpFreeRefIfDistinct(__ref, z)`). | the lift's lowering in `scopes` (`new_lift_var` marks it `inline_ref`; the pairing never runs) and both backends' bind arms |
+| 10.9 % | `free_record_in`: the placed buffers' and wrappers' releases (a claims walk that allocates, then a free-tree delete) | runtime |
+| 10.3 % | `place_record_prefilled`: the placement's claim (a best-fit search once the store has frees) and the prefill of a record every exit literal rewrites whole | runtime; the prefill is `(R-CompleteWrite)`'s to skip |
+| 6.9 % | `remove_claims_mode`: the per-turn `OpClear` of a placed buffer | runtime |
+| 13.2 % | `read_value`'s own code | — |
+| 5 % | `set_str` + `text_from_bytes_native`: the text payloads copied out of the frame (the cbor spans branch reads them in place; a text FIELD that borrows the frame is the language change the tree form cannot reach 3× without) | language |
+
+The runtime copy census (`LOFT_COPY_DUMP=1`, one round): per check, one copy at
+pluginabi:71 (`v = d.value` in `pa_decode`), one at :218 (the lift above), and 1.75 each at :86
+(`r = e.value` in `pa_get`) and :94 (`pa_text`'s match arm) — six deep copies of a CborValue
+tree per check, every one a compiler matter:
+
+1. **A lifted call result adopts like a named bind** (`__lift_N = f(…, __ref_N)`): the same
+   witnessed pairing a plain bind gets, so `f(g(x))` copies nothing.  −14 %.
+2. **`(R-ReturnField)`**: `p = mk(…); return p.a` hands `p`'s store over at the field's
+   position instead of minting a store and copying the field into it (`pa_decode`); cells
+   written and hand-checked in the scratchpad (`return_field_cells.loft`, r1–r7, values hold on
+   both backends today; 3 stores per call, 2 after).
+3. **Arena buffers**: a store that holds one tree cleared whole (a lazy `__ref` result buffer)
+   claims by bump and releases nothing until its root's `OpClear`, which RESETS it — the
+   placement's claim, the block releases and the per-turn walk all go.  A runtime policy
+   behind a switch; needs the fact that a record owns nothing outside its store.
+4. **Skip the prefill** of a placed buffer whose callee writes every field on every exit
+   (`(R-CompleteWrite)` already proves that for a mint).
+5. **`pa_get`'s and `pa_text`'s match copies**: a `match` on a view's variant binding a field
+   copies the payload; a read-only arm wants a view.
+6. **Text payloads as spans of the frame** — the language change.
+
+Beside the row, measured as a CEILING and kept in scratch (`cbor.patch`, `pluginabi.patch`):
+a reader that skips instead of decoding puts the row at 5.3× against a scanning twin, 1.97×
+against the tree twin.  It is not the answer; it is what the compiler is measured against.
+
