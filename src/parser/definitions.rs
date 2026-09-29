@@ -5998,7 +5998,7 @@ impl Parser {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
-                            "factory methods not yet supported: '{}' returns Self without a 'self: Self' parameter",
+                            "'{}' returns Self without a 'self: Self' first parameter, and that parameter is what names the type Self stands for — take the starting value as a parameter instead (`fn f<T: I>(…, start: T) -> T`)",
                             method_name
                         );
                     }

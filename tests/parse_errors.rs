@@ -1796,7 +1796,7 @@ fn generic_fn_struct_as_bound_errors() {
 #[test]
 fn interface_factory_method_rejected() {
     code!("interface Creatable { fn create() -> Self }\nfn test() {}")
-        .error("factory methods not yet supported: 'create' returns Self without a 'self: Self' parameter at interface_factory_method_rejected:1:44");
+        .error("'create' returns Self without a 'self: Self' first parameter, and that parameter is what names the type Self stands for — take the starting value as a parameter instead (`fn f<T: I>(…, start: T) -> T`) at interface_factory_method_rejected:1:44");
 }
 
 // ── I6/I10 — Satisfaction checking diagnostics ───────────────────────────────
@@ -5288,5 +5288,40 @@ fn a_guarded_multi_pattern_arm_covers_nothing() {
     .error(
         "match on Tg is not exhaustive — missing: A, B; add the missing variants or a '_ =>' \
          wildcard at a_guarded_multi_pattern_arm_covers_nothing:2:40",
+    );
+}
+
+/// A `for` comprehension beside other elements, in either position, is ONE error naming the form
+/// that builds the same vector — it used to say "not yet implemented" and then cascade
+/// ("Expect token ;"), or, with the comprehension first, only "Expect token ]".
+#[test]
+fn a_comprehension_beside_other_elements_is_one_error() {
+    code!("fn test() { v = [1, 2]; w = [0, for x in v { x * 10 }]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:33",
+        );
+    code!("fn test() { v = [1, 2]; w = [for x in v { x * 10 }, 5]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:51",
+        );
+}
+
+/// A captured receiver as a `par` worker names the method and a cure that compiles: a context
+/// argument must be a scalar, so the receiver itself cannot be passed.
+#[test]
+fn a_par_method_on_a_captured_value_names_the_scalar_route() {
+    code!(
+        "struct Cp { k: integer }\n\
+         fn scale(self: Cp, e: integer) -> integer { self.k * e }\n\
+         fn test() { c = Cp { k: 3 }; v = [1, 2]; s = 0; for a in v par(b=c.scale(a), 2) { s += b; } assert(s == 9, \"s\"); }"
+    )
+    .error(
+        "a parallel worker is a function, not a method of a captured value (`c.scale(…)`) — read \
+         what `scale` needs from `c` into scalars first, and pass them after the element to a \
+         function: `f(a, k)` at a_par_method_on_a_captured_value_names_the_scalar_route:3:77",
     );
 }

@@ -3089,6 +3089,41 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     }
 
     // <for-vector> ::= 'for' <id> 'in' <range> ['if' <cond>] '{' <expr> '}'
+    /// A `for` comprehension beside other elements — `[0, for x in v { … }]`, `[for x in v { … },
+    /// 5]`.  A comprehension is a whole vector literal, so this is reported once, naming the form
+    /// that builds the same vector, and the rest of the literal is skipped to its closing `]`, so
+    /// the parse resumes after it instead of cascading ("Expect token ;").
+    fn refuse_mixed_comprehension(&mut self) {
+        // The caret goes on the token that makes the literal mixed (the `for`, or the `,` after
+        // a comprehension), read before the skip moves the scan past it.
+        let at = self.lexer.peek().position.clone();
+        if !self.first_pass {
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "a `for` comprehension is a whole vector literal and takes no other elements \
+                 beside it — build it on its own, `[for x in v {{ … }}]`, and add the others \
+                 with `+=`"
+            );
+        }
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has {
+                crate::lexer::LexItem::None => break,
+                crate::lexer::LexItem::Token(t) if depth == 0 && t == "]" => break,
+                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => {
+                    depth += 1;
+                }
+                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                    depth -= 1;
+                }
+                _ => {}
+            }
+            self.lexer.cont();
+        }
+    }
+
     // Implements [for n in range { body }] vector comprehensions.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -3979,6 +4014,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.lexer.has_token("for");
                 let tp = self
                     .parse_vector_for(vec, elm, &mut in_t, val, is_var, is_field, block, parent_tp);
+                if self.lexer.peek_token(",") {
+                    self.refuse_mixed_comprehension();
+                }
                 self.lexer.token("]");
                 return tp;
             }
@@ -5331,13 +5369,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // a Block, not a bare FnRef); a non-capturing lambda / non-lambda leaves
         // it MAX.  Reset first so a prior element's value can't leak in.
         self.last_closure_work_var = u16::MAX;
-        let mut t = if self.lexer.has_token("for") {
-            //self.iter_for(&mut p)
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "For inside a vector is not yet implemented"
-            );
+        let mut t = if self.lexer.peek_token("for") {
+            // The early return ends the whole literal, so its `]` is consumed here.
+            self.refuse_mixed_comprehension();
+            self.lexer.has_token("]");
             return Some(Type::Unknown(0));
         } else {
             let mut parent_tp = Type::Null;

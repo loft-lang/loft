@@ -334,8 +334,10 @@ If the vector is empty, `v[0]` returns the null sentinel for `T`
 executes. The caller receives null, which is consistent with loft's standard
 pattern for "no value" results.
 
-For cases where null-as-zero is not acceptable, declare a `zero()` factory
-method in the interface (see open question Q4 and Q6 below).
+For cases where null-as-zero is not acceptable, take the starting value from the
+caller — `fn sum_of<T: Addable>(v: vector<T>, identity: T) -> T` (Q6 below).  A
+`zero()` factory in the interface is refused: a method returning `Self` needs a
+`self: Self` first parameter to name the type (Q4).
 
 ### Compound assignment
 
