@@ -5292,9 +5292,9 @@ impl Parser {
         }
     }
 
-    /// The `(variable, discriminant)` an `is` test proves: the lowering `parse_is_variant`
-    /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(v, 0)), disc)`.
-    fn variant_proof_from_condition(&self, test: &Value) -> Option<(u16, i32)> {
+    /// The `(subject, discriminant)` an `is` test proves: the lowering `parse_is_variant`
+    /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), disc)`.
+    fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
         let Value::Call(eq, args) = test.unspan() else {
             return None;
         };
@@ -5316,10 +5316,7 @@ impl Parser {
         if self.data.def(*get).name() != "OpGetEnum" {
             return None;
         }
-        match get_args.first().map(Value::unspan) {
-            Some(Value::Var(v)) => Some((*v, *disc)),
-            _ => None,
-        }
+        get_args.first().map(|s| (s.unspan().clone(), *disc))
     }
 
     fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {

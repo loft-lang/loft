@@ -265,15 +265,17 @@ pub fn add_block(self: Code, id: text) {
 // @PLN25 index flip — `self.blocks[len-1]` and `self.code[b]` are nullable (computed
 // indices). Discharge the block-stack top (`?? 0`) and GUARD the code access with
 // `if b < len(self.code)`: the guard proves `self.code[b]` in-bounds → non-null → the
-// `as Block` downcast works AND `bl` stays a mutable borrow so the field writes below
-// still write back (a `?? default` fallback would leak). The guard is always true here
-// (the top block always points at a live code slot).
+// `as Block` downcast works AND `bl` stays a view of the element, so the field writes below
+// write back; the `is` test makes the cast checked (@C131). The guards are always true here
+// (the top block always points at a live code slot of the kind it opened).
 pub fn end_block(self: Code, tp: u16) {
   b = self.blocks[self.blocks.len() - 1] ?? 0;
   if b < len(self.code) {
-    bl = self.code[b] as Block;
-    bl.length = ((self.code.len() - b) & 65535) as u16;
-    bl.into = tp;
+    if self.code[b] is Block {
+      bl = self.code[b] as Block;
+      bl.length = ((self.code.len() - b) & 65535) as u16;
+      bl.into = tp;
+    }
   }
   self.blocks.remove(-1);
 }
@@ -289,18 +291,22 @@ pub fn add_if(self: Code) {
 pub fn else_if(self: Code) {
   b = self.blocks[self.blocks.len() - 1] ?? 0;
   if b < len(self.code) {
-    i = self.code[b] as If;
-    i.yes = ((self.code.len() - b) & 65535) as u16;
+    if self.code[b] is If {
+      i = self.code[b] as If;
+      i.yes = ((self.code.len() - b) & 65535) as u16;
+    }
   }
 }
 
 pub fn end_if(self: Code, tp: u16) {
   b = self.blocks[self.blocks.len() - 1] ?? 0;
   if b < len(self.code) {
-    i = self.code[b] as If;
-    y = i.yes;
-    i.no = ((self.code.len() - b - y) & 65535) as u16;
-    i.into = tp;
+    if self.code[b] is If {
+      i = self.code[b] as If;
+      y = i.yes;
+      i.no = ((self.code.len() - b - y) & 65535) as u16;
+      i.into = tp;
+    }
   }
   self.blocks.remove(-1);
 }
@@ -314,8 +320,10 @@ pub fn add_loop(self: Code, id: text) {
 pub fn end_loop(self: Code) {
   b = self.blocks[self.blocks.len() - 1] ?? 0;
   if b < len(self.code) {
-    l = self.code[b] as Loop;
-    l.length = ((self.code.len() - b) & 65535) as u16;
+    if self.code[b] is Loop {
+      l = self.code[b] as Loop;
+      l.length = ((self.code.len() - b) & 65535) as u16;
+    }
   }
   self.blocks.remove(-1);
 }

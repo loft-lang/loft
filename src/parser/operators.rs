@@ -4553,6 +4553,7 @@ impl Parser {
                 let nullable_cast = self.lexer.has_token("?");
                 let mut cast_subject: Option<u16> = None;
                 let mut cast_literal: Option<String> = None;
+                let mut cast_operand = Value::Null;
                 // @PLN25 DN4/DN5 — a scalar cast target has a DOMAIN: its integer value
                 // RANGE, and (when it is a plain non-null scalar) that domain EXCLUDES null.
                 // A value fits `as τ` (no `?`) only if it lies in the domain on BOTH
@@ -4720,6 +4721,7 @@ impl Parser {
                     // cast this diagnostic prescribes as its own cure.
                     let outer_cast = self.in_explicit_cast;
                     self.in_explicit_cast = true;
+                    cast_operand = code.unspan().clone();
                     cast_subject = match code.unspan() {
                         Value::Var(v) => Some(*v),
                         _ => None,
@@ -4947,8 +4949,10 @@ impl Parser {
                 // as an unguarded division does, unless it is checked directly: inside
                 // `if s is Circle { … }`, or spelled `as Circle?` for null on a miss.
                 if !nullable_cast && let Some(disc) = self.variant_cast_disc(ctp, &rt) {
-                    let proven =
-                        cast_subject.is_some_and(|v| self.variant_proven.contains(&(v, disc)));
+                    let proven = self
+                        .variant_proven
+                        .iter()
+                        .any(|(s, d)| *d == disc && Self::same_projection(s, &cast_operand));
                     let no_default = if proven {
                         None
                     } else {

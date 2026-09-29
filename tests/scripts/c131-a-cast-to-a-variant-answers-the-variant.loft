@@ -68,4 +68,15 @@ fn main() {
   }
   first = code.code[0] ?? Rect { w: 0, h: 0 };
   assert((first as Circle?).radius == 40, "the cast of a projection views the element");
+  // Checked directly on a PROJECTION: `if code.code[j] is Circle` proves the element, so the
+  // cast takes no default, draws no warning, and a write through it reaches the element.
+  j = 0;
+  if j < len(code.code) {
+    if code.code[j] is Circle {
+      pj = code.code[j] as Circle;
+      pj.radius = 50;
+    }
+  }
+  again = code.code[0] ?? Rect { w: 0, h: 0 };
+  assert((again as Circle?).radius == 50, "a checked projection cast writes through");
 }
