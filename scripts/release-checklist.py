@@ -693,7 +693,7 @@ def check_open_deviations():
     if not resolvable:
         return OK, f"{len(live)} open, all marked not resolvable in a release"
     shown = ", ".join(
-        f"{t} ({', '.join('loft#' + n for n in iss) if iss else 'NO ISSUE'})"
+        f"{t} ({', '.join(('loft#' + n) if n.isdigit() else ('@' + n) for n in iss) if iss else 'NO ISSUE'})"
         for _f, t, iss in resolvable)
     return FAIL, f"{len(resolvable)} open deviation(s) a release can resolve: {shown}"
 

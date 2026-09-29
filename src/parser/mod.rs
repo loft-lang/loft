@@ -14982,11 +14982,11 @@ impl Parser {
         }
     }
 
-    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT: every field
-    /// compared with its own type's `==`, left to right, stopping at the first that differs —
-    /// a float field by float equality, a text by its characters, a nested value struct by
-    /// its own content, a reference field by identity (DESIGN_DECISIONS C91: bounded to the
-    /// value's own storage, never a reference-chase).
+    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
+    /// @C91): every field compared with its own type's `==`, left to right, stopping at the
+    /// first that differs — a float field by float equality, a text by its characters, a
+    /// nested value struct by its own content.  A reference field still compares by identity:
+    /// that is deviation D-op-16, closed when `==` on a struct becomes content.
     ///
     /// An operand that runs code is evaluated ONCE into a temporary; any other is read in
     /// place per field.  `None` when a field has no `==`, which leaves the comparison to the

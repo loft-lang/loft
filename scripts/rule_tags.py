@@ -260,6 +260,9 @@ REG_ENTRY_STRICT = re.compile(
 REG_ENTRY_BULLET = re.compile(
     rf"^[-*]\s+\*\*`?(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
 REG_ISSUE = re.compile(r"loft#(\d+)")
+# A deviation a PLAN is building names the plan instead of an issue: the plan is the tracker
+# for planned work, and a second issue beside it would only be a stale copy of its steps.
+REG_PLAN = re.compile(r"@(PLN\d+)(?!\d)")
 # The ATTRIBUTION — the first parenthetical of an entry's head, which is where the dates and
 # the issue it was filed as are written.  Bounded so it cannot run past the head into the
 # explanation; see `_tracking_issues`.
@@ -330,7 +333,9 @@ def _tracking_issues(head):
     """
     m = REG_ATTRIBUTION.search(head)
     named = REG_ISSUE.findall(m.group(1)) if m else []
-    return named or REG_ISSUE.findall(head)
+    if named or REG_ISSUE.findall(head):
+        return named or REG_ISSUE.findall(head)
+    return REG_PLAN.findall(m.group(1)) if m else []
 
 
 def _register_entries(body, pattern):
@@ -1103,10 +1108,11 @@ def main():
               f"issue · {len(unresolvable)} marked not resolvable in a release · "
               f"{len(untracked)} with NO tracking issue")
         for f, t in untracked:
-            print(f"  {f}: {t} is OPEN and names no loft#N — file its issue, or mark it "
+            print(f"  {f}: {t} is OPEN and names no loft#N or @PLN<n> — file its issue, name the "
+                  f"plan that builds it, or mark it "
                   f"`{UNRESOLVABLE}` with the reason")
         if want_issues:
-            named = {int(n) for _, _, iss, _ in live for n in iss}
+            named = {int(n) for _, _, iss, _ in live for n in iss if n.isdigit()}
             done, unreachable = closed_issues(named)
             print(f"\n{len(named)} issue(s) named by an open entry, {len(done)} now CLOSED")
             if unreachable:

@@ -48,6 +48,8 @@ method name.
   (G-Sat)   C ⊨ I   iff for every  fn m(self: Self, p̄) -> R  in I,  a concrete function m with
             receiver type C and signature [Self ↦ C](p̄ -> R) is VISIBLE at the point of use.
             No `impl` declaration is written or needed — having the methods IS satisfying.
+  (G-Sat-Eq) every type satisfies `Equatable`: one with no `OpEq` of its own is compared by
+            (E-Eq)'s content `==` in the monomorph, one with an `OpEq` by that.
 ```
 
 **In words.** A type satisfies an interface exactly when the required methods exist for it — loft
@@ -208,8 +210,12 @@ decided boundary, so it belongs here as a scope rule, not as a deviation to clos
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record, and the four closed
-deviations, are in the companion [interfaces-history.md](interfaces-history.md).
+**OPEN: 1.**
+- **D-gen-5** (opened 2026-09-29, @PLN175 step 8) — `<T: Equatable>` over a `struct`, a
+  `value struct` or a collection with no `OpEq` is refused (*missing OpEq*), against (G-Sat-Eq).
+
+The record, and the four closed deviations, are in the companion
+[interfaces-history.md](interfaces-history.md).
 
 ## Conformance
 

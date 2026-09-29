@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0**.  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
+OPEN: **1** (D-gen-5, opened 2026-09-29 by @PLN175 — C91's content `==` reaching `Equatable`, closed by the plan's step 8).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
 `D-gen-4` on 2026-09-02.
 
 ⚠ **This line read `OPEN: 0` because *"a rules doc adds no code deviation"* — a claim about the

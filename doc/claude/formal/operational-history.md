@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
+OPEN: **11** (D-op-14…22 — C91's content `==`, opened 2026-09-29 and closed step by step by @PLN175; D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -233,6 +233,18 @@ only as strong as the rules above it, not only as strong as its oracle.
   identical on interp and native, before AND after the fix.  So D-op-1 closing would not have
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
+
+### D-op-14 … D-op-22 — OPEN (2026-09-29, @PLN175): `==` is not yet content for every type
+
+- **Violates:** `(E-Eq)` / `(E-Eq-Key)` as amended by C91 (owner, 2026-09-28): content for every
+  type, `&a == &b` for identity, keys agreeing with `==`.
+- **Measured** (2026-09-29, the same on both backends): `struct` and `c = a` → `false`; a struct
+  holding a struct → `false`; `vector == vector` refused; a tuple of structs → `false`; `hash` /
+  `sorted` / `index` → `false`; a struct-enum → `false`; `&a == &b` refused; a `value struct`'s
+  reference field by identity; a `hash<E[k]>` on a float `k` holds `0.0` and `-0.0` as two
+  entries (`keys.rs` orders by `total_cmp`).
+- **Closed by** the ten steps of [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175),
+  each entry naming its step in [operational.md](operational.md) § Deviations.
 
 ### D-op-13 — OPENED AND CLOSED (2026-09-24, loft#1657): a literal part that wrote its own destination was handed the read snapshot
 
