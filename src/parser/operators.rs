@@ -5389,13 +5389,9 @@ impl Parser {
         }
         // A link to a heap value (`c = &a`) holds the same record handle as its target, so
         // the `&` of the TYPE is peeled and the handle compared as it is.
-        let peel = |t: &Type| match t {
-            Type::RefVar(inner) => inner.base().clone(),
-            _ => t.base().clone(),
-        };
         let heap = |t: &Type| {
             matches!(
-                t,
+                t.peel_link(),
                 Type::Reference(..)
                     | Type::Vector(..)
                     | Type::Hash(..)
@@ -5406,8 +5402,7 @@ impl Parser {
                     | Type::Enum(_, true, _)
             )
         };
-        let (l, r) = (peel(types[0]), peel(types[1]));
-        let (l, r) = (&l, &r);
+        let (l, r) = (types[0].peel_link(), types[1].peel_link());
         if !heap(l) || !heap(r) {
             let scalar = if heap(l) { r } else { l };
             diagnostic!(

@@ -31,40 +31,10 @@ impl Stores {
         if a.rec == 0 || b.rec == 0 {
             return a.rec == 0 && b.rec == 0;
         }
-        let (sa, sb) = (self.store(a), self.store(b));
-        match tp {
-            0 => return sa.get_int(a.rec, a.pos) == sb.get_int(b.rec, b.pos),
-            1 => return sa.get_long(a.rec, a.pos) == sb.get_long(b.rec, b.pos),
-            // A float's null is its NaN, so the two are compared by absence first; the values
-            // then by `==`, which holds `0.0 == -0.0`.
-            2 => {
-                let (x, y) = (sa.get_single(a.rec, a.pos), sb.get_single(b.rec, b.pos));
-                return if x.is_nan() || y.is_nan() {
-                    x.is_nan() && y.is_nan()
-                } else {
-                    x == y
-                };
-            }
-            3 => {
-                let (x, y) = (sa.get_float(a.rec, a.pos), sb.get_float(b.rec, b.pos));
-                return if x.is_nan() || y.is_nan() {
-                    x.is_nan() && y.is_nan()
-                } else {
-                    x == y
-                };
-            }
-            4 => return sa.get_byte(a.rec, a.pos, 0) == sb.get_byte(b.rec, b.pos, 0),
-            5 => {
-                let (na, nb) = (sa.text_is_null(a.rec, a.pos), sb.text_is_null(b.rec, b.pos));
-                if na || nb {
-                    return na && nb;
-                }
-                return sa.get_str(sa.get_u32_raw(a.rec, a.pos))
-                    == sb.get_str(sb.get_u32_raw(b.rec, b.pos));
-            }
-            6 => return sa.get_u32_raw(a.rec, a.pos) == sb.get_u32_raw(b.rec, b.pos),
-            _ => {}
+        if tp <= 6 {
+            return self.eq_base(a, b, tp);
         }
+        let (sa, sb) = (self.store(a), self.store(b));
         match &self.types[tp as usize].parts {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => self.eq_fields(a, b, fields),
             Parts::Enum(variants) => {
@@ -110,42 +80,76 @@ impl Stores {
             | Parts::Sorted(content, _)
             | Parts::Array(content)
             | Parts::Ordered(content, _)
-            | Parts::Index(content, _, _) => {
-                if let Some(answer) = self.eq_absent_collections(a, b) {
-                    return answer;
-                }
-                let (mut pa, mut pb) = (i32::MAX, i32::MAX);
-                loop {
-                    let ea = self.next(a, &mut pa, tp);
-                    let eb = self.next(b, &mut pb, tp);
-                    match (ea.rec == 0, eb.rec == 0) {
-                        (true, true) => return true,
-                        (false, false) => {
-                            if !self.eq_content(&ea, &eb, *content) {
-                                return false;
-                            }
-                        }
-                        _ => return false,
-                    }
+            | Parts::Index(content, _, _)
+            | Parts::Hash(content, _)
+            | Parts::Radix(content, _)
+            | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content),
+            Parts::Base => panic!(
+                "eq_content on the base type {} ({})",
+                tp, self.types[tp as usize].name
+            ),
+        }
+    }
+
+    /// The seven base types (`integer` … `character`) by value.  A float's null is its NaN, so
+    /// two floats are compared by absence first and then by `==`, which holds `0.0 == -0.0`.
+    fn eq_base(&self, a: &DbRef, b: &DbRef, tp: u16) -> bool {
+        let (sa, sb) = (self.store(a), self.store(b));
+        match tp {
+            0 => sa.get_int(a.rec, a.pos) == sb.get_int(b.rec, b.pos),
+            1 => sa.get_long(a.rec, a.pos) == sb.get_long(b.rec, b.pos),
+            2 => {
+                let (x, y) = (sa.get_single(a.rec, a.pos), sb.get_single(b.rec, b.pos));
+                if x.is_nan() || y.is_nan() {
+                    x.is_nan() && y.is_nan()
+                } else {
+                    x == y
                 }
             }
-            Parts::Hash(content, _) => {
-                if let Some(answer) = self.eq_absent_collections(a, b) {
-                    return answer;
+            3 => {
+                let (x, y) = (sa.get_float(a.rec, a.pos), sb.get_float(b.rec, b.pos));
+                if x.is_nan() || y.is_nan() {
+                    x.is_nan() && y.is_nan()
+                } else {
+                    x == y
                 }
+            }
+            4 => sa.get_byte(a.rec, a.pos, 0) == sb.get_byte(b.rec, b.pos, 0),
+            5 => {
+                let (na, nb) = (sa.text_is_null(a.rec, a.pos), sb.text_is_null(b.rec, b.pos));
+                if na || nb {
+                    return na && nb;
+                }
+                sa.get_str(sa.get_u32_raw(a.rec, a.pos)) == sb.get_str(sb.get_u32_raw(b.rec, b.pos))
+            }
+            6 => sa.get_u32_raw(a.rec, a.pos) == sb.get_u32_raw(b.rec, b.pos),
+            _ => unreachable!("eq_base on the stored type {tp}"),
+        }
+    }
+
+    /// A collection of `content` elements: two absent collections are one value; otherwise
+    /// element by element in the collection's own order (a hash in key order, a spatial index
+    /// or trie in its tree's order), and a different count differs.
+    fn eq_collection(&self, a: &DbRef, b: &DbRef, tp: u16, content: u16) -> bool {
+        if let Some(answer) = self.eq_absent_collections(a, b) {
+            return answer;
+        }
+        let pairwise = |ea: &[DbRef], eb: &[DbRef]| {
+            ea.len() == eb.len()
+                && ea
+                    .iter()
+                    .zip(eb)
+                    .all(|(x, y)| self.eq_content(x, y, content))
+        };
+        match &self.types[tp as usize].parts {
+            Parts::Hash(_, _) => {
                 let keys = self.keys(tp);
-                let ra = crate::hash::records_sorted(a, &self.allocations, keys);
-                let rb = crate::hash::records_sorted(b, &self.allocations, keys);
-                ra.len() == rb.len()
-                    && ra
-                        .iter()
-                        .zip(&rb)
-                        .all(|(x, y)| self.eq_content(x, y, *content))
+                pairwise(
+                    &crate::hash::records_sorted(a, &self.allocations, keys),
+                    &crate::hash::records_sorted(b, &self.allocations, keys),
+                )
             }
-            Parts::Radix(content, _) | Parts::Trie(content, _) => {
-                if let Some(answer) = self.eq_absent_collections(a, b) {
-                    return answer;
-                }
+            Parts::Radix(_, _) | Parts::Trie(_, _) => {
                 let elements = |r: &DbRef| -> Vec<DbRef> {
                     self.for_each_owned_child(r, tp)
                         .children
@@ -158,17 +162,24 @@ impl Stores {
                         })
                         .collect()
                 };
-                let (ea, eb) = (elements(a), elements(b));
-                ea.len() == eb.len()
-                    && ea
-                        .iter()
-                        .zip(&eb)
-                        .all(|(x, y)| self.eq_content(x, y, *content))
+                pairwise(&elements(a), &elements(b))
             }
-            Parts::Base => panic!(
-                "eq_content on the base type {} ({})",
-                tp, self.types[tp as usize].name
-            ),
+            _ => {
+                let (mut pa, mut pb) = (i32::MAX, i32::MAX);
+                loop {
+                    let ea = self.next(a, &mut pa, tp);
+                    let eb = self.next(b, &mut pb, tp);
+                    match (ea.rec == 0, eb.rec == 0) {
+                        (true, true) => return true,
+                        (false, false) => {
+                            if !self.eq_content(&ea, &eb, content) {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+            }
         }
     }
 

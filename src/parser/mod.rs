@@ -15012,17 +15012,14 @@ impl Parser {
         let [a, b] = types else {
             return None;
         };
-        let peel = |t: &Type| match t {
-            Type::RefVar(inner) => inner.base().clone(),
-            _ => t.base().clone(),
-        };
-        let (Type::Vector(ea, _), Type::Vector(eb, _)) = (peel(a), peel(b)) else {
+        let (Type::Vector(ea, _), Type::Vector(eb, _)) = (a.peel_link(), b.peel_link()) else {
             return None;
         };
-        if !ea.is_equal(&eb) || ea.is_unknown() {
+        if !ea.is_equal(eb) || ea.is_unknown() {
             return None;
         }
-        Some(self.vector_of(&ea))
+        let elem = (**ea).clone();
+        Some(self.vector_of(&elem))
     }
 
     /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
@@ -15098,20 +15095,21 @@ impl Parser {
         {
             return;
         }
-        let kind = match types.first().map(Type::base) {
-            Some(Type::Reference(d, _)) => match self.data.def_type(*d) {
+        let Some(first) = types.first() else {
+            return;
+        };
+        let kind = match first.peel_link() {
+            Type::Reference(d, _) => match self.data.def_type(*d) {
                 DefType::Enum | DefType::EnumValue => "struct-enum",
                 _ if self.data.is_value_struct(*d) => "value-struct",
                 _ => "struct",
             },
-            Some(Type::Vector(..)) => "vector",
-            Some(
-                Type::Hash(..)
-                | Type::Sorted(..)
-                | Type::Index(..)
-                | Type::Radix(..)
-                | Type::Trie(..),
-            ) => "collection",
+            Type::Vector(..) => "vector",
+            Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => "collection",
             _ => "other",
         };
         let pos = self.lexer.pos();
