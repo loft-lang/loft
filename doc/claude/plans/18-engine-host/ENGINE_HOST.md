@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > Grown from the @PLN16 (debugger) exploration and **graduated to this plan**.
 > **Status: recorded evaluations — the build is phased in [README.md](README.md).**
 > This is the C71/N9 execution model made buildable (the per-fn execution model
-> [DESIGN_DECISIONS § C71](../../DESIGN_DECISIONS.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
+> [DESIGN_DECISIONS § C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
 > names as the steady state). It gates [IDE.md](../16-debugger/IDE.md) slices **6b** (hot-swap `reload`)
 > and **6c** (breakpoint-in-game). Canonical context: [LAVITION.md](../../LAVITION.md)
 > (the engine), [GOALS.md](../../GOALS.md) § Purpose (live prototyping, AS/400 reliability).

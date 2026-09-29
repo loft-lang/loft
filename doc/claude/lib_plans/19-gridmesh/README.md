@@ -78,7 +78,7 @@ this:
   index is a `hash` (open-addressed: a contiguous bucket array + records
   in one store), kept COMPACT so a chunk's index stays cache-resident —
   hence the keyed-collection compactness work (plan-44: `coll[key]=value`
-  upsert dedups in place and reclaims, [C68](../../DESIGN_DECISIONS.md#c68--keyed-collections-dedup-on-insert--and-collkeyvalue);
+  upsert dedups in place and reclaims, [C68](../../DESIGN_DECISIONS_COLLECTIONS.md#c68--keyed-collections-dedup-on-insert--and-collkeyvalue);
   duplicate keys would bloat the index out of cache).
 - **Halo bounded to ≤k rings** — the apron a rule reads is the only
   cross-chunk data pulled in; keeping it minimal keeps the working set

@@ -257,7 +257,7 @@ draining library code out of the compiler crate (@PLN3).
 
 ## Native-library execution model — the steady-state design
 
-_Decided 2026-06-04. Canonical decision record: [DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)._
+_Decided 2026-06-04. Canonical decision record: [DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)._
 
 ### The model
 

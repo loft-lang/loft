@@ -107,7 +107,7 @@ store written by one build readable by another *of the same layout*.
               EXEMPT and keep C85's sentinel — a pragmatic exemption and not a principled one:
               the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
               value in 2^32 and buys the only narrow type whose overflow is detectable
-              ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
+              ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
               § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
               is not a line to extend.  Where the language can
               demand the author say what an unfitting value becomes it refuses instead; where it

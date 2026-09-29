@@ -142,7 +142,7 @@ playground, IDE integration).
   deferred [REPL.S](#deferred-follow-ups) follow-up.  **Deterministic RNG
   continuation across resume is declined** (a saved generator state would let
   future `random()` be predicted/replayed) — see
-  [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS.md#c72--repl-session-resume-does-not-persist-rng-generator-state);
+  [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS_PLATFORM.md#c72--repl-session-resume-does-not-persist-rng-generator-state);
   reproducible streams use explicit seeds.
 
 ## Cross-references

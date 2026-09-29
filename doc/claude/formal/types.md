@@ -217,7 +217,7 @@ the UB class**: a slot of type `τ` never holds a non-`τ` value — it either f
 op is non-null) or it's `null` (and `(N-Store)` forces you to discharge it). We do **not**
 fake non-null on an op that can miss.
 
-> **The one decided exception — overflow arithmetic ([C85](../DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
+> **The one decided exception — overflow arithmetic ([C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
 > `a+b` / `a*b` / `a-b` stay typed **non-null `integer`** (forcing `integer?` on every
 > arithmetic op would poison the common path to guard a fault that essentially never fires),
 > yet on overflow they write the reserved `i64::MIN` sentinel into that non-null slot — which
@@ -537,7 +537,7 @@ old auto-`τ?` reading. Design record:
             room its declared range leaves inside the width.  `limit(-100, 100) size(1)` is
             201 values in 256 and the 55 codes left over are NOT a place to keep a null:
             a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
-            ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
+            ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
             Spareness is arithmetic the author did not do, so it cannot decide semantics.
             The plain `integer` and `i32` TEMPLATES keep their sentinel, and that is an
             EXEMPTION rather than a distinction the rule draws: it costs one value in 2^32

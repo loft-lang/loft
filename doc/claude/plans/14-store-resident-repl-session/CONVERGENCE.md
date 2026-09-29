@@ -45,7 +45,7 @@ snapshotted: restoring saved RNG state would make the stream reproducible from
 the session image (predict/replay future `random()` outputs — a security
 hazard).  On resume the generator continues fresh (re-seeded from entropy, as on
 any launch); reproducible streams stay an explicit-seed opt-in (`random_seed`).
-Declined — [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS.md#c72--repl-session-resume-does-not-persist-rng-generator-state).
+Declined — [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS_PLATFORM.md#c72--repl-session-resume-does-not-persist-rng-generator-state).
 
 **What the store-resident model still needs** (beyond the mmap, which is built):
 
@@ -72,7 +72,7 @@ now precisely because the interim is a band-aid the user has chosen to replace.
 ## See also
 
 - [README.md](README.md) — the @PLN14 build plan (sub-arcs A–G) this design feeds.
-- [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS.md#c72--repl-session-resume-does-not-persist-rng-generator-state)
+- [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS_PLATFORM.md#c72--repl-session-resume-does-not-persist-rng-generator-state)
   — RNG generator state deliberately not persisted.
 - `src/store.rs` · `src/data_store.rs` · `src/cache.rs` — the mmap + content-hashed
   startup-cache infrastructure phase F reuses.

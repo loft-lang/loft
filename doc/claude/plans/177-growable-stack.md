@@ -26,7 +26,7 @@ have).
 
 loft has no runtime exceptions: nothing a running program does may stop it, except `panic`
 and `assert`, and those only in tests and development builds
-([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation),
+([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation),
 owner ruling 2026-09-28).  Every calculation fault already degrades to null and logs.  The
 call-depth cap is the one runtime halt left:
 

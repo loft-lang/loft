@@ -54,9 +54,9 @@ tables.
   read is already nullable) keep their existing meaning.  The value stored is identical either
   way.
 - **C3** — WASM `par()` runs sequentially.
-  See [DESIGN_DECISIONS.md § C3](DESIGN_DECISIONS.md#c3--wasm-par-runs-sequentially).
+  See [DESIGN_DECISIONS.md § C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially).
 - **C38** — Closure capture was copy-at-definition.
-  See [DESIGN_DECISIONS.md § C38](DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition).
+  See [DESIGN_DECISIONS.md § C38](DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
   Plan-22 (shipped 2026-05-13) supersedes the copy semantics: scalar captures use
   heap-owned cells (auto-Reference encoding); `Type::Reference` captures use 12B
   `Parts::DbRef` into the live original.  Pure read-only captures of non-Reference

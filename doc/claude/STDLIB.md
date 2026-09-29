@@ -546,7 +546,7 @@ print("{p}\n");                // a user type via its to_text
 
 This one tool covers printing a value, separating several values, and appending strings
 — loft has no variadic `print(a, b, c)` and no bare `print(42)` (a deliberate decision,
-[DESIGN_DECISIONS.md § C100](DESIGN_DECISIONS.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
+[DESIGN_DECISIONS.md § C100](DESIGN_DECISIONS_SYNTAX.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
 want inside the braces (`"{a} {b}"` spaces, `"{a}, {b}"` commas, `"{a}{b}"` appends).
 
 ---

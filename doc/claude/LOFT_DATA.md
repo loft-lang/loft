@@ -24,7 +24,7 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 ```
 
 **A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
-slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
+slice patterns are in [§ Slice patterns](LOFT_CONTROL.md#slice-patterns-matching-a-vector).
 
 **The vector built-ins are stdlib methods on `vector`** — `reverse`, `reserve`, `insert`,
 `sort`, `filter`, `map`, `reduce`: `reverse(v)` and `v.reverse()` are one call (as are
@@ -179,7 +179,7 @@ Full rule + the reasoning:
 **Empty vectors** require a type annotation so the compiler knows the element type.
 Use `v: vector<T> = []` instead of the older `[for _ in 0..0 { default }]` pattern.
 
-To remove elements while iterating, use `v#remove` inside a filtered loop (see [For loops](#for-loops)).
+To remove elements while iterating, use `v#remove` inside a filtered loop (see [For loops](LOFT_CONTROL.md#for-loops)).
 
 ---
 

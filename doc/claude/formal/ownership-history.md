@@ -2707,7 +2707,7 @@ The entry claimed the #415 struct-vector-field copy-on-bind was a stopgap contra
 reference-default.  The reversal attempt found the premise false: on BOTH backends every
 WHOLE-VALUE heap bind copies (`p = o`, `b = x`, `af = bx.v`) and only projections alias —
 the written law, not the code, was wrong.  The maker's call
-([DESIGN_DECISIONS C86](../DESIGN_DECISIONS.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
+([DESIGN_DECISIONS C86](../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
 whole-value binds COPY by contract; `p = o` becomes an alias only when the source is
 provably dead afterwards — the rustc last-use rule, as an OPTIMIZATION
 (`use_analysis::ElidePlan` is that analysis).  `O-Borrow` scopes to projections /

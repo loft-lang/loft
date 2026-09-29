@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 Open — design settled, no implementation.  Tracker:
 [@PLN178](https://github.com/loft-lang/plans/issues/178).  The ruling is
-[DESIGN_DECISIONS.md C130](../DESIGN_DECISIONS.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment);
+[DESIGN_DECISIONS.md C130](../DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment);
 this file carries the phases and the matrix, not the rationale.
 
 ## Goal
@@ -118,8 +118,8 @@ one phase, because a rewrite that declined on native leaves a cell green for the
 
 ## See also
 
-- [DESIGN_DECISIONS.md C130](../DESIGN_DECISIONS.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment) — the ruling.
-- [DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) — nothing stops a running calculation.
+- [DESIGN_DECISIONS.md C130](../DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment) — the ruling.
+- [DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) — nothing stops a running calculation.
 - [formal/heap.md](../formal/heap.md) `(H-WriteOOB)` / `(H-WriteNull)`; [formal/operational.md](../formal/operational.md) `(E-Uncomp-Seen)` / `(E-Report)`.
 - `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft` — the standing guard for the write that lands nowhere; this plan's matrix extends its axes with the arm.
 - [LOGGER.md](../LOGGER.md) — the level configuration that is the project-wide switch.

@@ -152,18 +152,51 @@ fn library_guard_tags() -> Vec<String> {
 }
 
 fn check_new_decisions_are_guarded(index: &str) {
-    let register = std::fs::read_to_string("doc/claude/DESIGN_DECISIONS.md")
-        .expect("read DESIGN_DECISIONS.md");
-    let ids: Vec<&str> = register
-        .lines()
-        .filter_map(|l| l.strip_prefix("## C"))
-        .filter_map(|rest| rest.split(' ').next())
-        .filter(|id| id.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .collect();
+    // The register is one flat id sequence spread over the subject files
+    // `DESIGN_DECISIONS_<SUBJECT>.md`; DESIGN_DECISIONS.md is its index.
+    let mut defined: Vec<(String, String)> = Vec::new();
+    for entry in std::fs::read_dir("doc/claude").expect("read doc/claude") {
+        let path = entry.expect("dir entry").path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if !name.starts_with("DESIGN_DECISIONS_") || !name.ends_with(".md") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read a register subject file");
+        for rest in text.lines().filter_map(|l| l.strip_prefix("## C")) {
+            let id = rest.split(' ').next().unwrap_or("");
+            if id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                defined.push((id.to_string(), name.clone()));
+            }
+        }
+    }
+    let ids: Vec<&str> = defined.iter().map(|(id, _)| id.as_str()).collect();
     assert!(
         ids.len() > 50,
         "read {} decision ids from the register — this check is measuring nothing",
         ids.len()
+    );
+    let twice: Vec<&(String, String)> = defined
+        .iter()
+        .filter(|(id, _)| ids.iter().filter(|other| *other == id).count() > 1)
+        .collect();
+    assert!(
+        twice.is_empty(),
+        "decision id(s) defined more than once: {twice:?} — ids are one sequence across the \
+         subject files; `./scripts/idx next-decision` names the next free one"
+    );
+    let register_index = std::fs::read_to_string("doc/claude/DESIGN_DECISIONS.md")
+        .expect("read DESIGN_DECISIONS.md");
+    let listed: Vec<&str> = register_index
+        .lines()
+        .filter_map(|l| l.strip_prefix("- [C"))
+        .filter_map(|rest| rest.split(']').next())
+        .collect();
+    let unlisted: Vec<&&str> = ids.iter().filter(|id| !listed.contains(id)).collect();
+    let stale: Vec<&&str> = listed.iter().filter(|id| !ids.contains(id)).collect();
+    assert!(
+        unlisted.is_empty() && stale.is_empty(),
+        "the index doc/claude/DESIGN_DECISIONS.md is out of step with the subject files: \
+         entries it does not list {unlisted:?}, rows naming no entry {stale:?}"
     );
     // A citation in a library repo names an entry here, exactly as one in this tree must
     // (`idx broken` checks those).
@@ -175,7 +208,7 @@ fn check_new_decisions_are_guarded(index: &str) {
     assert!(
         dangling.is_empty(),
         "library guard(s) cite {dangling:?}, which name no entry in \
-         doc/claude/DESIGN_DECISIONS.md (index/library_guards.json; `./scripts/idx tag:<tag>`)"
+         doc/claude/DESIGN_DECISIONS_*.md (index/library_guards.json; `./scripts/idx tag:<tag>`)"
     );
     let unguarded: Vec<&&str> = ids
         .iter()
@@ -191,7 +224,7 @@ fn check_new_decisions_are_guarded(index: &str) {
         .collect();
     assert!(
         unguarded.is_empty(),
-        "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: every \
+        "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS_*.md have no guard: every \
          decision is kept by a test that cites `@C<n>` and fails on a build that breaks it — \
          under tests/ here, or in the library it is about (`make guards-fetch`).  A decision \
          no guard can keep is reopened, not documented — DESIGN_DECISIONS_RULES.md § Using \
@@ -274,13 +307,13 @@ fn index_hygiene_clean() {
          (b) add the missing PROBLEMS.md row / plan dir\n  \
          (c) add `<!--noindex-->` to the line if the ref is \
          an intentional documentation example\n  \
-         (d) an `@C<n>` names a decision: cite one that has an entry in \
-         doc/claude/DESIGN_DECISIONS.md\n\
+         (d) an `@C<n>` names a decision: cite one that has an entry in a \
+         doc/claude/DESIGN_DECISIONS_<SUBJECT>.md file\n\
          See: doc/claude/plans/37-tracker-index/03-broken-validator.md"
     );
 
     // 2b. @PLN175 — a design decision is held to what it says: every entry of
-    //     DESIGN_DECISIONS.md has at least one GUARD, a `tests/` site (here or in a
+    //     the register (DESIGN_DECISIONS_*.md) has at least one GUARD, a `tests/` site (here or in a
     //     library) citing `@C<n>`; `./scripts/idx decisions` counts each entry's sites.
     check_new_decisions_are_guarded(&index);
 

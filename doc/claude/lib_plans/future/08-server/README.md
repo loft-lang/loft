@@ -16,7 +16,7 @@ with the library itself.
   `ws_upgrade` / `next` / `send`, multi-client `run(on_event)` / `poll_event` /
   `broadcast` / `send_to`). Catalogue entry: [LIBRARIES.md](../../../LIBRARIES.md). <!--noindex-->
 - **Why the framework design was declined:**
-  [DESIGN_DECISIONS.md § C84](../../../DESIGN_DECISIONS.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+  [DESIGN_DECISIONS.md § C84](../../../DESIGN_DECISIONS_PLATFORM.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
 
 ## What this doc used to claim vs. what shipped
 

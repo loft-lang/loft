@@ -1079,7 +1079,7 @@ deviation) — overflow arithmetic** `a*b`/`a+b`/`a-b` stays NON-null: overflow 
 continue (C80, no trap), NOT `τ?`. The fault is extraordinary (operands ~3×10⁹) while the op is
 ubiquitous, so forcing discharge on all arithmetic is disproportionate + (given no traps) would
 block a game over a fault its player never hits —
-[DESIGN_DECISIONS C85](../DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--). Range-tracking keeps provably-fit multiplies exact.
+[DESIGN_DECISIONS C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--). Range-tracking keeps provably-fit multiplies exact.
 
 ### DN4 — CLOSED (2026-07-02, F5 cutover): `as` to a narrower type enforces the range
 `400 as u8` was UB (the cast asserted the *type* but left an out-of-range value in a `u8`
@@ -1145,7 +1145,7 @@ is chosen now (pre-freeze-only).
 
 **Rule.** A float/single op types its result `τ?` **iff it can yield the reserved NaN-null
 from an input a normal program reaches** — the DN3 boundary read across to floats, with
-[C85](../DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)
+[C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)
 (overflow → non-null) as its complement:
 
 - **`τ?`:** `/` and `%` (÷0 — mirror of integer `/`; the existing `divisor_provably_nonzero`
@@ -1206,7 +1206,7 @@ are recorded in
 
 D2 was framed as a deviation to *remove* by widening the IR (`Value::Int` → i64) so the default
 integer is "i64 end-to-end." That framing is **declined** — see
-[DESIGN_DECISIONS.md C83](../DESIGN_DECISIONS.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience).
+[DESIGN_DECISIONS.md C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience).
 The reconciliation:
 
 - **The user-visible contract is met.** `integer` *is* i64 everywhere a user can observe it — a

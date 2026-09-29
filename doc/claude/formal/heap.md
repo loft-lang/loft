@@ -243,7 +243,7 @@ agree exactly (verified):
   **vector-typed** projection (`fv = e.items`). A fresh store is allocated and the graph
   duplicated, so the two are independent: `fv = e.items; fv[0] = 99` leaves `e.items[0] == 1`;
   `c = o; c.v = 9` leaves `o.v == 1`.
-- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([C77](../DESIGN_DECISIONS.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
+- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
   NOT a copy: `r = &v; r[0] = 99` makes `v[0] == 99` (verified both backends). This is why a `&`
   is written — to share the backing, not duplicate it. (A vector **parameter** likewise aliases
   the caller — see the invariant below.)

@@ -111,7 +111,8 @@ def is_maintainer_doc(path: str) -> bool:
 def is_contract_doc(path: str) -> bool:
     if not path.endswith(".md") or path.endswith("-history.md"):
         return False
-    if path in history_report.EXCLUDE_EXACT or path.startswith(history_report.EXCLUDE_DIRS):
+    if path in history_report.EXCLUDE_EXACT or \
+            path.startswith(history_report.EXCLUDE_DIRS + history_report.EXCLUDE_PREFIX):
         return False
     return path.startswith(("doc/claude/", "doc/")) or path in ("README.md", "CLAUDE.md")
 

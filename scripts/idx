@@ -19,11 +19,15 @@
 #                                   @FR-B-View does not return @FR-B-View-Base.
 #                                   See doc/claude/formal/README.md § Rule tags.
 #   idx tag:@C<n>                 — a DESIGN-DECISION citation (@PLN175): every code,
-#                                   doc and test site that keeps decision C<n> of
-#                                   DESIGN_DECISIONS.md, headed by the entry itself,
+#                                   doc and test site that keeps decision C<n> (an
+#                                   entry of a DESIGN_DECISIONS_<SUBJECT>.md file),
+#                                   headed by the entry itself,
 #                                   then the guards in the library repos.
 #                                   Boundary-exact, like @FR-.
-#   idx decisions                 — every decision in DESIGN_DECISIONS.md with its
+#   idx next-decision             — the highest decision id across every subject
+#                                   file, and the next free one; an id defined
+#                                   twice is named and exits 1.
+#   idx decisions                 — every decision, in id order, with its
 #                                   code / doc / guard citation counts; `guards` is
 #                                   tests/ here PLUS `library` (a library repo's
 #                                   tests/ at its origin/main, index/library_guards.json
@@ -223,11 +227,11 @@ case "$QUERY" in
     # @C<n> → the register entry the citation resolves to (a local file, so the
     # heading line is read rather than a URL printed).
     if [[ "$t" =~ ^@C([0-9]+(\.[A-Z])?)$ ]]; then
-      entry=$(grep -n -m1 "^## C${BASH_REMATCH[1]} " "$ROOT/doc/claude/DESIGN_DECISIONS.md" || true)
+      entry=$(cd "$ROOT" && grep -n -m1 "^## C${BASH_REMATCH[1]} " doc/claude/DESIGN_DECISIONS_*.md | head -1 || true)
       if [[ -n "$entry" ]]; then
-        echo "→ doc/claude/DESIGN_DECISIONS.md:${entry/:## /  }"
+        echo "→ ${entry/:## /  }"
       else
-        echo "→ no entry C${BASH_REMATCH[1]} in doc/claude/DESIGN_DECISIONS.md" >&2
+        echo "→ no entry C${BASH_REMATCH[1]} in doc/claude/DESIGN_DECISIONS_*.md" >&2
       fi
     fi
     jq --arg t "$t" '.[$t] // []' "$IDX" | filter_kind | add_excerpts
@@ -237,12 +241,28 @@ case "$QUERY" in
         | "→ library guard  \($r):\($p):\(.line)  (origin/main \($c))"' "$LIBGUARDS"
     fi
     ;;
+  next-decision)
+    # The register is one flat id sequence spread over the subject files, so the
+    # next id is read from all of them — and an id two files define is refused here.
+    heads=$(cd "$ROOT" && grep -H -o -E '^## C[0-9]+(\.[A-Z])? ' doc/claude/DESIGN_DECISIONS_*.md \
+      | sed -E 's/:## C/\t/; s/ $//')
+    dups=$(printf '%s\n' "$heads" | cut -f2 | sort | uniq -d)
+    if [[ -n "$dups" ]]; then
+      for d in $dups; do
+        echo "C$d is defined twice: $(printf '%s\n' "$heads" | awk -F'\t' -v d="$d" '$2 == d {print $1}' | tr '\n' ' ')" >&2
+      done
+      exit 1
+    fi
+    top=$(printf '%s\n' "$heads" | awk -F'\t' '{split($2, a, "."); print a[1] "\t" $1}' | sort -n | tail -1)
+    echo "highest: C${top%%$'\t'*}  (${top#*$'\t'})"
+    echo "next:    C$(( ${top%%$'\t'*} + 1 ))"
+    ;;
   decisions)
-    # One row per register entry, in register order: where it is cited, split
+    # One row per register entry, in id order: where it is cited, split
     # by kind.  A guard is a citation under tests/; a doc one a .md file; code
     # everything else.  Read from the index, so `make index` first.
-    grep -E '^## C[0-9]+(\.[A-Z])? ' "$ROOT/doc/claude/DESIGN_DECISIONS.md" \
-      | sed -E 's/^## (C[0-9]+(\.[A-Z])?) — (.*)$/\1\t\3/' \
+    grep -h -E '^## C[0-9]+(\.[A-Z])? ' "$ROOT"/doc/claude/DESIGN_DECISIONS_*.md \
+      | sed -E 's/^## (C[0-9]+(\.[A-Z])?) — (.*)$/\1\t\3/' | sort -V \
       | jq -R -s --slurpfile idx "$IDX" --slurpfile lib "${LIBGUARDS}" '
           split("\n") | map(select(length > 0) | split("\t")) | map(
             . as [$id, $title]

@@ -187,7 +187,7 @@ sentinel-collision edges the owner's C80 rule says accept.
 | `999999999 as character` → NUL | renders null; C80-adjacent. No genuine wrong value. |
 | `sqrt(-1)` / `log(-1)` / `asin(2)` → **null** | **ACCEPT** ([C80](../../DESIGN_DECISIONS.md): undefined → null, never a fault). No decision needed. |
 
-**Sentinel collisions — DECIDED: ACCEPTED (owner ruling 2026-07-13, [C85](../../DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
+**Sentinel collisions — DECIDED: ACCEPTED (owner ruling 2026-07-13, [C85](../../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
 A value equal to the null sentinel (`i64::MAX+1`, `abs(i64::MIN)`, `1<<63`, a literal
 `-9223372036854775808`) reads as null. This is semantically **just an overflow** ("don't rely on it;
 the program may malfunction") and strictly BETTER than a two's-complement wrap because null is

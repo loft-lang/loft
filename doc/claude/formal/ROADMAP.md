@@ -114,8 +114,8 @@ These are **spec-may-adjust** — your call resolves them, then they close or re
 | # | deviation | the decision | likely outcome |
 |---|---|---|---|
 | ~~B1~~ | ~~**D-gram-3**~~ **DONE** | `**` is now **right**-associative (`2**3**2 == 512`) — the maker-centric call (don't carry a surprise). | code→spec, landed; `tests/issues.rs::power_is_right_associative` |
-| ~~B2~~ | ~~**D-gram-2**~~ **DONE** | loft's surface IS deliberately not context-free — accepted on purpose. | reclassified → decided edge, [DESIGN_DECISIONS C82](../DESIGN_DECISIONS.md#c82--lofts-surface-is-deliberately-not-context-free) |
-| ~~B3~~ | ~~**D-gram-4**~~ **DONE** | A1 made prefix `&` total — keep one `&` token, disambiguated by position (like Rust). | reclassified → decided edge, [DESIGN_DECISIONS C81](../DESIGN_DECISIONS.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference) |
+| ~~B2~~ | ~~**D-gram-2**~~ **DONE** | loft's surface IS deliberately not context-free — accepted on purpose. | reclassified → decided edge, [DESIGN_DECISIONS C82](../DESIGN_DECISIONS_SYNTAX.md#c82--lofts-surface-is-deliberately-not-context-free) |
+| ~~B3~~ | ~~**D-gram-4**~~ **DONE** | A1 made prefix `&` total — keep one `&` token, disambiguated by position (like Rust). | reclassified → decided edge, [DESIGN_DECISIONS C81](../DESIGN_DECISIONS_SYNTAX.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference) |
 | ~~B4~~ | ~~**D-clo-18**~~ (+ **D-clo-20**) **DONE** | A closure cannot write through a captured `&` SCALAR parameter, nor rebind a captured heap parameter: `(L-CapScalar)` hands the closure a COPY, so there is no shared record for the write to land in, and the repoint that looks like the cure was MEASURED to move the wrong answer from caller to callee rather than remove it. Both were silent wrong answers before the refusal. | reclassified → decided edge, [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md); closures.md 3 → 2 with no code change |
 
 ## Phase C — tracked projects (have or need a plan; weeks)

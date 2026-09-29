@@ -540,7 +540,7 @@ range_expr   ::= expr '..' [ '=' ] expr   // exclusive or inclusive end
 The `{ binary_op operators }` rule above is intentionally **flat** — it does not encode
 how a chain like `a + b * c ?? d` groups. That grouping is fixed by the **precedence
 ladder** (twelve levels, loosest `??` to tightest `as`) and **associativity** (every level
-left-associative except `**`, which is right-associative) given in [§ Operators](#operators);
+left-associative except `**`, which is right-associative) given in [§ Operators](LOFT.md#operators);
 a unary prefix (`!`, `-`, `~` in `single`) binds tighter than every binary operator. The
 parser realises this with a precedence-climbing walk (`OPERATORS` / `parse_operators`); the
 two statements — this grammar and that table — together pin every expression's shape.

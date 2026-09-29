@@ -263,7 +263,7 @@ becoming concurrency experts or hunting races.
 
 **The turn-off.** They prototype on the desktop where `par` is parallel, then ship
 to the web — where `par` runs **sequentially**
-([C3, accepted](DESIGN_DECISIONS.md#c3--wasm-par-runs-sequentially)) — and the
+([C3, accepted](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)) — and the
 speedup they designed around silently isn't there. The accepted trade-off becomes a
 broken expectation for anyone who picked loft *for* the parallelism *and* targets
 the browser.

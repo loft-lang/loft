@@ -24,13 +24,13 @@ predicted — they leave formal/ rather than being driven to zero).
 > The speculative backtracking (type-vs-variable, `S { … }`-vs-block) + lexer interpolation
 > modes are accepted on purpose: they buy real ergonomics and no consumer needs a CFG (tooling
 > reuses the hand-written parser, which IS the spec). Decided, not chased → [DESIGN_DECISIONS.md
-> C82](../DESIGN_DECISIONS.md#c82--lofts-surface-is-deliberately-not-context-free).
+> C82](../DESIGN_DECISIONS_SYNTAX.md#c82--lofts-surface-is-deliberately-not-context-free).
 
 > **D-gram-4 (RESOLVED — decided edge) — `&` stays one token, disambiguated by position.**
 > Infix `&` is bitwise-and; a *leading* `&` is the reference annotation. Prefix `&` is a parse
 > error in every non-binding position, so the positional rule is **total** — like Rust, one `&`
 > token is kept. Decided → [DESIGN_DECISIONS.md
-> C81](../DESIGN_DECISIONS.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference).
+> C81](../DESIGN_DECISIONS_SYNTAX.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference).
 >
 > "Total" was claimed here from 2026-07-24 on the strength of A1 (binding.md D-bind-7), which
 > closed the bare-statement position only. It became true on 2026-08-09 with binding.md's

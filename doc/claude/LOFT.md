@@ -66,7 +66,7 @@ and collections alongside the scalars.
 leave the reserved pattern in a non-null slot: an integer overflow writes the sentinel
 and the slot then reads `null`, and a non-null `float` can hold a `NaN` the same way
 (the deliberate, bounded edge in
-[DESIGN_DECISIONS C85](DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).
+[DESIGN_DECISIONS C85](DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).
 A width with no code to spare — `u8`, `i8`, `u16`, `i16` — cannot hold the pattern at
 all, so the same fault leaves the type's default there instead. So `x == null` on a
 non-null slot is not dead code.
@@ -159,7 +159,7 @@ if !count { skipped += 1; }  // catches only null; zero passes through
 The idiomatic "zero or null" check on an integer is `count == 0 or !count`,
 or simply `count == 0` if the sentinel and zero should be treated the same.
 This asymmetry is a deliberate, settled choice — see
-[DESIGN_DECISIONS.md § C69](DESIGN_DECISIONS.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
+[DESIGN_DECISIONS.md § C69](DESIGN_DECISIONS_VALUES.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
 The compiler warns when `!` is applied to a statically `not null` operand
 (`!x` there is always false, since the value can never be the null sentinel).
 
@@ -326,7 +326,7 @@ enum Shape {
 ```
 
 A variant's fields are read **directly** — `s.radius` — with `match` / `is` reserved for
-*dispatch* rather than extraction ([C89](DESIGN_DECISIONS.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced)).  A field EVERY variant
+*dispatch* rather than extraction ([C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced)).  A field EVERY variant
 declares shares one slot and reads correctly from any of them.
 
 **A field only SOME variants declare answers for the variant the value holds** (loft#980).
