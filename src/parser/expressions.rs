@@ -7564,7 +7564,7 @@ use a separate collection or add after the loop"
                 // `(u8, integer)` one kept 44, and a `text` member was written as a float.
                 // A KEYED member given a vector is not a conversion: `emit_tuple_set_ops` fills
                 // it by key (loft#1675), so that member is checked at its own type here.
-                let want = match &rhs_type {
+                let want = match rhs_type.base() {
                     Type::Tuple(src) if src.len() == elems_vec.len() => Type::Tuple(
                         elems_vec
                             .iter()

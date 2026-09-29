@@ -5616,7 +5616,7 @@ impl Parser {
                     } else {
                         if !self.first_pass
                             && !matches!(
-                                false_type,
+                                false_type.base(),
                                 Type::Void | Type::Never | Type::Null | Type::Unknown(_)
                             )
                         {
