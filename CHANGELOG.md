@@ -312,6 +312,11 @@ said.  It is refused now, as the `if` spelling always was.  (loft#1390)
   well.  It now reuses the standard library it already read, so a small program starts in about
   a sixth of the work it took before.  A changed standard library is still always read again.
 
+**A record passed by value and appended whole skips the field prefill on `--native`.**
+`self.items += [p]` with `p` a small record parameter wrote every field twice: the default
+fill, then the copy.  When the record owns no heap the fill is gone.  mesh3d's `sphere` is
+1.3× faster again, same output.
+
 **Appending a record to a struct's vector field is as cheap as appending to a plain vector.**
 `self.items += [x]`, the way every library grows its collections, went through the runtime's
 general record dispatch — two type walks and three empty bookkeeping steps per element, on

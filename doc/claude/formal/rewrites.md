@@ -2264,8 +2264,12 @@ line in `Output::output_function`'s prelude.
                  `set_default_value`'s walk (or its all-zero `zero_range`, which
                  duplicates the zero-on-claim) writes nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
-                 `OpNewRecordNP`).  An uncovered field — a nested struct arriving
-                 by `OpCopyRecord`, a vector field bound by an append, a
+                 `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
+                 itself (`self.items += [p]`, `p` a value of the element type)
+                 covers every field when the element owns no heap; a heap-owning
+                 element's copy trusts the zeroed handles the prefill wrote and
+                 keeps it.  An uncovered field — a nested struct arriving by
+                 `OpCopyRecord` into a FIELD, a vector field bound by an append, a
                  `__nullable` element whose discriminant no `OpSet` names — keeps
                  the prefill: the check can only DECLINE the elision.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
