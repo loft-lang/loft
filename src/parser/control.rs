@@ -2218,6 +2218,15 @@ impl Parser {
             // the same carve-outs — the sibling-variant join, the statement-position discard,
             // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
             // first concrete arm has nothing to agree with and names the type instead.
+            let unboxed_tail;
+            let t = if context == "return from block"
+                && let Some(tt) = self.unbox_stored_tuple_tail(t, result, &mut l[last])
+            {
+                unboxed_tail = tt;
+                &unboxed_tail
+            } else {
+                t
+            };
             let arm_of_sibling = context == "else"
                 || ((context == "if" || context == "match_arm") && !result.is_unknown());
             let tuple_rewritten = !self.first_pass
@@ -4481,6 +4490,53 @@ impl Parser {
             Value::Return(inner) => Self::tail_var(inner),
             _ => None,
         }
+    }
+
+    /// loft#1742 — a heap-carrying tuple returned straight from a CALL arrives in its stored
+    /// spelling (`__tuple<text,integer>`), which the return's tuple rewrite does not take, so a
+    /// member widening into the declared `__tuple<text,float>` (`@FR-C-Num`) failed `convert`.
+    /// Bound to a stack-tuple local first — the shape the same function written
+    /// `a: (text, integer) = mk(); a` has — the rewrite writes each member at the declared type,
+    /// converting it.  Answers the tail's new type, or `None` when the tail is not that pair.
+    /// Asked by both return sites, the tail of a body and a `return` statement.
+    pub(crate) fn unbox_stored_tuple_tail(
+        &mut self,
+        t: &Type,
+        result: &Type,
+        tail: &mut Value,
+    ) -> Option<Type> {
+        let (Type::Reference(d, _), Type::Reference(r, _)) = (t, result) else {
+            return None;
+        };
+        if self.first_pass
+            || d == r
+            || !self.data.def(*d).name().starts_with("__tuple<")
+            || !self.data.def(*r).name().starts_with("__tuple<")
+            || !self.changes_representation(t, result)
+        {
+            return None;
+        }
+        let (elems, declared) = (
+            self.stored_tuple_elements(t),
+            self.stored_tuple_elements(result),
+        );
+        if elems.len() != declared.len()
+            || !elems
+                .iter()
+                .zip(&declared)
+                .all(|(x, y)| x.is_equal(y) || self.changes_representation(x, y))
+        {
+            return None;
+        }
+        let src = Type::Tuple(elems.clone());
+        let tmp = self.create_unique("_tret", &src);
+        let unboxed = self.unbox_tuple_from_dbref(tail.clone(), &elems);
+        *tail = v_block(
+            vec![v_set(tmp, unboxed), Value::Var(tmp)],
+            src.clone(),
+            "tuple_return_unbox",
+        );
+        Some(src)
     }
 
     pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
@@ -17922,6 +17978,9 @@ impl Parser {
             // "expected __tuple<…>, got (…)" even though the SAME tuple as a
             // function's final expression compiles.  parse_return is the statement
             // path; block_result is the tail path — they must agree.
+            let t = self
+                .unbox_stored_tuple_tail(&t, &r_type, &mut v)
+                .unwrap_or(t);
             let tuple_rewritten = !self.first_pass
                 // Through `base()`, exactly as `block_result`'s twin above: the statement path
                 // and the tail path must agree about what a tuple is, and an absent tuple is one

@@ -1307,6 +1307,17 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-17** *(opened 2026-09-29, CLOSED 2026-09-29, loft#1742)* — a tuple carrying a HEAP
+  member (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out
+  of a function was REFUSED when the returned value was a CALL: `fn back(k) -> (text, float) {
+  mk(k) }` over `mk -> (text, integer)` said *"expected (text, float), got (text, integer) on
+  return from block"*, and so did an inferred local holding the call's result, an `if` or
+  `match` of calls, and a `return mk(k)` statement.  The return's tuple rewrite takes a
+  STACK-tuple tail only; converting the members inside `convert` instead left it a literal it
+  wrote as `null`.  Both return sites now ask `unbox_stored_tuple_tail`, which binds such a tail
+  to a stack-tuple local at its OWN members — the shape an annotated local already had — and
+  the rewrite writes each member at the declared type, converting it.  Guard
+  `tests/scripts/a-heap-tuple-returned-from-a-call-widens-its-members.loft`.
 * **D-types-15, D-types-16** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Num)`, which this
   chapter did not state although LOFT.md's conversion table promises it, through `(C-Tuple)`.
   **-15**: a tuple that is not a LITERAL was stored bit for bit, so a member widening from
