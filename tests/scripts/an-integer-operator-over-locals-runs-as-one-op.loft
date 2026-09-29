@@ -23,6 +23,7 @@
 //   Falsified instead by planted defects, 2026-09-29: the second operand read one slot high
 //   (the unfused position) fails five of the seven tests; a fused store addressed without
 //   the pushed result's step never increments `i`, and the run is killed by the watchdog.
+//   A compare-and-jump testing the wrong comparison (`kind ^ 1`) fails three.
 
 fn arith(a: integer, b: integer) -> text {
   x = a + b;

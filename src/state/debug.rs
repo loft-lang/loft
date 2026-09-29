@@ -1539,6 +1539,24 @@ impl State {
                     self.code_pos = cur;
                     self.stack_pos = stack;
                     return Ok(op);
+                } else if (def.name().starts_with("OpIntV") || def.name().starts_with("OpCmpIntV"))
+                    && (a.name == "a" || a.name == "b")
+                {
+                    // A fused integer op reads its locals in place: name them as a `pos` read
+                    // is named.  Codegen records operand `a`'s read one byte into the
+                    // instruction and `b`'s two (`emit_fused_int`, `gen_if_test`).
+                    let pos = self.code::<u16>();
+                    let abs_slot = self.stack_pos - u32::from(pos);
+                    let key = code + if a.name == "a" { 1 } else { 2 };
+                    let annotation =
+                        if config.annotate_slots && d_nr != u32::MAX && code != u32::MAX {
+                            self.vars.get(&key).map_or(String::new(), |&v| {
+                                format!("={}", data.def(d_nr).variables().name(v))
+                            })
+                        } else {
+                            String::new()
+                        };
+                    attr.insert(a_nr, format!("{}=var[{abs_slot}]{annotation}", a.name));
                 } else if a_nr == 0
                     && a.name == "pos"
                     && a.typedef
