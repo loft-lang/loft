@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/fn-ref-field-non-inline-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches)
 // @C116 — a collection element holds a plain fn-ref, never a capturing closure.
 //
 // A non-inline source for a fn-ref struct field is REFUSED, whichever way it is spelled.

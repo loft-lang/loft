@@ -1,0 +1,12 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -4896,7 +4896,7 @@
+         // silently vanish at thread join (D2.0).  The error gives
+         // the full reachability chain so the user can see exactly
+         // which helper introduces the offending call.
+-        if !self.first_pass
++        if false
+             && fn_d_nr != u32::MAX
+             && let Some(chain) = crate::scopes::worker_calls_parent_write_deep(&self.data, fn_d_nr)
+         {

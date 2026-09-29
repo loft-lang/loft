@@ -1,0 +1,12 @@
+diff --git a/src/parser/builtins.rs b/src/parser/builtins.rs
+--- a/src/parser/builtins.rs
++++ b/src/parser/builtins.rs
+@@ -420,7 +420,7 @@
+             // (B) captured (context) params must be scalars, not references.
+             for &a in real_params.iter().skip(1) {
+                 let tp = self.data.attr_type(d_nr, a);
+-                if is_heap_ref(&tp) {
++                if false && is_heap_ref(&tp) {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,

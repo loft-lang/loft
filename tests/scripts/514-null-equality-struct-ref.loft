@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/514-null-equality-struct-ref.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //
 // @PLN99 A5 — `== null` / `!= null` on a nullable STRUCT-reference variable
 // (`s: DT?`, typed `Optional(Reference)`).  Its null is the reference sentinel

@@ -1,0 +1,12 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -8116,7 +8116,7 @@
+                 // `to` is `OpGet<T>(accessor, offset)`: `accessor` produces the element
+                 // reference (and carries the fn/method call), `offset` is the field position
+                 // within it (0 for a scalar element, e.g. 8 for the 2nd field of a struct).
+-                let f2_place = if op != "=" && !self.first_pass {
++                let f2_place = if false && op != "=" && !self.first_pass {
+                     match to.unspan() {
+                         Value::Call(get_d, gargs)
+                             if self.data.def(*get_d).name.starts_with("OpGet")

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/150-amp-head-position.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control never opens the `&` head at `=`, so every legal `&` binding is refused — the refusal IS the defect this file guards.
 // @C81 — `&` is one token, read by its position.
 //
 // @PLN87 B-Ref-AnnotationOnly — the ACCEPT half of the `&`-position sweep.

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/201-bind-copies-projection-views.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @C77 @C86 — whole-value binds copy, projections view, `&` binds a live reference.
 //
 // @PLN130 — the copy/view boundary, pinned end to end.
