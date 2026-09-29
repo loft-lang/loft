@@ -829,6 +829,28 @@ impl Stores {
     /// that needs to distinguish "empty input" from "invalid bytes" should
     /// validate before decoding.
     #[must_use]
+    /// `text_from_bytes(bytes, lo, hi)`: the text of the byte range `lo..hi`, read in
+    /// place — no slice vector is built.  Bounds clamp to the live length as a slice's do;
+    /// a reversed or empty range, a null buffer and invalid UTF-8 answer "".
+    pub fn text_from_bytes_range(&mut self, bytes: DbRef, lo: i64, hi: i64) -> String {
+        let length = i64::from(vector::length_vector(&bytes, &self.allocations));
+        if bytes.rec == 0 || bytes.pos == 0 || length == 0 {
+            return String::new();
+        }
+        let lo = lo.clamp(0, length);
+        let hi = hi.clamp(0, length);
+        if hi <= lo {
+            return String::new();
+        }
+        let store = self.store(&bytes);
+        let vec_rec = store.get_u32_raw(bytes.rec, bytes.pos);
+        if vec_rec == 0 {
+            return String::new();
+        }
+        let raw = &store.bytes_of(vec_rec)[lo as usize..hi as usize];
+        String::from_utf8(raw.to_vec()).unwrap_or_default()
+    }
+
     pub fn text_from_bytes_native(&mut self, bytes: DbRef) -> String {
         let length = vector::length_vector(&bytes, &self.allocations);
         if bytes.rec == 0 || bytes.pos == 0 || length == 0 {

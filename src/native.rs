@@ -123,6 +123,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("t_4text_to_uppercase_dest", t_4text_to_uppercase_dest),
     // text_from_bytes: owned-text producer (vector<u8> -> text), dest-passing.
     ("n_text_from_bytes_dest", n_text_from_bytes_dest),
+    ("n_text_from_byte_range_dest", n_text_from_byte_range_dest),
     // @PLN10 — destination-passing variants for the always-non-null text
     // producers; key is the loft def name + `_dest` (the lookup in
     // `gen_text_dest_call` / `try_text_dest_pass`).  Added to
@@ -1071,6 +1072,20 @@ fn n_text_from_bytes_dest(stores: &mut Stores, stack: &mut DbRef) {
     let dest = stores.get::<DbRef>(stack);
     let v_bytes = stores.get::<DbRef>(stack);
     let new_value = stores.text_from_bytes_native(v_bytes);
+    stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos)
+        .push_str(&new_value);
+}
+
+/// `text_from_byte_range(bytes, lo, hi)`, destination-passing like `n_text_from_bytes_dest`:
+/// the range's text pushed straight into the caller's return buffer, no slice built.
+fn n_text_from_byte_range_dest(stores: &mut Stores, stack: &mut DbRef) {
+    let dest = stores.get::<DbRef>(stack);
+    let v_hi = stores.get::<i64>(stack);
+    let v_lo = stores.get::<i64>(stack);
+    let v_bytes = stores.get::<DbRef>(stack);
+    let new_value = stores.text_from_bytes_range(v_bytes, v_lo, v_hi);
     stores
         .store_mut(&dest)
         .addr_mut::<String>(dest.rec, dest.pos)

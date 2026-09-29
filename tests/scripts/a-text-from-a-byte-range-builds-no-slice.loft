@@ -1,0 +1,42 @@
+// `text_from_byte_range(bytes, lo, hi)` — the text of a byte range read in place, what a
+// decoder writes instead of `text_from_bytes(bytes[lo..hi])` (whose slice is a fresh vector,
+// `(Slice-Value)`, built to be read once).  Hand-computed cells, both backends: the whole,
+// an inner range, an empty range, a reversed range, bounds clamped like a slice's, invalid
+// UTF-8 answering "" as `text_from_bytes` does, a null buffer, and agreement with the slice
+// spelling on every valid range.  `LOFT_ALLOC_REPORT=1 loft --interpret <this> range|slice`
+// counts the stores: both forms mint at most one (the slice's is reused across calls); what
+// the range form saves is the slice's copy per call, measured on pluginabi (records.md).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-30) — `text_from_bytes_range` with its
+// clamp removed (`lo..hi` taken raw): the clamped cells panic on both backends at the byte
+// index; restored byte-identically.
+fn main() {
+  args = arguments();
+  b: vector<u8> = [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8];   // "hello"
+  bad: vector<u8> = [104 as u8, 0xff as u8, 111 as u8];
+  e: vector<u8> = [];
+  if len(args) > 0 {
+    s = 0;
+    for r in 0..2000 {
+      if args[0] == "range" { s += size(text_from_byte_range(b, r % 3, 5)); }
+      if args[0] == "slice" { s += size(text_from_bytes(b[r % 3..5])); }
+    }
+    println("{args[0]} sink={s}");
+    return;
+  }
+  assert(text_from_byte_range(b, 0, 5) == "hello", "whole");
+  assert(text_from_byte_range(b, 1, 3) == "el", "inner");
+  assert(text_from_byte_range(b, 3, 3) == "", "empty");
+  assert(text_from_byte_range(b, 4, 2) == "", "reversed");
+  assert(text_from_byte_range(b, -3, 99) == "hello", "clamped both ends");
+  assert(text_from_byte_range(b, 2, 99) == "llo", "clamped high");
+  assert(text_from_byte_range(bad, 0, 3) == "" && text_from_bytes(bad) == "", "invalid utf-8");
+  assert(text_from_byte_range(bad, 0, 1) == "h" && text_from_byte_range(bad, 2, 3) == "o", "valid parts of an invalid buffer");
+  assert(text_from_byte_range(e, 0, 1) == "", "empty buffer");
+  for lo in 0..6 {
+    for hi in 0..6 {
+      assert(text_from_byte_range(b, lo, hi) == text_from_bytes(b[lo..hi]), "agrees with the slice at {lo}..{hi}");
+    }
+  }
+  println("text_from_byte_range ok");
+}

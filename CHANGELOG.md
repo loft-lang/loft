@@ -277,6 +277,10 @@ inside loft, and a loop writing a locked list under `--native` changed it with n
 entered it, and the outermost frame answers 0, as the documentation said.  The interpreter
 gave the NEXT line when a call ended its statement, and `--native` gave each function's
 declaration line.
+**`text_from_byte_range(bytes, lo, hi)`** makes a text from part of a byte buffer without
+copying the part out first: what a decoder writes once it has found where a text starts and
+ends, instead of `text_from_bytes(bytes[lo..hi])`.
+
 **A function that builds a vector and returns it inside a record copies nothing on the way
 out.**  `items: vector<T> = []; …; return Out { items: items }` used to build the vector in a
 store of its own and copy every element into the result; now it is built where the result

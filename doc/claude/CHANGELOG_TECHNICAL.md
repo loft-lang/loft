@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `text_from_byte_range(bytes, lo, hi)` — a text from a byte range, read in place (2026-09-30)
+
+`text_from_bytes(bytes[lo..hi])` builds the slice as a fresh vector (`(Slice-Value)` at an
+argument position) only to read it once; the range form reads the bytes where they are.  Its
+own name, because the interpreter dispatches a stdlib native by name (`native.rs FUNCTIONS`,
+`is_text_dest_native`) and an arity overload landed on the one-argument entry (SIGSEGV in
+`OpFormatText`).  Bounds clamp as a slice's, invalid UTF-8 answers "" as `text_from_bytes`
+does; both backends; guard `tests/scripts/a-text-from-a-byte-range-builds-no-slice.loft`.
+Measured on pluginabi's `check_request` scratch (records.md): the value text's slice store
+was a fifth of the check.
+
 ### `(R-Place)`'s loop clause and `(R-ExitVector)` — a decoder builds its tree in one store (2026-09-29)
 
 Two clauses on the placement matrix (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`,

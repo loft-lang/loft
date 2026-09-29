@@ -178,6 +178,7 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             | "n_host_input"
             // text_from_bytes — owned text decoded from a vector<u8>.
             | "n_text_from_bytes"
+            | "n_text_from_byte_range"
     )
 }
 
