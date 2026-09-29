@@ -482,7 +482,7 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record — `D-own-52` back to
+**OPEN: 0.**  Every deviation this doc has carried is closed; the record — `D-own-53` back to
 the first — is in [ownership-history.md](ownership-history.md).  One shape keeps a store: a
 closure capturing a VECTOR inside a loop, because the witness is record-typed; the obvious
 widening answers wrong on `--native` (`D-own-38`).
