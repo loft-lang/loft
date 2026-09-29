@@ -515,10 +515,16 @@ two operands are one record is only the fast path of content equality, never its
 collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
 identity `==` reported where a value is stored: `b = a; a == b` answered false, and
 `value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
-decided by what is written; how fast it is, by the compiler.  **Not built yet:** `==` on a plain
-struct, a collection and a struct-enum still compares identity, `vector == vector` and `&a == &b`
-are refused, and a float key keeps `0.0` and `-0.0` apart; the build is ten small steps, census
-before every flip — [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175).
+decided by what is written; how fast it is, by the compiler.  Built by @PLN175 in ten steps,
+census before every flip; a tuple bound to `T: Equatable` is the one gap left (D-gen-6,
+loft#1738).
+
+**Holds at:** `@C91` — `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`
+(struct, nested, tuple, lists, cycles, nullable pairs, a value struct's reference),
+`c91-a-collection-and-an-enum-value-compare-by-content.loft`, `c91-a-vector-compares-by-content.loft`,
+`c91-an-identity-compare-names-one-record.loft` and `c91-an-identity-compare-refuses-what-it-cannot-ask.loft`
+(`&a == &b`), `c91-a-float-key-agrees-with-equality.loft` (keys), `c91-every-type-is-equatable.loft`
+(generics), and `tests/store_content_eq.rs` (`Stores::eq_content`, the census trace); both backends.
 
 **Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
 identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
