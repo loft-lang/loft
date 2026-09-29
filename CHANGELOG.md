@@ -277,6 +277,12 @@ inside loft, and a loop writing a locked list under `--native` changed it with n
 entered it, and the outermost frame answers 0, as the documentation said.  The interpreter
 gave the NEXT line when a call ended its statement, and `--native` gave each function's
 declaration line.
+**A function that builds a vector and returns it inside a record copies nothing on the way
+out.**  `items: vector<T> = []; …; return Out { items: items }` used to build the vector in a
+store of its own and copy every element into the result; now it is built where the result
+lives, and a decoder that does this at every level (the cbor library's `read_value`) builds
+its whole tree in one store — its decode bench runs in 60 % of the time it took.  Nothing in
+your code changes; `LOFT_NO_EXIT_VECTOR=1` and `LOFT_NO_PLACE_RESULT=1` restore the copies.
 
 **Bytes can be read without copying them.**
 

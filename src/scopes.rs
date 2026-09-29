@@ -9531,6 +9531,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // live: decided here, after the scan has settled the function's frees and before the
         // slot intervals are computed off the final IR.  One home for both backends.
         crate::place_result::rewrite(data, d_nr);
+        // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
+        // return buffer's store: decided on the same IR, after the placements it may host.
+        crate::exit_vector::rewrite(data, d_nr);
         // `@FR-R-Rebind` — `x = f(x, …)` hands the callee x's own record as its buffer:
         // decided here for the same reason, on the same settled IR.
         crate::rebind_place::rewrite(data, database, d_nr);

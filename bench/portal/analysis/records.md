@@ -666,3 +666,63 @@ local vector's store, (c) the placed thing being the ONE heap-owning field of a 
 scalars are read after the move (a field move that zeroes its source so the wrapper's free
 finds nothing), and (d) the local vector returned inside the exit literal built in the
 return buffer's store.  Each is an ownership argument with cells already in the matrix.
+
+## `check_request` after the loop clause and the exit vector (2026-09-29)
+
+Both clauses the matrix asked for are built (`(R-Place)`'s loop clause: w1/w9; `(R-ExitVector)`:
+v1–v13, w1, w4, l3), and the cbor `read_value` is admitted at every site: `sub`, `kd`, `vd`
+placed in the local vector's store and moved out by field; `bs`, `tb`, `items`, `entries`
+claimed in the return buffer's store and taken by a handle move.  The tree is built in ONE
+store — the outermost buffer's — and copied nowhere on the way up.
+
+**Measured** (this box, `--native-release`):
+
+| row | before | loop clause | + exit vector |
+|---|---:|---:|---:|
+| cbor bench `decode`, ms per op | 42.6 | 34.7 | 26.2 |
+| stores per `check_request` | 26 (20.4 after the fixes since) | 20.4 | 7.4 |
+| `check_request` driver, 40 rounds of 2 048 checks | 0.47 s | 0.39 s | 0.39 s |
+
+**The A/B the census demanded** (`scripts/perf_check.py`, this box, the clauses off against
+the clauses on over the seven libraries and two consumer lanes the census flagged): with both
+clauses OFF `check_request` is 18 % slower (49.6× → 58.6×) and cbor's `decode` 17 % slower
+(23.8× → 27.7×); no hex_* routine moved 15 % either way, so the native header and base
+hoists the placed vectors lose cost nothing the bench can see.  Blessed in
+`bench/portal/rewrite_census.tsv`.
+
+So the decoder's own row moved 38 %, the store cycles per check fell to a third, and
+`check_request`'s TIME did not move with the second clause.  The profile says why: what the
+store mints cost is now paid by BLOCK claims and releases in the shared store —
+`place_record_prefilled` 11 % (a best-fit search of the store's free tree per placement, then
+the prefill), `free_record_in` 10.6 % (the claims walk, then a free-tree delete per block), and
+the free-tree maintenance behind both (`claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_balance`,
+`delete`: ≈ 16 %).  A claim in a store is not cheaper than a store mint: both are an allocator
+round-trip.  The other half of the profile is unchanged: `OpCopyRecord` 15 % (the library's
+`v = d.value` copy in `pa_decode`, item 6), the claims walks 18 % (`remove_claims_mode`,
+`owned_walk`, `holds_no_heap` — item 3, and `owned_walk` still allocates a `Vec` per record),
+`read_value`'s own code 13 %.
+
+**What this settles.**  Items 2 and part of 1 of the six are done — no copy composes the tree
+and only two stores a decode remain (the `d` buffer and `pa_decode`'s copy).  The distance to 3×
+is now in three places, each a runtime or library change rather than a rewrite:
+
+1. *The arena's allocator.*  A tree built once and cleared whole pays a red-black free-tree
+   claim per node and a delete per node at the clear.  A store whose content is one tree wants
+   BUMP claims and a one-step reset (`(R-Header)`'s store-free list already resets a root
+   vector's store in one step); the heap the texts own is the only thing a reset must still
+   find.
+2. *The claims walk.*  `owned_walk` allocates per record and `remove_claims` re-asks
+   `holds_no_heap` per child (item 3): the same walk over a type table computed once would
+   cost a fraction.
+3. *The library.*  `pa_decode`'s copy (`v = d.value; return v` — the w2 shape, 15 % of the
+   profile) and `pa_get`'s discharge (item 6).
+
+The first two move every store-based program, not this row; the third is pluginabi's and is
+this stream's to make.
+
+**A side-finding the perf-check surfaced.**  hex_shape's `wall_chain_walk` died under the
+exit vector with a corrupt reference: its `(mq, mr, md) = chain_marks(…)` locals carry
+wrappers typed `main_vector<vector<integer>>` over `vector<integer>` (loft#1757), harmless
+while a wrapper is a store released whole, fatal once released as a block by its type.  The
+clause declines such a wrapper (54 sites in hex_shape); the typing itself stays open.
+

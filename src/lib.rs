@@ -337,6 +337,7 @@ pub mod byte_copy;
 pub mod compact;
 pub mod const_fn;
 pub mod copy_view;
+pub mod exit_vector;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]

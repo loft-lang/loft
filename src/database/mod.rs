@@ -2829,6 +2829,46 @@ impl Stores {
         r
     }
 
+    /// `(R-ExitVector)` — the exit literal takes a local vector by a HANDLE MOVE: the
+    /// vector's record number leaves the wrapper's slot for the literal's field slot and the
+    /// source slot is zeroed, so nothing an element owns moves.  Same store only, and only
+    /// into an EMPTY slot; otherwise it is the element copy the rule replaced (`vector_add`),
+    /// with the source left for its wrapper's release.  A null or empty source moves nothing.
+    ///
+    /// # Panics
+    ///
+    /// Under `LOFT_HOIST_VERIFY=1` when the two slots do not share a store — the placement
+    /// that put the wrapper in the buffer's store did not happen.  Never otherwise.
+    pub fn move_vector(&mut self, dst: &crate::keys::DbRef, src: &crate::keys::DbRef, tp: u16) {
+        if src.store_nr == u16::MAX
+            || src.rec == 0
+            || dst.store_nr == u16::MAX
+            || dst.rec == 0
+            || (src.store_nr as usize) >= self.allocations.len()
+            || (dst.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let h = self.allocations[src.store_nr as usize].collection_rec(src.rec, src.pos);
+        if h == 0 {
+            return;
+        }
+        let d = self.allocations[dst.store_nr as usize].collection_rec(dst.rec, dst.pos);
+        if src.store_nr == dst.store_nr && d == 0 {
+            let store = &mut self.allocations[src.store_nr as usize];
+            store.set_u32_raw(dst.rec, dst.pos, h);
+            store.set_u32_raw(src.rec, src.pos, 0);
+            return;
+        }
+        assert!(
+            !crate::keys::hoist_verify(),
+            "vector move across stores (#{}→#{}) or into a filled slot — the wrapper was not placed in the buffer's store",
+            src.store_nr,
+            dst.store_nr
+        );
+        self.vector_add(dst, src, tp);
+    }
+
     /// @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an OWNED record local into a
     /// field, CONSUMING the source: when source and destination share a store the record's
     /// bytes RELOCATE — its heap handles keep their claims because a handle never names a
@@ -2845,6 +2885,42 @@ impl Stores {
     ///
     /// Under `LOFT_HOIST_VERIFY=1`, when a PLACED source and its destination do NOT share
     /// a store — the placement's whole claim, so the verifying build says so.
+    /// `OpMoveField` (`@FR-R-MoveLast`'s field clause): the `tp` record's bytes at `src`
+    /// relocate into `dst` and the source bytes are zeroed — the heap handles keep their
+    /// claims, and the record that held them (a placed buffer refilled on the next turn, a
+    /// wrapper whose scalars are read after) keeps its block and owns nothing of what moved.
+    /// Across stores the handles cannot travel: the copy is deep and the source's heap is
+    /// released, the same end state by the longer road.  Null-guarded like every record op.
+    pub fn move_field_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
+        if src.store_nr == u16::MAX
+            || src.rec == 0
+            || dst.store_nr == u16::MAX
+            || dst.rec == 0
+            || (src.store_nr as usize) >= self.allocations.len()
+            || (dst.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let size = u32::from(self.size(tp));
+        if src.store_nr == dst.store_nr {
+            self.copy_block(src, dst, size);
+            self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
+            return;
+        }
+        self.copy_block(src, dst, size);
+        self.copy_claims(src, dst, tp);
+        self.remove_claims(src, tp);
+        self.allocations[src.store_nr as usize].zero_range(src.rec, src.pos, size);
+    }
+
+    /// `(R-MoveLast)` — the last-use store of an owned record local into a field: a
+    /// relocation within one store, the deep copy across two (see `move_record_shallow`).
+    ///
+    /// # Panics
+    ///
+    /// Under `LOFT_HOIST_VERIFY=1` when a placed buffer that is not a store root is moved
+    /// across stores — the placement that should have put it in the destination's store did
+    /// not happen.  Never otherwise.
     pub fn move_record_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
         if src.store_nr == u16::MAX
             || src.rec == 0

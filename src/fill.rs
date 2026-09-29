@@ -289,6 +289,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     copy_record,
     place_record,
     move_record,
+    move_field,
+    move_vector,
     free_record_in,
     copy_ref_or_null,
     bind_or_copy,
@@ -618,6 +620,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCopyRecord",
     "OpPlaceRecord",
     "OpMoveRecord",
+    "OpMoveField",
+    "OpMoveVector",
     "OpFreeRecordIn",
     "OpCopyRefOrNull",
     "OpBindOrCopy",
@@ -2912,6 +2916,19 @@ fn move_record(s: &mut State) {
     s.database.move_record_out(&v_data, &v_dest, v_tp);
 }
 
+fn move_vector(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_src = s.get_stack::<DbRef>();
+    let v_dest = s.get_stack::<DbRef>();
+    s.database.move_vector(&v_dest, &v_src, v_tp);
+}
+
+fn move_field(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_dest = s.get_stack::<DbRef>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.move_field_out(&v_data, &v_dest, v_tp);
+}
 fn free_record_in(s: &mut State) {
     let v_tp = s.code::<u16>();
     let v_rec = s.get_stack::<DbRef>();

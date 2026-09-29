@@ -2475,8 +2475,21 @@ on the drawing bench).
                  exists only while the value holds that variant.  A member of a linked
                  collection group is NOT a decline: the group's maintenance brackets
                  the fill (Col-Group), and a fill that arrives through the buffer
-                 instead of an append is one it must see.  Every other call keeps its
-                 own buffer.
+                 instead of an append is one it must see.  A bind INSIDE a loop is
+                 admitted through the same argument when the destination is the ONE
+                 heap-owning field of the result — its payload — stored into an
+                 element appended to a host that is a parameter or a local vector
+                 bound before the loop, with the result's scalars read after the
+                 store: the buffer is claimed in the host's store on the first turn
+                 and cleared on the next (the lazy mint keeps its shape), the field
+                 moves by relocation with its source ZEROED — the turn's clear and
+                 the callee's refill then find an empty record, and a later read of a
+                 scalar reads what the callee wrote — and the exit releases the placed
+                 record as a block, so a host that outlives the frame keeps nothing of
+                 it.  Declines keep the copy: a read of the payload after the move, a
+                 second destination, a nested loop, the local or the buffer named
+                 outside the turn, a host bound after the loop or rebound.  Every
+                 other call keeps its own buffer.
   (R-MoveLast)   a record-literal field or a field/element assignment whose source is
                  a LOCAL the ownership oracle marks OWNED (O-Owner: never a parameter,
                  a view, a `&` link or a witnessed local) and DEAD on every path after
@@ -2491,6 +2504,32 @@ on the drawing bench).
                  for it — and keeps B-Copy's deep copy when they do not: a cross-store
                  move copies every claim anyway, so the rewrite has no gain there, and
                  R-Place is what brings the source into the destination's store first.
+  (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
+                 function's exit only inside the literal built into the return
+                 buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its
+                 wrapper CLAIMED IN the return buffer's store (the buffer ensured
+                 first, exactly as the exit ensures it), the literal takes the vector
+                 by a HANDLE MOVE — the slot's record number moves and the source slot
+                 is zeroed, so no element and no heap claim moves — and every exit
+                 releases the wrapper's block, which finds nothing on the path that
+                 moved and the whole vector on one that did not.  Between its init
+                 and the exit the local is only ever a RECEIVER (the first argument of
+                 a native op: a push, a read, a placement host) or a borrowed argument
+                 of a loft-defined call, and the wrapper is named only at its null
+                 init, its mint, its length reset and its exit frees.  Declines keep
+                 the wrapper store and the copy: a rebind or an alias of the local, a
+                 bare `return xs`, a copy of it anywhere but the buffer's literal, a
+                 mention of it in that literal AFTER the field that took it (the move
+                 would be read as empty), a free outside an exit, a wrapper freed
+                 nowhere, and a wrapper whose type is not `main_vector<T>` for the
+                 local's `vector<T>` (a tuple-destructured local's is typed a level
+                 too deep, loft#1757, and a release that walked it by that type would
+                 read every element as a handle).  It composes with R-Place's loop clause: a loop whose host is
+                 this local places its buffers in the return buffer's store too, so a
+                 recursive decoder builds its whole tree in the store of the outermost
+                 buffer and copies nothing on the way up.  The move is same-store and
+                 into an empty slot by construction; the runtime keeps the copy for any
+                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in

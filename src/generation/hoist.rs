@@ -9722,6 +9722,8 @@ fn native_writes_existing(
             | "OpDatabaseNP"
             | "OpPlaceRecord"
             | "OpMoveRecord"
+            | "OpMoveField"
+            | "OpMoveVector"
             | "OpFreeRef"
             | "OpFreeRefIfDistinct"
             | "OpFreeRecordIn"

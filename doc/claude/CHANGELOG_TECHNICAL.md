@@ -10,6 +10,42 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-Place)`'s loop clause and `(R-ExitVector)` — a decoder builds its tree in one store (2026-09-29)
+
+Two clauses on the placement matrix (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`,
+cells w1/w9 and v1–v13, hand-computed, both backends, pinned in `tests/place_result.rs`).
+**The loop clause** (`place_result::admitted_loops`): a bind inside a loop whose result's ONE
+heap-owning field is stored into an element appended to a parameter or a local vector bound
+before the loop has its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy
+mint's `then`), the field moves by the new `OpMoveField` (bytes relocate, source zeroed), and
+each exit releases the placed record as a block.  **The exit vector** (`exit_vector.rs`, new,
+run right after the placements): a local vector that reaches the exit only inside the literal
+built into the return buffer has its wrapper claimed in that buffer's store, the literal takes
+it by the new `OpMoveVector` (a handle move: the slot's record number moves, the source slot is
+zeroed; the runtime keeps the copy for a cross-store or filled pair, fatal under
+`LOFT_HOIST_VERIFY=1`), and each exit releases the wrapper's block.  A/B on this box (the
+clauses off against on, the census-flagged lanes): `check_request` +18 % and cbor `decode`
++17 % without them, no hex_* routine moved 15 % either way — the native header and base hoists
+that decline a placed vector (no longer a fresh store root) cost nothing measurable, blessed in
+the census.  Composed, the cbor
+`read_value` builds its whole tree in the outermost buffer's store: its bench's decode row
+42.6 ms → 26.2 ms per op here, stores per pluginabi `check_request` 26 → 7.  Switches
+`LOFT_NO_PLACE_RESULT` (both placements) and `LOFT_NO_EXIT_VECTOR`; `LOFT_TRACE_PLACE=1` names
+each admission and decline.  Fixed on the way: the loop clause's first cut REMOVED a buffer's
+exit frees by paths read before any plan was applied, so a second buffer's path landed one
+statement on and stripped the NEXT buffer's free — a store leaked per map decode (the cbor
+bench: 400 a round, `store table exhausted` in `bench/stats.py`); frees are now made no-ops in
+place, and a plan's site is asserted to be what it names.  Found by `make perf-check` over
+hex_shape and declined: a tuple-destructured vector local's wrapper is typed
+`main_vector<vector<T>>` (loft#1757), and releasing it as a block by that type read every
+integer as a handle (`Store access out of bounds … the reference is corrupt` in
+`wall_chain_walk`); the clause admits only a wrapper named `main_vector<T>` for a
+`vector<T>` local (matrix cell v14).  Not measured as a speed-up on
+`check_request` itself: the store cycles it lost were replaced by block claims and releases in
+the shared store (`place_record_prefilled` 11 %, `free_record_in` 10.6 % of the profile), and
+the free-tree cost of a claim is close to a store mint's — `bench/portal/analysis/records.md`
+§ check_request after the two clauses.
+
 ### `(R-Place)`'s callee clause admits a chain exit (2026-09-29)
 
 `place_result::callee_writes_buffer_at_every_exit` read `return g(…)` as an exit answering a

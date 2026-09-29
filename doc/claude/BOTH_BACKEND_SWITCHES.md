@@ -55,6 +55,29 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
+Since 2026-09-29 the same switch covers `(R-Place)`'s LOOP clause: a bind inside a loop whose
+result's ONE heap-owning field is stored into an element appended to a parameter or to a
+local vector bound before the loop (`sub = read(…); items += [sub.value]; p = sub.next`)
+gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy mint's
+`then`, the turn's `OpClear` kept), the field moves by `OpMoveField` — the bytes relocate,
+the source is ZEROED so the next turn's clear and the callee's refill find an empty record
+— and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
+cbor decoder's bench (`--native-release`, this box): decode 42.6 ms → 34.7 ms per op.
+**`LOFT_NO_EXIT_VECTOR=1`** (`(R-ExitVector)`, decided in the scope pass after the placements,
+BOTH backends) keeps a local vector that is returned inside the exit literal (`items:
+vector<T> = []; …; return Out { items: items, … }`) minting a wrapper store of its own and
+the literal deep-copying it into the return buffer — with it off, the wrapper is claimed in
+the return buffer's store (`OpPlaceRecord(__retbuf, …)` behind the exit's own ensure), the
+literal takes the vector by a handle move (`OpMoveVector`: the slot's record number moves,
+the source slot is zeroed) and every exit releases the wrapper's block (`OpFreeRecordIn`).
+It is the first bisect step for a wrong or EMPTY vector field out of a callee that built it
+in a local, and for a leak into a caller's store; `LOFT_TRACE_PLACE=1` names each admission
+(`[exit-vector]`) and each decline (a rebind, an alias, a bare return, a copy elsewhere, a
+mention after the move, a free outside an exit, a wrapper typed a level too deep — the
+tuple-destructured local of loft#1757).  A vector placed this way is no longer a
+fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
+`(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
+34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
 of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS

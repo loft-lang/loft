@@ -18,6 +18,22 @@
 // `LOFT_ALLOC_REPORT=1 loft --interpret <this> p3` counts the stores a shape still mints
 // (p2 and p3: one per call, the Rack literal; p1: two).
 //
+// Since 2026-09-29 the matrix also carries the two clauses it asked for.  `(R-Place)`'s LOOP
+// clause admits w1 and w9 (the per-turn buffer placed in the local vector's store, the payload
+// field moved out with its source zeroed): w1 2 → 1 stores per call.  `(R-ExitVector)`, cells
+// v1–v13: a local vector returned inside the exit literal (v1 one exit; v2 an early exit and a
+// read after the move — declined; v3 an element walk and an index read — declined as an alias;
+// v4 records with text; v5 a callee reading it inside the literal; v6 a bound-local exit; v7 a
+// rebind — declined; v9 two locals in one literal; v10 a mint inside a branch with a read after
+// the move — declined; v12 bytes with a text made from them; v13 a bare return — declined;
+// v14 a tuple-destructured local, whose wrapper the parser mistypes — declined):
+// v1 2 → 1, v9 3 → 1, w1 2 → 1, l3 2 → 1, w4 5 → 3 stores per call.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-29, `(R-ExitVector)`) — the handle move
+// made to leave the SOURCE slot filled (`Stores::move_vector` without its zeroing): the
+// wrapper's release then frees the vector the literal holds, and `assertion failed: p5` (w1's
+// items gone) on BOTH backends, plain and under every falsifier.  Restored byte-identically.
+//
 // @falsified-at: hand-measured (sabotage, 2026-09-29) — the clause's recursion into the
 // chain's target removed (`Exits::chain` a no-op): p6's `slot_chain_bound` is ADMITTED, and
 // `--native` panics at the moved record ("vector_append: … the vector handle in record … points
@@ -199,6 +215,107 @@ fn slot_view(r: Rack, b: Bag, i: integer) { v = chain_view(b, i); r.slots += [Sl
 fn chain_bound(n: integer) -> Val { return bound_then_returned(n); }
 fn slot_chain_bound(r: Rack, n: integer) { v = chain_bound(n); r.slots += [Slot { val: v, k: n }]; }
 
+// ── the exit vector (`(R-ExitVector)`): a local vector returned INSIDE the exit literal ──
+// Its wrapper store goes: the wrapper is claimed in the return buffer's store, the literal
+// takes the vector by a handle move, the wrapper's block is released at the exit.
+struct Out { xs: vector<integer>, n: integer }
+struct Bytes { bs: vector<u8>, txt: text }
+
+// v1 — a scalar vector pushed in a loop, returned inside the exit literal: one exit.
+fn v1(n: integer) -> Out {
+  xs: vector<integer> = [];
+  for i in 0..n { xs += [i * 3]; }
+  return Out { xs: xs, n: n };
+}
+// v2 — two exits: an early literal without the vector, the success exit taking it.
+fn v2(n: integer) -> Out {
+  xs: vector<integer> = [];
+  if n < 0 { return Out { xs: [], n: -1 }; }
+  for i in 0..n { xs += [i + 1]; }
+  return Out { xs: xs, n: len(xs) };
+}
+// v3 — the vector READ (length, index, an element walk) between the pushes and the exit.
+fn v3(n: integer) -> Out {
+  xs: vector<integer> = [];
+  for i in 0..n { xs += [i * i]; }
+  t = 0;
+  for e in xs { t += e; }
+  first = xs[0] ?? -1;
+  return Out { xs: xs, n: t * 100 + len(xs) * 10 + first };
+}
+// v4 — records with a text field: the claims move with the handle.
+fn v4(n: integer) -> Bag {
+  items: vector<Val> = [];
+  for i in 0..n { items += [Val { n: i, tag: "k{i}" }]; }
+  return Bag { items: items, count: len(items) };
+}
+// v5 — the vector handed to a callee INSIDE the exit literal, after the field that takes it.
+fn v5(n: integer) -> Bag {
+  items: vector<Val> = [];
+  for i in 0..n { items += [Val { n: i * 2, tag: "m" }]; }
+  return Bag { items: items, count: total(items) };
+}
+// v6 — the literal bound to a local and returned: a bound-local exit, not an Object exit.
+fn v6(n: integer) -> Out {
+  xs: vector<integer> = [];
+  for i in 0..n { xs += [n - i]; }
+  o = Out { xs: xs, n: n };
+  return o;
+}
+// v7 — the vector REBOUND after its first pushes: outside the clause.
+fn v7(n: integer) -> Out {
+  xs: vector<integer> = [];
+  for i in 0..n { xs += [i]; }
+  xs = [n * 10];
+  for i in 0..n { xs += [i + 100]; }
+  return Out { xs: xs, n: len(xs) };
+}
+// v9 — two local vectors in one exit literal.
+fn v9(n: integer) -> Rack {
+  ss: vector<Slot> = [];
+  vs: vector<Val> = [];
+  for i in 0..n {
+    ss += [Slot { val: Val { n: i, tag: "s" }, k: i * 7 }];
+    vs += [Val { n: i * 3, tag: "v{i}" }];
+  }
+  return Rack { slots: ss, items: vs };
+}
+// v10 — the vector minted inside a branch; exits in other branches never bound it (the
+// decoder's arm shape), and one exit inside the arm leaves it behind.
+fn v10(kind: integer, n: integer) -> Out {
+  if kind == 0 { return Out { xs: [], n: -5 }; }
+  if kind == 1 {
+    xs: vector<integer> = [];
+    for i in 0..n { xs += [i + kind]; }
+    if n > 5 { return Out { xs: [], n: -6 }; }
+    return Out { xs: xs, n: len(xs) };
+  }
+  return Out { xs: [n], n: 1 };
+}
+// v12 — a byte vector pushed a byte at a time, and a text made from it in the same literal.
+fn v12(n: integer) -> Bytes {
+  bs: vector<u8> = [];
+  for i in 0..n { bs += [((97 + i) & 255) as u8]; }
+  return Bytes { bs: bs, txt: text_from_bytes(bs) };
+}
+// v13 — the vector returned bare: another rule's shape, not this clause's.
+fn v13(n: integer) -> vector<integer> {
+  xs: vector<integer> = [];
+  for i in 0..n { xs += [i * 5]; }
+  return xs;
+}
+
+
+// v14 — the local bound by a TUPLE destructure: the parser mints its wrapper as
+// `main_vector<vector<integer>>` over a `vector<integer>` local, so a release that walked
+// the wrapper by type would read every integer as a handle — declined by the wrapper check.
+fn pair(n: integer) -> (vector<integer>, vector<integer>) { ([n, n + 1], [n * 2]) }
+fn v14(n: integer) -> Out {
+  (xa, xb) = pair(n);
+  xa += [n + 2];
+  return Out { xs: xa, n: len(xb) };
+}
+
 fn run_all() {
   rk = Rack { slots: [], items: [] };
   add_mk(rk, 1);
@@ -268,6 +385,72 @@ fn run_all() {
   b8 = l3(xs);
   println("l3 {b8.count} {len(b8.items)} {b8.items[2]?.tag}");
   assert(b8.count == 16 && len(b8.items) == 3 && b8.items[2]?.tag == "t5", "l3");
+  o1 = v1(4);
+  s1 = 0;
+  for e in o1.xs { s1 += e; }
+  println("v1 {s1} {len(o1.xs)} {o1.n}");
+  assert(s1 == 18 && len(o1.xs) == 4 && o1.n == 4, "v1");
+  o2a = v2(3);
+  o2b = v2(-2);
+  s2 = 0;
+  for e in o2a.xs { s2 += e; }
+  println("v2 {s2} {o2a.n} {len(o2b.xs)} {o2b.n}");
+  assert(s2 == 6 && o2a.n == 3 && len(o2b.xs) == 0 && o2b.n == -1, "v2");
+  o3 = v3(4);
+  s3 = 0;
+  for e in o3.xs { s3 += e; }
+  println("v3 {s3} {o3.n}");
+  assert(s3 == 14 && o3.n == 1440, "v3");
+  b4 = v4(3);
+  t4 = "";
+  s4 = 0;
+  for it in b4.items { s4 += it.n; t4 += it.tag; }
+  println("v4 {s4} {t4} {b4.count}");
+  assert(s4 == 3 && t4 == "k0k1k2" && b4.count == 3, "v4");
+  b5 = v5(3);
+  s5 = 0;
+  for it in b5.items { s5 += it.n; }
+  println("v5 {s5} {len(b5.items)} {b5.count}");
+  assert(s5 == 6 && len(b5.items) == 3 && b5.count == 6, "v5");
+  o6 = v6(3);
+  s6 = 0;
+  for e in o6.xs { s6 += e; }
+  println("v6 {s6} {o6.n}");
+  assert(s6 == 6 && o6.n == 3, "v6");
+  o7 = v7(2);
+  s7 = 0;
+  for e in o7.xs { s7 += e; }
+  println("v7 {s7} {o7.n}");
+  assert(s7 == 221 && o7.n == 3, "v7");
+  r9v = v9(3);
+  k9 = 0;
+  n9 = 0;
+  t9 = "";
+  for sl in r9v.slots { k9 += sl.k; }
+  for it in r9v.items { n9 += it.n; t9 += it.tag; }
+  println("v9 {k9} {n9} {t9} {len(r9v.slots)}");
+  assert(k9 == 21 && n9 == 9 && t9 == "v0v1v2" && len(r9v.slots) == 3, "v9");
+  oa = v10(1, 3);
+  ob = v10(0, 3);
+  oc = v10(1, 7);
+  od = v10(2, 4);
+  sa = 0;
+  for e in oa.xs { sa += e; }
+  println("v10 {sa} {oa.n} {ob.n} {oc.n} {len(oc.xs)} {od.n} {od.xs[0] ?? -1}");
+  assert(sa == 6 && oa.n == 3 && ob.n == -5 && oc.n == -6 && len(oc.xs) == 0 && od.n == 1 && (od.xs[0] ?? -1) == 4, "v10");
+  y = v12(3);
+  println("v12 {y.txt} {len(y.bs)}");
+  assert(y.txt == "abc" && len(y.bs) == 3, "v12");
+  z = v13(3);
+  sz = 0;
+  for e in z { sz += e; }
+  println("v13 {sz} {len(z)}");
+  assert(sz == 15 && len(z) == 3, "v13");
+  o14 = v14(3);
+  s14 = 0;
+  for e in o14.xs { s14 += e; }
+  println("v14 {s14} {len(o14.xs)} {o14.n}");
+  assert(s14 == 12 && len(o14.xs) == 3 && o14.n == 1, "v14");
 }
 
 fn main() {
@@ -295,6 +478,14 @@ fn main() {
     if cell == "p2" { rk = Rack { slots: [], items: [] }; slot_mk(rk, r); s += len(rk.slots); }
     if cell == "p3" { rk = Rack { slots: [], items: [] }; slot_chain(rk, r); s += len(rk.slots); }
     if cell == "p6" { rk = Rack { slots: [], items: [] }; slot_chain_bound(rk, r % 9); s += len(rk.slots); }
+    if cell == "v1" { s += v1(r % 5).n; }
+    if cell == "v2" { s += v2(r % 7 - 2).n; }
+    if cell == "v4" { s += v4(r % 4).count; }
+    if cell == "v9" { s += len(v9(r % 3).items); }
+    if cell == "v10" { s += v10(r % 3, r % 8).n; }
+    if cell == "v12" { s += len(v12(r % 4).bs); }
+    if cell == "v13" { s += len(v13(r % 6)); }
+    if cell == "v14" { s += v14(r % 4).n; }
     if cell == "p4" { rk = Rack { slots: [], items: [] }; slot_bound(rk, r % 9); s += len(rk.slots); }
   }
   println("{cell} sink={s}");
