@@ -293,7 +293,11 @@ fn log_family_writes_on_both_backends() {
     );
 }
 
-/// Production mode logs the fault and CONTINUES — on both backends (loft#1263).
+/// @C66 — production mode logs the fault and CONTINUES — on both backends (loft#1263).
+///
+/// Falsified by hand (2026-09-29): with `runtime_error::logged_in_production` answering
+/// `false` (production treated as development), the `--interpret/panic` cell stops after
+/// `BEFORE` and this test fails.
 ///
 /// `production = true` is documented to turn `panic()` into a fatal log entry and a failing
 /// `assert()` into an error entry, with execution carrying on, "useful for long-running

@@ -137,7 +137,9 @@ wrong value, while a developer wants the loud stop.
 **Revisit when.** A deployment shape surfaces where log-and-continue is wrong.  Decided
 2026-05-11, calculation faults revised by C80 on 2026-06-24 —
 [record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
-**Holds at:** `tests/panic_halts_both_backends.rs`; LOGGER.md.
+**Holds at:** `@C66` — `panic_halts_both_backends.rs::production_mode_logs_and_continues_on_both_backends`
+(production continues, both backends; the halting rows above it are its control); LOGGER.md.
+The locked-store write keeps the same promise: `@C80`, `tests/locked_writes.rs`.
 **Catalogue:** @F38 (arithmetic safety), @F44 (logging — panic/assert).
 
 ## C67 — Fail at startup, not at runtime (no programmer-side try/catch for internal bugs)
