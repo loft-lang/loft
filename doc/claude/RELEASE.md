@@ -168,8 +168,10 @@ Plans live in [`loft-lang/plans`](https://github.com/loft-lang/plans); GitHub's
 plan.  Closing is explicit and cross-repo:
 
 - **A PR that completes a plan** carries a close directive in its body —
-  `Closes @PLN<n>` (or `Closes loft-lang/plans#<n>`).  The plan stays
-  `status:active` while the work is only on the cycle branch.
+  `Closes @PLN<n>` (or `Closes loft-lang/plans#<n>`).  A plan does not wait for the
+  merge: it is closed by hand the moment its work is finished and verified, with its
+  label swapped to `status:finished` (the `loft-plan-workflow` skill § Closing or
+  deferring a plan); the directive closes a plan still open when the PR merges.
 - **On merge to `main`** (the release), the
   [`close-plans` workflow](../../.github/workflows/close-plans.yml) reads the
   merge PR's directives and runs
@@ -488,7 +490,9 @@ python3 scripts/doc_history_report.py <doc.md>   # the lines it flagged, and why
 
 It is a REPORT, not a gate, and it has to be: whether a date is timeline or contract is a
 judgement — *"`@F7` shipped in 1.1"* is a compatibility FACT that belongs in the contract — and
-a gate over a judgement gets satisfied rather than obeyed.  Two rules make the split hold:
+a gate over a judgement gets satisfied rather than obeyed.  It is VISIBLE on the PR that adds
+one: the advisory `doc-timeline` job turns red (`doc_lint.py --fail-on timeline`) without
+blocking the merge, and a line that is meant carries `<!-- doc-lint: ok -->`.  Two rules make the split hold:
 
 - **The latest state stays in the contract doc.**  A reader must not have to open the companion
   to learn that two deviations are open.  Keep the count and one line per open item; move the

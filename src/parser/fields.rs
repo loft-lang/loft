@@ -614,7 +614,7 @@ impl Parser {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
-                            "Unknown field {}.{field} — did you mean the free function `{field}(…)` ? ({declared_by}; see LOFT.md § Methods and function calls)",
+                            "Unknown field {}.{field} — did you mean the free function `{field}(…)` ? ({declared_by}; see LOFT_DATA.md § Methods and function calls)",
                             t.source_name(&self.data)
                         );
                     } else if let Some(s) = self.suggest_field_name(dnr, &field) {

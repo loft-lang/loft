@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 > **Status — DONE / SHIPPED 2026-07-08.** `value struct` is implemented, proven zero-cost on
 > both backends, and lands via the finishing PR (`Closes @PLN101`). User-facing syntax:
-> [LOFT.md § Value structs](../../LOFT.md). Per-slice build log: [STEPS.md](STEPS.md).
+> [LOFT_DATA.md § Value structs](../../LOFT_DATA.md). Per-slice build log: [STEPS.md](STEPS.md).
 
 ## What shipped
 
@@ -96,5 +96,5 @@ prototype that already proves the feature. Any residual polish is bug-fix-level 
 
 - Supersedes **@PLN99 Arc D** (the deferred "someday-perf" framing).
 - Mechanism: `src/scopes.rs` (`value_struct_copy`), `src/parser/{definitions,mod}.rs`, `src/data.rs`.
-- Reference: [LOFT.md § Value structs](../../LOFT.md), [STEPS.md](STEPS.md), DESIGN_DECISIONS.md C65.
+- Reference: [LOFT_DATA.md § Value structs](../../LOFT_DATA.md), [STEPS.md](STEPS.md), DESIGN_DECISIONS.md C65.
 - Tracker: [@PLN101](https://github.com/loft-lang/plans/issues/101).

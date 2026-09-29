@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @I58 (parser), @F37 (operator precedence). Context-sensitive points: @F35 (string interpolation), @F12 (struct literals).
 
 > **Rules then deviations** (see [README](README.md)). This area pins what the informal
-> grammar in [LOFT.md § Summary of grammar](../LOFT.md) leaves out — **operator
+> grammar in [LOFT_DECLARATIONS.md § Summary of grammar](../LOFT_DECLARATIONS.md) leaves out — **operator
 > precedence and associativity** — and records where the surface is *not* context-free.
 > Rough spot #4 from [FORMALIZATION.md](../FORMALIZATION.md), which the runtime-scoped
 > red-flag map structurally misses.
@@ -145,7 +145,7 @@ is the only place a leading `&` is allowed. The parser disambiguates purely by p
 > **@PLN35 · SHIPPED.** This ladder was written spec-first, ahead of the code; the code landed
 > with phases 1–7 + PC1–PC5 ([matching.md § Rules — PEG patterns](matching.md)) and parses these
 > groupings — verified both backends. The pattern
-> *productions* live in [LOFT.md § Summary of grammar](../LOFT.md); this pins their operator
+> *productions* live in [LOFT_DECLARATIONS.md § Summary of grammar](../LOFT_DECLARATIONS.md); this pins their operator
 > precedence, the one fact that lives only in the parser. Design:
 > [../plans/35-match-peg/FORMAL-DESIGN.md](../plans/35-match-peg/FORMAL-DESIGN.md).
 

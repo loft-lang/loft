@@ -38,11 +38,13 @@ EXCLUDE_EXACT = {
     "doc/claude/STABILITY_SWEEP.md",
     "doc/claude/STABILITY_HOTSPOTS.md",
     "doc/claude/STABILITY_REDFLAGS.md",
-    "doc/claude/DESIGN_DECISIONS.md",   # a register of decisions, each with its date
+    "doc/claude/DESIGN_DECISIONS.md",   # the register's index
     "doc/claude/LIBRARY_BRANCHES.md",
     "doc/claude/MOVING.md",
     "doc/claude/formal/ROADMAP.md",
 }
+# The register's subject files: each entry is a decision with its date.
+EXCLUDE_PREFIX = ("doc/claude/DESIGN_DECISIONS_",)
 EXCLUDE_DIRS = ("doc/claude/plans/", "doc/claude/lib_plans/", "doc/features/", "doc/claude/finished/")
 
 ROOTS = ("doc/claude", "doc", ".")
@@ -71,7 +73,7 @@ def contract_docs():
                 if not fn.endswith(".md") or fn.endswith("-history.md"):
                     continue
                 rel = os.path.relpath(os.path.join(dirpath, fn), ROOT)
-                if rel in seen or rel in EXCLUDE_EXACT or rel.startswith(EXCLUDE_DIRS):
+                if rel in seen or rel in EXCLUDE_EXACT or rel.startswith(EXCLUDE_DIRS + EXCLUDE_PREFIX):
                     continue
                 seen.add(rel)
                 yield rel

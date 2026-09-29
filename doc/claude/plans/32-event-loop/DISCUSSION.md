@@ -77,7 +77,7 @@ el::on(loop, fn(e: ClickEvent) { state.score += 1 });   // doesn't work
 In every language the novice has used (JS, Python, Lua, C#
 closures), this Just Works.  The error message will be Greek.
 This is **not** something the EventLoop spec can fix — it's
-loft's [C38](../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition)
+loft's [C38](../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition)
 design choice — but it dominates the novice's first-day
 experience.
 
@@ -195,7 +195,7 @@ The pivot the user has flagged:
 Options if the pivot is taken:
 
 1. **Move closer to Rust's closure model** (recorded as the
-   future direction in [DESIGN_DECISIONS.md § C38](../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition)).
+   future direction in [DESIGN_DECISIONS.md § C38](../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition)).
    `&T` / `&mut T` capture, FnOnce / FnMut / Fn capability
    hierarchy.  Heaviest lift; most novice-friendly because
    `state.score += 1` Just Works.
@@ -260,7 +260,7 @@ Decisions that have been made and locked into the spec:
 
 - **`on_each` future opt-in for vector recv-types.**  Refinement to streaming: when the handler subscribes to a vector-typed payload, an opt-in `on_each(loop, name, encoding, marker, fn(item) { … })` form delivers each parsed element as it arrives on the wire.  Doesn't ship in v1; doesn't change the default `on()` semantics.
 
-- **Closure capture is by value (C38); state is captured via `Reference<T>`; `Mutable<T>` stdlib helper for scalars.**  See [DESIGN_DECISIONS.md § C38](../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition).
+- **Closure capture is by value (C38); state is captured via `Reference<T>`; `Mutable<T>` stdlib helper for scalars.**  See [DESIGN_DECISIONS.md § C38](../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
 
 - **EventLoop is a library, not a language construct.**  Lanes-and-budgets are pure runtime semantics; no parser change.
 

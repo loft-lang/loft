@@ -15,11 +15,13 @@ struct Product {
 }
 // ## Field Constraints
 // You can restrict what values a field may hold.
-// 'limit(min, max)' gives the field a smaller range. It is not a rejection and it
-// never stops your program: a value outside the range cannot be represented, so the
-// field takes the same answer any uncomputable number takes (see the Integers page).
-// That is null when the field is nullable, and the type's default when it is not —
-// 0 for a range that includes zero.
+// 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove
+// fits is refused where you write it, and the error names the cures: a fallback
+// ('over ?? 0'), the checked cast 'as integer(0, 255)?' (the value or null), or a value
+// that provably fits. It never stops a running program: a step the compiler cannot ask
+// about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a
+// range that includes zero — and loft advises you ('narrow-fallback'). A nullable
+// field takes null instead.
 // Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back
 // as three zeros, with nothing extra to write.
 // Fields you omit in a constructor receive zero (or null for nullable fields) by default.
@@ -200,10 +202,18 @@ fn main() {
   linked = &item;
   linked.stock = 1;
   assert(item.stock == 1, "'&' binds a live link");
+  // ## Comparing structs
+  // '==' compares what two structs hold, field by field — a plain struct and a value
+  // struct alike, with no 'OpEq' to write. To ask whether two names are the SAME
+  // record, put '&' on both sides.
+  twin = Product {name: "Pear", price: 90, stock: 3 };
+  assert(spare == twin, "equal fields make equal structs");
+  assert(!(&spare == &twin), "…held in two different records");
+  assert(&linked == &item, "a '&' link names the record it links to");
   // ## sizeof
   // 'sizeof(Type)' returns the packed byte size used when the type is stored
   // as a struct field or vector element. Range-constrained integer types like
-  // u8 and u16 report their packed size, not the 4-byte stack slot size.
+  // u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");

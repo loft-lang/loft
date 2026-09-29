@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § String comparisons containing `{` or `}` — an undoubled brace opens an
+// @PAGE: LOFT_DESIGN.md § String comparisons containing `{` or `}` — an undoubled brace opens an
 // interpolation, so `{r:128,g:0,b:64}` is read as an expression with a format spec and does
 // not parse as the text the author meant.
 // The harness re-parses the file with the refused cell blanked (loft#1242), and each

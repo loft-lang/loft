@@ -484,5 +484,7 @@ tells you to reach for:
   procedure, the copy-lease worked example, the evidence behind the patch signs — is
   `doc/claude/DESIGN_PROTOCOL.md` § Deciding what a construct means.
 - The verification questions a finished design answers are
-  `doc/claude/DESIGN_VERIFICATION.md § C1`; declined designs are recorded in
-  `doc/claude/DESIGN_DECISIONS.md` — check it before re-proposing one.
+  `doc/claude/DESIGN_VERIFICATION.md § C1`; decided and declined designs are recorded in
+  the register `doc/claude/DESIGN_DECISIONS.md` indexes (one `DESIGN_DECISIONS_<SUBJECT>.md`
+  per subject) — check it before re-proposing one; `./scripts/idx next-decision` names the
+  id for a new entry.

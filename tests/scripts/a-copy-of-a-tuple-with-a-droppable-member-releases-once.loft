@@ -20,7 +20,7 @@
 // Three shapes are NOT here because they still release twice — a nested tuple, a member
 // declared NULLABLE, and a copy off a tuple PARAMETER.  All three are the same missing
 // pairing (the element type carries no backing dep, or the deps are the caller's), all three
-// are open as `heap.md` D-heap-1, and all three are branch-internal: they do not reproduce
+// are open as `heap-history.md` D-heap-1, and all three are branch-internal: they do not reproduce
 // on `main`, where the member is aliased rather than copied.
 //
 // @falsified-at: 7aaab369 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,

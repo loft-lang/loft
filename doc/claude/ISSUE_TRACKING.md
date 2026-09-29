@@ -133,7 +133,7 @@ files would.  The win is the *uniform* convention, not GitHub itself.
   work.  A bug filed in the wrong repo is **re-homed** — re-file in the owning
   repo, close the original with a pointer — never closed by a cross-repo `Fixes`,
   which won't fire.  After a library fix, the loft-side fixture re-sync
-  ([LIBRARY_AUTHORING.md § 5d](LIBRARY_AUTHORING.md)) is a **separate** reviewable
+  ([LIBRARY_PUBLISH.md § 5d](LIBRARY_PUBLISH.md)) is a **separate** reviewable
   commit in loft, not the issue's closer.
 - **Cross-repo** — a bug in repo A that *blocks* repo B → an Issue in A, referenced
   from a `blocked-by`-labelled tracking Issue in B (`loft-lang/loft#247`).  The

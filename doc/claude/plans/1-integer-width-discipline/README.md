@@ -47,7 +47,7 @@ silently loses data and no backend disagrees on width.
 ## The rule (design)
 
 This is the existing conversion-mode framework ([INCONSISTENCIES.md #17](../../INCONSISTENCIES.md),
-[LOFT.md § Type-conversion rules](../../LOFT.md)) applied to integer widths.
+[LOFT_DECLARATIONS § Type-conversion rules](../../LOFT_DECLARATIONS.md)) applied to integer widths.
 Rule of thumb already in LOFT.md: *infallible/widening = implicit; fallible/
 narrowing = explicit `as`.*  The integer-width rows that follow from it:
 
@@ -191,7 +191,7 @@ opcodes, byte values, counts); anything that can exceed i32 stays `integer`.
 
 - [INCONSISTENCIES.md #17](../../INCONSISTENCIES.md) — the implicit/format/explicit
   conversion-mode framework this plan extends.
-- [LOFT.md § Type-conversion rules](../../LOFT.md) — the conversion table P2 adds the
+- [LOFT_DECLARATIONS § Type-conversion rules](../../LOFT_DECLARATIONS.md) — the conversion table P2 adds the
   `integer → i32` row to; also § `integer` (64-bit end-to-end) and the null-sentinel table.
 - [PROBLEMS.md](../../PROBLEMS.md) — @P370 (fixed by P1), @P368 (partial; P4).
 - `src/extensions.rs` (FFI auto-marshal), `src/parser/operators.rs` (@P368),

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Enum-scoped variants — a bare variant with no type in scope is refused,
+// @PAGE: LOFT_DECLARATIONS.md § Enum-scoped variants — a bare variant with no type in scope is refused,
 // and the refusal names the qualification to write.
 // @EXPECT_ERROR: ambiguous variant 'Red' (a variant of Color, Light) — qualify it
 

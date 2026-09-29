@@ -23,7 +23,7 @@
 fn push_two(v: &vector<integer>) {
     v += [1, 2];  // caller sees the change
 }
-// const: read-only (locked in debug builds)
+// const: read-only (a write through it is a compile error)
 fn count(v: const vector<integer>) -> integer {
     len(v)
 }

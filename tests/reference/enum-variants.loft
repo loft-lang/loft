@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Enum-scoped variants — two enums may share a variant name; a bare name
+// @PAGE: LOFT_DECLARATIONS.md § Enum-scoped variants — two enums may share a variant name; a bare name
 // resolves only where a type supplies the context.  The refusal is in
 // enum-variants-refused.loft.
 

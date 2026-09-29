@@ -84,7 +84,7 @@ leak), P121 (tuple heap corruption), P122/P123 (loop-store exhaustion).
 ## 2. Hard-coded vector-record layout (`+4` count, `+8` data)
 
 **Files:** `src/vector.rs`, `src/state/io.rs:505`, `src/native.rs`
-`populate_frame_variables`, `src/lib/graphics/native/src/lib.rs:908`.
+`populate_frame_variables`, `tests/fixtures/libs/graphics/native/src/lib.rs`.
 
 **What it does:** A `vector<T>` record is stored as
 `[size i32 | length i32 | element_0 | element_1 | ...]`, so the length
@@ -339,13 +339,13 @@ a compile error**:
   store — `303-ref-reassign-free.loft`, 2 stores at exit;
 - the FRESHNESS gate and the DEFER decision (`alloc_after`): deferring without freshness gives an
   in-place re-init AFTER the call, which wipes a source the call handed back (`@FR-O-Detach`,
-  `formal/ownership.md` D-own-41) — and forcing freshness WITHOUT the deferral is the opposite
+  `formal/ownership-history.md` D-own-41) — and forcing freshness WITHOUT the deferral is the opposite
   over-reach, measured as `1184-a-view-assigned-back-onto-its-own-source.loft` reading `len 0`
   where 8 is right across six cells (a view assigned back onto its own source lands in a store
   the source no longer names) plus a `??` default arm's mint released twice.  The three conditions
   are ONE pairing, the two wrong answers are on OPPOSITE sides, and the middle is NARROW: three
   candidate predicates were measured, two of them wrong in opposite directions, and every one of
-  the 70 targeted tests across eight guards was green on each.  `formal/ownership.md` D-own-41
+  the 70 targeted tests across eight guards was green on each.  `formal/ownership-history.md` D-own-41
   carries all three.  ⚠ The leak direction is invisible to a plain run of the guard that
   caught it, and the reason is a property of the GUARD rather than of the area: **a `main`-ful
   file IS leak-checked by a direct `--interpret` run** (`src/main.rs` calls `check_store_leaks`

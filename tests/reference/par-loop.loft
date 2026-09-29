@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: STDLIB.md § `par(...)` Parallel For-Loop — the worker call runs on `n` threads and its
+// @PAGE: STDLIB_RUNTIME.md § `par(...)` Parallel For-Loop — the worker call runs on `n` threads and its
 // result is bound for the body, in the original order.
 
 struct Score { value: integer }

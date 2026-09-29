@@ -10848,7 +10848,7 @@ impl Data {
     /// The DROP sites' own narrow question, and deliberately not [`Type::heap_def_nr`]
     /// widened: that predicate's `Reference | Enum` pattern is written out across the parser,
     /// the scope pass, both backends and the hoist, so widening IT moves all of them at once
-    /// (`formal/heap.md` D-heap-13 records the count).  Keyed exactly as `vector_def` keys the
+    /// (`formal/heap-history.md` D-heap-13 records the count).  Keyed exactly as `vector_def` keys the
     /// def it creates — the element's `Type::name`, which is what separates two element DEFS
     /// that share a spelling (`vector_wrapper_is_per_element_def_not_per_spelling`) — so the
     /// lookup and the mint cannot disagree, and deps are dropped first because a binding's

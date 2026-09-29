@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Literals (function references and lambdas) — a function's bare name is a
+// @PAGE: LOFT_LITERALS.md § Literals (function references and lambdas) — a function's bare name is a
 // value of its `fn` type; a lambda is written long (every type spelled) or short (inferred
 // from the expected type).
 

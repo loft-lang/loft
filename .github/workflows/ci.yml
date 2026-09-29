@@ -155,7 +155,7 @@ jobs:
           # costs one platform's time (see the `workflow_dispatch` note above).
           #
           # The PR leg is additionally SPLIT IN TWO, along the `heavy-serial` test
-          # group boundary (@CI_BUDGET "Where the 31 minutes actually are").  That
+          # group boundary (@CI_BUDGET, CI_BUDGET-history.md "Where the 31 minutes actually are").  That
           # group is 77 of 3937 tests and 57% of the suite's COLD wall clock: it is
           # `max-threads = 1`, so it cannot overlap itself, and cold it does not
           # overlap the other 3860 either — measured 226s + 174s = 398s, additive.
@@ -1368,7 +1368,7 @@ jobs:
         # not block — external chunk-repo availability is outside this repo's
         # control.  When the drift is intentional (a dogfood lib shipped a new
         # version), bump PINNED_REFS + re-sync in the same PR — see
-        # LIBRARY_AUTHORING.md § 5d.
+        # LIBRARY_PUBLISH.md § 5d.
         run: scripts/sync-fixtures.sh --check
 
   fixtures-unreleased:
@@ -1422,6 +1422,22 @@ jobs:
         # surface as GitHub warning annotations, never block the PR.  Standard
         # + baseline ratchet + cleanup workflow: doc/claude/DOC_QUALITY.md § Check.
         run: scripts/lint_comments.sh --check
+
+  # A contract doc states what holds now; its history goes to `<doc>-history.md` (DOC_QUALITY
+  # § Maintainer docs 4).  The rule is a judgement, so it is not a merge gate (RELEASE.md
+  # § 5b): this job only turns RED when a PR adds a timeline finding — a date, a hash or a
+  # status word in a contract doc — so the regrowth is seen on the PR that brings it rather
+  # than found at release.  Not a required check; `advisory-failures.yml` files it as an issue.
+  doc-timeline:
+    name: documentation timeline (ubuntu, advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: No new date, hash or status word in a contract doc
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 scripts/doc_lint.py --since FETCH_HEAD --changed --fail-on timeline
 
   # @PLAN53 Wave 2 — the per-PR ASan gate.  ASan is cheap enough (~few min,
   # ubuntu-only, parallel under the windows `Test` long pole) to gate every PR,

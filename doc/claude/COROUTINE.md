@@ -8,7 +8,7 @@
 > it ships, is guarded (loft#1277 and the two `a-delegation…` files) and is specified as
 > `(G-Delegate)` in [formal/coroutines.md](formal/coroutines.md). This line said "deferred to
 > 1.1+" until 2026-09-25, long after it landed.
-> Open enhancement: **native lazy loop yields** ([Design: lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9))
+> Open enhancement: **native lazy loop yields** ([Design: lazy loop yields (CL-9)](COROUTINE_LAZY_YIELDS.md))
 > — slice 1 has landed (loft#836), and the `while` half of slice 3 with it (loft#1586): a `for` or
 > `while` loop with one `yield` on its body's straight line is lazy on `--native`, statements
 > after the yield included. Slices 2–4 (multiple / conditional yields, nested loops, text-in-loop
@@ -35,8 +35,8 @@ this sentence claimed the opposite until it was measured on 2026-09-25).
 - [Stack Layout and Execution Model](#stack-layout-and-execution-model)
 - [Coroutine Frame Design](#coroutine-frame-design)
 - [Runtime Design](#runtime-design)
-- [Safety Concerns and Mitigations](#safety-concerns-and-mitigations)
-- [Implementation Phases](#implementation-phases)
+- Safety Concerns and Mitigations — [COROUTINE_SAFETY.md](COROUTINE_SAFETY.md)
+- Implementation Phases — [COROUTINE-history.md](COROUTINE-history.md)
 - [Known Limitations](#known-limitations)
 - [Non-Goals](#non-goals)
 - [See also](#see-also)
@@ -140,7 +140,7 @@ is a **compile-time error**: it is the position to give to `v[i]`, and a
 generator's values have none (`#count` numbers them).  `e#remove` is a
 **compile-time error** on a generator iterator too — a
 generator cannot remove a value it has already yielded
-(see [SC-CO-11](#sc-co-11--eremove-inside-a-generator-for-loop-must-be-a-compile-time-error)).
+(see [SC-CO-11](COROUTINE_SAFETY.md#sc-co-11--eremove-inside-a-generator-for-loop-must-be-a-compile-time-error)).
 
 **Explicit advance:**
 
@@ -297,7 +297,7 @@ types, and a call on a type that declares none is refused.
 The generator frame is placed immediately above the caller's current stack top
 (`new_base = self.stack_pos`) at each resume. It is never at a fixed absolute
 position; `frame.stack_base` is updated to `self.stack_pos` at the start of
-every `OpCoroutineNext` (see [SC-CO-7](#sc-co-7--absolute-stack_base-stale-when-caller-pushes-locals-after-creation)).
+every `OpCoroutineNext` (see [SC-CO-7](COROUTINE_SAFETY.md#sc-co-7--absolute-stack_base-stale-when-caller-pushes-locals-after-creation)).
 
 When the generator yields, the region `[new_base .. value_start)` is serialised
 into `frame.stack_bytes` and the stack pointer is rewound to `new_base`. The
@@ -340,8 +340,8 @@ When the compiler encounters a call to a generator function, it emits
 
 1. The call-site arguments have already been pushed onto the stack.
 2. The runtime copies those argument bytes into `frame.stack_bytes`, processes
-   any dynamic text slots (see [SC-CO-1](#sc-co-1--text-ownership-in-the-saved-stack),
-   [SC-CO-8](#sc-co-8--dynamic-string-objects-leaked-during-yield-serialisation)),
+   any dynamic text slots (see [SC-CO-1](COROUTINE_SAFETY.md#sc-co-1--text-ownership-in-the-saved-stack),
+   [SC-CO-8](COROUTINE_SAFETY.md#sc-co-8--dynamic-string-objects-leaked-during-yield-serialisation)),
    and sets `frame.code_pos` to the function's entry bytecode position.
 3. `frame.stack_base` is set to `0` — it has no meaning until the first resume.
 4. The argument bytes are removed from the live stack.
@@ -353,8 +353,8 @@ When the compiler encounters a call to a generator function, it emits
 `OpCoroutineNext` on a `Created` or `Suspended` frame (both cases are identical):
 
 1. Check `active_coroutines` for a re-entrant advance (see
-   [SC-CO-3](#sc-co-3--re-entrant-advance-corrupts-the-live-stack),
-   [SC-CO-9](#sc-co-9--scalar-coroutine_sp-cannot-represent-yield-from-nesting)).
+   [SC-CO-3](COROUTINE_SAFETY.md#sc-co-3--re-entrant-advance-corrupts-the-live-stack),
+   [SC-CO-9](COROUTINE_SAFETY.md#sc-co-9--scalar-coroutine_sp-cannot-represent-yield-from-nesting)).
 2. Record `frame.caller_return_pos = self.code_pos` (continuation address).
 3. Set `frame.call_depth = self.call_stack.len()` — the frame's call frames
    will go above the current call stack depth at this resume (see note below).
@@ -381,7 +381,7 @@ at the time of the advance.
    `value_start = stack_pos - value_size`.
 2. Serialise the **entire** region `stack[stack_base..stack_pos]` (locals
    **and** yielded value together) to detect any `Str` in the yielded value
-   itself (see [SC-CO-10](#sc-co-10--yielded-text-value-not-serialised-its-string-may-be-freed)).
+   itself (see [SC-CO-10](COROUTINE_SAFETY.md#sc-co-10--yielded-text-value-not-serialised-its-string-may-be-freed)).
    Split the result: `frame.stack_bytes = bytes[..locals_len]`, and keep the
    updated value bytes separately for the slide step below.
 3. Free original dynamic `String` allocations via the text side-table
@@ -796,406 +796,7 @@ stack. No extra allocation occurs on the resume path.
 
 ---
 
-## Safety Concerns and Mitigations
-
-### SC-CO-1 — Text ownership in the saved stack
-
-**Problem:** `Str { ptr, len }` slots in `stack_bytes` may point to a dynamic
-`String` that was freed when the stack was rewound after the yield. On resume,
-those pointers dangle.
-
-**Mitigation:** `serialise_text_slots` converts every dynamic text slot to an
-owned `String` in `frame.text_owned`, and writes a `Str` pointing to the new
-buffer into `stack_bytes`. On resume, the owned `String` addresses are patched
-back into `stack_bytes` before the bytes are written to the live stack, keeping
-all `Str` pointers valid.
-
----
-
-### SC-CO-2 — DbRef locals may dangle if stores are freed mid-suspension
-
-**Problem:** A generator may hold a `DbRef` local that refers to a heap record.
-If the consumer frees or reallocates that record between iterations, the
-suspended frame holds stale coordinates.
-
-**Mitigation:** This is no different from any other loft local holding a
-`DbRef`. The generator does not add a new risk. Document as a Known Limitation
-(CL-2); the caller must not free records that a suspended generator still
-references.
-
-**P2-R5 — Text-specific variant: store-backed `Str` at yield**
-
-When a generator reads a text field from a store record, the resulting `Str`
-value is a zero-copy pointer directly into the store's raw allocation
-(`{ ptr: store.ptr + rec*8 + 8, len }`).  If this `Str` is live in a local at
-a `yield` point, `stack_bytes` encodes the raw pointer.
-
-If the consumer:
-1. Deletes the record (`database.free(r)` / `store.delete(rec)`), OR
-2. Frees the entire store (`database.free(db_ref)`)
-
-…between the yield and the next resume, and the store word is subsequently
-reused for different data, the `Str.ptr` in `stack_bytes` points to unrelated
-bytes — **silent data corruption** on resume.
-
-**Invariant (CL-2b):** Any `Str` value derived from a store record field (via
-`store.get_str()` or equivalent) must be treated as a borrow of the store's
-memory.  If such a `Str` is live at a `yield` point, the caller must not delete
-the backing record or free the store before the generator is exhausted or the
-local is overwritten.
-
-This is more dangerous than the `DbRef` case (SC-CO-2) because a `Str` looks
-like a plain value, not an obvious reference.
-
-**Long-term fix:** CO1.3d's `serialise_text_slots` (P2-R3) will deep-copy
-store-derived `Str` values into owned `String` objects at yield time, eliminating
-this class entirely.
-
----
-
-### SC-CO-3 — Re-entrant advance corrupts the live stack
-
-**Problem:** Advancing a `Running` generator overwrites live stack bytes with
-saved bytes, corrupting the currently executing frame.
-
-**Mitigation:** `OpCoroutineNext` checks `active_coroutines.contains(&idx)`
-before resuming. If the index is already active, execution aborts:
-
-```
-runtime error: coroutine advanced re-entrantly; this generator is already running
-```
-
-The `contains` check is O(depth) but depth is bounded by nested `yield from`
-chains, which are shallow in practice.
-
----
-
-### SC-CO-4 — `yield` inside a `par(...)` body crosses thread boundaries
-
-**Problem:** Each parallel worker has its own `State` and `coroutines` table.
-A `COROUTINE_STORE` DbRef produced inside a worker cannot be advanced by
-the enclosing scope's `State`.
-
-**Mitigation:** The compiler must reject `yield` and generator function calls
-inside `par(...)` bodies. `iterator<T>` values must not be assigned to
-cross-thread shared variables. Until the compiler check is implemented, this
-is a hard documented restriction:
-
-> Generator functions and `yield` may not be used inside `par(...)` bodies.
-> The `iterator<T>` DbRef must not cross thread boundaries.
-
----
-
-### SC-CO-5 — Stack serialisation cost is O(depth) per yield
-
-**Problem:** A deeply recursive generator copies a large `stack_bytes` and
-`call_frames` on every yield and resume.
-
-**Mitigation:** Document the cost model. Use iterative generators for
-performance-critical paths; recursive `yield from` is for correctness-first
-code. No optimisation is planned for the initial implementation.
-
----
-
-### SC-CO-6 — Advancing an exhausted generator must always return null
-
-**Problem:** If an exhausted frame were freed and its slot reused, a subsequent
-`next()` on the old DbRef would access the wrong frame.
-
-**Mitigation:** every handle carries a **generation stamp** in `DbRef::pos`, taken
-from the frame it was made for, and each entry point (`coroutine_next`,
-`coroutine_exhausted`, `free_coroutine`) compares it before touching the slot. A
-handle whose frame is gone reads as exhausted and frees nothing, so the slot can
-be recycled the moment its generator finishes — which is what makes the
-scope-exit free of a handle safe (loft#835). `OpCoroutineNext` on an `Exhausted`
-frame pushes null immediately without entering the body.
-
----
-
-### SC-CO-7 — Absolute `stack_base` stale when caller pushes locals after creation
-
-**Problem:** If `stack_base` were fixed at creation time (position `P`), any
-local the caller pushes after creation would live at `P + …`. Resuming the
-generator would then write `stack_bytes` starting at `P`, overwriting those
-locals.
-
-```loft
-gen = count_up(0);  // suppose base captured at P
-x   = 42;           // x at P+12 (after DbRef)
-for n in gen { say("{n} {x}"); }  // would overwrite x!
-```
-
-**Mitigation:** `OpCoroutineNext` always sets `frame.stack_base = self.stack_pos`
-before writing any bytes. The frame is placed at the current top of the caller's
-stack, above all live caller locals. This is safe because no slot in
-`stack_bytes` contains an absolute stack address; `Str` pointers reference
-`text_code` or `text_owned` buffers, and `DbRef` values reference the store
-heap — neither is affected by relocating the frame base.
-
----
-
-### SC-CO-8 — Dynamic String objects leaked during yield serialisation
-
-**Problem:** `str.str().to_owned()` creates a new `String` but does not free
-the original. The original dynamic allocation has no remaining owner and leaks.
-
-**Mitigation:** `serialise_text_slots` calls `database.free_dynamic_str(ptr)`
-on the original allocation immediately after `to_owned()`. The exact API
-mirrors `OpFreeText`; the implementation must align with how `text.rs` manages
-the scratch/side-table of dynamic `String` objects.
-
----
-
-### SC-CO-9 — Scalar `coroutine_sp` cannot represent `yield from` nesting
-
-**Problem:** `yield from` makes two coroutines simultaneously active — the
-outer (waiting in the `OpYieldFrom` loop) and the inner (executing). A single
-`usize` cannot represent both, so the re-entrant check would miss the outer
-generator while it is mid-`yield-from`.
-
-**Mitigation:** `active_coroutines: Vec<usize>` holds the indices of all
-currently active frames. `OpCoroutineNext` checks membership before resuming.
-`OpYield` and `OpCoroutineReturn` pop the last entry.
-
----
-
-### SC-CO-10 — Yielded `text` value not serialised; its String may be freed
-
-**Problem:** If serialisation covers only the locals region (below the yielded
-value), a `Str` in the yielded value still points to a dynamic `String` that
-`SC-CO-8`'s mitigation then frees. The consumer receives a dangling pointer.
-
-**Mitigation:** `OpYield` serialises the **entire** region from `stack_base`
-to `stack_pos` (locals + yielded value) in one pass. After serialisation, the
-yielded value bytes contain `Str` pointers that point into `text_owned` buffers
-(not freed originals). Only the locals portion is stored in `frame.stack_bytes`;
-the value portion is slid to `stack_base` as the `next()` return value.
-
----
-
-### SC-CO-11 — `e#remove` inside a generator for-loop must be a compile-time error
-
-**Problem:** Generators do not back a store record; any remove opcode emitted
-against a generator iterator would operate on garbage coordinates, potentially
-corrupting an unrelated record.
-
-**Mitigation:** The compiler must detect `e#remove` on a generator-typed
-iterator (identified at the `for` loop's type-resolution step by the element
-type's source — a `COROUTINE_STORE` DbRef) and report:
-
-```
-error: `e#remove` is not valid on a generator iterator;
-       generators do not back a store — use a collection if removal is needed.
-```
-
----
-
-### SC-CO-12 — `text_owned` offset stored as `u16` silently truncates
-
-**Problem:** A `u16` offset caps at 65535 bytes. A deeply recursive generator
-can exceed this (e.g. 3000 nested calls × ~22 bytes/CallFrame ≈ 66 KB).
-Truncation silently patches the wrong `Str` slot on resume.
-
-**Mitigation:** Use `u32` for the offset field (`Vec<(u32, String)>`), giving
-4 GB headroom — sufficient for any realistic frame size.
-
----
-
-### Summary of safety concerns
-
-| ID | Concern | Severity | Resolution |
-|---|---|---|---|
-| SC-CO-1 | Dynamic text slots dangle after stack rewind | High | `text_owned` deep-copy; pointer patch on resume |
-| SC-CO-2 | DbRef locals dangle if caller frees records mid-suspension | Medium | Documented (CL-2); caller responsibility |
-| SC-CO-3 | Re-entrant advance overwrites live stack | High | `active_coroutines.contains()` check; runtime error |
-| SC-CO-4 | `yield` inside `par(...)` crosses thread boundaries | High | Compiler error; documented hard restriction |
-| SC-CO-5 | Serialisation cost O(depth) per yield | Low | Documented cost model; no optimisation planned |
-| SC-CO-6 | Advancing exhausted generator after slot reuse | Medium | Exhausted frames kept alive; null pushed without frame entry |
-| SC-CO-7 | Fixed `stack_base` overwritten by caller locals pushed after creation | High | Set `stack_base = stack_pos` at every resume |
-| SC-CO-8 | Original dynamic String leaked after `to_owned()` | High | `database.free_dynamic_str(ptr)` in `serialise_text_slots` |
-| SC-CO-9 | Scalar active-coroutine tracker fails for `yield from` nesting | Medium | `active_coroutines: Vec<usize>` replaces scalar |
-| SC-CO-10 | Yielded `text` value's `Str` not serialised; freed by SC-CO-8 mitigation | High | Serialise entire `[stack_base..stack_pos]` region in one pass |
-| SC-CO-11 | `e#remove` against generator emits store-remove opcode; corrupts unrelated records | Medium | Compile-time error at `for` loop type resolution |
-| SC-CO-12 | `text_owned` `u16` offset truncates for frames > 65535 bytes | Low | `u32` offset field |
-
----
-
-## Implementation Phases
-
----
-
-### Phase 1 — Infrastructure (`src/state/mod.rs`, `src/data.rs`)
-
-Introduce all runtime data structures without any language surface.
-
-1. Define `CoroutineStatus { Created, Suspended, Running, Exhausted }` in
-   `src/data.rs`.
-
-2. Define `CoroutineFrame` (all fields above) in `src/state/mod.rs`.
-
-3. Add `coroutines: Vec<Option<Box<CoroutineFrame>>>` and
-   `active_coroutines: Vec<usize>` to `State`; initialise both in the
-   constructor. Pre-push one `None` at index 0 (null sentinel).
-
-4. Add helper functions to `State`:
-   - `allocate_coroutine(frame: CoroutineFrame) -> usize` — finds the first
-     `None` slot at index ≥ 1 or pushes a new slot; returns the index.
-   - `free_coroutine(idx: usize)` — sets the slot to `None` and zeroes the
-     capacity hint.
-   - `coroutine_frame_mut(db_ref: DbRef) -> &mut CoroutineFrame` — asserts
-     `store_nr == COROUTINE_STORE` and `rec != 0`; panics on invalid index.
-
-5. Define `COROUTINE_STORE: u16 = u16::MAX` (or another value that cannot
-   clash with `Stores.allocations` indices, which are limited by `Stores.max`).
-
-6. Add `serialise_text_slots` as described in the Runtime Design section.
-   Leave `free_dynamic_str` as a stub (panics) until the text side-table API
-   is confirmed.
-
-#### Tests — Phase 1
-
-| Test | What it verifies |
-|---|---|
-| `coroutine_allocate_nonzero` | `allocate_coroutine` never returns 0 |
-| `coroutine_allocate_retrieve` | allocated frame is retrievable via `coroutine_frame_mut` |
-| `coroutine_free_reuse` | after `free_coroutine`, the slot is `None`; next allocation reuses it |
-| `coroutine_null_dbref` | DbRef with `rec == 0` is treated as null by `coroutine_frame_mut` |
-| `serialise_static_text` | `serialise_text_slots` does not add to `text_owned` for static `Str` |
-| `serialise_null_text` | `serialise_text_slots` skips null `Str` (ptr == STRING_NULL) |
-
----
-
-### Phase 2 — Type and opcode declarations (`default/05_coroutine.loft`, `src/main.rs`)
-
-1. Create `default/05_coroutine.loft` declaring:
-   - `CoroutineStatus` enum
-   - `next(gen: iterator<T>) -> T` bound to `OpCoroutineNext`
-   - `exhausted(gen: iterator<T>) -> boolean` bound to `OpExhausted`
-
-2. Add the file to the default load order in `src/main.rs` after
-   `04_stacktrace.loft`.
-
-3. Add all six coroutine opcodes to the `Op` enum in `src/data.rs` (or
-   wherever opcodes are defined) with their operand types.
-
-4. Add stub implementations in `fill.rs` for all opcodes (abort with
-   "not yet implemented" to catch accidental emission during later phases).
-
-5. Add parser recognition:
-   - A function with return type `iterator<T>` is flagged as a generator.
-   - `yield expr` is parsed as a new statement type; compile error if outside
-     a generator function.
-   - `yield from expr` is parsed as a new statement type.
-   - `e#remove` on a generator iterator emits a compile error (SC-CO-11).
-   - `yield` inside `par(...)` emits a compile error (SC-CO-4).
-
-#### Tests — Phase 2
-
-| Test | What it verifies |
-|---|---|
-| `gen_types_declared` | `CoroutineStatus`, `next`, `exhausted` resolve in a loft program |
-| `yield_non_generator_error` | `yield` in a plain function is a compile error |
-| `yield_par_error` | `yield` inside `par(...)` is a compile error |
-| `remove_generator_error` | `e#remove` in a `for` loop over a generator is a compile error |
-
----
-
-### Phase 3 — Creation and exhaustion (`src/fill.rs`, `src/state/mod.rs`)
-
-Implement the frame lifecycle without the yield/resume cycle.
-
-1. Implement `OpCoroutineCreate` as in the pseudocode above:
-   - `serialise_text_slots` for the argument region.
-   - Allocate frame; push DbRef.
-
-2. Implement `OpCoroutineReturn` as above:
-   - Clear `text_owned` and `stack_bytes`; truncate `call_stack`;
-     mark `Exhausted`; push null; jump to `caller_return_pos`.
-
-3. Implement `OpCoroutineNext` for `Created` and `Exhausted` cases only:
-   - `Exhausted`: push null immediately.
-   - `Created`: restore frame, push `call_frames`, jump to `code_pos`.
-   - `Running` / re-entrant: runtime error.
-
-4. Implement `OpExhausted`.
-
-5. In `codegen.rs`, emit `OpCoroutineCreate` (instead of `OpCall`) when the
-   called function is a generator; emit `OpCoroutineReturn` at each `return`
-   and at the implicit end of a generator body.
-
-#### Tests — Phase 3
-
-| Test | What it verifies |
-|---|---|
-| `gen_create_returns_dbref` | calling a generator function returns a non-null `iterator<T>` DbRef |
-| `gen_empty_body_null` | a generator with an empty body returns null on first `next()` |
-| `gen_return_immediately` | a generator that returns without yielding is exhausted after one `next()` |
-| `gen_exhausted_next_null` | `next()` on an exhausted generator always returns null |
-| `gen_exhausted_flag` | `exhausted(gen)` returns true after the generator finishes |
-| `gen_reentrant_error` | advancing a `Running` generator produces the expected runtime error message |
-| `gen_null_iterator` | `next(null_gen)` returns null without crashing |
-
----
-
-### Phase 4 — Yield and resume (`src/fill.rs`, `src/state/mod.rs`)
-
-Implement the suspend/resume cycle.
-
-1. Implement `OpYield`:
-   - Serialise `stack[stack_base..stack_pos]` including the yielded value
-     (SC-CO-10); split into `stack_bytes` and `updated_value`.
-   - Save `call_frames`; truncate `call_stack`.
-   - Mark `Suspended`; pop `active_coroutines`.
-   - Slide `updated_value` to `stack_base`; jump to `caller_return_pos`.
-
-2. Extend `OpCoroutineNext` for the `Suspended` case:
-   - Save `caller_return_pos`, update `stack_base` and `call_depth` (SC-CO-7).
-   - Patch `text_owned` pointers into `stack_bytes`; write to live stack.
-   - Restore `call_frames`; mark `Running`; push to `active_coroutines`.
-   - Jump to `frame.code_pos`.
-
-3. In the compiler, emit `OpYield` at each `yield expr` statement.
-
-4. In the for-loop code generator, emit `OpCoroutineNext` (instead of a
-   collection-iterator advance) when the iterator is a generator (detected
-   by the `COROUTINE_STORE` type tag on the `iterator<T>` value).
-
-#### Tests — Phase 4
-
-| Test | What it verifies |
-|---|---|
-| `gen_single_yield` | a generator that yields once produces exactly one value then exhausts |
-| `gen_multiple_yield` | a generator that yields three values produces them in order |
-| `gen_for_loop` | `for n in count_up(0)` with break at 5 produces 0..4 |
-| `gen_resume_local` | the generator's local variable retains its value across a yield |
-| `gen_text_local` | a text local is correctly preserved across a yield (SC-CO-1, SC-CO-8) |
-| `gen_text_yield` | a generator that yields a `text` value does not dangle (SC-CO-10) |
-| `gen_caller_local_intact` | a caller local pushed after creating the generator survives resumption (SC-CO-7) |
-| `gen_infinite_break` | an infinite generator with a break in the consumer terminates cleanly |
-| `gen_count_attribute` | `n#count` counts from 0 across iterations |
-| `gen_first_attribute` | `n#first` is true only on the first iteration |
-
----
-
-### Phase 5 — `yield from` (`src/fill.rs`, parser)
-
-1. Implement `OpYieldFrom`:
-   - Inner loop: `OpCoroutineNext` on sub-generator; if non-null, `OpYield` it;
-     on outer resume, loop; if null (sub exhausted), exit loop.
-   - `active_coroutines` naturally contains both outer and inner indices while
-     both are active; the check in Phase 4 covers the nested case (SC-CO-9).
-
-2. In the compiler, emit `OpYieldFrom` at each `yield from expr` statement.
-
-#### Tests — Phase 5
-
-| Test | What it verifies |
-|---|---|
-| `yield_from_flat` | `yield from range(0, 3)` produces 0, 1, 2 |
-| `yield_from_chain` | two sequential `yield from` calls produce their values in order |
-| `yield_from_recursive` | recursive `yield from` on a tree produces leaves in left-to-right order |
-| `yield_from_empty` | `yield from` an already-exhausted sub-generator produces no values |
-| `yield_from_reentrant` | advancing the outer generator while inside `yield from` produces the expected runtime error (SC-CO-9) |
+**Safety concerns and mitigations (SC-CO-1 … SC-CO-12)** — see [COROUTINE_SAFETY.md](COROUTINE_SAFETY.md).
 
 ---
 
@@ -1212,7 +813,7 @@ Implement the suspend/resume cycle.
 | CL-5 | Serialisation cost per yield is O(frame depth); deeply recursive `yield from` chains are slow | Flatten recursive generators iteratively using an explicit `vector` stack local |
 | CL-6 | Mutable-reference parameters (`&vector<T>`) in a generator function are not visible to the frame copy | Pass collections by value or use `reference<T>` and write through the reference |
 | CL-8 | On `--native`, a generator yielding a tuple with a **text element** (`iterator<(text, integer)>`) does not yet compile — a yielded `text` is a `&str`, so riding the unified yield codec needs a store intern (`db_from_text`) with a lifetime question still open. Scalar and DbRef-ref tuple elements (`(integer, float)`, `(vector, integer)`, …) work on both backends. | Yield the text from a separate single-`text` generator, or wrap the pair in a record and yield its `reference<S>` |
-| CL-9 | **Mostly fixed (loft#836 slice 1; loft#1586 `while` and statements after the yield).** A `for` or `while` loop with ONE `yield` on its body's straight line is lazy on `--native` too: one iteration per advance, the cursor persisted in the coroutine struct, and statements after the yield run at the start of the next advance (the loop is rotated). An infinite or early-`break`-consumed loop-generator therefore stops when its consumer does — `while true { …; yield x; }` included. These shapes still take the eager `ForLoopBody` buffer, so their side effects still interleave differently: more than one yield per iteration, a yield inside an `if`/`match`, a nested loop and a `continue` (axes A2–A4).  A closure in the loop body is lazy since loft#1587, which made a lambda's fn-ref and closure record persistent fields. ⚠ An eager loop runs to its end before the first value is handed out, so an ENDLESS loop of one of those shapes — `while true { if ready { yield x; } }` — never hands one out on `--native`: it fills its buffer until the process runs out of memory. `LOFT_TIMEOUT` does not stop it first. A yield of a tuple / fn-ref (the `next_into` channel) or of a struct / vector also stays eager; a struct / vector pushed into the eager buffer is a per-yield SNAPSHOT in a store the generator owns (released when it is exhausted or abandoned), so the consumer reads the value as it was at the yield rather than the record's final state, and the statements after the loop run once the buffer is filled (loft#1356). Values agree throughout. | Keep one `yield` on the loop body's straight line — not under an `if` — and yield a scalar or `text`; that shape is lazy on both backends, `for` and `while` alike. Otherwise use **straight-line** yields, or fully drain the generator. Remaining slices: **[Lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9)** below. |
+| CL-9 | **Mostly fixed (loft#836 slice 1; loft#1586 `while` and statements after the yield).** A `for` or `while` loop with ONE `yield` on its body's straight line is lazy on `--native` too: one iteration per advance, the cursor persisted in the coroutine struct, and statements after the yield run at the start of the next advance (the loop is rotated). An infinite or early-`break`-consumed loop-generator therefore stops when its consumer does — `while true { …; yield x; }` included. These shapes still take the eager `ForLoopBody` buffer, so their side effects still interleave differently: more than one yield per iteration, a yield inside an `if`/`match`, a nested loop and a `continue` (axes A2–A4).  A closure in the loop body is lazy since loft#1587, which made a lambda's fn-ref and closure record persistent fields. ⚠ An eager loop runs to its end before the first value is handed out, so an ENDLESS loop of one of those shapes — `while true { if ready { yield x; } }` — never hands one out on `--native`: it fills its buffer until the process runs out of memory. `LOFT_TIMEOUT` does not stop it first. A yield of a tuple / fn-ref (the `next_into` channel) or of a struct / vector also stays eager; a struct / vector pushed into the eager buffer is a per-yield SNAPSHOT in a store the generator owns (released when it is exhausted or abandoned), so the consumer reads the value as it was at the yield rather than the record's final state, and the statements after the loop run once the buffer is filled (loft#1356). Values agree throughout. | Keep one `yield` on the loop body's straight line — not under an `if` — and yield a scalar or `text`; that shape is lazy on both backends, `for` and `while` alike. Otherwise use **straight-line** yields, or fully drain the generator. Remaining slices: **[Lazy loop yields (CL-9)](COROUTINE_LAZY_YIELDS.md)** below. |
 
 ### Native yield codec — status (@PLAN16 phase 02)
 
@@ -1231,129 +832,7 @@ Full record: the @PLAN16 closure doc at
 
 ---
 
-## Design: lazy loop yields (CL-9)
-
-> **Status: slice 1 built (loft#836, 2026-08-10); the `while` half of slice 3 and the statement
-> after the yield built (loft#1586, 2026-09-22); slice 2, nested loops and slice 4 open.** A loop
-> with ONE `yield` on its body's straight line is lowered to a header+body state pair — one
-> iteration per advance, the cursor persisted — and everything else keeps the eager buffer.  A
-> `while` is the same lowering with no setup (the parser emits it as a bare `Loop`).  Statements
-> after the yield ROTATE the loop: a third state runs them at the start of the next advance,
-> before the header, so a `break` among them still ends the loop.  A lazy loop's hidden record
-> buffers (`__ref_*`) persist in the struct, and so do a lambda's fn-ref and its `___clos_*`
-> record (loft#1587), which is what lets a loop that builds a closure per iteration stay lazy.
-> Guard: `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`. `tests/scripts/836-lazy-loop-yields.loft`
-> and `tests/oracle/26-coroutine-laziness.loft` assert the interleaving; VALUES cannot, which is
-> why the value-only oracle reported agreement across a difference this wide.
-> The eager buffer holds VALUES, not handles: a struct or vector yield is copied into a
-> snapshot store the generator owns (`coroutine_snapshot`, one store per generator, freed at
-> exhaustion and from `drop_stores`), because the whole loop runs before the consumer reads
-> and a handle to a per-iteration record would alias its final state — three yields of
-> {7,17,27} summed to 81. The factory also runs the generator's TAIL (the statements after the
-> last yield, where its scope-exit frees live) once the buffer is filled; it used to drop it,
-> which leaked every persistent heap local and lost a `print` after the loop (loft#1356;
-> guard `tests/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
-> The rest below is the original design, kept as the map for slices 2-4.
-
-### The problem, precisely
-
-Native coroutine lowering (`generation/coroutine.rs`) scans a generator body into **segments**
-(`Simple`, `YieldFrom`, `ForLoopBody`) and emits a state machine (`LoftCoroutine::next_i64`).
-`Simple` (a straight-line `yield`) is a real **lazy state-machine step** — control returns to the
-consumer at the yield and resumes after it. `YieldFrom` is lazy too, and it covers more than its
-name suggests: `detect_yield_from` matches a loop that does nothing but yield its own loop
-variable, so `for x in <iterable> { yield x }` delegates lazily and never reaches the eager path.
-`ForLoopBody` catches everything else — any `Block`/`Loop`/`If` containing a yield — and is the
-shortcut: it **runs the loop eagerly and buffers every yield into a `Vec<i64>`**, then serves the
-buffer, chosen (the code comment) to avoid "a full state-machine decomposition of the
-range-iteration IR." The interpreter, by contrast, serialises the whole frame at each yield and is
-lazy everywhere. CL-9 is exactly this gap — and its real edge is one statement wide, not one
-construct wide.
-
-### The invariant (the hypothesis to build against)
-
-> **A `yield` returns control to the consumer BEFORE the next generator statement runs — in a
-> loop body no less than in straight-line code.** Equivalently: the generator's observable step
-> sequence is `next()`-driven, one body-slice per advance, with the loop's *cursor* (index /
-> iterator position) and any loop-carried locals PERSISTED in the coroutine frame across advances.
-
-If that invariant holds, `--native` matches the interpreter and formal G-Call/G-Next, and the
-decided edge closes.
-
-### The mechanism (the lever — persist the loop cursor, decompose the loop into states)
-
-The two halves are already in the tree:
-
-1. **State persistence — REUSE the existing machinery.** `coroutine_persistent_locals` /
-   `coroutine_persistent_vars` (`generation/coroutine.rs`, `dispatch.rs`) already lift a
-   generator's locals that live across a yield into the coroutine **struct** (a heap record —
-   the same heap-state-persistence approach a **closure record** uses; the coroutine struct *is*
-   the analog). The fix ADDS the loop's **cursor** (the `#index` / range counter / iterator
-   position) and any loop-carried locals to that persistent set — literally "add the loop
-   variable to the coroutine state to remember through a pass."
-2. **Control decomposition — the new work.** Replace the `ForLoopBody` eager-buffer segment with
-   **resumable states**: a *loop-header* state (test the condition / advance the cursor from its
-   persisted value), a *body* state that runs to the `yield`, writes the value to the yield codec,
-   and returns (leaving the cursor persisted), and a *back-edge* so the next `next_i64` re-enters
-   the header. This is the standard `async`/`await` loop-to-state-machine transform — Rust
-   expresses it fine; loft simply has not decomposed loops yet.
-
-### Failure axes (probe each before trusting the transform — where it gets hard)
-
-The single-yield range/vector loop is easy; the transform's cost is dominated by these axes, each
-a state the decomposition must model:
-
-- **A1 — a loop whose body is a single `yield` PLUS at least one other statement** — one header +
-  one body state, persist the index. Do this first.
-  **Not** the bare `for x in <iterable> { yield x }` shape: `detect_yield_from` matches that
-  exactly (a 2-op block whose loop's third op is `Yield(Var(item_var))`) and lowers it to the
-  lazy `YieldFrom` segment, so it is already `next()`-driven on native and needs no work here.
-  The eager path starts the moment the body holds anything else — `{ print(…); yield i; }` is
-  `ForLoopBody`. Verified 2026-08-09: a `for i in 0..1000000000 { yield i; }` generator
-  consumed three values and stopped, while `{ print("p{i} "); yield i; }` over `0..1000` ran all
-  1000 iterations before the consumer's first advance.
-- **A2 — multiple yields per iteration** (`for … { yield a; yield b }`) — each yield is its own
-  state; the back-edge targets the header, but re-entry lands at the *next* yield-state.
-- **A3 — a `yield` inside an `if`/`match` inside the loop** — conditional states; the resume point
-  depends on which branch yielded.
-- **A4 — nested loops with yields** — a cursor per loop level, all persisted; the state graph is
-  the product.
-- **A5 — `while` / bare `loop` (not just `for`)** — the header is a general condition, and a bare
-  `loop { yield }` is the infinite-generator case CL-9's hazard names — the whole point of lazy.
-- **A6 — text / tuple yields in a loop** — interacts with CL-8 (a yielded text is a `&str`); a
-  store-derived text live across the loop back-edge must be interned/persisted (CL-2b / CL-7).
-
-### The incremental plan (ship a slice, keep the fallback)
-
-1. **Slice 1 — A1 only.** Decompose a single-yield `for` over a range or vector into header+body
-   states, persist the index. Keep the eager `Vec` buffer as the FALLBACK for A2–A6 (a
-   segment-scanner predicate: "simple single-yield counted loop → lazy; else → eager"). This
-   closes CL-9 for the common case and shrinks the decided edge to "only complex loops."
-2. **Slice 2 — A2/A3** (multiple + conditional yields): generalise the segment scanner to emit one
-   state per yield within the loop body.
-3. **Slice 3 — A4/A5** (nested + `while`/`loop`): a cursor stack; the infinite-generator case then
-   works lazily on native (the biggest user win).
-4. **Slice 4 — A6**: fold in the CL-8/CL-2b text-in-loop interning.
-
-Each slice keeps the eager fallback for the axes it hasn't reached, so no generator regresses.
-
-### Verification (how each slice is proven)
-
-The falsifying program is a **side-effect interleaving** check the value-only oracle currently
-misses: `fn g() -> iterator<integer> { for i in 0..3 { print("y{i} "); yield i } }` consumed by
-`for x in g() { print("g{x} ") }` must print **`y0 g0 y1 g1 y2 g2`** (lazy) on `--native`, not
-`y0 y1 y2 g0 g1 g2` (eager). Graduate it to `tests/oracle/` beside the straight-line
-`26-coroutine-laziness.loft` guard; add an **infinite-generator + early `break`** case (must
-terminate on native) once Slice 3 lands. `tests/coroutine_matrix.rs` + the differential oracle
-guard the value equality throughout.
-
-### Reassertion-site count (the design-protocol tell)
-
-The invariant is asserted at ONE place — the segment scanner's "lazy-vs-eager" predicate +
-the `ForLoopBody` codegen it feeds. Persistence rides the existing `coroutine_persistent_*`
-chokepoint (one place). So `N ≈ 1` re-assertion site with the eager fallback as the explicit,
-loud default — the transform is additive, not a spray. That is the signal this is a bounded
-enhancement, not an open-ended rewrite.
+**Design: lazy loop yields (CL-9)** — see [COROUTINE_LAZY_YIELDS.md](COROUTINE_LAZY_YIELDS.md).
 
 ---
 

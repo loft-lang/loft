@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/collections-history.md — the deviation register for [collections.md](collections.md)
 
 > **The rules are next door.**  [collections.md](collections.md) states what must always be true of the
@@ -255,3 +256,94 @@ rule already said the set; the test asked about a pair.
 
 **SCOPE (2026-07-10)** — not yet rules: it inventories the shipped behaviour, names each rule with its anchor, and lists what must be both-backends-verified before it graduates to the normal form at 0 deviations. **`Slice-Open`/`Slice-Cap` now HOLD (2026-08-19, loft#1002)** — the open spatial slices answered the Z-order tail against a rule that already said *outward walk*, and open question 4 (`:n` exact-count) is answered: exactly n from any origin
 
+## Deviations carried by collections.md until 2026-09-29
+
+Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
+
+- **`D-col-13`** — opened and CLOSED 2026-09-29: **`len` of a nullable KEYED collection was
+  refused or crashed** where a `vector<…>?` warned and counted.  Three layers, one per kind
+  family: `hash`, `sorted`, `spatial` and `trie` were warned by `(N-Store)`'s junction and then
+  refused by `can_convert`'s keyed-to-generic arm, which matched the bare shape only ("expected
+  hash, got hash<E[k]>?"); `index`'s own `len` route matched the bare shape and answered
+  "Unknown function len"; and once admitted, an absent `hash`, `spatial`, `trie` or `index`
+  panicked in a store accessor, because their counts indexed a store before testing the null.
+  **Fix.**  The keyed arm reads through the `?`, the `index` route peels it and asks the store
+  face itself, and the four counts test `is_null()` first, as `length_vector` did.  `(Col-Len)`
+  now states the absent count.  Guard
+  `tests/scripts/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft`
+  (six kinds, present and absent, both backends).
+
+- **`D-col-12`** — opened and CLOSED 2026-09-29 (loft#1728): **a slice at a method's RECEIVER was
+  not a vector.**  `(Slice-Value)` makes `v[a..b]` the fresh vector a bind would make at every
+  vector-typed position, and a receiver is one — but it is resolved by its TYPE before any
+  coercion sees it, so `len(v[a..b])` answered "Unknown function len" and `v[a..b].len()`
+  "Unknown field iterator<integer>.len", on both backends.  **Fix.**  Where resolution would
+  otherwise fail, the slice receiver goes through `iterator_as_vector`, the one home: the free
+  spelling in `Parser::call_with_slice_receiver`, the method spelling when the member is a
+  method a vector declares and no iterator does (`Parser::slice_receiver_method`).  A keyed
+  range slice stays `(Slice-KeyedIter)`'s refusal.  Guard
+  `tests/scripts/1728-a-slice-is-a-vector-as-a-methods-receiver.loft`.
+
+- **`D-col-11`** — opened and CLOSED 2026-09-28: **a comprehension over a keyed collection walked
+  the collection, not its snapshot**, against `(Col-Order)`.  A `for` statement walks a `hash`,
+  `spatial` or `trie` through the ordered snapshot `parse_for` built; a comprehension over the same
+  source built none and stepped the COLLECTION in the snapshot's mode — a non-empty hash panicked
+  on a record number read out of its table header, a two-key trie answered `[null]`, a four-point
+  spatial one element, the last two silently, on both backends.  **Closed**: `keyed_snapshot` is
+  the one home both walks call, and the comprehension releases its snapshot when its loop ends.
+  Guard `tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft`,
+  falsified at `49350ce2b`.
+
+- **`D-col-10`** — opened and CLOSED 2026-09-28: **a range slice's cap below zero answered every
+  record**, against `(Slice-Cap)`'s "capped at n".  The lowering spelled "no `:n` written" as the
+  limit `-1` and the runtime read every negative limit as that flag, so `xs[(x,y)..:k]` and
+  `t[pre..:k]` with `k` gone negative (an overspent budget) or null answered the whole collection,
+  on both backends — silently, since a cap has no answer that looks wrong.  **Closed** by moving the
+  flag out of the program's reach: `SLICE_UNCAPPED` is `i64::MAX`, a cap that means "uncapped"
+  whoever writes it, and `slice_cap` is the one reader, for the spatial and trie builders both.
+  The paged loaders (`store_load_prefix`, `store_load_box`) keep "negative means no cap": theirs
+  is a documented function parameter, not this rule.  Guard
+  `tests/scripts/a-slice-cap-below-zero-answers-no-records.loft`.
+
+- **`D-col-7`** — opened and CLOSED 2026-09-25 (loft#1670): **`insert` and `reverse` did not act
+  on a LINKED vector's layout.**  A `vector<T>` is linked — each slot a 4-byte record id, each
+  element a record of its own — as soon as any keyed collection over `T` exists, which the author
+  never spells at the call site, so neither may change what these operations do.  Two defects:
+  `Parser::element_store_size`, the `@FR-H-Stride` home, answered the STRUCT's size for a linked
+  element, so both operations slid the wrong span (`reverse` of `1,2,3` read `null,null,3,`); and
+  with the stride right, `insert` still wrote the element's FIELDS over the slot's record id
+  (`1,4294967298,null,3,`), and a group insert reached no keyed sibling.  **Closed** at the
+  stride home (it answers 4 for a linked element), and at one runtime body both backends' ops run,
+  `Stores::insert_vector_element`: a linked slot is given a record claimed the way an append claims
+  one, its id written into the slot, and the RECORD answered for the fields to be written into.
+  `parse_insert` then hands the element to a group's keyed siblings (`OpLinkRecord`), since an
+  insert, unlike an append, reaches no `OpFinishRecord`; the group site is the one
+  `vector_group_site` derivation an element write through the group already reads.  Guards
+  `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` (reverse, both
+  layouts) and `tests/scripts/1670-an-insert-writes-the-element-its-layout-holds.loft` (10 cells:
+  every index, negative and out-of-range, a text-owning element, a copied variable, an insert
+  then a remove, and three through a group), falsified at `ea45d5fdf` on both backends.
+
+- **`D-col-6`** — opened and CLOSED 2026-09-24 (loft#1664): **a write through a payload BINDING
+  to a group member kept the field spelling after `(B-View)` had materialised the binding**, so
+  the write went to the reassigned subject while the reads came from the copy
+  (`binding_len` 1, the subject 3), which is loft#1662's split surviving exactly where the
+  resolution must stay.  The `&` LINK spelling of the same question was settled the same day by
+  making a collection link reach `(B-Ref-Reshape)` (`D-bind-60`), so it can never be downgraded
+  to a copy and the field it named at the bind is the field it still names at every write; three
+  sites that build an appended record (`build_vector_list`, the keyed `+= <elem>` fast path and
+  the keyed `+= [ … ]` list path) now share `Parser::resolved_group_write`, and membership is
+  asked both ways (`Stores::field_is_group_member`).
+  **The binding half is closed where the materialise is decided.**  The field-spelled write is
+  recognised by its ELEMENT, whose type records the binding it lives in, and `new_record` records
+  on the `Function` the collection type the binding's own spelling passes
+  (`group_write_views`).  The walk counts such a write as a USE of the binding; where the binding
+  is condemned, the scope pass spells `OpNewRecord` / `OpFinishRecord` back to
+  `(binding, its collection type, u16::MAX)`, so the write lands in the copy — which is what
+  `(B-View)` says a materialised view's write does.  Undisturbed, the write keeps the field
+  spelling and still reaches every member.  A KEYED member needed the materialise itself first
+  ([binding.md](binding.md) `D-bind-61`).  Guard
+  `tests/scripts/1664-a-group-member-payload-binding-materialises-like-any-view.loft`, 11 cells
+  (vector and keyed members, both declaration orders, a back edge, the `is` spelling, a
+  two-element append, and the undisturbed controls), falsified at `b938c9cb4` on both backends;
+  `1160-…` and `1662-…` unchanged.

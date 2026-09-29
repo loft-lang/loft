@@ -22,7 +22,7 @@ Tracker: [@PLN130](https://github.com/loft-lang/plans/issues/130) · opened from
 | what shipped | its home |
 |---|---|
 | the view-invalidation contract (reshape / re-key / reassign → materialise + advice) | [OWNERSHIP_MODEL.md § A view lasts as long as the thing it names](../../OWNERSHIP_MODEL.md#a-view-lasts-as-long-as-the-thing-it-names--and-loft-says-when-it-does-not) · user-facing in [LOFT.md](../../LOFT.md) |
-| the copy/view boundary it extends | [DESIGN_DECISIONS.md § C86](../../DESIGN_DECISIONS.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) |
+| the copy/view boundary it extends | [DESIGN_DECISIONS.md § C86](../../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) |
 | the `&` rule — a disturbance under a live reference is refused | [formal/binding.md § B-Ref-Reshape / B-Disturb](../../formal/binding.md) · the C79 principle behind it in [DESIGN_DECISIONS.md § C79](../../DESIGN_DECISIONS.md) |
 | the copy-diagnostic model (the owner's five decisions, the three copy kinds) | [COPY_DIAGNOSTICS.md § The decided model](../../COPY_DIAGNOSTICS.md) |
 | removal renumbers a vector, and a vector stays DENSE | [formal/collections.md § Col-Remove](../../formal/collections.md) |

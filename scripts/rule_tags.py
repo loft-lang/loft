@@ -31,8 +31,8 @@
 #                  entry's issue has closed
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
-#   claims         the LIMITATION sentences of the hand-written reference docs (LOFT.md,
-#                  STDLIB.md, CAVEATS.md, the loft-write skill) that cite a `loft#N`, each with
+#   claims         the LIMITATION sentences of the hand-written reference docs (LOFT*.md,
+#                  STDLIB*.md, CAVEATS.md, the loft-write skill) that cite a `loft#N`, each with
 #                  the guard `tests/scripts/N-*.loft` that would say which way N went; with
 #                  `--issues` asks the tracker which of those issues have CLOSED — a limitation
 #                  still on the page after its issue closed is what routes every agent around a
@@ -49,7 +49,7 @@
 #                  a signature listing rather than a program is a ```grammar fence and is not
 #                  asked.  `--gate` fails a fence with no source or one that has drifted
 #                  (@PLN176 phase 2; the walk that gives every fence a home is the plan's)
-#   sections       every `##`/`###` section of LOFT.md and STDLIB.md, and what KEEPS it: a
+#   sections       every `##`/`###` section of LOFT*.md and STDLIB*.md, and what KEEPS it: a
 #                  sourced sample, an `@FR-`/`(Rule)` or `@F` citation, a signature table the
 #                  stdlib source resolves, a guard path or a `loft#N`; a section with none is
 #                  prose nothing in the repo would contradict.  Also names a signature row no
@@ -487,9 +487,24 @@ def citations():
 #
 # The docs are the hand-written ones a reader takes as the definition; the generated pages
 # (tests/docs/*.loft) run and need no such check.  Env-overridable for a vendoring project.
+# The hand-written reference is a FAMILY of files — LOFT.md and STDLIB.md split by subject into
+# LOFT_*.md / STDLIB_*.md, the loft-write skill into several pages — so each list below is
+# globbed rather than named: a split that adds a file keeps it checked.
+def _family(*patterns):
+    import glob
+    return sorted({p for pat in patterns for p in glob.glob(pat)
+                   if not p.endswith("-history.md") and p not in NOT_REFERENCE})
+
+
+# Named like the family, about something else: the `loft test` runner.
+NOT_REFERENCE = {"doc/claude/LOFT_TEST.md"}
+
+
+REFERENCE_DOCS = ("doc/claude/LOFT.md", "doc/claude/LOFT_*.md",
+                  "doc/claude/STDLIB.md", "doc/claude/STDLIB_*.md")
 CLAIM_DOCS = (os.environ["CLAIM_DOCS"].split(":") if os.environ.get("CLAIM_DOCS")
-              else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md", "doc/claude/CAVEATS.md",
-                    ".claude/skills/loft-write/SKILL.md"])
+              else _family(*REFERENCE_DOCS, "doc/claude/CAVEATS.md",
+                           ".claude/skills/loft-write/*.md"))
 ISSUE_CITE = re.compile(r"loft#(\d+)")
 # A sentence is a LIMITATION when it says something does not work, is refused, needs a
 # workaround, or holds "until" something — the forms the two stale callouts took.
@@ -605,8 +620,8 @@ def claim_sites(docs=None):
 # `fn main`, 25 of the 94 ran as written, the rest were excerpts assuming context).  So a
 # fence NAMES its program and must match a window of it verbatim; the program asserts.
 FENCE_DOCS = (os.environ["FENCE_DOCS"].split(":") if os.environ.get("FENCE_DOCS")
-              else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md", "doc/claude/CAVEATS.md",
-                    ".claude/skills/loft-write/SKILL.md"])
+              else _family(*REFERENCE_DOCS, "doc/claude/CAVEATS.md",
+                           ".claude/skills/loft-write/*.md"))
 FENCE_PAGES = (os.environ["FENCE_PAGES"].split(":") if os.environ.get("FENCE_PAGES")
                else ["doc/00-vs-rust.html", "doc/00-vs-python.html"])
 FENCE_FROM = re.compile(r"<!--\s*from\s+(\S+)\s*-->")
@@ -746,7 +761,7 @@ def fence_report(docs=None, pages=None):
 # section runs to the next heading of the same or a higher level, so a `##` with `###`
 # children is kept by any child; each child is measured on its own.
 SECTION_DOCS = (os.environ["SECTION_DOCS"].split(":") if os.environ.get("SECTION_DOCS")
-                else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md"])
+                else _family(*REFERENCE_DOCS))
 # A pure index, and the two sections whose subject is not the language: STDLIB's note on how
 # the stdlib is implemented (a maintainer pointer) and its ledger of routines proposed and not
 # yet written, whose unresolved names are the content.
@@ -825,13 +840,24 @@ def section_report(docs=None, rules=None):
     return rows
 
 
+def _is_pointer(body):
+    """A section a split left behind: a sentence or two naming what moved and a link to the
+    family file that now holds it.  Its content is kept where the link points."""
+    lines = [l for l in body if l.strip()]
+    if not lines or len(lines) > 3 or any(l.lstrip().startswith("```") for l in lines):
+        return False
+    family = {os.path.basename(d) for d in SECTION_DOCS}
+    targets = re.findall(r"\]\(([A-Za-z0-9_\-]+\.md)(?:#[^)]*)?\)", " ".join(lines))
+    return any(t in family for t in targets)
+
+
 def _section_rows(text, rules, names, rel):
     """`section_report` over one doc's text — separate so a selftest can hand it a string."""
     rows = []
     if True:
         for line, lvl, title, body in doc_sections(text):
             plain = re.sub(r"\s*\(.*\)\s*$", "", re.sub(r"[`~*]", "", title)).strip()
-            if plain in SECTION_INDEX:
+            if plain in SECTION_INDEX or _is_pointer(body):
                 rows.append((rel, line, lvl, title, ["index"], []))
                 continue
             joined = title + "\n" + "\n".join(body)

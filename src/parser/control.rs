@@ -1022,7 +1022,7 @@ impl Parser {
             // which container to build.
             // @PLN124/loft#837 — an INTERPOLATION TARGET threads for the third time for
             // the same reason: `fn q(name: text) -> Query { "hi {name}" }` has no other
-            // way to say which type the string builds, and LOFT.md § "Building a value
+            // way to say which type the string builds, and LOFT_LITERALS.md § "Building a value
             // instead of text" lists the return type beside the assignment and the
             // parameter.  `interpolation_target` is a pure lookup (Reference → struct →
             // defines `lit`), so widening the gate costs a def-table probe on block tails
@@ -5778,7 +5778,7 @@ impl Parser {
         // so `match` on an `integer?` routes to the scalar handler instead of falling to the `_`
         // arm ("match requires an enum, struct, or scalar type"). Gate-OFF inert (never Optional).
         // A `&` subject is read through its reference, as every other operation on a `&`
-        // binding is (LOFT.md § References): the SHAPE question is asked of the pointee
+        // binding is (LOFT_DECLARATIONS.md § References): the SHAPE question is asked of the pointee
         // (`Type::peel_link`), and the subject value reads through the link like a field
         // access does (loft#1526).
         let subject_type = subject_type.peel_link().clone();
@@ -5786,7 +5786,7 @@ impl Parser {
         // `p` came from an enum declared LOWER in the file.  The dispatch below cannot
         // recognise it, so the arms contribute nothing and `result_type` would stay `Void`;
         // a local bound to the match then locks to void and pass 2's real type is REFUSED
-        // ("cannot change type from void to integer").  LOFT.md § File structure promises a
+        // ("cannot change type from void to integer").  LOFT_DECLARATIONS.md § File structure promises a
         // file may hold its declarations "in any order", so this must stay re-typeable —
         // the same first-pass escape `call_op` takes for an unresolved operand.
         let subject_unresolved = self.first_pass && subject_type.is_unknown();

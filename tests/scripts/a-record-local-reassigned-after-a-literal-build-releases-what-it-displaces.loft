@@ -158,7 +158,7 @@ fn c_struct() { a = DH { id: 21 }; x = DH { id: 23 }; note("m{x.id}"); x = a; no
 fn c_variant() { b: DE = B { k: 31 }; x: DE = A { k: 33 }; note("m{x.k}"); x = b; note("V{x.k}"); }
 
 // A droppable FIELD in the payload rather than a hook on the enum itself: the release is a
-// CASCADE, and it is a separate decoder from the hook (`heap.md` D-heap-2 is the entry for it).
+// CASCADE, and it is a separate decoder from the hook (`heap-history.md` D-heap-2 is the entry for it).
 fn c_cascade() { a: FE = F { h: DH { id: 61 } }; x: FE = F { h: DH { id: 63 } }; note("m"); x = a; note("V"); }
 
 // A NULLABLE STRUCT local — `@FR-N-Shape` makes `DH?` the synthetic struct-enum

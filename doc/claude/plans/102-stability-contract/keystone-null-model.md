@@ -176,7 +176,7 @@ rewrite.**
    a revert). STDLIB.md updated. *(2026-07-11; `default/03_text.loft` + `default/01_code.loft`.)*
 5. ✅ **DESIGN_DECISIONS entry + golden tests** for the accepted residual — the one reserved value
    per nullable scalar is now a conscious, frozen decision:
-   [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen)
+   [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS_VALUES.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen)
    (option B ratified; per-type reserved-value table part of the contract-1 freeze). Golden pin
    `tests/scripts/pln102-null-residual-golden.loft` freezes each reserved value as a boundary (the
    pattern reads null; an adjacent value does not) on both backends. *(2026-07-11.)*

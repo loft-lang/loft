@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/operational-history.md — the deviation register for [operational.md](operational.md)
 
 > **The rules are next door.**  [operational.md](operational.md) states what must always be true of the

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/ownership-history.md — the deviation register for [ownership.md](ownership.md)
 
 > **The rules are next door.**  [ownership.md](ownership.md) states what must always be true of the
@@ -2706,7 +2707,7 @@ The entry claimed the #415 struct-vector-field copy-on-bind was a stopgap contra
 reference-default.  The reversal attempt found the premise false: on BOTH backends every
 WHOLE-VALUE heap bind copies (`p = o`, `b = x`, `af = bx.v`) and only projections alias —
 the written law, not the code, was wrong.  The maker's call
-([DESIGN_DECISIONS C86](../DESIGN_DECISIONS.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
+([DESIGN_DECISIONS C86](../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
 whole-value binds COPY by contract; `p = o` becomes an alias only when the source is
 provably dead afterwards — the rustc last-use rule, as an OPTIMIZATION
 (`use_analysis::ElidePlan` is that analysis).  `O-Borrow` scopes to projections /
@@ -2848,3 +2849,647 @@ temporaries it was built for.  Guard:
 fifteen cells on both backends, falsified at `c25b444c`; the full record, including the
 four measurements that shaped the mechanism, is in
 [ownership-history.md](ownership-history.md).
+
+## The register summary carried by ownership.md until 2026-09-29
+
+The rules chapter's `OPEN` paragraph, moved here as written (RELEASE.md § 5b).
+
+**OPEN: 0.**  `D-own-52` (a record function whose abandoned return candidate is promoted onto
+its buffer and which answers ANOTHER function's result through it — `none = F {…}; if k < 0
+{ return none }; if k > 0 { return other(k) }` — freed the promoted local BEFORE the call that
+is handed it as the buffer: the loft#1126 transition free, unguarded, where `(O-Buffer)`'s
+callee clause says every free of the promoted local declines on its entry witness.  The
+interpreter does not reset the freed local, so a callee that fills a live buffer filled the
+freed store, and the caller read whatever took that slot next — another record's text, with
+no diagnostic, loft#1703.  The scope pass's two transition frees now stand down where the
+buffer has an entry witness; the rebind's own free after the call, guarded by that witness
+on both backends, is the one home for the displaced store.  Guard
+`tests/scripts/1703-a-forward-past-an-abandoned-candidate-fills-a-live-buffer.loft`) opened and
+CLOSED 2026-09-27.
+`D-own-51` (a field hoisted out of an in-place literal — `r = Outer { b: o.b }; r`,
+a work-ref typed `ref(Inner)["o"]`, a VIEW of the parameter — was freed at scope exit as a
+work-ref regardless of what it borrowed, releasing the CALLER's record on every call; in a
+loop the caller's pooled buffer was then read back, 46 strict-store violations on both
+backends and a panic in a larger program — loft#1683.  `(O-Derived)` frees a local iff it owns
+its store; the hoist that stages the field now marks a staged struct-typed PROJECTION
+(`is_projection_op`, `(B-View)`) a borrow (`skip_free`) at its mint, so the exit owes it
+nothing.  Keyed on the staged EXPRESSION, and there and not at the exit, because the temp's
+deps are not the fact: a staged WHOLE variable (`Inner { a: a }`) is a copy that owns its
+store while its type carries the source's deps (measured: keying on deps leaked
+`1184-…` and `880-…`), and a pass-2 tuple buffer carries deps the same way (measured:
+exempting every borrowing work-ref at the exit leaked one).  Guard `tests/scripts/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft`)
+opened and CLOSED 2026-09-26.
+`D-own-50` (a record returned by a fn-ref call whose target is UNRESOLVED had no
+decided owner: bound, it was adopted even when it was the caller's capture; inline, it was held
+to frame exit — loft#1659) opened and CLOSED 2026-09-24, below.
+`D-own-49` (an explicit `return` of an ELEMENT published a signature with no
+borrow, so the caller freed the container — loft#1625, and the third container kind of one
+missing record after loft#677 and loft#1140) opened and CLOSED 2026-09-23, below.
+`D-own-48` (a returned vector local rebound by a call inside a loop or a branch
+answered a store its caller never handed in, loft#1599) opened and CLOSED 2026-09-22, below.
+`D-own-47` (a local a `match` statement's arms first assign died at the block
+the lowering wraps the arms in, and was read after it) opened and CLOSED 2026-09-21, below.
+`D-own-46` (a view leaf admitted where the element was not the value's copy on
+every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
+`D-own-43` (the interpreter's rebind of a promoted buffer local frees the
+buffer the caller handed it — masked while such callees receive the null sentinel) opened
+2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below; `D-own-45` (a return that may hand
+back one of several arguments guarded against the first, loft#1550) opened and CLOSED
+2026-09-17, below.  `D-own-42` (a plain local's first bind
+from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
+CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
+and CLOSED 2026-09-17, below; `D-own-40`
+(`(O-Witness)` armed for locals whose assignments do NOT mix, and
+`(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
+value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
+2026-09-10.  Every earlier deviation this doc has carried is closed; the
+record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
+closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
+hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
+a store — a closure capturing a VECTOR inside a loop, because the witness is record-typed — and
+the entry records why the obvious widening is not taken: it answers wrong on `--native`.
+
+## Deviations carried by ownership.md until 2026-09-29
+
+Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
+
+### D-own-49 — OPENED AND CLOSED (2026-09-23, loft#1625): an explicit `return` of an ELEMENT published a signature with no borrow, and the caller freed the container
+
+- **Violates:** (O-Move) — *"if the return borrows a parameter, the return type records it
+  (`{Attr(param)}`)"* — with (O-Opaque), which is what gives the omission its cost.
+- **Where:** `parse_return`'s mid-body VECTOR leg filtered its dep list down to a CALL's
+  work-ref (`__ref_` / `__rref_`), so a return BORROWING a parameter named no site ref and
+  `ref_return` was never entered at all.  The tail spelling reaches it through `block_result`,
+  which hands over the tail's own deps.  Two spellings of one callee, two signatures, from
+  **byte-identical bodies**:
+  `fn retn(v, i) -> vector<integer>? { return v[i]; }` typed `vector<integer>?` with EMPTY
+  deps, `fn tail(v, i) -> vector<integer>? { v[i] }` typed `vector<integer>["v"]?`.
+- **Effect:** (O-Opaque) reads an empty list as *"the callee minted this"* — the one reading
+  that licenses a free — so the caller released an element of its OWN container.  Measured
+  2026-09-23, four iterations through a fn-ref call: the interpreter answers `null`, `--native`
+  a recycled number, and the caller's outer vector reads `len(vs) == 0`.  Two backends, two
+  different wrong answers, no diagnostic — `(O-NoDiverge)` with it.
+  It takes five things together and each one alone is clean: an ELEMENT read (a FIELD read was
+  always right), returned DIRECTLY (a bare tail and a local are right), from a
+  nullable-collection callee, through a FN-REF call (a named call is right), inside a LOOP.
+  Binding the result or the argument does not help, which is what says the defect is the
+  callee's signature and not the call site's spelling.
+- **Status:** CLOSED 2026-09-23.  Found while measuring loft#1624's controls.
+- **The same defect a third time, and the class is now closed.**  `D-own`'s loft#677 lost a
+  RECORD return's `["o"]` dep, where *"callers then read the returned borrow as owned and freed
+  the CALLER's store"*.  loft#1140 found the explicit-return spelling of it for KEYED
+  collections and fixed that arm — in a comment that describes this one exactly, one container
+  kind over.  This is the VECTOR arm beside it.  The remaining kinds were then measured rather
+  than assumed: a RECORD element return, a TUPLE return holding a borrowed vector, and both of
+  their tail spellings are correct, so there is no fourth instance to find.  What the three
+  share is not a container kind but an ENTRY POINT: `ref_return` is the one site that writes
+  `(O-Move)`'s record, and every path to a return has to reach it.  `LOFT_TRACE_RETPROMO`
+  answers that directly — it prints an ENTER line per entry, and the absence of one is the
+  defect's own signature (two lines for the tail spelling, none for the `return`).
+- **Closed:** the vector arm hands `ref_return` the value's deps when the work-ref filter comes
+  up empty, as the keyed arm above it already does.  No placement is decided and none can be:
+  every var in that list is already an ATTRIBUTE, and the classifier answers such a var
+  `MergeAttr` before any placement rung — *"an attribute has nothing left to place, so the only
+  thing left to say about it is which attr the return borrows"*.  Guard
+  `tests/scripts/1625-an-explicit-return-of-an-element-records-its-borrow.loft`, whose `k1` is
+  the axis the fix must not move: a callee that genuinely MINTS its answer keeps its empty deps,
+  or the caller stops freeing what the callee really did hand over.
+- **The first cure was wider than the rule and leaked**, which is why `c13` and `c14` exist.
+  `(O-Move)` has two halves that want OPPOSITE things: a return borrowing a PARAMETER records
+  it, so the caller does not free; a return of a LOCAL's store is DELIVERED, so the caller is
+  handed exactly that store.  Reading the dep list without splitting on it recorded a borrow
+  for the delivered case and leaked it, on every shape `tests/nullable_ret_buffer.rs` measures.
+  A MIXED list — a value that comes from a parameter on one path and a local on the other — is
+  declined rather than guessed.
+- **The record has THREE homes and no guard ties them together.**  `ref_return` is the
+  dispatching writer; `parser/mod.rs`'s template arm and `parser/definitions.rs`'s interface
+  stub each write `Deps::attrs` directly.  All three are correct today, and none of them is
+  this deviation — the defect here was an entry reaching NO writer — but a change to what the
+  record means has three places to land, which is the drift shape loft#1622 records one
+  subsystem over.  Noted rather than cured: unifying them is a refactor with no defect behind
+  it yet.
+
+### D-own-48 — OPENED AND CLOSED (2026-09-22, loft#1599): a returned vector local rebound by a call inside a loop or a branch answered a store its caller never handed in
+
+`(O-Owner)` for a local renamed onto the RETURN BUFFER: the caller hands in a buffer, frees that
+buffer, and owns what the function answered in it.  Every rebind of the renamed local must
+therefore fill that buffer.  A rebind on the straight line hands its call the buffer itself
+(`nrvo_collapse_tail_set`, `nrvo_collapse_defining_call`).  A rebind by a call inside a loop or a
+branch handed the call a buffer of its own and pointed the local at it, so the function answered
+that store:
+
+```loft
+fn build() -> vector<integer> { v = mkv(1); for i in 0..2 { v = mkv(2 + i); } v }
+```
+
+The caller freed only its own buffer, so one store leaked per call, identically on both backends
+(the interpreter's leak check names it; native leaks in silence).  The value was right.
+
+**Closed** where the promotion is decided: such a local is not renamed
+(`Parser::var_call_rebound_nested`, beside `var_bound_to_branch` in the same rung, whose reason it
+shares), so it keeps its own store and is copied into the buffer once at the return, the
+delivery a join at the tail already takes.  A literal, a copy and `[]` refill the buffer in place
+and keep the rename, as does a call rebind on the straight line.  Guard
+`tests/scripts/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.loft`.
+
+### D-own-50 — OPENED AND CLOSED (2026-09-24): a record returned through an unresolved fn-ref had no decided owner
+
+`@FR-O-Unknown` says the oracle may derive nothing, and that the READER must then decide.  A
+`CallRef` whose target is unresolved — a fn-typed parameter, a slot two lambdas were assigned
+to — is that case, and for a record result both readers had decided without deciding:
+
+```loft
+fn build(f: fn(integer) -> S, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += height(f(i)); }     // inline: held to frame exit
+  for i in 0..n { s = f(i); t += height(s); }  // bound: adopted, then freed
+  t
+}
+```
+
+* **Bound** (`s = f(i)`): the heap first-bind dispatch had no arm for an unresolved target, so
+  the bind was the plain adopt and `s` the store's owner.  Where the closure the caller passed
+  hands back its CAPTURE on some calls (`if c { cap } else { S {…} }`, an early `return cap;`,
+  `capn ?? S {…}`), `s`'s free released the caller's capture — every later read answered another
+  record's bytes, on both backends, with nothing said.  A closure returning ONLY its capture was
+  unaffected, because its return is copied into the call site's buffer.
+* **Inline** (`height(f(i))`): `Scopes::callref_owned_return` declined the lift for an unresolved
+  target, so the result had no binding at all and the frame's fn-ref hand-up list held it until
+  the frame ended — one store per call, the store table exhausted at 65 535 calls on both
+  backends.  `--native` also handed such stores UP through every frame returning a heap value,
+  and its duplicate check scanned the growing list on every call (quadratic).
+
+**Closed** by reading the one fact that exists: the call's own return compares the store it
+hands back against the allocation counter as the call found it (`State::release_fnref_bufs`,
+`codegen_runtime::cr_fnref_minted`), and @PLN150 already carried that verdict one hop to a
+record COPY.  `OpBindFnRefResult` (interpreter) and `cr_fnref_adopt` (`--native`) carry it to
+the BIND: a store that predates the call is copied into a fresh store and left alone
+(`@FR-B-Copy`); any other is adopted and taken OFF the hand-up list, so the binding is its one
+owner (`@FR-O-Owner`).  `use_analysis::opaque_callref_bind` is the one predicate both backends
+and the scope pass read; the inline spelling lifts into an owning temp and takes the same bind,
+at the first bind and at the reassignment a lift temp reaches.  A binding whose deps name an
+argument the call may hand back (`@FR-O-Opaque`) keeps its borrow.  Measured: 1 000 inline
+calls peaked at 1 000 live stores and now at 1–3; no copy on the mint arm.
+
+Guard: `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft` — 14 cells, ten of
+which fail on the build before (the 70 000-call cells on the store ceiling, the capture cells on
+the value; both backends).
+
+### D-own-47 — OPENED AND CLOSED (2026-09-21): a local a `match` statement's arms first assign died at the match's block, and was read after it
+
+`@FR-O-Owner` places a free where the value DIES.  Every `match` lowers its arms inside a block
+of its own — the subject binding, then the arm chain — and a heap local first assigned in an arm
+was registered in that block, so `get_free_vars` released its store at the block's end:
+
+```loft
+match e { A => { t = P { v: 7 }; }, B => { t = P { v: 8 }; } }
+// … anything that allocates …
+t.v      // answered 3 — a churned record's bytes — on the interpreter; E0425 on native
+```
+
+It is `D-own-24` (loft#1156) with the `match` block in place of a loop body, and it has that
+entry's signature: the interpreter answered WRONG with no diagnostic (an ordinary build, not
+only under `LOFT_POISON`), and `--native` refused to compile, because it scopes the Rust `let` to
+the same block — one decision shown twice.  The `if` spelling of the same arms was clean, since
+`scan_if` pre-initialises a first-assigned local where the `if` stands.  Scalars were never
+affected: a scalar slot is function-wide already.
+
+Found 2026-09-21 because a droppable's value `match` began to be written out to its statement
+form (`formal/heap-history.md` D-heap-18), which is the author's own spelling of this shape; the
+author's spelling had been failing all along.
+
+Closed at loft#1156's home, generalised: `Scopes::locals_read_after` takes a statement BLOCK as
+well as a loop, and hoists a local that the block first assigns and that the following
+statements READ, under the same liveness guard (loft#1332) and the same loop-variable exclusion
+(loft#1135).  Guard: `tests/scripts/a-local-a-match-arm-assigns-is-bound-before-the-match.loft`.
+
+### D-own-46 — OPENED AND CLOSED (2026-09-17): a view leaf was admitted where the element was not the value's copy on every path
+
+`(O-ViewField)`'s callee half, `(O-Complete)`.  The opt-in view-leaf unit (`LOFT_VIEW_FIELD`)
+asked its question per EXIT and by statement position: "is the element this exit views built
+earlier in the exit's own statement list, with no other build in between".  A statement that
+holds the append under an `if` counts as that build, and nothing asked about the value after its
+copy.  Four shapes answered wrong on `--native`, with nothing to say so, on every build that
+armed the unit: `if c { sc.ops += [Op { opts: p }] }; Mark { mpts: p }` read 0 points for 3 on
+the path that did not append; and the value grown (`p += [x]`), rebound (`p = mkpts(n + 2)`) or
+written (`p[0]?.px = 100`) after its copy read the element's 3,9 where the record holds 4,109,
+5,30 and 3,109.  No default program was affected — the unit was opt-in — which is why it was
+found by the matrix written before a default flip rather than by a consumer.
+
+Closed by making the rule's per-path clause the test itself: `hoist::fresh_leaf` walks the
+structured IR forward (an `if` joins its arms, a loop runs to its fixpoint, a `break`,
+`continue` or `return` carries its state to its target) and admits an exit only where the fact
+holds on every path.  It also admits what the old test declined and the rule allows — an append
+in each arm, viewed as the container's last element, and an append with its `return` inside a
+loop — and it declines a value changed inside the literal between its copy and the element's
+finish (`p17`), which neither test had a cell for until the finish rule was sabotaged.  The gate
+stores each exit's leaf and the emitter writes the stored one; before, the emitter re-derived it
+without the disturbance summary the gate had used.  Guard `tests/scripts/164-view-field.loft`
+(`p1`–`p17`), pins `tests/view_field.rs`.
+
+### D-own-45 — OPENED AND CLOSED (2026-09-17): a return that may hand back one of several arguments was guarded against the first
+
+`(O-Oracle)` — the fact is derived, never upgraded on a base that cannot be trusted — and
+`(B-Copy)`.  `fn either(a: Canvas, h: H, c: boolean) -> Canvas { if c { a } else { h.c } }`
+summarised its return as `Join(a)`: the lattice joined two borrows with different bases into a
+`Join` of the first, which the Galois connection above does not cover.  Every `Join` reader
+assumes one arm is OWNED, so the caller's guard compared the answer with `a` alone, adopted
+`h`'s store as the binding's own whenever the callee answered `h.c`, and the binding's
+scope-exit free released the caller's record: `pick = either(cv, h, false); pick` read `h` back
+as another record's bytes on both backends (`55 51539607552` for `101 42`), with no diagnostic
+(loft#1550, `silent-wrong`).  The rebind spelling (`cv = either(cv, h, c)`) aliased on native
+and freed on the interpreter; the nullable return aliased once the guard was gone.
+
+Closed at the call boundary: a callee whose return deps name more than one visible parameter
+answers `Join(∅)` there (above), which every reader copies — native's copy-or-adopt split, the
+interpreter's first-bind call copy, the nullable first bind (`nullable_join_first_bind`'s
+"copy always" base), and the interpreter's rebind through a FRESH store, whose protect
+bracket no longer names the local (it named the new store after the copy and left the old
+one protected, one leaked store per call).  Changing the lattice itself was measured and
+reverted: `q ?? [7, 8]` joins a parameter with the function's own literal backing, and
+`Join(q)` is the right answer there (`1257-…`, `1318-…` and `1323-…` went red).  Twelve files'
+emission moved over the 1 590-file corpus before that correction and three after it — the
+three that ARE this shape.  Guard
+`tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft`.
+
+### D-own-44 — OPENED AND CLOSED (2026-09-17): a lift temp whose value a consuming op had freed was freed again at its rebind
+
+`(O-Override)` — *a binding marked never-free takes no ownership-derived free in ANY of a
+free's spellings* — and `(O-Owner)`.  `rs = f()` on a keyed local lowers to a lifted call
+result `__lift_N` that `OpReplaceKeyed` copies into `rs` and then FREES (its source-free
+bit): the call's store is the op's to release.  `scopes::mark_lift_handoff` recorded that
+hand-off (loft#890) in a set the scope-exit sweep reads, so the lift took no free at scope
+exit — but the fact never reached the variable, and the second spelling of its free, the
+displaced-store free a REBIND emits (`Function::owns_displaced_store`, both backends), still
+fired.  In a loop the rebind released the slot the op had already freed, which by the next
+pass belonged to whatever store the program made in between: a vector literal read `1` for
+`24`, a record read `3 4294967308` for `5 3`, on both backends, dense and nullable returns,
+`sorted` and `hash` alike — silent without `LOFT_STRICT_STORES`, a panic under
+`LOFT_POISON`.
+
+Closed at the fact: every temp in the hand-off set is marked never-free after the scan
+(`scopes::run_scan_phase`), so both backends' displaced-store predicate answers no through
+the veto it already consults.  It surfaced because @PLN164 A0 moved a buffer mint into the
+first pass, where the freed slot was, and `1150-…`'s vector control read 0; eager minting had
+masked it only because the next call's result happened to reuse the same slot number, which
+made the identity-guarded free decline.  Guard:
+`tests/scripts/164-consumed-keyed-lift-rebind.loft` (c1–c4 fail on both backends with the
+mark removed, c5–c6 are the controls).
+
+### D-own-43 — OPENED (2026-09-15) AND CLOSED (2026-09-17): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
+
+`(O-Buffer)` — a hidden return buffer is the CALLER's store: the callee fills it and hands
+it back, or mints its own and hands that back — and `(O-Owner)`: the callee never frees what
+the caller owns.  A local the parser promotes onto the buffer (`fn render(p) -> Canvas { cv =
+Canvas { … }; cv = alloc_canvas(…); cv }`, plan 51 cluster 3) IS that buffer parameter, and
+its rebind from a call runs the interpreter's reassignment path: a pre-set free of the store
+the local holds, which is the caller's buffer.  Native guards that free against the buffer
+the frame was handed (`_rb_w_<buffer>`, loft#1126); the interpreter does not, so the two
+backends disagree about who owns a store — the `(O-NoDiverge)` shape D-own-41 already named.
+
+Masked today: such a callee always receives the null sentinel (@PLN164 B1 keeps it so by
+excluding its pairings from the entry-time pool, `Scopes::minted_pairs`), and a free of the
+sentinel is a no-op.  Measured 2026-09-15: B1's cell c6 with that exclusion removed —
+`[strict-store] USE AFTER FREE (read) store #3 type=Q … killed by the free of <anon>` inside
+`render_lit_then_call`, `--interpret` only; the caller's next record took the freed slot and
+`p.tag` read it.  Closes with @PLN164 B1b: the interpreter's reassignment path takes the
+same guard, after which the pool may enrol these buffers and the cell must stay green under
+`LOFT_STRICT_STORES=1` on both backends.
+
+**Closed by @PLN164 B1b — and the rebind was one of THREE frees that held the same false
+belief.**  The scope pass's own sentence for the promoted buffer read *"this function mints
+its store"* (`Scopes::is_promoted_ret_buffer`, the loft#688 exit leg), which is true only
+while the caller hands the null sentinel.  With the pool enrolling these buffers, the cells
+(`plans/164-activation-arena/bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`) found
+the other two: the free a LITERAL exit emits for the promoted buffer when a chain renamed it
+(`fn scan(…) -> Mk { … return no_mk() … return Mk { … } }`, both backends — native's
+`_rb_w_` guards only its rebind), and native's COPY arm at a bind that a scope-pass pre-init
+had turned into a rebind (`if c { m = scan(…) }` in a loop, `parse_scene_at`'s `ps_f`),
+whose source-free released the pooled store.  Closed at the fact rather than per site: the
+scope pass mints an ENTRY WITNESS for every promoted record buffer (`__rbw_<buf> =
+OpRefAlias(buf)`, `Function::entry_witness`) and guards its exit legs with it; the
+interpreter's rebind frees read the same witness (`OpFreeRefUnlessEntry` where the displaced
+store is already on the stack); and the one bind after an `if` pre-init is recorded as a
+first bind (`Variable::deferred_first_bind`), adopted on both backends.  The rule gained the
+callee-side clause above.  Guard `tests/scripts/164-adopt-buffer-reuse.loft`, pins
+`tests/adopt_buffer_reuse.rs`.
+
+### D-own-42 — OPENED AND CLOSED (2026-09-15): a plain local's first bind from a callee that returns its promoted local COPIED where the rule transfers
+
+`(O-Move)` — *a returned heap value's ownership transfers to the caller's binding; the callee
+never frees what it transfers* — and `(O-Buffer)`'s fresh leg: a callee handed the null sentinel
+for its buffer mints the store it hands back, and nothing else names it.  `fn mk() -> P { o = P
+{ … }; …; o }` is that callee: the parser renames `o` onto the hidden buffer and reports the
+return as `["o"]`, a dep naming no parameter.  Both backends nevertheless COPIED at `b = mk()`
+— a second store minted by the caller, a deep copy, the callee's store freed — because the one
+predicate both read (`return_adopts_fresh_store`) declines a hidden-attribute dep for a reason
+that belongs to a DIFFERENT destination: adopting is unsound where the bound local is itself a
+return buffer (`render(p) -> Canvas { cv = alloc_canvas(…); cv }`, plan 51 cluster 3), and the
+predicate is a callee fact that cannot see the destination.  The value was right on every
+program; the cost was two mints, a copy and two frees per call, and the drawing library's
+`parse` row paid it at every `PointList` and at the bench's `Sketch` bind.
+
+**Closed by @PLN164 B1:** the question is asked per SITE, in one home
+(`use_analysis::adopts_minted_at_bind`): a direct call whose return deps name exactly the
+callee's buffer attribute, bound to a plain local — not a parameter, not a caller-hidden
+buffer, not the call's own buffer argument.  `scopes` strips the local's deps and pairs it
+with the call's buffer for the identity-guarded free `(O-Buffer)` already gives a
+literal-returning callee's result; the interpreter binds by `OpPutRef` and native by the plain
+assignment.  The rule did not change: the code now reads the destination the rule was always
+about.  What the matrix caught on the way is recorded in the plan: enrolling such a buffer in
+the entry-time pool hands the callee a store the interpreter's rebind of its promoted local
+frees where native guards it (`_rb_w_`), so the buffer stays null and reuse for that callee
+shape is the plan's B1b.  Guard `tests/scripts/164-adopt-first-bind.loft`; cells
+`plans/164-activation-arena/bytecode-comparisons/B1-adopt-first-bind-cells.loft`.
+
+### D-own-41 — OPENED AND CLOSED (2026-09-11): the interpreter detached a local by re-allocating its store IN PLACE, wiping the value being copied into it
+
+`(O-Detach)` — DETACH AFTER THE READS — names *"the free, sentinel or RE-ALLOCATION that stops
+[a binding] naming its current store"* and requires it after every read of that binding by the
+value being assigned.  A NULLABLE heap local reassigned from a call whose return BORROWS a
+parameter that reads it answered the type's ZERO on `--interpret` and correctly on `--native`:
+
+```loft
+fn keep(s: K) -> K { s }
+c: K? = mk();  c = keep(c ?? K { x: 9 });     // --interpret 0, --native 7
+```
+
+Two lines, no loop, no literal, **live on `main`** — and a wrong value with no diagnostic, which
+makes it the more serious half of the loft#1517 arc even though it was found second.
+
+The interpreter DID defer the re-allocation past the call, which is what the rule asks.  It then
+performed it IN PLACE on the local's own store: `OpDatabase(c)` cleared the record and the
+`OpCopyRefOrNull` after it copied from the call's result — which was that same store, because
+`keep` hands back what it was given.  `--native` has a runtime same-store passthrough for exactly
+this (`generation/dispatch.rs`'s `PASSTHROUGH`, whose comment cites this rule), added when the
+backends were wrong the other way round (loft#1017b).  So `(O-NoDiverge)` was broken by a fix that
+had only ever been applied to one side.
+
+⚠ **That is a hiding place, not bad luck, and it generalises past this entry.**  This is one
+question answered by two decoders — the usual shape — but here the two decoders are the two
+BACKENDS, and the instrument that normally finds that shape is a differential run comparing them.
+Repairing one backend and not the other therefore breaks the very cross-check that would report
+it, and the defect becomes invisible to the @PLN89 oracle by construction: the oracle asks whether
+the two agree, and the repair is what made them disagree.  A same-store, same-rule fix landed in
+`generation/dispatch.rs` or `state/codegen.rs` alone should be read as an OPEN deviation in the
+other until measured, whichever direction it goes.  Measured cost of not doing that here: a
+two-line wrong value shipped for a cycle, found only because an unrelated arming defect was being
+corrected on top of it.
+
+**Two reasons it stayed invisible**, and they are the reusable part:
+
+- The condition that forces a FRESH destination was gated on the local being **WITNESSED**, and
+  `(O-Detach)` carries no such qualifier — a guard narrower than the rule it cites, the third
+  instance of that shape in two days.  A witnessed local took the fresh-store path and was
+  correct, which is also why loft#1517's misclassification MASKED this: the locals that reach
+  this path were being witnessed for a false reason, and that reason was load-bearing.
+- Its other half, `value.reads_var(v)`, is SYNTACTIC and could not see the case at all.  A `??`
+  (and an `if`-valued arm) HOISTS the read of the local into a temporary in a PRIOR statement —
+  which is the lowering `(O-Detach)` itself prescribes — so the assignment arrives as
+  `Set(c, Call(keep, [__lift_1, …]))` and mentions `c` nowhere.  **The hoist moved the READ, not
+  the VALUE**: `__lift_1` is bound to `c` and names c's store, and its dep list says so
+  (`["__ref_p2_1", "c"]`).  A predicate written from the source spelling matches nothing here and
+  looks inert.
+
+**CLOSED** by the ORACLE's borrow BASE: a `Borrowed`/`Join` whose base may hold `v`'s store —
+`base == v`, or `base`'s dep list names `v`.  The `??` hoist temp carries exactly that dep
+(`__lift_1` reads `["c", "__ref_p2_1"]`), because the hoist moved the READ and not the VALUE.
+
+⚠ **Two other facts were tried first and BOTH are wrong, in OPPOSITE directions, and all 70
+targeted tests across eight guards were green on each.**  Recorded so neither is retried:
+
+- **`value.reads_var(v)` widened into the gate.**  Answers NO for the defect (hoisted) and YES
+  for `s = grow(s)`, which NEEDS the in-place destination — one store leaked per loop pass,
+  `303-ref-reassign-free.loft`, `R3×4` and `N3×4`.
+- **`Def::returns_borrowed_view`** (the return's dep names a visible param).  True for a callee
+  that MINTS its record and merely carries a dep through a `text` field —
+  `fn grow(x: N3) -> N3 { N3 { name: x.name + "x", v: x.v + 1 } }` reads as borrowing and hands
+  back a fresh store — so it leaks the same population.  A return type's dep list is not an
+  ALIASING fact.
+
+And the middle is narrow rather than the edges merely being wrong: the first cut over-reached into
+the WIPE (`1184-a-view-assigned-back-onto-its-own-source`, `len 0` where 8 is right, six cells,
+plus a `??` default arm's mint released twice), the narrowing over-reached back into the LEAK, and
+the oracle-alone form does not separate them either — **1184's failing cells and the defect share
+the signature `reads=false, Borrowed`**.  What separates them is only the base: the defect's base
+carries a dep naming `v`; 1184's bases (`w`, `d`, `target`) have empty dep lists and are genuine
+views of ANOTHER binding, which is why that population needs the in-place destination — it is
+assigning a view back onto its own source.
+
+⚠ **All of it was found by an env-gated probe inside the gate, after two wrong answers reasoned
+from predicates that were in scope.**  `(O-Detach)`'s three candidate facts are indistinguishable
+by reading; they separate on one line of `eprintln!`.  And ⚠ **a plain run shows none of it**:
+`--interpret`, `--native` and `--tests` on `303` are all clean, because only `wrap`'s in-process
+SUITE run arms the leak gate (`--tests` skips it).  Two of us checked 303 the natural way and
+concluded it was fixed.
+
+Guard `tests/scripts/a-reassignment-from-a-borrowing-call-does-not-wipe-its-own-source.loft`, 11
+cells.  Its sharp control is `test_the_callee_returns_the_other_parameter`: the callee's return
+borrows, but not the parameter carrying the local, so it says the condition is *"the result may be
+the destination's own store"* and not *"the callee borrows something"* — and it is where the
+remaining conservatism (a fresh allocation bought for nothing) is visible as a choice.
+
+### D-own-40 — OPENED AND CLOSED (2026-09-11): `(O-Witness)` was armed where its premise is false, and `(O-Owner)` broke while it was
+
+`(O-Witness)` conditions the runtime witness on the local's assignments MIXING ownership — *"one
+assignment hands a heap-record local a store of its own and another hands it a VIEW"*.  Two
+measured populations carry a witness with no mix at all, so the release placement `(O-Override)`
+then vetoes is replaced by one that does not cover the same deaths.  This is the ownership half
+of loft#1517; [heap-history.md](heap-history.md) `D-heap-6` is the `(H-Drop)` half and carries the guard.
+
+- `x: SE = A { k: 3 }; x = a` — a CONSTRUCTION and a whole-value COPY.  Classification arm (e)
+  makes a record construction `Owned` (fresh, `(O-Owner)`).  For the copy the rule is
+  `binding.md (B-Copy)`, which names this spelling outright — *"a heap WHOLE-VALUE … a
+  struct-enum `c = e`: the bound variable is INDEPENDENT"* — so it is a second record the
+  binding alone names, which is owning.  (The dataflow arm that carries it is not cited here:
+  (c′)'s `reminted` test is about the LOCAL being `OpDatabase`'s arg-0, and a struct-enum
+  literal mints into a work-ref instead, so naming that arm would be an attribution rather
+  than a reading.)  Two owning assignments, no view, and a witness.
+- `c: K? = K { x: 7 }; c = keep_k(c ?? …)` where `fn keep_k(s: K) -> K { s }` — a CONSTRUCTION
+  and a call whose return BORROWS its parameter.  `(O-Move)` is explicit for that case: *"if the
+  return borrows a parameter, the return type records it and the caller COPIES to obtain its own
+  store"*.  So the local owns after the call, which is measured rather than read off the rule —
+  `c.x = 99` leaves the source at `7` on both backends, where a `(B-View)` projection writes
+  through.  Two owning assignments again.
+
+The misclassification is one `Other` read by two sites for two different questions (D-heap-6 has
+the mechanism).  What belongs HERE is the consequence for these rules, and there are two:
+
+**`(O-Owner)` is broken for as long as the witness is armed.**  A construction delivers through a
+work-ref, and `scan_set`'s hand-off disarm — which writes the sentinel into that work-ref so the
+binding becomes the store's one claimant, `D-heap-5`'s cure — is conditioned on
+`proxy_says_owned`, which a witnessed local is not.  So the work-ref and the local both name the
+store: *"every heap store has exactly one owner at any moment"* does not hold on that path.
+⚠ `witness_set_kind`'s own comment reasons FROM that state — the store is *"the work-ref's and
+not solely the local's"* — and concludes the local does not own.  The rule says the state should
+not exist; the disarm should fire.  Measured: with the witness suppressed the disarm DOES fire
+and the local adopts the store outright, so `(O-Owner)` holds for every non-witnessed spelling.
+
+**The cure ORDER was settled by these rules, not by a design call.**  `D-heap-6` recorded it as
+an open question — either the other release path mis-frees a local the witness was covering, or
+such a local must stay witnessed.  `(O-Witness)` and `(O-Move)` decide it: the local must NOT be
+witnessed, so the witness on it is this deviation and the other path's wrong answer (`0` where
+`7` is right) is the defect to fix FIRST.  *"Keep the witness because removing it breaks
+something"* was never an available answer.  That second defect is `D-own-41` below, it turned out
+to be LIVE on `main` independently, and fixing it is what let the arming correction land.
+
+**CLOSED 2026-09-11** by `heap-history.md` D-heap-6's Cure A: `is_view_of_storage` answers `false` where
+`construction_work_ref` names a work-ref, so a construction is no longer counted as the view half
+of a mix.  `(O-Owner)` follows from the same change — an unwitnessed local reaches the hand-off
+disarm, so the work-ref stops naming the store and the single-owner property holds on that path
+again.  Guard: `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft`,
+whose `test_mixed` and `test_null_then_call_field` cells are the two directions a cure could
+over-reach in.
+
+⚠ **No gate saw this, and the reason is structural — closing it changes nothing there.**
+`(O-Override)`'s gate is `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`), which reds on a FREE
+of a never-free binding.  Run over both guards it reported `clean — 0 RED`, because nothing frees
+illicitly: what was missing was a DROP.  `(H-Drop)`'s own ⚠ says a drop's two failures are not ordered the way a
+free's are, and this is that asymmetry showing up in the instruments — the free side has a
+checker and the drop side has only per-guard traces.  A gate for `(H-Drop)`'s three deaths is
+the gap, and it would have caught both populations above.
+
+### D-own-39 — OPENED AND CLOSED (2026-09-10): a per-path hand-off to a SHARED destination
+
+`(O-Complete)` makes the ownership fact per binding and PER PATH.  A whole-value copy written
+inside a branch arm moves a release on the runs that take that arm and on no others, and the
+hand-off is recorded once for the statement — so the arm that did not run leaves its source
+with nothing to release it, and the resource is never released at all, silently, on both
+backends.
+
+The ARM-LIFT half of this is CLOSED (loft#1514, `scopes::handoff_target`): a value `if`/`match`
+lifts each arm's value into a temp of its own, and because each temp is null until its own arm
+assigns it, keeping the release with the SOURCE and stopping the DESTINATION is correct on
+every path with no runtime witness.  Guard
+`a-branch-arm-releases-the-source-the-other-arm-took.loft`, 19 cells, 12 moving.
+
+What stays open is the case where the arms assign one SHARED local:
+
+```loft
+a = mk(1); b = mk(2); x = mk(3);
+if c { x = a; } else { x = b; }        // c=true releases 3 and 1, never 2
+```
+
+The per-arm rule does not reach it and must not: `x` genuinely owns what it took on the path
+that ran, so stopping `x` would lose THAT release instead of restoring the other.  Neither side
+can be chosen statically, which is the whole of the deviation — `(O-Complete)`'s "per path"
+has no representation at a destination that is shared across the paths.
+
+✓ **CLOSED by MATERIALISING the path fact** (loft#1515): `Scopes::handed_off` is one boolean
+per source, false at entry, set where the copy runs, read at the source's scope-end release and
+cleared when the SOURCE is reassigned.  Not a new mechanism — loft#1200's `local_owns` already
+materialises sole ownership for the free it guards, and this is the same answer for the drop.
+Guard `a-shared-destination-releases-the-arm-that-did-not-run.loft`, 14 cells, 12 moving.
+
+⚠ **Two cures were measured and rejected, and both fail in ways that reading them does not
+show.**  A DISTINCTNESS WITNESS (`if !OpEqRef(a, x) { … }`) rests on the two naming one record,
+and `binding.md (B-Copy)` makes the plain bind COPY — so it is true on every path and would run
+the cascade where the copy already owns the resource, this deviation with the sign flipped.
+And giving `drop_transferred` the per-path intersect-merge `owned_refs` has turns every lost
+hook here into a DOUBLED one, which `(H-Drop)`'s own clause rules out: a drop has no safe
+direction.  That merge is INERT on its own besides — measured byte-identical on 19 cells,
+because the seed's whole-body walk and the statement-level re-arm both arm the fact before
+`scan_if` descends into the arms.
+
+⚠ **What the fix does NOT reach, and the cell that says so.**  A struct-ENUM local loses its
+hooks at an UNCONDITIONAL bind (loft#1517) — `a: SE = A{…}; x: SE = A{…}; x = a` releases
+neither the displaced record nor the copy, with no branch in sight — so the guard's `c_enum`
+cell moves to ONE hook of three rather than three.  It is kept for exactly that: a fix here has
+a place to be scored, and the residual is visible rather than implied.
+
+✓ **The RETURNED value branch CLOSED 2026-09-11** (loft#1515 shape 2), and it needed no runtime
+witness at all — where the shared-destination half had to materialise the path fact, here the
+ARM *is* the path.  `scopes::move_join_hooks_into_arms` reads what each arm hands out —
+a MEMBER of a local, that local WHOLE, or nothing — and gives each arm the hooks its own path
+owes: the arm handing `src.h` out gets the `(skip, depth)` cascade over everything else, the arm
+handing nothing out gets the whole record, the arm handing the record out gets nothing.  It is
+`free_record_in_omitting_arms`'s shape (loft#1476) one level over.
+
+**Only the HOOK moves; the `OpFreeRef` stays in the common sweep** — a store is freed once
+whichever arm ran, and splitting that would free it per path.  `(H-Drop)` and `(H-Free)` want
+the same placement here for opposite reasons.
+
+Two rungs were needed and the first is not landable alone.  `classify_ret_promotion`'s
+`wrong_shape_for_buffer` refuses a candidate that does not have the return's own SHAPE, and it
+opened on `Type::Vector` while the rule it cites carries no such qualifier — so a `Two` local
+was renamed onto a `CfH` buffer, `is_argument` became true, and `(H-Drop)`'s parameter clause
+declined the cascade on EVERY path.  Widening it alone trades the lost release for a double,
+which for a DROP is not a safer direction.
+
+The rewrite is IDEMPOTENT by a marker on the node (`materialized_view_return_armed`), because
+the scan runs in more than one phase over a body the previous phase installed: without it the
+second phase injects a second copy of every hook and the delivering arm releases twice —
+measured, not anticipated.
+
+Guard `1515-a-join-return-releases-each-arms-source-once.loft`, nine cells, both backends
+byte-identical and clean under `LOFT_POISON=1`.  Three are load-bearing: `nested_with_sibling`
+(the delivering arm skips `p.a` and must still release `p.b` AND `q` — the only cell an
+offset-only skip fails), `two_fields` (the delivering arm keeps the sibling member, which is
+what a whole-cascade suppression loses), and `loop_before_return` (the back edge).  `two_exits`
+is the control: two separate `return` statements are two sweeps and were always right.
+
+## The status paragraph carried by ownership.md's header until 2026-09-29
+
+(as written)
+
+> ownership model.  The register stands at **`OPEN: 0`** — `D-own-47`, a `match` arm's local freed
+> at the block the lowering wraps the arms in, opened and CLOSED 2026-09-21; `D-own-46`, a view leaf the opt-in
+> unit admitted off the per-path clause, opened and CLOSED 2026-09-17; `D-own-43`, a masked backend
+> divergence opened 2026-09-15, was CLOSED by @PLN164 B1b on 2026-09-17; `D-own-40` and
+> `D-own-41` both opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04
+> until 2026-09-11, and what
+> moved it was not a new defect but a VALIDATION of loft#1517 against these rules: the zero had
+> been re-measured against its oracle, which covers the JOIN family and does not ask whether a
+> witness should EXIST at all.  A zero that an oracle cannot disturb is only as strong as the
+> questions that oracle asks.  The five original `D-own-*`
+
+## What the build measured
+
+Moved from `(O-Move)`'s returned-view clause of [ownership.md](ownership.md) (RELEASE.md § 5b), as written.
+
+**What the build measured** (@PLN164 C5, 2026-09-16, and E-1, 2026-09-17 — the conditions
+above that are not in the rule as first written, each with the cell that bought it in
+`tests/scripts/164-view-field.loft`).  The per-PATH clause: a test that asked "is the
+element built earlier in this exit's statement list" admitted an append under an `if`
+(`p4` read 0 points for 3) and never asked about the value after its copy (`p7`, `p7c`,
+`p7d`, `p17`: 3,9 where the record holds 4,109, 5,30, 3,109, 4,109) — D-own-46.  The
+discharge: a `?`-discharged source is a `Join`, and the hand-proven rung that viewed one was
+sound only because its element was always present (`d2`).  The accounted empty exit: read as
+"no append names the field", a returned vector literal delivered a null view for a vector of
+eight (`723-ncc-loop-element-bind`, and `d6`).  The element read: `m.mpts[0]?.px = 100`
+wrote into the container, which read 109 where the copy holds 9 (`b7`).  The removal:
+`s.ops.remove(0)` between the bind and the read made the first result read the SECOND
+element's points (`b8`, 5,30 for 2,3).  The upper bound: the scope pass's own
+`grown_containers` is a documented LOWER bound, and reusing it admitted `b2` and `b3`.  The
+LAST-element clause is what admits the shape a parser writes most — an append in each arm of
+an `if` (`p1`, `p11`, `p12`, `p14`); sabotaged to read the FIRST element, `p1` read 3,9 for
+4,18.
+
+## Two ⚠ notes on the proxy census
+
+Moved from § The facts that answer it of [ownership.md](ownership.md), as written.
+
+⚠ **And the "seventeen decide a free" above is a HAND count the gate could not reproduce.**
+Re-measured 2026-09-03, after `scripts/o_proxy_check.py` was given a decidable predicate for
+*"does this site reach a free?"*: of 24 positive sites **6 reach one, and all 6 discharge the
+veto**. Two of those six were undischarged until that run — `scan_set`'s displaced-owned dep
+strip and `gen_set_first_ref_var_copy`'s move — and both now consult it.
+
+⚠ **The pass corrected one of its own conclusions, which is why it is worth writing down.**
+`parse_field_iteration` looked like a `free` site and its own prose said so — *"a
+borrow/skip_free binding owns no allocation"* — so it was first declared `free` and given the
+veto. The differential probe then reported **8 of 1119 corpus files** reaching it with a
+`skip_free` binding, i.e. a live behaviour change rather than a latent guard. Reading the
+mechanism settled it: the frees that follow are of FRESH per-field bindings
+(`copy_variable` + `remap_var_deep`), never of the binding tested — so the veto does not
+belong there, and the site is `copy`. **A site's own comment is not a measurement**, and the
+prose there still overstates its filter.
+
+## Date stamps lifted from the rule prose
+
+Each is the stamped phrase as it stood; the sentence it sat in remains in [ownership.md](ownership.md) without it.
+
+- `Admitted by the owner on 2026-09-15 (C122): the contract`
+- `A fourth home, @PLN157 § V-af (2026-09-13): a local`
+- `C79 revisited 2026-08-05). That is`
+- `a struct-`Enum` variable arm > was in this list until 2026-09-04, when the `@FR-B-Copy` walk gave it the copy lowering > a struct's has, `tests/`

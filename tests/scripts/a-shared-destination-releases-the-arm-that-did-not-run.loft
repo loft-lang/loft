@@ -56,7 +56,7 @@
 //   nothing is handed off at all.  c_enum MOVED TWICE: this cure took it from `V161` to
 //   `V161,e162`, one hook short of the three records it holds, because a struct-ENUM local lost
 //   its hooks at an UNCONDITIONAL bind too — the branch was never what broke it, so no
-//   branch-shaped cure could reach it.  loft#1517 closed that half (`formal/heap.md` D-heap-6:
+//   branch-shaped cure could reach it.  loft#1517 closed that half (`formal/heap-history.md` D-heap-6:
 //   a literal built through a work-ref read as a VIEW, so a local whose every assignment OWNS
 //   was witnessed as a mixed one), and the cell now reads `e163,V161,e161,e162` — three records,
 //   three hooks, the displaced literal included.  Kept as a CONTROL of this cure rather than

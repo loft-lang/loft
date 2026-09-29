@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/layout-history.md — the deviation register for [layout.md](layout.md)
 
 > **The rules are next door.**  [layout.md](layout.md) states what must always be true of the

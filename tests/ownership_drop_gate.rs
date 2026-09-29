@@ -30,7 +30,7 @@
 //! refuses, or that crashes, gets a verdict of its own and is never scored as clean.
 //!
 //! **The cells** come from three families.  The PILOT cells are written by hand: controls for
-//! shapes that are known to hold, the open `heap.md` D-heap-1 shapes, and the `(H-Drop-Not)`
+//! shapes that are known to hold, the open `heap-history.md` D-heap-1 shapes, and the `(H-Drop-Not)`
 //! boundary.  The CROSS family composes nine SOURCE spellings of a resource (a fresh call, a
 //! local, a field, an element, a tuple member, a parameter, a parameter's field, a call
 //! result's field, a `??`) with eleven DESTINATIONS it is copied into.  The COALESCE family
@@ -137,7 +137,7 @@ fn p_k4() { p_k4_b(0); }"#,
             r#"fn p_k7_b(x: S) { t = x; println("R{t.h.id}"); }
 fn p_k7() { s = S { h: mk(9) }; p_k7_b(s); println("R{s.h.id}"); }"#,
         ),
-        // heap.md D-heap-8's COLLECTION spelling.  A whole-value bind of a droppable collection
+        // heap-history.md D-heap-8's COLLECTION spelling.  A whole-value bind of a droppable collection
         // makes a second structure — the parser mints a `__vdb_N` backing and fills it — and both
         // structures release, with no disturbance needed to provoke it.  `LOFT_DROP_COPY_CENSUS`
         // lists no row for any of the three: its bind arm matches `Set(v, Var(src))`, a node this
@@ -163,7 +163,7 @@ fn p_k7() { s = S { h: mk(9) }; p_k7_b(s); println("R{s.h.id}"); }"#,
             r#"fn p_v4_b(p: vector<H>) { u = p; println("R{len(u)}"); }
 fn p_v4() { v: vector<H> = [mk(84)]; p_v4_b(v); }"#,
         ),
-        // heap.md D-heap-13 (loft#1551): a bare COLLECTION a call answers, bound to a LOCAL,
+        // heap-history.md D-heap-13 (loft#1551): a bare COLLECTION a call answers, bound to a LOCAL,
         // never releases its elements.  `(H-Move)` makes the bind a move — a fresh call result
         // placed where it is produced — so `d` is the owner, and `(H-Drop)` releases at the
         // owner's scope end.  It does not, on either backend, and no free-side instrument can
@@ -203,7 +203,7 @@ fn p_v8() { d = p_v8_m(); println("R{len(d.v)}"); }"#,
             r#"fn p_v9_m() -> vector<H> { r: vector<H> = [mk(145)]; return r; }
 fn p_v9() { b = Bag { v: [], tag: 0 }; b.v = p_v9_m(); println("R{len(b.v)}"); }"#,
         ),
-        // heap.md D-heap-1's open shapes.
+        // heap-history.md D-heap-1's open shapes.
         cell(
             "p_o1",
             r#"fn p_o1() { v: vector<(H, integer)> = [(mk(10), 1)]; for e in v { u = e; println("R{u.0.id}"); } }"#,
@@ -394,7 +394,7 @@ fn p_s5() { p_s5_b(false); }"#,
 fn p_s8() { p_s8_b(0); }"#,
         ),
         // A variable rebound to its own value: `a = a` and `a = a ?? d` each WRITE a copy of the
-        // existing `a`, so both are refused (`formal/heap.md` H-Copy-Refuse; heap.md D-heap-10
+        // existing `a`, so both are refused (`formal/heap.md` H-Copy-Refuse; heap-history.md D-heap-10
         // records how the second released twice while it compiled).
         cell(
             "p_i1",

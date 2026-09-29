@@ -411,7 +411,7 @@ The remaining work is phased by what blocks each example.
 
 ### Phase 1: Frame yield + 18 interactive examples (FY.1–FY.3, GAL.3)
 
-The frame-yield design ([WASM.md § Frame Yield](../../WASM.md#frame-yield--browser-game-loop-via-interpreter-suspension))
+The frame-yield design ([WASM_FRAME_YIELD.md § Frame Yield](../../WASM_FRAME_YIELD.md#frame-yield--browser-game-loop-via-interpreter-suspension))
 suspends the interpreter at `gl_swap_buffers` and resumes on `requestAnimationFrame`.
 With this, all examples that use a render loop and don't need file I/O work immediately.
 

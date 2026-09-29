@@ -1,6 +1,7 @@
 ---
 render_with_liquid: false
 ---
+<!-- size-exempt: a record doc, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # Changelog
 
 All notable changes to the loft language and interpreter.
@@ -390,7 +391,7 @@ files' incidental late reads dropped.  `tests/wrap.rs` raises the census after t
 (it ran a pre-scope subset of the lints, so no lease `@EXPECT_ERROR` could match), the drop
 gate and the `double_move` cells run under the switch-off, and the drop gate checks its
 Refused/Once verdicts against the default compiler over all 285 cells (it found `p_l1`,
-`p_l2` and `p_s4`).  `formal/heap.md` D-heap-8 CLOSED.
+`p_l2` and `p_s4`).  `formal/heap-history.md` D-heap-8 CLOSED.
 
 ### C127 — a declared narrow range has no null; the spare-code encodings retired (2026-09-23)
 
@@ -916,7 +917,7 @@ number captured BEFORE the growth relocated it.  The source is now re-read from 
 slot after the growth whenever it shares the destination's store, and the self-append takes
 the same-store `copy_block` every other append does.  The matrix found the second half before
 the change: a `text` vector of 200 appended to itself stopped with `Store access out of bounds
-… the reference is corrupt` on both backends (`formal/heap.md` D-heap-17).  `render_marks`
+… the reference is corrupt` on both backends (`formal/heap-history.md` D-heap-17).  `render_marks`
 −8.3 % (4 230 → 3 885 µs, same hash).  Guard `tests/scripts/a-self-append-is-one-block-copy.loft`
 (s1–s12), falsified against 48d49e24 on both backends with a patch receipt.
 
@@ -1056,14 +1057,14 @@ second is its to free: the scope pass mints an ENTRY WITNESS (`__rbw_<buf> = OpR
 interpreter's rebind frees read the same variable — the twin of native's `_rb_w_`.  A local
 first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at that bind
 (`Variable::deferred_first_bind`).  `LOFT_TRACE_POOL=1` names the gate that keeps a witnessed
-buffer out of the pool.  Closes `formal/ownership.md` D-own-43.  23 cells both backends in both
+buffer out of the pool.  Closes `formal/ownership-history.md` D-own-43.  23 cells both backends in both
 switch states; pins `tests/adopt_buffer_reuse.rs`.  Measured: `Mark` mints 24 → 14 per two
 parses.
 
 **Two defects it surfaced, each with its guard.**  loft#1549 (`@FR-H-ClearRelease`'s record
-clause, `formal/heap.md` D-heap-12): a reused record buffer did not release what it held, so a
+clause, `formal/heap-history.md` D-heap-12): a reused record buffer did not release what it held, so a
 heap-owning record's previous occupant was stranded — resident memory now flat over 1 000 000
-refills, pins `tests/pooled_buffer_release.rs`.  loft#1550 (`formal/ownership.md` D-own-45): a
+refills, pins `tests/pooled_buffer_release.rs`.  loft#1550 (`formal/ownership-history.md` D-own-45): a
 return that may hand back one of SEVERAL arguments was copied at every bind, five of twelve
 cells red before the fix; pins `tests/one_of_several_args.rs`.
 
@@ -1222,7 +1223,7 @@ stays null — enrolling it in the entry-time pool hands the callee a store the 
 rebind of the promoted local frees where native guards it (`_rb_w_`), which the cell matrix
 caught as a use-after-free on `143`'s shape; reuse for this callee shape is @PLN164 B1b.
 Switch `LOFT_NO_ADOPT_FIRST_BIND=1`; guard `tests/scripts/164-adopt-first-bind.loft`; pins
-`tests/adopt_first_bind.rs`.  `formal/ownership.md` D-own-42 (closed).  @PLN164 B1.
+`tests/adopt_first_bind.rs`.  `formal/ownership-history.md` D-own-42 (closed).  @PLN164 B1.
 
 ### A counted loop with a computed start pays no null test per iteration (2026-09-13)
 
@@ -3772,7 +3773,7 @@ release.
 
 Guard `tests/scripts/a-copy-of-a-tuple-with-a-droppable-member-releases-once.loft` (9 cells
 incl. a two-resource control, falsified at `7aaab369` on both channels).  Three shapes stay
-open as `heap.md` D-heap-1 — a nested tuple, a member declared nullable, and a copy off a
+open as `heap-history.md` D-heap-1 — a nested tuple, a member declared nullable, and a copy off a
 tuple parameter — each because the element type carries no backing dep to read, or the deps
 are not this frame's; none reproduces on `main`, so they are branch-internal by the bug
 policy.  `heap.md` moves from `OPEN: 0` to `OPEN: 1`, which is what that line is for.
@@ -7757,7 +7758,7 @@ layout gives a shared name+type ONE slot — so the read is right for the varian
 declare it and reads another variant's bytes for the rest. `match` afterwards still
 reports the original variant, because nothing changed the tag. Both backends, exit 0.
 
-**Direct payload access stays.** [C89](DESIGN_DECISIONS.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
+**Direct payload access stays.** [C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
 enum payloads are named fields you read straight, with matching for *dispatch* and never
 for *extraction* — refusing a bare `c.field` would force a matcher on every read, which
 is the thing C89 exists to prevent. And the common-prefix case is already correct:

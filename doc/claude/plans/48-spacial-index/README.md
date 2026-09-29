@@ -8,7 +8,7 @@ and range-slice proximity queries (`xs[(x,y)..]`, `xs[(x,y)..:n]`,
 diagnostic is gone. S4 validated it in crawler (`near_mobs_test.loft`): the
 spacial near-set matches a brute-force scan on every query, both backends, with
 an 18× candidate reduction and an 8× (interpreted) / 3.7× (native) wall-clock
-win. See [DATABASE.md § Spatial Index](../../DATABASE.md#spatial-index-srcradix_treers)
+win. See [DATABASE_INDEXES.md § Spatial Index](../../DATABASE_INDEXES.md#spatial-index-srcradix_treers)
 for the shipped operation reference.
 
 ## Why

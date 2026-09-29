@@ -29,7 +29,7 @@ items move from here into the spec.
 The
 [novice-readiness evaluation in EVENT_LOOP_DISCUSSION.md](../../32-event-loop/DISCUSSION.md#novice-readiness-evaluation-2026-05-05--pivot-trigger)
 identified closure capture by value (loft's
-[C38](../../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition))
+[C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition))
 as the dominant blocker for novice game programmers.  Every
 novice's first instinct, on every game framework they've ever
 used:
@@ -171,7 +171,7 @@ hierarchy, lifetime annotations on captured references.
 
 **Outcome:** eliminated as a near-term option.  Stays as the
 recorded long-term direction in
-[C38](../../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition).
+[C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
 
 ### G. Co-scoped mutable capture — adopted and refined
 
@@ -608,10 +608,10 @@ Resulting structure:
 
 - [README.md](README.md) — the locked-in
   spec.
-- [DESIGN_DECISIONS.md § C38](../../../DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition)
+- [DESIGN_DECISIONS.md § C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition)
   — closed-by-decision entry; long-term direction note recorded
   2026-05-04.
-- [DESIGN_DECISIONS.md § C3](../../../DESIGN_DECISIONS.md#c3--wasm-par-runs-sequentially)
+- [DESIGN_DECISIONS.md § C3](../../../DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially)
   — `par(...)` internal-switch precedent.
 - [EVENT_LOOP.md](../../32-event-loop/README.md) and
   [EVENT_LOOP_DISCUSSION.md](../../32-event-loop/DISCUSSION.md) — the

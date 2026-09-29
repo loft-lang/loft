@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Two collections over one element type — in one struct they are VIEWS of
+// @PAGE: LOFT_DATA.md § Two collections over one element type — in one struct they are VIEWS of
 // the same records; a second type is what separates them.
 
 struct Tile { k: integer, n: text }

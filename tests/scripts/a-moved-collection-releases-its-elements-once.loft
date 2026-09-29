@@ -6,7 +6,7 @@
 // holds them last.
 //
 // The parser writes each as a whole-collection COPY, and nothing handed the release over, so the
-// source's store released the elements too (`formal/heap.md` D-heap-23).  A `return v` below a
+// source's store released the elements too (`formal/heap-history.md` D-heap-23).  A `return v` below a
 // function's top level did it in the callee, before the caller had read the result.  The source
 // store now takes a per-path flag, set right after the copy and reset where the store is rebuilt.
 //

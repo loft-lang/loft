@@ -107,7 +107,7 @@ store written by one build readable by another *of the same layout*.
               EXEMPT and keep C85's sentinel — a pragmatic exemption and not a principled one:
               the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
               value in 2^32 and buys the only narrow type whose overflow is detectable
-              ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
+              ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
               § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
               is not a line to extend.  Where the language can
               demand the author say what an unfitting value becomes it refuses instead; where it
@@ -170,7 +170,7 @@ lookup answered `null` for a record its own iteration yields (loft#1431); and
 where the field is NULLABLE, and reading it as null regardless reported a not-null `u8` holding
 `255`, and a not-null `i8` holding `127`, as absent.
 
-Three more readers joined the count on 2026-09-23, all of them the same sentence again and all
+Three more readers joined the count, all of them the same sentence again and all
 found by ONE probe of an `i8` holding `-1`.  `Parser::get_val` and `Parser::set_field_check` are
 the field's read and write: a non-null type that kept a spare top code decoded every code as a
 value, so C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the

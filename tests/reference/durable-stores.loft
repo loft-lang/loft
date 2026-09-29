@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: STDLIB.md § Durable stores and § Path-backed hash storage — a keyed collection is
+// @PAGE: STDLIB_FILES.md § Durable stores and § Path-backed hash storage — a keyed collection is
 // bound to a path and persists there; a durable path is checked on start and sealed on exit.
 
 struct Entry { key: integer, value: integer }

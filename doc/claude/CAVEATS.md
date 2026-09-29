@@ -10,7 +10,7 @@ to keep.  Entries that merely document shipped diagnostics or internal
 compiler details belong in CHANGELOG.md / LOFT.md / SLOTS.md, not here.
 
 **Maintenance rule:** when an entry is fixed, delete it; when it becomes
-a design-accepted fact, move it to LOFT.md § Design decisions.
+a design-accepted fact, move it to LOFT_DESIGN.md § Design decisions.
 
 ---
 
@@ -54,9 +54,9 @@ tables.
   read is already nullable) keep their existing meaning.  The value stored is identical either
   way.
 - **C3** — WASM `par()` runs sequentially.
-  See [DESIGN_DECISIONS.md § C3](DESIGN_DECISIONS.md#c3--wasm-par-runs-sequentially).
+  See [DESIGN_DECISIONS.md § C3](DESIGN_DECISIONS_PLATFORM.md#c3--wasm-par-runs-sequentially).
 - **C38** — Closure capture was copy-at-definition.
-  See [DESIGN_DECISIONS.md § C38](DESIGN_DECISIONS.md#c38--closure-capture-is-copy-at-definition).
+  See [DESIGN_DECISIONS.md § C38](DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
   Plan-22 (shipped 2026-05-13) supersedes the copy semantics: scalar captures use
   heap-owned cells (auto-Reference encoding); `Type::Reference` captures use 12B
   `Parts::DbRef` into the live original.  Pure read-only captures of non-Reference
@@ -765,7 +765,7 @@ for 1.1+" diagnostic is gone.  Two diagnostics remain: a bare `spatial<T>`
 with no coordinate key fields (*"spatial<T[x, y]> needs coordinate key
 fields, e.g. spatial<Mob[x, y]>"*), and more than 3 axes (*"spatial<T[…] >
 supports at most 3 coordinate axes, got N"* — `MAX_AXES = 3`).  See
-[DATABASE.md § Spatial Index](DATABASE.md#spatial-index-srcradix_treers)
+[DATABASE_INDEXES.md § Spatial Index](DATABASE_INDEXES.md#spatial-index-srcradix_treers)
 for the full operation set (construct/append/iterate/`len()`/range slices).
 **Tests:** `tests/parse_errors.rs::spatial_needs_coordinate_keys`,
 `::spatial_rejects_more_than_three_axes` (the old `spatial_not_implemented*`
@@ -826,4 +826,4 @@ Last retested: **2026-04-12** against commit `2aaba5a` (main branch).
 
 - [PROBLEMS.md](PROBLEMS.md) — full bug tracker (severity, fix paths)
 - [INCONSISTENCIES.md](INCONSISTENCIES.md) — language design asymmetries
-- [LOFT.md](LOFT.md) § Design decisions — accepted language-level trade-offs
+- [LOFT_DESIGN.md](LOFT.md) § Design decisions — accepted language-level trade-offs

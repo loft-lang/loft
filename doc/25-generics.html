@@ -25,7 +25,7 @@
 <article>
 <p>A generic function uses a type variable to work with any type. Write the function once; the compiler creates a specialised copy for each concrete type you call it with.</p>
 <h2 id="declaring-a-generic-function">Declaring a generic function</h2>
-<p>Place a single type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector&lt;T&gt;) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — <code>&lt;K: Printable, V: Printable&gt;</code> — each with its own bounds, each inferred from the parameters that name it.</p>
+<p>Place a type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector&lt;T&gt;) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — <code>&lt;K: Printable, V: Printable&gt;</code> — each with its own bounds, each inferred from the parameters that name it.</p>
 <p>A struct may declare type variables too — see Generic structs below.</p>
 <pre><code><span class="kw">fn</span> identity&lt;<span class="en">T</span>&gt;(x: <span class="en">T</span>) -&gt; <span class="en">T</span> { x }</code></pre>
 <h2 id="calling-a-generic-function">Calling a generic function</h2>
@@ -51,7 +51,7 @@
 <pre><code><span class="kw">fn</span> first_element&lt;<span class="en">T</span>&gt;(gen_v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="en">T</span> {
   gen_v[<span class="nm">0</span>]
 }</code></pre>
-<p>A computed index <code>gen_v.len() - 1</code> is not provably in-bounds, so the read is nullable; a generic has no <code>?? default</code>, so the honest result type is <code>T?</code>.</p>
+<p>A computed index <code>gen_v.len() - 1</code> is not provably in-bounds, so the read is nullable; a generic has no value of T of its own to write after <code>??</code>, so the honest result type is <code>T?</code> (or take the fallback as a parameter: <code>v[i] ?? d</code>).</p>
 <pre><code><span class="kw">fn</span> last_element&lt;<span class="en">T</span>&gt;(gen_v: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="en">T</span>? {
   gen_v[gen_v.<span class="bi"><a href="stdlib-text.html">len</a></span>() - <span class="nm">1</span>]
 }
@@ -132,6 +132,7 @@ Scalable   fn scale(self: T, factor: integer) -&gt; integer
 Printable  fn to_text(self: T) -&gt; text
 Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
+<p><code>Equatable</code> is the exception: every type satisfies it, because <code>==</code> compares what two values hold — a struct field by field.  Define <code>OpEq</code> only when equality should mean something else.</p>
 <p>The same definition serves the bare operator: once <code>Money</code> has <code>OpLt</code>, both <code>a &lt; b</code> and <code>&lt;T: Ordered&gt;</code> work on it. Miss one and the error names it — "<code>Money</code> does not satisfy interface <code>Ordered</code>: missing OpLt" — at the CALL site, because that is where the concrete type is known.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Money</span> { cents: <span class="ty"><a href="stdlib-types.html">integer</a></span> }
 <span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents &lt; other.cents }
@@ -145,6 +146,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(best.cents == <span class="nm">700</span>, <span class="st">"Ordered on a user type: {best.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cheap &lt; dear, <span class="st">"…and the bare operator, from the same definition"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(cheap, <span class="en">Money</span> { cents: <span class="nm">300</span> }), <span class="st">"Equatable on a user type"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }), <span class="st">"…and on one that defines no OpEq"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">same</span>(<span class="en">Tile</span> { height: <span class="nm">1</span>, name: <span class="st">"t"</span> }, <span class="en">Tile</span> { height: <span class="nm">2</span>, name: <span class="st">"t"</span> }), <span class="st">"…comparing every field"</span>);
   total = <span class="fn-call">clamped_add</span>(cheap, cheap, <span class="en">Money</span> { cents: <span class="nm">1000</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
@@ -223,7 +226,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 // Write the function once; the compiler creates a specialised copy for each
 // concrete type you call it with.
 // ## Declaring a generic function
-// Place a single type variable in angle brackets after the function name.
+// Place a type variable in angle brackets after the function name.
 // The type variable must appear in a parameter (directly or as a container
 // element like vector&lt;T&gt;) — any parameter; a T that appears only in the return
 // type is refused, since a call infers T from its arguments.  A header may
@@ -258,7 +261,8 @@ fn first_element&lt;T&gt;(gen_v: vector&lt;T&gt;) -&gt; T {
   gen_v[0]
 }
 // A computed index `gen_v.len() - 1` is not provably in-bounds, so the
-// read is nullable; a generic has no `?? default`, so the honest result type is `T?`.
+// read is nullable; a generic has no value of T of its own to write after `??`, so the
+// honest result type is `T?` (or take the fallback as a parameter: `v[i] ?? d`).
 fn last_element&lt;T&gt;(gen_v: vector&lt;T&gt;) -&gt; T? {
   gen_v[gen_v.len() - 1]
 }
@@ -360,6 +364,10 @@ fn test_combined_bounds() {
 //   Printable  fn to_text(self: T) -&gt; text
 //   Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 //
+// `Equatable` is the exception: every type satisfies it, because `==` compares
+// what two values hold — a struct field by field.  Define `OpEq` only when
+// equality should mean something else.
+//
 // The same definition serves the bare operator: once `Money` has `OpLt`, both
 // `a &lt; b` and `&lt;T: Ordered&gt;` work on it. Miss one and the error names it —
 // "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL
@@ -376,6 +384,8 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap &lt; dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");

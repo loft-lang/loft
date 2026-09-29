@@ -2314,7 +2314,7 @@ impl State {
             // re-initialising that store IN PLACE would wipe the record the copy reads from?
             //
             // Three facts were tried here and two of them are wrong in opposite directions;
-            // the measurements are in `formal/ownership.md` D-own-41, and the short form is:
+            // the measurements are in `formal/ownership-history.md` D-own-41, and the short form is:
             //
             // - `value.reads_var(v)` is SYNTACTIC and answers NO for the defect, because a `??`
             //   HOISTS the read of `v` into a temporary in a PRIOR statement — the lowering
@@ -2938,7 +2938,7 @@ impl State {
                         // `--interpret` only, where `--native`'s runtime same-store passthrough
                         // (`generation/dispatch.rs`'s `PASSTHROUGH`) answered correctly — one
                         // question, two decoders, and the decoders are the two BACKENDS
-                        // (@FR-O-NoDiverge, `formal/ownership.md` D-own-41).
+                        // (@FR-O-NoDiverge, `formal/ownership-history.md` D-own-41).
                         //
                         // ⚠ The second disjunct is conjoined with `stash_old_for_post_free` and
                         // both halves are load-bearing.  That flag is what emits the

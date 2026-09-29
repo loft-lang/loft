@@ -6666,6 +6666,10 @@ fn run_fix_command(args: &[String]) -> i32 {
     for a in args {
         match a.as_str() {
             "--apply" => apply = true,
+            "--help" | "-h" => {
+                println!("usage: loft fix [--apply] <file…>");
+                return 0;
+            }
             s if s.starts_with('-') => {
                 eprintln!("loft fix: unknown option `{s}`");
                 return 1;
@@ -6737,6 +6741,10 @@ fn run_fmt_command(args: &[String]) -> i32 {
         match a.as_str() {
             "--check" => check = true,
             "--write" | "-w" => write = true,
+            "--help" | "-h" => {
+                println!("usage: loft fmt [--check|--write] <file…>   (`-` = stdin→stdout)");
+                return 0;
+            }
             "-" => files.push("-".to_string()),
             s if s.starts_with('-') => {
                 eprintln!("loft fmt: unknown option `{s}`");

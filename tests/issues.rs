@@ -4533,7 +4533,7 @@ fn p54_chained_access_on_nested_object() {
     .result(Value::str("Alice"));
 }
 
-/// P54 step 4 — locks the LOFT.md § Match expressions JsonValue
+/// P54 step 4 — locks the LOFT_CONTROL.md § Match expressions JsonValue
 /// example.  Exercises destructuring of every JsonValue variant
 /// (JObject / JArray / JNumber / JNull / wildcard) so that the
 /// documented `match json_parse(raw) { ... }` patterns stay
@@ -8425,7 +8425,7 @@ fn p54_step4_nonempty_array_to_json_text_shape() {
 /// Tests mirror the array second-slice guards: discriminant,
 /// length, field lookup (hit + miss), has_field, to_json, and
 /// a round-trip.  Every loft string with `{` / `}` doubles them
-/// to `{{` / `}}` per LOFT.md § String literals.
+/// to `{{` / `}}` per LOFT_LITERALS.md § String literals.
 #[test]
 fn p54_step4_nonempty_primitive_object_has_jobject_kind() {
     code!(
@@ -9354,7 +9354,7 @@ fn q2_has_field_gates_conditional_safely() {
 }
 
 // INC#18 — `x#break` is a labelled-break statement that reuses the
-// `#attribute` syntax.  Documented in LOFT.md § Break and continue;
+// `#attribute` syntax.  Documented in LOFT_CONTROL.md § Break and continue;
 // these tests lock the behaviour so the two-mechanism design cannot
 // silently regress.
 
@@ -9484,7 +9484,7 @@ fn run() -> integer {
 }
 
 // INC#2 — vector has comprehensions; sorted/index do not.  Documented
-// in LOFT.md § Key-based collections (gotcha block).  These tests
+// in LOFT_DATA.md § Key-based collections (gotcha block).  These tests
 // lock the vector-vs-keyed-collection asymmetry so a future uniformity
 // refactor cannot silently flip either half without updating the doc.
 
@@ -9521,7 +9521,7 @@ fn run() -> integer {
 }
 
 // INC#8 — method-vs-free-function is the stdlib author's choice per
-// function.  Documented in LOFT.md § Methods and function calls
+// function.  Documented in LOFT_DATA.md § Methods and function calls
 // (gotcha block).  These tests lock concrete examples so the
 // stdlib's declared call-forms cannot silently drift.
 
@@ -9537,7 +9537,7 @@ fn inc08_sum_of_is_free_function_only() {
 }"
     )
     .expr("run()")
-    .error("Unknown field vector<integer>.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
+    .error("Unknown field vector<integer>.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT_DATA.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
 }
 
 /// `text.starts_with(s)` is declared with `self: text` — method syntax
@@ -9788,7 +9788,7 @@ fn quality_6c_free_call_on_wrong_type_suggests_method() {
     starts_with(5, \"he\")
 }"
     )
-    .error("Unknown function starts_with — did you mean the method `x.starts_with(…)` on text? (stdlib declared `starts_with` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_on_wrong_type_suggests_method:2:5");
+    .error("Unknown function starts_with — did you mean the method `x.starts_with(…)` on text? (stdlib declared `starts_with` as a method; see LOFT_DATA.md § Methods and function calls) at quality_6c_free_call_on_wrong_type_suggests_method:2:5");
 }
 
 /// QUALITY-history.md 6c follow-on — methods declared on several receiver types
@@ -9801,7 +9801,7 @@ fn quality_6c_free_call_lists_all_method_receivers() {
     is_numeric(5)
 }"
     )
-    .error("Unknown function is_numeric — did you mean the method `x.is_numeric(…)` on text / character? (stdlib declared `is_numeric` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_lists_all_method_receivers:2:5");
+    .error("Unknown function is_numeric — did you mean the method `x.is_numeric(…)` on text / character? (stdlib declared `is_numeric` as a method; see LOFT_DATA.md § Methods and function calls) at quality_6c_free_call_lists_all_method_receivers:2:5");
 }
 
 /// QUALITY-history.md 6c follow-on — the hint must stay silent when no method

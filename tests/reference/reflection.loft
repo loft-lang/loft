@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: STDLIB.md § Reflection — `type_of` describes a value's type, `field_value` reads a
+// @PAGE: STDLIB_RUNTIME.md § Reflection — `type_of` describes a value's type, `field_value` reads a
 // field by position, and `x#fields` walks the fields with their values.
 
 struct Row { id: integer, name: text }

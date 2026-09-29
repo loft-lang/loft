@@ -13,7 +13,7 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
 ## loft-libs-assets
 
-- `laptop-perf-bench` — PR no-PR · (9 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (9 files) — bench: every bench program imports under C98
   ⚠ orphan
 - `tuxedo-assets-w6` — PR #11 open · (4 files) — A sprite reaches a page without becoming a fil
 
@@ -21,17 +21,17 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
 - `174-f5-crypto-foreign` — PR no-PR · (6 files) — crypto: loft-ffi 0.1.2 from crates.io, and the  ⚠ orphan
 - `174-f6-cbor-spans` — PR no-PR · (8 files) — cbor: the payload arms take their span of the   ⚠ orphan
-- `laptop-perf-bench` — PR no-PR · (15 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (15 files) — bench: every bench program imports under C98
   ⚠ orphan
 
 ## loft-libs-docs
 
-- `laptop-perf-bench` — PR no-PR · (5 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (5 files) — bench: every bench program imports under C98
   ⚠ orphan
 
 ## loft-libs-game
 
-- `laptop-perf-bench` — PR no-PR · (6 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (6 files) — bench: every bench program imports under C98
   ⚠ orphan
 - `tuxedo-audio-bus` — PR #12 open · (8 files) — audio_bus 0.1.0 — one slider, many sounds
 
@@ -44,10 +44,10 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
 ## loft-libs-net
 
-- `laptop-perf-bench` — PR no-PR · (11 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (11 files) — bench: every bench program imports under C98
   ⚠ orphan
 
 ## loft-libs-world
 
-- `laptop-perf-bench` — PR no-PR · (42 files) — bench: every bench program imports under C98 �
+- `laptop-perf-bench` — PR no-PR · (42 files) — bench: every bench program imports under C98
   ⚠ orphan

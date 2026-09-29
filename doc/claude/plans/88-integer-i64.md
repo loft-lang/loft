@@ -133,7 +133,7 @@ codegen constant emission (C, D).
 ## Plan — rungs (each proven standalone on `--interpret` AND `--native` before the next)
 
 > **Progress (formalize4) — D2 CLOSED by reconciliation; user-visible side done.** The audit
-> RESPLIT the plan around [DESIGN_DECISIONS C83](../DESIGN_DECISIONS.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience):
+> RESPLIT the plan around [DESIGN_DECISIONS C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience):
 > the **storage rework is OFF-PATH** (the compact `Int`/`Long` encoding is the intended design —
 > never blanket-widen for convenience), so rungs **2, 3, 6 are NOT pursued**. What matters is the
 > **user-visible** side: a large value a user can OBSERVE must never `as i32`-truncate.

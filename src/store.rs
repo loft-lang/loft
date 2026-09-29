@@ -1418,7 +1418,7 @@ impl Store {
     /// turns NON-deterministic uninitialised-arena bugs — which valgrind
     /// cannot see, because the arena buffer is itself validly allocated — into
     /// deterministic, reproducible failures.  Read once (cached); zero cost
-    /// when off.  See `doc/claude/DEBUG.md` § store-ownership debugging.
+    /// when off.  See `doc/claude/DEBUG_STORES.md` § store-ownership debugging.
     fn zero_claim_enabled() -> bool {
         // Default ON: a claimed block's PAYLOAD must read as zero.  `claim` reuses freed blocks
         // WITHOUT clearing them, so a caller that relies on zero-init — e.g. an empty `[]`

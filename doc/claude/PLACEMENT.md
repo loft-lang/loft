@@ -15,7 +15,7 @@ placement = "inproc" | "process" | "remote"
 ```
 
 This doc is the **mechanism and the authoring rules**. The declaration and its
-user-facing behaviour are in [PACKAGES.md § `placement`](PACKAGES.md); the plan
+user-facing behaviour are in [PACKAGES_MANIFEST_TABLES.md § `placement`](PACKAGES_MANIFEST_TABLES.md); the plan
 that built it, with the design questions and the corrections it made to itself,
 is [plans/119-out-of-process-libraries](plans/119-out-of-process-libraries/README.md).
 
@@ -269,7 +269,7 @@ compiles it. A `&text` out-parameter arrives at the typed twin as `&mut String`.
 
 ## See also
 
-- [PACKAGES.md § `placement`](PACKAGES.md) — declaring it, and what a consumer sees.
+- [PACKAGES_MANIFEST_TABLES.md § `placement`](PACKAGES_MANIFEST_TABLES.md) — declaring it, and what a consumer sees.
 - [SANDBOX.md](SANDBOX.md) — the isolation tier this adds: isolated **and**
   direct-data, because the boundary is a page table rather than a marshalling step.
 - [DATABASE.md](DATABASE.md) — stores, `DbRef`, the working-set loader.

@@ -637,7 +637,7 @@ the mechanism behind the `viewer_markdown` flaky-cdylib collision.
 **Mitigation (M, redesign)** — decouple to a stable `LoftStore` handle: the same
 C-ABI indirection the exec path already uses, so the cdylib↔host interaction
 crosses a versioned handle, not a raw pointer.  Design in
-[NATIVE.md § Resolution](NATIVE.md#resolution-separate-the-api-id-from-the-rust-part-link-the-cdylib-by-c-abi)
+[NATIVE_ARTIFACT_IDENTITY.md § Resolution](NATIVE_ARTIFACT_IDENTITY.md#resolution-separate-the-api-id-from-the-rust-part-link-the-cdylib-by-c-abi)
 + [@PLN26](https://github.com/loft-lang/plans/issues/26).  Sibling of
 [H8](#h8--the-raw-storesallocations-surface): both are "raw `Stores` state needs
 an interface" — H9 is the FFI-boundary site, H8 the in-process `allocations`

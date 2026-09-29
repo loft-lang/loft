@@ -1302,7 +1302,7 @@ pub struct Output<'a> {
     /// for `#native` package functions (instead of `extern crate <pkg>`) and link
     /// each package's cdylib `.so` by C-ABI, sealing the package's Rust crate graph
     /// inside the `.so` — this eliminates the shared-dep `StableCrateId` collision
-    /// class (see NATIVE.md § Resolution: separate the API id from the Rust part).
+    /// class (see NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API id from the Rust part).
     /// False for wasm32-wasip2 (links the cross-compiled rlib) and `wasm_browser`
     /// (host imports).
     pub native_cabi: bool,
@@ -6225,7 +6225,7 @@ extern crate loft;"
             }
             writeln!(w, "}}")?;
         } else if native_cabi {
-            // Host-native backend (NATIVE.md § Resolution: separate the API
+            // Host-native backend (NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API
             // id from the Rust part).  Declare each reachable `#native`
             // package function as an `extern "C"` symbol; the cdylib `.so`
             // is linked by C-ABI (`add_native_extern_flags`), so the
@@ -9782,7 +9782,7 @@ extern crate loft;"
                             // C-ABI: call the symbol via its `__cabi_`-prefixed alias
                             // (declared with `#[link_name]` in the `extern "C"` block),
                             // resolved by linking the package's cdylib `.so` — no
-                            // `extern crate` (NATIVE.md § Resolution).  The alias avoids
+                            // `extern crate` (NATIVE_ARTIFACT_IDENTITY.md § Resolution).  The alias avoids
                             // shadowing the same-named wrapper fn (E0428).
                             let aliased = format!("__cabi_{}", def.native());
                             self.output_native_direct_call(w, def_nr, &aliased)?;

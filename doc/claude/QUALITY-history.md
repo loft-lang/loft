@@ -641,11 +641,11 @@ left both sides' rows standing (476 · 452 and 485 · 461); neither was the unio
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
 the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
 all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construction_work_refs`
-(`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
+(`formal/heap-history.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
 still.  `scopes::branch_tail_vars` (family 7) peels `Span` — +1 site, on the peel side, **24**
 opaque still.  `sink_set_into_arms`' `owners_beside_locals_only` (`formal/binding.md` D-bind-33)
 peels `Span` — +1 site, on the peel side, **24** opaque still.  2026-09-15: `use_analysis::projection_root`
-and `written_roots` (`formal/heap.md` D-heap-7 family 4, the `double-move` member-copy clause) peel
+and `written_roots` (`formal/heap-history.md` D-heap-7 family 4, the `double-move` member-copy clause) peel
 `Span` — +2 sites, both on the peel side, **24** opaque still; attributed by diffing the audit's own
 predicate over HEAD's and the working tree's `use_analysis.rs`.)
 
@@ -3371,7 +3371,7 @@ column and the ratchet's `337 · 1317` have not moved.  That guard is worth the 
 obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
 `make optional-ratchet` fail — a new test is as able to grow this count as new code is.
 § V-aa's sites land on the see-through side for the same reason.  2026-09-14:
-`scopes::var_copy_owns` (`formal/heap.md` D-heap-7 family 7, the bind's dep-strip test moved out
+`scopes::var_copy_owns` (`formal/heap-history.md` D-heap-7 family 7, the bind's dep-strip test moved out
 of `scan_set` whole) asks through `.base()` — +1 function, on the see-through side, with the
 opaque column and the ratchet's `337 · 1317` unchanged.  The same change first added an opaque
 function and test, a block-result check its tail walker repeated from `sinkable` where it was
@@ -7912,7 +7912,7 @@ holds only in the letter, and the sixth turned up a silent wrong answer one doc 
 **The code defect: a `text` slice counted from the end at ONE bound.**  `s[-2..]` answered `""`
 where `v[-2..]` answers the last two — both backends, no diagnostic — while `s[..-1]` right beside
 it was correct, and `s[-1]`, `char_slice(-2, 6)` and every vector form counted from the end as
-LOFT.md § Vectors (@P384) and STDLIB.md § text slice both document.  Nine cells of the matrix were
+LOFT_DATA.md § Vectors (@P384) and STDLIB.md § text slice both document.  Nine cells of the matrix were
 wrong and one of them (`s[-2..2]`, a reversed range) passed by luck.
 
 ⚠ **Three implementations of one operation, and the one that had it right is the one nothing
@@ -12633,7 +12633,7 @@ session-of-the-week background bite.
       with the receiver type, the diagnostic now reads
       `"Unknown field vector.sum_of — did you mean the free function
       `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see
-      LOFT.md § Methods and function calls)"`.  Tests:
+      LOFT_DATA.md § Methods and function calls)"`.  Tests:
       `inc08_sum_of_is_free_function_only` locks the hint wording;
       `quality_6c_unknown_field_without_free_fn_has_no_hint` locks
       specificity (a genuinely-misspelled field still gets the plain
@@ -12644,7 +12644,7 @@ session-of-the-week background bite.
       receiver to a `self:` method via free syntax), the diagnostic
       now reads `"Unknown function starts_with — did you mean the
       method `x.starts_with(…)` on text? (stdlib declared
-      `starts_with` as a method; see LOFT.md § Methods and function
+      `starts_with` as a method; see LOFT_DATA.md § Methods and function
       calls)"`.  Methods declared on multiple receivers (e.g.
       `is_numeric` on both `text` and `character`) are enumerated
       with `/`.  Site: `src/parser/mod.rs::call` uses

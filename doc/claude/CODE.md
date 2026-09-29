@@ -158,7 +158,7 @@ Prefer the standard library and existing project code over adding new Cargo depe
 ### Decision rule
 
 Before adding a dependency:
-1. **Check if existing code covers it.** Loft already has JSON text parsing (`src/database/structures.rs`) and JSON serialisation (`src/database/format.rs`). New JSON functionality belongs in `src/database/json.rs`, not `serde_json`.
+1. **Check if existing code covers it.** Loft already has JSON text parsing (`src/database/structures.rs`) and JSON serialisation (`src/database/format.rs`). New JSON functionality belongs in `src/json.rs`, not `serde_json`.
 2. **Estimate the implementation size.** If the needed functionality is ≤ ~100 lines of straightforward Rust, write it. If it requires thousands of lines of platform APIs (TLS stacks, image codecs, memory-mapped I/O), a dependency is justified.
 3. **Feature-gate optional dependencies.** Any dependency that adds compile weight or is unused for core interpreter work must be behind a Cargo feature (following the `png`, `mmap`, `random`, and planned `http` pattern).
 4. **Prefer crates with minimal transitive dependencies.** `ureq` and `png` have no required transitive deps. Avoid crates that pull in async runtimes, proc-macro infrastructure, or heavy frameworks.

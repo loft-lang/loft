@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Variable scoping — a name bound inside a block has ended by the line
+// @PAGE: LOFT_DESIGN.md § Variable scoping — a name bound inside a block has ended by the line
 // after it.
 // @EXPECT_ERROR: local-out-of-scope
 

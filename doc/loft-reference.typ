@@ -189,7 +189,7 @@ Loft is inspired by Rust but designed for general-purpose scripting with a short
 ```rust
 x = 42;
 x += 1;
-const y = 42;   // opt-in: locked in debug builds
+const y = 42;   // opt-in: a write to it is a compile error
 ```
 
 ```rust
@@ -198,9 +198,9 @@ x += 1;
 let y = 42;     // immutable by default; compiler-enforced
 ```
 
-Upside Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use const to signal that a value should not change — in debug builds the runtime locks the store immediately after initialisation, catching accidental writes early.
+Upside Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use const to say a value must not change — the compiler refuses every write it forbids.
 
-Downside Immutability is opt-in, not the default. Rust makes variables immutable unless you write mut, catching accidents at compile time for free. Loft's const lock is only checked at runtime and only in debug builds, so it provides less of a safety net.
+Downside Immutability is opt-in, not the default. Rust makes variables immutable unless you write mut, so every binding is protected for free; in loft only the ones you mark const are.
 
 === Null instead of Option\<T\>
 
@@ -233,7 +233,7 @@ Downside The absence is in the type, as in Rust, but nothing forces you to disch
 fn push_two(v: &vector<integer>) {
     v += [1, 2];  // caller sees the change
 }
-// const: read-only (locked in debug builds)
+// const: read-only (a write through it is a compile error)
 fn count(v: const vector<integer>) -> integer {
     len(v)
 }
@@ -256,9 +256,9 @@ fn add_to(n: &mut i32, delta: i32) {
 }
 ```
 
-Upside No borrow-checker errors. No lifetime annotations. No ownership transfer to reason about. Struct field mutations through a parameter are always visible to the caller. A collection parameter is SHARED with no annotation at all — field writes, element writes, appends, removes and clears all reach the caller. & adds exactly one thing on top of that: whole-value replacement, v = \[...\], seen by the caller. const parameters signal read-only intent, and in debug builds the runtime locks the store for the duration of the call — enough to catch most accidents during development.
+Upside No borrow-checker errors. No lifetime annotations. No ownership transfer to reason about. Struct field mutations through a parameter are always visible to the caller. A collection parameter is SHARED with no annotation at all — field writes, element writes, appends, removes and clears all reach the caller. & adds exactly one thing on top of that: whole-value replacement, v = \[...\], seen by the caller. A const parameter is read-only: a write through it, or passing it on to a parameter that is not const, is a compile error.
 
-Downside The compile-time guarantees are much weaker. Rust's borrow checker statically proves no aliased mutations, no dangling references, and no data races — before the program ever runs. Loft's const is a debug-only runtime check. Aliasing is unchecked at compile time, and the engine's Rust runtime is what truly enforces memory safety.
+Downside The compile-time guarantees are much weaker. Rust's borrow checker statically proves no aliased mutations, no dangling references, and no data races — before the program ever runs. Loft's const covers the name it marks and nothing more; aliasing is otherwise unchecked at compile time, and the engine's Rust runtime is what truly enforces memory safety.
 
 === ^ is XOR; \*\* or pow() for exponentiation
 
@@ -342,7 +342,7 @@ for (i, x) in (1..=5).enumerate() {
 
 Upside No tuple destructuring needed. x\#first reads as "is this the first x", which is self-explanatory. Eliminates helper counter variables for the common pattern of comma-separated output.
 
-Downside The \#attribute syntax is unique to loft and unfamiliar to everyone else. Rust's .enumerate() composes freely with other adapters; loft's attributes are only available on the loop variable of the innermost loop.
+Downside The \#attribute syntax is unique to loft and unfamiliar to everyone else. Rust's .enumerate() composes freely with other adapters; loft's attributes exist only on a for loop's own variable.
 
 === Named loop break — x\#break
 
@@ -394,7 +394,7 @@ p.greet();     // only dot syntax
 
 Upside No impl block ceremony. Methods and free functions are the same thing — just a naming convention. Functions can be added to any type from any file without modifying the original struct definition, similar to extension methods. Mark the first parameter const to guarantee the method never modifies the receiver — analogous to Rust's &self.
 
-Downside No consuming self. Plain (non-const) methods behave like &mut self — the caller's value is always mutably aliased. Multiple functions with the same name but different non-variant self types are a compile error — no standard overloading.
+Downside No consuming self. Plain (non-const) methods behave like &mut self — the caller's value is always mutably aliased.
 
 === Polymorphic enum dispatch
 
@@ -424,7 +424,7 @@ fn area(s: &Shape) -> f64 {
 
 Upside Each variant's behaviour lives in its own small function — easy to read and extend. Adding a new type of shape only requires a new fn area(self: NewShape) without modifying the dispatch site. Feels like OOP method overriding without the inheritance.
 
-Downside Rust's match is exhaustive: the compiler forces you to handle every variant. In loft, leaving a variant without an implementation emits a compiler warning but does not stop compilation. To suppress the warning and produce a null return, write an explicit empty-body stub: fn area(self: NewShape) -\> float { }. Exhaustiveness is enforced by discipline, not the type system.
+Downside A variant needs its own implementation only once something calls the method on a value held as the enum — that call is refused until every variant has one or the enum has a fallback (fn area(self: Shape)) — so a missing one surfaces at the first such call, not where the variant is declared. An empty-body stub (fn area(self: NewShape) -\> float { }) answers the type's default, 0.0, which a caller cannot tell from a computed one; Rust's match makes that decision visible at every site.
 
 === Closures — same-scope capture works
 
@@ -463,7 +463,7 @@ fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
 
 Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (move vs borrow), no Fn/FnMut/FnOnce trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (fn name) are compile-checked.
 
-Downside You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a & parameter cannot be captured at all, and a scalar the closure writes to may be captured by only one closure — the cure for the last two is to hold the state in a struct and capture that.
+Downside You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a closure cannot write a captured &integer or &text parameter (it holds a copy), and a scalar the closure writes to may be captured by only one closure — the cure for the last two is a local the closure updates, or state held in a struct and captured.
 
 === Generic functions — inferred, with structural interface bounds
 
@@ -519,7 +519,7 @@ let hex  = format!("{:#x}", n);
 
 Upside Concise — no format!() call, no separate variable. Full format expressions (arithmetic, slices, for comprehensions) can appear directly inside {}. Specifiers mirror Rust: :width, :.precision, :width.precision, sign (+), radix (\#x, \#o, b), alignment (\<, \>, ^), and zero-padding (0N) all work. The sign (+) and zero-pad (0N) flags apply to floats too: {5.25:+} is +5.25 and {5.25:08} is 00005.25.
 
-Downside Unknown radix letters in specifiers are compile-time errors (e.g. :5z or :5B are both rejected). Radix letters are case-sensitive: valid ones are b, o, x/X, e, and j/json — uppercase B or O produce an error. Applying a numeric specifier to an incompatible type (such as :x on a text value, or zero-padding on a boolean) is a compile-time error.
+Downside Unknown radix letters in specifiers are compile-time errors (e.g. :5z or :5B are both rejected). Radix letters are case-sensitive: valid ones are b, o, x/X and d on an integer, and j/json on a struct, vector or enum — uppercase B or O produce an error, and there is no exponent form (e). Applying a numeric specifier to an incompatible type (such as :x or zero-padding on a text value) is a compile-time error.
 
 === Built-in parallel for-loops — par(...)
 
@@ -549,7 +549,7 @@ let sum: i32 = scores.par_iter()
 
 Upside Built into the language — no external crate, no Cargo.toml edit. The compiler validates the worker function signature at the call site. Results are delivered in the original vector order. The thread count is set per call, making it easy to tune for the hardware at hand.
 
-Downside Workers can return primitives (integer, float, single, boolean, character), text, and inline enums — but not struct references. Workers cannot capture local variables: context must be embedded as fields alongside the data in the element struct. For multi-stage transformations, use map() / filter() / reduce() sequentially — each stage allocates a new intermediate vector.
+Downside A worker is a named function, not a closure: context from the calling scope reaches it only as extra scalar arguments, because each worker runs on its own copy of the heap and cannot reach a struct or vector of the caller's. Nor may it touch shared state (no println, no file access) — a rule the compiler does not check. For multi-stage transformations, use map() / filter() / reduce() sequentially — each stage allocates a new intermediate vector.
 
 
 = vs Python
@@ -605,7 +605,7 @@ u.age = <span class="kw">None</span>  <span class="cm"># allowed at runtime; myp
 
 Upside Nullability is part of the type and readable at a glance, and the default is the safe one: a field is non-null unless it says ?, so absence is something you opt INTO. No Optional\[T\] wrapping is needed; the comparison v == null is natural, and ?? supplies a fallback at the point of use.
 
-Downside The default is the safe one — a field is non-null unless its type says ? — but nothing forces you to discharge a nullable at the point of use, and writing null into a non-null slot is a warning rather than a refusal. Python with mypy and Optional\[T\] annotation gives static guarantees that loft's runtime checks do not. Python's None also participates in truthiness testing (if not email:), pattern matching, and or chaining in ways that loft's null does not support.
+Downside The default is the safe one — a field is non-null unless its type says ? — but nothing forces you to discharge a nullable at the point of use, and writing null into a non-null slot is a warning rather than a refusal. Python with mypy and Optional\[T\] annotation gives static guarantees that loft's runtime checks do not.
 
 === Structs vs classes and dicts
 
@@ -640,7 +640,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 
 Upside Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.
 
-Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and a struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). But == on a struct compares identity until it defines OpEq, where Python's \@dataclass generates a field-by-field \_\_eq\_\_ for you; a value struct compares its fields without one. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
+Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and == compares every field with no \_\_eq\_\_ written, as \@dataclass's generated one does (&a == &b asks what Python's is asks). A struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
 
 === while loop — yes, and while true; no while ... else
 
@@ -707,9 +707,9 @@ s.area();   // dispatches on the runtime variant
     <span class="kw">case</span> <span class="en">Rect</span>(w=w, h=h): <span class="kw">return</span> w * h
 ```
 
-Upside Each variant's behaviour lives in its own small, named function — easy to read, easy to navigate in an editor. Adding a new shape only requires a new fn area(self: NewShape) with no changes to existing code or a central dispatch function. The compiler warns when a variant has no implementation for a called method.
+Upside Each variant's behaviour lives in its own small, named function — easy to read, easy to navigate in an editor. Adding a new shape only requires a new fn area(self: NewShape) with no changes to existing code or a central dispatch function. Calling a method on a value held as the enum is refused until every variant has an implementation, or the enum has a fallback (fn area(self: Shape)).
 
-Downside Unlike Rust's match, loft does not enforce exhaustiveness — a missing variant implementation produces only a warning, not a compile error. Python 3.10+ structural pattern matching (match/case) fully destructs the matched value and is exhaustive when case \_: is present. Python also supports inheritance-based polymorphism (class Circle(Shape)) and abstract base classes, giving far richer dispatch options.
+Downside A missing implementation surfaces at the first call through the enum, not where the variant is declared, and an empty-body stub answers the type's default rather than anything like None. Python 3.10+ structural pattern matching (match/case) fully destructs the matched value and is exhaustive when case \_: is present. Python also supports inheritance-based polymorphism (class Circle(Shape)) and abstract base classes, giving far richer dispatch options.
 
 === String formatting — embedded expressions
 
@@ -730,9 +730,9 @@ lst  = <span class="st">","</span>.<span class="fn-call">join</span>(<span class
 pad  = <span class="st">f"{count:08}"</span>
 ```
 
-Upside All loft strings are implicitly format strings — no f prefix needed. Inline for loops inside {} produce a bracketed list (\[2,4,6\]) without a separate join. Format specifiers mirror Python's f-string mini-language: width, precision, sign, alignment, zero-padding, and radix (\#x, \#o, b) all work on integers and on floats alike: {5.25:+} is +5.25 and {5.25:08} is 00005.25.
+Upside All loft strings are implicitly format strings — no f prefix needed. Inline for loops inside {} produce a bracketed list (\[2,4,6\]) without a separate join. Format specifiers mirror Python's f-string mini-language: width, sign, alignment and zero-padding work on integers and floats alike, precision on floats, and radix (\#x, \#o, b) on integers: {5.25:+} is +5.25 and {5.25:08} is 00005.25.
 
-Downside Python f-strings accept arbitrary expressions: method calls ({obj.method():.2f}), ternary expressions ({"yes" if ok else "no"}), and join operations inline. Loft restricts what can appear inside {}. Python also supports conversion flags (!r for repr, !s for str, !a for ASCII) and the = debug specifier ({x=} prints x=42); loft has none of these.
+Downside Both accept an expression inside the braces — a method call with a specifier ({obj.method():.2}), an if expression ({if ok {"yes"} else {"no"}}), a join. Python also supports conversion flags (!r for repr, !s for str, !a for ASCII) and the = debug specifier ({x=} prints x=42); loft has none of these.
 
 === Collections — typed and built-in
 
@@ -796,7 +796,7 @@ shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> n
 
 Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's nonlocal does. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (fn name) are compile-checked. Higher-order functions (map, filter, reduce) accept both lambdas and fn-refs.
 
-Downside You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a & parameter cannot be captured at all, and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (\[x + offset for x in v\]) are shorter than map(v, fn(x) { x + offset }).
+Downside You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured &integer or &text parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (\[x + offset for x in v\]) are shorter than map(v, fn(x) { x + offset }).
 
 === No exception handling — file errors use FileResult
 
@@ -888,9 +888,9 @@ total = <span class="bi">sum</span>(results)
 
 Upside Built into the language — no import, no boilerplate. The GIL does not apply; worker threads run on separate OS threads inside the same process. Results arrive in the original vector order. The compiler validates the worker function signature at the call site. The thread count is set per call, making it easy to tune for the hardware.
 
-Downside Workers can return primitives (integer, long, float, boolean), text, and inline enums — but not struct references. Context must be embedded as fields in the element struct; workers cannot capture local variables. Python's ProcessPoolExecutor works with any picklable object and gives full control over timeouts, cancellation, and error propagation.
+Downside A worker is a named function, not a lambda, and context from the calling scope reaches it only as extra scalar arguments: each worker runs on its own copy of the heap, so it cannot reach a struct or vector of the caller's. Python's ProcessPoolExecutor works with any picklable object and gives full control over timeouts, cancellation, and error propagation.
 
-=== Generic functions — pass-through only, no duck typing
+=== Generic functions — interface bounds, no duck typing
 
 ```rust
 // Pass-through generics work:
@@ -958,7 +958,7 @@ Downside No \*args or \*\*kwargs — variadic dispatch must use a vector paramet
 // `loft install` fetches the rest from a signed registry.
 
 // Built-in: text, math, file I/O, collections,
-//           logging, threading, image, lexer/parser
+//           logging, threading, lexer/parser
 ```
 
 ```python
@@ -972,9 +972,9 @@ Downside No \*args or \*\*kwargs — variadic dispatch must use a vector paramet
 <span class="cm">#   pip install <package></span>
 ```
 
-Upside Zero external dependencies — the interpreter is a single self-contained binary. Deployment is copying one file. There is no requirements.txt, no virtual environment, no version conflict, and no supply-chain risk. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, image handling, and a full lexer/parser framework.
+Upside The interpreter is a single self-contained binary with the standard library inside, so a program that needs nothing else deploys by copying one file, with no virtual environment. What it does need, loft.toml declares and loft install fetches from a signed registry. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, and a full lexer/parser framework; image handling is the registry's imaging package.
 
-Downside Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs. Any data science, web development, database integration, or protocol implementation task will require reimplementing from scratch what Python solves with a single pip install. For these domains, loft is the wrong tool today.
+Downside Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single pip install. For these domains, loft is the wrong tool today.
 
 === Exponentiation with \*\* or pow(); ^ is XOR
 
@@ -2168,7 +2168,7 @@ struct Product {
 
 === Field Constraints
 
-You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. It is not a rejection and it never stops your program: a value outside the range cannot be represented, so the field takes the same answer any uncomputable number takes (see the Integers page). That is null when the field is nullable, and the type's default when it is not — 0 for a range that includes zero. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
+You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback ('over ?? 0'), the checked cast 'as integer(0, 255)?' (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you ('narrow-fallback'). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
 
 You may meet 'not null' on a field in older code. It has no effect — a type is non-null by default now — and the compiler advises removing it.
 
@@ -2438,9 +2438,20 @@ Write '&' to get a live link where a bind would otherwise copy.
   assert(item.stock == 1, "'&' binds a live link");
 ```
 
+=== Comparing structs
+
+'==' compares what two structs hold, field by field — a plain struct and a value struct alike, with no 'OpEq' to write. To ask whether two names are the SAME record, put '&' on both sides.
+
+```rust
+  twin = Product {name: "Pear", price: 90, stock: 3 };
+  assert(spare == twin, "equal fields make equal structs");
+  assert(!(&spare == &twin), "…held in two different records");
+  assert(&linked == &item, "a '&' link names the record it links to");
+```
+
 === sizeof
 
-'sizeof(Type)' returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 4-byte stack slot size.
+'sizeof(Type)' returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
 
 ```rust
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
@@ -3830,11 +3841,11 @@ If the interpreter version is below the stated minimum, loading the library prod
 
 === Wildcard and Selective Imports
 
-A bare `use lib;` already brings in every `pub` name, and `use lib::\*` says the same thing out loud. What the other forms buy you is a say in WHICH names arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes a group. Multiple names must be parenthesised — the flat `use lib::Name, Other` is refused ("import multiple names with parentheses"). Only `pub` definitions can be named this way; the rest stay reachable as `lib::name`.
+A bare `use lib;` brings in only the `lib::` prefix, and `use lib::\*` brings in every `pub` name. The selective forms give you a say in WHICH names arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes a group. Multiple names must be parenthesised — the flat `use lib::Name, Other` is refused ("import multiple names with parentheses"). Only `pub` definitions can be named this way; the rest stay reachable as `lib::name`.
 
-Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A bare import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.
+Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A wildcard import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.
 
-`use lib as short;` gives you the qualifier alone — `short::name` — and brings nothing in bare, which is the escape hatch when a name does clash. Single names alias too: `use lib::Name as N`, or `use lib::(Name as N, other)`.
+`use lib as short;` gives you the qualifier under another name — `short::name` — and, like a bare `use lib;`, brings nothing in bare. Single names alias too: `use lib::Name as N`, or `use lib::(Name as N, other)`.
 
 === Limitations
 
@@ -4741,12 +4752,12 @@ This means `result = expensive\_call() ?? default` is safe: the function is call
   assert(slice == "h", "slicing returns text");
 ```
 
-Building text from characters requires format interpolation:
+A character appends to text directly:
 
 ```rust
   result = "";
-  for c in "abc" { result += "{c}"; }
-  assert(result == "abc", "characters must be formatted into text");
+  for c in "abc" { result += c; }
+  assert(result == "abc", "`+=` appends a character to text");
 ```
 
 === Format strings: braces are always interpreted
@@ -4837,13 +4848,13 @@ Naming some fields and omitting others is legal, and each omitted field takes it
   assert(tile.palette_pick == -1, "a declared default answers instead: {tile.palette_pick}");
 ```
 
-=== A field only some variants declare reads another variant's bytes
+=== A field only some variants declare answers null on the others
 
-Enum payloads are named fields you read straight — `shape.radius`. Where several variants declare the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, the access resolves at compile time to the first variant that has it, and a value of any other variant reads that slot anyway: the tag is never consulted, so the read answers another variant's bytes typed as this one's. loft warns (`warning\[variant-field-unchecked\]`); bind the field in a `match` arm, which is per-variant and cannot reach the wrong one.
+Enum payloads are named fields you read straight — `shape.radius`. Where every variant declares the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, a value of any other variant has no such field: the read answers null, although the field's type does not say it can, and a write to it is silently dropped. loft warns (`warning\[variant-field-unchecked\]`); bind the field in a `match` arm or an `is` test, which is per-variant and cannot reach the wrong one.
 
 === A conditional `yield` in a loop runs eagerly on --native
 
-A generator is suspended at each `yield` on the interpreter.  On --native a `for` or `while` loop is too when its one `yield` sits on the body's straight line; a yield inside an `if` or `match`, two yields in one iteration, a nested loop or a `continue` runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless `while true { if ready { yield x; } }` never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional: `while true { …; yield x; }` is lazy on both backends.
+A generator is suspended at each `yield` on the interpreter.  On --native a `for` or `while` loop is too when its one `yield` sits on the body's straight line; a yield inside an `if` or `match`, two yields in one iteration, a nested loop, a `continue`, or a yield of a struct, vector or tuple runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless `while true { if ready { yield x; } }` never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional and yield a number or a text: `while true { …; yield x; }` is lazy on both backends.
 
 === XOR is `^`, not exponentiation
 
@@ -5154,7 +5165,7 @@ A generic function uses a type variable to work with any type. Write the functio
 
 === Declaring a generic function
 
-Place a single type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector\<T\>) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — `\<K: Printable, V: Printable\>` — each with its own bounds, each inferred from the parameters that name it.
+Place a type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector\<T\>) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — `\<K: Printable, V: Printable\>` — each with its own bounds, each inferred from the parameters that name it.
 
 A struct may declare type variables too — see Generic structs below.
 
@@ -5200,7 +5211,7 @@ fn first_element<T>(gen_v: vector<T>) -> T {
 }
 ```
 
-A computed index `gen\_v.len() - 1` is not provably in-bounds, so the read is nullable; a generic has no `?? default`, so the honest result type is `T?`.
+A computed index `gen\_v.len() - 1` is not provably in-bounds, so the read is nullable; a generic has no value of T of its own to write after `??`, so the honest result type is `T?` (or take the fallback as a parameter: `v\[i\] ?? d`).
 
 ```rust
 fn last_element<T>(gen_v: vector<T>) -> T? {
@@ -5311,6 +5322,8 @@ Printable  fn to_text(self: T) -> text
 Walkable   fn children(self: T) -> vector<T>
 ```
 
+`Equatable` is the exception: every type satisfies it, because `==` compares what two values hold — a struct field by field.  Define `OpEq` only when equality should mean something else.
+
 The same definition serves the bare operator: once `Money` has `OpLt`, both `a \< b` and `\<T: Ordered\>` work on it. Miss one and the error names it — "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL site, because that is where the concrete type is known.
 
 ```rust
@@ -5326,6 +5339,8 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap < dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
@@ -5663,7 +5678,7 @@ A 'for' loop drives the generator forward automatically. The body runs once per 
 
 === The body really is suspended
 
-Calling a generator runs none of its body; each advance runs exactly one more slice, up to the next 'yield'.  Write the loop so its body ENDS in a single 'yield' and this holds on both backends.
+Calling a generator runs none of its body; each advance runs exactly one more slice, up to the next 'yield'.  Give the loop one unconditional 'yield' of a number or a text and this holds on both backends.
 
 === Manual advance with next() and exhausted()
 
@@ -5809,7 +5824,7 @@ Squares via for loop with index tracking.
 
 'counted' is asked for a thousand values and the loop breaks after six. Its step counter shows the body ran six times, not a thousand — the work for the values nobody asked for was never done.
 
-⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included.  Other shapes — a yield inside an 'if' or 'match', two yields in one iteration, a nested loop, a 'continue' — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep the yield out of an 'if' in a generator loop, or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
+⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included.  Other shapes — a yield inside an 'if' or 'match', two yields in one iteration, a nested loop, a 'continue', a yield of a struct, vector or tuple — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep the yield out of an 'if' in a generator loop, or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
 
 ```rust
   trace = Trace { steps: 0 };
@@ -7460,7 +7475,7 @@ The tests reach your code by importing the package by name:
   }
 ```
 
-A bare 'use greeter;' already brings in every 'pub' name, and 'use greeter::\*;' says the same thing out loud — either way 'greet("Ada")' works. What the other forms buy you is a say in WHICH names arrive: 'use sums::add' takes one name from a package, and 'use sums::(add, subtract)' takes a group. Taking only what you name is the stronger position, because a package that later GROWS a name cannot then collide with one of yours.
+'use greeter::\*;' brings in every 'pub' name, which is why 'greet("Ada")' works bare. A bare 'use greeter;' brings in only the prefix, so there you would write 'greeter::greet("Ada")'. The selective forms give you a say in WHICH names arrive: 'use sums::add' takes one name from a package, and 'use sums::(add, subtract)' takes a group. Taking only what you name is the stronger position, because a package that later GROWS a name cannot then collide with one of yours.
 
 The 'greeter::' prefix is available whichever form you wrote, and it is the spelling that says where a name came from — useful once you import several packages, and the only way to reach something the package did not mark 'pub'.
 
@@ -8797,7 +8812,7 @@ Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as 
 pub fn file_map(path: text) -> vector<u8> ?fs#read
 ```
 
-Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read — an index, an iteration, a slice (a copy), text\_from\_bytes — works as on any vector\<u8\>; a WRITE is refused at run time (write\_to\_locked\_store): copy first (`w = v\[0..len(v)\]`) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
+Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. A WRITE, to it or a slice, is refused at run time: copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
 
 ```rust
 pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update

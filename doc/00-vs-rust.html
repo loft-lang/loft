@@ -18,7 +18,7 @@
   <p class="lang-label loft-label">Loft</p>
   <pre><code>x = <span class="nm">42</span>;
 x += <span class="nm">1</span>;
-<span class="kw">const</span> y = <span class="nm">42</span>;   <span class="cm">// opt-in: locked in debug builds</span></code></pre>
+<span class="kw">const</span> y = <span class="nm">42</span>;   <span class="cm">// opt-in: a write to it is a compile error</span></code></pre>
 </div>
 <div>
   <p class="lang-label rust-label">Rust</p>
@@ -28,8 +28,8 @@ let y = 42;     // immutable by default; compiler-enforced</code></pre>
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use <code>const</code> to signal that a value should not change — in debug builds the runtime locks the store immediately after initialisation, catching accidental writes early.</p>
-<p class="down"><strong>Downside</strong> Immutability is opt-in, not the default. Rust makes variables immutable unless you write <code>mut</code>, catching accidents at compile time for free. Loft's <code>const</code> lock is only checked at runtime and only in debug builds, so it provides less of a safety net.</p>
+<p class="up"><strong>Upside</strong> Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use <code>const</code> to say a value must not change — the compiler refuses every write it forbids.</p>
+<p class="down"><strong>Downside</strong> Immutability is opt-in, not the default. Rust makes variables immutable unless you write <code>mut</code>, so every binding is protected for free; in loft only the ones you mark <code>const</code> are.</p>
 </div>
 
 <h2 id="null">2. Null instead of <code>Option&lt;T&gt;</code></h2>
@@ -66,7 +66,7 @@ assert!(p.label.is_none());</code></pre>
 <span class="kw">fn</span> <span class="fn-call">push_two</span>(v: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) {
     v += [<span class="nm">1</span>, <span class="nm">2</span>];  <span class="cm">// caller sees the change</span>
 }
-<span class="cm">// const: read-only (locked in debug builds)</span>
+<span class="cm">// const: read-only (a write through it is a compile error)</span>
 <span class="kw">fn</span> <span class="fn-call">count</span>(v: <span class="kw">const</span> <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
     <span class="bi"><a href="stdlib-collections.html">len</a></span>(v)
 }
@@ -90,8 +90,8 @@ fn add_to(n: &amp;mut i32, delta: i32) {
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> No borrow-checker errors. No lifetime annotations. No ownership transfer to reason about. Struct field mutations through a parameter are always visible to the caller. A collection parameter is SHARED with no annotation at all — field writes, element writes, appends, removes and clears all reach the caller. <code>&amp;</code> adds exactly one thing on top of that: whole-value replacement, <code>v = [...]</code>, seen by the caller. <code>const</code> parameters signal read-only intent, and in debug builds the runtime locks the store for the duration of the call — enough to catch most accidents during development.</p>
-<p class="down"><strong>Downside</strong> The compile-time guarantees are much weaker. Rust's borrow checker statically proves no aliased mutations, no dangling references, and no data races — before the program ever runs. Loft's <code>const</code> is a debug-only runtime check. Aliasing is unchecked at compile time, and the engine's Rust runtime is what truly enforces memory safety.</p>
+<p class="up"><strong>Upside</strong> No borrow-checker errors. No lifetime annotations. No ownership transfer to reason about. Struct field mutations through a parameter are always visible to the caller. A collection parameter is SHARED with no annotation at all — field writes, element writes, appends, removes and clears all reach the caller. <code>&amp;</code> adds exactly one thing on top of that: whole-value replacement, <code>v = [...]</code>, seen by the caller. A <code>const</code> parameter is read-only: a write through it, or passing it on to a parameter that is not <code>const</code>, is a compile error.</p>
+<p class="down"><strong>Downside</strong> The compile-time guarantees are much weaker. Rust's borrow checker statically proves no aliased mutations, no dangling references, and no data races — before the program ever runs. Loft's <code>const</code> covers the name it marks and nothing more; aliasing is otherwise unchecked at compile time, and the engine's Rust runtime is what truly enforces memory safety.</p>
 </div>
 
 <h2 id="xor">4. <code>^</code> is XOR; <code>**</code> or <code>pow()</code> for exponentiation</h2>
@@ -183,7 +183,7 @@ loop {           // truly infinite — no bound needed
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> No tuple destructuring needed. <code>x#first</code> reads as "is this the first x", which is self-explanatory. Eliminates helper counter variables for the common pattern of comma-separated output.</p>
-<p class="down"><strong>Downside</strong> The <code>#attribute</code> syntax is unique to loft and unfamiliar to everyone else. Rust's <code>.enumerate()</code> composes freely with other adapters; loft's attributes are only available on the loop variable of the innermost loop.</p>
+<p class="down"><strong>Downside</strong> The <code>#attribute</code> syntax is unique to loft and unfamiliar to everyone else. Rust's <code>.enumerate()</code> composes freely with other adapters; loft's attributes exist only on a <code>for</code> loop's own variable.</p>
 </div>
 
 <h2 id="named-break">8. Named loop break — <code>x#break</code></h2>
@@ -239,7 +239,7 @@ p.greet();     // only dot syntax</code></pre>
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> No <code>impl</code> block ceremony. Methods and free functions are the same thing — just a naming convention. Functions can be added to any type from any file without modifying the original struct definition, similar to extension methods. Mark the first parameter <code>const</code> to guarantee the method never modifies the receiver — analogous to Rust's <code>&amp;self</code>.</p>
-<p class="down"><strong>Downside</strong> No consuming <code>self</code>. Plain (non-<code>const</code>) methods behave like <code>&amp;mut self</code> — the caller's value is always mutably aliased. Multiple functions with the same name but different non-variant <code>self</code> types are a compile error — no standard overloading.</p>
+<p class="down"><strong>Downside</strong> No consuming <code>self</code>. Plain (non-<code>const</code>) methods behave like <code>&amp;mut self</code> — the caller's value is always mutably aliased.</p>
 </div>
 
 <h2 id="enum-dispatch">10. Polymorphic enum dispatch</h2>
@@ -271,7 +271,7 @@ fn area(s: &amp;Shape) -&gt; f64 {
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Each variant's behaviour lives in its own small function — easy to read and extend. Adding a new type of shape only requires a new <code>fn area(self: NewShape)</code> without modifying the dispatch site. Feels like OOP method overriding without the inheritance.</p>
-<p class="down"><strong>Downside</strong> Rust's <code>match</code> is exhaustive: the compiler forces you to handle every variant. In loft, leaving a variant without an implementation emits a compiler warning but does not stop compilation. To suppress the warning and produce a null return, write an explicit empty-body stub: <code>fn area(self: NewShape) -&gt; float { }</code>. Exhaustiveness is enforced by discipline, not the type system.</p>
+<p class="down"><strong>Downside</strong> A variant needs its own implementation only once something calls the method on a value held as the enum — that call is refused until every variant has one or the enum has a fallback (<code>fn area(self: Shape)</code>) — so a missing one surfaces at the first such call, not where the variant is declared. An empty-body stub (<code>fn area(self: NewShape) -&gt; float { }</code>) answers the type's default, <code>0.0</code>, which a caller cannot tell from a computed one; Rust's <code>match</code> makes that decision visible at every site.</p>
 </div>
 
 <h2 id="closures">11. Closures — same-scope capture works</h2>
@@ -312,7 +312,7 @@ fn make_adder(n: i32) -&gt; impl Fn(i32) -&gt; i32 {
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (<code>move</code> vs borrow), no <code>Fn</code>/<code>FnMut</code>/<code>FnOnce</code> trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (<code>fn name</code>) are compile-checked.</p>
-<p class="down"><strong>Downside</strong> You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a <em>collection</em> (a struct field holds one fine), a <code>&amp;</code> parameter cannot be captured at all, and a scalar the closure <em>writes</em> to may be captured by only one closure — the cure for the last two is to hold the state in a struct and capture that.</p>
+<p class="down"><strong>Downside</strong> You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a <em>collection</em> (a struct field holds one fine), a closure cannot write a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter (it holds a copy), and a scalar the closure <em>writes</em> to may be captured by only one closure — the cure for the last two is a local the closure updates, or state held in a struct and captured.</p>
 </div>
 
 <h2 id="generics">12. Generic functions — inferred, with structural interface bounds</h2>
@@ -372,7 +372,7 @@ let hex  = format!("{:#x}", n);
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Concise — no <code>format!()</code> call, no separate variable. Full format expressions (arithmetic, slices, <code>for</code> comprehensions) can appear directly inside <code>{}</code>. Specifiers mirror Rust: <code>:width</code>, <code>:.precision</code>, <code>:width.precision</code>, sign (<code>+</code>), radix (<code>#x</code>, <code>#o</code>, <code>b</code>), alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), and zero-padding (<code>0N</code>) all work. The sign (<code>+</code>) and zero-pad (<code>0N</code>) flags apply to floats too: <code>{5.25:+}</code> is <code>+5.25</code> and <code>{5.25:08}</code> is <code>00005.25</code>.</p>
-<p class="down"><strong>Downside</strong> Unknown radix letters in specifiers are compile-time errors (e.g. <code>:5z</code> or <code>:5B</code> are both rejected). Radix letters are case-sensitive: valid ones are <code>b</code>, <code>o</code>, <code>x</code>/<code>X</code>, <code>e</code>, and <code>j</code>/<code>json</code> — uppercase <code>B</code> or <code>O</code> produce an error. Applying a numeric specifier to an incompatible type (such as <code>:x</code> on a <code>text</code> value, or zero-padding on a <code>boolean</code>) is a compile-time error.</p>
+<p class="down"><strong>Downside</strong> Unknown radix letters in specifiers are compile-time errors (e.g. <code>:5z</code> or <code>:5B</code> are both rejected). Radix letters are case-sensitive: valid ones are <code>b</code>, <code>o</code>, <code>x</code>/<code>X</code> and <code>d</code> on an integer, and <code>j</code>/<code>json</code> on a struct, vector or enum — uppercase <code>B</code> or <code>O</code> produce an error, and there is no exponent form (<code>e</code>). Applying a numeric specifier to an incompatible type (such as <code>:x</code> or zero-padding on a <code>text</code> value) is a compile-time error.</p>
 </div>
 
 <h2 id="parallel">14. Built-in parallel for-loops — <code>par(...)</code></h2>
@@ -404,7 +404,7 @@ let sum: i32 = scores.par_iter()
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Built into the language — no external crate, no <code>Cargo.toml</code> edit. The compiler validates the worker function signature at the call site. Results are delivered in the original vector order. The thread count is set per call, making it easy to tune for the hardware at hand.</p>
-<p class="down"><strong>Downside</strong> Workers can return primitives (<code>integer</code>, <code>float</code>, <code>single</code>, <code>boolean</code>, <code>character</code>), <code>text</code>, and inline enums — but not struct references. Workers cannot capture local variables: context must be embedded as fields alongside the data in the element struct. For multi-stage transformations, use <code>map()</code> / <code>filter()</code> / <code>reduce()</code> sequentially — each stage allocates a new intermediate vector.</p>
+<p class="down"><strong>Downside</strong> A worker is a named function, not a closure: context from the calling scope reaches it only as extra <em>scalar</em> arguments, because each worker runs on its own copy of the heap and cannot reach a struct or vector of the caller's. Nor may it touch shared state (no <code>println</code>, no file access) — a rule the compiler does not check. For multi-stage transformations, use <code>map()</code> / <code>filter()</code> / <code>reduce()</code> sequentially — each stage allocates a new intermediate vector.</p>
 </div>
 
 </article>

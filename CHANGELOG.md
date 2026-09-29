@@ -5201,7 +5201,7 @@ q: SqlText = "SELECT id FROM users WHERE name = {name}";
 db.db_rows(q)
 ```
 
-See [LOFT.md § Building a value instead of text](doc/claude/LOFT.md).
+See [LOFT_LITERALS.md § Building a value instead of text](doc/claude/LOFT_LITERALS.md).
 
 ### Removing from a container you hold a reference into no longer loses your write
 
@@ -6112,7 +6112,7 @@ SSH-port-forward 8765 from the host.  Built entirely in loft (web
 server, markdown rendering, JSON parsing, file walking) + a small bash
 wrapper for `git` calls; no Python, no external markdown library, no
 syntax-highlighter dependency.  See
-[doc/claude/DEBUG.md § Branch review viewer](doc/claude/DEBUG.md#branch-review-viewer-make-view).
+[doc/claude/DEBUG_VIEW.md § Branch review viewer](doc/claude/DEBUG_VIEW.md#branch-review-viewer-make-view).
 
 A `/welcome` landing page surfaces project status at a glance: open
 problems, recently closed bugs (last 30 days), active and recently

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/interfaces-history.md — the deviation register for [interfaces.md](interfaces.md)
 
 > **The rules are next door.**  [interfaces.md](interfaces.md) states what must always be true of the

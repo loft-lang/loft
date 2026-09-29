@@ -92,7 +92,7 @@ make view                                     # branch-aware doc + code review v
   port-forward.  Renders any file in the repo with line
   numbers + cross-doc links.  Dashboard shows files changed
   vs main, recent commits, and per-file diffs.  See
-  [DEBUG.md § Branch review viewer](doc/claude/DEBUG.md).
+  [DEBUG_VIEW.md § Branch review viewer](doc/claude/DEBUG_VIEW.md).
 ```
 
 #### `CHANGELOG_TECHNICAL.md`

@@ -166,7 +166,7 @@ where that is decided; nothing in these ten weeks decides it earlier.
 blocked the 2026.10.0 tag and the one open `silent-wrong`; the walk's yield is now hygiene
 gates on new files rather than wrong answers (this branch's own day: a store in condition
 position refused on both backends, a `default/` that does not match its binary refused at
-load, and [C130](DESIGN_DECISIONS.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
+load, and [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
 with [@PLN178](plans/178-store-else.md) as the language's answer to a dropped write —
 each a refusal or a rule, none a fix to a wrong answer).  Two advisory CI regressions
 appeared on main the same morning and were fixed within two hours; that is the cadence
@@ -602,7 +602,7 @@ either conclusion.
    (caught + closed 2 real bugs in its first five minutes), `LOFT_POISON=1 cargo test`
    fully green (24 latent memory bugs fixed across the poison campaign), and the
    debug-assertions calibration run
-   ([DEBUG.md](DEBUG.md#the-debug-assertions-calibration-run-target-da)).  The residue
+   ([DEBUG.md](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da)).  The residue
    is enumerated, not anecdotal: the open DA cells + unfuzzed axes in
    [plans/85 fuzz-proof-gate.md](plans/85-store-lifetime-retirement/fuzz-proof-gate.md).
    **Build-order dependency — RESOLVED.** Gate 1 was blocked by gate 2: the ownership invariant

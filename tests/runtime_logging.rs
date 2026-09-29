@@ -4,7 +4,7 @@
 //! Plan-07 phase 4 production-mode tests.
 //!
 //! Asserts the production-mode log-and-continue contract from
-//! [`DESIGN_DECISIONS.md § C66`](../doc/claude/DESIGN_DECISIONS.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt):
+//! [`DESIGN_DECISIONS.md § C66`](../doc/claude/DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt):
 //! when the loft binary is invoked with `--production` and a logger
 //! is attached, runtime fault sites (panic / assert / div / mod /
 //! vec OOB / text OOB / null deref / narrow cast / stack overflow)

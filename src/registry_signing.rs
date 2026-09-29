@@ -5,7 +5,7 @@
 //! Ed25519 signature verification for the registry index.
 //!
 //! PKG.REG R3.5.  See
-//! [PKG_REGISTRY.md § Index signing](../doc/claude/PKG_REGISTRY.md#index-signing--indexjsonsig)
+//! [PKG_REGISTRY_TRUST.md § Index signing](../doc/claude/PKG_REGISTRY_TRUST.md#index-signing--indexjsonsig)
 //! for the threat model.  Short version: HTTPS to the registry host
 //! is insufficient on its own — an attacker who controls the registry
 //! repo (or successfully MITMs HTTPS) can swap `index.json` with

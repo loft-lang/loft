@@ -193,10 +193,10 @@ fn main() {
   slice = txt[0..1];
   assert(ch == 'h', "indexing returns a character");
   assert(slice == "h", "slicing returns text");
-  // Building text from characters requires format interpolation:
+  // A character appends to text directly:
   result = "";
-  for c in "abc" { result += "{c}"; }
-  assert(result == "abc", "characters must be formatted into text");
+  for c in "abc" { result += c; }
+  assert(result == "abc", "`+=` appends a character to text");
 
   // ## Format strings: braces are always interpreted
   // Every string literal in loft is a format string. Literal braces must
@@ -313,25 +313,26 @@ fn main() {
   tile = Tile { name: "grass" };
   assert(tile.palette_pick == -1, "a declared default answers instead: {tile.palette_pick}");
 
-  // ## A field only some variants declare reads another variant's bytes
+  // ## A field only some variants declare answers null on the others
   // Enum payloads are named fields you read straight — `shape.radius`. Where
-  // several variants declare the same name and type it is ONE slot and each
-  // variant reads its own value. Where only SOME declare it, the access
-  // resolves at compile time to the first variant that has it, and a value of
-  // any other variant reads that slot anyway: the tag is never consulted, so
-  // the read answers another variant's bytes typed as this one's. loft warns
-  // (`warning[variant-field-unchecked]`); bind the field in a `match` arm,
-  // which is per-variant and cannot reach the wrong one.
+  // every variant declares the same name and type it is ONE slot and each
+  // variant reads its own value. Where only SOME declare it, a value of any
+  // other variant has no such field: the read answers null, although the
+  // field's type does not say it can, and a write to it is silently dropped.
+  // loft warns (`warning[variant-field-unchecked]`); bind the field in a
+  // `match` arm or an `is` test, which is per-variant and cannot reach the
+  // wrong one.
 
   // ## A conditional `yield` in a loop runs eagerly on --native
   // A generator is suspended at each `yield` on the interpreter.  On --native
   // a `for` or `while` loop is too when its one `yield` sits on the body's
   // straight line; a yield inside an `if` or `match`, two yields in one
-  // iteration, a nested loop or a `continue` runs the whole loop before the
-  // first value is handed out.  The values agree, the side effects do not —
-  // and an endless `while true { if ready { yield x; } }` never hands out a
-  // value on --native, it runs until memory runs out.  Keep the yield
-  // unconditional: `while true { …; yield x; }` is lazy on both backends.
+  // iteration, a nested loop, a `continue`, or a yield of a struct, vector or
+  // tuple runs the whole loop before the first value is handed out.  The values
+  // agree, the side effects do not — and an endless
+  // `while true { if ready { yield x; } }` never hands out a value on --native,
+  // it runs until memory runs out.  Keep the yield unconditional and yield a
+  // number or a text: `while true { …; yield x; }` is lazy on both backends.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

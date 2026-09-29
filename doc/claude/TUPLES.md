@@ -320,8 +320,8 @@ A destructuring LHS is a **binding position**, so its names follow the same rule
 
 Both forms answer identically, which is the rule to keep: a binding position mints a
 local whatever else carries that name, and the function stays reachable as a call —
-values and functions are separate namespaces (loft#852, [LOFT.md § Shadowing and
-qualified names](LOFT.md)). Before loft#756 only `name = …` was recognised as a
+values and functions are separate namespaces (loft#852, [LOFT_DECLARATIONS.md § Shadowing and
+qualified names](LOFT_DECLARATIONS.md)). Before loft#756 only `name = …` was recognised as a
 binding, so a destructured element resolved to the definition instead and the author
 got *"Tuple destructuring requires plain variable names"* about a name that is exactly
 that, plus an arity error counting the names that had been dropped.
@@ -530,7 +530,7 @@ When the element type is an enum (plain or struct-enum), a capitalised name is a
 pattern, never a binding: `(Fire, Wall)` tag-tests both positions, and `(Fire { id }, Wall
 { status })` also binds each payload field by name, in scope for the guard and the arm.  The
 same view-or-copy rule as a top-level arm applies — a record or other heap payload is a view
-of the matched value, a scalar payload is a copy (LOFT.md § Match expressions).  Plain-enum
+of the matched value, a scalar payload is a copy (LOFT_CONTROL.md § Match expressions).  Plain-enum
 variants take an or-pattern (`(Fire | Ice, _)`); struct-enum variants do not, so spell those
 as separate arms.  The element and the top-level arm share one lowering
 (`parse_field_sub_pattern`), which is what `(P-Point)` in `formal/matching.md` asks for: a
@@ -970,7 +970,7 @@ fn main() {
 
 ## See also
 - [TUPLES.md](TUPLES.md) — Full tuple design; T1.8a/b for function-return convention
-- [LOFT.md](LOFT.md) § Match expressions — match syntax reference;
+- [LOFT_CONTROL.md](LOFT.md) § Match expressions — match syntax reference;
   L2 nested field patterns tracked in PLANNING.md
 - [PLANNING.md](PLANNING.md) — T1 backlog
 - `src/parser/control.rs` — `parse_match`, `parse_scalar_match`, `parse_vector_match`

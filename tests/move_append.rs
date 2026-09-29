@@ -133,7 +133,7 @@ fn each_cell_pairs_exactly_the_loops_predicted() {
 /// run must emit the same bytes.  At the host's death c22 releases its buffers in REVERSE
 /// declaration order — the second loop's before the first's — which is `(H-Drop)`'s scope-end
 /// order: each buffer holds the collection one loop iterates, and takes its turn in the sweep
-/// where that collection is bound (`formal/heap.md` D-heap-21).  The re-arm at the host's
+/// where that collection is bound (`formal/heap-history.md` D-heap-21).  The re-arm at the host's
 /// `OpDatabase` nulls them in declaration order.
 #[test]
 fn two_runs_emit_the_same_text() {

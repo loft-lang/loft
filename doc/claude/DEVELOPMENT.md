@@ -455,7 +455,7 @@ not resurface every session.
 - **Adding** an entry requires the question, the evaluation, the decision with its date, and
   a "revisit when" trigger: the compact entry goes in the register, the deliberation in
   [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md) under the same heading
-  ([DESIGN_DECISIONS.md § Using the register](DESIGN_DECISIONS.md#using-the-register)).
+  ([DESIGN_DECISIONS_RULES.md § Using the register](DESIGN_DECISIONS_RULES.md#using-the-register)).
 
 When declining a proposal, strike it (`~~…~~`) in its source doc and append a pointer to its
 DESIGN_DECISIONS.md entry.

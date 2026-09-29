@@ -240,7 +240,7 @@ here. Re-run it if the trampoline design changes, or on a new target — the
 argument-register boundary it probes is per-ABI, and AArch64 splits at eight
 arguments where x86-64 splits at six.
 
-See also: [PACKAGES.md § Direct C binding](../../../doc/claude/PACKAGES.md) ·
+See also: [PACKAGES_C_BINDING.md](../../../doc/claude/PACKAGES_C_BINDING.md) ·
 [@PLN24](https://github.com/loft-lang/plans/issues/24) ·
 [@PLN23](https://github.com/loft-lang/plans/issues/23) (the MariaDB/PostgreSQL
 clients — the first consumer, and the reason the handle shape is here).

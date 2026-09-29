@@ -117,7 +117,7 @@ measurements reframed the cost/benefit and point to a clear priority order:
 
    **E2 deprioritised further (2026-06-04) — superseded-for-perf by the
    native-library execution model** ([DESIGN_DECISIONS.md §
-   C71](../../DESIGN_DECISIONS.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
+   C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
    [BROADENING.md § Native-library execution
    model](../../BROADENING.md#native-library-execution-model--the-steady-state-design)).
    In the native-library model (stable/published libraries compile to native
@@ -222,7 +222,7 @@ blast radius (only the `default/` parse).
 
 ### Arc N — native-library execution model (C71 build-out)
 
-**The forward arc.**  Per [DESIGN_DECISIONS § C71](../../DESIGN_DECISIONS.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
+**The forward arc.**  Per [DESIGN_DECISIONS § C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
 the steady state is **native libraries + interpreted scripts**; this arc builds
 that architecture.  It **supersedes the G2 zero-copy endgame for perf** (E2 /
 M6-cold / M7 are parked — see recommendation #2): native libraries are never
@@ -923,7 +923,7 @@ libs on demand.  Two reasons, both permanent:
 
 Caching the **whole bundle** (core + the script's sorted lib-set) sidesteps both
 — every index inside one image is internally consistent, no relocation anywhere.
-Closed in the decision register: [DESIGN_DECISIONS.md § C70](../../DESIGN_DECISIONS.md#c70--no-per-library-ir-snapshot--cache).
+Closed in the decision register: [DESIGN_DECISIONS.md § C70](../../DESIGN_DECISIONS_PLATFORM.md#c70--no-per-library-ir-snapshot--cache).
 
 **Interim stop-gap (precedes this plan):** @PLN82 Step 2 ships a
 **whole-stdlib / whole-bundle JSON snapshot** (loft's own database JSON,

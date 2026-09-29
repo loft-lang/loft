@@ -87,7 +87,7 @@ The signs, which tend to appear together:
   *"… unless it is a local holding the caller's record"*, then *"… unless that local is written
   through"*.
 - **The defect list re-cuts instead of shrinking.** Closing one shape reveals its neighbour;
-  `formal/heap.md` D-heap-1 records its list being re-cut four times as it was measured.
+  `formal/heap-history.md` D-heap-1 records its list being re-cut four times as it was measured.
 - **Each option grows its own machinery.** The next proposal needs a runtime check, and the one
   after it a hidden value in the calling convention.
 

@@ -4,342 +4,166 @@
 
 # Loft Code Formatter
 
-> **Status: shipped** — implemented in `src/formatter.rs` (T2-0, 2026-03-16).
-> `loft --format file.loft` formats in-place; `loft --format-check file.loft` exits 1 if not canonical.
-
-A canonical, opinionated formatter for `.loft` source files — similar in philosophy to `gofmt`.
-One right way to format code; no configuration.
-
----
-
-## Design Goals
-
-- **Low cognitive burden**: the rules fit on one page; you never have to think about them
-- **Idempotent**: running the formatter twice produces the same output as running it once
-- **Comment-preserving**: line comments (`//`) survive formatting unchanged
-- **No configuration**: there is one canonical loft style
+`loft fmt` — a canonical, opinionated formatter for `.loft` source, in the spirit of `gofmt`:
+one style, no configuration.  It is a loft program (`tools/fmt/whole.loft`) run by the
+interpreter through the `loft::host` call API.  The design and its open steps are in
+[plans/formatter-parser-driven.md](plans/formatter-parser-driven.md); the retired Rust formatter
+is in [FORMATTER-history.md](FORMATTER-history.md).
 
 ---
 
 ## Invocation
 
 ```
-loft --format file.loft          # format in-place (overwrites)
-loft --format-check file.loft    # exit 1 if file differs from formatted output
+loft fmt <file…>            # print the formatted source (default; file untouched)
+loft fmt --write <file…>    # rewrite in place; prints `formatted <file>` per changed file
+loft fmt -w <file…>         # same as --write
+loft fmt --check <file…>    # exit 1 if any file differs; lists them on stderr
+loft fmt -                  # stdin -> stdout
 ```
 
-Or as a pipe:
-```
-loft --format -             # read stdin, write stdout
-```
+- `--check` and `--write` together: error, exit 1.
+- No file: usage line, exit 1.  Unknown option (including `--help`): `unknown option`, exit 1.
+- An unreadable file: message on stderr, exit 1, the remaining files are still processed.
+- `LOFT_FMT_WIDTH=<n>` sets the width budget (default 100).
+- The formatter source is embedded in the binary (`include_str!`); the stdlib `default/`
+  directory is resolved as for `loft run` (beside the binary, else the source tree).
+- The LSP `textDocument/formatting` runs the same program (`src/lsp.rs`), so editor and CLI
+  produce identical output.  A tidy buffer yields no edit.
 
 ---
 
-## Implementation
+## How it is built
 
-### `src/formatter.rs` — standalone tokenizer + state machine
+`src/main.rs::run_fmt_command` compiles `tools/fmt/whole.loft` once
+(`Program::from_source_with_stdlib`) and calls its `format(text) -> text` per file.
+`whole.loft` is the only file the binary uses.  It is self-contained and has three layers:
 
-The formatter uses its **own scanner** (`fn scan`) that tokenizes loft source into a `Tok`
-enum — completely independent of the parser's `lexer.rs`.  This keeps formatting self-contained
-and allows formatting files that do not yet fully parse.
+1. **Lossless lexer** (`lex`) — every byte belongs to one token: words, operators, `//`
+   comments, whitespace, newlines.  Strings (`"…"` with `{expr}` slots and `{{`/`}}`), backtick
+   strings and char literals are ONE opaque token; the formatter never rewrites their
+   interior.  `#directive` is one token.
+2. **Bracket tree** (`parse`) — `[]`, `{}`, `()` nest into `Group` nodes; all else is a `Leaf`.
+   Error-tolerant: an unmatched close is a leaf, an unterminated group has an empty close.
+3. **Renderer** — `render_stmts` (statements, one source line per output line, re-indented),
+   `render_range` (one line of tokens, spacing by `sp`), `render_block`, `render_container`.
+   Whitespace is re-derived; comments are kept.  Layout is direct string building, not a
+   `Doc` algebra.
 
-Public API:
-```rust
-pub fn format_source(source: &str) -> String
-pub fn check_source(source: &str) -> bool
-```
+Classification of a `{…}` group is syntactic, confirmed against its body: a struct or enum
+definition (`struct`/`enum` before the name) and a struct literal (`CamelName { field: … }`,
+no top-level `;`, at least one top-level `:`) are DATA containers; everything else (fn, `if`,
+`for`, `match` arms, `-> Type {`, a bare `{`) is a BLOCK.  An `interface` body is a forced block.
 
-Both functions normalize CRLF line endings at entry so they behave identically on Windows
-and Unix.
+### The prototype files
 
-Internal types:
-```rust
-enum Tok { Word(String), Int(String), Flt(String), Str(String), Chr(String),
-           Sym(String), Comment(String), Newline, Blank }
-
-enum Ctx { Block, StructDef, ArgList, ArrayLit, StructLit }
-
-struct Fmt {
-    depth: usize,
-    prev: String,           // last emitted token text (or sentinel like "unary")
-    ctx: Vec<Ctx>,
-    next_brace_is_block: bool,
-    out: String,
-}
-```
-
-`next_brace_is_block` is set by all block-opening keywords (`fn`, `if`, `else`, `for`,
-`while`, `loop`, `match`) and by `->`, so that `{` always opens a `Block` context when
-following a keyword, regardless of what the immediately preceding token was.
-
-### `src/main.rs`
-
-`--format` / `--format-check` / `--format -` flags are parsed before the normal execution
-path and handled without loading the standard library.
-
-### `src/lib.rs`
-
-`pub mod formatter;` exposes the formatter for integration tests.
+`cst.loft`, `roundtrip.loft`, `fmt.loft`, `rules.loft` in `tools/fmt/` are the step-by-step
+groundwork (lossless lexer, tree, a rule-free `Doc`/`Group` engine with a stubbed transparent
+`Group` resolver, a first container-rule cut).  Each carries its own copy of the lexer, runs
+standalone (`LOFT_FMT_FILE=<file> loft --interpret <step>.loft`), and is NOT used by `loft fmt`.
+`whole.loft` supersedes them.
 
 ---
 
-## Formatting Rules
+## Invariants
 
-### Indentation
+For any input `x` (the harness in `whole.loft`'s `main`):
 
-- 2 spaces per depth level (matches existing codebase convention)
-- Depth increases after `{`, decreases before `}`
+- **Idempotent**: `format(format(x)) == format(x)`.
+- **Token stream preserved**: the non-trivia tokens of `format(x)` equal those of `x`, except
+  that a trailing `,` before a closer may be added or removed.
+- **Comments preserved**: the `//` comment count is unchanged.
+- **Empty stays empty**; otherwise the output ends in exactly one newline.
 
-### Blank Lines
+Run the self-check on one file (prints `OK …` or `FAIL !IDEMPOTENT !SEMANTICS !COMMENTS`):
 
-| Context | Rule |
-|---|---|
-| Between top-level items (`fn`, `struct`, `enum`, `type`, `use`, constant) | 1 blank line |
-| Inside a function body | preserve at most 1 blank line |
-| Inside struct/enum body | no blank lines |
-
-### Braces `{ }`
-
-Opening brace **always** on the same line as the header.
-Closing brace **always** on its own line, at the enclosing indent.
-
-```loft
-fn foo(x: integer) -> integer {
-  x + 1
-}
+```
+LOFT_FMT_FILE=$PWD/tests/scripts/01-integers.loft loft --interpret tools/fmt/whole.loft
 ```
 
-**No inline blocks** — even a one-liner body is expanded:
-```loft
-// input:   if x > 0 { return x; }
-// output:
-if x > 0 {
-  return x;
-}
-```
+Set `LOFT_FMT_PRINT=1` to print the formatted text instead.
 
-This is the single most important rule: it eliminates all "should I inline this?" decisions.
+---
 
-### Semicolons `;`
+## Rules applied
 
-Semicolons terminate statements and are followed by a newline at the same depth.
-The formatter does **not** insert missing semicolons (that remains a parse error).
+### Indentation and blank lines
 
-### Commas `,`
+- 2 spaces per level.
+- Statement line structure is preserved: one source line stays one output line (a
+  `a; b` line stays a line).  Blank runs collapse to one blank line; leading blanks are dropped.
 
-| Context | Rule |
-|---|---|
-| Function parameter list `fn f(a, b)` | space after comma, stay on one line; wrap if line > 80 cols |
-| Function call `f(a, b)` | space after comma, stay on one line; wrap if line > 80 cols |
-| Struct literal `Point { x: 1, y: 2 }` | space after comma, stay on one line |
-| Struct/enum definition body | comma + newline (each field on its own line) |
-| Array literal `[1, 2, 3]` | space after comma, stay on one line; wrap if line > 80 cols |
+### Blocks `{ }`
 
-Trailing commas in struct/enum definitions are **stripped** (the formatter enforces
-"no trailing comma" as the canonical style, matching the existing test files).
-Trailing commas in call/param/array contexts are also stripped.
+- Opening brace on the header line, closing brace on its own line at the enclosing indent.
+- A `fn` body and an `interface` body always break.
+- Any other block with at most one `;`, no nested `{…}` and no `//` comment stays inline as
+  `{ expr }` when it fits the width; otherwise it breaks.  An empty body is `{}`.
 
-The heuristic for "struct/enum definition body vs struct literal" is purely syntactic:
-- In a `struct Name {` or `enum Name {` header → definition mode (multi-line)
-- After `=`, after a type name in expression position → literal mode (single-line)
+### Data containers (struct/enum definitions, struct literals, `[…]`)
 
-**Line-length wrapping for param/call/array lists (> 80 cols):** emit each element on
-its own line at `depth+1`, with the closing `)` or `]` on a new line at `depth`.
-This handles long function signatures without needing the full Wadler/Lindig algorithm.
-```loft
-// short — stays on one line:
-fn add(a: integer, b: integer) -> integer {
+- A struct or enum definition always breaks: one field or variant per line, trailing comma.
+- Otherwise a container stays inline when it fits the width and nothing forces a break.
+  Forced break: a `//` comment inside, or a `[…]` holding a struct literal (`Name { … }`).
+- A broken container has one element per line and a trailing comma, except a pure-scalar
+  `[…]` vector that overflows: its elements wrap into rows filled to the width.
+- A same-line trailing comment after an element's comma stays on that line; leading comments
+  keep their own lines.
+- A `(…)` list, a comprehension `[for … { … }]` and a match slice pattern (`*`/`+` repetition
+  or `..rest`) break on width only, one element per line, and take no trailing comma after
+  the last element.
 
-// long — each param on its own line:
-fn process(
-  source: vector<Record>,
-  target: vector<Record>,
-  options: Options,
-) -> Result {
-```
+### Spacing
 
-### Spaces Around Tokens
-
-| Token(s) | Rule |
-|---|---|
-| Binary operators `+ - * / % == != < > <= >= && \|\| & \| ^ << >> ?? as` | 1 space before and after |
-| Assignment operators `= += -= *= /= %=` | 1 space before and after |
-| `->` (return type) | 1 space before and after |
-| `=>` | 1 space before and after |
-| `:` in type annotation `field: type`, `param: type` | no space before, 1 space after |
-| `::` (path separator) | no spaces |
-| `.` (field/method access) | no spaces |
-| `(` in call | no space before |
-| `[` in index | no space before |
-| `,` | no space before, 1 space after (except before newline) |
-| `!` (unary not) | no space after |
-| `-` (unary minus) | no space after |
-| `#` (loop attribute) | no space before or after |
-| `?` | no space before |
-
-### Keywords with Trailing Space
-
-`fn`, `pub`, `struct`, `enum`, `type`, `use`, `if`, `else`, `for`, `in`, `return`,
-`break`, `continue`, `loop`, `as`, `and`, `or`, `not`
-
-Exception: `else if` → 1 space between `else` and `if`.
+- One space around binary and assignment operators, `->`, `=>`, `??`, `&&`, `||`.
+- No space before `,` `;` `:` `)` `]`, none after `(` `[`; one space after `,` `;` `:`.
+- No space around `.` and `::`; none before `(` or `[` in a call or index.
+- Unary `-` `+` `*` `&` (after an operator, opener, `,` `;` `:` or `return`) and `!` hug their
+  operand.
+- Generic brackets are tight: `vector<T>`, `sorted<K>`, `Name<T>`; `<` after any other token is a
+  comparison and is spaced.
+- `#rust"…"` hugs its string; a repetition postfix `)*` / `)+` hugs the paren.
 
 ### Comments
 
-Line comments (`// ...`) are preserved verbatim.
-A comment on its own line keeps its current indentation depth (re-indented to `depth`).
-A trailing comment (end of a line with code) is separated from the code by 2 spaces.
-
-Block comments (`/* ... */`) are not currently used in loft and are not handled.
+`//` comments are kept verbatim.  A trailing comment stays at the end of its line, one space
+after the code.  A comment alone on a line is re-indented.
 
 ---
 
-## Context Stack
+## Not implemented
 
-To decide inline-vs-multiline and spacing, the formatter maintains a stack of contexts:
+Live plan: [plans/formatter-parser-driven.md](plans/formatter-parser-driven.md) (Step 4 rules
+"keep landing").  The formatter does NOT yet:
 
-```
-enum Ctx {
-    Block,          // inside { } of fn/if/for/loop body — multi-line
-    StructDef,      // inside struct/enum declaration — multi-line, comma+newline
-    ArgList,        // inside ( ) of fn call or declaration — single-line
-    ArrayLit,       // inside [ ] — single-line unless overflow
-    StructLit,      // inside { } of struct/enum constructor — single-line
-    FormatExpr,     // inside { } of a format string — passthrough
-}
-```
+- align consecutive trailing comments to a common column;
+- break, join or wrap statements and expressions (only the containers above wrap);
+- insert or normalise blank lines between top-level items;
+- sort `use` lines, or strip trailing commas in data containers (it adds them when breaking);
+- run the `Doc`/`Group` layout engine of `fmt.loft` (a prototype; `whole.loft` renders directly).
 
-Context is pushed on `{`, `(`, `[` and popped on the matching closer.
-Determining the context at `{`:
-- Stack top is `Block` or `ArgList` and prev token is `)` or `->` type → `Block`
-- Prev token is identifier or type keyword → `StructLit`
-- After `struct`/`enum` keyword path → `StructDef`
-- Inside a `CString` format expression → `FormatExpr`
+Not every stdlib file is canonical yet: `loft fmt --check default/*.loft` lists
+`default/01_code.loft` and `default/02_files.loft`.
 
 ---
 
-## Token Reconstruction
+## Tests
 
-The formatter scans the token stream and, for each token, emits:
-
-1. Any pending newlines / indentation
-2. Any spacing before the token (based on rules above)
-3. The token text
-4. Any comment that was attached to this line
-
-The token → text mapping:
-
-| LexItem | Output |
+| Test | Covers |
 |---|---|
-| `Integer(n, false)` | decimal `n` |
-| `Integer(n, true)` | `0x{N:X}` for hex constants, else decimal |
-| `Long(n)` | `{n}l` |
-| `Float(f)` | shortest round-trip decimal |
-| `Single(f)` | `{f}f` |
-| `Token(s)` | `s` as-is |
-| `Identifier(s)` | `s` as-is |
-| `CString(s)` | `"{s}"` with interior `{...}` expressions re-formatted |
-| `Character(c)` | `'c'` |
-| `LineComment(s)` | `// {s}` |
+| `tests/host_call.rs::formatter_dogfood` | struct definition expands |
+| `tests/host_call.rs::formatter_enum_variant_if_body_is_a_block` | `if x == E.A { … }` is a block, no `;,` |
+| `tests/host_call.rs::formatter_qualified_variant_before_block_is_not_a_struct_lit` | `Light::Point { … }` and `-> a::B { … }` bodies are blocks |
+| `tests/host_call.rs::formatter_width_counts_characters_not_bytes` | width is measured in characters |
+| `tests/lsp_transport.rs::formatting_returns_a_whole_document_edit_and_noops_when_tidy` | LSP formatting = one whole-document edit; tidy buffer = none |
 
----
-
-## Example: Before and After
-
-**Input (messy):**
-```loft
-fn   add( a:integer,b:integer)->integer{return a+b;}
-struct  Point{x:float,y:float}
-fn dist(p:Point)->float{ let d=p.x*p.x+p.y*p.y; d.sqrt() }
-```
-
-**Output (formatted):**
-```loft
-fn add(a: integer, b: integer) -> integer {
-  return a + b;
-}
-
-struct Point {
-  x: float,
-  y: float
-}
-
-fn dist(p: Point) -> float {
-  let d = p.x * p.x + p.y * p.y;
-  d.sqrt()
-}
-```
-
----
-
-## File Layout in `src/formatter.rs`
-
-```
-fn scan(src: &str) -> Vec<Tok>          // standalone scanner
-
-impl Fmt {
-    fn process(&mut self, tokens: &[Tok])
-    fn handle_sym(&mut self, s: &str, tokens: &[Tok], i: &mut usize)
-    fn close_brace(&mut self, tokens: &[Tok], i: &mut usize)
-    fn need_space(&self, tok: &str) -> bool
-    fn push_ctx(&mut self, ctx: Ctx)
-    fn pop_ctx(&mut self)
-    fn emit(&mut self, s: &str)
-    fn newline(&mut self)
-}
-
-pub fn format_source(source: &str) -> String
-pub fn check_source(source: &str) -> bool
-```
-
----
-
-## Non-Goals (Explicitly Out of Scope)
-
-- **Full optimal line-length wrapping (Wadler/Lindig)**: the simple > 80-col heuristic on
-  param/call/array lists covers the common cases; arbitrary expression wrapping is not attempted
-- **Semantic analysis**: the formatter works on tokens alone; it does not type-check; files
-  that do not yet compile can still be formatted
-- **Multi-file project formatting**: `loft --format` takes one file at a time; shell
-  globbing (`loft --format src/*.loft`) handles projects
-
-## In Scope (revised from initial draft)
-
-- **Import sorting**: consecutive `use` lines are sorted alphabetically within each contiguous
-  block; a blank line between `use` statements starts a new block (preserving intentional grouping).
-  This is safe because loft does not allow two `use` statements to import the same identifier — if
-  they did, the second would already be a compile error.
-- **Trailing comma stripping**: trailing commas after the last element in struct/enum definitions,
-  call lists, and array literals are removed. Adding trailing commas is not done (requires
-  knowing whether the grammar permits them in each position).
-
----
-
-## Testing
-
-`tests/format.rs` — 11 tests using `include_str!` wrapped in `lf()` for CRLF safety:
-
-| Test | Type | File(s) |
-|---|---|---|
-| `roundtrip_comments` | roundtrip | `comments.loft` |
-| `roundtrip_struct_def` | roundtrip | `struct_def.loft` |
-| `normalize_messy` | normalize | `messy.loft` → `messy.loft.fmt` |
-| `format_check_already_formatted` | check_source | `comments.loft` |
-| `format_check_needs_formatting` | check_source | `messy.loft` |
-| `roundtrip_unary_minus` | roundtrip | `unary_minus.loft` |
-| `roundtrip_range_ops` | roundtrip | `range_ops.loft` |
-| `roundtrip_binary_literals` | roundtrip | `binary_literals.loft` |
-| `roundtrip_if_for_blocks` | roundtrip | `if_for_blocks.loft` |
-| `roundtrip_adjacent_words` | roundtrip | `adjacent_words.loft` |
-| `normalize_else_same_line` | normalize | `else_same_line.loft` → `else_same_line.loft.fmt` |
-
-Golden files live in `tests/format/`. `.gitattributes` enforces `eol=lf` on checkout so
-`include_str!` yields `\n`-only strings on every platform.
+The corpus check is the `whole.loft` self-check above run over `tests/scripts/*.loft` and
+`default/*.loft`; no make target or CI step runs it.
 
 ---
 
 ## See also
-- [LOFT.md](LOFT.md) — Canonical syntax that the formatter must preserve
-- [CODE.md](CODE.md) — Formatting rules and style conventions the formatter enforces
-- [COMPILER.md](COMPILER.md) — Lexer and parser pipeline the formatter re-uses for token traversal
-- [TESTING.md](TESTING.md) — How to run formatter tests (`cargo test --test format`) and add golden files
+- [LOFT.md](LOFT.md) — the syntax the formatter must preserve
+- [CODE.md](CODE.md) — style conventions
+- [plans/rust-host-call-api.md](plans/rust-host-call-api.md) — the `loft::host` API `loft fmt` uses
+- [FORMATTER-history.md](FORMATTER-history.md) — the retired Rust formatter

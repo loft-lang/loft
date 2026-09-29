@@ -3965,7 +3965,7 @@ impl Parser {
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;
             }
-            // loft#1506 / `formal/heap.md` D-heap-3 — the same view-model for an OWNED
+            // loft#1506 / `formal/heap-history.md` D-heap-3 — the same view-model for an OWNED
             // RECORD subject, and for the same reason.  The join's value is `if __ncc_N
             // { __ncc_N } else { <default> }`: both arms are vars THIS FRAME owns and
             // frees, so a result typed as a bare owner hands a second owner to whoever

@@ -98,7 +98,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
   in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  **`~`
   because the gate pins 94 cells that release wrongly today, none with a diagnostic** —
-  `heap.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
+  `heap-history.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
   empty.  *Trace guards beside it, all `tests/scripts/`, all both-backends:
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
@@ -179,11 +179,11 @@ oracle — which is the argument for this section existing.
   the same edge one row deeper, not a second one. *Guard: `tests/scripts/1356-…`.*
 - ✓ **G-Next values / G-Done** — one value per advance (sum 30); exhaustion (take-first-2 ⇒ 1),
   both backends. Nested CALL between yields works too. *Guard: oracle `12`.*
-- ✓ **G-YieldDepth** (restated 2026-09-25) — a nested non-yielding call across a suspension ✓
+- ✓ **G-YieldDepth** — a nested non-yielding call across a suspension ✓
   both backends; a `yield` INSIDE a plain helper is REFUSED on both, so the old rule text
   promised a shape the language rejects and the chapter's conformance line claimed it verified.
   The stackful frame's realised surface is `yield from`, which shipped.
-- ✓ **G-Delegate** (new 2026-09-25) — the sub-generator is built once, its values pass through,
+- ✓ **G-Delegate** — the sub-generator is built once, its values pass through,
   and the statements before the `yield from` run once per ACTIVATION.  *Guard:
   `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`; arguments and exhaustion
   in `tests/scripts/1277-…`.*
@@ -294,7 +294,7 @@ sweep is green.
 
 **Still open after verification (not testable-to-close — they need action, not probes):**
 1. **CL-9 / the coroutine decided edge** — native eager loop yields. Removal DESIGN written
-   ([COROUTINE.md § lazy loop yields](../COROUTINE.md#design-lazy-loop-yields-cl-9)); needs the build.
+   ([COROUTINE_LAZY_YIELDS.md § lazy loop yields](../COROUTINE_LAZY_YIELDS.md)); needs the build.
 2. **D-op-1 / D-op-2** — the differential-oracle meta-deviations; open BY DESIGN. "More testing" =
    growing the corpus, which this worklist did (3 new programs) and which continues.
 

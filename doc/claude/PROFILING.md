@@ -25,7 +25,7 @@ the report used to render at process exit, so the run you most want a profile of
 one that could not produce one (loft#1089). Handlers are installed only when the profiler
 is armed.** `LOFT_PROFILE` / `LOFT_ALLOC_PATHS` also cover **test runs** (`loft test`,
 `--tests`), merged into ONE report keyed by resolved `function` + `file:line` — each test
-compiles its own bytecode, so positions cannot be merged, only labels (loft#860).
+compiles its own bytecode, so positions cannot be merged, only labels.
 `LOFT_ALLOC_SITES` is program-only and says so under a suite instead of going quiet.
 **A NATIVE run is not sampled** — and the default backend IS native, so a bare
 `LOFT_PROFILE=1 loft p.loft` announces that rather than exiting empty (loft#865).

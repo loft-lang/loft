@@ -357,7 +357,7 @@ PR — typically a sanity check on the description, homepage URL,
 and tarball provenance.  After approval, `registry_maintain.sh`
 merges the PR into `main` and, at the end of that same run,
 re-signs the resulting `index.json` locally (see
-[PKG_REGISTRY.md § Why laptop signing](PKG_REGISTRY.md#why-laptop-signing-not-ci)).
+[PKG_REGISTRY.md § Why laptop signing](PKG_REGISTRY_TRUST.md#why-laptop-signing-not-ci)).
 
 **Once merged, `loft install my-lib` works for everyone.**
 Typical time-to-publish from PR open to merge: hours to days
@@ -400,7 +400,7 @@ version turns out to be broken or vulnerable, yank it
 > `shapes`, `gridmesh`, `imaging`, `arguments`, `game_protocol`, `web`,
 > `hex_world`, `time`) have one extra step: re-sync the loft monorepo
 > test fixture so the compiler suite tracks the new tag.  See
-> [LIBRARY_AUTHORING.md § 5d](LIBRARY_AUTHORING.md#5d-re-sync-the-loft-monorepo-fixture-in-tree-tested-libs-only).
+> [LIBRARY_PUBLISH.md § 5d](LIBRARY_PUBLISH.md#5d-re-sync-the-loft-monorepo-fixture-in-tree-tested-libs-only).
 > A pure registry-only library has no fixture and skips it.
 
 ---

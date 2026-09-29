@@ -1,3 +1,4 @@
+<!-- size-exempt: a formal rule doc, read by rule tag and anchor (DOC_QUALITY § Maintainer docs 2) -->
 <!--
 Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
@@ -16,12 +17,7 @@ bookkeeping, the append path) are not rewrites and are not here; the IR lowering
 both backends share (the fused scalar append, append in place) belong to the
 chapters of the constructs they lower.
 
-**Why a chapter.** Every rewrite rests on ONE invariant, and until now each lived
-as prose in its own design section (`doc/claude/plans/157-native-4x-drawing/
-DESIGN.md`), with no name a code site could cite.  Measured: `src/generation/
-hoist.rs` cited zero rules while enforcing eight, and the first defect of the
-family — a user function inlined as a stdlib wrapper (D-rw-1 below) — was the
-rule's own qualifier ("stdlib") that the code had never asked.  A rewrite that
+**Why a chapter.** Every rewrite rests on ONE invariant, and a code site needs a name to cite it.  A rewrite that
 COMPOSES others (R-Inputs takes R-Callee's admission, R-Scalar's and R-Header's
 candidates, and moves them through a call) needs them as citation targets.
 
@@ -80,7 +76,7 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  handed to code outside it — keeps the representation the API
                  promises, and the boundary materialises whatever an internal rewrite
                  made of it; one that does not escape may be rewritten in any way its
-                 conditions allow.  (C122, owner 2026-09-15.)
+                 conditions allow.  (C122.)
 ```
 
 **`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
@@ -112,11 +108,7 @@ switches; `hoist_verify` in `Output` is the one flag every checking form reads.
 
 **The both-backend clause in words.**  `LOFT_STRICT_STORES` and `LOFT_POISON` catch a leak or
 a double free; they do not catch a stale VALUE, and a rewrite the interpreter shares gives
-the two backends the same wrong answer, so their agreement proves nothing.  loft#1647 was that
-case: a lazily minted return buffer (`O-LazyBuffer`) met a double release older than it and a
-loop read its first pass's value on both backends — six days on main, seen by no cell, found
-by a consumer's suite.  Its switch told the difference at once (`LOFT_NO_LAZY_BUFFER=1`
-restored the value), which is the A/B's whole argument: for this family the switch is the
+the two backends the same wrong answer, so their agreement proves nothing.  For this family the switch is the
 only second answer there is, so it is run over everything, every night, rather than only when
 someone already suspects the rewrite.
 
@@ -127,10 +119,7 @@ HOIST STATE: the map from a vector path to the holder the loop keeps for it, plu
 scalars it read once.  Each rewrite below is a claim on that state — what it may add, what it
 may read, what it must keep current — and the three rules here are what make a combination of
 rewrites decidable by a lookup instead of by the order their collectors happened to run in.
-Measured: the first emission of a push loop beside a twin call gave one path TWO holders,
-because the push collector ran before the twin-input collector; the verifier caught it and
-the ordering closed it, but nothing in the per-rewrite rules had said it was wrong
-([rewrites-history.md](rewrites-history.md)).
+([rewrites-history.md](rewrites-history.md) records the first defect this state closed.)
 
 ### One path, one holder
 
@@ -208,9 +197,7 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  through the runtime and grows its store all the same); in-place
                  sets, store-free ops, store-free or in-place-only callees, frees
                  and a null-discharge buffer's mint (a FRESH store, or a clear of
-                 the buffer's own — neither moves an element any header names;
-                 admitted 2026-09-18, the crossing loop's `pg_table[i]?` had kept
-                 its loop on headers alone) may run — a
+                 the buffer's own — neither moves an element any header names) may run — a
                  hoisted header (R-Header) is accompanied by the address of its
                  vector's element 0, derived once beside it, and every fused element
                  read and write of the path in the loop is one bounds test against
@@ -441,7 +428,7 @@ re-derives the header at every access.  Sites: `hoist::vector_path`,
 `hoist::vector_candidates`, `Output::begin_vector_hoist`, the registry's
 `FusedElementReadEmitter`, `FusedElementWriteEmitter` and `HoistedLengthEmitter`.
 
-**(R-PushFill)'s window clause, in words.** 2026-09-21, @PLN158 V1–V3
+**(R-PushFill)'s window clause, in words.**
 (`bench/portal/analysis/vector-build.md`).  A push through the header cost a capacity test in
 bytes, a store resolved through `allocations[store_nr]`, the element, the length bumped in
 the header AND written back to the record — 2.3–3.1 ns an element against a Rust `Vec`'s
@@ -449,40 +436,15 @@ the header AND written back to the record — 2.3–3.1 ns an element against a 
 the comprehension was no counted range to any rewrite (its loop has three statements and the
 range parser asked for two, so its step stayed the null-aware add, its arithmetic fully
 checked, and it reserved nothing); the reservation stood in the guard's `else` arm; and the
-push resolved a store it could have held.  Measured, hashes unchanged — on
-`bench/stats.py` (7 samples pinned to the fastest core, each ±0.5 % or tighter): `push`
-48.8 → 8.0 µs (0.47× its Rust twin), `comprehension` 62.1 → 11.0 µs (9.53× → 1.70×), `grid`
-69.6 → 23.9 µs (8.10× → 2.81×); and `f32_build`, A/B on one build through the switch,
-739 → 147 µs (−80 %, eighteen pushes a pass through one window).  Every other row of both
-lanes within noise, and the one that read slower in an UNPINNED loop — `record_append`,
-bimodal at 69k / 76–79k — is byte-identical in its emission and reads 68.4–69.5k (±0.4 %)
-pinned: not reproduced, and its cause not established.
-THE FORM IS LOAD-BEARING: the first hand-price kept the header's own `len` as the counter
-and handed the header to the growth arm by reference — its address escaped, LLVM kept it on
-the stack, and every push loaded and stored the length through memory: 22.8 µs.  The window
-is three scalars, the growth arm takes the length BY VALUE and answers a fresh window by
-value: 10–13 µs.  Switch `LOFT_NO_PUSH_WINDOW` (and `LOFT_NO_PUSH_FILL`, one rule); trace
+push resolved a store it could have held.
+THE FORM IS LOAD-BEARING: the header's own `len` is not the counter and the header is not handed to the growth arm by reference — its address would escape, LLVM would keep it on the stack, and every push would load and store the length through memory.  The window is three scalars, the growth arm takes the length BY VALUE and answers a fresh window by value.  Switch `LOFT_NO_PUSH_WINDOW` (and `LOFT_NO_PUSH_FILL`, one rule); trace
 `LOFT_TRACE_PUSH_FILL=1` names the clause that declined a window; falsifiers
 `LOFT_HOIST_VERIFY=1` (every windowed push checks the frozen header against a fresh
 derivation and the window's base and capacity against that header, and the close checks the
 header it leaves) and `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` /
 `LOFT_NATIVE_LEAK_CHECK`.  ⚠ `LOFT_HOIST_VERIFY` CANNOT see the defect this clause exists to
 prevent: a runtime READER meeting the lagging length changes nothing, so there is no stale
-fact to compare — the interpreter is the falsifier, through the cells.  Sabotage, measured
-(each admission clause off in turn): "names the pushed vector" — d1 answers `51 102` for
-`51 2601`; "names a variable that may view it" — d4 answers 780 for 2340; "writes a store" —
-NOTHING CHANGED, so no cell guards that clause and none is claimed to: every second grower
-that could be built declines the loop's whole hoist before this admission is asked, which
-makes the clause a second fence behind the push header's own gate, kept because it can only
-decline.  ⚠ A prediction that failed and was measured rather than explained: a result
-vector's pushed root depends on a store witness (`__vdb_1`) that is the hidden return buffer
-the CALLER handed in, and `hoist::owned_local` reads any `__vdb*` dep as "the store it owns"
-— so such a root passes as an exclusive owned local and the window is admitted beside a
-parameter read.  Whether a caller can make the two one store was built both ways — the
-result replacing its own source (once, twice, in a loop) and the result built in an element
-slot of the container its source is an element of, that store reallocating under the call —
-and every one holds under the verifier: the window needs no reader of the vector's LENGTH
-and no store growth, and neither needs the parameter to live in another store.  The looser
+fact to compare — the interpreter is the falsifier, through the cells.  The looser
 reading of `owned_local` is (R-Alias)'s own and is recorded here, not narrowed on suspicion.
 Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
@@ -492,7 +454,7 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
 
-**(R-PushFill)'s record clause, in words.** 2026-09-22, @PLN158 round 4
+**(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
 edits += [Paint { … }] } else { edits += [Wall { … }] } }`, and every record went through
@@ -502,20 +464,12 @@ to the record.  The window clause did not reach it for two reasons that are one 
 group is four statements the scalar push's recogniser does not read, and it stands under
 an `if` arm, which the scalar clause declines — and neither matters to the window: the
 arms are exclusive, so at most one group runs a pass, the trip count times that bounds the
-appends, and the window never grows inside the loop.  Hand-priced on the emitted Rust
-before any emitter code (the build loop edited by script: reserved for its trips, a
-`push_window` opened on the header, each arm's mint taking `base + len·32` and zeroing it
-through the window, its finish `len += 1`, the close after every copy the guarded chain
-emits): 35.9 → 20.4 µs, hash `1493`; built, 23.4 µs — the difference was the fast path
-staying a CALL until `#[inline(always)]` (`Stores::push_record_windowed`: one growth test
-`len >= cap`, the slot at `len·size + 8`, the growth arm outlined beside it).  The first
+appends, and the window never grows inside the loop.  The first
 hand placement closed only the CHECKED copy of the loop and read hash `0`: a window whose
 close does not run leaves the record's length at 0, and the consuming loop reads an empty
 vector — which is why the close stands after every guarded copy, and why the VALUE channel
 is the falsifier here (`LOFT_HOIST_VERIFY=1` compares the frozen header against a fresh
-derivation at every mint and cannot see a length nothing wrote).  Sabotage, measured: the
-finish emitted as nothing, r1 answers `0 0 0 0` for `300 7261 6400 6566` on the built
-form; the switch restores the interpreter's answer.  Two admissions the first build got
+derivation at every mint and cannot see a length nothing wrote).  Two admissions the first build got
 wrong, each a cell: a NESTED record element's field set (`pos.x` on the fresh element)
 read as a view of the vector because its path had a field on the root — the root being
 the fresh element decides, not the path's length (r5); and the finish's own element
@@ -531,16 +485,11 @@ windowed-mint address in `Output::bind_record_ptr`, the registry's `NewRecordEmi
 `push_record_window_grow`.  Cells `tests/scripts/158-record-window.loft` (r1–r3, r5, r9
 and `build` a window; r4, r7, r8, r10, r11 the declines), pins `tests/record_window.rs`.
 
-**(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
+**(R-Base)'s join clause, in words.**
 (`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar
 getter sits on the element address and the two fuse — but with the `?` the getter's operand
 is a `Block`, so the fused read answered `None`, the join ran on every pass and its result was
-read through the store again, in a loop holding the base.  Hand-priced in four forms before
-any emitter code, `record_update`, hash unchanged: today 34.9 µs; the join KEPT and its result
-identity-tested against the header 21.4 (−39 %); the index tested first 12.1 (−65 %); that,
-with the join's temp still assigned in range, 12.2; and that through an `inline(always)`
-helper answering `Option<(DbRef, T)>`, 12.0–12.4 — the one built, measured 11.6–12.3
-(pinned: 4.62× → 1.60× of Rust, range 1.59–1.61).  The
+read through the store again, in a loop holding the base.  The
 result-identity form looked better on paper (it re-evaluates nothing and drops no effect) and
 loses 40 % of the gain: the join stays in the loop, and with it a cold `OpDatabaseNP(cell, …)`
 call that holds the whole body back.  Assigning the temp in range costs NOTHING, so the form
@@ -562,7 +511,7 @@ Sites: `hoist::fused_join_read`, `Output::fused_join_read`, `pre_eval::collect_p
 `FusedElementReadEmitter`, `vector::elem_field_at`, `vector::field_of`.  Cells
 `tests/scripts/158-join-read.loft` j1–j11, pins `tests/join_read.rs`.
 
-**(R-Base)'s growth condition, in words.** 2026-09-21, found while building the window.
+**(R-Base)'s growth condition, in words.**
 `growth_free` counted a loop's pushes and its MINT PUSHES — the mints that earned a push
 header — so a mint left on its templates read as no growth, and a base was bound for a
 sibling field of the record whose store that mint was growing.  Reachable in the default
@@ -596,12 +545,11 @@ now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
                  `yield` decline.  A free on a `return`/`continue` path stays.
 ```
 
-**In words.** 2026-09-18, the `(R-LoopBuffer)` shape for a record.  A record literal
+**In words.** The `(R-LoopBuffer)` shape for a record.  A record literal
 bound inside a loop cost the free of its store at the body's end and a fresh store next
 pass — `free_named`, the free-slot search, the re-init, the claim, the zero, the tag: 39 ns
 per pass against 10 ns for a vector loop buffer's reset — where a local declared outside
-the loop already kept its store through `OpDatabase`'s clear arm.  Measured on the probe
-(`s = S1 { a: k }; t += s.a`, 200 000 passes): 7 600–8 500 → 480–540 µs per 200 000 passes, 39 → 2.4 ns per pass (the kept record's field write and read no longer resolve a store per pass either), value unchanged.  Switch `LOFT_NO_LOOP_RECORD`
+the loop already kept its store through `OpDatabase`'s clear arm.  Switch `LOFT_NO_LOOP_RECORD`
 (and `LOFT_NO_LOOP_BUFFER_REUSE`, one family); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
 `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` (a kept
 store must still be freed exactly once).  Sites: `hoist::loop_records`, the `Value::Loop`
@@ -636,7 +584,7 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
-**The text clause of (R-Base)** (2026-09-22, @PLN158 round 4): a TEXT element read —
+**The text clause of (R-Base)**: a TEXT element read —
 `OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
 that holds P's header and element base reads the element's record number through the
 base (one bounds test, one `u32` load) and slices the text off the vector's store's DATA
@@ -647,17 +595,16 @@ element's bytes lie in that span.  Past the end — where a walk's last read lan
 its length test breaks — is the null text without a call, as `get_vector` answers any
 non-negative index at or beyond the length (a null vector's length is 0); a NEGATIVE index
 counts from the end and takes the unfused path (`text_elem_cold`, outlined: folded in, the
-hot half lost its inline and the walk its registers — 9.0 µs against 6.6 on `join`).
+hot half lost its inline and the walk its registers).
 `LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
-base carries no span, and such a read keeps the store-resolving form.  Measured: the
-stdlib `join` 11.0 → **6.6 µs** (−40 %, 2.11× → ~1.15× of its twin), hash `2df9`.  Switch
+base carries no span, and such a read keeps the store-resolving form.  Switch
 `LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
 past-the-end arm answering the element before it); pins `tests/text_borrow.rs`.  Sites:
 `Output::fused_text_read`, the span beside each base in `Output::bind_loop_headers` and
 `Output::bind_view_header`, the arm in `LazySplitNextEmitter`, the pre-eval exemption in
 `Output::collect_pre_evals_inner`, `vector::text_elem_at`, `vector::text_at`,
 `vector::text_span_of`, `Store::text_span`.
-**The link clause** (2026-09-22): a hoist's ROOT is loop-invariant only while nothing the
+**The link clause**: a hoist's ROOT is loop-invariant only while nothing the
 root LINKS to is rebound — `g = &e` reads whatever `e` holds now, so a rebind of `e` in
 the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::rebound_vars`
 closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
@@ -678,25 +625,18 @@ field would push into the record the previous pass claimed (measured: `1575-…`
 read `null(oob)` for `1` the moment the allowance took a heap-holding record); the field sets that follow are (R-InPlace) sets and walk on their own,
 and the scalar tier reads the allocation as the record's type whole (R-Scalar).  A growth
 of the buffer's own store from the body — an append to the absent element's vector
-field — is a push through a non-pure path, which the gate declines on its own.  Until
-2026-09-22 (@PLN158 round 3, P1) the record had to be ALL-SCALAR, on the reading that a
-store hosting no vector could not be named by a header; the invariant-path argument is
-the one that holds, and the restriction had kept `map_set`'s loop — three
-`m.chunks[i]?` joins over `Chunk { …, hexes: vector<Hex> }` — on no header at all, each
-join a store resolution and `len(m.chunks)` a call per iteration.  Only the pass-2
+field — is a push through a non-pure path, which the gate declines on its own.  Only the pass-2
 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a return
 buffer may be a record the caller offered (R-Callee's second half carries that case).
 Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`; cells
 `tests/scripts/158-heap-discharge-buffer.loft`.  Site: `hoist::null_buffer_alloc`.
-**The copy clause** (2026-09-21, @PLN158 R5).  A consumer writes the copy-out / mutate /
+**The copy clause**.  A consumer writes the copy-out / mutate /
 write-back a Rust or C author writes — `e = ents[i]?; e.energy += e.speed; …; ents[i] = e`.
 In loft `e` is a VIEW of `ents[i]` (`(B-View)`), so the last statement copies the element
 onto itself, which both backends already make a no-op (`data == to`).  But the whole-record
 copy was an unclassified store writer: the loop held no header, `e` no address (*"the
 remainder may grow a store"*), and each of the ~20 field accesses per pass resolved the
-store.  Found by a five-variant one-statement bisect under `LOFT_TRACE_RECPTR=1`; priced by
-deleting the write-back (−26 %); built, `entity_tick` 205.4 → 157.7 µs (−23 %), 3.19× →
-2.45× of the Rust reference (4.67× before this arc).  The copy itself STAYS.  Eliding it
+store.  The copy itself STAYS.  Eliding it
 statically would need more than the alias proof: on the path where `ents[i]?` discharged an
 absent element, `ents[i] = e` is an out-of-range store with a fault note of its own, and a
 rewrite does not decide what is reported after a fault (C120).  Two cells could not fail
@@ -709,7 +649,7 @@ now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-pl
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
 
-**The read clause** (2026-09-27, @PLN158).  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
+**The read clause**.  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
 scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the
 first read), each in place; nothing is claimed, grown or freed, so no header, base or record
 address can go stale across it.  `OpCreateStack(t)` of a scalar local is on the list with it:
@@ -717,11 +657,7 @@ taking the address writes nothing, and whatever writes through it is judged on i
 scalar tier gets no exemption — `body_writes` still answers "untyped" for the read, because
 it advances `f#next`, which is a field a loop may hoist: typing it as writing nothing reads
 `[2,2,2,2]` for `[2,4,6,8]` in cell r3 (the patch receipt).  A text read builds a text and a
-vector or record read fills a value in a store; each stays a writer.  Measured on the
-crawler's `read_i16_vec` shape — `while i < n { out += [read_one_i16(bf)]; … }`, the read in a
-helper — together with two runtime costs of the read itself (a `SipHash` of the name `text`
-in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 → 2.87 ms**,
-32.8× → ~14×, hash `fa34c62d78`.  Switch `LOFT_NO_WRITE_HOIST` (the tier); cells
+vector or record read fills a value in a store; each stays a writer.  Switch `LOFT_NO_WRITE_HOIST` (the tier); cells
 `tests/scripts/158-scalar-file-read.loft`; pin `tests/scalar_file_read.rs`.  Sites:
 `hoist::scalar_file_read`, `hoist::scalar_stack_ref`, `hoist::blocks_header_hoist`,
 `hoist::in_place_only_writer`.
@@ -852,21 +788,14 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  not a null record.
 ```
 
-**In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
+**In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
 then six field reads of `pg_cur` and three more inside `edge_x` per edge per row): each
 read resolved the store — `stores.store(&db).get_int(db.rec, db.pos + off)` — where the
 Rust reference's `let cur = table[i]` reads registers.  (R-View) hoists the HEADER of a
 vector view; this is the same promise for a RECORD view, whose derivation is an address
 rather than a header.  Sound for the reason (R-Base) is: nothing in the remainder can move
 the record's bytes, and a freed record's read is excluded by order (the releases a block
-ends with follow the last use).  Measured on the `wide_line` probe: 7 800 → 5 060 ns/op
-(−35 %), 2.9× → 1.9× the reference; hand-priced first at −25 % for the reads and −15 % for
-the callee's inputs.  The first build admitted a return BUFFER's null pre-init
-(`__ref_p2_N = null`) as a binding and did not read the literal's mint into it
-(`OpDatabaseNP(buf, tp)`, a native op writing its first operand, not a `Set`) as a rebind,
-so the literal's field writes went through a null address and were dropped — a library's
-`mk()` answered a record of zeros; the suite caught it the same day (the 47 golden, the
-#672 parity test) and the two clauses above are its receipt, with cells r14/r15.  Switch
+ends with follow the last use).  Switch
 `LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`, one rule);
 falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
@@ -879,20 +808,9 @@ the same gate admits it once the `Optional` is peeled — the loop body reads ev
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
 `forview` probe — `for e in v { t += e.a * 2 + e.b - (e.f as integer) }` over 100 000 records — 562–584 → 389–405 µs per pass, −31 %, the value hand-checked).  No lane row moved: the one such loop on the drawing bench (`polygon_generic`'s `for e in edges`) appends to `pg_table` and so declines by design.
 
-*The base clause (2026-09-21, @PLN158 R2).*  A `for e in v` loop built a `DbRef` for its
+*The base clause.*  A `for e in v` loop built a `DbRef` for its
 element and then resolved the store a second time to turn that `DbRef` back into an address
-— per element, in a loop that already held the address of element 0.  Hand-priced on the
-emitted Rust before anything was built (`record_walk`, 32.0 µs per call): the address from
-the base and the index −40 %, the element's `DbRef` no longer built −49 %, the index stepped
-unchecked −62 % (1.12× the Rust reference).  Built, the first two arrive together — once the
-address stops depending on the `DbRef`, LLVM drops the `DbRef` where nothing else reads it —
-and the third is `(R-Counter)`'s iteration clause: `record_walk` 31.97 → 16.15 µs (2.98× →
-1.50×), `tuple_kernel` −20 % (2.02× → 1.62×), `entity_tick` −30 % (its inner scan).  The
-form matters and was measured: a first build took the address from the `DbRef` — an
-identity (`rec_ptr` is the store's pointer plus `rec * 8 + pos`, the base the same pointer
-plus `rec * 8 + 8`) guarded by a test of its store and record — and ran **+46 % slower**
-than the store resolution it replaced, because the tests and the fallback hid the induction
-from the optimiser; the index form is what ships.  An explicit index binding (`e = v[i]?`)
+— per element, in a loop that already held the address of element 0.  An explicit index binding (`e = v[i]?`)
 is a JOIN — the element, or a discharge buffer in another store — and keeps `rec_ptr`.
 Switch `LOFT_NO_BASE_RECPTR`; falsifier `LOFT_HOIST_VERIFY=1` (`rec_get`/`rec_set` compare
 the address with a fresh `rec_ptr` at every use — a sabotaged `index + 1` panics there, and
@@ -901,12 +819,10 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 `hoist::iteration_head`, `Output::held_iteration_base`, `Output::bind_record_ptr`, the
 `BIND_RECPTR_BASE` rule in `scripts/emission_audit.py`.
 
-*The path clause (2026-09-21, @PLN158 R3).*  Only a DIRECT field of a view counted as a
+*The path clause.*  Only a DIRECT field of a view counted as a
 fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
 bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
-and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  Priced
-first by hand-binding the sub-record (`p = v.pos`, −52 %); built, 70.3 → 37.4 µs (−47 %),
-4.7×.  What is left there is the null-aware float comparison, which is the language's
+and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  What is left there is the null-aware float comparison, which is the language's
 semantics on operands no proof says are non-null.  **Emitter-local by design:** the fold
 is sound for an ADDRESS, which loads the bytes where they are each time.  Done in the
 parser it would turn `v.pos.x` into `OpGetFloat(v, 8)`, a `(R-Scalar)` candidate typed
@@ -922,15 +838,13 @@ a nested read now walks the path the unrewritten way and compares
 use), `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`,
 `vector::path_read_verify`.
 
-*The mint clause (2026-09-21, @PLN158 R4).*  An address is promised for the whole
+*The mint clause.*  An address is promised for the whole
 remainder of a block, and a minted element never got one: its remainder holds the NEXT
 append, which grows a store (`_elm_N`: *"the remainder may grow a store"*).  So every field
 of an appended record resolved the store again — a store lookup, a record-validity read and
 two bounds checks per field, 143 instructions for a three-field record against the Rust
 reference's 18, even through a push header that had just produced the slot.  The element
-needs the address only while it is filled.  Hand-priced on the emitted Rust (−38…46 %),
-then built: `record_append` 126.7 → 69.1 µs (3.55× → 1.95×), `mesh_emit` 189.3 → 107.2 µs
-(4.98× → 2.83×; it stood at 18.3× before `(R-Mint)`'s field clause).  The window is judged
+needs the address only while it is filled.  The window is judged
 by the verdict a remainder gets (`hoist::view_extent_verdict`, one definition for both
 extents): a text set, a nested mint, a builder that appends and a delivery copy each
 decline it; a field value that names the container runs BEFORE the mint (loft#1548) and so
@@ -939,25 +853,18 @@ left for the caller to serve.  Any mint form qualifies — a keyed collection's 
 record is one `DbRef` too, and its finish files it by the key just written.  The shared
 verdict also stopped reading an in-place set of a kind the address does not serve
 (`OpSetBoolean`, the narrow integers) as a REBIND of the view: it is a fixed-width write to
-the same bytes, and counting it had declined every record with such a field.  **The first
-sabotage of this clause changed nothing** — with the window's verdict blinded to everything
-but the element's own writes, every cell stayed green, because a stale address needs the
-store's memory to MOVE inside the window and nine small elements never reallocate: the
-cells could not fail, so they proved nothing.  `m4b` (sixty nested points per element, 120
-elements) is the cell that can: under the sabotage it answers `120 125094 21420` for
-`120 127140 21420`, and `LOFT_HOIST_VERIFY=1` panics naming the stale address.  Switch
+the same bytes, and counting it had declined every record with such a field.  Switch
 `LOFT_NO_MINT_WINDOW`.  Cells `tests/scripts/158-mint-window.loft`, pins
 `tests/mint_window.rs`.  Sites: `hoist::mint_window`, `hoist::view_extent_verdict`,
 `Output::bind_record_ptr`, `Output::close_ptr_windows_before`.
 
-*The order clause (2026-09-21, @PLN158 R6).*  The free-before-use question was asked per
+*The order clause.*  The free-before-use question was asked per
 top-level STATEMENT of the extent, and a lookup loop's whole body is one statement — so
 `for c in m.chunks { if c.cx == cx && … { return c.hexes[i]?.h } }`, where the `return`
 releases the `?` discharge buffer after the last read of `c`, read as *"frees and uses in
 one statement"* and `c` held no address (*"the remainder frees a record before a use of the
 view"*).  It is the shape of every find-and-answer helper.  Asked in execution order it is
-no free before a use at all.  `chunk_lookup` 1,417 → 1,097 µs (−23 %), 3.67× → 2.84× of the
-Rust reference.  A `break` or `continue` keeps running this function, so a block holding
+no free before a use at all.  A `break` or `continue` keeps running this function, so a block holding
 one carries its frees on; and a loop variable's extent is ONE pass — it is rebound, and its
 address re-derived, at the top of the next — which is why a returning block that also holds
 a `break` still leaves `c` its address (cell q9: the prediction said decline, the rule and
@@ -974,7 +881,7 @@ state those facts fail.  No switch of its own — it refines `(R-RecPtr)`'s admi
 `tests/leaving_free.rs`.  Sites: `hoist::free_before_use`, `hoist::free_before_use_by`,
 `hoist::view_extent_verdict`.
 
-*The enum clause (2026-09-21, @PLN158 R7).*  `hoist::plain_record_type` answers `None` for
+*The enum clause.*  `hoist::plain_record_type` answers `None` for
 every enum, and its reason — *"their payload offsets are a layout question this key does not
 model"* — is `(R-Scalar)`'s: a hoisted scalar is keyed by (type, offset), and two variants
 put different fields at one offset.  But the predicate was read by every rewrite, so a
@@ -985,8 +892,7 @@ layout: the literal's lowering writes the tag and the variant's fields at explic
 and the parser resolves each arm's reads behind that arm's own tag test.  A minted element's
 WINDOW (the mint clause) therefore asks only that the element be a record — a struct-enum
 element's variable is typed by a placeholder record, not by the enum — and the iteration
-head is seen through the `OpGetField(element, 0, _)` a struct-enum element is bound behind.
-`enum_match` 111.6 → 40.4 µs (−64 %), 12.4× → 4.5× of the Rust reference.  The tag's answer
+head is seen through the `OpGetField(element, 0, _)` a struct-enum element is bound behind.  The tag's answer
 for the null record is falsified by the ORACLE, not the checking form — flipped to the first
 variant, a view bound past the end matches it and the cell answers `null 0` for `120 2`
 under `LOFT_HOIST_VERIFY=1` as without it, since that form compares an address with a fresh
@@ -1015,12 +921,9 @@ registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
 so for a frameless, unflippable stdlib method the op is the call; `len(d)` after a
 view binding then reads the header.  Leaf arguments, because the op's operands are
 emitted from a fresh list the pre-evaluation map (keyed on node addresses) cannot see —
-and, since 2026-09-22 (@PLN158 round 3), a pure vector path too: side-effect free and
+and a pure vector path too: side-effect free and
 never bound by the pre-evaluation, its clone emits what the original would, and as the
-op's operand it is what a held header serves.  Before that `for i in 0..len(m.chunks)`
-kept `len` a CALL per iteration — a store resolution and a length load — beside the
-header the loop already held for `m.chunks` (`map_set`'s bound, and 88 such loops in
-the corpus and the libraries).  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.
+op's operand it is what a held header serves.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.
 Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
 
 ### A callee's invariant inputs cross the call
@@ -1047,11 +950,7 @@ and view `self.data` per call — single reads, so (R-Scalar) cannot hoist them
 inside the callee, and the caller's hoisted values do not cross the call.  Handing
 them over is sound for exactly the reason each was hoisted: the caller's loop proved
 them invariant across the call (its write set includes what the callee writes), and
-the callee's own write set proves it does not write them either.  Measured before
-the code by hand-editing the emitted Rust: the twin and a full inline of the
-callee cost the same (`composite` 4.2× → 2.33× of Rust), because rustc inlines the
-small twin — so the rewrite passes values and never clones IR; shipped, the consumer's
-`composite` row measures 2.34× (446k → 237k ns/op), `render_lock` / `render_marks` −8 %.  Switch
+the callee's own write set proves it does not write them either.  Switch
 `LOFT_NO_CALLEE_INPUTS`; falsifier `LOFT_HOIST_VERIFY=1`, which inside the twin
 re-reads every input against the record.  Sites: `hoist::callee_inputs`,
 `hoist::hoistable` (the mapping through the argument), the twin's emission in
@@ -1067,13 +966,13 @@ replacement, whose variable numbers are the caller's), the key by
 call ask.  A scalar input still needs a leaf variable — its key carries a variable,
 not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
 other: its write set is its buffer's type whole, which no parameter's field shares.
-**The address half** (2026-09-18, (R-RecPtr)): a scalar input the caller holds no VALUE
+**The address half** ((R-RecPtr)): a scalar input the caller holds no VALUE
 for — the record changes per iteration — but whose record ADDRESS the caller's block holds
 is read through that address at the call (`Output::rec_ptr_read`), so `edge_x(pg_cur, y)`
 takes its twin with three loads for arguments where the plain call read three store
 resolutions inside; and handing `r` to such a twin counts as a use of `r`'s address for
 (R-RecPtr)'s admission.
-**The base half** (2026-09-18, (R-Base)'s twin clause): a header input alone left the
+**The base half** ((R-Base)'s twin clause): a header input alone left the
 twin resolving the store per element — `composite`'s `get_pixel`/`set_pixel` twins ran
 `get_elem_hoisted` through `allocations[k].ptr` on every pixel, and LLVM cannot hoist that
 load (the pointer is loaded from memory the twin's own writes may alias; LTO and a
@@ -1109,8 +1008,7 @@ push's own is refreshed at the site, the record's length included (R-Refresh).  
 `LOFT_NO_PUSH_HOIST`; falsifier `LOFT_HOIST_VERIFY=1` (the push re-derives its header
 before each fast-path store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`,
 `hoist::pre_alloc_path`, `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`
-and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
-4.39× → 3.51× of Rust, hashes unchanged.  The fusable kinds are `i64`, `f32`, `f64`, the
+and `PreAllocEmitter`, `Stores::push_hoisted`.  The fusable kinds are `i64`, `f32`, `f64`, the
 `i32` (`OpPushInt4`, the integer null kept as `i32::MIN`), the CHARACTER (`OpPushCharacter`,
 the code point as `u32`) and the BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`), whose element is the encoded byte
 `Store::byte_raw(min, val)` — the one encoding `OpSetByte` writes, so the header's raw store,
@@ -1122,11 +1020,7 @@ ENUM pushes (`OpPushBoolean`, `OpPushEnum`) are the byte kind at bias 0 — thei
 holds, the enum null 255 included, so their element is the value itself, spelled `as u8`
 because a boolean's native value is a `bool` (`hoist::push_value_cast`); being unbiased, their
 one-value slice fill IS admitted, and a `true`, `false` or enum literal is a simple invariant
-for it.  Before they joined, every boolean or enum push in a loop re-entered the runtime per
-element and blocked the loop's reservation: hex_field's `hexset_chunk`
-(`for _ in 0..n { cells += [false]; }`) is the whole cell set of every `HexSet`, and hex_place
-`field_union` went 3.76 → 2.18 ms per op with it (−42 %, hash unchanged; hand-priced at
-2.25).  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
+for it.  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 
 ### A minted element is a record no holder can name
 
@@ -1175,7 +1069,7 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
-*The rebound clause (2026-09-18):* the drawing library's `fronds` declares its point and width
+*The rebound clause:* the drawing library's `fronds` declares its point and width
 vectors per pass of the side loop, and every rebound mover declined the WHOLE loop — so
 neither the side loop nor the `for i` around it hoisted anything (the `for i` was declined a
 second way, by its per-pass `fd_sides` loop buffer's `OpDatabase`).  A rebind from the
@@ -1184,7 +1078,7 @@ its holder and nothing else.  Falsified on the alias the clause refuses: a mover
 VIEW of a held vector (`w = &big; w += [...]` beside `len(big)`) must still decline the loop,
 or the hoisted length answers the pre-push count (`tests/scripts/157-group-push.loft` g7).
 Switch `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` names the first statement
-that declines a loop.  *The own-buffer mint (2026-09-27):* the guarded mint of the frame's own
+that declines a loop.  *The own-buffer mint:* the guarded mint of the frame's own
 hidden return buffer (`OpDatabase(__retbuf)`, which runs only where the caller offered no
 record and then claims a fresh store) moves nothing a header describes, so a lookup loop
 that returns `v[i]?` keeps its holders (`map_get_hex`, the `own_retbuf_mint` arm).  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
@@ -1200,7 +1094,7 @@ element's field is `(R-Mint)`'s own exemption.  `fronds`' outer loop then reads 
 parameter's twelve fields once per activation: 69.8 → 64.9 µs per call (`tests/scripts/
 157-group-push.loft` g11, g12; trace `LOFT_TRACE_HOIST_DECLINE=1` now also names the node
 that left a write set untyped).  Sites: the owned arms in `hoist::body_writes`.
-*The field clause (2026-09-21, @PLN158 R1):* every builder a consumer writes appends to a
+*The field clause (@PLN158 R1):* every builder a consumer writes appends to a
 vector that is a FIELD — `m.verts += […]`, `sc.ops += […]`, `world.items += […]` — and that
 append names the PARENT record and a field number, so the gate, which asked whether the
 operand typed as a vector, never admitted it: the loop held no header, and every element
@@ -1216,9 +1110,7 @@ key, so a field-form element would have been minted by its template and finished
 the header — `0` elements for `20`, silently; both halves now resolve the holder through
 `hoist::mint_target`.  And a NULL root handed to a parameter (`fill(h.ms[5], 3)`) is a
 dropped append on the general path, where the header's finish indexed store 65535:
-`Stores::push_record_finish` returns on an absent owner, as `vector_finish` does.
-Measured: `mesh_emit` 708.7 → 189.5 µs per call (−73 %, the figure its paired-variant
-probe priced), 18.3× → 4.9× of the Rust reference, hashes unchanged.  A field-form group
+`Stores::push_record_finish` returns on an absent owner, as `vector_finish` does.  A field-form group
 OUTSIDE a held header keeps its templates: the parser reserves only for a local vector, and
 `(R-GroupPush)` starts at the reservation.  Switch `LOFT_NO_FIELD_MINT`; falsifier
 `LOFT_HOIST_VERIFY=1`.  Cells `tests/scripts/158-field-mint.loft`, pins
@@ -1270,10 +1162,8 @@ falsifier `LOFT_HOIST_VERIFY=1` (the header re-derived and compared at the slot 
 the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoistable`,
 `Output::begin_vector_hoist`, `Output::active_mint_push`, the registry's
 `NewRecordEmitter`, `FinishRecordEmitter` and `PreAllocEmitter`,
-`Stores::push_record_hoisted`, `Stores::push_record_finish`.  Shipped: standalone
-`smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
-8.4× of Rust on the measuring box, 14/14 hashes unchanged.
-*The heap clause (2026-09-18):* `fronds`' element is `Frond { fpts, fwid }`, two vector
+`Stores::push_record_hoisted`, `Stores::push_record_finish`.
+*The heap clause:* `fronds`' element is `Frond { fpts, fwid }`, two vector
 handles, so every one of its 1 272 mints per call paid the dispatch and a `set_default_value`
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
@@ -1305,16 +1195,14 @@ green, which is why that falsifier and not the plain run guards the clause.  Swi
                  the templates, which resolve per element and are always right.
 ```
 
-**In words.** @PLN157 (2026-09-18).  `(R-PushRec)` gave the header to a mint INSIDE a loop
+**In words.** @PLN157.  `(R-PushRec)` gave the header to a mint INSIDE a loop
 that holds one; every other append — a literal group at function level, a group inside a
 loop that declined, a group on a per-pass local — paid the `record_new` dispatch, the prefill
 and the `record_finish` dispatch per element: the drawing library's `fronds` built its 1 296
 points per call that way (`fd_pts += [pt(…), pt(…)]`, `fd_pts` declared per pass), 15 µs of a
 102 µs call.  The group's own reservation already guarantees the slots, so the header derived
 after it is exact for the whole group, and the group is straight-line code the parser emits —
-the same producer `(R-Mint)` trusts.  Hand-priced first on the lean emission (H7 −15 µs, H8
-the heap clause −12 µs, together −33 µs), then built: `fronds` 101.7 → 69.6 µs per call
-(2.71× → 1.86× of the Rust reference), hash `ebcfd875` on every run, the hand ceiling met.
+the same producer `(R-Mint)` trusts.
 The audit reads the group's close marker (`// @FR-R-GroupPush group __ph_N closed`) because
 the header's Rust binding outlives the group.  Switch `LOFT_NO_GROUP_PUSH`; falsifier
 `LOFT_HOIST_VERIFY=1` (the header re-derived at the slot and the finish; the growth cell g6
@@ -1364,7 +1252,7 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  always right.
 ```
 
-**The type clause, in words.** 2026-09-22, the C129/C120 discussion with the `cbor` library as
+**The type clause, in words.** The C129/C120 discussion with the `cbor` library as
 the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
 SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
 was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
@@ -1376,19 +1264,12 @@ a proof trusting it would have run plain on a value the type says cannot exist),
 came first, and this clause reads `Parser::is_narrowing_int`'s complement: what the narrowing
 rules make true, the range proof may assume.  One helper (`range::type_range`) at the two
 homes a fact is read from — `range_vars` seeds every variable of such a type before its
-fixpoint, and `range()`'s block leaf reads `Block::result` before the tail.  Measured: r1/r4
-(declared `limit` and `u8` parameters) fully plain, the join's `* 256` and `+` plain with the
-index `p + 1` over a plain integer rightly checked, cbor's `read_value` +8 plain ops, values
-unchanged.  Switch `LOFT_NO_RANGE_ARITH` (one rule); falsifier `LOFT_HOIST_VERIFY=1`.
-Sabotage, measured: the spare-code exclusion removed, c8's `after = x + 5` on an overflowed
-`limit(-100, 100) size(1)` answers `-9223372036854775803` for null and the verifier panics —
-the first cell written for it (an `i32`) could not fail, because `i32` is the signed-32
-template and excluded a clause earlier.  A boxed capture is read through its box and stays
+fixpoint, and `range()`'s block leaf reads `Block::result` before the tail.  Switch `LOFT_NO_RANGE_ARITH` (one rule); falsifier `LOFT_HOIST_VERIFY=1`.  A boxed capture is read through its box and stays
 checked (c7, measured, a refinement not a defect); a bare-variable `??` over a nullable
 parameter lowers to an `if` whose then arm is the parameter and stays checked (c5).  Cells
 `tests/scripts/157-range-arith.loft` c1–c8, pins `tests/range_arith.rs`.
 
-**In words.** 2026-09-20.  C120 declined the CLOSURE of the non-sentinel proof over
+**In words.**  C120 declined the CLOSURE of the non-sentinel proof over
 arithmetic — an overflow's null must propagate on both backends — and named the admissible
 successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
 result CANNOT overflow may emit the plain operator, because no fault can occur and no value
@@ -1402,34 +1283,19 @@ rule without that requirement answers `1` for null.  Beside it the non-sentinel 
 a callee's RETURN summary (`callee_returns_non_sentinel`: every exit non-sentinel under the
 callee's own facts, parameters trusted for nothing), which is what lets `color_a(get_pixel(…))`
 range at all — the pixel is any integer, the accessor's `?? 0` makes it non-null, the mask
-makes it a byte.  Measured on `composite_layer`: 24 of its 36 checked operators take the
-plain form and the row does NOT move — the twelve that remain (`j * lw + i`, `x0 + i`,
-`y0 + j`, the accessors' `by * width + bx`) have record-scalar or parameter operands no
-static proof can bound, and the ceiling (every operator plain, −33 %) is carried by exactly
-those (class split: those six −35 %, the counters −5 %, the divisions −3 %).  That is what
-`(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
+makes it a byte.  Operators with record-scalar or parameter operands (`j * lw + i`, `x0 + i`, `y0 + j`, the accessors' `by * width + bx`) have no static proof, and that is what `(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` compares the plain answer with the checked one at every admitted
 operator).  Cells `tests/scripts/157-range-arith.loft` a1–a9, pins `tests/range_arith.rs`.
 
-**The counted-counter clause was INERT until 2026-09-21** (loft#1558).  It is listed above
-and was written, but no counted loop ever got a range: the seeding looked for the counter's
-SEED inside the loop, and the parser emits `index = <start>` as the statement BEFORE it, so
-`seeds` was always 0.  The seed is now looked for in the whole FUNCTION, which is what makes
+**The counted-counter clause** (loft#1558).  The parser emits `index = <start>` as the statement BEFORE the loop, so the seed is looked for in the whole FUNCTION, which is what makes
 it sound rather than merely wider — `v_seed` counts every non-step `Set` to that counter
 anywhere, so a counter written from a second place declines on `seeds != 1` instead of taking
-the first value it meets.  Nothing made the gap visible, because the one pin that would have
-shown it (a4's `wrapping_mul` on `i * i`) was recording a plain form supplied by
-`(R-GuardedChain)`'s duplicated copy, not by this proof: **a pin can borrow another
-rewrite's evidence and read as proof that its own clause works.**  It surfaced only when the
-guard's profitability gate declined that loop and took the borrowed evidence with it.
-Measured against the clause inert, same lane and invocation: `smooth` +12.9 %, `fill_circle`
-+2.9 %, `hash` +1.8 %, `render_marks` +1.5 %, `resize` +1.1 %, every other row within its
-swing.  Cells b1–b6, of which b3/b4 are the BOUNDARY PAIR: they differ only in the range's
+the first value it meets.  Cells b1–b6, of which b3/b4 are the BOUNDARY PAIR: they differ only in the range's
 end (`0..=10` against `0..=9`, `i * 1e18` crossing i64::MAX between them), so the multiply's
 verdict is a claim about the counter's top bound and nothing else — a top taken one too LOW
 is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=1` panic
 naming the operator.
-**The accumulator clause** (2026-09-22, @PLN158 round 4): a second self-stepping shape
+**The accumulator clause** (@PLN158 round 4): a second self-stepping shape
 read off a loop, after the counters.  A local seeded ONCE by a ranged value (`n = 0`) and
 stepped only by LITERALS (`n += 1`, `n -= 2`), every step either straight-line after the
 seed in the seed's own block or inside ONE loop there that is a character walk `(R-CharWalk)`
@@ -1441,9 +1307,7 @@ answers what the template would.  The seed's block may itself sit in a loop (eac
 re-seeds); a step under a second loop, under a loop that is not such a walk (a counted loop:
 its trips are not a text's size; a walk over a text the body appends to), a step by a
 non-literal, a second seed, a write to `n` anywhere else, a parameter seed or `n` handed out
-by reference declines.  Measured: the stdlib bench's `char_walk` (`n += 1` / `n += 2` under
-`for c in src`) 12.5 → 10.45 µs (−17 %), hash `2e18`; `LOFT_HOIST_VERIFY=1` compares every
-plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
+by reference declines.  `LOFT_HOIST_VERIFY=1` compares every plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
 `tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
@@ -1498,14 +1362,12 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  not guarded twice.
 ```
 
-**In words.** 2026-09-20.  `(R-BoundedNest)`'s method — a fact ESTABLISHED before the
+**In words.**  `(R-BoundedNest)`'s method — a fact ESTABLISHED before the
 arithmetic runs, in the same magnitude-bound arithmetic the rule states — for the index
 chains of any counted loop, where the static `(R-Range)` proof stops: `composite_layer`'s
 `j * lw + i`, `x0 + i`, `y0 + j` read record scalars (`lay.lw`, `lay.x0`) that a program
 cannot bound at generation time and a guard can bound at the loop's entry in six checked
-operations.  Measured, `composite` 103 → 68 µs per call (−34 %, the hand ceiling for those
-six operators met), hash exact; the trace shows the guard admitting the graphics library's
-`fill_rect`, `fill_triangle`, `resample`, `mat4_mul`, `sphere` loops as well.  A leaf may be
+operations.  A leaf may be
 a PARAMETER — the guard tests its value — where the static proofs never trust one.  The
 two emission forms were measured against each other: the branch-per-operator form alone
 keeps `composite` at −21 % (LLVM does not unswitch a body that calls), the innermost
@@ -1564,22 +1426,13 @@ and the append is then a shallow relocation whose heap handles never change stor
 zeroed source is what the temporary's clear and free are allowed to walk.  The gates are
 under-approximations on purpose; the one that carries values is use-after — falsified by
 removing it, the read-after-append cell answers the zeroed source (`3 409 45` →
-`3 409 0`).  All three lifetime conditions were falsified on builds that lacked them
-(2026-09-11): the scope-end-only release corrupted a recycled store slot on a6f30ae7 —
-values right, teardown walked another store's live records (the red `native_scripts`
-gate) — the host-death build WITHOUT the OpDatabase re-arm corrupted c21 (a store panic
-at rec 472: the reuse clear had reclaimed the placement the guard still trusted), and a
-corpus struct named `T` was walked through `main_vector<T>`'s typevar field (the
-c19–c22 cells).  The host-death form reuses the placement across an enclosing loop's
-entries — `fronds` 351k → 295k ns/op (−16 %), the hand ceiling met exactly.  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
+`3 409 0`).  Composes with `(R-PushRec)`: a no-heap element's slot comes from the
 push header and the move lands in it (the c16 cell).  Switch `LOFT_NO_MOVE_APPEND`; the value
 cells run under `LOFT_POISON=1` and both leak checks.  Sites: `hoist::move_appends`,
 `hoist::pair_for_block`, `Output::move_pair_for_block`, `Output::active_move_pair`, the
 placement in `Output::output_block`, the move arm in `OpCopyRecordEmitter`, the record
 free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
 `Stores::place_record_in`, `Stores::move_record_shallow`, `Stores::free_record_in`.
-Shipped: standalone `fronds` −11 % (396–400k → 354–359k ns/op), the hand-measured
-ceiling reached exactly; hash `ebcfd875` on every run.
 
 ### A loop over a split takes its pieces from the text
 
@@ -1623,10 +1476,7 @@ fires — and lazy native disagreed with the interpreter AND with its own switch
 (`count=0` for `count=1`).  The cell that found it passes a real null (s2, s21); the
 first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The source
 needs no gate because the copy is always sound; the borrow is the one case where the
-copy is provably unnecessary.  Priced by hand patch first (−1.85 µs), then built: `parse`
-19.21 → **17.44 µs (−9 %), 298k → 268k instructions per parse**, 2.93× → 2.63× its
-reference on x86-64, hash `33f6d2b8`; with the switch set the bench's emission is
-byte-identical to the build before the rule.  Two spellings of the `For` block reach it —
+copy is provably unnecessary.  Two spellings of the `For` block reach it —
 the buffer minted at function entry, and minted at first use inside the block
 (`(O-LazyBuffer)`), where a `#count` seed may also stand before the bind — and both are
 one shape to the matcher, which finds the bind and requires it, the index seed and the
@@ -1688,8 +1538,7 @@ text and the out-of-bounds note for the first, the recoverable `IndexOutOfBounds
 `NegativeIndex` fault for the second (`LOFT_DEV_SOFT_HALT` halts both forms alike).  The binding-block condition is the Rust scope of the `let` the table becomes; a
 mention outside it would not compile.  `len` reaches the emitter through `(R-Wrapper)`,
 so the switch that keeps the wrapper a call (`LOFT_NO_WRAPPER_INLINE`) keeps every table a
-vector too.  Priced by hand first on the `split` row: 21.2 → 6.3 µs (−70 %, hash `21bd`),
-and 3.3 with the `?`-discharged piece borrowed instead of copied twice — the twin is 2.7.
+vector too.
 Switch `LOFT_NO_SPLIT_TABLE`; trace `LOFT_TRACE_SPLIT_TABLE` (each table admitted, each
 declined with its reason, and whether the buffer is minted).  The interpreter keeps the
 vector and is the oracle; `LOFT_NO_SPLIT_TABLE=1` is the same-build oracle on native.
@@ -1749,8 +1598,7 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
 allocation and a copy per element — and the loop hoisted NOTHING, because its element read
 `OpGetText` and every text op in its body (`size(p)`, `result += p`, `p == "x"`) read as
-store writers to `(R-Header)`'s condition.  The standard library's `join` paid 30.8 µs for
-2 000 words against its Rust twin's 5.7.  A text local's Rust slot is decided at every site
+store writers to `(R-Header)`'s condition.  A text local's Rust slot is decided at every site
 that spells it by ONE predicate (`Output::text_borrowed`: a text parameter, or a local this
 rule admits), so the borrowed loop variable reads bare where an owned local reads `&var`,
 converts with `.to_string()` where an owned local clones, and needs no site of its own.
@@ -1789,8 +1637,7 @@ through the `CallRef` this clause refuses), so a place read through a frame-mint
 in a frame-minted store.  A scalar set in place moves no block, so it may land anywhere.
 The scope is the innermost statement block holding every mention of the variable: a value a
 statement computes does not outlive its block unless it is bound, and a bound borrow is a
-variable this clause judges on its own.  Priced by hand first: `word_count` 58.5 → 44.3
-ns/op (−24 %; the temp alone −14 %), `hash_text_keys` 657 → 603 µs (−8 %).  Cells
+variable this clause judges on its own.  Cells
 `tests/scripts/158-text-borrow-store.loft` (a1–a7 admitted, d1–d7 declined, d1 the one that
 reads differently without the store condition); pins `tests/text_borrow.rs`.  Sites:
 `hoist::borrowed_store_texts`, `hoist::param_rooted`, `hoist::frame_minted_locals`,
@@ -1826,9 +1673,7 @@ verbatim.  NUL is excluded on purpose — `text_character` answers it as the nul
 and the walk's fault note fires, which the fast arm would silence.  The null test is a
 CONTENT compare (`T != "\0"`) LLVM does not hoist past the step's calls; asked once it
 costs one compare per walk, and the condition — T not written in the loop — is
-`(R-LazySplit)`'s borrow condition over the loop's statements.  Together 23.5 → 12.9 µs on
-the `char_walk` row (4.6× → ~2.5×); the two checked accumulator adds of the body are what
-remains, C120's territory.  Switch `LOFT_NO_CHAR_WALK`; falsifier `LOFT_HOIST_VERIFY=1`,
+`(R-LazySplit)`'s borrow condition over the loop's statements.  Switch `LOFT_NO_CHAR_WALK`; falsifier `LOFT_HOIST_VERIFY=1`,
 whose checking form runs the step as written beside the fast arm and panics when the two
 disagree, and keeps the per-iteration null test as an assertion.  Sites:
 `hoist::char_walks`, `hoist::text_written` (shared with the lazy split's borrow), the bind
@@ -1858,12 +1703,9 @@ escape loop on native, against 3.4 for the push itself.  The value is unchanged 
 construction (the same parts, in the same order, onto the same text) except where a part
 reads the destination, which is the one decline the rule needs.
 
-**BUILT** (2026-09-25, `Parser::format_append_in_place`, `LOFT_NO_FORMAT_APPEND`; the
+**BUILT** (`Parser::format_append_in_place`, `LOFT_NO_FORMAT_APPEND`; the
 guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and the pin
-`tests/format_append.rs`).  The probe (a 120-character escape loop, `--native-release`):
-1660 → 410–560 ns per call; the library rows, re-measured on the same box: html
-`escape_html` 10.3× → 2.64×, markdown `html_escape` 8.6× → 1.71×, zttext `materialise`
-23.8× → 6.87× and `flow_layout_full` 107× → 14.8× (bench/portal/analysis/libraries-wide.md).
+`tests/format_append.rs`).
 The stdlib's own `char_slice` takes it too.
 
 ### A text copied byte by byte is one append
@@ -1887,13 +1729,8 @@ push cost 4.3 ns a byte against a block copy.  The append grows the vector the w
 grows it (`vector::append_bytes`, one home with `vector_append`'s doubling), because a
 reservation to the exact length reallocated on every chunk.
 
-**BUILT** (2026-09-25, `src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
+**BUILT** (`src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
 guard `tests/scripts/a-byte-wise-text-copy-is-one-append.loft`, pin `tests/byte_copy.rs`).
-The probe (256-byte texts appended 64 000 times, `--native-release`): 2.8–3.0 → 0.34–0.50 ns
-a byte.  cbor `encode_bytes`, re-measured on the same box: **94.7× → 43.1×** of Rust — the
-copy is gone and what the row still pays is the buffer's own growth (each doubling claims,
-zero-fills and relocates) and the per-text work around the copy
-(bench/portal/analysis/libraries-wide.md).
 
 ### A vector copied element by element is one append
 
@@ -1919,12 +1756,9 @@ a length re-read and a push per element.  Nothing in the body can move V's lengt
 no push into an exclusive t reaches V, so the walk visits every element in index order
 exactly as the append copies them.  No guard is needed: the conditions are all static.
 
-**BUILT** (2026-09-26, `src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
+**BUILT** (`src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
 `tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
-`tests/vec_copy.rs`).  zttext `insert_text` (`nb = []; for c in d.buf { nb += [c] }`), the
-insert-only bench, `--native-release`: 25.4 → 5.95 ms per op, hash unchanged — on top of the
-heap fact that `character` owns none (55.2 → 25.4 ms), which had hidden most of this
-rewrite's gain behind a per-element claims walk (bench/portal/analysis/libraries-wide.md).
+`tests/vec_copy.rs`).
 
 ### A lookup by one integer key takes the typed entry
 
@@ -1953,9 +1787,7 @@ hash (a dispatch over its type row), that the key is one integer (a `Content` bu
 matched apart, a pre-resolved key chosen and then re-dispatched per bucket).  After the
 walk itself was cut to ~1.2 buckets a lookup (`bench/portal/analysis/keyed.md`, L5) that
 prologue had become most of a lookup: 613 instructions, of which the hash and the walk
-are about 250.  The typed entry is the table's header reads, the digest inline, and the
-walk compiled for the key's kind: **613 → 444 instructions a lookup**, `hash_find` −13 %,
-`hash_update` −14 % on x86-64.  The condition is read off the schema the emitter already
+are about 250.  The typed entry is the table's header reads, the digest inline, and the walk compiled for the key's kind.  The condition is read off the schema the emitter already
 bakes type numbers from (`Output::stores`), and the runtime re-reads the key's position
 and kind from the same row, so the emitter asserts only the SHAPE (hash, one key, integer)
 and never an offset.  Switch `LOFT_NO_TYPED_KEYED`.  The falsifier is
@@ -2008,8 +1840,7 @@ across calls — and collapsing the delivery BLOCK whole drops its scope-exit fr
 `hoist::ret_adopt`, the init arm in `Output::output_set`, the witness skip in
 `OpDatabaseEmitter`, the scoped pair blanking in `TextDispatchEmitter`, the
 `in_adopt_delivery` scope in `Output::output_block`, the placement re-target in the
-§ V-j hook.  Shipped: standalone `fronds` −9.5 % (381–396k → 350–357k ns/op) and
-`smooth` −14.4 % (2 205 → 1 887), hashes exact, cells leak-free under poison.
+§ V-j hook.
 
 ### A filling loop is one slice fill
 
@@ -2115,19 +1946,12 @@ with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`
 `ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
 select), `vector::abs_bound_i64`.
 
-**The reduction clause, in words.**  2026-09-22, @PLN158 (`bench/portal/analysis/vector-build.md`
+**The reduction clause, in words.**  @PLN158 (`bench/portal/analysis/vector-build.md`
 § `sum` re-priced).  The stdlib `sum` was 6.45× its Rust twin: every element paid the checked,
 null-propagating add — a sentinel test on each operand and a `checked_add` — which cannot
-vectorise, against a twin's wrapping add that runs 2-wide on SSE2.  The ledger had the row as
-"priced negative, the gap is the language's semantics" from an attempt that made the bound a
-SEPARATE, CHECKED pass and edited `t_7integer_sum` while the row runs its callee twin; and an
-i128 accumulator that would have closed the gap by CHANGING the answer for a prefix overflow
-that later cancels was rejected by the owner on principle (slower on many targets) — and is
-unnecessary.  The correct problem is the per-element check, and the answer is this rule's
+vectorise, against a twin's wrapping add that runs 2-wide on SSE2.  The correct problem is the per-element check, and the answer is this rule's
 own: prove from a bound that the checked answer is the plain one, then run plain — per block,
-at run time, in the same pass.  Priced on the emitted twin before any emitter code, then
-built: `sum` 11.9 → 3.7 µs, hash unchanged, pinned **6.45× → 2.06×** of Rust (range
-2.06–2.08); the built form matches the price to the microsecond.  The remaining 2× is the op count (add, shift, or, add per element against
+at run time, in the same pass.  The remaining 2× is the op count (add, shift, or, add per element against
 the twin's add), and the owner has said 2× is fine for a routine an optimised program caches
 the result of.  Switch `LOFT_NO_BOUNDED_SUM` (and `LOFT_NO_VECTOR_BASE` /
 `LOFT_NO_VECTOR_HOIST`, one rule); trace `LOFT_TRACE_NEST=1` names each reduction admitted
@@ -2261,13 +2085,9 @@ guarded frees), with `OpRefIsNull(v)` as the condition.  The attribute carries a
 `work_buffer` mark because every route that builds a frame by hand — the argv entry, the par
 worker, the shared-cdylib bridge, the engine host, placement — reads the hidden compound
 attribute as THE return buffer, and a second one would have been pushed as a result or
-refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len(v) }`,
-2 M calls, `--native-release`): 81 → 33–34 ns a call.  Census of the library corpus
-(2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
-test, 194 results (another rule's), 90 handed to a call — the by-value clause above admits
-those whose callee answers no view of the parameter.
+refused.
 
-**The pool** (2026-09-27, loft#1697; `Parser::pooled_work_buffer`, opened by
+**The pool** (loft#1697; `Parser::pooled_work_buffer`, opened by
 `patch_work_buffer_callers`; `LOFT_NO_WORK_BUFFER_POOL`; guard
 `tests/scripts/a-frame-pools-its-work-buffers-across-call-sites.loft`).  Per site, the
 transitive clause multiplied buffers up the call tree: a library of 100 functions of 150 calls
@@ -2279,7 +2099,7 @@ per activation (`tests/work_buffer.rs` `n_c18`): a forwarded buffer is only ever
 so it holds nothing across the call; a frame's OWN promoted local, which does, is never in the
 pool, and a self-call that must supply one still mints a buffer of its own.
 
-**BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
+**BUILT** (`src/parser/work_buffer.rs`, run from `after_pass2` beside the
 targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard
 `tests/scripts/a-non-escaping-vector-local-is-a-caller-buffer.loft`, pin
 `tests/work_buffer.rs`, and `LOFT_WORK_BUFFER_NULL` the positive control that runs every
@@ -2289,45 +2109,17 @@ where it offered its result record), placement (a function with one runs in-proc
 the shared-cdylib bridge (a fresh scratch, released after the call whatever was returned);
 the argv entry, the native `main` and the par worker's queue already allocate one store per
 hidden vector attribute and free it after.  A `par(…)` worker is declined by name of the
-builtin's `func` operand: its scalar route builds the frame from the element alone.  The
-probe on the release tier, 2 M calls: **78–91 → 29–36 ns a call**, the hand-written
-caller-buffer form 26.  Census of the walk over six libraries (2026-09-25): 98 locals
-promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29); over
-eight libraries, library code alone, 82 promoted once the by-value clause admitted the
-hand-offs whose callee answers no view (28 hand-offs still decline: a native, a `&`
-parameter, a callee answering a view) and the element-field clause kept 37 for the emitter.
-Two things the first measurement taught, both on the drawing bench (2026-09-25/26): the
-native emitter must read the promoted parameter as EXCLUSIVE where a rewrite only needs
-nothing else to reach the store — `hoist::work_buffer_arg`, the attribute's mark looked up
-by argument position, admitted beside an owned local at the push window, the mint window
-and the loop hoist's mover set — because taken for a possibly aliased view it declined the
-push window, and `render_marks` and `resize` ran 1.5× SLOWER; and a local the emitter
-already builds inside an appended element (`fronds`' `fd_wid`) must stay a local, or the
-buffer costs a copy and the loop its hoists (`fronds` 1.95× → 4.3×).  A lazy mint for a callee's buffer lands in the arm
+builtin's `func` operand: its scalar route builds the frame from the element alone.  A lazy mint for a callee's buffer lands in the arm
 that makes the call, not before the whole value `if` (`scopes::place_in_if`) — cbor's
 `encode` minted its map arm's four buffers on every call.  A promotion is only a gain
-where the emitter still sees an owner and the form it replaces was a store at all.  The
-rows, re-measured clean on the converged tree (2026-09-25, the committed row without
-the rule → now): hex_body `rig_world_frame3` **9.54× → 5.20×** (its twelve scratch
-vectors), cbor `encode` **18.0× → 11.4×** and `encode_bytes` **43.1× → 24.9×** (the map
-encoder's key tables), graphics `fill_rect` 4.05× → 3.05×, `draw_line` 2.70× → 2.06×,
-`blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.87×, drawing `composite` 1.56× →
-1.27×; `fronds`, `render_marks` and `resize` within noise of their committed rows once
-the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.44× was the one row worse,
-and its cause is the rule's own shape: a thin wrapper called once per element that calls
-`rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
-callee did, and pays the callee's clear and witness for nothing.  The cure is the
+where the emitter still sees an owner and the form it replaces was a store at all.  The cure is the
 TRANSITIVE clause above — the wrapper's own `__ref_N` work-refs are locals that never leave
 its frame and are candidates in their turn, so the buffers climb to the outermost frame
 that loops — Phase A once, then promotion of the work-refs and Phase B alternating until a
 round promotes nothing (capped at sixteen rounds; stopping after any Phase B leaves every
 buffer minted by its caller).  Without the cycle decline the fixpoint does not end rather
 than answer wrong: each round hands the recursive callee one more parameter, so every
-depth still has a buffer of its own (the pin's falsifier: `c2` grows seventeen).
-Measured clean (2026-09-26, the row above → with the clause): `bone_shape_has` **5.44× →
-2.68×**, same hash, 11.2 → 5.5 ms against Rust's 2.07 — the three per-query mints at
-~67 ns each were half the query, not the sixth the hand-price guessed from an assumed 1 µs
-row; every other row of the five libraries within noise.  A buffer lives as
+depth still has a buffer of its own (the pin's falsifier: `c2` grows seventeen).  A buffer lives as
 long as its caller's
 activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
 return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
@@ -2389,8 +2181,7 @@ acyclicity (only the depth count does), so this rule reaches the recursive funct
 tier, and keeps its depth push.  The predicate is a breadth-first closure with the
 per-body half cached (`Output::registers_buffers`); a `#rust`-bodied standard function is
 the body's own work, as `(R-Leaf)` reads an op, and a stdlib function taking a fn-ref would
-be opaque (none does today).  Measured on `fib(30)`: 11.3 → 7.4 ms (−34 %), 4.1× → ~2.5× of
-its Rust twin, hash `cb228`.  The stack-pointer overflow check the round priced beside it
+be opaque (none does today).  The stack-pointer overflow check the round priced beside it
 (a further −15 %) is DECLINED: `MAX_CALL_DEPTH` is a cap both backends share and report
 identically (`runtime_errors.rs`, `native.rs` pin "exceeded 10000 stack frames"), and a check
 against the machine's stack would fault at a machine-dependent depth — the disagreement
@@ -2398,11 +2189,7 @@ against the machine's stack would fault at a machine-dependent depth — the dis
 `LOFT_TRACE_GUARD_FREE` (each frame that keeps its guard, naming the registrant); scored on
 the LEAK channel — cells `tests/scripts/158-guard-free.loft` g1–g9 under
 `LOFT_NATIVE_LEAK_CHECK=1` / `LOFT_STRICT_STORES=1` (falsified by answering `true` for every
-frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  The cells also found
-a leak of their own, unrelated to the rule: @PLN150's borrowed-return marker taken only on a
-MATCH stayed armed past an unrelated copy and matched a reused slot number later
-(`158-fnref-borrowed-marker.loft`); it is now taken by the first copy after the call, as the
-interpreter's is.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
+frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
 line in `Output::output_function`'s prelude.
 
 ### A fast path inlines; its cold half is outlined
@@ -2840,7 +2627,7 @@ answered here rather than decided in the code.
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
 
-**The nested clause** (2026-09-28; cells `tests/scripts/158-nested-value-record.loft` n1–n14,
+**The nested clause** (cells `tests/scripts/158-nested-value-record.loft` n1–n14,
 the moved pin `tests/nested_field.rs` n12).  A record whose fields are scalars and inline
 sub-records of scalars — `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }`, eight floats two
 structs deep — rides the tuple like a flat one: `hoist::type_layout` recurses into an inline
@@ -2858,14 +2645,12 @@ half: a write through a sub-record is a write into every enclosing record, so
 reaches every type that holds its record inline (`inline_parents`), which only ever declines
 more.  Sabotaged (the chain struck), cell n12 reads 1 where the write through the parent
 made it 7.  A bind FROM a sub-record (`q = w.pos`) is a VIEW by the oracle and keeps the
-local a record (n10).  Measured on the sphere shape (three tuple builders into a builder into
-an append, two million vertices, this box, idle): 0.27 → 0.17 s; `LOFT_NO_VALUE_RECORD=1`
-0.43 s.  Trade to know: a callee's nested tuple parameter is filled at the site by one read
+local a record (n10).  Trade to know: a callee's nested tuple parameter is filled at the site by one read
 per scalar, so a store record handed to one costs eight loads where the callee may read two
 (`nested_field` n12's row moved 2 → 9 reads through the address) — the flat rule's trade at
 the new width.
 
-**The body clause** (2026-09-26, loft#1697; cells
+**The body clause** (loft#1697; cells
 `tests/scripts/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).
 A call `(R-Const)` must decline — the result stored into a field, returned, written — still
 ran the function, and the function built its vector one push per literal: a 115 000-element
@@ -2878,18 +2663,13 @@ arguments (no variable, no call but a built-in operator: what the twin's extract
 an element kind the constant store does not pre-build (an enum, a narrow integer) has no twin
 and keeps its pushes.  Beside it, native emits every constant table whose elements share one
 field layout as one static array per field and one loop (`write_const_columns`), the
-per-element form kept for a table of mixed shapes.  Measured on the crawler's
-`rivers_test` (a 115 200-, an 86 400- and two 14 878-element table): the emitted Rust 61.7 MB
-→ 4.9 MB, `init` 1.06 M lines → 17 k, and a cold `--native` run from more than 20 minutes
-(unfinished) to 16.4 s.
+per-element form kept for a table of mixed shapes.
 
-**The own-buffer clause** (2026-09-26, `LOFT_NO_REBIND_OWN_BUFFER`; cells
+**The own-buffer clause** (`LOFT_NO_REBIND_OWN_BUFFER`; cells
 `tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft`, pin
 `tests/rebind_own_buffer.rs`).  A builder promotes the local it returns onto its hidden
 buffer, which made it an argument, and every argument was refused — so each `d = step(d, …)`
-filled a pooled buffer and the bind copied it whole into `d`.  zttext's insert loop
-(`io_d = insert_text(io_d, …)` inside `insert_op`): 5.95 → 5.01 ms per op, hash unchanged;
-two admissions over the census programs (zttext, hex_body).  Built beside it, the live-view
+filled a pooled buffer and the bind copied it whole into `d`.  Built beside it, the live-view
 half of this rule as the code had not enforced it: a view of x read after the call — a loop
 variable over one of x's fields, read after the body rebinds x — now declines (it had
 answered 3004 where the rule says 4; `tests/fixtures/rebind-view-across-call.loft`), which
@@ -2899,7 +2679,7 @@ cost no library admission.
 `(R-Place)` hands a call the place its result is going, `(R-ElemFirst)` builds a vector
 inside the element that consumes it, `(R-InPlaceLiteral)` writes a literal into its slot,
 `(R-RetAdopt)` builds a result in the buffer it is returned through, `(R-MoveAppend)`
-relocates a dying temporary.  The wide pass (2026-09-24, `bench/portal/analysis/
+relocates a dying temporary.  The wide pass (`bench/portal/analysis/
 libraries-wide.md`) measured a second class those cannot reach, and it holds the rows
 furthest from Rust: bytes that ALREADY EXIST in a store the program still owns, copied
 whole into a second store because the language's plain bind copies (`(B-Copy)`).  The
@@ -2916,24 +2696,16 @@ to bisect to.
   `buf` field (100 000 characters) is copied per edit today — TWICE: the exit mints a fresh
   `Doc` and `vector_add`s `buf` into it, and the call site deep-copies that result into `doc`
   again — and is H-CopySelf under the rule, so an edit costs O(pieces) as the Rust twin's
-  does.  **Hand-priced 2026-09-24** on the bench row's emitted Rust (the exit's mint and
-  `buf` copy struck, `pieces` delivered into `d`'s own record, `return d`; the call site
-  unchanged — its identity test already accepts a result that is its argument): **61–64 ms →
-  4.2–4.6 ms per op (−93 %)**, hash `cb409877` unchanged, native leak check clean; against
-  the twin's 0.68 ms the row goes 138× → ~6.5×, the remainder being the per-edit rebuild of
-  5 000 pieces, which the twin pays too.  `mat4_mul` (37×) DECLINES —
+  does.  `mat4_mul` (37×) DECLINES —
   it fills its result before reading `mb` — and stays where it is: its cost is the mint
   of a 16-float vector per call, which no copy rule removes.
-  **BUILT 2026-09-24** (`LOFT_NO_REBIND_PLACE`, `LOFT_TRACE_REBIND`), in three pieces.
+  **BUILT** (`LOFT_NO_REBIND_PLACE`, `LOFT_TRACE_REBIND`), in three pieces.
   The parser (`Parser::rebind_safe_literal`, on every exit literal built into an offered
   buffer): a vector field's `OpAppendVector` into the buffer becomes `OpReplaceVector`,
   whose runtime self-test is `(H-CopySelf)` and whose clear releases (`(H-ClearRelease)`,
   `Stores::vector_replace`), and its zeroing default is dropped; a SCALAR field expression
   that reads a by-value parameter of the buffer's type is staged into a temp ahead of the
-  first write (native's value-record tuple emits those temps ahead of the tuple); and a
-  body whose LAST statement is an explicit `return` now takes the buffer road at all —
-  until then only a bare tail did, so every `return S { … }`-ending function, the shape the
-  libraries write, minted a store per exit and its callers copied.  `return <by-value
+  first write (native's value-record tuple emits those temps ahead of the tuple); and a body whose LAST statement is an explicit `return` takes the buffer road as well as a bare tail.  `return <by-value
   parameter>` is admitted as an exit beside the literals.  The scope pass
   (`src/rebind_place.rs`, after `place_result`): at `x = f(x, …)` the hidden buffer
   argument becomes `x` — the one IR change; the `Set` stays, since the bind's identity
@@ -2944,14 +2716,7 @@ to bisect to.
   measured on the cells: a text or reference field read off the parameter (not staged),
   a vector read at another of the parameter's fields (the two-vector swap), a vector
   field built from a literal list or omitted, a chain exit, a promoted buffer, the local
-  handed in twice, a view local, a witnessed local, recursion.  Measured on the zttext
-  bench, same binary (`LOFT_NO_REBIND_PLACE=1` 88.5 ms/op, 211×): `delete_range` 4.1 ms/op
-  (**138× → 9.6×**, the twin's lane noisy at ±5 %), `insert_text` 95× → 63× (its own `nb`
-  copy of the buffer remains, the library's algorithm), `invert` 118× → 99× — `apply_op`'s
-  exits are CHAINS
-  (`return delete_range(d, …)`), the next admission to write: a chain whose callee is
-  rebind-safe on the parameter it is handed and whose buffer is handed on answers the
-  buffer too.  21 sites admitted across 6 corpus files; the cells
+  handed in twice, a view local, a witnessed local, recursion.  21 sites admitted across 6 corpus files; the cells
   `a-rebind-from-a-call-taking-the-same-local-keeps-its-values` c1–c20 pass on both
   backends under the falsifiers, and a build with the staging and the consults-the-
   parameter decline struck fails them.  **Found on the way, and fixed:** the interpreter's
@@ -2968,23 +2733,14 @@ to bisect to.
   suffix; every entry owns two vectors, copied per push today, untouched in place),
   zttext `invert`'s prepend (118×) and `insert_text`'s identity copy (95×; its other
   half, a `character` push holding no push header on native, is closed — `OpPushCharacter`
-  and `OpPushInt4` joined `hoist::FUSABLE_PUSHES` on 2026-09-24).  **Hand-priced
-  2026-09-24** on `truncate_to`'s emitted Rust: the rebuild — a store for `te_new`, a copy of
-  every kept entry into it, a SECOND hidden store for the rebind, the entries copied again,
-  the old field cleared, copied back, both stores freed: three deep copies of every kept
-  element, each claiming its two inner vectors — replaced by one in-place compaction
-  (release each dropped element where it stands, one block move of the kept run, the
-  length set): **3.2–3.8 ms → 414–435 µs per op (−87 %)**, hash `31aefae` unchanged, clean
-  under the leak check, `LOFT_POISON` and `LOFT_STRICT_STORES`; against the twin's 13.8 µs
-  the row goes 207× → ~30×, and what remains is the per-push `Stroke` construction —
-  `(R-MoveAppend)` / `(R-Place)`'s class, not this rule's.  The runtime lacks the primitive
+  and `OpPushInt4` joined `hoist::FUSABLE_PUSHES` ).  The runtime lacks the primitive
   (a range compaction: `remove_vector` shifts one element and releases nothing,
   `clear_vector_release` releases all) and its parts all exist; the 22-line composition is
   what the build adds.  Found on the way: `clear_vector_release` derives the element type
   only under a one-field `main_vector<T>` root, so a rebind of a vector FIELD of a
   multi-field record released nothing and stranded every old element's owned heap in the
   store — fixed beside this price (see heap.md's register).
-  **BUILT 2026-09-25, the CONTIGUOUS-RANGE form** (`LOFT_NO_COMPACT`, `LOFT_TRACE_COMPACT`;
+  **BUILT, the CONTIGUOUS-RANGE form** (`LOFT_NO_COMPACT`, `LOFT_TRACE_COMPACT`;
   scope pass, BOTH backends): `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;`
   becomes ONE guarded op — `if 0 <= lo && lo <= hi && hi <= len(V) { OpKeepVectorRange(V,
   tp, lo, hi) } else { the statements as written }` — where the op (`Stores::keep_vector_range`,
@@ -3007,33 +2763,22 @@ to bisect to.
   the two forms the guard cannot see.  Not yet built: the FILTER form (`for e in V { if p {
   t += [e] } }`, a loop rewrite with a write index), the PREPEND form (`invert`) and the
   IDENTITY form (`insert_text`), which the rule states and this unit's recogniser does not
-  reach.  Measured on the portal's consumer lane, same box: `truncate_to` **3.62 ms →
-  195 µs per op, 259× → 14.0×** of Rust (−95 %: the row's 250 drop-oldest rebuilds per op
-  and its 30 truncates are all compacted; the hand-price replaced the truncate alone).
+  reach.
   Cells: `tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft`
   (c1–c18, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
   `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
-  admission is pinned on the emitted Rust in `tests/compact.rs`.  Sabotage receipts: the
-  guard's `hi <= len(V)` test struck, the beyond-length cell (c7) keeps the vector whole
-  instead of padding, on both backends; the "t named nowhere else" test struck, the pin sees
-  c14 compacted.
+  admission is pinned on the emitted Rust in `tests/compact.rs`.
 - **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
   vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
   moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,
   which is a STORE into a field and keeps its copy under the rule — the rule removes the
-  rebuild, not the author's choice to store it.  **Hand-priced 2026-09-24** on the row's
-  emitted Rust: the two tables built once per process (a `OnceLock` holding the first
-  build's `DbRef`, minted with a null buffer so the store is its own) **117 → 7.0 ms per
-  op**, and the callers' hidden buffer struck as well (`(O-LazyBuffer)`'s mint before the
-  call and free at every exit, ~74 ns a pair over 38 000 calls) **→ 4.3 ms (−96 %)**; hash
-  `53aaaae5` unchanged, the leak check naming exactly the two resident tables and nothing
-  else; against the twin's 1.31 ms the row goes 86× → ~3.3×.  The caller's bind had NOT
+  rebuild, not the author's choice to store it.  The caller's bind had NOT
   copied — the emission binds the callee's buffer directly — so the second half of this
   rule strikes a BUFFER, never a copy, and its landing note must say so.  What remains is
   the per-pixel `set_pixel` (the call class) and one emitter waste found on the way: the
   fused element write derives `text_span_of` on every call for an INTEGER element and
   never uses it (9–13 % of the row).
-  **BUILT 2026-09-25** (`LOFT_NO_CONST_VIEW`, `LOFT_TRACE_CONST`; parse time + scope pass,
+  **BUILT** (`LOFT_NO_CONST_VIEW`, `LOFT_TRACE_CONST`; parse time + scope pass,
   BOTH backends), on the machinery a top-level constant already has rather than on a
   `OnceLock`: the parser gives a zero-parameter function whose whole body is ONE vector
   literal over literals a synthetic `DefType::Constant` twin holding that literal
@@ -3060,47 +2805,29 @@ to bisect to.
   constant store is write-locked and a program's copy must be its own; a wrong decline is
   the build the program already paid.  The second half of the rule as written — the bind
   of the view is B-Copy's copy the moment the local is written — lands as that decline:
-  the copy is the call's own store, so no copy road was added.  Found on the way: a TOP-LEVEL
-  constant bound to a local and written (`c = NAMES; c[0] = 5`, `c += [7]`) or handed to a
-  parameter the callee writes (`f(NAMES)`) had no copy road and halted on the lock — the bind
-  was given its copy by loft#1686 and the argument by loft#1729 (deviation D-rw-6, closed).
-  Measured on the
-  portal's text2d lane, same box: `write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of
-  Rust (the hand-price said ~3.3×; the rest of the row is `set_pixel`, the call class), the
-  other four rows unmoved.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`
+  the copy is the call's own store, so no copy road was added.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`
   (c1–c24, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
   `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
   admission is pinned on the emitted Rust in `tests/const_fn.rs` (which calls read the
-  constant store, which keep their call), since the values pass on either form.  Sabotage
-  receipts: every argument position read as a pure read fails c7 on the interpreter with the
-  write-locked panic; the one-literal test struck answers 5 for 7 in c16 on both backends.
+  constant store, which keep their call), since the values pass on either form.
 - **`(R-CopyView)`** — graphics `fill_polygon` **22.6×**: `polygon_crossings` picks each
   crossing edge's top and bottom vertex with `pc_ty = if pc_a.py < pc_b.py { pc_a } else
   { pc_b }`, and each of the two binds minted a store, copied a `Coord` into it and freed it,
   per crossing per scanline — not the crossings vector the overview first blamed, which the
-  return buffer already reuses.  Hand-priced (the four arm copies struck, the arms answering
-  their sources): 6.62 → 2.86 ms per op, hash `91eac327` unchanged.  **BUILT 2026-09-26**
-  (`src/copy_view.rs`, after `(R-Const)` on the settled IR; `LOFT_NO_COPY_VIEW`,
-  `LOFT_TRACE_COPY_VIEW`): measured clean **22.62× → 9.94×** (6.65 → 2.92 ms), same hash,
-  the other graphics and drawing rows within noise.  Over the benches it admits exactly
+  return buffer already reuses.  **BUILT** (`src/copy_view.rs`, after `(R-Const)` on the settled IR; `LOFT_NO_COPY_VIEW`, `LOFT_TRACE_COPY_VIEW`).  Over the benches it admits exactly
   those two locals: the 303 record copies there are mostly a PARAMETER copied (declined —
   `(R-ValueRecord)`'s tuple already makes that copy free, and the rewrite census caught the
   first cut taking eight of `server`'s tuple parameters away, R-ValueLocal 15 → 7) or a
   source the frame owns.  Cells: `tests/scripts/a-read-only-record-copy-is-a-view.loft`
   (k1–k11, hand-computed, both backends, switch A/B, `LOFT_POISON` + `LOFT_STRICT_STORES`),
-  the admission pinned by `tests/copy_view.rs`.  Sabotage receipt: condition (3) struck, k4
-  reads 99 for 1 and k5 1003 for 3 on both backends.
+  the admission pinned by `tests/copy_view.rs`.
 - **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
   EVERY call site reads fields off it; a site that binds the whole record to a local, or
   rebinds its own argument, declined it and paid a store per call: mesh3d
   `mat4_transform` **22×** (`p = mat4_transform(m, p)`) and `sphere` (23×: `vec3`,
   `normalize3`, `vec2`, `vertex` per vertex), moros `resolve_move` (7.5×: `vec3`, a `Hex`
   answered as a VIEW of an element, a `HexAddress` from `world_to_hex`) and
-  `emit_to_material` (14×), hex_body `bone_shape_has` (69×, three records per query).
-  **Hand-priced 2026-09-24** on `mat4_transform`'s emitted Rust: `p` carried as three `f64`
-  locals across the 500 000-call loop, the callee answering its tuple into them and `tv`
-  crossing as scalars, **45 → 3.1–4.0 ms per op (−92 %)**, hash `1871b40b` unchanged, the
-  leak check silent; against the twin's 1.85 ms the row goes 22× → ~1.7–2.2×.  The decline
+  `emit_to_material` (14×), hex_body `bone_shape_has` (69×, three records per query).  The decline
   `(R-ValueRecord)` makes today is its SITE gate — *a site consumes its record*: the local is
   handed on as an argument — and what the site pays is not a deep copy but a store MINTED
   and the previous one FREED per call (the buffer handed in is the null sentinel every
@@ -3108,7 +2835,7 @@ to bisect to.
   unwritten matrix per call: an instrument that hoists them reads ~1.2–1.5×, so the rule
   that would own it — a loop-invariant ELEMENT read of a held, unwritten vector, where
   `(R-Invariant)` covers integer chains only — is the next one to write for this class.
-  **BUILT 2026-09-25** (`LOFT_NO_VALUE_LOCAL`, `LOFT_TRACE_VALUEREC`; generation time,
+  **BUILT** (`LOFT_NO_VALUE_LOCAL`, `LOFT_TRACE_VALUEREC`; generation time,
   `--native` only, the interpreter the values oracle), as the TUPLE PARAMETER: a by-value
   parameter of a plain no-heap record of at most eight scalars is received as the tuple of
   its fields (`hoist::tuple_param_candidates`, decided in `value_records`' fixpoint beside
@@ -3157,11 +2884,7 @@ to bisect to.
   bind) each name the callee for the argument question, restored per argument because a
   nested call argument had left the outer call's callee naming the inner one.  A `(R-RecPtr)`
   view handed to a tuple parameter keeps its address for the hand-off, exactly as it did for
-  the twin's inputs, and the site reads the fields through it.  MEASURED on the mesh3d bench,
-  same binary, the twin at 1.99 ms: `mat4_transform` **9.9 → 2.64 ms per op (−73 %, 5.0× →
-  1.32×)** — the hand-priced form to the number; `sphere` 6.5 → 4.05 ms (23× → 13×, its
-  `vertex` and `normalize3` parameters tuples); `mesh_to_floats` 12.7 → 8.4 ms;
-  `mat4_mul` 51 → 44 ms (its `mb` parameter, `(R-Rebind)` declining it still).  The cells:
+  the twin's inputs, and the site reads the fields through it.  The cells:
   `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft` (18, every alias
   route that must decline beside the shapes that admit; receipt: a sabotage of the
   write-set test fails c3 on native, `1` for `5`); the value-record pins
@@ -3173,8 +2896,7 @@ to bisect to.
   parameter into a fresh local (`q = p` declines as an untyped mint), and the
   loop-invariant element reads the price named.
 
-**The width, the discharged return, the field write and the terminal copy (2026-09-27,
-@PLN158; cells `tests/scripts/158-a-seven-field-record-returns-by-value.loft`).**  Six
+**The width, the discharged return, the field write and the terminal copy (@PLN158; cells `tests/scripts/158-a-seven-field-record-returns-by-value.loft`).**  Six
 fields became eight — moros's `Hex` has seven, and a tuple past the register file is
 returned through the caller's stack slot, still nothing beside a store record.  Three
 admissions beside it, each the one thing that kept `map_get_hex` off the value path:
@@ -3189,8 +2911,7 @@ collection — asks the narrower question the tuple form needs, whether an EXIST
 of the type may be written (`hoist::may_write_existing`: growth writes fresh slots only, a
 set and a copy are asked their target's type, an unknown native answers yes).  The copy
 FROM a value local derives its destination once (seven element lookups for one record,
-`OpCopyRecordEmitter`).  Consumer `slope_path_with_undo`: hand-priced 565 → 297 µs per
-op on the emitted Rust, built 572 → **293 µs (−49 %)**, hash equal.
+`OpCopyRecordEmitter`).
 
 **Landing (R-Switch).**  `(R-Rebind)`, `(R-Compact)` and `(R-Const)` are parse- or
 scope-pass rewrites the interpreter shares, so their falsifier is the switch A/B over
@@ -3210,10 +2931,7 @@ emitted Rust of its headline row before any emitter code: `delete_range` with `v
 handed as the buffer and the `buf` copy struck, `truncate_to` as a length set plus the
 per-element release, `write_text` with the two tables hoisted to statics,
 `mat4_transform` with `p` carried as three floats — the price the twin sets is the
-ceiling each is measured against.  Written 2026-09-24 from the wide pass's measurements,
-ahead of the code, so that the code changes to match them; `(R-Rebind)` was built the same
-day, `(R-ValueLocal)`, `(R-Const)` and `(R-Compact)`'s contiguous-range form the day after
-(their entries above); `(R-Compact)`'s filter, prepend and identity forms are NOT BUILT.
+ceiling each is measured against.
 
 ## Validating the emitted routines against their assumptions
 
@@ -3235,86 +2953,4 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-28).
-
-- **D-rw-6 — OPENED AND CLOSED 2026-09-28 (loft#1729).**  `(R-Const)` makes a constant's view
-  B-Copy's copy the moment it is "handed to a parameter the callee writes", and a top-level
-  vector constant handed there went through as the VIEW: the callee's first write reached the
-  write-locked constant store and a development run halted (*"write to a constant"*), on both
-  backends.  loft#1686 had covered the bind (`c = CODES` copies); the argument was the other
-  road.  **Fix.**  `Parser::constant_arg_needs_copy`: at a loft-defined callee's non-`const`,
-  non-`&` vector parameter, an `OpConstRef` argument travels as a copy
-  (`materialize_collection_value`) when the callee writes that parameter
-  (`callee_param_writes`) — read only for a callee parsed before the caller, since the copy
-  mints its temporaries on both parser passes and pass 1 has no later body; a forward or
-  recursive callee is assumed to write.  A callee that only reads still receives the view.
-  Guard `tests/scripts/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft`.
-- **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
-  literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed
-  before the store.  The re-init comes first, and #330 lifts an initialiser that reads the
-  local above it.  A COLLECTION member cannot be lifted: it is primed with its field place and
-  its literal writes through the field, after the re-init.  So `s = Bx { v: [s.n + 1], n: 2 }`
-  read the cleared record: `1` for `6`, an element `null`, a comprehension over the local's own
-  vector an empty vector, and with `n` written first, the NEW `n`.  Silent, on both backends,
-  and older than @PLN164.  Found while probing `D-heap-25`'s vector-member cell.  Closed: the
-  parser watches for the author naming the local while such a member is parsed
-  (`Parser::rebuild_watch`, set in `var_usages`).  If it does, the literal is parsed again with
-  the in-place hint declined, built apart and bound — the retry the parser already took for a
-  postfix.  Two defects on that road were fixed with it.  The lexer's interpolation state was
-  not replayed with the tokens, so a literal parsed twice refused every `"…{x}…"` inside it
-  (guard `tests/scripts/a-literal-parsed-twice-keeps-its-interpolations.loft`).  And the
-  work-ref the literal builds into keeps naming the binding's store for reuse on the next pass
-  (loft#1513), so in a loop the re-init cleared the record the literal was about to read:
-  `Scopes::scan_set` now gives that reuse up for a construction that reads its binding.
-  Guard `tests/scripts/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft`.
-  The same read through a call that returns its argument (`s = me(Bx { … s.n … })` in a loop)
-  was `D-op-11`, closed the same day.
-
-- **D-rw-4 — OPENED AND CLOSED 2026-09-21 (loft#1571).**  `(R-InPlaceLiteral)` stages every
-  field expression that may read the place, and the staging asked whether an expression NAMED
-  the destination.  It missed three other names a place has.  For an ELEMENT destination the
-  place is the whole variable, and that branch tested only a direct read of `v`, so a view
-  local (`p = v[0]; v[0] = Pt { x: p.y, y: p.x }`) was never staged.  A view that reaches the
-  destination through another view, such as a loop variable over the container, was missed by
-  the one-level deps test.  And a heap PARAMETER, where the destination is a caller's
-  (`sw(v, v[0])`), has no deps in the callee at all.  Each answered `2,2` for `2,1` on both
-  backends, silently: the element spelling since @PLN164 C1, the field spelling through a
-  parameter (`w.p = Pt { … }` inside `sw3(w, w.p)`) since the field road was built.  Found
-  while probing `D-heap-24`'s control, a record rebuilt from its own fields.  Closed at the
-  staging: a naming of any variable in `Function::store_viewers(root)` counts as a read of the
-  place.  That is `(R-ElemFirst)`'s answer to the same question for a growth (`D-rw-3`), moved
-  out of `hoist::destination_views` so that both readers ask one home.  Guard
-  `tests/scripts/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft`
-  (16 cells and 3 controls: views, parameters, a loop variable, a nested literal, narrow-int,
-  float, enum and text fields).
-
-- **D-rw-3 — OPENED AND CLOSED 2026-09-17 (loft#1553).**  `(R-ElemFirst)` moves the append's
-  mint — its GROWTH — to the temp's declaration, and the gate asked only whether a statement in
-  between NAMED `out`.  A view of `out`'s element is another variable: `e = out[0]; ws = [];
-  ws += […]; w = e.fid; out += [F { fpts: ws }]` left `e` a view (the scope pass saw the growth
-  at the append, after the read), and on `--native` it read the vector record the early mint
-  had relocated — `4609434218613702656` for `100` at the eleventh element, silently, since
-  @PLN157 § V-z.  Found by @PLN164 E-2b's growth-boundary sweep.  Closed at the gate: the
-  window may not read a local whose deps close over `out`'s store or, where that store is a
-  caller's, a heap parameter; a view of a sibling field is spared by the scope pass's own place
-  model.  Guard `tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft`;
-  cells `g25`–`g27` of `164-element-place.loft` for the field destination.
-
-- **D-rw-2 — OPENED AND CLOSED 2026-09-17 (loft#1552).**  `(R-ElemFirst)` says the temp is consumed
-  exactly once, and the gate counted its READS but never its BINDINGS: `p: vector<Pt> = [];
-  if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the early element's field at the
-  declaration, the conditional rebind pointed `p` at the call's store, and the suppressed copy
-  left the element holding the empty vector — `len(out[0].pts)` 0 where the interpreter says 3
-  (`1000` for `1093` in the guard), silently, on `--native` since @PLN157 § V-z.  Found by
-  @PLN164 E-2's cell `g13`, which widened the same gate.  Closed at the gate: the declaration
-  must be the temp's only binding.  Guard
-  `tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft`.
-
-- **D-rw-1 — CLOSED 2026-09-09.**  `one_op_wrapper` asked the body's SHAPE and not
-  the definition's ORIGIN, so a user function whose body is one op (`fn reader(w:
-  W) -> integer { w.a }`) was emitted as its op; the wasm live-dispatch probe
-  flipped it to the interpreter and counted 0 dispatches where it expected 2.  The
-  rule was always (R-Wrapper)'s "stdlib"; the code now asks `def.source() ==
-  STD_SOURCE`, and cell c11 of `V-o-wrapper-op-cells.loft` pins the user call.
-  Found by the GitHub gate on the rebased tree (run 34323456806); the local
-  curated set never runs the wasm probe.
+**OPEN: 0**.

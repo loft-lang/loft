@@ -805,7 +805,7 @@ impl Parser {
                 // as a value is a construction.
                 if !self.lexer.peek_token("=") {
                     // A `&` member is the VALUE read through its reference, as every other
-                    // use of a `&` binding is (LOFT.md § References): the member's type is the
+                    // use of a `&` binding is (LOFT_DECLARATIONS.md § References): the member's type is the
                     // pointee, and the load of the `&` variable reads through the link by that
                     // type.  Kept as the link, the member had a type no tuple slot can hold and
                     // `(n, 2)` over `n: &integer` stopped code generation (loft#1526).  A
@@ -6917,7 +6917,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // Which member this hold is a view OF — the one fact its own type cannot carry.
             // The dep above names the base variable and nothing else, so a copy reading a
             // leaf through this hold has no way back to the tuple whose type pairs that leaf
-            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap.md D-heap-1`).
+            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap-history.md D-heap-1`).
             let member = match &src {
                 Value::TupleGet(_, i) => Some(*i),
                 _ => None,

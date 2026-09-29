@@ -8,7 +8,7 @@
 // left for `x` to own.  The scope pass's arm lift then turned `x` into a borrow of per-arm temps
 // and gave a temp only to the `a` arm, so the store the call made had no owner: one leaked
 // record per evaluation, unbounded in a loop, on both backends, with the right answer every
-// time.  The hook half of the same defect is `formal/heap.md` D-heap-16, pinned by
+// time.  The hook half of the same defect is `formal/heap-history.md` D-heap-16, pinned by
 // `a-join-bound-local-owns-what-it-was-handed.loft`; this file is the store half, which only the
 // leak check sees, so it asserts values alone and fails through the leak channel.
 

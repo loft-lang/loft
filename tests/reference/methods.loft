@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Both call spellings, one definition and § Polymorphic text methods — a
+// @PAGE: LOFT_DATA.md § Both call spellings, one definition and § Polymorphic text methods — a
 // `self` function is callable as a method and as a free function, and one name may be
 // defined per variant of an enum.
 

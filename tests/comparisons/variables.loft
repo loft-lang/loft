@@ -17,7 +17,7 @@
 fn page_rust_variables() {
   x = 42;
   x += 1;
-  const y = 42;   // opt-in: locked in debug builds
+  const y = 42;   // opt-in: a write to it is a compile error
   assert(x == 43 and y == 42, "the write landed; `const` is a value that does not change");
 }
 page_rust_variables();

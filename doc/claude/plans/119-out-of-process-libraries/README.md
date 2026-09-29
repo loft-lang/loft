@@ -13,7 +13,7 @@ unchanged — in this process, in a worker, or on another machine.
 
 **The mechanism and the authoring rules live in
 [PLACEMENT.md](../../PLACEMENT.md)**; the user-facing declaration is in
-[PACKAGES.md § `placement`](../../PACKAGES.md).  This file is the closure record:
+[PACKAGES_MANIFEST_TABLES.md § `placement`](../../PACKAGES_MANIFEST_TABLES.md).  This file is the closure record:
 what was decided, what the plan got wrong about itself, and what it found on the
 way.
 

@@ -65,7 +65,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 40. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`, and its docs are its own agent's to keep under this contract — the report and `make file-sizes` leave `plans/` out. — [plans/README](plans/README.md), DOC_QUALITY § Maintainer docs rule 14
 41. A new guard records `@falsified-at:` and how to score it again. — [GUARDS](GUARDS.md) · gate: `every_new_guard_records_its_control`
 42. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
-43. A design decision names the sites that keep it with `@C<n>`, a guard under `tests/` among them; one nothing can keep is reopened. — [DESIGN_DECISIONS](DESIGN_DECISIONS.md) § Using the register · gate: `index_hygiene_clean` (every `@C` resolves; every entry has a guard) · report: `./scripts/idx decisions`
+43. A design decision names the sites that keep it with `@C<n>`, a guard under `tests/` among them; one nothing can keep is reopened. — [DESIGN_DECISIONS_RULES](DESIGN_DECISIONS_RULES.md) § Using the register · gate: `index_hygiene_clean` (every `@C` resolves; every entry has a guard) · report: `./scripts/idx decisions`
 
 ## Reviewer pass
 

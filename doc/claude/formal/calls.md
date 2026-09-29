@@ -177,7 +177,7 @@ shipped documents.** `binding.md` `(B-Copy)` says a plain bind COPIES — `c = b
 w += [9]` leaves `a` alone. Neither fact is about parameters. A parameter aliases
 (`F-ParamHeap`), which `binding.md` `(B-Ref-Reshape)` already says in as many words: *"A plain
 PARAMETER is NOT exempt: it aliases the caller's element exactly as a `&` one does (calls.md
-F-ParamHeap), so the rule keys on the aliasing relation, not on the token."* LOFT.md § Ref-param
+F-ParamHeap), so the rule keys on the aliasing relation, not on the token."* LOFT_DESIGN.md § Ref-param
 vector append and the reference's Vector chapter both promised that `v += [x]` on a non-`&`
 parameter was callee-local; it never was, on either backend, and the rules said so from the other
 end (loft#1251). Pinned by
