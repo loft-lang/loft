@@ -108,9 +108,9 @@ entry = "src/mylib.loft"   override the default entry path
 </code></pre>
 <p>If the interpreter version is below the stated minimum, loading the library produces a fatal compile error describing the version mismatch. If no manifest is present, the default entry <code>src/&lt;name&gt;.loft</code> is used.</p>
 <h2 id="wildcard-and-selective-imports">Wildcard and Selective Imports</h2>
-<p>A bare <code>use lib;</code> already brings in every <code>pub</code> name, and <code>use lib::*</code> says the same thing out loud. What the other forms buy you is a say in WHICH names arrive: <code>use lib::Name</code> takes one, and <code>use lib::(Name, Other)</code> takes a group. Multiple names must be parenthesised — the flat <code>use lib::Name, Other</code> is refused ("import multiple names with parentheses"). Only <code>pub</code> definitions can be named this way; the rest stay reachable as <code>lib::name</code>.</p>
-<p>Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A bare import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.</p>
-<p><code>use lib as short;</code> gives you the qualifier alone — <code>short::name</code> — and brings nothing in bare, which is the escape hatch when a name does clash. Single names alias too: <code>use lib::Name as N</code>, or <code>use lib::(Name as N, other)</code>.</p>
+<p>A bare <code>use lib;</code> brings in only the <code>lib::</code> prefix, and <code>use lib::*</code> brings in every <code>pub</code> name. The selective forms give you a say in WHICH names arrive: <code>use lib::Name</code> takes one, and <code>use lib::(Name, Other)</code> takes a group. Multiple names must be parenthesised — the flat <code>use lib::Name, Other</code> is refused ("import multiple names with parentheses"). Only <code>pub</code> definitions can be named this way; the rest stay reachable as <code>lib::name</code>.</p>
+<p>Taking only what you name is the stronger position, because it makes you immune to the library GROWING a name. A wildcard import and your own definition of a name the library exports are a conflict, and it is refused naming both sites; under a selective import every name you did not ask for stays yours.</p>
+<p><code>use lib as short;</code> gives you the qualifier under another name — <code>short::name</code> — and, like a bare <code>use lib;</code>, brings nothing in bare. Single names alias too: <code>use lib::Name as N</code>, or <code>use lib::(Name as N, other)</code>.</p>
 <h2 id="limitations">Limitations</h2>
 <p><strong>`use` must appear before all definitions.</strong> If you write a function first and then a <code>use</code>, the compiler reports a syntax error.</p>
 <p><strong>`pub` decides the bare spelling.</strong> Only <code>pub</code> definitions come in bare or can be named by an import; the rest are still reachable as <code>lib::name</code>. A library therefore has no hidden half — <code>pub</code> says which names are ready to be written without ceremony, not which ones exist.</p>
@@ -261,20 +261,20 @@ fn main() {
   // library produces a fatal compile error describing the version mismatch.
   // If no manifest is present, the default entry `src/&lt;name&gt;.loft` is used.
   // ## Wildcard and Selective Imports
-  // A bare `use lib;` already brings in every `pub` name, and `use lib::*` says
-  // the same thing out loud. What the other forms buy you is a say in WHICH
-  // names arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes
+  // A bare `use lib;` brings in only the `lib::` prefix, and `use lib::*` brings
+  // in every `pub` name. The selective forms give you a say in WHICH names
+  // arrive: `use lib::Name` takes one, and `use lib::(Name, Other)` takes
   // a group. Multiple names must be parenthesised — the flat `use lib::Name,
   // Other` is refused ("import multiple names with parentheses"). Only `pub`
   // definitions can be named this way; the rest stay reachable as `lib::name`.
   //
   // Taking only what you name is the stronger position, because it makes you
-  // immune to the library GROWING a name. A bare import and your own definition
+  // immune to the library GROWING a name. A wildcard import and your own definition
   // of a name the library exports are a conflict, and it is refused naming both
   // sites; under a selective import every name you did not ask for stays yours.
   //
-  // `use lib as short;` gives you the qualifier alone — `short::name` — and
-  // brings nothing in bare, which is the escape hatch when a name does clash.
+  // `use lib as short;` gives you the qualifier under another name — `short::name` —
+  // and, like a bare `use lib;`, brings nothing in bare.
   // Single names alias too: `use lib::Name as N`, or `use lib::(Name as N, other)`.
   // ## Limitations
   //

@@ -138,6 +138,11 @@ fn main() {
     "single asin(1) == PI/2"
   );
   assert(acos(1.0f) == 0.0f, "single acos(1) == 0");
+  // --- Single remainder defended by `??` (the nullable peer, OpRemSingleNullable) ---
+  zs = 0.0f;
+  assert(((7.5f % zs) ?? 1.25f) == 1.25f, "single % 0 is null, so `??` supplies the default");
+  assert(((7.5f % 2.0f) ?? 1.25f) == 1.5f, "single % 2 is 1.5, so `??` does not fire");
+  assert(!((7.5f % zs) ?? null), "single % 0 defended with `?? null` is null");
   // --- Single equality is EXACT IEEE (@PLN102); use approx() for tolerance ---
   assert(1.0f + 0.0000005f != 1.0f, "exact ==: a 5e-7 offset is a distinct single");
   assert(approx(1.0f + 0.0000005f, 1.0f, 0.000001f), "approx(a, b, 1e-6): within tolerance");

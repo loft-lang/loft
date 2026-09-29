@@ -64,7 +64,7 @@ u.age = <span class="kw">None</span>  <span class="cm"># allowed at runtime; myp
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Nullability is part of the type and readable at a glance, and the default is the safe one: a field is non-null unless it says <code>?</code>, so absence is something you opt INTO. No <code>Optional[T]</code> wrapping is needed; the comparison <code>v == null</code> is natural, and <code>??</code> supplies a fallback at the point of use.</p>
-<p class="down"><strong>Downside</strong> The default is the safe one — a field is non-null unless its type says <code>?</code> — but nothing forces you to discharge a nullable at the point of use, and writing <code>null</code> into a non-null slot is a warning rather than a refusal. Python with mypy and <code>Optional[T]</code> annotation gives static guarantees that loft's runtime checks do not. Python's <code>None</code> also participates in truthiness testing (<code>if not email:</code>), pattern matching, and <code>or</code> chaining in ways that loft's null does not support.</p>
+<p class="down"><strong>Downside</strong> The default is the safe one — a field is non-null unless its type says <code>?</code> — but nothing forces you to discharge a nullable at the point of use, and writing <code>null</code> into a non-null slot is a warning rather than a refusal. Python with mypy and <code>Optional[T]</code> annotation gives static guarantees that loft's runtime checks do not.</p>
 </div>
 
 <h2 id="structs">3. Structs vs classes and dicts</h2>
@@ -101,7 +101,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.</p>
-<p class="down"><strong>Downside</strong> No inheritance, no properties or descriptors. Printing needs no <code>__repr__</code> — <code>"{p}"</code> renders every field — and a struct can overload operators by defining them (<code>OpAdd</code> for <code>+</code>, <code>OpEq</code> for <code>==</code>, <code>OpLt</code> for <code>&lt;</code>). But <code>==</code> on a <code>struct</code> compares identity until it defines <code>OpEq</code>, where Python's <code>@dataclass</code> generates a field-by-field <code>__eq__</code> for you; a <code>value struct</code> compares its fields without one. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.</p>
+<p class="down"><strong>Downside</strong> No inheritance, no properties or descriptors. Printing needs no <code>__repr__</code> — <code>"{p}"</code> renders every field — and <code>==</code> compares every field with no <code>__eq__</code> written, as <code>@dataclass</code>'s generated one does (<code>&amp;a == &amp;b</code> asks what Python's <code>is</code> asks). A struct can overload operators by defining them (<code>OpAdd</code> for <code>+</code>, <code>OpEq</code> for <code>==</code>, <code>OpLt</code> for <code>&lt;</code>). Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.</p>
 </div>
 
 <h2 id="loops">4. <code>while</code> loop — yes, and <code>while true</code>; no <code>while ... else</code></h2>
@@ -173,8 +173,8 @@ s.<span class="fn-call">area</span>();   <span class="cm">// dispatches on the r
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Each variant's behaviour lives in its own small, named function — easy to read, easy to navigate in an editor. Adding a new shape only requires a new <code>fn area(self: NewShape)</code> with no changes to existing code or a central dispatch function. The compiler warns when a variant has no implementation for a called method.</p>
-<p class="down"><strong>Downside</strong> Unlike Rust's <code>match</code>, loft does not enforce exhaustiveness — a missing variant implementation produces only a warning, not a compile error. Python 3.10+ structural pattern matching (<code>match</code>/<code>case</code>) fully destructs the matched value and is exhaustive when <code>case _:</code> is present. Python also supports inheritance-based polymorphism (<code>class Circle(Shape)</code>) and abstract base classes, giving far richer dispatch options.</p>
+<p class="up"><strong>Upside</strong> Each variant's behaviour lives in its own small, named function — easy to read, easy to navigate in an editor. Adding a new shape only requires a new <code>fn area(self: NewShape)</code> with no changes to existing code or a central dispatch function. Calling a method on a value held as the enum is refused until every variant has an implementation, or the enum has a fallback (<code>fn area(self: Shape)</code>).</p>
+<p class="down"><strong>Downside</strong> A missing implementation surfaces at the first call through the enum, not where the variant is declared, and an empty-body stub answers the type's default rather than anything like <code>None</code>. Python 3.10+ structural pattern matching (<code>match</code>/<code>case</code>) fully destructs the matched value and is exhaustive when <code>case _:</code> is present. Python also supports inheritance-based polymorphism (<code>class Circle(Shape)</code>) and abstract base classes, giving far richer dispatch options.</p>
 </div>
 
 <h2 id="formatting">6. String formatting — embedded expressions</h2>
@@ -198,8 +198,8 @@ pad  = <span class="st">f"{count:08}"</span></code></pre>
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> All loft strings are implicitly format strings — no <code>f</code> prefix needed. Inline <code>for</code> loops inside <code>{}</code> produce a bracketed list (<code>[2,4,6]</code>) without a separate join. Format specifiers mirror Python's f-string mini-language: width, precision, sign, alignment, zero-padding, and radix (<code>#x</code>, <code>#o</code>, <code>b</code>) all work on integers and on floats alike: <code>{5.25:+}</code> is <code>+5.25</code> and <code>{5.25:08}</code> is <code>00005.25</code>.</p>
-<p class="down"><strong>Downside</strong> Python f-strings accept arbitrary expressions: method calls (<code>{obj.method():.2f}</code>), ternary expressions (<code>{"yes" if ok else "no"}</code>), and <code>join</code> operations inline. Loft restricts what can appear inside <code>{}</code>. Python also supports conversion flags (<code>!r</code> for repr, <code>!s</code> for str, <code>!a</code> for ASCII) and the <code>=</code> debug specifier (<code>{x=}</code> prints <code>x=42</code>); loft has none of these.</p>
+<p class="up"><strong>Upside</strong> All loft strings are implicitly format strings — no <code>f</code> prefix needed. Inline <code>for</code> loops inside <code>{}</code> produce a bracketed list (<code>[2,4,6]</code>) without a separate join. Format specifiers mirror Python's f-string mini-language: width, sign, alignment and zero-padding work on integers and floats alike, precision on floats, and radix (<code>#x</code>, <code>#o</code>, <code>b</code>) on integers: <code>{5.25:+}</code> is <code>+5.25</code> and <code>{5.25:08}</code> is <code>00005.25</code>.</p>
+<p class="down"><strong>Downside</strong> Both accept an expression inside the braces — a method call with a specifier (<code>{obj.method():.2}</code>), an <code>if</code> expression (<code>{if ok {"yes"} else {"no"}}</code>), a <code>join</code>. Python also supports conversion flags (<code>!r</code> for repr, <code>!s</code> for str, <code>!a</code> for ASCII) and the <code>=</code> debug specifier (<code>{x=}</code> prints <code>x=42</code>); loft has none of these.</p>
 </div>
 
 <h2 id="collections">7. Collections — typed and built-in</h2>
@@ -267,7 +267,7 @@ shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> n
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's <code>nonlocal</code> does. Both long-form (<code>fn(x: integer) -&gt; integer { x * 2 }</code>) and short-form (<code>|x| { x * 2 }</code>) lambdas are supported. Named function references (<code>fn name</code>) are compile-checked. Higher-order functions (<code>map</code>, <code>filter</code>, <code>reduce</code>) accept both lambdas and fn-refs.</p>
-<p class="down"><strong>Downside</strong> You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a <code>&amp;</code> parameter cannot be captured at all, and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (<code>[x + offset for x in v]</code>) are shorter than <code>map(v, fn(x) { x + offset })</code>.</p>
+<p class="down"><strong>Downside</strong> You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (<code>[x + offset for x in v]</code>) are shorter than <code>map(v, fn(x) { x + offset })</code>.</p>
 </div>
 
 <h2 id="exceptions">9. No exception handling — file errors use <code>FileResult</code></h2>
@@ -363,10 +363,10 @@ total = <span class="bi">sum</span>(results)
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Built into the language — no import, no boilerplate. The GIL does not apply; worker threads run on separate OS threads inside the same process. Results arrive in the original vector order. The compiler validates the worker function signature at the call site. The thread count is set per call, making it easy to tune for the hardware.</p>
-<p class="down"><strong>Downside</strong> Workers can return primitives (<code>integer</code>, <code>long</code>, <code>float</code>, <code>boolean</code>), <code>text</code>, and inline enums — but not struct references. Context must be embedded as fields in the element struct; workers cannot capture local variables. Python's <code>ProcessPoolExecutor</code> works with any picklable object and gives full control over timeouts, cancellation, and error propagation.</p>
+<p class="down"><strong>Downside</strong> A worker is a named function, not a lambda, and context from the calling scope reaches it only as extra <em>scalar</em> arguments: each worker runs on its own copy of the heap, so it cannot reach a struct or vector of the caller's. Python's <code>ProcessPoolExecutor</code> works with any picklable object and gives full control over timeouts, cancellation, and error propagation.</p>
 </div>
 
-<h2 id="generics">11. Generic functions — pass-through only, no duck typing</h2>
+<h2 id="generics">11. Generic functions — interface bounds, no duck typing</h2>
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
@@ -439,7 +439,7 @@ T = <span class="fn-call">TypeVar</span>(<span class="st">"T"</span>)
 <span class="cm">// `loft install` fetches the rest from a signed registry.</span>
 
 <span class="cm">// Built-in: text, math, file I/O, collections,</span>
-<span class="cm">//           logging, threading, image, lexer/parser</span></code></pre>
+<span class="cm">//           logging, threading, lexer/parser</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -454,8 +454,8 @@ T = <span class="fn-call">TypeVar</span>(<span class="st">"T"</span>)
 </div>
 </div>
 <div class="verdict">
-<p class="up"><strong>Upside</strong> Zero external dependencies — the interpreter is a single self-contained binary. Deployment is copying one file. There is no <code>requirements.txt</code>, no virtual environment, no version conflict, and no supply-chain risk. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, image handling, and a full lexer/parser framework.</p>
-<p class="down"><strong>Downside</strong> Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs. Any data science, web development, database integration, or protocol implementation task will require reimplementing from scratch what Python solves with a single <code>pip install</code>. For these domains, loft is the wrong tool today.</p>
+<p class="up"><strong>Upside</strong> The interpreter is a single self-contained binary with the standard library inside, so a program that needs nothing else deploys by copying one file, with no virtual environment. What it does need, <code>loft.toml</code> declares and <code>loft install</code> fetches from a signed registry. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, and a full lexer/parser framework; image handling is the registry's <code>imaging</code> package.</p>
+<p class="down"><strong>Downside</strong> Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single <code>pip install</code>. For these domains, loft is the wrong tool today.</p>
 </div>
 
 <h2 id="exponentiation">14. Exponentiation with <code>**</code> or <code>pow()</code>; <code>^</code> is XOR</h2>

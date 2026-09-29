@@ -206,7 +206,7 @@ loft-level existence check.
 | `is_file(path: text) -> boolean` | Returns `true` if the path exists and is a regular file. |
 | `list_dir(path: text) -> vector<text>?` | Entry names (base names, sorted) of a directory. **Null** when the path is missing or is not a readable directory; `[]` means the directory really is empty. Discharge with `?? []`. |
 | `read_bytes(path: text) -> vector<u8>?` | Reads the whole file as raw bytes. **Null** when the file is missing or unreadable; `[]` means the file really is empty. Binary-exact (round-trips with `write_bytes`). Discharge with `?? []`. |
-| `file_map(path: text) -> vector<u8>?` | Maps the whole file READ-ONLY without copying it: the vector's bytes are the file's, mapped for as long as the vector lives. **Null** when missing or unreadable; `[]` for an empty file. Every read works as on any `vector<u8>`; a write is refused at run time (`write_to_locked_store`) — copy first (`w = v[0..len(v)]`). |
+| `file_map(path: text) -> vector<u8>?` | Maps the whole file READ-ONLY without copying it: the vector's bytes are the file's, mapped for as long as the vector lives. **Null** when missing or unreadable; `[]` for an empty file. Every read works as on any `vector<u8>`, and a slice is a view of the same bytes; a write to either is refused at run time — copy first (`w = v`, a bind copies). |
 | `write_bytes(path: text, bytes: vector<u8>) -> boolean` | Writes raw bytes to a file, truncating existing content; `true` on success. |
 | `set_file_size(self: File, size: integer) -> FileResult` | Truncates or extends a file to exactly `size` bytes. |
 

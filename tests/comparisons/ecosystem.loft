@@ -13,4 +13,4 @@
 // `loft install` fetches the rest from a signed registry.
 
 // Built-in: text, math, file I/O, collections,
-//           logging, threading, image, lexer/parser
+//           logging, threading, lexer/parser

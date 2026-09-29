@@ -152,10 +152,10 @@
   slice = txt[<span class="nm">0..1</span>];
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ch == <span class="ch">'h'</span>, <span class="st">"indexing returns a character"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(slice == <span class="st">"h"</span>, <span class="st">"slicing returns text"</span>);</code></pre>
-<p>Building text from characters requires format interpolation:</p>
+<p>A character appends to text directly:</p>
 <pre><code>  result = <span class="st">""</span>;
-  <span class="kw">for</span> c <span class="kw">in</span> <span class="st">"abc"</span> { result += <span class="st">"{c}"</span>; }
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(result == <span class="st">"abc"</span>, <span class="st">"characters must be formatted into text"</span>);</code></pre>
+  <span class="kw">for</span> c <span class="kw">in</span> <span class="st">"abc"</span> { result += c; }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(result == <span class="st">"abc"</span>, <span class="st">"`+=` appends a character to text"</span>);</code></pre>
 <h2 id="format-strings-braces-are-always-interpreted">Format strings: braces are always interpreted</h2>
 <p>Every string literal in loft is a format string. Literal braces must be escaped as <code>{{</code> and <code>}}</code>:</p>
 <pre><code>  n = <span class="nm">42</span>;
@@ -208,10 +208,10 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(plain_tile.palette_pick == <span class="nm">0</span>, <span class="st">"an omitted field takes the type's zero"</span>);
   tile = <span class="en">Tile</span> { name: <span class="st">"grass"</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile.palette_pick == -<span class="nm">1</span>, <span class="st">"a declared default answers instead: {tile.palette_pick}"</span>);</code></pre>
-<h2 id="a-field-only-some-variants-declare-reads-another-variant-s-bytes">A field only some variants declare reads another variant's bytes</h2>
-<p>Enum payloads are named fields you read straight — <code>shape.radius</code>. Where several variants declare the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, the access resolves at compile time to the first variant that has it, and a value of any other variant reads that slot anyway: the tag is never consulted, so the read answers another variant's bytes typed as this one's. loft warns (<code>warning[variant-field-unchecked]</code>); bind the field in a <code>match</code> arm, which is per-variant and cannot reach the wrong one.</p>
+<h2 id="a-field-only-some-variants-declare-answers-null-on-the-others">A field only some variants declare answers null on the others</h2>
+<p>Enum payloads are named fields you read straight — <code>shape.radius</code>. Where every variant declares the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, a value of any other variant has no such field: the read answers null, although the field's type does not say it can, and a write to it is silently dropped. loft warns (<code>warning[variant-field-unchecked]</code>); bind the field in a <code>match</code> arm or an <code>is</code> test, which is per-variant and cannot reach the wrong one.</p>
 <h2 id="a-conditional-yield-in-a-loop-runs-eagerly-on-native">A conditional <code>yield</code> in a loop runs eagerly on --native</h2>
-<p>A generator is suspended at each <code>yield</code> on the interpreter.  On --native a <code>for</code> or <code>while</code> loop is too when its one <code>yield</code> sits on the body's straight line; a yield inside an <code>if</code> or <code>match</code>, two yields in one iteration, a nested loop or a <code>continue</code> runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless <code>while true { if ready { yield x; } }</code> never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional: <code>while true { …; yield x; }</code> is lazy on both backends.</p>
+<p>A generator is suspended at each <code>yield</code> on the interpreter.  On --native a <code>for</code> or <code>while</code> loop is too when its one <code>yield</code> sits on the body's straight line; a yield inside an <code>if</code> or <code>match</code>, two yields in one iteration, a nested loop, a <code>continue</code>, or a yield of a struct, vector or tuple runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless <code>while true { if ready { yield x; } }</code> never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional and yield a number or a text: <code>while true { …; yield x; }</code> is lazy on both backends.</p>
 <h2 id="xor-is-not-exponentiation">XOR is <code>^</code>, not exponentiation</h2>
 <p>Unlike some languages where <code>^</code> means "power", in loft <code>^</code> is bitwise XOR. For exponentiation use the <code>**</code> operator (<code>2 ** 10 == 1024</code>, <code>2.0 ** 3.0 == 8.0</code>) or the <code>pow()</code> function. Watch one precedence footgun: a leading <code>-</code> binds TIGHTER than <code>**</code>, so <code>-x ** y</code> raises the NEGATED BASE. loft warns on the bare spelling; write the parentheses for whichever of the two you mean.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((<span class="nm">0b1010</span>^<span class="nm">0b1100</span>) == <span class="nm">0b0110</span>, <span class="st">"^ is XOR"</span>);
@@ -427,10 +427,10 @@ fn main() {
   slice = txt[0..1];
   assert(ch == 'h', "indexing returns a character");
   assert(slice == "h", "slicing returns text");
-  // Building text from characters requires format interpolation:
+  // A character appends to text directly:
   result = "";
-  for c in "abc" { result += "{c}"; }
-  assert(result == "abc", "characters must be formatted into text");
+  for c in "abc" { result += c; }
+  assert(result == "abc", "`+=` appends a character to text");
 
   // ## Format strings: braces are always interpreted
   // Every string literal in loft is a format string. Literal braces must
@@ -547,25 +547,26 @@ fn main() {
   tile = Tile { name: "grass" };
   assert(tile.palette_pick == -1, "a declared default answers instead: {tile.palette_pick}");
 
-  // ## A field only some variants declare reads another variant's bytes
+  // ## A field only some variants declare answers null on the others
   // Enum payloads are named fields you read straight — `shape.radius`. Where
-  // several variants declare the same name and type it is ONE slot and each
-  // variant reads its own value. Where only SOME declare it, the access
-  // resolves at compile time to the first variant that has it, and a value of
-  // any other variant reads that slot anyway: the tag is never consulted, so
-  // the read answers another variant's bytes typed as this one's. loft warns
-  // (`warning[variant-field-unchecked]`); bind the field in a `match` arm,
-  // which is per-variant and cannot reach the wrong one.
+  // every variant declares the same name and type it is ONE slot and each
+  // variant reads its own value. Where only SOME declare it, a value of any
+  // other variant has no such field: the read answers null, although the
+  // field's type does not say it can, and a write to it is silently dropped.
+  // loft warns (`warning[variant-field-unchecked]`); bind the field in a
+  // `match` arm or an `is` test, which is per-variant and cannot reach the
+  // wrong one.
 
   // ## A conditional `yield` in a loop runs eagerly on --native
   // A generator is suspended at each `yield` on the interpreter.  On --native
   // a `for` or `while` loop is too when its one `yield` sits on the body's
   // straight line; a yield inside an `if` or `match`, two yields in one
-  // iteration, a nested loop or a `continue` runs the whole loop before the
-  // first value is handed out.  The values agree, the side effects do not —
-  // and an endless `while true { if ready { yield x; } }` never hands out a
-  // value on --native, it runs until memory runs out.  Keep the yield
-  // unconditional: `while true { …; yield x; }` is lazy on both backends.
+  // iteration, a nested loop, a `continue`, or a yield of a struct, vector or
+  // tuple runs the whole loop before the first value is handed out.  The values
+  // agree, the side effects do not — and an endless
+  // `while true { if ready { yield x; } }` never hands out a value on --native,
+  // it runs until memory runs out.  Keep the yield unconditional and yield a
+  // number or a text: `while true { …; yield x; }` is lazy on both backends.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

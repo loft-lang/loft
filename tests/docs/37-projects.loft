@@ -49,9 +49,10 @@
 //       assert(greet("Ada") == "hello, Ada!", "greet builds the sentence");
 //     }
 //
-// A bare 'use greeter;' already brings in every 'pub' name, and 'use greeter::*;'
-// says the same thing out loud — either way 'greet("Ada")' works. What the other
-// forms buy you is a say in WHICH names arrive: 'use sums::add' takes one name
+// 'use greeter::*;' brings in every 'pub' name, which is why 'greet("Ada")' works
+// bare. A bare 'use greeter;' brings in only the prefix, so there you would write
+// 'greeter::greet("Ada")'. The selective forms give you a say in WHICH names
+// arrive: 'use sums::add' takes one name
 // from a package, and 'use sums::(add, subtract)' takes a group. Taking only
 // what you name is the stronger position, because a package that later GROWS a
 // name cannot then collide with one of yours.
