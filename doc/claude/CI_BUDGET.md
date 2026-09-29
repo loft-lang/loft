@@ -452,6 +452,25 @@ compiler ACCEPTS can break a cell in a subject it never names (a new refusal bro
 in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
 fixture, a derived row, formatting or a lint attribute is not that.
 
+### Sizing the checks for a performance change
+
+Size the local checks to how far the change reaches and how quietly it could fail.
+A performance rewrite that computes the same thing through the same functions, and fails
+LOUDLY when its one risk goes wrong, needs four things.  First, its guard: hand-computed cells
+aimed at that risk, falsified once by planting the defect.  Second, the switch back to the old
+form, which (R-Switch) requires anyway.  Third, `find_problems.sh --changed`.  Fourth, one
+timing.  Then push; the PR's `ci.yml` runs the full gate on the exact commit, and it is the
+one gate the change owes for a new op.
+
+A local full suite, a corpus A/B, a second planted defect or a round-trip check is warranted
+only when the change reaches every run, or the paths the instruments depend on, or when its
+failure would be SILENT.  Measured 2026-09-29: the interpreter's operand fusion
+(superinstructions) got its guard, two planted defects, a 1,876-script fused/unfused A/B, a
+round-trip check and a full suite.  Only the guard and one plant were owed.  A wrong operand
+position breaks nearly every loop, as a wrong value or a hang, which the guard shows on its
+first run.  The fast stack path the same day did reach every interpreted run and every
+instrument's checked path, so its one full suite was owed.
+
 **The pre-flight** runs in `ci-run.sh start` and refuses to queue a gate that would stop on one
 of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygiene` and
 `frontend_counts` through nextest — seconds of tests, minutes of compiling when the release
