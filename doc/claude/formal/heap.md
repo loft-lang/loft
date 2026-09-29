@@ -486,7 +486,7 @@ installed, which the frame does own.
              are not ordered that way — a hook that does not run leaves the resource open,
              and a hook that runs twice closes a handle the author already closed, which is
              the author's own use-after-free.  So a change that converts one into the other
-             is not progress and must not be landed as an improvement (measured 2026-09-10 on
+             is not progress and must not be landed as an improvement (measured on
              loft#1515's shared-destination shape: giving `drop_transferred` a per-path merge
              turns every lost hook in that family into a doubled one).  The consequence for
              the cures below is that "err toward the safe side while the real fix is designed"
@@ -607,7 +607,7 @@ use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
-identical on both backends.  The copy rules conform since 2026-09-24: `(H-Copy-Refuse)` and
+identical on both backends.  The copy rules conform: `(H-Copy-Refuse)` and
 `(H-Spent)` are compile-time errors (`D-heap-8`, closed), `(H-Copy-Lease)` runs `OpCopy` on every
 copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D-heap-11`.
 `tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each

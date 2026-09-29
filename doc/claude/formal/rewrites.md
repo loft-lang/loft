@@ -436,7 +436,7 @@ re-derives the header at every access.  Sites: `hoist::vector_path`,
 `hoist::vector_candidates`, `Output::begin_vector_hoist`, the registry's
 `FusedElementReadEmitter`, `FusedElementWriteEmitter` and `HoistedLengthEmitter`.
 
-**(R-PushFill)'s window clause, in words.** 2026-09-21, @PLN158 V1–V3
+**(R-PushFill)'s window clause, in words.**
 (`bench/portal/analysis/vector-build.md`).  A push through the header cost a capacity test in
 bytes, a store resolved through `allocations[store_nr]`, the element, the length bumped in
 the header AND written back to the record — 2.3–3.1 ns an element against a Rust `Vec`'s
@@ -487,7 +487,7 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
 
-**(R-PushFill)'s record clause, in words.** 2026-09-22, @PLN158 round 4
+**(R-PushFill)'s record clause, in words.**
 (`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
 its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
 edits += [Paint { … }] } else { edits += [Wall { … }] } }`, and every record went through
@@ -526,7 +526,7 @@ windowed-mint address in `Output::bind_record_ptr`, the registry's `NewRecordEmi
 `push_record_window_grow`.  Cells `tests/scripts/158-record-window.loft` (r1–r3, r5, r9
 and `build` a window; r4, r7, r8, r10, r11 the declines), pins `tests/record_window.rs`.
 
-**(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
+**(R-Base)'s join clause, in words.**
 (`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar
 getter sits on the element address and the two fuse — but with the `?` the getter's operand
 is a `Block`, so the fused read answered `None`, the join ran on every pass and its result was
@@ -557,7 +557,7 @@ Sites: `hoist::fused_join_read`, `Output::fused_join_read`, `pre_eval::collect_p
 `FusedElementReadEmitter`, `vector::elem_field_at`, `vector::field_of`.  Cells
 `tests/scripts/158-join-read.loft` j1–j11, pins `tests/join_read.rs`.
 
-**(R-Base)'s growth condition, in words.** 2026-09-21, found while building the window.
+**(R-Base)'s growth condition, in words.**
 `growth_free` counted a loop's pushes and its MINT PUSHES — the mints that earned a push
 header — so a mint left on its templates read as no growth, and a base was bound for a
 sibling field of the record whose store that mint was growing.  Reachable in the default
@@ -631,7 +631,7 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
-**The text clause of (R-Base)** (2026-09-22, @PLN158 round 4): a TEXT element read —
+**The text clause of (R-Base)**: a TEXT element read —
 `OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
 that holds P's header and element base reads the element's record number through the
 base (one bounds test, one `u32` load) and slices the text off the vector's store's DATA
@@ -652,7 +652,7 @@ past-the-end arm answering the element before it); pins `tests/text_borrow.rs`. 
 `Output::bind_view_header`, the arm in `LazySplitNextEmitter`, the pre-eval exemption in
 `Output::collect_pre_evals_inner`, `vector::text_elem_at`, `vector::text_at`,
 `vector::text_span_of`, `Store::text_span`.
-**The link clause** (2026-09-22): a hoist's ROOT is loop-invariant only while nothing the
+**The link clause**: a hoist's ROOT is loop-invariant only while nothing the
 root LINKS to is rebound — `g = &e` reads whatever `e` holds now, so a rebind of `e` in
 the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::rebound_vars`
 closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
@@ -683,7 +683,7 @@ discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a re
 buffer may be a record the caller offered (R-Callee's second half carries that case).
 Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`; cells
 `tests/scripts/158-heap-discharge-buffer.loft`.  Site: `hoist::null_buffer_alloc`.
-**The copy clause** (2026-09-21, @PLN158 R5).  A consumer writes the copy-out / mutate /
+**The copy clause**.  A consumer writes the copy-out / mutate /
 write-back a Rust or C author writes — `e = ents[i]?; e.energy += e.speed; …; ents[i] = e`.
 In loft `e` is a VIEW of `ents[i]` (`(B-View)`), so the last statement copies the element
 onto itself, which both backends already make a no-op (`data == to`).  But the whole-record
@@ -704,7 +704,7 @@ now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-pl
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
 
-**The read clause** (2026-09-27, @PLN158).  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
+**The read clause**.  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
 scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the
 first read), each in place; nothing is claimed, grown or freed, so no header, base or record
 address can go stale across it.  `OpCreateStack(t)` of a scalar local is on the list with it:
@@ -867,7 +867,7 @@ the same gate admits it once the `Optional` is peeled — the loop body reads ev
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
 `forview` probe — `for e in v { t += e.a * 2 + e.b - (e.f as integer) }` over 100 000 records — 562–584 → 389–405 µs per pass, −31 %, the value hand-checked).  No lane row moved: the one such loop on the drawing bench (`polygon_generic`'s `for e in edges`) appends to `pg_table` and so declines by design.
 
-*The base clause (2026-09-21, @PLN158 R2).*  A `for e in v` loop built a `DbRef` for its
+*The base clause.*  A `for e in v` loop built a `DbRef` for its
 element and then resolved the store a second time to turn that `DbRef` back into an address
 — per element, in a loop that already held the address of element 0.  Hand-priced on the
 emitted Rust before anything was built (`record_walk`, 32.0 µs per call): the address from
@@ -889,7 +889,7 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 `hoist::iteration_head`, `Output::held_iteration_base`, `Output::bind_record_ptr`, the
 `BIND_RECPTR_BASE` rule in `scripts/emission_audit.py`.
 
-*The path clause (2026-09-21, @PLN158 R3).*  Only a DIRECT field of a view counted as a
+*The path clause.*  Only a DIRECT field of a view counted as a
 fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
 bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
 and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  Priced
@@ -910,7 +910,7 @@ a nested read now walks the path the unrewritten way and compares
 use), `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`,
 `vector::path_read_verify`.
 
-*The mint clause (2026-09-21, @PLN158 R4).*  An address is promised for the whole
+*The mint clause.*  An address is promised for the whole
 remainder of a block, and a minted element never got one: its remainder holds the NEXT
 append, which grows a store (`_elm_N`: *"the remainder may grow a store"*).  So every field
 of an appended record resolved the store again — a store lookup, a record-validity read and
@@ -938,7 +938,7 @@ elements) is the cell that can: under the sabotage it answers `120 125094 21420`
 `tests/mint_window.rs`.  Sites: `hoist::mint_window`, `hoist::view_extent_verdict`,
 `Output::bind_record_ptr`, `Output::close_ptr_windows_before`.
 
-*The order clause (2026-09-21, @PLN158 R6).*  The free-before-use question was asked per
+*The order clause.*  The free-before-use question was asked per
 top-level STATEMENT of the extent, and a lookup loop's whole body is one statement — so
 `for c in m.chunks { if c.cx == cx && … { return c.hexes[i]?.h } }`, where the `return`
 releases the `?` discharge buffer after the last read of `c`, read as *"frees and uses in
@@ -962,7 +962,7 @@ state those facts fail.  No switch of its own — it refines `(R-RecPtr)`'s admi
 `tests/leaving_free.rs`.  Sites: `hoist::free_before_use`, `hoist::free_before_use_by`,
 `hoist::view_extent_verdict`.
 
-*The enum clause (2026-09-21, @PLN158 R7).*  `hoist::plain_record_type` answers `None` for
+*The enum clause.*  `hoist::plain_record_type` answers `None` for
 every enum, and its reason — *"their payload offsets are a layout question this key does not
 model"* — is `(R-Scalar)`'s: a hoisted scalar is keyed by (type, offset), and two variants
 put different fields at one offset.  But the predicate was read by every rewrite, so a
@@ -1055,13 +1055,13 @@ replacement, whose variable numbers are the caller's), the key by
 call ask.  A scalar input still needs a leaf variable — its key carries a variable,
 not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
 other: its write set is its buffer's type whole, which no parameter's field shares.
-**The address half** (2026-09-18, (R-RecPtr)): a scalar input the caller holds no VALUE
+**The address half** ((R-RecPtr)): a scalar input the caller holds no VALUE
 for — the record changes per iteration — but whose record ADDRESS the caller's block holds
 is read through that address at the call (`Output::rec_ptr_read`), so `edge_x(pg_cur, y)`
 takes its twin with three loads for arguments where the plain call read three store
 resolutions inside; and handing `r` to such a twin counts as a use of `r`'s address for
 (R-RecPtr)'s admission.
-**The base half** (2026-09-18, (R-Base)'s twin clause): a header input alone left the
+**The base half** ((R-Base)'s twin clause): a header input alone left the
 twin resolving the store per element — `composite`'s `get_pixel`/`set_pixel` twins ran
 `get_elem_hoisted` through `allocations[k].ptr` on every pixel, and LLVM cannot hoist that
 load (the pointer is loaded from memory the twin's own writes may alias; LTO and a
@@ -1163,7 +1163,7 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
-*The rebound clause (2026-09-18):* the drawing library's `fronds` declares its point and width
+*The rebound clause:* the drawing library's `fronds` declares its point and width
 vectors per pass of the side loop, and every rebound mover declined the WHOLE loop — so
 neither the side loop nor the `for i` around it hoisted anything (the `for i` was declined a
 second way, by its per-pass `fd_sides` loop buffer's `OpDatabase`).  A rebind from the

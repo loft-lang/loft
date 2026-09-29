@@ -40,7 +40,7 @@ hand), which reclaims in the order of what it costs to lose — the standing swe
 incremental caches, this checkout's whole gate scratch, `cargo sweep` — until 20 GB is free,
 prints one line when it acted and nothing when it did not, and REFUSES below 2 GB so the gate
 stops there instead of reporting truncated object files and missing rlibs as test failures
-(measured 2026-09-28: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
+(measured: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
 alone runs on the checkout's scratch at the start of every gate, and `make sweep-scratch` runs
 it on the checkout's scratch and on `TMPDIR` with the session prune, printing `df` after.  All
 of them touch only loft's own names, only dead pids or aged entries, and never a sibling

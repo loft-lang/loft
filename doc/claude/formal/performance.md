@@ -52,7 +52,7 @@ reader would otherwise use. The bar is stated per routine class (a tree-walking
 interpreter is not held to compiled-Rust time; `--native` is), and the measured table with
 its bar lives with the bench, re-measured each release (`M-perf-pass`).
 
-**The numbers** (owner, 2026-09-17).  The ceiling was 4× — the drawing bench's
+**The numbers** (owner).  The ceiling was 4× — the drawing bench's
 `compare.py --bar` default, and @PLN157's end state — and is 3× now, with a median of 2×
 as the end goal.  The population is the ROUTINES loft ships — stdlib functions and library
 `pub fn`s, each on a workload a real program would run — and grows library by library

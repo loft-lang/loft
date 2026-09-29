@@ -179,11 +179,11 @@ oracle — which is the argument for this section existing.
   the same edge one row deeper, not a second one. *Guard: `tests/scripts/1356-…`.*
 - ✓ **G-Next values / G-Done** — one value per advance (sum 30); exhaustion (take-first-2 ⇒ 1),
   both backends. Nested CALL between yields works too. *Guard: oracle `12`.*
-- ✓ **G-YieldDepth** (restated 2026-09-25) — a nested non-yielding call across a suspension ✓
+- ✓ **G-YieldDepth** — a nested non-yielding call across a suspension ✓
   both backends; a `yield` INSIDE a plain helper is REFUSED on both, so the old rule text
   promised a shape the language rejects and the chapter's conformance line claimed it verified.
   The stackful frame's realised surface is `yield from`, which shipped.
-- ✓ **G-Delegate** (new 2026-09-25) — the sub-generator is built once, its values pass through,
+- ✓ **G-Delegate** — the sub-generator is built once, its values pass through,
   and the statements before the `yield from` run once per ACTIVATION.  *Guard:
   `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`; arguments and exhaustion
   in `tests/scripts/1277-…`.*

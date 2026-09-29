@@ -4608,8 +4608,8 @@ std::thread_local! {
 ///
 /// `ownership_of` re-derives the whole function's definitions per question, and the native
 /// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
-/// square of its size: a 1 500-function program spent 2 s in codegen where the build of
-/// 2026-09-10 spent 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
+/// square of its size: a 1 500-function program spent 2 s in codegen where it had spent
+/// 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
 /// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
 /// the emission of a single function — keyed by this `Data` and this function, and it restores
 /// whatever it replaced when dropped, so a nested span leaves the outer one intact.

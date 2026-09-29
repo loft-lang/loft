@@ -55,7 +55,7 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
-**`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON since 2026-09-24, parse time +
+**`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
 of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS
 `x`, so the callee's exit literal writes x's record in place (a vector field that views the
@@ -68,7 +68,7 @@ field, a leak or a double free out of a local rebound from a call that takes it.
 at ANOTHER field of the parameter, a literal-list vector field, a chain exit, a promoted
 buffer, the local handed in twice, a view or witnessed local each decline); the falsifiers
 are `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on the cells.
-**`LOFT_NO_CONST_VIEW=1`** (`@FR-R-Const`, default-ON since 2026-09-25, parse time + scope
+**`LOFT_NO_CONST_VIEW=1`** (`@FR-R-Const`, default-ON, parse time + scope
 pass, BOTH backends) makes a literal-bodied function build its vector on every call again —
 with it off, a zero-parameter function whose whole body is ONE vector literal over literals
 (`fn face_rows() -> vector<integer> { [0, 0, 0, 4, …] }`, the idiom the `const` diagnostics
@@ -85,7 +85,7 @@ program's copy must be its own — and is the first bisect step for a wrong elem
 `LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
 body's shape) and each call admitted or declined; the interpreter and native share the
 rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
-**`LOFT_NO_COPY_VIEW=1`** (`@FR-R-CopyView`, default-ON since 2026-09-26, scope pass, BOTH
+**`LOFT_NO_COPY_VIEW=1`** (`@FR-R-CopyView`, default-ON, scope pass, BOTH
 backends) makes a read-only record copy copy again — with it off, `t = a` of a record, and a
 join `t = if c { a } else { b }`, where t is only READ (a field read), every source is a VIEW
 into a parameter's records (not the parameter itself, which `@FR-R-ValueRecord` may carry as
@@ -98,7 +98,7 @@ each local made a view and each candidate declined with the reason; both backend
 rewrite, so the switch A/B and the cells' hand-computed values
 (`tests/scripts/a-read-only-record-copy-is-a-view.loft`, pinned by `tests/copy_view.rs`) are
 the falsifier.
-**`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON since 2026-09-25, scope pass, BOTH
+**`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON, scope pass, BOTH
 backends) makes a vector rebuilt from a contiguous run of its own elements copy again —
 with it off, `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;` (a history
 truncated to its cursor, its oldest entries dropped) is ONE guarded op: `if 0 <= lo &&

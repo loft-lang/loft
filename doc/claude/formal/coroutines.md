@@ -221,8 +221,7 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 0.**  D-gen-hold opened and closed 2026-09-27 (loft#1708, below); D-gen-lambda opened
-and closed 2026-09-25 (loft#1676, below).
+**OPEN: 0.**  The closed entries are in [coroutines-history.md](coroutines-history.md).
 
 Every deviation this doc has carried is closed; the record is in the companion
 [coroutines-history.md](coroutines-history.md).
@@ -244,7 +243,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   helper that is not itself a generator is REFUSED, identically on both backends — *"yield is
   only allowed inside generator functions (return type must be iterator<T>)"*.
   ⚠ This line read *"a `yield` inside a helper called from the generator produces the value and
-  resumes correctly past the helper"* until 2026-09-25, when it was measured and does not.
+  resumes correctly past the helper"* until it was measured, and it does not.
   [VERIFICATION.md](VERIFICATION.md) had said so in three places — *"deferred G-YieldDepth — a
   `yield` INSIDE a helper (true stackful) needs `yield from`"* — so the two records disagreed
   about the same rule, and this is the one a reader of the rules meets.  A conformance line is a

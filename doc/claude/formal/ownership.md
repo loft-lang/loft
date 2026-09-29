@@ -522,60 +522,10 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-52` (a record function whose abandoned return candidate is promoted onto
-its buffer and which answers ANOTHER function's result through it — `none = F {…}; if k < 0
-{ return none }; if k > 0 { return other(k) }` — freed the promoted local BEFORE the call that
-is handed it as the buffer: the loft#1126 transition free, unguarded, where `(O-Buffer)`'s
-callee clause says every free of the promoted local declines on its entry witness.  The
-interpreter does not reset the freed local, so a callee that fills a live buffer filled the
-freed store, and the caller read whatever took that slot next — another record's text, with
-no diagnostic, loft#1703.  The scope pass's two transition frees now stand down where the
-buffer has an entry witness; the rebind's own free after the call, guarded by that witness
-on both backends, is the one home for the displaced store.  Guard
-`tests/scripts/1703-a-forward-past-an-abandoned-candidate-fills-a-live-buffer.loft`) opened and
-CLOSED 2026-09-27.
-`D-own-51` (a field hoisted out of an in-place literal — `r = Outer { b: o.b }; r`,
-a work-ref typed `ref(Inner)["o"]`, a VIEW of the parameter — was freed at scope exit as a
-work-ref regardless of what it borrowed, releasing the CALLER's record on every call; in a
-loop the caller's pooled buffer was then read back, 46 strict-store violations on both
-backends and a panic in a larger program — loft#1683.  `(O-Derived)` frees a local iff it owns
-its store; the hoist that stages the field now marks a staged struct-typed PROJECTION
-(`is_projection_op`, `(B-View)`) a borrow (`skip_free`) at its mint, so the exit owes it
-nothing.  Keyed on the staged EXPRESSION, and there and not at the exit, because the temp's
-deps are not the fact: a staged WHOLE variable (`Inner { a: a }`) is a copy that owns its
-store while its type carries the source's deps (measured: keying on deps leaked
-`1184-…` and `880-…`), and a pass-2 tuple buffer carries deps the same way (measured:
-exempting every borrowing work-ref at the exit leaked one).  Guard `tests/scripts/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft`)
-opened and CLOSED 2026-09-26.
-`D-own-50` (a record returned by a fn-ref call whose target is UNRESOLVED had no
-decided owner: bound, it was adopted even when it was the caller's capture; inline, it was held
-to frame exit — loft#1659) opened and CLOSED 2026-09-24, below.
-`D-own-49` (an explicit `return` of an ELEMENT published a signature with no
-borrow, so the caller freed the container — loft#1625, and the third container kind of one
-missing record after loft#677 and loft#1140) opened and CLOSED 2026-09-23, below.
-`D-own-48` (a returned vector local rebound by a call inside a loop or a branch
-answered a store its caller never handed in, loft#1599) opened and CLOSED 2026-09-22, below.
-`D-own-47` (a local a `match` statement's arms first assign died at the block
-the lowering wraps the arms in, and was read after it) opened and CLOSED 2026-09-21, below.
-`D-own-46` (a view leaf admitted where the element was not the value's copy on
-every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
-`D-own-43` (the interpreter's rebind of a promoted buffer local frees the
-buffer the caller handed it — masked while such callees receive the null sentinel) opened
-2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below; `D-own-45` (a return that may hand
-back one of several arguments guarded against the first, loft#1550) opened and CLOSED
-2026-09-17, below.  `D-own-42` (a plain local's first bind
-from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
-CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
-and CLOSED 2026-09-17, below; `D-own-40`
-(`(O-Witness)` armed for locals whose assignments do NOT mix, and
-`(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
-value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
-2026-09-10.  Every earlier deviation this doc has carried is closed; the
-record is in [ownership-history.md](ownership-history.md).  `D-own-38` (loft#1388) was
-closed by `(O-Witness)`: every release a captured local owes is now by STORE IDENTITY, with the
-hand-off at the closure build placed ahead of it for `(O-Detach)`'s ordering.  One shape keeps
-a store — a closure capturing a VECTOR inside a loop, because the witness is record-typed — and
-the entry records why the obvious widening is not taken: it answers wrong on `--native`.
+**OPEN: 0.**  Every deviation this doc has carried is closed; the record — `D-own-52` back to
+the first — is in [ownership-history.md](ownership-history.md).  One shape keeps a store: a
+closure capturing a VECTOR inside a loop, because the witness is record-typed; the obvious
+widening answers wrong on `--native` (`D-own-38`).
 
 > **A zero here is a claim to re-measure, and this is what its oracle covers.**  The join
 > family is pinned by three files: `1323-every-arm-of-a-value-branch-has-its-own-binding`

@@ -385,7 +385,7 @@ does not appear fails the file (loft#929), and the check runs even when the file
 diagnostics at all.  **One diagnostic answers one expectation**, in both harnesses: two cells
 expecting the same text need two reports, and under `loft test` a cell's expectation first
 takes a report located in its own function, so a failure names the cell that went quiet
-(loft#1727; `tests/expectation_credit.rs`).
+(`tests/expectation_credit.rs`).
 
 **An expectation claims only what it names.**  Under `loft test` / `--tests` — the path a
 library's CI takes, with `LOFT_DENY_WARNINGS=1` — an `@EXPECT_WARNING` quiets the warnings
@@ -398,8 +398,7 @@ The rule is per ANNOTATION, not per file, and that distinction is the whole of i
 annotation written above a `fn` binds to that function; only one written ahead of every
 `fn`/`struct`/`enum` is file-level.  Both kinds are scored by the same predicate — the
 declared substring must appear in some error the file produced.  Asking instead whether the
-file produced *any* error would credit every annotation in a file that errs anywhere
-(loft#1261).
+file produced *any* error would credit every annotation in a file that errs anywhere.
 
 Two directions have to hold, and only together do they mean anything:
 

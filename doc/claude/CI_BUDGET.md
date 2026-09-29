@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # CI budget — what runs when, where the time goes, what to split
 
-> **Where the 20-minute rule is ENFORCED (2026-09-13).** In the LOCAL gate, not in GitHub CI.
+> **Where the 20-minute rule is ENFORCED.** In the LOCAL gate, not in GitHub CI.
 > `make ci` carries a hard cancel at `CI_BUDGET_SECS` (default 1200s), implemented in
 > `scripts/ci_budget.sh`; a run that passes it is killed, `result.txt` gets
 > `CI-RESULT: CANCELLED`, and the message says to CUT THE WORK rather than raise the number.
@@ -20,7 +20,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > would have said why it ran long.
 >
 > **The same rule holds for a NIGHTLY job that outgrows its limit: the limit stays, and the job
-> does less repeated work** (owner's direction, 2026-09-24).  The valgrind sweep was cancelled at
+> does less repeated work** (owner's direction).  The valgrind sweep was cancelled at
 > its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column
 > showed the stdlib being re-parsed under memcheck in every one of 1 753 runs and a handful of
 > store-ceiling guards running into the per-run limit.  Parsing once (a warm bundle) and planning
@@ -32,7 +32,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > its own gate is the one case where `CI_BUDGET_SECS=... make ci` is the right answer for a
 > single run. That is a fact about the box, not about the diff.
 >
-> **A macOS box is not the Linux gate's twin, and four facts bit on 2026-09-13.**  Its
+> **A macOS box is not the Linux gate's twin, and four facts bit.**  Its
 > `/bin/sh` is bash 3.2: a single quote inside `"${x:+…}"` is read as an opening quote (the
 > recipe died with *unexpected EOF while looking for matching `'`*), and `BASHPID` does not
 > exist.  It ships no `flock` (`brew install flock`; the recipe runs UNSERIALISED without it,
@@ -238,7 +238,7 @@ This document is about the CI runner. A developer's complaint is different — *
 `make ci` costs ten minutes and blocks iteration* — and it has a different answer, so it is
 recorded separately rather than folded in.
 
-**A red gate is not re-run to verify its fix (owner, 2026-09-28).** Once a gate has named the
+**A red gate is not re-run to verify its fix (owner).** Once a gate has named the
 tests it failed, what is left to check is those tests: rerun them alone
 (`cargo test --release --test <binary> <name>`, or `find_problems.sh --changed`) and push.  A
 test whose own retry passed in the gate (`TRY 2 PASS`) is rerun alone too, never by
@@ -247,7 +247,7 @@ restarting the gate.
 **Measured on 24 cores.** Full run: **572 s**, of which `cargo nextest` is ~478–572 s and the
 three builds ~130 s. So the test step is the whole question.
 
-**The thread count is capped by MEMORY as well as cores (2026-09-07).** `make ci` sizes its
+**The thread count is capped by MEMORY as well as cores.** `make ci` sizes its
 build and test parallelism as `nproc / live-gates`, floored at 2 — and now also capped at
 `MemAvailable / 0.7 GiB` (`CI_MEM_JOBS` in the Makefile): a thread's peak is roughly 0.7 GiB
 (rustc for native fixtures, the release build's codegen units), so sizing by cores alone
@@ -272,7 +272,7 @@ KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more 
 journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
 process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
-**A SECOND gate on the box turns native tests RED, not slow (2026-09-22).** With
+**A SECOND gate on the box turns native tests RED, not slow.** With
 `LOFT_GATE_PARALLEL=1`, or with a sibling checkout's gate live while yours starts, the two
 storms of `rustc` meet and the LINKER is what gives: a native cell fails with `native compile:
 error: linking with `cc` failed: exit status: 1`, the harness reports it as a failed test, and
@@ -285,7 +285,7 @@ native red in a loaded gate is a claim to re-run before it is a defect to chase;
 discriminator is a gate on a quiet box, and it costs one run. The load average at the START of
 your gate is what predicts it — `uptime` before `ci-run.sh start`.
 
-**A gate that reports `QUEUED behind another gate` may be queued behind NOTHING (2026-09-10).**
+**A gate that reports `QUEUED behind another gate` may be queued behind NOTHING.**
 `make ci` serialises with `exec 9>/tmp/loft-gate.lock` followed by `flock 9`, and fd 9 is
 INHERITED by every process the gate spawns — including the long-lived `loft` server children some
 tests start (`tests/engine_host_kernel.rs`'s `run_s3_scenario` spawns one per scenario). When such
@@ -507,7 +507,7 @@ one test. The two levers that follow are behavioural, not code:
    `./scripts/find_problems.sh --subject <name>` is seconds; the full gate runs once per change
    whose reach you cannot bound, and a red one is followed by `scripts/ci-run.sh recheck`, not a
    restart (§ After a red gate).  Measured cost of getting this wrong: six full gates in one day
-   on a three-line change, and on 2026-09-28 four in one afternoon on fixes to constants.
+   on a three-line change, and four in one afternoon on fixes to constants.
 
 ⚠ The general lesson is the one this document already teaches about JUnit `time` and did not
 apply to itself: **a recorded measurement is a claim with a date on it.** Re-measure before

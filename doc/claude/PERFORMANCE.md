@@ -396,8 +396,8 @@ exclusive by construction — a user CALL is deliberately not a site, because ti
 would make its ticks inclusive of its callees and one table would then mix inclusive and
 exclusive rows.
 
-**Why counts are the portable tier, and ticks are not.** Measured on an Apple M-series
-(2026-09-12): reading the cycle counter (`mrs cntvct_el0`) costs **0.72 ns** — cheaper than
+**Why counts are the portable tier, and ticks are not.** Measured on an Apple M-series:
+reading the cycle counter (`mrs cntvct_el0`) costs **0.72 ns** — cheaper than
 the `AtomicU64` increment at 1.43 ns, and 20× cheaper than `Instant::now()` at 14.7 ns, so
 the instrument uses the instruction and never `Instant`. But the counter only *advances*
 every **~41.7 ns**: 196 728 of 200 000 back-to-back reads returned the same value, while an
@@ -465,7 +465,7 @@ distribution you read is the instrumented program's, not the shipped one's. Use 
 `compare.py` or `profile.sh`.
 
 That difference is not theoretical, and it is what the instrument is FOR. `lock_curved`'s
-`perf` profile (2026-09-12) read `n_lock_layer` at 77.6 % self and concluded the one target
+`perf` profile read `n_lock_layer` at 77.6 % self and concluded the one target
 was `brush_sample`'s record return — which @PLN157 § V-aa then closed, for −3 %. The
 checkpoint rollup on the same row says why the prize was small:
 
