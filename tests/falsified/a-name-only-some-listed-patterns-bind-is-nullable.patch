@@ -1,0 +1,20 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index aa8832516..394304d7a 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -6336,13 +6336,13 @@ impl Parser {
+                     let opt = Type::optional(tp);
+                     self.vars.set_type(v_nr, opt.clone());
+                     if !first_names.contains(&name) {
+-                        arm_stmts.push(v_set(v_nr, self.null(&opt)));
++                        let _ = &arm_stmts; // MUTATION: no null store
+                     }
+                     for (names_i, (_, stmts_i, _)) in
+                         branch_names.iter().zip(multi_branches.iter_mut())
+                     {
+                         if !names_i.contains(&name) {
+-                            stmts_i.push(v_set(v_nr, self.null(&opt)));
++                            let _ = &stmts_i; // MUTATION: no null store
+                         }
+                     }
+                 }

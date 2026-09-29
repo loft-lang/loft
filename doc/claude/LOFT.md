@@ -2136,7 +2136,9 @@ An element written **after** a `..` takes the same forms as one before it — a 
 literal or a variant pattern (`[Kw { word }, .., End { e }]` binds `e` from the last element;
 guard `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`).
 **One limit worth knowing.** A multi-pattern arm (`A { r }, B { r } => …`) is for enum
-variants only — it does not accept slice patterns.
+variants only — it does not accept slice patterns.  A name only some of its patterns bind
+(`A { r }, B { s } => …`) is nullable in the body — `null` when a pattern without it matched
+(guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`).
 
 ### `is` variant check
 

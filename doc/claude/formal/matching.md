@@ -276,9 +276,9 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **1** — `D-match-10`, a refusal of a program the pattern rules define, found by
-the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`, which it closed,
-and `D-match-11` to `-13`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+OPEN: **0** — the 2026-09-29 rule-led walk of the pattern rules found `D-match-7` to `-13`,
+each a refusal of a program those rules define, and all seven closed the same day; `D-match-14`
+opened and closed with them.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
 The walk's finding is one shape seven times: each rule held on its own and was refused where two
@@ -287,7 +287,7 @@ alternation, a capture a later pattern alone binds, a heap field under a repetit
 a scalar repetition, an iterator of tuples.  Every one was a refusal, none a wrong answer, and
 every one said *"not yet supported"* or named a plan phase, which is how the register read
 `OPEN: 0` over them: a refusal worded as pending work was never entered as a deviation.  The
-open four now say what holds and what to write instead.
+open ones now say what holds and what to write instead.
 
 - **D-match-14 — OPENED AND CLOSED 2026-09-29.** `(P-Rest)` × `(P-Rest)`: a second rest in one
   slice was accepted and the FIRST one's binding dropped without a word — `[..a, ..b]` bound only
@@ -317,14 +317,17 @@ open four now say what holds and what to write instead.
   inside `(a)*` into a `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) was
   refused.  Admitting it answered every value right and freed the SUBJECT: the per-element read of
   a heap field is a view into the subject's store, and typed as an owned value its scope-end free
-  released the subject's record each iteration — visible only to `LOFT_STRICT_STORES=1`, on both
-  backends.  The read now carries the borrow dep a whole element's read carries, and each field
+  released the subject's record each iteration, on both backends — a use-after-free a value check
+  on the projection alone did not see.  The read now carries the borrow dep a whole element's read carries, and each field
   is deep-copied into the projection (`@FR-H-Alloc`)
   (`tests/scripts/a-repetition-collects-a-heap-field-per-element.loft`).
-- **D-match-10 — OPEN (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm granularity, so a capture
-  only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when another pattern matched —
-  as a single-element alternation already answers.  Refused, because the first pattern's shared
-  slots exist before a later pattern shows the name is partial.
+- **D-match-10 — OPENED AND CLOSED 2026-09-29 (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm
+  granularity, so a capture only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when
+  another pattern matched — as a single-element alternation already answered.  It was refused,
+  and so was a capture inside a later pattern's field sub-pattern (`D-match-8`'s refusal).  A
+  name a later pattern adds now gets a shared slot of its own, every pattern that lacks a name
+  stores null into it, and a name some pattern lacks is typed `τ?` before the arm body is
+  parsed.  Guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`.
 - **D-match-9 — OPENED AND CLOSED 2026-09-29.** `(G-Pat-Prec)`'s own example, `a:V | b:W`, did
   not parse: an alternation branch was read as a variant name and failed on the `:`.  A branch's
   capture now joins the alternation's capture unification as a whole-element entry, typed by
@@ -332,8 +335,8 @@ open four now say what holds and what to write instead.
   `tests/scripts/an-alternation-branch-may-capture-the-element-it-matched.loft`.
 - **D-match-8 — OPENED AND CLOSED 2026-09-29.** `(P-Point)` lets a field be a pattern; in a
   multi-pattern arm that was refused in the first listed pattern and failed to parse in a later
-  one.  Each listed pattern's sub-patterns are now its own branch condition; a sub-pattern in a
-  later pattern that BINDS a name is refused by name, since the shared body never reads it.
+  one.  Each listed pattern's sub-patterns are now its own branch condition.  A sub-pattern in a
+  later pattern that BINDS a name was refused by name; `D-match-10` made that name `τ?`.
   Guard `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
 - **D-match-7 — OPENED AND CLOSED 2026-09-29.** `(P-Guard)` × `(P-Multi)`: a guard on a
   multi-pattern arm was refused.  Each listed pattern's arm now carries it beside its own
