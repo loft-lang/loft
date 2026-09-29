@@ -706,7 +706,7 @@ do by looking up the pair in this table:
 | `character` ↔ `text`               | See § String literals | Indexing vs. slicing asymmetry; concatenation via interpolation |
 | `text` (of form `"VariantName"`) → plain enum | Explicit `as` | `"West" as Direction` — the name must match a declared variant |
 | Struct-enum variant → parent enum  | Implicit on assignment | `p: Shape = Circle { r: 1.0 }` works without `as` |
-| Struct-enum variant ← parent enum  | `match` only  | Recover the concrete variant via pattern matching; there is no direct downcast |
+| Struct-enum variant ← parent enum  | `as V` / `as V?` | `if s is V { s as V }` is checked; an unchecked `s as V` warns and a miss answers `V` with its fields defaulted, `s as V?` answers null (`@C131`) |
 | `text` → struct / vector<T>        | Explicit `as` or `.parse` | `raw as Program` or `Program.parse(raw)` |
 
 **Rule of thumb:** conversions that cannot fail (widening numeric,

@@ -145,15 +145,22 @@ fn main() {
   // Direct field access via the shared field name also works.
   assert(lb.name == "important", "direct base field access on Label");
   assert(it.name == "widget", "direct base field access on Item");
-  // --- Variant cast (as EnumVariant): retrieve a typed element from a vector ---
+  // --- Variant cast (as EnumVariant): retrieve a typed element from a vector (@C131) ---
+  // Checked directly — inside `if x is V` the cast needs no default and draws no warning.
   mixed = [
     Circle { radius: 1.5 },
     Rect { width: 4.0, height: 5.0 },
   ];
-  first_c = mixed[0] as Circle;
-  assert(first_c.radius == 1.5, "variant cast as Circle: radius={first_c.radius}");
-  second_r = mixed[1] as Rect;
-  assert(second_r.width == 4.0, "variant cast as Rect: width={second_r.width}");
+  m0 = mixed[0];
+  if m0 is Circle {
+    first_c = m0 as Circle;
+    assert(first_c.radius == 1.5, "variant cast as Circle: radius={first_c.radius}");
+  }
+  m1 = mixed[1];
+  if m1 is Rect {
+    second_r = m1 as Rect;
+    assert(second_r.width == 4.0, "variant cast as Rect: width={second_r.width}");
+  }
 
   // The cells below `main`.  The harness runs ONLY `main` when a file has one, so a
   // zero-parameter function it does not call is compiled and never executed — eight

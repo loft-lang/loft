@@ -83,3 +83,19 @@ or `??` would give "or" a third meaning; a result wrapper is declined by C89.
 answer is a cheaper guard (`else {}`), never a mode split or a compile-time nag.  Decided
 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
 **Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](plans/178-store-else.md) · `formal/heap.md` `(H-WriteOOB)` / `(H-WriteNull)` / `(H-WriteLocked)`, `formal/operational.md` `(E-Uncomp-Seen)` / `(E-Report)`.
+
+## C131 — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
+
+**Decision.** `s as V` casts an enum value to one of its variants.  A miss the compiler can prove —
+the value is known to be another variant — is a compile error.  Otherwise the result is a non-null
+`V`: on a miss, `V` with every field at its default (`(D-Rec)`), never null; a variant with no
+default refuses the cast.  An unchecked cast WARNS (`variant-cast-default`), as an unguarded
+division does, unless it is checked directly — inside `if s is V { … }` — or spelled `s as V?`, the
+checked form, which answers null on a miss.  **Why.** A cast that can answer null while typed
+non-null lied to every check after it (`!c` was reported "always false" and printed true); a
+default keeps the promised type, and the warning says where the default can be taken.
+
+**Revisit when.** A program needs the other variants' data at the cast site — the answer is `match`
+or `is`, not a wider cast.  Decided 2026-09-29 (owner) — [record](DESIGN_DECISIONS-history.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns).
+**Holds at:** `@C131` — `./scripts/idx tag:@C131`.
+**Catalogue:** @F5 (checked cast), @F30 (is variant check) · `formal/types.md` `(N-Cast)`, `(D-Rec)`.

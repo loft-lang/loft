@@ -7934,8 +7934,10 @@ impl Data {
                         self.def(*d_nr).name()
                     ));
                 }
-                if self.def_type(*d_nr) != DefType::Struct {
-                    // An enum-value reference and other non-struct refs default fine.
+                // A struct-enum VARIANT is a record like a struct and defaults the same way,
+                // `(D-Rec)` over its payload fields (its discriminant attribute carries its own
+                // value); other non-struct refs default fine.
+                if !matches!(self.def_type(*d_nr), DefType::Struct | DefType::EnumValue) {
                     return Ok(());
                 }
                 let rec = self.def(*d_nr).name().to_string();

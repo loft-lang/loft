@@ -4202,6 +4202,27 @@ impl Parser {
     /// @PLN116 — build type `tp`'s default VALUE (the single source both `x?` and, in
     /// time, `S{}` consult).  `None` means `tp` has no well-defined default (the caller
     /// raises the compile error).  `tp` is the already-peeled non-null base.
+    /// The discriminant of `target` when `src as target` casts a struct-enum value to one of
+    /// its own variants (`@C131`), else `None`.
+    fn variant_cast_disc(&self, src: &Type, target: &Type) -> Option<i32> {
+        let Type::Reference(v_nr, _) = target else {
+            return None;
+        };
+        if self.data.def_type(*v_nr) != crate::data::DefType::EnumValue {
+            return None;
+        }
+        let Type::Enum(e_nr, true, _) = src.peel_link().base() else {
+            return None;
+        };
+        if self.data.def(*v_nr).parent() != *e_nr {
+            return None;
+        }
+        match self.data.def(*v_nr).attributes().first().map(|a| &a.value) {
+            Some(Value::Enum(nr, _)) => Some(i32::from(*nr)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn build_default(&mut self, tp: &Type) -> Option<(Value, Type)> {
         match tp {
             Type::Integer(_) | Type::Float | Type::Single | Type::Boolean => {
@@ -4330,6 +4351,17 @@ impl Parser {
             {
                 let name = self.data.def(*d_nr).name().to_string();
                 Some(self.subparse_default(&format!("{name} {{}}"), tp))
+            }
+            // A struct-enum VARIANT defaults like a record (`(D-Rec)`): the variant with every
+            // field defaulted, the value `emit_variant_value` builds for an enum's first variant.
+            Type::Reference(d_nr, _)
+                if self.data.def_type(*d_nr) == crate::data::DefType::EnumValue =>
+            {
+                let parent = self.data.def(*d_nr).parent();
+                let name = self.data.def(*d_nr).name().to_string();
+                let mut v = Value::Null;
+                self.emit_variant_value(parent, &name, &mut v);
+                Some((v, tp.clone()))
             }
             _ => None,
         }
@@ -4519,6 +4551,7 @@ impl Parser {
                     (p.line, p.pos)
                 };
                 let nullable_cast = self.lexer.has_token("?");
+                let mut cast_subject: Option<u16> = None;
                 // @PLN25 DN4/DN5 — a scalar cast target has a DOMAIN: its integer value
                 // RANGE, and (when it is a plain non-null scalar) that domain EXCLUDES null.
                 // A value fits `as τ` (no `?`) only if it lies in the domain on BOTH
@@ -4686,16 +4719,42 @@ impl Parser {
                     // cast this diagnostic prescribes as its own cure.
                     let outer_cast = self.in_explicit_cast;
                     self.in_explicit_cast = true;
+                    cast_subject = match code.unspan() {
+                        Value::Var(v) => Some(*v),
+                        _ => None,
+                    };
                     let converted =
                         self.convert(code, cast_src, &tp) || self.cast(code, cast_src, &tp);
                     self.in_explicit_cast = outer_cast;
                     if !converted {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "Unknown cast from {} to {tps}",
-                            &ctp.source_name(&self.data),
-                        );
+                        // `@C131` — two variants of one enum: the value is known to be the first,
+                        // so the cast provably misses.
+                        let variant_parent = |tp: &Type| match tp.peel_link().base() {
+                            Type::Reference(d, _)
+                                if self.data.def_type(*d) == crate::data::DefType::EnumValue =>
+                            {
+                                Some(self.data.def(*d).parent())
+                            }
+                            _ => None,
+                        };
+                        if let (Some(a), Some(b)) = (variant_parent(ctp), variant_parent(&tp))
+                            && a == b
+                        {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "a `{}` is never a `{tps}` — this value is known to be the other \
+                                 variant, so the cast cannot succeed",
+                                &ctp.source_name(&self.data),
+                            );
+                        } else {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "Unknown cast from {} to {tps}",
+                                &ctp.source_name(&self.data),
+                            );
+                        }
                     }
                 }
                 // Post-2c: remember the cast target alias so `f += x as i32`
@@ -4809,6 +4868,81 @@ impl Parser {
                 } else {
                     for d in ctp.depend() {
                         rt = rt.depending(d);
+                    }
+                }
+                // @C131 — an enum value cast to one of its variants (`s as Circle`).  Where the
+                // miss is provable the cast is refused (a known `Rect` has no `as Circle`, above);
+                // where it is not, a miss answers the variant with every field at its default
+                // (`(D-Rec)`) — never null, so the result stays non-null — and the cast WARNS,
+                // as an unguarded division does, unless it is checked directly: inside
+                // `if s is Circle { … }`, or spelled `as Circle?` for null on a miss.
+                if !nullable_cast && let Some(disc) = self.variant_cast_disc(ctp, &rt) {
+                    let proven =
+                        cast_subject.is_some_and(|v| self.variant_proven.contains(&(v, disc)));
+                    let no_default = if proven {
+                        None
+                    } else {
+                        self.data.has_default(&rt).err()
+                    };
+                    if let Some(reason) = no_default {
+                        // No default to answer a miss with: the cast cannot keep its promise, so
+                        // it is refused and the two spellings that need no default are named.
+                        if !self.first_pass {
+                            let vn = rt.source_name(&self.data);
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "`as {vn}` needs a default `{vn}` for a value holding another \
+                                 variant, but {reason} — check the variant first (`if … is {vn} \
+                                 {{ … }}`), or write `as {vn}?` for null on a miss",
+                            );
+                        }
+                    } else if !proven {
+                        if !self.first_pass {
+                            let vn = rt.source_name(&self.data);
+                            let subject = cast_subject.map_or_else(
+                                || "the value".to_string(),
+                                |v| self.vars.name(v).to_string(),
+                            );
+                            diagnostic!(
+                                self.lexer,
+                                Level::Warning,
+                                code = "variant-cast-default",
+                                "`as {vn}` answers a `{vn}` with every field at its default when {subject} \
+                                 holds another variant",
+                            );
+                            self.lexer.fix_last(crate::diagnostics::Fix {
+                                kind: crate::diagnostics::FixKind::Conditional,
+                                title: format!("check the variant first: `if {subject} is {vn} {{ … }}`"),
+                                condition: Some(format!(
+                                    "the other variants need a path of their own rather than a default `{vn}`"
+                                )),
+                                edit: None,
+                                concept: "is variant check",
+                                concept_ref: "@F30",
+                            });
+                            self.lexer.fix_last(crate::diagnostics::Fix {
+                                kind: crate::diagnostics::FixKind::Conditional,
+                                title: "make the cast checked".to_string(),
+                                condition: Some(
+                                    "the result is then null on a miss, and every use of it must \
+                                     handle that"
+                                        .to_string(),
+                                ),
+                                edit: Some(crate::diagnostics::Edit {
+                                    line: type_end.0,
+                                    col: type_end.1,
+                                    len: 0,
+                                    text: "?".to_string(),
+                                }),
+                                concept: "checked cast",
+                                concept_ref: "@F5",
+                            });
+                        }
+                        let mut defaulted = Type::optional(rt.clone());
+                        self.expr_not_null = false;
+                        self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
+                        rt = defaulted;
                     }
                 }
                 // #254: set the current type and fall through to `None` rather

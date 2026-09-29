@@ -5292,6 +5292,36 @@ impl Parser {
         }
     }
 
+    /// The `(variable, discriminant)` an `is` test proves: the lowering `parse_is_variant`
+    /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(v, 0)), disc)`.
+    fn variant_proof_from_condition(&self, test: &Value) -> Option<(u16, i32)> {
+        let Value::Call(eq, args) = test.unspan() else {
+            return None;
+        };
+        if self.data.def(*eq).name() != "OpEqInt" || args.len() != 2 {
+            return None;
+        }
+        let Value::Int(disc) = args[1].unspan() else {
+            return None;
+        };
+        let Value::Call(conv, conv_args) = args[0].unspan() else {
+            return None;
+        };
+        if self.data.def(*conv).name() != "OpConvIntFromEnum" {
+            return None;
+        }
+        let Some(Value::Call(get, get_args)) = conv_args.first().map(Value::unspan) else {
+            return None;
+        };
+        if self.data.def(*get).name() != "OpGetEnum" {
+            return None;
+        }
+        match get_args.first().map(Value::unspan) {
+            Some(Value::Var(v)) => Some((*v, *disc)),
+            _ => None,
+        }
+    }
+
     fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -5386,6 +5416,12 @@ impl Parser {
         if let Some((v, true)) = divisor {
             self.divisor_nonzero.push(v);
         }
+        // `if v is Variant { … }` proves the variant in the THEN branch (THEN-only: the else
+        // side knows only which variant it is NOT), so a cast `v as Variant` there is checked.
+        let variant_base = self.variant_proven.len();
+        if let Some(pair) = self.variant_proof_from_condition(&test) {
+            self.variant_proven.push(pair);
+        }
         // …and the MATH twin, the third family, on the same discipline.
         let math_sign = self.math_sign_proof_from_condition(&test);
         let math_base = self.math_sign_proven.len();
@@ -5430,6 +5466,7 @@ impl Parser {
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
         self.math_sign_proven.truncate(math_base);
+        self.variant_proven.truncate(variant_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {

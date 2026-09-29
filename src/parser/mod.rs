@@ -1375,6 +1375,9 @@ pub struct Parser {
     /// non-zero literal) is provably fit and types NON-null; otherwise it types `τ?`. Same
     /// push/truncate/invalidate discipline as `narrowed_non_null`.
     pub(crate) divisor_nonzero: Vec<u16>,
+    /// `(variable, discriminant)` pairs an enclosing `if v is Variant { … }` proves in its
+    /// THEN branch — a cast `v as Variant` there is checked directly and needs no default.
+    pub(crate) variant_proven: Vec<(u16, i32)>,
     /// `@FR-N-Domain`'s guard licence for the domain-partial MATH family — local-var slots
     /// proven `> 0` (`Pos`) or `>= 0` (`NonNeg`) by an enclosing comparison against zero.
     /// `domain_sign` reads it for a bare `Value::Var`, so a guarded `sqrt(x)` types non-null
@@ -1842,6 +1845,7 @@ impl Parser {
             const_views: std::collections::HashMap::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
+            variant_proven: Vec::new(),
             math_sign_proven: Vec::new(),
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,

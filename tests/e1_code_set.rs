@@ -153,6 +153,12 @@ const CODES: &[(&str, &str)] = &[
          fn old_way(v: integer) -> integer { v + 2 }  #superseded \"new_way\"\n\
          fn main() { print(\"{old_way(1)}\"); }",
     ),
+    // @C131 — an enum value cast to a variant it is not proven to hold.
+    (
+        "variant-cast-default",
+        "enum Sh { C { r: integer }, R { w: integer } }\n\
+         fn main() { s: Sh = R { w: 1 }; c = s as C; print(\"{c.r}\"); }",
+    ),
     (
         "text-parse-may-fail",
         "fn main() { x: integer = \"5\" as integer; print(\"{x}\"); }",

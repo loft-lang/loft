@@ -4572,3 +4572,23 @@ that did not take.
 
 **Moved from the register entry (2026-09-29).**  "A lock fault is not a dropped write" is an owner ruling of 2026-09-28.
 
+## C131 — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
+
+### Question
+
+`s as Circle` on a `Shape` answered null when `s` held another variant, while the result was typed
+non-null `Circle`: `d = t as Circle; !d` drew `redundant-null-negation` ("always false") and printed
+`true`, and the warning tier gates a library's CI.  `"Purple" as Direction` behaves the same way.
+LOFT.md said a variant is recovered by `match` only ("no direct downcast"), yet the cast compiled
+and `tests/scripts/05-enums.loft` used it.  Three answers were weighed: refuse the asserting cast
+under `(N-Cast)` and require `as V?`; type the result `V?`; or silence the lint for cast results.
+
+### Decision
+
+Owner, 2026-09-29: "at least it should be an error if we can determine that, if we cannot prevent
+it it will return the value with defaults set.  We handle the cast like we do division so it gives
+a warning unless checked directly."  A provable miss is refused; an unproven cast answers `V`, a
+miss giving `V` with its fields at their `(D-Rec)` defaults; the cast warns unless inside
+`if s is V { … }` or spelled `as V?`.  A variant with no default refuses the unchecked cast.
+`build_default` / `has_default` learned the variant record (`(D-Rec)` had always covered it); the
+text-to-enum parse (`"Purple" as Direction`) was left for its own decision.

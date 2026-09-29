@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: answers a `Circle` with every field at its default
+//
+// @C131 — A CAST TO A VARIANT ANSWERS THE VARIANT.  `s as Circle` on a `Shape` is a non-null
+// `Circle`: on a miss, `Circle` with every field at its `(D-Rec)` default, never null — and the
+// unchecked cast warns (`variant-cast-default`).  Checked directly — inside `if s is Circle` —
+// it needs no default and draws no warning; `as Circle?` is the checked form and answers null.
+// The cast answered null while typed non-null, so `!c` was reported "always false" and printed
+// true.  The refusals (a provable miss, a variant with no default) are the sibling file.
+// Values are hand-computed.
+//
+// @falsified-at: PENDING
+
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { radius: integer, tag: text, at: Pt }, Rect { w: integer, h: integer } }
+
+fn main() {
+  s: Shape = Rect { w: 3, h: 4 };
+  c = s as Circle;
+  assert(c.radius == 0 && c.tag == "" && c.at.x == 0 && c.at.y == 0, "a miss is the default Circle: {c.radius} [{c.tag}] {c.at.x}");
+  t: Shape = Circle { radius: 5, tag: "x", at: Pt { x: 7, y: 8 } };
+  d = t as Circle;
+  assert(d.radius == 5 && d.tag == "x" && d.at.x == 7, "a hit is the value: {d.radius} [{d.tag}] {d.at.x}");
+  hit = 0;
+  if t is Circle {
+    e = t as Circle;
+    hit = e.radius;
+  }
+  assert(hit == 5, "checked directly: {hit}");
+  f = s as Circle?;
+  assert(f == null, "the checked form answers null on a miss");
+  v: vector<Shape> = [Circle { radius: 9, tag: "v", at: Pt { x: 1, y: 1 } }, Rect { w: 1, h: 1 }];
+  g = v[0] as Circle;
+  h = v[1] as Circle;
+  assert(g.radius == 9 && h.radius == 0 && h.tag == "", "elements: {g.radius} {h.radius}");
+}
