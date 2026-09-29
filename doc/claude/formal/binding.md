@@ -505,12 +505,12 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   verdict, `CopyVar`, so the bind takes `lower_vec_copy_bind`'s copy on every route (an arm
   reaches the same classifier); read positions — the index, the length, the iteration —
   keep the view.  The one route that is not a bind, a callee writing through a PARAMETER
-  handed the constant, stays a fault (a parameter aliases its argument, and a copy there
-  would be a silent lost write) and is now the defined one heap.md `(H-WriteLocked)` asks
-  for: the constant store is locked as a user lock (`Store::lock_constant`, both backends)
-  and the refusal names a constant and the cure.  Guard
+  handed the constant, was left a runtime fault here; `(R-Const)` makes it `(B-Copy)`'s copy
+  too, and C80 rules the halt out — rewrites.md `D-rw-6` (loft#1729).  The constant store
+  stays locked as a user lock (`Store::lock_constant`, both backends), `(H-WriteLocked)`'s
+  backstop for a route no rule copies.  Guard
   `tests/scripts/1686-a-local-bound-from-a-vector-constant-copies-it.loft`; the parameter
-  route `tests/exit_codes.rs` `a_write_through_a_parameter_to_a_constant_is_a_defined_fault`.
+  route `tests/exit_codes.rs` `a_constant_handed_to_a_writing_parameter_is_copied_for_the_call`.
 * **D-bind-62** *(opened 2026-09-25, CLOSED 2026-09-25; loft#1679)* — `(B-Scope)` at the CALL
   spelling, both halves of it.  The rule says a bind after the `}` starts a NEW binding and a
   read of the ended one is refused; a fn-ref local got neither.  With a rebind,
