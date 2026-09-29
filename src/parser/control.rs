@@ -5096,13 +5096,13 @@ impl Parser {
         // declaration gave the sentinel up is `redundant-null-negation`, which reads
         // `IntegerSpec::non_null_reads_null` — the same question asked where the answer is
         // known.  Adding a type list here that re-answered it would be a second decoder.
+        //
+        // `text` is not on the list: its absence is in band too (`Type::non_null_slot_reads_null`
+        // answers yes), so a `text` local, field or argument that `(N-Store)` let a null into
+        // takes the ELSE branch of `if t`, and calling that condition constant was false.
         if !matches!(
             base,
-            Type::Text(_)
-                | Type::Vector(_, _)
-                | Type::Hash(_, _, _)
-                | Type::Sorted(_, _, _)
-                | Type::Index(_, _, _)
+            Type::Vector(_, _) | Type::Hash(_, _, _) | Type::Sorted(_, _, _) | Type::Index(_, _, _)
         ) {
             return;
         }
@@ -5968,7 +5968,15 @@ impl Parser {
                 // sentinel, and covers no variant — an absent subject is not a variant of
                 // anything, which is why exhaustiveness is untouched for it.
                 let (discs, cond) = if heap_null_subject {
-                    let is_null = self.cl("OpRefIsNull", std::slice::from_ref(&subject_val));
+                    // `null_test` is the one home for "is this absent?": a struct-enum
+                    // subject bound from an `E` slot is a sub-reference whose absence is its
+                    // discriminant, which the bare sentinel test called present, so the
+                    // match fell through every arm.
+                    let is_null = self
+                        .null_test(subject_val.clone(), &subject_type, false)
+                        .unwrap_or_else(|| {
+                            self.cl("OpRefIsNull", std::slice::from_ref(&subject_val))
+                        });
                     (Vec::new(), Some(is_null))
                 } else {
                     (vec![0], None)
@@ -12109,19 +12117,15 @@ impl Parser {
             return self.for_type(inner);
         }
         if let Type::Vector(t_nr, dep) = &in_type {
+            // A struct-enum element stays the ENUM for the loop variable, as an index read
+            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  It used to become
+            // `Reference(E)` for a hand-written enum — a record spelling of the same value
+            // that the null tests, the `E?` parameter and the variant join of a `??` default
+            // do not recognise, so `for e in v` refused `f(e)` into an `E?` parameter and
+            // `e ?? Variant {…}`, and read an absent element as present.  Variant field
+            // access, narrowing, captures, `match` and writes through the variable answer
+            // the same in either spelling.
             let mut t = *t_nr.clone();
-            if let Type::Enum(nr, true, _) = t
-                && !self.data.def(nr).name.starts_with("__nullable<")
-            {
-                // @PLN25 E2 — keep a synthetic `__nullable<S>` element in `Enum`
-                // form for the loop variable: field access on `Type::Enum(.., true)`
-                // unwraps to the `Some` variant via `find_poly_enum_field`
-                // (fields.rs), whereas `Reference(enum_def)` does not (the enum
-                // itself has no payload field) → "Unknown field __nullable<S>.f".
-                // Hand-written struct-enums keep the Reference conversion (variant
-                // field-access resolves against the variant def, not the parent).
-                t = Type::Reference(nr, Deps::none());
-            }
             // P189b: vector elements that are tuples live as inline bytes
             // in the vector record.  Iteration yields a 12-byte DbRef
             // pointing at those bytes; treat the loop var as a reference
@@ -15924,6 +15928,29 @@ impl Parser {
         stmts.iter().any(|s| walk(s, buf))
     }
 
+    /// Rewrite a tail whose terminal is a bare local `v` — through spans and a `return` —
+    /// into `if OpVectorIsNull(v) { null } else { v }`, the branch
+    /// [`Self::materialize_vector_arms_into`] delivers one arm at a time.  `false` when the
+    /// terminal is not a bare local, and the tail is left as it was.
+    fn split_nullable_vector_tail(tail: &mut Value, is_null_nr: u32, sentinel_nr: u32) -> bool {
+        match tail {
+            Value::Span(b) => Self::split_nullable_vector_tail(&mut b.1, is_null_nr, sentinel_nr),
+            Value::Return(inner) => {
+                Self::split_nullable_vector_tail(inner, is_null_nr, sentinel_nr)
+            }
+            Value::Var(v) => {
+                let v = *v;
+                *tail = Value::If(
+                    Box::new(Value::Call(is_null_nr, vec![Value::Var(v)])),
+                    Box::new(Value::Call(sentinel_nr, Vec::new())),
+                    Box::new(Value::Var(v)),
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// @PLN85 cluster II — PER-ARM, native-safe vector NRVO delivery. Descends a
     /// `match`/`if` to each arm's terminal local-vector `Var` and rewrites it to
     /// `Insert([OpClearVector(w), OpAppendVector(w, <local>, rec_tp),
@@ -16927,7 +16954,18 @@ impl Parser {
         // release what they displace.  A work-ref's lifetime is the buffer pool's to decide,
         // so only a local the program declared is asked.
         let declared_in_loop = !is_work_ref && self.vars.created_in_loop(v) != u16::MAX;
+        // `@FR-N-Shape` — a NULLABLE vector local cannot BE the buffer.  Renamed, it is the
+        // caller's handle, so its `null` lowers to `OpNullRefSentinel()` over that handle and
+        // every write after it lands in no store: `v: vector<integer>? = null; v = [k]; v`
+        // answered null, on both backends.  Unrenamed it keeps a store of its own and the
+        // `Bind` rung below copies it — or its null — into the buffer at the exit.  A record
+        // return re-mints its destination on delivery and a text local has no handle to lose,
+        // so both were measured right and stay out of the rung.
+        let nullable_vector_local = !is_work_ref
+            && matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
+            && self.vars.tp(v).peel_optional().1;
         let allow_rename = !(bound_already
+            || nullable_vector_local
             || wrong_shape_for_buffer
             || reassigned
             || declared_in_loop
@@ -17444,6 +17482,25 @@ impl Parser {
                                 }
                                 Type::Vector(elm, _) => {
                                     self.materialize_vector_return_into(&elm, tail, buf_var);
+                                }
+                                // A NULLABLE vector local at the tail — the local the rename
+                                // rung declines for `@FR-N-Shape`.  Delivered by the same
+                                // per-arm leg as a branch with a null arm, on the branch its
+                                // own null test spells: the null path answers the sentinel,
+                                // the other copies the local into the buffer and frees its
+                                // backing.  Without it the local's store was the answer —
+                                // one store per call that no caller frees.
+                                Type::Optional(inner) => {
+                                    if let Type::Vector(elm, _) = inner.base()
+                                        && Self::split_nullable_vector_tail(
+                                            tail,
+                                            self.data.def_nr("OpVectorIsNull"),
+                                            null_sentinel_nr,
+                                        )
+                                    {
+                                        let elm = (**elm).clone();
+                                        self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    }
                                 }
                                 _ => {}
                             }

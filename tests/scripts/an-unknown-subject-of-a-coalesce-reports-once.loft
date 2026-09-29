@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `??` whose value is the `never` poison of an error already reported says nothing more
+// (@P376): the unknown name is the one error, however many coalesces stand downstream of it.
+//
+// A library whose one call no longer resolved (`seg_mesh_new`, under C98's import rule)
+// reported sixteen further errors, one per `m.kinds[0] ?? 0` — *"`??` default of type
+// `integer` is not assignable to `never`"* — each blaming a default that was right.  The
+// genuine mismatch, `integer? ?? "t"`, is still refused: `tests/e1_code_set.rs` and
+// `1208-a-postfix-discharge-defaults-from-its-own-subject.loft` carry that control.
+//
+// Each fn has its own unknown name, and `@EXPECT_ERROR` is fatal when unmatched while an
+// unexpected error fails the file, so the count is the assertion: ONE report per fn.
+//
+// @falsified-at: aa4348da7 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 3/4, native exit 1 -> 0, native expectations FAIL/4 -> 3/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-unknown-subject-of-a-coalesce-reports-once.patch — the same channels.
+//   CHANNEL: the EXPECTATIONS — on the control every fn reports a
+//   `coalesce-default-type-mismatch` behind its own error (nine errors for four), and the
+//   file fails.
+//   WITNESS: "`??` default of type `integer` is not assignable to `never`" in `c_field`.
+//   HOLDS: no leak and no panic on either tree; every fn reports its own unknown name.
+
+// @EXPECT_ERROR: Unknown function u_direct
+fn c_direct() { assert((u_direct(3) ?? 0) == 0, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_field
+fn c_field() { m = u_field(3); assert((m.kinds[0] ?? 0) == 255, "u"); assert((m.colors[0] ?? 0) == 255, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_float
+fn c_float() { m = u_float(3); assert((m.x ?? 1.5) > 0.0, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_text
+fn c_text() { m = u_text(3); assert(len(m.name ?? "none") > 0, "u"); }

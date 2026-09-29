@@ -977,6 +977,11 @@ When the structure is not correctly filled
 /// Powers `len(h)` for `hash<T[key]>` (P192).
 #[must_use]
 pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+    // An absent hash has no elements, as an absent vector has none (`length_vector`): the
+    // null is tested before any store is indexed.
+    if hash_ref.is_null() {
+        return 0;
+    }
     let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return 0;

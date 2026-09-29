@@ -3044,33 +3044,31 @@ impl Function {
         }
         // @FR-N-Join — an inferred local's type is the JOIN of its assignments, made optional
         // when any of them may be null; a declared one is @FR-N-Decl's and never widens.
-        // @PLN25 DN6 (N-Join): an INFERRED local first assigned a bare `null`, then a
-        // non-null INLINE scalar `τ`, widens to `Null ⊔ τ = τ?` instead of erroring — the
-        // ergonomic escape valve for `a = null; a = 5` (a now `integer?`, so a later
-        // `b: integer = a` still requires a discharge).  `var_tp == Null` is INHERENTLY the
-        // inferred-from-null case: a variable cannot be ANNOTATED `null`, so this never
-        // overrides an explicit non-null contract — `a: integer = null` carries
-        // `var_tp == integer` and is the case-1 nullable-mix reject below.  Scoped to this
-        // ONE direction (the reverse `a = 5; a = null` cannot be told apart from an
-        // annotated `a: integer = null` here, so it keeps rejecting).  DN1-gated.
+        // @PLN25 DN6 (N-Join): an INFERRED local first assigned a bare `null`, then a `τ`,
+        // widens to `Null ⊔ τ = τ?` instead of erroring — `a = null; a = 5` makes `a` an
+        // `integer?`, so a later `b: integer = a` still requires a discharge.  `var_tp == Null`
+        // is INHERENTLY the inferred-from-null case: a variable cannot be ANNOTATED `null`.
+        // The other order, `a = 5; a = null`, is widened at the assignment seam, which tells
+        // an inferred local from a declared one (`parse_assign_op_inner`).
         //
-        // SOUNDNESS BOUNDARY — INLINE scalars ONLY (Integer/Boolean/Float/Single/Character).
-        // The retroactive widen keeps the slot allocated by the FIRST `= null`; that slot is
-        // sound for a τ? only when Null and τ? share it.  Inline scalars carry the null as an
-        // in-slot sentinel, so `null`→`τ?` reuses the same inline slot.  `Text` (the only
-        // heap-backed scalar here) needs a heap-ref slot with text-position tracking that the
-        // Null slot is NOT — widening it corrupts `fn_return`'s discard accounting (interp
-        // underflow / native E0308).  A text null-start must annotate `s: text? = null` so the
-        // slot is heap from the start; `s = null; s = "hi"` falls through to the case-1
-        // nullable-mix error, which already says "declare it `text?`".
-        // The source may itself be nullable — `a = null; a = v[i]` — and the join is the
-        // same `τ?` over the same inline slot, so the arm reads the source through `base()`.
+        // Every kind whose `τ?` is declarable: an inline scalar, `text`, and a heap handle.
+        // `text` and the heap kinds were once held out on a fear for the slot the first
+        // `= null` allocates and `fn_return`'s discard accounting; measured over a text tail,
+        // a `return` from an arm, a loop rebuild, a `??` tail, a vector append and a record
+        // rebuilt per pass, on both backends under `LOFT_STRICT_STORES`, every cell held.
+        // The source may itself be nullable — `a = null; a = v[i]` — and the join is the same
+        // `τ?`, so the arm reads the source through `base()`.
         if crate::keys::pln25_dn1_enabled()
             && matches!(var_tp, Type::Null)
-            && matches!(
+            && (matches!(
                 type_def.base(),
-                Type::Integer(_) | Type::Boolean | Type::Float | Type::Single | Type::Character
-            )
+                Type::Integer(_)
+                    | Type::Text(_)
+                    | Type::Boolean
+                    | Type::Float
+                    | Type::Single
+                    | Type::Character
+            ) || crate::data::is_dbref(type_def.base()))
         {
             let widened = Type::optional(type_def.base().clone());
             self.trace_type_change(var_nr, &widened, "change_var_type(N-Join)");
@@ -3225,15 +3223,15 @@ impl Function {
             {
                 return self.is_new(var_nr);
             }
-            // @PLN25 (N-Decl / DN6) — a `null` ↔ non-null-scalar transition is the
-            // NULLABILITY case, not a generic type mismatch: `a: integer = null` (the
-            // slot is committed non-null) or the inferred `a = null; a = 5` (the slot
-            // was `null`). Name the real fix (`τ?`) and NEVER suggest `as` — `x as
-            // integer` would LAUNDER the null into the non-null slot (the DN5 hole).
-            // (Once `(N-Join)`/DN6 lands, the inferred direction widens silently instead
-            // of erroring.) DN1-gated so gate-OFF stays byte-identical: gate-OFF the bare
-            // `null` is coerced to the scalar sentinel before here, so `Type::Null` never
-            // reaches `change_var` and this branch is unreachable.
+            // @PLN25 (N-Decl / DN6) — a `null` ↔ non-null transition that reaches here is
+            // the NULLABILITY case, not a generic type mismatch.  A declared full-width
+            // local and every inferred join are answered at the assignment seam before this
+            // (`@FR-N-Store` warns, `@FR-N-Join` widens); what is left is the join that has
+            // no `τ?` of its own — an inferred NARROW integer meeting `null`.  Name the real
+            // fix (`τ?`) and NEVER suggest `as` — `x as integer` would LAUNDER the null into
+            // the non-null slot (the DN5 hole).  DN1-gated so gate-OFF stays byte-identical:
+            // gate-OFF the bare `null` is coerced to the scalar sentinel before here, so
+            // `Type::Null` never reaches `change_var` and this branch is unreachable.
             let is_null_scalar = |t: &Type| {
                 matches!(
                     t,

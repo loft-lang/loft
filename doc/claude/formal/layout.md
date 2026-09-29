@@ -448,6 +448,38 @@ comparison asks the bound spelling (`tagged_pointer_type`); the `is` capture's b
 reaches a nullable payload through the shared `element_view_of`.  Guard
 `tests/scripts/a-pattern-binds-a-nullable-record-field-through-its-tag.loft`.
 
+D-layout-11 OPENED AND CLOSED 2026-09-29: `(L-Null)` gives a struct-enum `E` and `E?` one
+layout, and `(N-Store)` lets a `null` into an `E` field or `vector<E>` element with a warning,
+after which the slot holds it — discriminant 0 in its own bytes.  Only the tests that read the
+slot where it stands saw that: `s.e == null` read true while `s.e ?? d`, `s.e?`,
+`x = s.e; x == null`, an `E?` argument, an `E?` return and an element's `??` all read present,
+and a `match` on the argument fell through every arm, on both backends and with nothing
+reported.  Each of those had become a VARIABLE holding a sub-reference into the slot, and the
+variable's test asked the handle sentinel alone.
+
+**Closed where a test is written, not where a value moves.**  A present struct-enum, handle or
+slot, always has a variant — numbered from 1 — in its first word, so "the handle is null, else
+its first word is 0" is exact for every struct-enum a variable can hold; `null_test` asks it of
+any repeatable place, and the `??`/`?` test and a `match`'s `null` arm now ask `null_test`
+rather than spelling their own sentinel test.  Reading the value through its discriminant
+where it LEAVES the slot — `(L-Null-Which)`'s treatment of `E?` — was measured first and
+rejected for `E`: it put a branch on every bind and field read of every struct-enum element
+and defeated the copy elision of `b = src` over a `vector<E>`, to serve an absence only a
+warned store creates.
+
+The same test closed a shape of the element walk.  A local bound from a call that returns an
+element (`b = head(v)`) has deps naming the vector and holds a whole HANDLE, `nullref` when the
+callee answered absent; the slot word read through it said present.  `head([])` over a
+`vector<E?>` was wrong on every build, and `head([null, …])` since loft#1529 read a returned
+element through to `nullref` (2026.9.0 answered it right; `main` at 70079f138 did not).
+
+And a spelling.  `Parser::for_type` typed a `for e in v` variable over a `vector<E>` of a
+hand-written struct-enum as `Reference(E)`, which no null test, no `E?` parameter and no `??`
+variant join recognised: `f(e)` and `e ?? Variant {…}` were refused and an absent element read
+present.  It keeps the enum now, as an index read does; narrowing, captures, `match`, field
+access and writes through the variable answer the same.  Guard
+`tests/scripts/a-struct-enum-slot-holding-null-reads-null-wherever-it-goes.loft`.
+
 D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
 views to compute the SAME offsets and says their agreement *"is part of the rule, not an
 implementation detail"*.  They did not agree when one tuple type was written BOTH ways in a

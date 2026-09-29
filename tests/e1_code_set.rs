@@ -159,22 +159,22 @@ const CODES: &[(&str, &str)] = &[
     ),
     (
         "redundant-coalesce",
-        "struct S { a: integer }\n\
+        "struct S { a: u8 }\n\
          fn main() { s = S { a: 1 }; print(\"{s.a ?? 0}\"); }",
     ),
     (
         "redundant-default-fallback",
-        "struct S { a: integer }\n\
+        "struct S { a: u8 }\n\
          fn main() { s = S { a: 1 }; print(\"{s.a?}\"); }",
     ),
     (
         "redundant-null-check",
-        "struct S { a: integer }\n\
+        "struct S { a: u8 }\n\
          fn main() { s = S { a: 1 }; if s.a == null { print(\"n\") } }",
     ),
     (
         "redundant-null-negation",
-        "struct S { a: integer }\n\
+        "struct S { a: u8 }\n\
          fn main() { s = S { a: 1 }; if !s.a { print(\"n\") } }",
     ),
     (
@@ -740,8 +740,8 @@ fn every_mechanical_fix_is_applicable_or_listed() {
 ///     real code looks like.
 #[test]
 fn loft_fix_reaches_a_warning_level_fix() {
-    const ONE: &str = "struct T1003f { name: text }\n\
-fn main() { t = T1003f { name: \"g\" }; s = t.name ?? \"none\"; println(\"{s}\"); }\n";
+    const ONE: &str = "struct T1003f { level: u8 }\n\
+fn main() { t = T1003f { level: 7 }; s = t.level ?? 9; println(\"{s}\"); }\n";
     let reported = fix_output(ONE);
     assert!(
         reported.contains("delete the `?? <default>`"),
@@ -754,12 +754,12 @@ fn main() { t = T1003f { name: \"g\" }; s = t.name ?? \"none\"; println(\"{s}\")
     );
 
     // Two instances, applied for real, then run: the rewrite is only a fix if the program
-    // still says `xy`.
-    const TWO: &str = "struct T1003g { a: text, b: text }\n\
+    // still says `45`.
+    const TWO: &str = "struct T1003g { a: u8, b: u8 }\n\
 fn main() {\n\
-\x20 t = T1003g { a: \"x\", b: \"y\" };\n\
-\x20 p = t.a ?? \"p\";\n\
-\x20 q = t.b ?? \"q\";\n\
+\x20 t = T1003g { a: 4, b: 5 };\n\
+\x20 p = t.a ?? 8;\n\
+\x20 q = t.b ?? 9;\n\
 \x20 println(\"{p}{q}\");\n\
 }\n";
     let path = std::env::temp_dir().join(format!("loft_e1_fix1003_{}.loft", std::process::id()));
@@ -795,8 +795,8 @@ fn main() {\n\
     let ran = String::from_utf8_lossy(&run.stdout).into_owned();
     let _ = std::fs::remove_file(&path);
     assert!(
-        ran.contains("xy"),
-        "the rewritten program must still answer `xy`, said:\n{ran}"
+        ran.contains("45"),
+        "the rewritten program must still answer `45`, said:\n{ran}"
     );
 }
 

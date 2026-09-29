@@ -89,6 +89,8 @@ owns their *operations + order*).
                 DEFINED semantic and not a discharge the author forgot.  It is the ONE write
                 that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
+                An ABSENT collection counts 0 at every kind — a `<kind>?` handed to `len` is
+                `(N-Store)`'s store (a warning), and 0 is the one value C80 leaves it.
 ```
 *Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
 
@@ -638,6 +640,18 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+- **`D-col-13`** — opened and CLOSED 2026-09-29: **`len` of a nullable KEYED collection was
+  refused or crashed** where a `vector<…>?` warned and counted.  Three layers, one per kind
+  family: `hash`, `sorted`, `spatial` and `trie` were warned by `(N-Store)`'s junction and then
+  refused by `can_convert`'s keyed-to-generic arm, which matched the bare shape only ("expected
+  hash, got hash<E[k]>?"); `index`'s own `len` route matched the bare shape and answered
+  "Unknown function len"; and once admitted, an absent `hash`, `spatial`, `trie` or `index`
+  panicked in a store accessor, because their counts indexed a store before testing the null.
+  **Fix.**  The keyed arm reads through the `?`, the `index` route peels it and asks the store
+  face itself, and the four counts test `is_null()` first, as `length_vector` did.  `(Col-Len)`
+  now states the absent count.  Guard
+  `tests/scripts/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft`
+  (six kinds, present and absent, both backends).
 - **`D-col-12`** — opened and CLOSED 2026-09-29 (loft#1728): **a slice at a method's RECEIVER was
   not a vector.**  `(Slice-Value)` makes `v[a..b]` the fresh vector a bind would make at every
   vector-typed position, and a receiver is one — but it is resolved by its TYPE before any

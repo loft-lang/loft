@@ -12,6 +12,26 @@ OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-24 — OPENED AND CLOSED (2026-09-29): a nullable vector local at the tail lost every write after its null
+
+`(F-Ret)`: a function returns the value it computed.  `fn f(k) -> vector<integer>? { v:
+vector<integer>? = null; v = [k]; v }` answered null, on both backends, silently, and so did
+the same local read inside the function after the write — present in the 2026.8.0 release.
+The tail local was RENAMED onto the caller's return buffer (NRVO), so its `= null` lowered to
+`OpNullRefSentinel()` written over the caller's handle, and every write after it went to no
+store.  `return v;` (a mid-return, which never renames), a non-null start and the same code in
+`main` were right, which is what placed it.  Declining the rename exposed the second half: the
+`Bind` rung's copy matched the return type without peeling `?`, so an optional vector return
+delivered nothing and handed out the local's own store — one store per call nobody freed, and
+a use-after-free once `+=` had minted a second backing (the comment there cited a loft#948
+that is an unrelated issue; the conditional delivery it named was never built).  **Fix.**  The
+rename ladder declines a nullable vector local (`nullable_vector_local`), and the `Bind` leg
+delivers an optional vector tail per arm: `if OpVectorIsNull(v) { null } else { v }` through
+`materialize_vector_arms_into`, which copies the value arm into the buffer and frees the
+local's backing.  Records and `text` were measured right and stay out.  Guard
+`tests/scripts/a-nullable-vector-local-at-the-tail-keeps-its-writes.loft` — value, null and
+loop cells, both backends, clean under `LOFT_STRICT_STORES` and `LOFT_POISON`.
+
 ### D-call-23 — OPENED AND CLOSED (2026-09-28, loft#1719): an operand whose call failed was reported as a missing argument of the operator
 
 `(F-Arity)` makes a call ill-formed when a parameter is NOT FILLED.  `nosuch(v) == 3` fills

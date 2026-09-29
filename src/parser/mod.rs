@@ -5079,9 +5079,13 @@ impl Parser {
         // model EXACTLY: the scalars back to the uniform hard error below, and the heap half
         // back to silence.  Letting it fall through to that error instead would hand the opt-out
         // a refusal this branch never had — the one outcome the freeze forbids here.
+        // A PLAIN enum is the same question one kind over: a one-byte value whose `null` is a
+        // reserved discriminant, declarable `E?`, and neither a scalar nor a handle — so it
+        // was asked by neither half and a bare `null` into an `E` field, argument or return
+        // passed in silence while the slot held null.  It takes the heap half's wording.
         let heap_target = crate::keys::heap_nstore_enabled()
             && crate::keys::nstore_softens(false)
-            && crate::data::is_dbref(target_tp)
+            && (crate::data::is_dbref(target_tp) || matches!(target_tp, Type::Enum(_, false, _)))
             // Both spellings of `τ?`, asked HERE.  `is_nullable_wrapper` covers the synthetic
             // `__nullable<S>`; the `Type::Optional` marker was covered only by `is_dbref`
             // answering `false` for a wrapper — a nullability question answered by a shape
@@ -5229,13 +5233,13 @@ impl Parser {
     /// distinctly and WARNS instead (`keys::nstore_softens` is the flag half).  `never_error`
     /// is the caller's "this site never escalates" — a null literal into a heap target.  Two
     /// branches spelled this test by hand and could only agree by accident; this is the one.
-    fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
+    pub(crate) fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
         !never_error && matches!(target_tp, Type::Integer(s) if s.byte_width(false) < 8)
     }
 
     /// @PLN25 DN1 — the scalar types whose default flips to NON-null (a bare `null` needs `τ?`).
     /// Heap-nullable types (reference / vector / enum / keyed) are NOT here — they stay nullable.
-    fn is_non_null_scalar(tp: &Type) -> bool {
+    pub(crate) fn is_non_null_scalar(tp: &Type) -> bool {
         matches!(
             tp,
             Type::Integer(_)
@@ -6612,14 +6616,19 @@ impl Parser {
             // compatible.  Used for stdlib helpers like `len(both: sorted)`.
             if let Type::Reference(r, _) = should {
                 let r = *r;
+                // Through the value's `?`: whether a keyed collection may be absent is
+                // `@FR-N-Store`'s question, which `convert`'s junction has already asked and
+                // warned about before this is reached, and it says nothing about which generic
+                // parameter the collection is.  Matching the bare shape only refused
+                // `len(h)` on a `hash<…>?` with a second verdict — after the warning — where a
+                // `vector<…>?` warns and compiles.
+                let (keyed, _) = test_type.peel_optional();
                 let bare = (r == self.data.def_nr("sorted")
-                    && matches!(test_type, Type::Sorted(_, _, _)))
-                    || (r == self.data.def_nr("hash") && matches!(test_type, Type::Hash(_, _, _)))
-                    || (r == self.data.def_nr("index")
-                        && matches!(test_type, Type::Index(_, _, _)))
-                    || (r == self.data.def_nr("spatial")
-                        && matches!(test_type, Type::Radix(_, _, _)))
-                    || (r == self.data.def_nr("trie") && matches!(test_type, Type::Trie(_, _, _)));
+                    && matches!(keyed, Type::Sorted(_, _, _)))
+                    || (r == self.data.def_nr("hash") && matches!(keyed, Type::Hash(_, _, _)))
+                    || (r == self.data.def_nr("index") && matches!(keyed, Type::Index(_, _, _)))
+                    || (r == self.data.def_nr("spatial") && matches!(keyed, Type::Radix(_, _, _)))
+                    || (r == self.data.def_nr("trie") && matches!(keyed, Type::Trie(_, _, _)));
                 if bare {
                     return true;
                 }
@@ -7122,7 +7131,7 @@ impl Parser {
         } else if name == "len"
             && types.len() == 1
             && named_args.is_empty()
-            && matches!(*recv, Type::Index(_, _, _))
+            && matches!(recv.peel_optional().0, Type::Index(_, _, _))
         {
             // P192: `len(ix)` for `ix: index<T[key]>`.  Dispatched
             // here (not via stdlib overload) because the runtime
@@ -7135,11 +7144,20 @@ impl Parser {
             // fall through standard dispatch to the existing
             // `Unknown function len` error message which lists the
             // method-style alternative.
-            let known = self.get_type(recv);
+            //
+            // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
+            // "Unknown function len".  This route bypasses `convert`, so it asks
+            // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+            let (base, absent) = recv.peel_optional();
+            let base = base.clone();
+            let known = self.get_type(&base);
             let op_d_nr = self.data.def_nr("OpLengthIndex");
             if known != u16::MAX && op_d_nr != u32::MAX {
                 let fields = self.database.fields(known);
                 let mut args = list.to_vec();
+                if absent && let Some(first) = args.first_mut() {
+                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
+                }
                 args.push(Value::Int(i32::from(fields)));
                 *code = Value::Call(op_d_nr, args);
                 return crate::data::I64.clone();
@@ -12896,7 +12914,8 @@ impl Parser {
                 || self.data.def_type(d_nr) == DefType::TypeTemplate)
         {
             let tp = self.data.attr_type(d_nr, f_nr);
-            self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
+            self.expr_not_null =
+                !self.data.attr_nullable(d_nr, f_nr) && !tp.non_null_slot_reads_null();
             self.expr_not_null_name.clear();
             return v_block(
                 vec![
@@ -12917,8 +12936,10 @@ impl Parser {
         }
         let tp = self.data.attr_type(d_nr, f_nr);
         let nullable = self.data.attr_nullable(d_nr, f_nr);
-        self.expr_not_null = !nullable;
-        if !nullable && f_nr != usize::MAX {
+        // Not declared `?` is not the same as never null: a field of an in-band kind holds the
+        // null `(N-Store)` lets into it, so the "never null" lints ask the slot's TYPE too.
+        self.expr_not_null = !nullable && !tp.non_null_slot_reads_null();
+        if self.expr_not_null && f_nr != usize::MAX {
             self.expr_not_null_name = self.data.attr_name(d_nr, f_nr);
         } else {
             self.expr_not_null_name.clear();
@@ -18821,6 +18842,17 @@ impl Parser {
         let Some(version) = self.lock_pin_in_force(id, scope, cur_script) else {
             return false;
         };
+        // A lock the manifest has since overruled does not decide the load: `loft.toml`
+        // says `graphics = "=0.9.3"` and a `loft.lock` written before that edit still says
+        // 0.3.0.  Loading the pin because its files happen to be cached ran the version the
+        // declaration excludes, silently — the question `install::constraint_for` answers
+        // for the install below, which re-resolves under the manifest and rewrites the lock.
+        if crate::install::constraint_for(Some(&version), self.root_dep_constraint(id).as_deref())
+            .as_deref()
+            != Some(version.as_str())
+        {
+            return false;
+        }
         self.resolve_registry_installed(id, &version, f);
         if std::path::Path::new(f).exists() {
             self.pin_behind_notice(id, &version, cur_script, scope);

@@ -839,6 +839,10 @@ pub fn previous(store: &Store, rec: &DbRef) -> u32 {
 /// Powers `len(ix)` for `index<T[key]>` (P192).
 #[must_use]
 pub fn count(data: &DbRef, fields: u16, stores: &[Store]) -> u32 {
+    // An absent collection has no records; tested before any store is indexed.
+    if data.is_null() {
+        return 0;
+    }
     let mut cur = first(data, fields, stores).rec;
     if cur == 0 {
         return 0;

@@ -18,12 +18,12 @@
 // stop that draft coming back.  The `!` spelling of the same question belongs to
 // `redundant-null-negation`, which asks `IntegerSpec::non_null_reads_null` where it is known.
 //
-// Axes this file MOVES:  the subject's kind (heap · scalar) and its nullability
+// Axes this file MOVES:  the subject's kind (heap · scalar, `text` among the scalars) and its nullability
 //                        (non-optional · `?`), which are the two facts the lint reads.
 // Axes it HOLDS FIXED:   the position — `if` and `while` share one call site.
 //
 // @falsified-at: 6f2850cd3 — interpret exit 0 -> 0, and the channel is the EXPECTATION count,
-//   not exit: on that build the lint does not exist, so the three `@EXPECT_WARNING` pins never
+//   not exit: on that build the lint does not exist, so the `@EXPECT_WARNING` pins never
 //   fire, and an `@EXPECT_WARNING` that never fires is fatal.  The scalar cells are inert
 //   against that control by construction — they assert an ABSENCE, which is also what a build
 //   without the lint produces — so they are scored by the mutation instead: widening the
@@ -33,15 +33,11 @@
 
 // @EXPECT_WARNING: Warning[constant-condition]
 // @EXPECT_WARNING: Warning[constant-condition]
-// @EXPECT_WARNING: Warning[constant-condition]
 
 fn main() {
   // --- the cells: a non-optional heap value cannot be absent ---
   v: vector<integer> = [1, 2];
   if v { println("vector: the branch always runs"); }
-
-  t: text = "hello";
-  if t { println("text: the branch always runs"); }
 
   e: vector<integer> = [];
   if e { println("an EMPTY vector is still not absent"); }
@@ -56,6 +52,12 @@ fn main() {
 
   f: float = 0.0;
   if f { println("float 0.0 is truthy"); }
+
+  // `text` spells its absence in band as well: `(N-Store)` lets a `null` into a non-null
+  // `text` with a warning of its own, and the slot then holds it, so this is a real test.
+  t: text = null;
+  if t { println("unreachable for a null text"); } else { println("a null text is falsy"); }
+  assert(!t, "the text still holds the null it was given");
 
   // --- the NULLABLE control: a presence test is exactly what `(E-Truthy)` licenses ---
   n: vector<integer>? = null;

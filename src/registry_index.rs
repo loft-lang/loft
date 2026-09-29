@@ -464,6 +464,20 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
 
 // ── Version resolution ────────────────────────────────────────────
 
+/// Does `constraint` name ONE release?  Both spellings [`satisfies`] reads that way: the bare
+/// `0.9.3` a lockfile and `pkg@0.9.3` write, and the `=0.9.3` a manifest writes.  The two
+/// sites that ask were reading only the bare one, so a manifest's exact pin was filtered by
+/// what the lock held — "no version satisfies `=0.9.3`" beside a list naming 0.9.3 — and a
+/// yanked version it named was skipped.
+#[must_use]
+pub fn is_exact_pin(constraint: &str) -> bool {
+    let c = constraint.trim();
+    c.strip_prefix('=')
+        .unwrap_or(c)
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_digit())
+}
+
 /// Find the best version of `pkg` matching `constraint`.  Skips
 /// yanked versions and (unless `allow_prerelease`) prereleases.
 ///
@@ -491,7 +505,7 @@ pub fn find_best_version<'a>(
     let yanked: std::collections::HashSet<&str> = pkg.yanked.iter().map(String::as_str).collect();
     // An exact pin names one release and is what a lockfile records; anything else is the
     // resolver choosing on the consumer's behalf, where a yanked version must stay excluded.
-    let exact_pin = constraint.trim().starts_with(|c: char| c.is_ascii_digit());
+    let exact_pin = is_exact_pin(constraint);
     let mut best: Option<&Version> = None;
     for ver in pkg.versions.values() {
         if yanked.contains(ver.semver.as_str()) && !exact_pin {
@@ -560,7 +574,7 @@ pub fn find_compatible_version<'a>(
     allow_prerelease: bool,
     held: Option<&str>,
 ) -> Resolution<'a> {
-    let exact_pin = constraint.trim().starts_with(|c: char| c.is_ascii_digit());
+    let exact_pin = is_exact_pin(constraint);
     let Some(held) = held.filter(|h| !exact_pin && satisfies(h, constraint)) else {
         return Resolution {
             best: find_best_version(pkg, constraint, allow_prerelease),
@@ -2078,9 +2092,17 @@ mod tests {
     fn an_exact_pin_crosses_a_declared_break() {
         let idx = parse_index(FLOORS).expect("parse");
         let lib = idx.packages.get("lib").expect("lib");
-        let r = find_compatible_version(lib, "0.4.0", false, Some("0.1.0"));
-        assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
-        assert!(r.withheld.is_empty());
+        // Both spellings of one release: the bare pin a lockfile writes and the `=` pin a
+        // manifest writes.  The `=` spelling was filtered by the held version and answered
+        // no version at all.
+        for pin in ["0.4.0", "=0.4.0", " = 0.4.0"] {
+            let r = find_compatible_version(lib, pin, false, Some("0.1.0"));
+            assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"), "`{pin}`");
+            assert!(r.withheld.is_empty(), "`{pin}`");
+        }
+        // A range is not a pin: the held version still keeps the declared break back.
+        let r = find_compatible_version(lib, ">=0.1.0", false, Some("0.1.0"));
+        assert_ne!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
     }
 
     /// A floor raised past the held release is the same deliberate step as a pin:
@@ -2133,6 +2155,11 @@ mod tests {
             find_best_version(crypto, "0.1.0", false).map(|v| v.semver.as_str()),
             Some("0.1.0"),
             "a lockfile pin to a yanked version must still resolve"
+        );
+        assert_eq!(
+            find_best_version(crypto, "=0.1.0", false).map(|v| v.semver.as_str()),
+            Some("0.1.0"),
+            "a manifest's `=` pin to a yanked version must resolve too"
         );
         // ...while nothing that lets the RESOLVER choose ever picks one up.
         for c in ["*", "^0.1", ">=0.1"] {

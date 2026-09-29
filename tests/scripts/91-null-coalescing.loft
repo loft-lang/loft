@@ -87,8 +87,11 @@ fn test_if_typing() {
   assert(!r2, "if typing null");
 }
 
+// A `u8`, because the three checks below are redundant only where the slot has no null
+// (C127).  A plain `integer` field holds the sentinel an overflow writes (C85) and the null
+// `(N-Store)` lets into it, so the same three checks there are real tests and stay quiet.
 struct NNCounter {
-  count: integer,
+  count: u8,
 }
 
 // @EXPECT_WARNING: Redundant null check

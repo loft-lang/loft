@@ -1,0 +1,123 @@
+diff --git b/src/hash.rs a/src/hash.rs
+index 9a1e272ee..7eef4a22d 100644
+--- b/src/hash.rs
++++ a/src/hash.rs
+@@ -977,11 +977,6 @@ When the structure is not correctly filled
+ /// Powers `len(h)` for `hash<T[key]>` (P192).
+ #[must_use]
+ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+-    // An absent hash has no elements, as an absent vector has none (`length_vector`): the
+-    // null is tested before any store is indexed.
+-    if hash_ref.is_null() {
+-        return 0;
+-    }
+     let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+     if claim == 0 {
+         return 0;
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index f51dde1b8..3cb94d7f3 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -6598,19 +6598,14 @@ impl Parser {
+             // compatible.  Used for stdlib helpers like `len(both: sorted)`.
+             if let Type::Reference(r, _) = should {
+                 let r = *r;
+-                // Through the value's `?`: whether a keyed collection may be absent is
+-                // `@FR-N-Store`'s question, which `convert`'s junction has already asked and
+-                // warned about before this is reached, and it says nothing about which generic
+-                // parameter the collection is.  Matching the bare shape only refused
+-                // `len(h)` on a `hash<…>?` with a second verdict — after the warning — where a
+-                // `vector<…>?` warns and compiles.
+-                let (keyed, _) = test_type.peel_optional();
+                 let bare = (r == self.data.def_nr("sorted")
+-                    && matches!(keyed, Type::Sorted(_, _, _)))
+-                    || (r == self.data.def_nr("hash") && matches!(keyed, Type::Hash(_, _, _)))
+-                    || (r == self.data.def_nr("index") && matches!(keyed, Type::Index(_, _, _)))
+-                    || (r == self.data.def_nr("spatial") && matches!(keyed, Type::Radix(_, _, _)))
+-                    || (r == self.data.def_nr("trie") && matches!(keyed, Type::Trie(_, _, _)));
++                    && matches!(test_type, Type::Sorted(_, _, _)))
++                    || (r == self.data.def_nr("hash") && matches!(test_type, Type::Hash(_, _, _)))
++                    || (r == self.data.def_nr("index")
++                        && matches!(test_type, Type::Index(_, _, _)))
++                    || (r == self.data.def_nr("spatial")
++                        && matches!(test_type, Type::Radix(_, _, _)))
++                    || (r == self.data.def_nr("trie") && matches!(test_type, Type::Trie(_, _, _)));
+                 if bare {
+                     return true;
+                 }
+@@ -7113,7 +7108,7 @@ impl Parser {
+         } else if name == "len"
+             && types.len() == 1
+             && named_args.is_empty()
+-            && matches!(recv.peel_optional().0, Type::Index(_, _, _))
++            && matches!(*recv, Type::Index(_, _, _))
+         {
+             // P192: `len(ix)` for `ix: index<T[key]>`.  Dispatched
+             // here (not via stdlib overload) because the runtime
+@@ -7126,20 +7121,11 @@ impl Parser {
+             // fall through standard dispatch to the existing
+             // `Unknown function len` error message which lists the
+             // method-style alternative.
+-            //
+-            // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
+-            // "Unknown function len".  This route bypasses `convert`, so it asks
+-            // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+-            let (base, absent) = recv.peel_optional();
+-            let base = base.clone();
+-            let known = self.get_type(&base);
++            let known = self.get_type(recv);
+             let op_d_nr = self.data.def_nr("OpLengthIndex");
+             if known != u16::MAX && op_d_nr != u32::MAX {
+                 let fields = self.database.fields(known);
+                 let mut args = list.to_vec();
+-                if absent && let Some(first) = args.first_mut() {
+-                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
+-                }
+                 args.push(Value::Int(i32::from(fields)));
+                 *code = Value::Call(op_d_nr, args);
+                 return crate::data::I64.clone();
+diff --git b/src/radix_db.rs a/src/radix_db.rs
+index b6e660170..a530b86ca 100644
+--- b/src/radix_db.rs
++++ a/src/radix_db.rs
+@@ -191,10 +191,6 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
+ /// word (O(1)); key-free, mirroring `hash::count`.
+ #[must_use]
+ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+-    // An absent collection has no records; tested before any store is indexed.
+-    if coll.is_null() {
+-        return 0;
+-    }
+     let store = keys::store(coll, stores);
+     let tree = store.get_u32_raw(coll.rec, coll.pos);
+     if tree == 0 {
+diff --git b/src/tree.rs a/src/tree.rs
+index 4e995931d..693285d62 100644
+--- b/src/tree.rs
++++ a/src/tree.rs
+@@ -839,10 +839,6 @@ pub fn previous(store: &Store, rec: &DbRef) -> u32 {
+ /// Powers `len(ix)` for `index<T[key]>` (P192).
+ #[must_use]
+ pub fn count(data: &DbRef, fields: u16, stores: &[Store]) -> u32 {
+-    // An absent collection has no records; tested before any store is indexed.
+-    if data.is_null() {
+-        return 0;
+-    }
+     let mut cur = first(data, fields, stores).rec;
+     if cur == 0 {
+         return 0;
+diff --git b/src/trie_db.rs a/src/trie_db.rs
+index 20b7cef32..c0d7d2230 100644
+--- b/src/trie_db.rs
++++ a/src/trie_db.rs
+@@ -161,10 +161,6 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
+ /// Number of element records. Reads the tree's cached length word (O(1)).
+ #[must_use]
+ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+-    // An absent collection has no records; tested before any store is indexed.
+-    if coll.is_null() {
+-        return 0;
+-    }
+     let store = crate::keys::store(coll, stores);
+     let tree = store.get_u32_raw(coll.rec, coll.pos);
+     if tree == 0 {

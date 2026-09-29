@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Store` / `@FR-N-Decl` — a bare `null` written to a DECLARED full-width local is the
+// same store an undischarged `τ?` is: a WARNING, the local keeps its declared type and holds
+// the null.  The `τ?` half is `153-n-store-a-declared-local-warns-at-every-full-width-kind`;
+// this is the literal half, which was refused at every kind ("cannot hold both `null` and the
+// non-null type") while the same `null` warned at a field, an argument and a return.
+//
+// One cell per kind, at the declaration and at a later assignment, and a parameter.  Each
+// cell carries exactly one report, on its own name, and reads the null back: a scalar and a
+// text read null, a vector reads null and length 0, a record reads null.  The narrow kinds
+// stay ERRORS — `153-n-store-refused-into-a-narrow-local`.
+//
+// The last three cells are a PLAIN enum at a field, an argument and a return: neither a
+// scalar nor a handle, it was asked by neither half of the report and took the `null` in
+// silence while the slot held it.
+// @falsified-at: 3d4f1036a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/153-n-store-a-bare-null-into-a-declared-local-warns.patch — the same channels.
+//   CHANNEL: the EXIT — the control refuses the declared locals at pass 1, so it runs no cell.
+//   WITNESS: the "cannot hold both `null` and the non-null …" refusal.
+//   HOLDS: no leak and no panic on either tree; no cell's value is compared on the control.
+
+struct S { n: integer }
+enum E { A, B }
+struct H { e: E }
+
+// @EXPECT_WARNING: `null` is stored into the local `xi` of the non-null scalar type `integer`
+fn d_int() -> boolean { xi: integer = null; !xi }
+// @EXPECT_WARNING: `null` is stored into the local `xf` of the non-null scalar type `float`
+fn d_float() -> boolean { xf: float = null; !xf }
+// @EXPECT_WARNING: `null` is stored into the local `xt` of the non-null scalar type `text`
+fn d_text() -> boolean { xt: text = null; !xt }
+// @EXPECT_WARNING: `null` is stored into the local `xb` of the non-null scalar type `boolean`
+fn d_bool() -> boolean { xb: boolean = null; xb == null }
+// @EXPECT_WARNING: `null` is stored into the local `xe` of the non-null type `E`
+fn d_enum() -> boolean { xe: E = null; !xe }
+// @EXPECT_WARNING: `null` is stored into the local `xr` of the non-null type `S`
+fn d_ref() -> boolean { xr: S = null; !xr }
+// @EXPECT_WARNING: `null` is stored into the local `xv` of the non-null type `vector<integer>`
+fn d_vec() -> integer { xv: vector<integer> = null; if xv == null { 100 + len(xv) } else { 0 } }
+// @EXPECT_WARNING: `null` is stored into the local `yi` of the non-null scalar type `integer`
+fn r_int() -> boolean { yi: integer = 5; was = yi; yi = null; !yi && was == 5 }
+// @EXPECT_WARNING: `null` is stored into the local `yt` of the non-null scalar type `text`
+fn r_text() -> boolean { yt: text = "a"; yt = null; !yt }
+// @EXPECT_WARNING: `null` is stored into the local `yv` of the non-null type `vector<integer>`
+fn r_vec() -> integer { yv: vector<integer> = [1, 2]; yv = null; if yv == null { 200 + len(yv) } else { len(yv) } }
+// @EXPECT_WARNING: `null` is stored into the parameter `pa` of the non-null scalar type `integer`
+fn d_param(pa: integer) -> boolean { pa = null; !pa }
+// @EXPECT_WARNING: `null` is stored into the field of the non-null type `E`
+fn e_field() -> boolean { h = H { e: null }; h.e == null }
+fn takes(e: E) -> boolean { e == null }
+// @EXPECT_WARNING: `null` is stored into parameter 1 of `takes` of the non-null type `E`
+fn e_arg() -> boolean { takes(null) }
+// @EXPECT_WARNING: `null` is stored into the return value of the non-null type `E`
+fn e_ret() -> E { return null; }
+
+fn main() {
+  assert(d_int(), "integer holds null");
+  assert(d_float(), "float holds null");
+  assert(d_text(), "text holds null");
+  assert(d_bool(), "boolean holds null");
+  assert(d_enum(), "enum holds null");
+  assert(d_ref(), "record holds null");
+  assert(d_vec() == 100, "vector holds null, length 0: {d_vec()}");
+  assert(r_int(), "reassigned integer holds null");
+  assert(r_text(), "reassigned text holds null");
+  assert(r_vec() == 200, "reassigned vector holds null, length 0: {r_vec()}");
+  assert(d_param(7), "parameter holds null");
+  assert(e_field(), "enum field holds null");
+  assert(e_arg(), "enum argument holds null");
+  assert(e_ret() == null, "enum return holds null");
+  println("a bare null into a declared local warns at every full-width kind");
+}

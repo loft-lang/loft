@@ -1617,18 +1617,12 @@ fn a_nullable_collection_is_refused_with_its_discharge() {
          type's default, an empty collection) or `?? []`; either spelling gives an absent \
          collection zero iterations at \
          a_nullable_collection_is_refused_with_its_discharge:3:17",
-    )
-    // The one that follows is the parser's generic recovery after a `for` whose source did
-    // not resolve — not part of this refusal, and asserted only because the harness matches
-    // the diagnostics EXACTLY.
-    //
-    // There were TWO.  *"Need an iterable expression in a for statement"* went with loft#1453:
-    // `collections::iterator` reports the refusal above and then returns `Value::Null`, which
-    // the caller could not tell from "no iterable at all", so it added its own line on top of
-    // a message that had already named the problem.  It now asks `Diagnostics::error_count()`
-    // and speaks only when nothing else did.  The remaining line is a different cause — the
-    // `for` bails without consuming its body — and is still open on loft#1453.
-    .error("Expect token ; at a_nullable_collection_is_refused_with_its_discharge:3:17");
+    );
+    // And nothing follows it.  There were two recovery lines: *"Need an iterable expression
+    // in a for statement"* (the `for`'s fallback, which now speaks only when nothing else
+    // did) and *"Expect token ;"* (the `for` bailed without consuming its body, and its
+    // `Null` code asked for a `;` a loop never needs).  The harness matches the diagnostics
+    // EXACTLY, so the refusal standing alone is the assertion (loft#1453).
 }
 
 /// loft#1403 — the refusal names the kind the AUTHOR wrote.
@@ -11895,16 +11889,19 @@ fn test() {
 
 /// @P285 control — a GENUINE redundant check (`not_null_field == null`,
 /// no lookup) must STILL warn.  Guards against the fix over-suppressing.
+/// A narrow `u8` field, because that is a slot with no null (C127); a plain
+/// `text` or `integer` field holds the null `(N-Store)` lets into it, so the
+/// same check there is a real test (`Type::non_null_slot_reads_null`).
 #[test]
 fn p285_genuine_redundant_check_still_warns() {
     code!(
-        "struct P285G { name: text }
+        "struct P285G { level: u8 }
 fn test() {
-    g = P285G{name: \"x\"};
-    if g.name == null { assert(false, \"unreachable\"); }
+    g = P285G{level: 3};
+    if g.level == null { assert(false, \"unreachable\"); }
 }"
     )
-    .warning("Redundant null check — 'name' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:24")
+    .warning("Redundant null check — 'level' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:25")
     .result(Value::Null);
 }
 
