@@ -13800,19 +13800,25 @@ impl Parser {
         // into the host field at `base_pos`.  Mirrors the
         // `Type::Reference(_, deps.is_empty())` arm in
         // `set_field_check` (line 3202-3216).
+        //
+        // The question is the SOURCE's representation, so it is read off the source's TYPE —
+        // a call's return, a variable's, a block's result — not off one node shape.  Asked of
+        // a call alone, a VARIABLE holding the stored form took the per-element path and its
+        // 12-byte reference was read as the tuple's members: `[for x in v { x }]` over a
+        // `vector<(integer, integer)>` (the loop variable IS a stored tuple, a record of the
+        // vector) answered garbage on `--interpret`, and a text member crashed it; `--native`
+        // did not compile either.
         let promoted_src_def: Option<u32> = if self.first_pass {
             None
         } else {
-            match val_code.unspan() {
-                Value::Call(d_nr, _) => {
-                    if let Type::Reference(d, _) = self.data.def(*d_nr).returned()
-                        && *d == tuple_d_nr
-                    {
-                        Some(tuple_d_nr)
-                    } else {
-                        None
-                    }
-                }
+            let src_tp = match val_code.unspan() {
+                Value::Call(d_nr, _) => Some(self.data.def(*d_nr).returned().clone()),
+                Value::Var(v) => Some(self.vars.tp(*v).clone()),
+                Value::Block(bl) => Some(bl.result.clone()),
+                _ => None,
+            };
+            match src_tp {
+                Some(Type::Reference(d, _)) if d == tuple_d_nr => Some(tuple_d_nr),
                 _ => None,
             }
         };

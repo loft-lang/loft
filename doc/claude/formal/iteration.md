@@ -132,7 +132,7 @@ iterated`).  Pinned by `tests/scripts/iter-text-source-once.loft` and
 
 ```
   (I-Map)      src.map(f)         ≡  [ for x in src { f(x) } ]
-  (I-Filter)   src.filter(p)      ≡  [ for x in src { if p(x) { x } } ]     (keeps x where p(x))
+  (I-Filter)   src.filter(p)      ≡  [ for x in src if p(x) { x } ]          (keeps x where p(x))
   (I-Reduce)   src.reduce(a, g)   ≡  { acc := a ; for x in src { acc := g(acc, x) } ; acc }
   (I-Comp)     [ for x in src { e } ]
                  ≡  out := alloc(vector) ;                    (a FRESH store, heap.md H-Alloc)
@@ -181,9 +181,8 @@ case past it (QUALITY-history.md B8i).
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md) — the latest, D-iter-9 and D-iter-10 (a walk over
-a `hash`, `spatial` or `trie` yielded a record removed ahead of it, and accepted an append the
-rule refuses — loft#1710), closed 2026-09-28.
+[iteration-history.md](iteration-history.md) — the latest, D-iter-11 (a comprehension yielding a
+tuple element whole read its reference as the members), closed 2026-09-29.
 
 ## Conformance
 

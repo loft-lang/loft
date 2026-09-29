@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Comp` — `[for x in v { x }]` is a fresh vector of v's elements, whatever the element
+// is (formal/iteration.md D-iter-11).  A tuple element is stored as a record, so the loop
+// variable is a REFERENCE to it; the element write took that reference for a stack tuple and
+// split its 12 bytes into members — a `(integer, integer)` element answered garbage silently on
+// the interpreter, a text member segfaulted, a vector member panicked the store, and `--native`
+// did not compile; filtered or not, in an `if` arm too, on released 2026.9.0.  loft#1074 closed
+// the combinators over tuple elements and its corpus never yields the element WHOLE.
+//
+// The silent half — a scalar tuple answering garbage — is
+// `a-comprehension-yields-a-scalar-tuple-element-whole.loft`, apart, because a crash here ends
+// the process before it would be scored.
+//
+// Controls that were already right and must stay so: an append of the loop variable, a field
+// store and a local bound from it, an indexed read, and a rebuilt `(x.0, x.1)`.
+//
+// Axes this file MOVES:  the tuple's members (scalars, text, a nested tuple, a vector), filter
+//                        or none, the element in an `if` arm, the route into the slot
+//                        (comprehension, append, field, local, index), independence of the copy.
+// Axes it HOLDS FIXED:   a local source vector.
+
+struct H { t: (integer, text), n: integer }
+
+fn test_a_comprehension_copies_each_tuple_element() {
+  vt: vector<(integer, text)> = [(3, "a"), (4, "b"), (7, "c")];
+  ct = [for x in vt { x }];
+  ft = [for x in vt if x.0 % 2 == 1 { x }];
+  arm = [for x in vt { if x.0 > 3 { x } else { (0, "n") } }];
+  t1 = ct[1].1;
+  t2 = ft[1].1;
+  t3 = arm[0].1;
+  t4 = arm[2].1;
+  got = "{len(ct)}:{t1} {len(ft)}:{t2} {t3}{t4}";
+  assert(got == "3:b 2:c nc", "tuple elements: {got}");
+}
+
+fn test_a_nested_or_heap_member_is_copied_deep() {
+  vn: vector<((integer, integer), text)> = [((1, 2), "a"), ((3, 4), "b")];
+  cn = [for x in vn { x }];
+  vv: vector<(vector<integer>, integer)> = [([1, 2], 5), ([3], 6)];
+  cv = [for x in vv { x }];
+  cv[0].0 += [9];
+  vt: vector<(integer, text)> = [(3, "a"), (4, "b")];
+  ct = [for x in vt { x }];
+  ct[0].1 = "zz";
+  n1 = cn[1].0.1;
+  n2 = cn[1].1;
+  s1 = vt[0].1;
+  s2 = ct[0].1;
+  got = "{n1}{n2} {len(vv[0].0)}/{len(cv[0].0)}/{cv[1].1} {s1}/{s2}";
+  assert(got == "4b 2/3/6 a/zz", "nested/heap/independent: {got}");
+}
+
+fn test_the_other_routes_stay_right() {
+  v: vector<(integer, text)> = [(3, "a"), (4, "b")];
+  w: vector<(integer, text)> = [];
+  h = H { t: (0, ""), n: 1 };
+  hs: vector<H> = [];
+  s = "";
+  for x in v {
+    w += [x];
+    h.t = x;
+    hs += [H { t: x, n: x.0 }];
+    y = x;
+    s += "{y.0}{y.1};";
+  }
+  c = [for i in 0..2 { v[i] }];
+  r = [for x in v { (x.0, x.1) }];
+  w1 = w[1].1;
+  ht = h.t.1;
+  h1 = hs[1].t.1;
+  c1 = c[1].1;
+  r1 = r[1].1;
+  got = "{len(w)}{w1} {h.t.0}{ht} {hs[1].n}{h1} {s} {c1}{r1}";
+  assert(got == "2b 4b 4b 3a;4b; bb", "routes: {got}");
+}
