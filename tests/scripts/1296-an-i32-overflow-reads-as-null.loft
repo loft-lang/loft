@@ -38,14 +38,10 @@
 // ⚠ The in-range cells are the control the cure needs most: a guard that answered null on
 // every compound assignment would satisfy every overflow cell here.
 //
-// ⚠ The `s.a == null` cell draws `redundant-null-check`, *"'a' is 'not null', comparison is
-// always false"*, and the comparison is TRUE — the lint states a falsehood that C85 has always
-// contradicted (`s.a = big * big` reproduces it on the released binary, so it predates this
-// and is filed as loft#1297).  Pinned with `@EXPECT_WARNING` rather than written around: the
-// warning is evidence for what this file asserts, and an expectation that stops firing is
-// fatal here, so the pin notices if the lint is ever corrected.
-//
-// @EXPECT_WARNING: Warning[redundant-null-check]
+// The `s.a == null` cell drew `redundant-null-check` until the "never null" lints asked the
+// slot's TYPE (`Type::non_null_slot_reads_null`): the comparison is TRUE, as C85 has always
+// said, and an `i32` field is one of the two templates C127 lets keep its null.  The pin this
+// file carried was there to notice that correction, and it did.
 //
 // @falsified-at: 174e55be — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0.

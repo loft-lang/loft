@@ -5032,13 +5032,13 @@ impl Parser {
         // declaration gave the sentinel up is `redundant-null-negation`, which reads
         // `IntegerSpec::non_null_reads_null` — the same question asked where the answer is
         // known.  Adding a type list here that re-answered it would be a second decoder.
+        //
+        // `text` is not on the list: its absence is in band too (`Type::non_null_slot_reads_null`
+        // answers yes), so a `text` local, field or argument that `(N-Store)` let a null into
+        // takes the ELSE branch of `if t`, and calling that condition constant was false.
         if !matches!(
             base,
-            Type::Text(_)
-                | Type::Vector(_, _)
-                | Type::Hash(_, _, _)
-                | Type::Sorted(_, _, _)
-                | Type::Index(_, _, _)
+            Type::Vector(_, _) | Type::Hash(_, _, _) | Type::Sorted(_, _, _) | Type::Index(_, _, _)
         ) {
             return;
         }

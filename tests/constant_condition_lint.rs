@@ -48,7 +48,6 @@ fn it_fires_on_a_non_optional_heap_condition() {
     for (tag, decl) in [
         ("vector", "v: vector<integer> = [1, 2];"),
         ("empty_vector", "v: vector<integer> = [];"),
-        ("text", "v: text = \"hi\";"),
     ] {
         let err = diagnostics_of(
             tag,
@@ -70,6 +69,7 @@ fn it_is_silent_on_a_scalar_whose_sentinel_is_in_band() {
         ("sentinel", "d: integer = 0 - 9223372036854775807 - 1;"),
         ("float", "d: float = 0.0;"),
         ("character", "d: character = 'a';"),
+        ("text", "d: text = \"hi\";"),
     ] {
         let err = diagnostics_of(
             tag,
@@ -80,6 +80,49 @@ fn it_is_silent_on_a_scalar_whose_sentinel_is_in_band() {
             "a scalar condition is a real two-state test and must stay quiet ({tag}); got: {err}"
         );
     }
+}
+
+/// `text` spells its absence in band as well, and was on the HEAP side of this lint until the
+/// value said otherwise: `(N-Store)` lets a `null` into a non-null `text` local, field or
+/// argument with a warning of its own, the slot then holds it, and `if t` takes the ELSE branch
+/// in all three.  So the condition is a test and the lint must not call it constant.
+#[test]
+fn a_text_holding_null_takes_the_else_branch_and_is_not_reported() {
+    let dir = std::env::temp_dir().join("loft_constant_condition_lint");
+    std::fs::create_dir_all(&dir).expect("probe dir");
+    let path = dir.join("text_null.loft");
+    std::fs::write(
+        &path,
+        "struct Tn { t: text }
+fn arg(x: text) -> text { if x { \"a-then\" } else { \"a-else\" } }
+fn main() {
+  l: text = null;
+  s = Tn { t: null };
+  a = \"l-else\";
+  if l { a = \"l-then\"; }
+  b = \"f-else\";
+  if s.t { b = \"f-then\"; }
+  print(\"{a} {b} {arg(null)}\");
+}
+",
+    )
+    .expect("write probe");
+    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg("--interpret")
+        .arg(&path)
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("spawn loft");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let got = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        got, "l-else f-else a-else",
+        "a null text is falsy in every slot; stderr: {err}"
+    );
+    assert!(
+        !err.contains(CODE),
+        "a text condition is a real two-state test and must stay quiet; got: {err}"
+    );
 }
 
 #[test]

@@ -18,9 +18,9 @@
 // signal only: the element TYPE is unchanged, so a constant index stays the
 // trusted developer contract `index_provably_fit` makes it.
 //
-// @EXPECT_WARNING: Redundant null coalescing — 'x' is 'not null'
+// @EXPECT_WARNING: Redundant null coalescing — 'n' is 'not null'
 
-struct V2 { x: float, y: float }
+struct V2 { x: float, y: float, n: u8 }
 struct Vertex { pos: V2 }
 
 // The defended reads: none of these may be called redundant.
@@ -29,8 +29,16 @@ fn min_x_nested(vs: vector<Vertex>) -> float { vs[0].pos.x ?? -1.0 }
 fn min_x_varindex(vs: vector<Vertex>, i: integer) -> float { vs[i].pos.x ?? -1.0 }
 
 // The CONTROL, and the reason this is a lint change rather than a type change:
-// `v` comes from iteration, so it really cannot be null and the default really
-// is dead.  This one MUST still warn — it is the @EXPECT_WARNING above.
+// `v` comes from iteration, so it cannot be absent, and `n` is a `u8`, a slot with
+// no null (C127), so the default really is dead.  This one MUST still warn — it is
+// the @EXPECT_WARNING above.  A `float` field is not that control: it holds the
+// null `(N-Store)` lets into it, so `v.x ?? -1.0` is a real default and is quiet.
+fn fold_ns(vs: vector<V2>) -> integer {
+  s = 0;
+  for v in vs { s = s + (v.n ?? 9); }
+  s
+}
+
 fn fold_xs(vs: vector<V2>) -> float {
   s = 0.0;
   for v in vs { s = s + (v.x ?? -1.0); }
@@ -47,15 +55,17 @@ fn test_the_default_is_live_on_an_empty_vector() {
 }
 
 fn test_a_present_element_still_reads_through() {
-  vs = [V2 { x: 3.0, y: 4.0 }];
+  vs = [V2 { x: 3.0, y: 4.0, n: 0 }];
   assert(min_x_direct(vs) == 3.0, "present direct: {min_x_direct(vs)} expect 3");
-  ws = [Vertex { pos: V2 { x: 5.0, y: 6.0 } }];
+  ws = [Vertex { pos: V2 { x: 5.0, y: 6.0, n: 0 } }];
   assert(min_x_nested(ws) == 5.0, "present nested: {min_x_nested(ws)} expect 5");
   assert(min_x_varindex(ws, 0) == 5.0, "present var index: {min_x_varindex(ws, 0)} expect 5");
 }
 
 fn test_the_control_still_reads_correctly() {
-  assert(fold_xs([V2 { x: 1.0, y: 0.0 }, V2 { x: 2.0, y: 0.0 }]) == 3.0, "control fold");
+  assert(fold_ns([V2 { x: 1.0, y: 0.0, n: 3 }, V2 { x: 2.0, y: 0.0, n: 4 }]) == 7, "control fold");
+  assert(fold_xs([V2 { x: 1.0, y: 0.0, n: 3 }, V2 { x: null, y: 0.0, n: 4 }]) == 0.0,
+         "a null float field takes the default: {fold_xs([V2 { x: 1.0, y: 0.0, n: 3 }, V2 { x: null, y: 0.0, n: 4 }])}");
 }
 
 fn main() {

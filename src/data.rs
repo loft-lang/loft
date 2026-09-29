@@ -608,8 +608,13 @@ impl IntegerSpec {
     ///    is a real test and must not be flagged;
     /// 2. every other non-nullable spec is a declared NARROW range, and by C127 it has no
     ///    null at all: a value that does not fit takes the type's DEFAULT, so `!x` on it is
-    ///    always false.  `not_null` is the same answer reached by declaration rather than by
-    ///    width, and is kept as an early return because it also covers the wide templates.
+    ///    always false.
+    ///
+    /// `not_null` is NOT read.  It once was, as "the same answer reached by declaration", but
+    /// every non-nullable struct field's spec carries it and `not null` itself has no effect,
+    /// so on a wide template it claimed a null the bytes still hold: `s.i = a * b` overflowing
+    /// into an `i: integer` field reads null with nothing reported (C85), and the lint called
+    /// the only test that sees it always false.  The width families above are the whole answer.
     ///
     /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
     /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
@@ -635,9 +640,6 @@ impl IntegerSpec {
     /// this comment claimed *"two readers, one fact"*; that was never true.
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
-        if self.not_null {
-            return false;
-        }
         self.is_wide_template() || self.is_signed32_template()
     }
 
@@ -2385,6 +2387,33 @@ impl Type {
         match self {
             Type::Optional(inner) => (inner, true),
             other => (other, false),
+        }
+    }
+
+    /// @FR-N-Store, (E-Truthy-1) — can a value read from a NON-nullable slot of this type be
+    /// null?  The one home for the question every "this is never null" lint asks
+    /// (`redundant-null-negation`, `redundant-null-check`, `redundant-coalesce`,
+    /// `redundant-default-fallback`, `constant-condition`).
+    ///
+    /// Yes for every kind that spells absence IN BAND — a wide integer, `boolean`, `float`,
+    /// `single`, `character`, `text` and an enum: `(N-Store)` lets a null into such a slot with
+    /// a warning and the slot then holds it, and an overflow reaches a plain `integer` with no
+    /// warning at all (C85).  No for a declared narrow range (C127: an unfitting value takes
+    /// the default) and for a dense record or a collection, whose slot has no room for absence
+    /// and reads a record or an empty collection instead.
+    #[must_use]
+    pub fn non_null_slot_reads_null(&self) -> bool {
+        match self {
+            // Asked of a `τ?` the answer is trivially yes; spelled so the question is total.
+            Type::Optional(_) => true,
+            Type::Integer(spec) => spec.non_null_reads_null(),
+            Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Text(_)
+            | Type::Enum(..) => true,
+            _ => false,
         }
     }
 

@@ -931,7 +931,7 @@ fn main() { print(\"x={f([E::A { p: 1 }, E::B { q: 2 }])}\\n\"); }
 #[test]
 fn redundant_coalesce_inside_arm_body_still_warns() {
     let source = "\
-struct S { x: integer }
+struct S { x: u8 }
 enum E { A { p: integer }, C { r: integer } }
 fn f(v: vector<E>, s: S) -> integer {
   match v { [(A { p } |C { r })] => (s.x ?? 0) + (p ?? 0) + (r ?? 0), _ => -1, }
@@ -1547,5 +1547,135 @@ fn main() {
     assert!(
         diag.contains("cannot be stored into the tuple element"),
         "a narrow element must keep the hard error, not soften to a warning; got {diag:?}"
+    );
+}
+
+// ── The "never null" lints ask the slot's TYPE (formal/types.md D-types-9) ──
+// Four lints claim a field read can never be null: `!s.f`, `s.f == null`, `s.f ?? d`, `s.f?`.
+// That claim is true of a declared narrow range (C127), a dense record and a collection, and
+// false of every in-band kind, whose non-null slot holds the null `(N-Store)` lets into it.
+// Each cell scores the lint AND the value it answers, because a lint that went quiet by
+// changing the answer would pass a diagnostic-only check.
+
+/// `(kind, field type, the stored value, the `??` default, the four expected answers in
+/// order `!`, `== null`, `??`, `?`, whether the lints may speak)`.
+type NeverNullCell = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    [&'static str; 4],
+    bool,
+);
+
+const NEVER_NULL_KINDS: &[NeverNullCell] = &[
+    (
+        "integer",
+        "integer",
+        "null",
+        "7",
+        ["true", "true", "7", "0"],
+        false,
+    ),
+    (
+        "float",
+        "float",
+        "null",
+        "7.5",
+        ["true", "true", "7.5", "0"],
+        false,
+    ),
+    (
+        "text",
+        "text",
+        "null",
+        "\"d\"",
+        ["true", "true", "d", ""],
+        false,
+    ),
+    (
+        "enum",
+        "Col",
+        "null",
+        "Col.Green",
+        ["true", "true", "Green", "Red"],
+        false,
+    ),
+    ("u8", "u8", "5", "7", ["false", "false", "5", "5"], true),
+    (
+        "record",
+        "P",
+        "null",
+        "P { x: 7 }",
+        ["false", "false", "{x:0}", "{x:0}"],
+        true,
+    ),
+    (
+        "vector",
+        "vector<integer>",
+        "null",
+        "[7]",
+        ["false", "false", "[]", "[]"],
+        true,
+    ),
+];
+
+const NEVER_NULL_FORMS: [(&str, &str, &str); 4] = [
+    ("negation", "!s.f", "redundant-null-negation"),
+    ("check", "s.f == null", "redundant-null-check"),
+    ("coalesce", "s.f ?? DEFAULT", "redundant-coalesce"),
+    ("fallback", "s.f?", "redundant-default-fallback"),
+];
+
+#[test]
+fn never_null_lints_speak_only_where_the_slot_has_no_null() {
+    let mut wrong = Vec::new();
+    for (kind, tp, stored, default, answers, speaks) in NEVER_NULL_KINDS {
+        for (i, (form, expr, code)) in NEVER_NULL_FORMS.iter().enumerate() {
+            let expr = expr.replace("DEFAULT", default);
+            let source = format!(
+                "enum Col {{ Red, Green }}\n\
+                 struct P {{ x: integer }}\n\
+                 struct S {{ f: {tp} }}\n\
+                 fn main() {{ s = S {{ f: {stored} }}; print(\"<{{{expr}}}>\"); }}\n"
+            );
+            let (stdout, diag, _) =
+                run_with_warnings(&format!("never_null_{kind}_{form}"), &source);
+            let want = format!("<{}>", answers[i]);
+            if !stdout.contains(&want) {
+                wrong.push(format!("{kind} {form}: printed {stdout:?}, want {want}"));
+            }
+            let spoke = diag.contains(&format!("warning[{code}]"));
+            if spoke != *speaks {
+                wrong.push(format!(
+                    "{kind} {form}: {code} spoke={spoke}, want {speaks}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "never-null lint cells:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// The cell nothing else reports: an overflow reaches a plain `integer` field with no
+/// `(N-Store)` warning at all (C85 types `*` non-null), so the lint was the ONLY diagnostic
+/// on the line, and it advised deleting the one test that sees the null.
+#[test]
+fn never_null_lints_are_quiet_on_an_overflowed_integer_field() {
+    let source = "struct S { i: integer }\n\
+                  fn big() -> integer { 4611686018427387904 }\n\
+                  fn main() { s = S { i: 1 }; s.i = big() * 4; \
+                  print(\"<{!s.i} {s.i == null} {s.i ?? 7}>\"); }\n";
+    let (stdout, diag, _) = run_with_warnings("never_null_overflow", source);
+    assert!(
+        stdout.contains("<true true 7>"),
+        "the overflow reads null; got {stdout:?}"
+    );
+    assert!(
+        !diag.contains("warning[redundant-"),
+        "no lint may call the overflowed field never null; got stderr={diag:?}"
     );
 }

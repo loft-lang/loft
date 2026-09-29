@@ -12896,7 +12896,8 @@ impl Parser {
                 || self.data.def_type(d_nr) == DefType::TypeTemplate)
         {
             let tp = self.data.attr_type(d_nr, f_nr);
-            self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
+            self.expr_not_null =
+                !self.data.attr_nullable(d_nr, f_nr) && !tp.non_null_slot_reads_null();
             self.expr_not_null_name.clear();
             return v_block(
                 vec![
@@ -12917,8 +12918,10 @@ impl Parser {
         }
         let tp = self.data.attr_type(d_nr, f_nr);
         let nullable = self.data.attr_nullable(d_nr, f_nr);
-        self.expr_not_null = !nullable;
-        if !nullable && f_nr != usize::MAX {
+        // Not declared `?` is not the same as never null: a field of an in-band kind holds the
+        // null `(N-Store)` lets into it, so the "never null" lints ask the slot's TYPE too.
+        self.expr_not_null = !nullable && !tp.non_null_slot_reads_null();
+        if self.expr_not_null && f_nr != usize::MAX {
             self.expr_not_null_name = self.data.attr_name(d_nr, f_nr);
         } else {
             self.expr_not_null_name.clear();

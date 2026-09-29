@@ -686,6 +686,24 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-9** *(opened 2026-09-29, CLOSED 2026-09-29)* — the "never null" lints against
+  `(N-Store)` and `(E-Truthy-1)`.  `redundant-null-negation`, `redundant-null-check`,
+  `redundant-coalesce` and `redundant-default-fallback` read a FIELD as never null whenever it
+  was not declared `?`, so they called `!s.i`, `s.i == null`, `s.i ?? d` and `s.i?` constant on
+  every full-width field — integer, float, text, character, enum — while the slot held the null
+  `(N-Store)` let into it, and while C85's overflow reached a plain `integer` field with nothing
+  said at all (`s.i = a * b` read null, `!s.i` read true).  The deleted check was the only
+  thing that saw it.  A local and a parameter of the same types were already quiet, so the
+  spelling decided the answer.  `constant-condition` made the same claim about `text` in every
+  position (`if t` on a null text took the ELSE branch), and `IntegerSpec::non_null_reads_null`
+  read `not_null`, a flag every field carries and that has no effect on the bytes.  **Fix.**
+  One home, `Type::non_null_slot_reads_null`: yes for the in-band kinds, no for a declared
+  narrow range (C127), a dense record and a collection; `get_field` and `constant-condition`
+  ask it.  Guards `tests/runtime_warnings.rs` `never_null_lints_*` (a lint × field-kind matrix with
+  each cell's value) and `tests/constant_condition_lint.rs` (the text cell).  loft#1297 had softened the
+  `== null` message for the integer case; its table rated a `text` field "genuinely always
+  false", which `(N-Store)` had since made untrue.  `Contract: settled` — both rules already
+  said the slot holds null and that null is falsy.
 * **D-types-8** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(N-Store)` for a PLAIN enum: a bare
   `null` into an `E` field, argument or return passed in silence while the slot held null (all
   three read back null, both backends).  The report's heap half asked `is_dbref` and the scalar

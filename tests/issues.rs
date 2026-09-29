@@ -11889,16 +11889,19 @@ fn test() {
 
 /// @P285 control — a GENUINE redundant check (`not_null_field == null`,
 /// no lookup) must STILL warn.  Guards against the fix over-suppressing.
+/// A narrow `u8` field, because that is a slot with no null (C127); a plain
+/// `text` or `integer` field holds the null `(N-Store)` lets into it, so the
+/// same check there is a real test (`Type::non_null_slot_reads_null`).
 #[test]
 fn p285_genuine_redundant_check_still_warns() {
     code!(
-        "struct P285G { name: text }
+        "struct P285G { level: u8 }
 fn test() {
-    g = P285G{name: \"x\"};
-    if g.name == null { assert(false, \"unreachable\"); }
+    g = P285G{level: 3};
+    if g.level == null { assert(false, \"unreachable\"); }
 }"
     )
-    .warning("Redundant null check — 'name' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:24")
+    .warning("Redundant null check — 'level' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:25")
     .result(Value::Null);
 }
 

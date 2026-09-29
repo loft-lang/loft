@@ -2745,17 +2745,14 @@ fn gh256_bool_null_coalesce_supported() {
 /// @C69 — `!x` on a non-boolean is a null test.
 #[test]
 fn gh253_bang_on_not_null_warns() {
-    // Genuinely exercises `not null` (the `!x`-is-always-false diagnostic depends on the
-    // value being non-null), so it KEEPS `not null` and asserts the deprecation too.
-    code!("fn test() { h: integer not null = 3; if !h { h = 4; } }")
-        .advice(
-            "`not null` is deprecated and has no effect — a type is non-null by default now at gh253_bang_on_not_null_warns:1:34",
-        )
-        .warning(
-            "'!' on a 'not null' integer is always false — '!x' tests whether x \
-             is null, and a 'not null' value is never null at \
-             gh253_bang_on_not_null_warns:1:45",
-        );
+    // The `!x`-is-always-false diagnostic needs a slot with no null, which is a narrow range
+    // (C127).  It was spelled `integer not null` until that flag was measured to have no
+    // effect: such a local still reads null after an overflow, so `!h` on it is a real test.
+    code!("fn test() { h: u8 = 3; if !h { h = 4; } }").warning(
+        "'!' on a 'not null' integer(0, 255) is always false — '!x' tests whether x \
+         is null, and a 'not null' value is never null at \
+         gh253_bang_on_not_null_warns:1:31",
+    );
 }
 
 /// GitHub #253 companion — `!` on a *nullable* operand is the sanctioned null
