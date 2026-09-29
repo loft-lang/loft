@@ -10193,6 +10193,8 @@ use a separate collection or add after the loop"
         // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
         // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
         // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
+        // @FR-N-Shape: asked of the peeled element, so `vector<vector<T>?>` slices copy too
+        // — an absent element stays absent through the copy (loft#1739).
         if matches!(elm_tp.base(), Type::Vector(_, _)) {
             ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), element_id]));
         } else if self.is_type_var_element(&elm_tp) {

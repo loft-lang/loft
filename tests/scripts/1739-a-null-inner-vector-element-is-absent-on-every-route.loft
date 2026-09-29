@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1739 (`@FR-N-Shape`) — A NULL INNER VECTOR ELEMENT IS ABSENT ON EVERY ROUTE.
+// `vector<T>?` is a nullability bit over `vector<T>`'s own layout: the element slot is a 4-byte
+// record id where `0` is the EMPTY vector and `DbRef::ABSENT_REC` is null.  Every site that
+// writes, reads, copies or renders such an element asks its SHAPE of the peeled type and its
+// nullability of the `?`.  Asked of the unpeeled `Optional(Vector)`, the literal `null` wrote the
+// empty vector, `{v}` rendered the elements as enum values (`[?,null]`), a comprehension, a slice
+// and `v += [x]` stored the element's DbRef as a 4-byte int, and a copy of a vector holding an
+// absent element (`c = v`, `w += v`, a pass by value) followed the marker as a record id.
+//
+// Each route below is asserted on its VALUE, its LENGTH and absent-versus-empty; the file runs
+// under the leak check with the rest of the corpus.
+//
+// @falsified-at: PENDING
+
+struct Holder { g: vector<vector<integer>?> }
+
+fn pass(v: vector<vector<integer>?>) -> vector<vector<integer>?> { v }
+
+fn maybe(n: integer) -> vector<integer>? { if n > 0 { [n, n] } else { null } }
+
+fn count(x: vector<integer>?) -> integer { if x == null { -1 } else { len(x) } }
+
+fn main() {
+  // The literal: a null element is absent, an empty one is empty.
+  v: vector<vector<integer>?> = [[1, 2], null, [3]];
+  assert(len(v) == 3, "literal length {len(v)}");
+  assert(v[1] == null, "literal null element reads {v[1]}");
+  assert(v[0] != null && len(v[0] ?? []) == 2, "literal first element {v[0]}");
+  e: vector<vector<integer>?> = [[1, 2], [], [3]];
+  assert(e[1] != null && len(e[1] ?? []) == 0, "an empty element is present");
+  assert("{v}" == "[[1,2],null,[3]]", "format {v}");
+  assert("{v[0]} {v[1]} {v[2]}" == "[1,2] null [3]", "element format");
+
+  // Reads: a loop, an argument, `??`.
+  n = 0;
+  for x in v { if x == null { n += 100 } else { n += len(x) } }
+  assert(n == 103, "loop sum {n}");
+  assert(count(v[0]) == 2 && count(v[1]) == -1, "argument {count(v[0])} {count(v[1])}");
+  assert("{v[1] ?? [42]}" == "[42]", "?? on the absent element");
+
+  // Stores: `v[i] = null`, `+= [null]`, `+= [x]` for a null and a present variable, a call.
+  s: vector<vector<integer>?> = [[1], [9]];
+  s[1] = null;
+  s += [null];
+  x: vector<integer>? = null;
+  s += [x];
+  y: vector<integer>? = [4, 5];
+  s += [y];
+  s += [maybe(0)];
+  s += [maybe(3)];
+  assert(len(s) == 7, "store length {len(s)}");
+  assert("{s}" == "[[1],null,null,null,[4,5],null,[3,3]]", "stores {s}");
+  y += [6];
+  assert(len(s[4] ?? []) == 2, "the appended element is a copy, not a view of y");
+
+  // Comprehension, filter, map over absent elements.
+  w = [for z in v { z }];
+  assert("{w}" == "[[1,2],null,[3]]", "comprehension {w}");
+  assert(w[1] == null, "comprehension keeps the element absent");
+  f = [for z in v if z != null { z }];
+  assert("{f}" == "[[1,2],[3]]", "filter {f}");
+  m = [for z in v { z ?? [0] }];
+  assert("{m}" == "[[1,2],[0],[3]]", "map {m}");
+
+  // Copies: a slice, a bind, `+=` of a whole vector, a pass by value, a field.
+  sl = v[0..2];
+  assert("{sl}" == "[[1,2],null]" && sl[1] == null, "slice {sl}");
+  c = v;
+  assert(c[1] == null && "{c}" == "[[1,2],null,[3]]", "bind copy {c}");
+  assert(c == v, "a copy equals its source");
+  assert(e != v, "an empty element is not an absent one (C91)");
+  a: vector<vector<integer>?> = [[9]];
+  a += v;
+  assert("{a}" == "[[9],[1,2],null,[3]]" && a[2] == null, "append a vector {a}");
+  p = pass(v);
+  assert("{p}" == "[[1,2],null,[3]]" && p[1] == null, "pass by value {p}");
+  h = Holder { g: [[5], null] };
+  assert("{h.g}" == "[[5],null]" && h.g[1] == null, "field {h.g}");
+
+  // Other inner element types and a third level.
+  t: vector<vector<text>?> = [["a"], null];
+  assert("{t}" == "[[\"a\"],null]" && t[1] == null, "text inner {t}");
+  sg: vector<vector<single>?> = [null, [1.5f]];
+  assert("{sg}" == "[null,[1.5]]" && sg[0] == null, "single inner {sg}");
+  u: vector<vector<u8>?> = [[7, 250], null];
+  assert("{u}" == "[[7,250],null]" && u[1] == null, "u8 inner {u}");
+  d: vector<vector<vector<integer>?>> = [[[1], null], [null]];
+  assert("{d}" == "[[[1],null],[null]]", "depth three {d}");
+  assert(d[0][1] == null && d[1][0] == null, "depth three absent");
+  println("ok");
+}

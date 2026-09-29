@@ -2862,8 +2862,12 @@ impl Stores {
         let length = vector::length_vector(rec, &self.allocations);
         let size = u32::from(self.size(content_tp));
         let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
-        if cur == 0 {
-            self.store_mut(to).set_u32_raw(to.rec, to.pos, 0);
+        // An empty source (`0`) copies to an empty destination and an ABSENT one
+        // (`DbRef::ABSENT_REC`, a `vector<vector<T>?>` element that is null) to an absent
+        // one: neither names a block to copy.  Followed as a record, the absent marker sent
+        // `c = v`, `w += v` and a pass-by-value of such a vector into wild memory (loft#1739).
+        if cur == 0 || Self::owned_edge_absent(cur) {
+            self.store_mut(to).set_u32_raw(to.rec, to.pos, cur);
             return;
         }
         let into = self.store_mut(to).claim(1 + (size * length).div_ceil(8));

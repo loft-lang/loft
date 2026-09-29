@@ -2540,7 +2540,24 @@ impl Function {
         let ctr = self.unique.entry(name.to_string()).or_insert(0);
         *ctr += 1;
         let nr = *ctr;
-        self.add_variable(&format!("_{name}_{nr}"), type_def, lexer)
+        let full = format!("_{name}_{nr}");
+        // An ELEMENT temp is minted by some sites in pass 2 only (a slice, `map`, `filter`, a
+        // whole-vector copy), so its number names a different site in each pass and pass 2's
+        // `_elm_5` can meet pass 1's `_elm_5` at another element SHAPE.  Pass 1's code is
+        // discarded, so that type is no fact: pass 2's wins.  Kept the old way, a correct
+        // program was refused — `c = v` on a `vector<vector<integer>>` followed by a deeper
+        // literal: "Variable '_elm_5' cannot change type" (found by loft#1739's guard).  Only
+        // a SHAPE conflict, and only this family: another family can mint the same site twice
+        // on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
+        if name == "elm"
+            && let Some(&v) = self.names.get(&full)
+            && !type_def.is_unknown()
+            && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+        {
+            self.trace_type_change(v, type_def, "unique(elm)");
+            self.variables[v as usize].type_def = type_def.clone();
+        }
+        self.add_variable(&full, type_def, lexer)
     }
 
     /// Mark a variable as carrying an EXPLICIT `: Type` annotation (vs an inferred type).

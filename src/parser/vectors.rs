@@ -3774,8 +3774,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // DbRef handle).  The scalar `set_field(usize::MAX)` path emits `OpSetInt4`
         // (4 of 12 bytes) → eval-stack skew → garbage rec-id into the locked
         // CONST_STORE.  Deep-copy the inner record instead.  Scalar elements keep
-        // `set_field`.
-        if matches!(in_t, Type::Vector(_, _)) {
+        // `set_field`.  @FR-N-Shape: the shape is asked of the peeled element, so a
+        // `vector<vector<T>?>` body takes this arm too — asked of `Optional(Vector)` it fell
+        // to `set_field`, which stored the DbRef as a 4-byte int (loft#1739).
+        if let (Type::Vector(_, _), nullable) = in_t.peel_optional() {
             lp.push(self.cl(
                 "OpSetInt4",
                 &[Value::Var(elm), Value::Int(0), Value::Int(0)],
@@ -3791,10 +3793,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     .vector_element_type(in_t, &mut self.database)
                     .unwrap_or(u16::MAX),
             ));
-            lp.push(self.cl(
+            let copy = self.cl(
                 "OpCopyRecord",
                 &[Value::Var(comp_var), Value::Var(elm), type_nr],
-            ));
+            );
+            if nullable {
+                // A null body leaves the element ABSENT (`DbRef::ABSENT_REC`, what the
+                // literal and `v[i] = null` write), not the empty vector the zeroed handle is.
+                #[allow(clippy::cast_possible_wrap)]
+                let absent = Value::Int(crate::keys::DbRef::ABSENT_REC as i32);
+                let is_null = self.cl("OpVectorIsNull", &[Value::Var(comp_var)]);
+                let mark = self.cl("OpSetInt4", &[Value::Var(elm), Value::Int(0), absent]);
+                lp.push(v_if(is_null, mark, copy));
+            } else {
+                lp.push(copy);
+            }
         } else if self.is_type_var_element(in_t) {
             // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
             // `v += [x]` writes it, which each monomorph re-lowers at its concrete element
@@ -5165,8 +5178,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // `[JCircle { r: 1 }, dot]`) is stored into it as it is; a variant LITERAL is built
             // into it (the object literal's `type_matches`).
             Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
-        } else if let Type::Vector(inner, _) = assign_tp {
-            // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
+        } else if let Type::Vector(inner, _) = assign_tp.base() {
+            // #555 — a `vector<T>` element keeps its SPECIFIC type (`@FR-N-Shape`: a
+            // `vector<T>?` element too — unpeeled it took `was`, loft#1739).  `was` routes through
             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`
             // source def (data.rs), so the element var's inner type is shared across all vector
             // slices in a function — two nested-vector slices then desync (the later one's first
@@ -5967,6 +5981,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(guard) = self.keyed_local_materialise(vec) {
             ls.push(guard);
         }
+        // @FR-N-Shape — `τ?` is a nullability bit over τ's own layout: every question below
+        // about the element's SHAPE (a vector handle, a record, a nullable enum) is asked of
+        // the peeled type, and only the nullability question reads `in_t`.  Asked of
+        // `Optional(Vector)` they all answered "no", so `v += [x]` with `x: vector<T>?`
+        // stored the DbRef as a 4-byte int (loft#1739).
+        let shape = in_t.base();
         let is_field = self.is_field(val);
         let ed_nr = self.data.type_def_nr(in_t);
         if ed_nr == u32::MAX && self.first_pass && crate::data::Data::type_has_unresolved(in_t) {
@@ -6135,7 +6155,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let elem_known = lhs_known.unwrap_or_else(|| self.vector_of(in_t));
             // Inside a template a vector over a type variable has no row yet (`vector_of`
             // bakes the `u16::MAX` sentinel), so there is no content to size.
-            let known_tp = if matches!(in_t, Type::Vector(_, _))
+            let known_tp = if matches!(shape, Type::Vector(_, _))
                 && elem_known != u16::MAX
                 && self.database.size(self.database.content(elem_known)) < 4
             {
@@ -6195,17 +6215,40 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // handle on EVERY construction path — the literal/`Insert` path lacked
             // it (only the copy branch below had it), so nested `single` literals
             // crashed.  No-op for the already-zero 8-byte cases.
-            if !self.first_pass && matches!(in_t, Type::Vector(_, _)) {
+            if !self.first_pass && matches!(shape, Type::Vector(_, _)) {
                 ls.push(self.cl(
                     "OpSetInt4",
                     &[Value::Var(elm), Value::Int(0), Value::Int(0)],
                 ));
             }
-            if matches!(
-                in_t,
+            if self.is_null_source(p) && Self::is_collection_type(shape) {
+                // A `null` ELEMENT of a collection-typed element writes the element's 4-byte
+                // record id, the slot a collection FIELD has, so it takes the field's rule
+                // (`mark_collection_absent`): a NULLABLE element (`vector<vector<T>?>`) is
+                // ABSENT — `DbRef::ABSENT_REC`, what `v[i] = null` writes and
+                // `vector::is_absent_collection` reads — and a non-nullable one is the EMPTY
+                // collection, record id `0` (`(N-Default)`).  Writing `0` for the nullable
+                // element made `[[1], null]` read back `[]` and answer `v[1] == null` false
+                // (loft#1739, @FR-N-Shape).
+                //
+                // The generic `set_field` below cannot take this value: `convert` made the
+                // `null` a 16-byte REFERENCE sentinel, and the element's setter writes 4.
+                let (_, nullable) = in_t.peel_optional();
+                #[allow(clippy::cast_possible_wrap)]
+                let slot = if nullable {
+                    crate::keys::DbRef::ABSENT_REC as i32
+                } else {
+                    0
+                };
+                ls.push(self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(elm), Value::Int(0), Value::Int(slot)],
+                ));
+            } else if matches!(
+                shape,
                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
             ) {
-                let inner_nr = match in_t {
+                let inner_nr = match shape {
                     Type::Reference(nr, _) => *nr,
                     _ => self.data.type_def_nr(in_t),
                 };
@@ -6279,7 +6322,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     let free_source_bit: i32 = 0;
                     let type_nr = if self.first_pass {
                         Value::Int(i32::from(u16::MAX))
-                    } else if matches!(in_t, Type::Vector(_, _)) {
+                    } else if matches!(shape, Type::Vector(_, _)) {
                         // The ELEMENT type of the outer vector, from the shared
                         // resolver — the same id the literal, slice and comprehension
                         // paths use.  `vector(db_type(inner))` named a different row:
@@ -6311,7 +6354,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         }
                         other => other,
                     };
-                    ls.push(self.cl("OpCopyRecord", &[p.clone(), Value::Var(elm), type_nr]));
+                    let copy = self.cl("OpCopyRecord", &[p.clone(), Value::Var(elm), type_nr]);
+                    if matches!(shape, Type::Vector(_, _)) && in_t.peel_optional().1 {
+                        // A `vector<T>?` source that is null leaves the element ABSENT, as the
+                        // literal `null` does — copying nothing would leave the zeroed handle,
+                        // the EMPTY vector (loft#1739).
+                        #[allow(clippy::cast_possible_wrap)]
+                        let absent = Value::Int(crate::keys::DbRef::ABSENT_REC as i32);
+                        let is_null = self.cl("OpVectorIsNull", &[p.clone()]);
+                        let mark = self.cl("OpSetInt4", &[Value::Var(elm), Value::Int(0), absent]);
+                        ls.push(v_if(is_null, mark, copy));
+                    } else {
+                        ls.push(copy);
+                    }
                 }
             } else if let Value::Tuple(values) = p {
                 // P189c — vector-element tuple literal.  Emit
@@ -6361,26 +6416,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 for l in steps {
                     ls.push(l.clone());
                 }
-            } else if self.is_null_source(p) && Self::is_collection_type(in_t.base()) {
-                // A `null` ELEMENT of a collection-typed element (`vector<vector<T>?>`,
-                // and the keyed kinds) is the EMPTY collection — the same rule a `null`
-                // reaching a collection FIELD takes (loft#922), because the slot is the
-                // same: a 4-byte record id where `0` already means "no records".
-                //
-                // Without this arm the element fell to the generic `set_field` below,
-                // which wrote what `convert` had made of the `null`: a REFERENCE sentinel
-                // (`OpNullRefSentinel`, a 16-byte DbRef with `store_nr = u16::MAX`), the
-                // right null for a vector VARIABLE, whose slot is a DbRef.  Writing it
-                // through the element's 4-byte setter aborted the compiler with an
-                // internal assertion — `expected 8B on stack but … pushed 16B` — so
-                // `vv += [null]` never reached a diagnostic, let alone a value.
-                //
-                // Telling this empty from an absent element is the same open question
-                // the FIELD has, and has one home: loft#917's reader half.
-                ls.push(self.cl(
-                    "OpSetInt4",
-                    &[Value::Var(elm), Value::Int(0), Value::Int(0)],
-                ));
             } else if let Some(op) = self.narrow_elm_set(in_t, elm, p) {
                 // @PLN25 item 2 / #624 — narrow integer element write, shared with
                 // the slice-materialise site.  The fallback (an element outside the

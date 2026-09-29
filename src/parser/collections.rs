@@ -2774,8 +2774,13 @@ use #count instead"
         if let Some(narrow) = self.data.narrow_vector_content(cont, &mut self.database) {
             return self.database.vector(narrow);
         }
-        let db_tp = if matches!(cont, Type::Vector(_, _)) {
-            self.database.db_type(cont, &self.data)
+        // @FR-N-Shape — `vector<T>?` is a nullability bit over `vector<T>`'s own row, so the
+        // shape question is asked of the peeled element (the narrow call above keeps the `?`,
+        // which picks a nullable narrow encoding).  Asked of `Optional(Vector)` the test
+        // failed and the def lookup below named another row: `vector<vector<integer>?>`
+        // printed its elements as enum values, `[?,null]` (loft#1739).
+        let db_tp = if let shape @ Type::Vector(_, _) = cont.base() {
+            self.database.db_type(shape, &self.data)
         } else {
             let d_nr = self.data.type_def_nr(cont);
             self.data.def(d_nr).known_type()

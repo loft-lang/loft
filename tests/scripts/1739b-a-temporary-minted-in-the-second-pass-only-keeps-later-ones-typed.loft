@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TEMPORARY MINTED IN THE SECOND PASS ONLY KEEPS LATER ONES TYPED (found by loft#1739's guard).
+// The parser runs twice and meets pass 1's temporaries again BY NAME in pass 2.  A minted temp
+// (`_elm_N`) is numbered by how many were minted before it, and a slice, `map`, `filter` and a
+// whole-vector copy mint their element temp in pass 2 only, so every later number names a
+// different site in each pass.  Pass 2's `_elm_5` then met pass 1's `_elm_5` at another element
+// type, and a correct program was refused: "Variable '_elm_5' cannot change type from
+// vector<integer> to vector<vector<integer>>".  A minted temp takes pass 2's type on a conflict,
+// as a `__` temp already did — pass 1's code is discarded, so its type is not a fact.
+//
+// Each cell mints in pass 2, then builds a literal whose element temps have a DIFFERENT type.
+//
+// @falsified-at: PENDING
+
+fn main() {
+  v: vector<vector<integer>> = [[1, 2], [3]];
+
+  c = v;
+  d1: vector<vector<vector<integer>>> = [[[1]], [[4]]];
+  assert("{c} {d1}" == "[[1,2],[3]] [[[1]],[[4]]]", "bind copy: {c} {d1}");
+
+  sl = v[0..1];
+  d2: vector<vector<vector<integer>>> = [[[5]], [[6], [7]]];
+  assert("{sl} {d2}" == "[[1,2]] [[[5]],[[6],[7]]]", "slice: {sl} {d2}");
+
+  f = filter(v, |x| { len(x) > 1 });
+  d3: vector<vector<vector<integer>>> = [[[8]]];
+  assert("{f} {d3}" == "[[1,2]] [[[8]]]", "filter: {f} {d3}");
+
+  m = map(v, |x| { x });
+  t: vector<vector<text>> = [["a"], ["b", "c"]];
+  assert("{m} {t}" == "[[1,2],[3]] [[\"a\"],[\"b\",\"c\"]]", "map: {m} {t}");
+  println("ok");
+}
