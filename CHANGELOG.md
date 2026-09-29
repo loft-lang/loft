@@ -106,6 +106,12 @@ writes `?? 0`.  The `redundant-coalesce` lint no longer flags that `?? 0` as unu
 `limit` bound the type cannot carry is refused once and recovers as plain `integer`, instead
 of adding a second error about a type you never wrote.
 
+**A path can be asked whether it is a symbolic link.**  `is_symlink(path)` answers for the
+link itself, where `is_dir` and `is_file` answer for what it points at — so a directory walk
+that must not follow links has something to ask.  Measured by the first script written for
+@PLN179: without it, a tracked `docs -> doc` link listed every script under `doc/` twice.
+`false` on a browser host, which has no links.
+
 **A mistyped `=` in a condition is refused.**  `if v[9] = 2 { … }` — a store where a comparison
 was meant — used to compile and then behave differently on each backend.  It is now refused
 with the cure: write `==` to compare, or move the store to its own line.

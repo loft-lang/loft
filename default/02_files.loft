@@ -331,6 +331,12 @@ pub fn is_dir(path: text) -> boolean fs#read;
 pub fn is_file(path: text) -> boolean fs#read;
 #rust"codegen_runtime::fs_is_file(&s.database.resolve_path(@path))"
 #impure(io)
+// Returns true if `path` itself is a symbolic link, whatever it points at —
+// is_dir and is_file answer for the TARGET, so a walk that must not follow a
+// link asks this first (@PLN179).  False on a browser host, which has no links.
+pub fn is_symlink(path: text) -> boolean fs#read;
+#rust"codegen_runtime::fs_is_symlink(&s.database.resolve_path(@path))"
+#impure(io)
 // Lists the entry NAMES of directory `path` (base names, not full paths),
 // sorted.  A MISSING / non-directory path lists as NULL (distinct
 // from an EMPTY directory, `[]`); discharge with `?? []` to keep the old shape.

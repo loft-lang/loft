@@ -5409,6 +5409,22 @@ pub fn fs_is_dir(path: &str) -> bool {
     }
 }
 
+/// Returns `true` if `path` is itself a symbolic link (the link, not its target:
+/// `fs_is_dir` / `fs_is_file` follow it).  A host filesystem has no links, so it
+/// answers `false` there rather than asking the host.
+#[must_use]
+pub fn fs_is_symlink(path: &str) -> bool {
+    #[cfg(host_fs)]
+    {
+        let _ = path;
+        false
+    }
+    #[cfg(not(host_fs))]
+    {
+        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    }
+}
+
 /// Returns `true` if `path` exists and is a regular file.
 #[must_use]
 pub fn fs_is_file(path: &str) -> bool {
