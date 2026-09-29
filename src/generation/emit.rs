@@ -531,12 +531,23 @@ impl Output<'_> {
                     // block that binds it — is a statement list with a value tail, which
                     // inside a tuple is legal Rust only as a block expression.
                     let as_block = e.unspan().kind() == ValueType::Insert;
+                    // loft#1740 — a text member in a `&str` slot is spelled `&String`, `&str`
+                    // or `Str` depending on its source, and rustc reconciles those inside a
+                    // tuple only where the expected type is in view: an `if` join's two arms
+                    // and a pre-bound block argument were refused.  One spelling for all.
+                    let as_str = elem_is_text && !self.tuple_text_to_string;
+                    if as_str {
+                        write!(w, "tuple_text(")?;
+                    }
                     if as_block {
                         write!(w, "{{ ")?;
                     }
                     self.output_code_node(w, e)?;
                     if as_block {
                         write!(w, " }}")?;
+                    }
+                    if as_str {
+                        write!(w, ")")?;
                     }
                     if elem_is_bool {
                         write!(w, ") as u8)")?;

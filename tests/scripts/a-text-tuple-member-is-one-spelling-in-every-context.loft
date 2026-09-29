@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1740 — a tuple's `text` member reaches a `(text, …)` slot from many sources, and each is
+// one value.  `--native` spelled it by source — a `String` local `&String`, a literal `&str`, a
+// call's result `Str` — and rustc reconciles those inside a tuple only where the expected type
+// is in view, so an `if` join's two arms, a block argument and a call member did not compile.
+// And on the interpreter a `??` member (`opt() ?? "d"`) stored into a local read freed text:
+// the discharge answers through its own temporary, freed when the statement ends.
+//
+// Axes this file MOVES:  the member's source (a text local, a call, a literal, a tuple member,
+//                        a `??`) and the context (inline argument, `if` join, block argument,
+//                        `match` arm, return, a typed local), repeated calls.
+// Axes it HOLDS FIXED:   a `(text, float)` tuple.
+
+fn txt(k: integer) -> text { "t{k}" }
+fn opt(k: integer) -> text? { if k > 0 { "o{k}" } else { null } }
+fn take(p: (text, float)) -> text { "{p.0}/{p.1}" }
+
+fn contexts(s: text, n: integer) -> text {
+  c = n > 1;
+  tp = (s, 7);
+  a = take((txt(n), 1.5));
+  b = take(if c { (s, 1.5) } else { ("z", 2.5) });
+  d = take({ q = 1.5; (tp.0, q) });
+  e = take(match n { 2 => (opt(n) ?? "none", 1.5), _ => ("z", 2.5) });
+  t: (text, float) = (opt(n) ?? "none", 1.5);
+  u: (text, float) = (opt(0) ?? "none", 2.5);
+  "{a} {b} {d} {e} {take(t)} {take(u)}"
+}
+
+fn ret(s: text, n: integer) -> (text, float) { if n > 1 { (s, 1.5) } else { ("z", 2.5) } }
+
+fn test_every_source_in_every_context() {
+  for i in 0..3 {
+    s = "s{i}";
+    got = contexts(s, 2);
+    assert(got == "t2/1.5 s{i}/1.5 s{i}/1.5 o2/1.5 o2/1.5 none/2.5", "contexts {i}: {got}");
+    r = ret(s, 2);
+    assert("{r.0}/{r.1}" == "s{i}/1.5", "return {i}: {r.0}/{r.1}");
+  }
+  assert(contexts("q", 1) == "t1/1.5 z/2.5 q/1.5 z/2.5 o1/1.5 none/2.5", "the other arms");
+}

@@ -226,6 +226,38 @@ pub use crate::live_dispatch::n_live_flip;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
 
+/// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
+/// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
+/// `&str` parameter (`&str`), or a call's result (`Str`, whose text lives in the store).
+/// Rust reconciles `&String` with `&str` inside a tuple only where the expected type is in
+/// view, so the emitter asks this one spelling of every such member (loft#1740).
+pub trait TupleText<'a> {
+    fn tuple_text(self) -> &'a str;
+}
+
+impl<'a> TupleText<'a> for &'a String {
+    fn tuple_text(self) -> &'a str {
+        self.as_str()
+    }
+}
+
+impl<'a> TupleText<'a> for &'a str {
+    fn tuple_text(self) -> &'a str {
+        self
+    }
+}
+
+impl<'a> TupleText<'a> for crate::keys::Str {
+    fn tuple_text(self) -> &'a str {
+        self.str()
+    }
+}
+
+#[inline]
+pub fn tuple_text<'a, T: TupleText<'a>>(v: T) -> &'a str {
+    v.tuple_text()
+}
+
 /// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
 /// unknown names — user-defined functions and Op stubs default to the
 /// post-P199.A cell ABI.

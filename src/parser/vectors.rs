@@ -6701,7 +6701,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     && !self.vars.work_texts().contains(&d)
                     && !self.vars.is_argument(d)
             });
-            if !borrows_a_place {
+            // A `??` answers its present value through its own `__ncc_N` temporary, which is
+            // freed when the statement ends — a type with no deps says nothing about that, so
+            // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
+            // (loft#1740).
+            let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
+            if !borrows_a_place && !discharge_temp {
                 return None;
             }
             let w = self.vars.work_text_p2(&mut self.lexer);
