@@ -31,8 +31,8 @@ fns named), `A-ignores` (35, each with a rationale); ticked 09-16 and still stan
 | row | state | the work |
 |---|---|---|
 | `A-ci` | ❌ | full gate on `e953b54d9`: 5476 of 5477; its one failure (`frontend_counts`, +24 from a longer stdlib comment) is fixed in `3ff073ddd` and clean in a fresh worktree; a recheck is the evidence until the candidate's own gate |
-| `A-deviations` | ❌ | two open: **D-gen-6** (loft#1738 — a tuple bound to `T: Equatable`, the C91 remainder) and **D-perf-1** (loft#1570 — @PLN157's four bench rows) |
-| `A-changelog` | ❌ | write `CHANGELOG.md` `## 2026-10` in a user's words (C91 content `==` and `&a == &b`, C98 import rules, C124 `const` parameters, float keys, …); `M-changelog-read` follows it |
+| `A-deviations` | ❌ | one open: **D-perf-1** (loft#1570 — @PLN157's four bench rows).  D-gen-6 closed 09-29 (`197013a03`, Fixes #1738) |
+| `A-changelog` | ✅ | `## 2026-10` written 09-29: the cycle's entries had accumulated under `## 2026-09`, which is again byte-identical to what v2026.9.0 shipped; `M-changelog-read` is the owner's read of it |
 | `A-pdf` | ❌ | `cargo run --bin gendoc && make pdf` now; `A-pdf-version` needs the bump, so it is re-run in the window |
 | `A-docs-lint` | ❌ | +128 findings over the baseline, nearly all `timeline` in the formal chapters (rewrites +20, binding +13, closures +9, collections +9, CI_BUDGET +8): move them to the `-history` companions, or re-pin only what is meant |
 | `A-reference-review` | report | 12 of 40 chapters owe a read (Standard Library 13 commits since, vs Rust / vs Python, Closures, Coroutines, Match, Feature catalogue, …) — `make reference-review` |
