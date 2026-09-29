@@ -307,6 +307,7 @@ pub mod narrow;
 pub mod native;
 pub mod net_profile;
 pub mod null_census;
+pub mod op_census;
 pub mod spent;
 pub mod stack_census;
 pub mod stack_verify;

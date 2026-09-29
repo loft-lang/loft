@@ -647,3 +647,81 @@ fn an_unarmed_network_profile_is_silent() {
         "an unarmed run must not mention the instrument:\n{out}"
     );
 }
+
+/// `LOFT_OP_CENSUS`: each op keyed by the line of `main` it ran under and its function.
+/// Lines 9–12 below are the answer: `leaf` returns ten times under line 10 and once
+/// under line 11.  Line 11's call ends its statement.  `CallFrame.line` names the next
+/// line for that shape (loft#1753), and a census keyed on it would put this row
+/// under 12.  `copy_it` copies a vector of 1000 integers, so under the `op-census`
+/// feature its copying operator moves exactly 8000 bytes through `copy_block`.
+const OP_CENSUS: &str = r#"fn leaf(x: integer) -> integer { x + 1 }
+fn note(x: integer) { if x < 0 { println("negative"); } }
+fn copy_it(v: const vector<integer>) -> integer {
+  w = v;
+  w[0] = 7;
+  len(w) + (w[0] ?? 0)
+}
+fn main() {
+  v = [for i in 0..1000 { i }];
+  a = 0; for i in 0..10 { a += leaf(i); }
+  note(a);
+  b = copy_it(v);
+  println("{a} {b}");
+}
+"#;
+
+#[test]
+fn op_census_keys_each_op_to_its_line_of_main_and_counts_the_bytes_copied() {
+    let tsv = std::env::temp_dir().join(format!("loft_op_census_{}.tsv", std::process::id()));
+    let out = run(
+        "op_census",
+        OP_CENSUS,
+        &[("LOFT_OP_CENSUS", tsv.to_str().expect("utf-8 temp path"))],
+    );
+    assert!(out.contains("55 1007"), "the program's own answer:\n{out}");
+    let census = std::fs::read_to_string(&tsv).expect("the census file");
+    let _ = std::fs::remove_file(&tsv);
+    let rows: Vec<Vec<&str>> = census
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').collect())
+        .collect();
+    let count = |line: &str, function: &str, op: &str| -> u64 {
+        rows.iter()
+            .filter(|r| r[0] == line && r[1] == function && r[2] == op)
+            .map(|r| r[3].parse::<u64>().expect("count"))
+            .sum()
+    };
+    assert_eq!(
+        count("10", "n_leaf", "OpReturn"),
+        10,
+        "ten calls of leaf under line 10:\n{census}"
+    );
+    assert_eq!(
+        count("11", "n_note", "OpReturn"),
+        1,
+        "note returns once under its own line 11:\n{census}"
+    );
+    assert_eq!(
+        count("12", "n_note", "OpReturn"),
+        0,
+        "not under the line after it (loft#1753):\n{census}"
+    );
+    if !cfg!(feature = "op-census") {
+        assert!(
+            census.starts_with("# bytes: not counted"),
+            "without the feature the census must say it counted no bytes, not write zeros:\n{census}"
+        );
+        return;
+    }
+    let copied = rows
+        .iter()
+        .filter(|r| r[0] == "12" && r[1] == "n_copy_it")
+        .map(|r| r[4].parse::<u64>().expect("copy bytes"))
+        .max()
+        .unwrap_or(0);
+    assert_eq!(
+        copied, 8000,
+        "the vector copy moves 1000 × 8 bytes in one operator:\n{census}"
+    );
+}

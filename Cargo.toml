@@ -101,6 +101,11 @@ stack_align_guard = []
 # macros hide the full source — grab it off disk, run it standalone,
 # iterate.  No runtime impact when the feature is off (default).
 emit-repro   = []
+# `LOFT_OP_CENSUS` byte counters at the store's block routes (src/op_census.rs).  Off by
+# default because the block routes are code the NATIVE runtime shares, and a shipped
+# runtime should carry no census.  Without the feature the call sites are not compiled.
+# `make interp-gap` builds a separate census binary with it; the op counts need no feature.
+op-census    = []
 
 [dependencies]
 rand_core          = { version = "0.9", optional = true }

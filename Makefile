@@ -549,7 +549,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: speed profile profile-corpus speed-gate interp-gap rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -585,6 +585,10 @@ sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sampl
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
+interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
+	cargo build --release --lib --bin loft -q
+	cargo build --release --bin loft -q --features op-census --target-dir target/op-census
+	python3 scripts/interp_gap.py $(ARGS)
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless

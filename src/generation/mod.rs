@@ -9005,6 +9005,7 @@ extern crate loft;"
         }
         // Here and not in `start_fn`, which the type registration also runs for every
         // definition: a body emitted is the unit a rewrite's admission is counted in.
+        let _census_body = crate::rewrite_census::InBody::enter("native", def.name());
         self.census_plans();
         // Skip functions implemented in codegen_runtime — emitting a stub
         // would shadow the real implementation.  Plan 09 phase 01

@@ -745,7 +745,7 @@ mod reclaim_tests {
         let old = |name: &str| {
             let p = dir.join(name);
             std::fs::write(&p, b"x").unwrap();
-            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+            let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
             std::fs::File::open(&p).unwrap().set_modified(t).unwrap();
             p
         };

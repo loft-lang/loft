@@ -4125,6 +4125,8 @@ impl Store {
     /// Copy only the content of a record, not the claimed size
     fn copy(&self, rec: u32, into: u32) {
         let bytes = self.payload_bytes(rec, "Store::copy");
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Relocate, bytes);
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.ptr.offset(rec as isize * 8 + 4),
@@ -4228,6 +4230,8 @@ impl Store {
                 "copy_block dst OOB: rec={to_rec} [{to_pos}..+{size}] > {to_limit} bytes"
             );
         }
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Copy, size as usize);
         unsafe {
             std::ptr::copy(
                 self.ptr.offset(from_rec as isize * 8 + from_pos),
@@ -4291,6 +4295,8 @@ impl Store {
                 "copy_block_between dst OOB: rec={to_rec} [{to_pos}..+{len}] > {to_limit} bytes"
             );
         }
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
         unsafe {
             std::ptr::copy(
                 self.block_src(from_rec, from_pos, len),
@@ -4684,6 +4690,8 @@ impl Store {
 
     #[inline]
     pub fn set_str(&mut self, val: &str) -> u32 {
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
         let res = self.claim(((val.len() + 15) / 8) as u32);
         self.set_u32_raw(res, 4, val.len() as u32);
         unsafe {
@@ -4698,6 +4706,8 @@ impl Store {
 
     #[inline]
     pub fn set_str_ptr(&mut self, ptr: *const u8, len: usize) -> u32 {
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Text, len);
         let res = self.claim(((len + 15) / 8) as u32);
         self.set_u32_raw(res, 4, len as u32);
         unsafe {
@@ -4708,6 +4718,8 @@ impl Store {
 
     #[inline]
     pub fn append_str(&mut self, record: u32, val: &str) -> u32 {
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Text, val.len());
         let prev = self.get_u32_raw(record, 4);
         let result = self.resize(record, (prev as usize + val.len()).div_ceil(8) as u32);
         unsafe {

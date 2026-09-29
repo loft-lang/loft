@@ -91,6 +91,16 @@ Measured on a quiet x86-64 laptop the spreads are 0.0–2.7 % and two full runs 
 every ratio to within about 1 % (the threaded row to about 4 %).  A spread above `--noisy`
 (5 %) is flagged on the row: the box was busy, and that row wants re-running.
 
+That reproducibility holds for ONE build.  Any change to the runtime the native lane links
+moves some small routines by code layout alone, and a different change moves different
+routines.  Measured 2026-09-29 on lanes 13 and 14, a base build and the same build with
+code added that never runs, alternated twice each, every row within 1 % run to run:
+`replace` moved +18 %, `find_contains` +7 %, `grid` +6 %, `comprehension` +5 %.  A
+variant of the same change moved `byte_walk` +34 % and `join` +24 % instead, and left those
+four alone.  A one-routine move after a runtime change is therefore not evidence of a
+regression until a second, unrelated rebuild reproduces it.  `record_append` is BIMODAL on
+top of that (35.6 or 56.7 µs, stable within a run), and it changes state between builds.
+
 `scripts/native_ratio.sh` (`make native-ratio`) reads the same rows against the per-routine
 bars in `ratio_oracle.tsv`; `--gate` (`make native-ratio-gate`, and the last step of the
 local `make ci`) fails a ratio over its bar.  The bars are ratcheted DOWN as the ratios fall.
@@ -142,6 +152,45 @@ own bench (the drawing library's `bench/`) joins through `--package`, measured f
 pass's OWN checkout of the library: `make perf-libs` clones the eight library repositories
 as normal checkouts beside this one (`$LOFT_PERF_LIBS`, default `../loft-bench-libs`) and
 fast-forwards them when they are clean; `portal/libs.tsv` names them and their benches.
+
+## Interpreter against native: `interp_gap.py`
+
+The long-run question is how the interpreter compares with the compiled program. The
+nearer question is which native rewrites should move into the IR phase, so that both
+backends run them. `make interp-gap` answers both per routine. It is a report you run by
+hand, and it is never a gate.
+
+```bash
+make interp-gap                                   # every lane: time both backends, census both
+make interp-gap ARGS="--only 14,16"               # some lanes
+make interp-gap ARGS="--no-timing"                # the censuses only: a minute, no ratio column
+make interp-gap ARGS="--timing old.tsv"           # reuse a `stats.py --lanes native,interp --tsv` run
+make interp-gap ARGS="--package <scratch clone>/drawing=drawing"
+```
+
+Per routine it reports:
+
+- the interp/native ratio (`stats.py --lanes native,interp`);
+- the interpreter's operators per op, split into families: `frame` (a value onto the stack
+  and back, which native keeps in registers), `store` (field and element reads and writes),
+  `records` (records, vectors and texts built, copied, appended, freed), `control`,
+  `compute`;
+- the bytes it moved (copy / relocate / text);
+- the **native-only** rewrites admitted in the functions the routine ran, each with the
+  share of the routine's interpreter ops those functions carry.
+
+A second table turns this around, one row per generator rule: the routines and functions
+the rule fires in, weighed by the interpreter time those functions carry. These are the
+candidates for the IR phase. The weight is the time the functions carry, not a promise of
+what porting the rule saves. The per-routine detail (functions, their top operators, their
+rewrites) says what the interpreter does there instead.
+
+The report goes to `target/interp-gap/report.md`, and the terminal gets the ranking. The
+two censuses behind it are `LOFT_OP_CENSUS` and `LOFT_REWRITE_CENSUS_FN`
+([PROFILING.md](../doc/claude/PROFILING.md)). A routine is found by pairing the k-th
+row-printing line of `main` with the k-th row the program printed. The region runs from the
+last `… = ticks()` before that line up to it. So a new lane needs no annotation as long as
+it keeps that shape, and one that does not is reported as not attributed.
 
 ## The row protocol
 

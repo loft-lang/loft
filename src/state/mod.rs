@@ -5155,6 +5155,9 @@ impl State {
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             self.profile_tick(pc);
         }
+        if crate::op_census::armed() {
+            self.op_census_step(pc);
+        }
         self.profile_flush_check(data);
         let is_bp = self.debug.as_ref().is_some_and(|d| d.is_breakpoint(pc));
         // A pause from outside (`debugger::INTERRUPT`) suspends only a STEPPING run — the
@@ -5240,6 +5243,28 @@ impl State {
         if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
             p.record(pc, &frames);
         }
+    }
+
+    /// `LOFT_OP_CENSUS` — the op at `pc` is about to run: key it by the line of the entry
+    /// function it runs under (its call site when a callee runs, its own line when the entry
+    /// function does) and by its function.  The call site is resolved from a byte INSIDE the
+    /// call instruction, not from `CallFrame.line`, which names the next line after a
+    /// statement-final call (loft#1753).
+    fn op_census_step(&self, pc: u32) {
+        let line = match self.call_stack.get(1) {
+            Some(f) => crate::op_census::site_line(f.call_pos, || {
+                self.line_at(f.call_pos.saturating_sub(1))
+            }),
+            None => self.line_at(pc),
+        };
+        let function = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+        let at = pc as usize;
+        let opcode = match self.bytecode.get(at) {
+            Some(255) => 255 + self.bytecode.get(at + 1).map_or(0, |&e| u16::from(e)),
+            Some(&op) => u16::from(op),
+            None => return,
+        };
+        crate::op_census::step(line, function, opcode);
     }
 
     /// @PLN140 arc C — the op at `pc` allocated `stores` stores; hand the path that
@@ -6750,6 +6775,11 @@ impl State {
     /// (the two would fight over the same per-op hook, and the debugger was asked for
     /// explicitly).
     pub fn arm_profiler(&mut self) {
+        // `LOFT_OP_CENSUS` rides the same per-op branch as the sampler, so an unarmed run
+        // pays nothing for it; armed, it needs the `Debugger` that branch tests for.
+        if crate::op_census::enabled() && self.debug.is_none() {
+            self.debug = Some(Box::default());
+        }
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             return;
         }
