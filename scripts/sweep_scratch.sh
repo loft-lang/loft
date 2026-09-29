@@ -9,6 +9,12 @@
 #   loft_native_bin_<pid>, loft_native_<pid>.rs   a `--native` run's artefacts; a run that ends
 #                                                  normally removes them, one killed from outside
 #                                                  cannot — removed when <pid> is DEAD
+#   loft_native_cache_<checkout>/                  the native test harness's per-checkout cache
+#                                                  (tests/native.rs): the harness itself drops
+#                                                  the entries of an older loft build at the
+#                                                  start of a run; here the dead-pid rule runs
+#                                                  inside it, and the whole directory goes when
+#                                                  nothing in it moved for --days
 #   loft_native_<stem>*, loft_test_native_<stem>*  the native suites' per-file caches —
 #                                                  removed when older than --days (default 1)
 #   loft_*, loft-*                                 the html/probe/rebuild/serve scratch of the
@@ -69,19 +75,34 @@ sweep_falsify() { # <cache dir>
 }
 # The cache's own home (`falsify.sh`), which is not a temp directory anyone passes here.
 sweep_falsify "${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
-for d in "${dirs[@]}"; do
-  [ -d "$d" ] || continue
-  # 1. dead-process native artefacts (the pid is the trailing digit run of the stem)
-  # Only the two shapes the runtime writes per process; the test suites name theirs by
-  # script stem, and a stem ending in digits is not a pid.
-  for f in "$d"/loft_native_bin_* "$d"/loft_native_*.rs; do
+# 1. dead-process native artefacts (the pid is the trailing digit run of the stem).  Only
+# the shapes written per process: the runtime's two, and the harness's per-pid temporaries
+# inside its cache directory (`<stem>_<pid>_args.txt`, `<stem>_<pid>.rs.tmp`,
+# `<stem>_<pid>_bin.key.tmp`).  NOT `<stem>_<pid>_bin`: a script stem ending in digits
+# (`text_nul_iteration_755`) spells the same name, so that orphan is left to the age rule.
+dead_pids() { # <dir>
+  local f name pid
+  for f in "$1"/loft_native_bin_* "$1"/loft_native_*.rs \
+           "$1"/loft_native_*_[0-9]*_args.txt "$1"/loft_native_*_[0-9]*.rs.tmp \
+           "$1"/loft_native_*_[0-9]*_bin.key.tmp; do
     [ -e "$f" ] || continue
     name=${f##*/}
-    pid=${name#loft_native_bin_}; [ "$pid" = "$name" ] && { pid=${name#loft_native_}; pid=${pid%.rs}; }
+    case "$name" in
+      loft_native_bin_*) pid=${name#loft_native_bin_};;
+      *_args.txt) pid=${name%_args.txt}; pid=${pid##*_};;
+      *.rs.tmp) pid=${name%.rs.tmp}; pid=${pid##*_};;
+      *_bin.key.tmp) pid=${name%_bin.key.tmp}; pid=${pid##*_};;
+      *) pid=${name#loft_native_}; pid=${pid%.rs};;
+    esac
     case "$pid" in ''|*[!0-9]*) continue;; esac
     [ -d "/proc/$pid" ] && continue
     gone "$f"
   done
+}
+for d in "${dirs[@]}"; do
+  [ -d "$d" ] || continue
+  dead_pids "$d"
+  for c in "$d"/loft_native_cache_*; do [ -d "$c" ] && dead_pids "$c"; done
   # 2. aged scratch of loft's families
   while IFS= read -r f; do gone "$f"; done < <(
     find "$d" -mindepth 1 -maxdepth 1 \( -name 'loft_*' \

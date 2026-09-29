@@ -318,6 +318,66 @@ pub fn build_scratch_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+/// This checkout's OWN native test cache under [`scratch_dir`]: `loft_native_cache_<hash>`,
+/// the hash naming the owner (the checkout's manifest directory).  Everything inside it was
+/// written by this checkout's test harness and nothing else, so a sweep of it can never take
+/// another process's work: another checkout has another directory, and the runtime's own
+/// per-process artefacts (`loft_native_bin_<pid>`) stay in the parent.  Created if missing.
+#[must_use]
+pub fn native_cache_dir(owner: &str) -> std::path::PathBuf {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for b in owner.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let dir = scratch_dir().join(format!("loft_native_cache_{h:016x}"));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Drop this checkout's native test caches once the loft build they were compiled against
+/// is gone — the automatic removal at the start of a build.  `stamp` names the build (the
+/// harness passes the rlib's path and content hash, the two facts its cache key folds in, so
+/// a changed stamp means EVERY entry's key would miss); the directory remembers the stamp it
+/// was last swept for in `.build`.  A different stamp removes every `loft_native_*` entry of
+/// `dir` older than two minutes — a shard of the same run that started earlier has already
+/// compiled against the new build, and its entries are younger — then records the stamp.
+/// Only `dir` is read, which is what makes the rule safe: the caller passes its own
+/// [`native_cache_dir`], never a shared directory.  Answers the bytes freed.
+pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
+    let marker = dir.join(".build");
+    if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == stamp) {
+        return 0;
+    }
+    let mut freed = 0u64;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_string_lossy().starts_with("loft_native_") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let fresh = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age.as_secs() < 120);
+            if fresh || !meta.is_file() {
+                continue;
+            }
+            if std::fs::remove_file(entry.path()).is_ok() {
+                freed += meta.len();
+            }
+        }
+    }
+    // Written last and atomically: a crash between the sweep and the marker only sweeps again.
+    let tmp = dir.join(format!(".build.{}", std::process::id()));
+    if std::fs::write(&tmp, stamp).is_ok() {
+        let _ = std::fs::rename(&tmp, &marker);
+    }
+    freed
+}
+
 /// Bytes currently available on the filesystem backing `path`.
 ///
 /// Uses `df -P -k` (POSIX output → guaranteed single, unwrapped data row) and
@@ -672,6 +732,58 @@ pub fn native_worker_count(
 #[cfg(test)]
 mod reclaim_tests {
     use super::*;
+
+    /// `sweep_own_native_cache`: a changed build stamp removes the directory's `loft_native_*`
+    /// entries older than two minutes and keeps a fresh one (a concurrent shard's) and every
+    /// foreign name; the same stamp removes nothing; the marker records the stamp.
+    #[test]
+    fn a_new_build_sweeps_only_the_old_entries_of_its_own_cache() {
+        let dir =
+            std::env::temp_dir().join(format!("loft_native_cache_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+            std::fs::File::open(&p).unwrap().set_modified(t).unwrap();
+            p
+        };
+        let stale_bin = old("loft_native_a_bin");
+        let stale_key = old("loft_native_a_bin.key");
+        let foreign = old("other_tool_output");
+        let fresh = dir.join("loft_native_b_bin");
+        std::fs::write(&fresh, b"y").unwrap();
+        std::fs::write(dir.join(".build"), "old-build").unwrap();
+
+        let freed = sweep_own_native_cache(&dir, "new-build");
+        assert_eq!(freed, 2, "the two stale entries, one byte each");
+        assert!(
+            !stale_bin.exists() && !stale_key.exists(),
+            "the older build's entries go"
+        );
+        assert!(
+            fresh.exists(),
+            "a fresh entry is a concurrent shard's and stays"
+        );
+        assert!(
+            foreign.exists(),
+            "a name that is not the harness's is never touched"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".build")).unwrap(),
+            "new-build"
+        );
+
+        let again = old("loft_native_c_bin");
+        assert_eq!(
+            sweep_own_native_cache(&dir, "new-build"),
+            0,
+            "the same build sweeps nothing"
+        );
+        assert!(again.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// `pid_alive` answers the same three ways on every unix, which is what makes the
     /// dead-only sweep decidable off Linux.  The out-of-range case is the load-bearing

@@ -212,6 +212,36 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
     }
 }
 
+/// This checkout's own native cache (`platform::native_cache_dir`): the generated `.rs`,
+/// the binaries and their keys live here, apart from every other checkout's and from the
+/// runtime's per-process scratch, so the sweep at a run's start touches only what this
+/// harness wrote.
+fn native_scratch() -> PathBuf {
+    loft::platform::native_cache_dir(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The build this run compiles against, as the cache key sees it: the rlib's path and
+/// content hash.  A run whose stamp differs from the one the cache directory remembers
+/// sweeps the caches of the older build first (`platform::sweep_own_native_cache`) — once
+/// per process, because nextest starts a process per shard.
+fn sweep_older_build(rlib_info: &Option<(PathBuf, PathBuf)>) {
+    static SWEPT: OnceLock<()> = OnceLock::new();
+    SWEPT.get_or_init(|| {
+        let Some((rlib, _)) = rlib_info else { return };
+        let stamp = format!(
+            "{:016x}",
+            fnv64(rlib.to_string_lossy().as_bytes()) ^ rlib_content_hash(rlib)
+        );
+        let freed = loft::platform::sweep_own_native_cache(&native_scratch(), &stamp);
+        if freed > 0 {
+            println!(
+                "  swept {} MB of native caches built against an older loft",
+                freed >> 20
+            );
+        }
+    });
+}
+
 /// Paths for one native compilation job.
 struct NativeJob {
     stem: String,
@@ -469,7 +499,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // means cache_key() produces the same hash and compile_native_job stays cached.
     // scratch_dir honours LOFT_TMPDIR so the whole native run can be kept off a
     // small /tmp tmpfs; all of these must agree on the same directory.
-    let scratch = loft::platform::scratch_dir();
+    let scratch = native_scratch();
     let tmp_rs = scratch.join(format!("loft_native_{stem}.rs"));
     let existing = std::fs::read(&tmp_rs).unwrap_or_default();
     if existing != buf {
@@ -541,7 +571,7 @@ fn compile_native_job(
     // Preflight (Layer 2): never start a compile that could overflow a
     // RAM-backed tmpfs and exhaust memory.  Reclaims loft's own stale
     // artefacts first; skips (not fails) the test if space is still low.
-    let scratch = loft::platform::scratch_dir();
+    let scratch = native_scratch();
     if !loft::platform::native_compile_space_ok(&scratch) {
         println!(
             "  SKIP {} — low temp space in {} (set LOFT_TMPFS_MIN_FREE_MB to tune)",
@@ -709,13 +739,10 @@ fn run_native_jobs(
         .map(|n| n.get())
         .unwrap_or(4);
     const PER_WORKER_TMP: u64 = 1280 * 1024 * 1024;
-    let concurrency = loft::platform::native_worker_count(
-        cpu_max,
-        jobs.len(),
-        &loft::platform::scratch_dir(),
-        PER_WORKER_TMP,
-    );
+    let concurrency =
+        loft::platform::native_worker_count(cpu_max, jobs.len(), &native_scratch(), PER_WORKER_TMP);
     let rlib_ref = &rlib_info;
+    sweep_older_build(rlib_ref);
 
     // Phase 2: compile all jobs in parallel chunks.
     let mut compiled: Vec<bool> = Vec::with_capacity(jobs.len());

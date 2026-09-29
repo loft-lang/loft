@@ -9,6 +9,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The native test cache is per checkout and forgets an older build by itself (2026-09-29)
+
+`tests/native.rs` keeps its generated `.rs`, binaries and keys in `platform::native_cache_dir`
+(`<scratch>/loft_native_cache_<hash of the checkout>`) instead of the shared temp directory, and
+`platform::sweep_own_native_cache` runs once per process at a run's start: the rlib's path and
+content hash stamp the build in `.build`, and a stamp the directory has not seen removes every
+`loft_native_*` entry older than two minutes before the run compiles anything.  The rule reads
+one directory that only this checkout's harness writes, so it can never take another
+checkout's or another process's files — the bound the earlier age-based reclaim could not
+give, since it read the shared directory.  Measured cause: 4 259 binaries, 13 GB of the
+16 GB `/tmp` tmpfs, all this checkout's, all from one day's builds, none older than the
+day-old rule.  `sweep_scratch.sh` runs its dead-pid rule inside the directory (the harness's
+per-pid `_args.txt`, `.rs.tmp` and `.key.tmp` temporaries; not `_<pid>_bin`, which a stem
+ending in digits spells too) and ages the directory as a whole.  Unit test
+`reclaim_tests::a_new_build_sweeps_only_the_old_entries_of_its_own_cache`.
+
 ### A walk of a scalar literal builds no vector (2026-09-29)
 
 `@FR-R-LiteralWalk` (formal/rewrites.md): `for x in [e₀, …, eₙ₋₁]` over 1..=16 items of one
