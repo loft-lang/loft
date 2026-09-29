@@ -15032,7 +15032,54 @@ impl Parser {
     }
 
     fn call_op(&mut self, code: &mut Value, op: &str, list: &[Value], types: &[Type]) -> Type {
-        self.call_op_as(code, op, op, list, types)
+        let tp = self.call_op_as(code, op, op, list, types);
+        if matches!(op, "==" | "!=")
+            && !self.first_pass
+            && crate::env_once!(std::env::var_os("LOFT_TRACE_EQ_IDENTITY").is_some())
+        {
+            self.trace_eq_identity(code, op, types);
+        }
+        tp
+    }
+
+    /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
+    /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
+    /// operand types and the kind whose answer the content `==` changes.  Silent on a test
+    /// against the `null` literal, which asks presence and keeps its answer.  `scripts/eq_census.sh` collects it.
+    fn trace_eq_identity(&self, code: &Value, op: &str, types: &[Type]) {
+        let Value::Call(nr, _) = code else {
+            return;
+        };
+        if !matches!(self.data.def(*nr).name.as_str(), "OpEqRef" | "OpNeRef")
+            || types.iter().any(|t| matches!(t, Type::Null))
+        {
+            return;
+        }
+        let kind = match types.first().map(Type::base) {
+            Some(Type::Reference(d, _)) => match self.data.def_type(*d) {
+                DefType::Enum | DefType::EnumValue => "struct-enum",
+                _ if self.data.is_value_struct(*d) => "value-struct",
+                _ => "struct",
+            },
+            Some(Type::Vector(..)) => "vector",
+            Some(
+                Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..),
+            ) => "collection",
+            _ => "other",
+        };
+        let pos = self.lexer.pos();
+        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+        eprintln!(
+            "[eq-identity] {}:{}  {kind}  {} {op} {}",
+            pos.file,
+            pos.line,
+            name(types.first()),
+            name(types.get(1)),
+        );
     }
 
     /// [`Self::call_op`] where the operator the author WROTE differs from the one being

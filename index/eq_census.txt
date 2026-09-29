@@ -1,0 +1,28 @@
+# @C91 identity census — `==` / `!=` that compare identity today (2026-09-29, loft a57dfed9d)
+# tree  kind  site  types
+loft	struct	tests/docs/features/F108.loft:22	Part? == Part?
+loft	struct	tests/fixtures/133-lazy-loft-driver.loft:72	LzdPerson? == LzdPerson?
+loft	struct	tests/scripts/129-lazy-bind.loft:44	LzPerson? == LzPerson?
+loft	struct	tests/scripts/129-lazy-graph.loft:58	GCompany? == GCompany?
+loft	struct	tests/scripts/129-lazy-sql-graph.loft:40	SqCompany? == SqCompany?
+loft	struct	tests/scripts/129-lazy-sql-query.loft:32	SqLiked? == SqLiked?
+loft	struct	tests/scripts/1580-a-value-struct-compares-by-content.loft:105	Plain == Plain
+loft	struct	tests/scripts/1581-a-concrete-not-equal-derives-from-a-user-op-eq.loft:71	Plain != Plain
+loft	struct	tests/scripts/1581-a-concrete-not-equal-derives-from-a-user-op-eq.loft:71	Plain == Plain
+loft	struct	tests/scripts/514-null-equality-struct-ref.loft:54	DT? == DT?
+loft	struct	tests/scripts/514-null-equality-struct-ref.loft:56	DT? == DT?
+loft	struct	tests/scripts/514-null-equality-struct-ref.loft:57	DT? != DT?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:26	NrNode? == NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:27	NrNode? == NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:28	NrNode? == NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:29	NrNode? == NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:30	NrNode? != NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:31	NrNode? != NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:32	NrNode? != NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:33	NrNode? != NrNode?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:39	NrS? == NrS?
+loft	struct	tests/scripts/a-nullable-reference-compares-the-record-it-names.loft:40	NrS? == NrS?
+#
+# per tree and kind:
+#   loft struct                  22
+# files checked: 5580, did not compile (unmeasured): 1892

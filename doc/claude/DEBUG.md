@@ -603,6 +603,13 @@ admitted it as a TEST (`admit=`), the slot it is stored into (`what=`), and the 
 run when a store warns with the generic wording *"into a slot"* — that names the lowering
 that has not said which slot it is.
 
+**Which `==` compares identity?  `LOFT_TRACE_EQ_IDENTITY=1`** prints one line per `==` / `!=`
+the parser lowers to `OpEqRef` / `OpNeRef` — `file:line`, the kind (`struct`, `struct-enum`,
+`collection`, …) and both operand types — and nothing for a test against the `null` literal.
+Those are the sites whose answer `@C91`'s content `==` changes; `scripts/eq_census.sh` runs it
+over this tree, every library at `main` and read-only snapshots of the consumer applications,
+and writes `index/eq_census.txt` (guard: `tests/store_content_eq.rs`).
+
 `loft --introspect <file>` packages the dump primitives behind one
 flag, dumping bytecode + generated Rust + slot tables + per-fn type
 tables to stdout (or per-section files).  No env vars, no test
