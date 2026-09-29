@@ -40,8 +40,9 @@ gets) and sampled from the binary loft cached.  Point it at a SCRATCH CLONE, nev
 library's working tree: the build writes caches beside the source.
 
 The programs are BUILT before they are measured, in sets of `--batch` (20): a set compiles
-`--build-jobs` (5) at a time at low priority, then is measured one program at a time, so no
-build ever runs beside a measurement.  Every build step's wall-clock and CPU seconds and peak
+`--build-jobs` (5) at a time at low priority, then is measured `--measure-jobs` (3) programs
+at a time, each on its own fastest cores, so no build ever runs beside a measurement.  A
+program that declares `// bench-threads: N` gets N cores and is measured alone.  Every build step's wall-clock and CPU seconds and peak
 memory are printed and, with `--build-tsv`, written out (bench/README.md § Statistics).
 
 A REPORT, never a gate: timings are machine-bound.  Exit 1 on a hash disagreement, a lane
@@ -50,6 +51,7 @@ otherwise, whatever the ratios say.
 """
 import argparse
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -403,7 +405,7 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
     result in the batch's order, so the table reads the same however many ran at once."""
     if a.measure_jobs <= 1:
         for bench, pkg_dir, cmds in jobs:
-            yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench), not a.no_pin),
+            yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
                                a, lanes, target_us, stamp)
         return
     import threading
@@ -413,13 +415,16 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
     lock = threading.Condition()
 
     def one(bench, pkg_dir, cmds):
-        want = min(threads_of(bench), len(order)) if pinning else 0
+        threads = min(threads_of(bench, pkg_dir), len(order)) if pinning else 0
+        # A threaded program takes EVERY core of the tier — it waits for the others to finish
+        # and nothing starts beside it — and runs on the first `threads` of them.
+        want = len(order) if threads > 1 else threads
         cpus = []
         if pinning:
             with lock:
                 lock.wait_for(lambda: len(free) >= want)
                 cpus, free[:] = free[:want], free[want:]
-        pin = ["taskset", "-c", ",".join(map(str, cpus))] if cpus else []
+        pin = ["taskset", "-c", ",".join(map(str, cpus[:threads]))] if cpus else []
         try:
             return measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp)
         finally:
@@ -435,8 +440,20 @@ def measure_batch(jobs, a, lanes, target_us, stamp):
             yield fut.result()
 
 
-def threads_of(bench):
-    return 4 if bench.startswith("11_") else 1
+def threads_of(bench, pkg_dir):
+    """How many threads the program runs its routines on, as its own `bench.loft` declares
+    in a `// bench-threads: N` line (bench/README.md § The row protocol); 1 when it declares
+    none.  It is pinned to that many cores, and a program above 1 is measured ALONE."""
+    src = os.path.join(pkg_dir, "bench", "bench.loft") if pkg_dir else os.path.join(HERE, bench, "bench.loft")
+    try:
+        with open(src) as f:
+            for line in f:
+                m = re.match(r"\s*//\s*bench-threads:\s*(\d+)", line)
+                if m:
+                    return max(1, int(m.group(1)))
+    except OSError:
+        pass
+    return 1
 
 
 def main():
@@ -459,9 +476,9 @@ def main():
                     help="programs compiled at the same time, each at low priority")
     ap.add_argument("--batch", type=int, default=20,
                     help="programs built before they are measured, one at a time")
-    ap.add_argument("--measure-jobs", type=int, default=1,
-                    help="programs measured at the same time, each pinned to its own fastest "
-                         "cores; above 1 they share cache, memory bandwidth and turbo budget")
+    ap.add_argument("--measure-jobs", type=int, default=3,
+                    help="programs measured at the same time, each pinned to its own cores of "
+                         "the fastest tier; a threaded program is always measured alone")
     ap.add_argument("--build-mem-reserve-gb", type=float, default=3.0,
                     help="a build step waits while the machine has less memory available")
     ap.add_argument("--build-tsv", default="",

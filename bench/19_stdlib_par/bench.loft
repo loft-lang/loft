@@ -1,4 +1,5 @@
 // Benchmark 19: the standard library's `par` as a program calls it, one row each
+// bench-threads: 4
 //
 // bench/11_par is the one engine row of the PARALLEL class: a fixed Newton kernel over a
 // vector of records.  This lane measures the shapes a program writes around `par(...)`:
