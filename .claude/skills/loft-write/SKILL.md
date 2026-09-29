@@ -171,7 +171,7 @@ TYPE freezes the *value*.  They are opposites and compose:
 - **value-const** (`v: const T`, on the type): the value is read-only — append / element / nested
   writes (`t.v+=`, `t.v[i]=`, `t.r.x=` through it) are rejected; a whole-value rebind `t.v = other`
   is allowed.  Reach for it on a genuine value/record (shared config, a compound key, a `par()`-shared
-  value).  Enforced for DIRECT writes; laundering via a local/return/generic is Phase 3 (not yet).
+  value).  A write through a local bound to it (`w = t.v; w.x = 5`) is refused too.
 - **scalar collapse**: a by-value scalar (`integer/float/…`) freezes fully under EITHER axis —
   `const n: integer` and `n: const integer` both reject `t.n=` and `t.n+=`.
 
@@ -339,8 +339,8 @@ Field names may overlap across structs — lookups are type-scoped.
 ## Tuples
 
 Anonymous, fixed-arity, stack-allocated compound values.  Use them to
-return multiple values without naming a struct.  Shipped in 0.8.3
-(T1.1–T1.11); see [doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
+return multiple values without naming a struct.  See
+[doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
 
 <!-- from tests/reference/skill-tuples.loft -->
 ```loft
@@ -432,7 +432,8 @@ s = Circle { radius: 2.0 };
 a = area(s);   // dispatches to correct variant
 ```
 
-Plain enums cannot have methods — use struct-enum variants for polymorphic dispatch.
+A plain enum takes methods too (`fn label(self: Color) -> text { match self { … } }`);
+struct-enum variants add per-variant dispatch.
 
 Trailing commas in variant field lists are accepted: `Circle { radius: float, }`.
 
@@ -455,7 +456,7 @@ v[i];                // index read
 
 **Empty vectors** need a type annotation so the compiler knows the element type.
 
-**Slices are iterators, materialised on assignment.** `sub = arr[lo..hi]` (annotated or not) builds a fresh vector, and negative bounds count from the end (`arr[2..-1]`, @P384).  A slice still cannot be passed directly where a `vector<T>` **argument** is expected — assign to a local first, or pass the array with index bounds.
+**Slices are iterators, materialised on assignment.** `sub = arr[lo..hi]` (annotated or not) builds a fresh vector, and negative bounds count from the end (`arr[2..-1]`, @P384).  A slice passes directly where a `vector<T>` argument is expected (`total(a[1..3])`).
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
@@ -503,7 +504,8 @@ fn find_min<T: Comparable>(v: vector<T>) -> T { ... }
 
 Structural satisfaction: if the methods exist, the type satisfies the interface.
 No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`,
-`Numeric`, `Scalable`, `Printable` automatically.
+`Numeric`, `Scalable`, `Printable` automatically, and EVERY type — a struct, vector,
+tuple, enum — is `Equatable` (C91).
 
 ---
 
@@ -562,6 +564,16 @@ flags & ~32                        // bitwise NOT — clears bit 5
 **`?` and `??` are at opposite ends of this table**, so they parenthesise
 oppositely on a binary result: `a / b ?? 0` discharges the division, `a / b?` is
 `a / (b?)` and yields **null** — write `(a / b)?`.
+
+### `==` compares content; `&a == &b` asks identity
+
+**`==` / `!=` compare CONTENT for every type** — structs, vectors, tuples, struct-enum
+values, keyed collections, recursively through fields and `reference<T>`, cycles
+included (DESIGN_DECISIONS_VALUES.md § C91).  Two separately built records with equal
+fields are `==`; `[P{x:1}] == [P{x:1}]` is `true`.  To ask whether two names are ONE
+record, write `&a == &b` — `&` on both sides; on one side only it is a compile error.
+There is no `===`.  Keyed collections hash and compare keys the way `==` does (`0.0`
+and `-0.0` are one key).
 
 ### `is` variant check
 
@@ -760,49 +772,38 @@ emit(1, 2);
 ```
 
 **Type annotations on `|x|` shorthand are rejected by design
-(see `doc/claude/DESIGN_DECISIONS.md § C62`).**  If you need
+(see `doc/claude/DESIGN_DECISIONS_SYNTAX.md § C62`).**  If you need
 types, switch to `fn(name: <type>) { ... }` — the shorthand
 exists specifically *because* the types are inferred; adding
 annotations collapses the distinction between the two forms.
 
 ---
 
-## Variable scoping — one type per name, per function
-
-Variable names are **per-function**, and loft has **no block scoping**: a
-`for`/`if` body does not open a fresh binding — every local (loop variables
-included) lives in the enclosing function's scope for the whole function.  So the
-rule that matters is narrow: *within one function, a name maps to a single
-slot + type.*  The same name in a **different** function is completely free.
-
-All of the violations below are **clean compile-time errors with fix hints** —
-never a codegen panic or silent corruption, on either backend:
-
-- **A name reused with a different type in one function** → error, even across
-  disjoint blocks: `if … { x = 1 }  if … { x = "hi" }` →
-  `Variable 'x' cannot change type from integer to text`.  Re-assigning the *same*
-  type is fine (`x = 1; x = 2`).
-- **A loop variable named like an existing local** →
-  `loop variable 'x' shadows a local named 'x' — rename the loop variable
-  (e.g. loop_x)`.  Rename it, or drop the dead outer local.
-- **Nested same-name loops** → `for i { for i { … } }` is rejected: the inner
-  binding would take over `i` for the rest of the outer body.
-- **Loop variables are inference-only (@P345)** — `for i: integer in …` does not
-  parse (`loop variable 'i' is type-inferred from the iterable — remove the
-  ': <type>' annotation`).  Drop the annotation.
-
-**`for` loops are the exception to the one-type-per-name rule** (loft#915): each
-`for` binds its own variable, so two loops in one function may reuse a name at
-different element types — `for i in ["a","b"] {…}` then `for i in 0..3 {…}`
-compiles.  You therefore do **not** need per-function loop-variable prefixes;
-short names (`i`, `e`, `n`) are fine and read better.
+## Variable scoping — a block's locals end at its `}`
 
 **A local ends at the `}` of the block that bound it — an `if` arm, a loop body, a
 `match` arm, a bare `{ }` — and so does a loop variable** (`formal/binding.md`
-`(B-Scope)`, rustc's rule).  Reading it after is `error[local-out-of-scope]`, also when
-every arm binds it.  Bind it before the block (`x: T? = null; if c { x = mk(); }`,
-`last = 0; for v in xs { last = v; }`) or make the block's value the binding
-(`x = if c { a } else { b }`, a tuple for several).
+`(B-Scope)`, rustc's rule; LOFT_DESIGN.md § Variable scoping).  Reading it after is
+`error[local-out-of-scope]`, also when every arm binds it.  Bind it before the block
+(`x: T? = null; if c { x = mk(); }`, `last = 0; for v in xs { last = v; }`) or make the
+block's value the binding (`x = if c { a } else { b }`, a tuple for several).
+
+Within one scope a name keeps ONE type; a name in a different function is free.  The
+violations are clean compile-time errors with fix hints, on both backends:
+
+- **Re-typing a live name** → `x = 1; … x = "hi";` is `Variable 'x' cannot change type
+  from integer to text` — and so is assigning another type to an OUTER local inside a
+  block.  Two sibling blocks may each bind `x` at their own type, because the first
+  `x` has ended.  Re-assigning the *same* type is fine (`x = 1; x = 2`).
+- **A loop variable named like an existing local** →
+  `loop variable 'x' shadows a local named 'x' — rename the loop variable
+  (e.g. loop_x)`.  Rename it, or drop the dead outer local.
+- **Nested same-name loops** → `for i { for i { … } }` is rejected.
+- **Loop variables are inference-only** — `for i: integer in …` does not parse
+  (`loop variable 'i' is type-inferred from the iterable`).  Drop the annotation.
+
+Sequential loops may reuse a name at different element types — `for i in ["a","b"] {…}`
+then `for i in 0..3 {…}` compiles — so short names (`i`, `e`, `n`) are fine.
 
 **Unused variable = warning, not an error** — the program still runs (exit 0).
 Use `_` for an unused loop variable to keep the build warning-clean.
@@ -921,7 +922,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 
 | Error message | Fix |
 |--------------|-----|
-| `Too few parameters on n_<fn>` | Per-function name collision — give the loop/local a name distinct from the function's params; avoid `for` in `const vector<T>` recursive fns |
+| `Too few parameters on n_<fn> (got …, need …)` | A compiler panic (a hidden-buffer ABI mismatch), not a mistake in your code — reduce it to a minimal repro and file it (`gh issue create`) |
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
 | `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
@@ -968,7 +969,6 @@ loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
 
 - [ ] No loop variable shares a name with a plain local in the same function (loops may share names with each other)
 - [ ] No nested `fn` definitions — helpers live at file scope
-- [ ] No `arr[lo..hi]` passed as `vector<T>` argument
 - [ ] No local named `null`
 - [ ] All `use` imports appear before any other declarations
 - [ ] No `long` type / no `l` literal suffix — `integer` is i64; literals are plain (`86400000`), `f.size` compares with `0`

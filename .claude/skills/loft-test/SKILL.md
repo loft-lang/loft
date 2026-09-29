@@ -7,7 +7,7 @@ user-invocable: false
 # Loft Testing Reference
 
 Always consult this before adding or modifying tests under `tests/`.
-The loft project has 260+ integration test binaries (`ls tests/*.rs`
+The loft project has several hundred integration test binaries (`ls tests/*.rs`
 is the census) plus a custom testing framework; picking the wrong
 binary or the wrong macro means either a slow CI cycle or a test that
 doesn't actually validate the change.
@@ -28,7 +28,7 @@ binary that matches the kind of behaviour you're verifying.
 |---|---|---|
 | `tests/wrap.rs` | Loft script suites in `tests/scripts/*.loft` and `tests/docs/*.loft` driven through the **interpreter** (`dir` / `loft_suite`), plus the `wasm_dir` leg (`--native-wasm`, run under `wasmtime` when available). | Reads scripts from disk; no Rust-level macro. |
 | `tests/native.rs` | Same scripts driven through `--native` (`native_dir` / `native_features` / `native_scripts`).  Catches codegen vs interp divergence. | Disk-driven; `find_loft_rlib` + `compile_native_job`. |
-| `tests/issues.rs` | The regression register (800+ tests) — small named pins for fixes.  Prefer a `tests/scripts/*.loft` file where possible: it locks all three backends. | `code!(...)` |
+| `tests/issues.rs` | The regression register — small named pins for fixes.  Prefer a `tests/scripts/*.loft` file where possible: it locks all three backends. | `code!(...)` |
 | `tests/expressions.rs` | Language feature tests grouped by topic. | `code!(...)` and `expr!(...)` |
 | `tests/parse_errors.rs` | Negative tests — the loft source must produce a specific diagnostic. | `code!(...).error(...).warning(...)` |
 | the `*_matrix.rs` binaries | Cross-mode matrices (`tuple_matrix`, `closure_matrix`, `coroutine_matrix`, `mut_closure_matrix`, `binary_io_matrix`, `template_matrix`, `par_nested`) — every cell runs interp + `--native` and asserts byte-identical stdout. | `cross_mode!(name, body)` |
@@ -37,8 +37,7 @@ That is the load-bearing subset.  The full census is `ls tests/*.rs` — most bi
 are single-topic and self-describing (`exit_codes.rs`, `error_messages.rs`,
 `leak.rs`, `codegen_emitter.rs`, `slots.rs`, golden harnesses like
 `crystal_editor_gold.rs` / `layout_golden.rs`, …); TESTING.md carries the framework
-reference.  Do not extend a table here — it drifts (this one carried two deleted
-binaries for months).
+reference.  Do not extend a table here — it drifts.
 
 **When unsure where a test belongs**, look for an existing test that
 shares the *kind* of failure you'd reproduce (parse error → parse_errors,
@@ -163,21 +162,21 @@ file is picked up by:
 
 ### What a `.loft` test asserts with
 
-**`assert(condition, message)` is the whole vocabulary.** There is no `assert_eq`, no
-`assert_true`, and no `Test::` namespace — those are habits from other languages and cost a
-compile error (`Unknown function assert_eq_int`) before they cost anything else.
+**Three asserts: `assert(cond, msg)`, `assert_eq(got, want, what)` and `assert_ne(got,
+want, what)`** (STDLIB.md § Output and Diagnostics; `what` is optional). There is no
+`assert_true` and no `Test::` namespace — habits from other languages that cost a compile
+error.
 
 ```loft
+assert_eq(seen, 3, "generator arrivals");   // fails as `generator arrivals: got 2, want 3`
 assert(seen == 3, "the generator arrives three times: {seen}");
 ```
 
-Interpolate the value you GOT into the message. The condition carries what you wanted, so a
-failure that prints only "assertion failed" tells the next reader nothing they cannot already
-see in the source, while `got 2` tells them how far off it was. (A general `assert_eq` that
-reports both sides is loft-lang/loft#1147.)
-
-The message is a normal interpolated text, so a struct field, a length or a whole expression
-can go in it.
+Prefer `assert_eq` wherever it applies: it reports BOTH sides. It needs the type to be
+`Printable` (every scalar and `text`; a struct or vector without a `to_text` is refused at
+compile time), so for those use `assert(a == b, "…{got}…")` — `==` compares content for
+every type — and interpolate the value you GOT into the message, since a bare "assertion
+failed" tells the next reader nothing the source does not.
 
 **That's why pure loft tests have a bigger testing scope than Rust
 integration tests.**  A `code!(...)` test in `tests/issues.rs`
@@ -301,7 +300,8 @@ today-broken shape, asserts the post-fix behaviour, and is
 green automatically — preventing accidental release without the
 fix.
 
-Example (plan-17 phase 01 follow-up):
+The shape, as `plan17_a_implicit_generic_tuple_type_inference` in `tests/issues.rs`
+carried it until its fix landed and the `#[ignore]` came off (it now runs):
 
 ```rust
 #[test]
@@ -341,8 +341,8 @@ closed/historical archive; the legacy `P###` ids survive only as references).
 2. **When you file → `gh issue create`** (the `bug_report` template): a minimal
    reproducer (expected vs observed per backend), `sev:` + `area:` labels, and a
    **verified** `wa:*` workaround.  Not a PROBLEMS.md row.
-3. **Do NOT file** for: clippy / formatter complaints (fix in-branch, note the commit
-   — memory `feedback_fix_old_clippy.md`); or a bug you fix in the SAME change (the
+3. **Do NOT file** for: clippy / formatter complaints (fix in-branch, note the commit);
+   or a bug you fix in the SAME change (the
    fix + regression test ARE the record — close it with `Fixes #NNN`, don't also file).
 4. **Pin every fix with a regression test.** Name it `p<NNN>_<short>` for a legacy
    P-id or `tests/scripts/NN-<slug>.loft` for a GitHub issue; reference it in the
@@ -356,10 +356,8 @@ closed/historical archive; the legacy `P###` ids survive only as references).
 everything except a short named list of slow-and-few binaries.  The current
 numbers (test counts, timings, the excluded list) live in
 `scripts/find_problems.sh` / `scripts/test_subjects.sh`, which also carry the
-re-measure recipe — don't trust a copy of them here.  You no longer have to
-guess which suites your change could break, and guessing is what the old table
-here asked for: it named a fifth of the binaries, two of which had not existed
-for some time.
+re-measure recipe — don't trust a copy of them here.  You do not have to guess
+which suites your change could break.
 
 Guessing does not work, and there is a worked example. An over-broad change to
 the parser's `null()` was caught by `binary_io_matrix` — a binary no
@@ -370,6 +368,7 @@ by EXCLUSION leaves a miss set that is small, named and reviewable.
 | You want | Run |
 |---|---|
 | the normal check before a commit | `./scripts/find_problems.sh` |
+| a tight loop on what YOUR diff touches | `./scripts/find_problems.sh --changed [ref]` (seconds) |
 | a tight loop on one area | `./scripts/find_problems.sh --subject <name>` (seconds) |
 | everything, incl. the slow-and-few | `./scripts/find_problems.sh --full` |
 | to see subjects + what is excluded | `./scripts/find_problems.sh --list-subjects` |
@@ -386,13 +385,14 @@ binaries that are slow AND have very few tests. CI's
 of them can be skipped on the way to main.
 
 **Always run after the targeted set:**
-- `cargo fmt --all -- --check`
-- `cargo clippy --release --all-targets -- -D warnings`
-- `cargo clippy --release --all-targets --no-default-features -- -D warnings`
+- `cargo fmt --all` (format, don't just `--check`)
+- `cargo clippy --all-targets --all-features -- -D warnings` (what the CI job adds)
+- `cargo clippy --no-default-features --all-targets -- -D warnings`
 
-The two clippy variants together are the local CI gate; the
-`--no-default-features` variant catches lint debt in conditionally
-compiled paths and is the one most often skipped.
+The two clippy variants are the pair `make ship` runs; `make gate` runs fmt-check, the
+first variant, doc drift and `doc_hygiene` in a few minutes. The `--no-default-features`
+variant catches lint debt in conditionally compiled paths and is the one most often
+skipped.
 
 ---
 
@@ -439,7 +439,7 @@ for runtime panics that have no diagnostic-printing path.
 - [ ] If pinning a P-id fix, the test name starts with `p<NNN>_`.
 - [ ] If un-ignoring, the commit message names the reason being retired.
 - [ ] Ran the targeted-suite list, not the full suite, unless the change is multi-subsystem.
-- [ ] `cargo fmt --all -- --check` and both clippy variants are green.
+- [ ] `cargo fmt --all` applied and both clippy variants are green.
 - [ ] No nested `fn` definitions in any loft body string.
 - [ ] No `->` arm separators in any `match` (use `=>`).
 - [ ] No `cross_mode!` body shorter than `fn test() { … }` (the harness appends `fn main`, nothing else).
@@ -484,10 +484,10 @@ are evaluated only when the branch fires.
 
 | Category | Site | Use when debugging |
 |---|---|---|
-| `call` | `Parser::call` after `find_fn` | "Which def did the parser resolve, and was it skipped as Generic?"  Used heavily in plan-17 (A). |
-| `field` | `Parser::field` after attr lookup | "Did method dispatch find the attribute, what's the receiver type?"  Used in plan-17 (B). |
-| `generic` | `predict_generic_return_type` + `try_generic_instantiation` | "What did first-pass predict?  What did second-pass instantiate?"  Used in plan-17 (A). |
-| `match` | `expect_match_arm_arrow` | "What arrow did the parser see at the arm boundary?"  Used in P206 + plan-18. |
+| `call` | `Parser::call` after `find_fn` | "Which def did the parser resolve, and was it skipped as Generic?" |
+| `field` | `Parser::field` after attr lookup | "Did method dispatch find the attribute, what's the receiver type?" |
+| `generic` | `predict_generic_return_type` + `try_generic_instantiation` | "What did first-pass predict?  What did second-pass instantiate?" |
+| `match` | `expect_match_arm_arrow` | "What arrow did the parser see at the arm boundary?" |
 
 ### Adding a new category — selective rule
 

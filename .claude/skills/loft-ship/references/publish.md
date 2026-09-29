@@ -86,16 +86,16 @@ consumer's loft itself carries the needed compiler support.)
    - **Foreign submissions** (an author without signing access): the current route is a
      **staging file** `submissions/<name>-<version>.json` in a PR against
      `loft-lang/registry` — it never touches `index.json`; the maintainer run vets it
-     (`scripts/vet-lib.sh`) and folds + re-signs atomically (REGISTRY_SUBMIT.md § 4; the
-     old direct-index-edit PR still works but is being superseded). Preview your entry
+     (`scripts/vet-lib.sh`) and folds + re-signs atomically (REGISTRY_SUBMIT.md § 4 (recommended); a
+     direct `index.json` PR still works but is the older route). Preview your entry
      first with `loft publish --dry-run`; the maintainer-side wrapper for the whole
      fold-and-sign run is `loft ship`.
    Either way, editing the JSON:
    - **Match the index's CURRENT unicode convention** when editing with a script: check whether
      descriptions carry raw `—` or escaped `\uXXXX` and pass the matching `ensure_ascii` to
      `json.dump`, then verify with `git diff` that ONLY your entry (+ `updated`) changed.  The
-     convention has flipped once (a hard "always ensure_ascii=True" rule here rewrote every
-     description line against a raw-unicode index) — the diff check is the invariant, not the flag.
+     convention can flip, and a fixed `ensure_ascii` rule then rewrites every description
+     line — the diff check is the invariant, not the flag.
      Safer still for a small edit: substitute the STRINGS in place and never re-serialise, so the
      formatting, key order and convention cannot move at all.
    - **Re-sign, then verify** (the maintainer key; this is the step that breaks all installs if
@@ -111,11 +111,10 @@ consumer's loft itself carries the needed compiler support.)
 ## The re-sign foot-gun (internalize this)
 
 Editing `index.json` **without** regenerating `index.json.sig` leaves a valid-looking index
-with a **stale signature**. Every `loft install` then fails signature verification — *all*
-packages, not just the new one — every `loft install` fails with **"registry index
-signature INVALID"** (verification runs before anything else in `src/install.rs`). This happened in @PLN84 (a `crypto` version was
-merged into the index un-re-signed and broke installs until a re-sign PR fixed it). So: **every
-change to `index.json` is followed immediately by a re-sign.** Treat them as one atomic edit.
+with a **stale signature**. Every `loft install` of *every* package, not just the new one,
+then fails with **"registry index signature INVALID"** (verification runs before anything
+else in `src/install.rs`). So: **every change to `index.json` is followed immediately by a
+re-sign.** Treat them as one atomic edit.
 
 ## The first-`description` gotcha (a publish that succeeds and still loses data)
 
@@ -134,9 +133,8 @@ Nothing flags it.  The publish exits 0, every sha256 matches, the signature veri
 coverage check is clean and the pinned installs work — none of them look at the
 description.  It surfaces only in a before/after diff of `index.json`.
 
-It cost four entries on one run: `cbor` lost its canonical-ordering / byte-identical /
-native==wasm guarantees, `server` and `web` lost the crates backing them, and `ssh` lost
-**"Native-only"** — the one fact a consumer needs before choosing it.
+What gets lost is typically the line a consumer needs most: a guarantee (canonical
+ordering, native==wasm), the crate behind a library, or **"Native-only"**.
 
 **So: before adding a `description` for the first time, read what the index already says**
 
@@ -149,9 +147,9 @@ and merge rather than replace.  The existing text tends to say what the library 
 or how it is built; a fresh one tends to say what it is FOR.  A catalogue line should carry
 both.
 
-Not every old line is worth keeping — check it against the code before preserving it.  Two
-of the six on that run were wrong or empty (`game_protocol` advertised "ack/retransmit" it
-has no code for; `zttext` said "loft library zttext"), and replacing those was the fix.
+Not every old line is worth keeping — check it against the code before preserving it: an
+old description can advertise a feature the library has no code for, or be an empty
+placeholder, and replacing that is the fix.
 
 (This is the maintainer path only.  A foreign `submissions/` entry's `description` is
 ignored when the package already exists — see REGISTRY_SUBMIT.md — so the hazard does not
@@ -187,7 +185,6 @@ so "the publish succeeded" is not one of the checks.
   compare the parsed package/version SETS, not the diff text.
 - `loft install <lib>@<version>` succeeds from a clean cache (sha256 + size check pass).
   Pin the exact version; `@latest` can read a stale CDN edge.
-- **A concurrent publish survived.**  The registry has real concurrent writers (two of
-  three consecutive runs hit one).  The signer rebases and re-signs, or refuses — but
+- **A concurrent publish survived.**  The registry has real concurrent writers.  The signer rebases and re-signs, or refuses — but
   confirm the other party's entry is still in the index afterwards.
 - The parity gate (in SKILL.md) is green on every target the entry claims.

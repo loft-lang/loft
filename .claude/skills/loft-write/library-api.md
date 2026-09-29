@@ -1,7 +1,7 @@
 <!-- reference for the loft-write skill: read before writing `use` of a library -->
 # loft-write: finding a library's API
 
-Split out of [SKILL.md](SKILL.md) (unchanged).
+The library-API half of the [loft-write skill](SKILL.md).
 
 ## Finding a library's API
 

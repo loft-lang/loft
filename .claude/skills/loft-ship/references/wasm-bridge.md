@@ -3,7 +3,7 @@
 Read this when a `#native` library must run in the **browser** (`--html`) — the one matrix
 cell with no automatic path. The bridge lets the library's wasm call a **host capability**
 (crypto, sockets, the DOM, files) that wasm itself can't reach. Full reference:
-[PACKAGES_TARGETS.md § library-owned wasm bridges](../../../../doc/claude/PACKAGES_TARGETS.md),
+[PACKAGES_TARGETS.md § Wasm bridges](../../../../doc/claude/PACKAGES_TARGETS.md),
 [WASM.md](../../../../doc/claude/WASM.md), [HTML_EXPORT.md](../../../../doc/claude/HTML_EXPORT.md).
 
 ## The shape (four parts)
@@ -20,7 +20,7 @@ my_lib/
 
 1. **`[wasm.bridge]` in `loft.toml`** — its real fields are `crate` (the bridge crate),
    `host_js` (the JS shim file), and a `[wasm.bridge.routes]` table mapping each native
-   symbol (`n_<sym>`) to a bridge function (PACKAGES_TARGETS.md § wasm.bridge). Host-import
+   symbol (`n_<sym>`) to a bridge function (PACKAGES_TARGETS.md § Wasm bridges). Host-import
    module names carry the `loft_` prefix (e.g. `loft_web`), which is what the runtime
    recognizes as a permitted host-import module.
 2. **The bridge crate (`wasm/`)** — a small Rust crate compiled to wasm alongside the

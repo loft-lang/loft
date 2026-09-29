@@ -1,8 +1,7 @@
 <!-- reference for the loft-write skill: read when a program touches files -->
 # loft-write: file I/O reference
 
-Split out of [SKILL.md](SKILL.md) (file I/O section, unchanged).
-
+The file I/O half of the [loft-write skill](SKILL.md).
 
 ## File I/O patterns
 
@@ -92,8 +91,7 @@ Notes:
   The byte count is inferred from the type — `as i32` reads 4
   bytes, `as u8` reads 1, `as u16` reads 2, `as integer` reads 8.
   The legacy `f#read(n) as T` form still works but the `(n)` must
-  match the type's storage width exactly or the runtime panics in
-  `src/database/io.rs:276`.  The inferred form makes that mismatch
+  match the type's storage width exactly or the runtime panics.  The inferred form makes that mismatch
   impossible.  `as text` still needs `f#read(n) as text` because
   text has no fixed width.
 - **`s.field = f#read` (no `as T`) infers width from the LHS field's
@@ -101,7 +99,7 @@ Notes:
   `S { a: i32, b: u8, c: u16 }`, both sides become:
   `f += s.a; f += s.b; f += s.c` to write, `s.a = f#read; s.b = f#read;
   s.c = f#read` to read.  Changing a field's declared type
-  (`i32` → `i64`) automatically updates both sites at the next compile —
+  (`u16` → `i32`) automatically updates both sites at the next compile —
   no manual cast edits needed.
 - **Always cast scalar writes to the intended width.**  Bare
   `f += int_var` writes 8 bytes (loft stores integers as i64).  To

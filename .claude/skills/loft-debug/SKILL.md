@@ -31,22 +31,20 @@ irreversible moves not to make.
   it failed, with the measurement that killed it, names where the closure decided the
   unsound step actually is, and cites the `tests/scripts/` cell now guarding it — so you
   inherit a working control — and when an entry names a FALSE PREMISE, search for the other
-  sites that hold it (loft#1096 and loft#1097 are one wrong sentence at two sites, a day
-  apart). Measured cost of skipping it (loft#1096): a repair was written
-  and validated on both backends before the poison sweep exhausted the store table, and the
-  spec had already recorded that same move as *"a trade, not a closure"*, reverted as inert,
-  two lines above where it says the fix belongs. `IMPLEMENTATIONS.md` indexes what is merged.
+  sites that hold it. The cost of skipping it, worked through: the `loft-codegen` skill
+  § Zeroth. `IMPLEMENTATIONS.md` indexes what is merged.
 - **Investigation plans** (heavyweight) — `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
 
 ## Running a bug down — mechanics
 
 - **First, one tracker probe**: `gh issue list --search "<symptom keywords>"` —
-  a bug worth fixing is often already filed (consumers file fast: #342/#343
-  landed minutes before their fixes were built blind). An existing row hands
+  a bug worth fixing is often already filed (consumers file fast, often minutes
+  before an agent starts on the same symptom blind). An existing row hands
   you scope + workaround for free, and the fix commit must claim it (below).
 - Single file, interpreter: `cargo run --bin loft -- --interpret file.loft`
 - Native: `cargo run --bin loft -- --native file.loft`
-- ⚠ **The default backend is `--native` (compiled-in default everywhere).** For the SEEING loop ALWAYS pass
+- ⚠ **The default backend is `--native` wherever rustc is available** (a downloaded release
+  interprets). For the SEEING loop ALWAYS pass
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in
   seconds, whereas `--native` pays a rustc compile per probe (that cost belongs at the
   final verify, not the loop).
@@ -58,7 +56,7 @@ irreversible moves not to make.
   `LOFT_DUMP_ELEMENTS` tune the inline struct/vector dumps.
 - **Dump files**: a failing wrap/native test writes `tests/dumps/*.txt` — full IR +
   bytecode + execution trace; the root cause is almost always visible there. (See
-  `doc/claude/DEBUG.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
+  `doc/claude/RUNNING_TESTS.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
   investigate (CLAUDE.md § Debugging policy) — read the dump and reason.
 - **Tight loop**: `./scripts/find_problems.sh --subject <name>` (seconds) while
   iterating — one full gate per change of unknown reach, and `scripts/ci-run.sh recheck`
@@ -70,12 +68,10 @@ irreversible moves not to make.
 
 The @PLN16 debugger speaks NDJSON over stdio (the contract:
 `doc/claude/plans/16-debugger/PROTOCOL.md`). One `printf` pipes a whole scripted
-session — breakpoint → inspect the live frame → eval → edit → resume. Patterns
-below verified hands-on against this tree and a real multi-module consumer
-(crawler's Sim). ⚠ Version boundary: an installed binary older than the rpc
-fixes sends NO `verified` field on setBreakpoints and ignores string-form
-`"log"` (array only) — when driving an installed `loft`, prefer `target/*/loft`
-from this tree whenever the setBreakpoints response lacks `verified`.
+session — breakpoint → inspect the live frame → eval → edit → resume. ⚠ An older
+installed `loft` sends NO `verified` field on setBreakpoints and ignores string-form
+`"log"` (array only) — when the setBreakpoints response lacks `verified`, drive
+`target/*/loft` from this tree instead.
 
 ```sh
 printf '%s\n' \
@@ -104,14 +100,14 @@ printf '%s\n' \
   lexical scope at that line** — a full crawler `Sim` struct renders inline
   (vectors elided `…`); one event = the variables panel, drill down with `eval`.
   A local in scope that the frame does not HOLD carries a marker instead of a
-  value (@PLN120 A): `"<unset>"` (its assignment has not run yet on this path) or
+  value: `"<unset>"` (its assignment has not run yet on this path) or
   `"<reused by step>"` (its stack slot now belongs to `step` — the allocator is
   scope-blind, so two locals in one scope share a slot when their live ranges do
   not overlap; break one line earlier to read it). Never mistake a marker for a
   value: `eval` on such a name returns `value:null`, and `setValue` refuses it.
 - **`eval` runs against the paused frame** (`s.php`, `n * 100`, `len(v)`) over
-  every local the frame **holds** — which since @PLN120 A includes one read later
-  on the same line (`step` in `total = total + step`), previously missing. A name
+  every local the frame **holds** — including one read later on the same line
+  (`step` in `total = total + step`). A name
   that is out of scope, `<unset>` or `<reused by …>` returns `value:null`, not an
   error — check the `stopped` frame to tell which, and don't misread null as "the
   field is empty".
@@ -123,13 +119,11 @@ printf '%s\n' \
   tracepoint (`"log":"expr"` or `"log":["e1","e2"]`, `"stop":false`) streams
   `output{category:"trace"}` lines (`expr = value`) without pausing — structured
   trace beats sprinkled printlns. Log entries are EXPRESSIONS, not format strings.
-- **Conditions and trace exprs obey the same rule as `eval`** — a name the frame
-  does not hold evaluates null/`?`. Since @PLN120 B such a condition **reports and
-  stops** instead of silently never matching, and since @PLN120 A the set of
-  usable names is lexical scope rather than "referenced on this line" — so a
-  condition on a local of the enclosing block now works. One case remains
-  genuinely unusable: a name the `stopped` frame shows as `<unset>` or
-  `<reused by …>`.
+- **Conditions and trace exprs obey the same rule as `eval`** — the usable names
+  are the locals in lexical scope (an enclosing block's local works); a name the
+  frame does not hold makes the condition **report and stop** rather than silently
+  never match. The one unusable case: a name the `stopped` frame shows as `<unset>`
+  or `<reused by …>`.
 - Program stdout arrives as `output` events on the SAME pipe, never interleaved
   with protocol — parse line-by-line as JSON, switch on `event`/`id`.
 - The interactive twin is `loft debug <file>` (the `(dbg)` prompt) — same engine,

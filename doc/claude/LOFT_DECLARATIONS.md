@@ -144,7 +144,7 @@ with `a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
 <!-- from tests/reference/skill-constants.loft -->
 ```loft
 TAU      = 6.28318530717958;    // bare-name form
-const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
+const E  = 2.71828182845905;    // const-keyword form
 pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
 

@@ -57,7 +57,8 @@ rewrite for speed is a per-routine edge case with its reason recorded.
 
 1. **Scaffold** — `loft new <name>` (or copy a sibling library's `loft.toml`). See
    [LIBRARY_AUTHORING.md](../../../doc/claude/LIBRARY_AUTHORING.md) for the full author
-   narrative.
+   narrative (testbed → develop), [LIBRARY_PUBLISH.md](../../../doc/claude/LIBRARY_PUBLISH.md)
+   for publish → maintain.
 2. **Write the loft surface** — the `.loft` API. For naming/types/format-strings/known-bugs,
    use the **`loft-write` skill** (this skill is about *shipping*, that one is about *writing
    `.loft`*). Keep the public surface clean per
@@ -65,7 +66,7 @@ rewrite for speed is a per-routine edge case with its reason recorded.
    library; the stdlib is just the library every program imports).
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
    knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
-   (PACKAGES_BUILD.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
+   (PACKAGES_BUILD.md § The build phase), plus a `.wasm_exempt` marker for a justified wasm
    opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test` and `loft test --native`;
    the test runner has no wasm mode, so the wasm target is checked by the library CI's
    WASM cross-build and by a program entry, `loft --native-wasm <program>.loft`. Tier 2 adds a
@@ -95,10 +96,9 @@ is green" does **not** close a wasm/browser divergence — that divergence **is*
 the same failure mode the stability red-flags chase: two generators reading one IR, drifting).
 Add a leak check where the library allocates (`LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK`).
 
-## Pitfall index — the things that actually cost hours (hard-won, @PLN84)
+## Pitfall index — the things that actually cost hours
 
-These are not theoretical; each one bit a real ZT library this cycle. Skim them before you
-start, not after you're stuck.
+Each of these has broken a real library. Skim them before you start, not after you're stuck.
 
 - **The re-sign foot-gun (publish).** Editing the registry `index.json` *without re-signing*
   it breaks **all** `loft install`s — every install fails with "registry index
@@ -121,9 +121,8 @@ start, not after you're stuck.
 ## References (read on demand — don't inline them)
 
 - `references/wasm-bridge.md` — the Tier-2 `[wasm.bridge]` recipe: host-import module, host
-  shim (`host.js` browser / Node headless), asyncify, the marshalling traps, and the @PLN84
-  history. Read it
-  the moment a library needs the browser target.
+  shim (`host.js` browser / Node headless), asyncify, the marshalling traps. Read it the
+  moment a library needs the browser target.
 - `references/publish.md` — the registry publish runbook: `loft.toml` targets, per-target
   build, Ed25519 sign + **re-sign**, sha256/size, the CDN gotcha. Read it before any registry
   submission.
