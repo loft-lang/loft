@@ -230,25 +230,43 @@ fn find_mints(
             // a `vector<T>` local (hex_shape's `wall_chain_walk`), and a release that walks
             // that wrapper by its type reads every integer as a vector handle.  A store of
             // its own never walks, so the mismatch was silent until now; here it declines.
-            // The wrapper of a `vector<T>` local is `main_vector<T>`.
-            let (local_shape, _) = function.tp(*v).peel_optional();
-            let want = match local_shape.peel_link() {
-                Type::Vector(elem, _) => format!("main_vector<{}>", elem.name(data)),
-                _ => String::new(),
-            };
-            let have = wrapper_name(data, function, *vdb);
-            if have == want {
+            if wrapper_holds(data, function, *vdb, *v) {
                 out.push((*vdb, *v, wtp, path.clone()));
             } else if crate::keys::trace_place() {
                 eprintln!(
-                    "[exit-vector] v={}: DECLINED — the wrapper is {have}, the local wants {want}",
-                    function.name(*v)
+                    "[exit-vector] v={}: DECLINED — the wrapper is {}, not the local's vector",
+                    function.name(*v),
+                    wrapper_name(data, function, *vdb)
                 );
             }
         }
         find_mints(data, function, stmt, ops, path, out);
         path.pop();
     }
+}
+
+/// Does the wrapper record's one field hold exactly the local's vector type (deps aside)?
+fn wrapper_holds(data: &Data, function: &Function, vdb: u16, v: u16) -> bool {
+    let (shape, _) = function.tp(vdb).peel_optional();
+    let Type::Reference(td, _) = shape.peel_link() else {
+        return false;
+    };
+    if (*td as usize) >= data.definitions.len() {
+        return false;
+    }
+    let mut fields = data
+        .def(*td)
+        .attributes()
+        .iter()
+        .filter(|a| !a.name.starts_with("__"));
+    let Some(field) = fields.next() else {
+        return false;
+    };
+    if fields.next().is_some() {
+        return false;
+    }
+    let (local_shape, _) = function.tp(v).peel_optional();
+    field.typedef.without_deps() == local_shape.peel_link().without_deps()
 }
 
 /// The wrapper's type name, `main_vector<T>`, to hold against the local's `T`.
@@ -319,7 +337,7 @@ fn mentions(node: &Value, w: u16) -> bool {
 }
 
 fn names_var(n: &Value, w: u16) -> bool {
-    match n {
+    match n.unspan() {
         Value::Var(x)
         | Value::Set(x, _)
         | Value::TupleGet(x, _)

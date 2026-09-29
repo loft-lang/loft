@@ -64,6 +64,19 @@ fn operands(ir: &str, op: &str) -> Vec<String> {
         .collect()
 }
 
+/// The type operand of every `__ref_1(1):… = OpPlaceRecord(<host>, <tp>i32)` in `ir`.
+fn placed(ir: &str) -> Vec<String> {
+    ir.lines()
+        .filter(|l| l.contains("__ref_1(1)") && l.contains("= OpPlaceRecord("))
+        .map(|l| {
+            let rest =
+                &l[l.find("= OpPlaceRecord(").expect("the placement") + "= OpPlaceRecord(".len()..];
+            let tp = &rest[rest.find(", ").expect("the type operand") + 2..];
+            tp[..tp.find("i32)").expect("a typed operand")].to_owned()
+        })
+        .collect()
+}
+
 #[test]
 fn a_reused_buffer_of_a_heap_owning_record_releases_before_each_refill() {
     let text = introspect(&[]);
@@ -72,8 +85,13 @@ fn a_reused_buffer_of_a_heap_owning_record_releases_before_each_refill() {
     ] {
         let ir = ir_of(&text, name);
         let released = operands(ir, "OpClear");
+        // The mint is `OpDatabase(__ref_1, tp)` — or, since `(R-Place)`'s loop clause,
+        // `__ref_1 = OpPlaceRecord(host, tp)`: the buffer claimed in the host's store,
+        // released by the same type at every turn.
+        let mut minted = operands(ir, "OpDatabase");
+        minted.extend(placed(ir));
         assert!(
-            released.len() == 1 && released == operands(ir, "OpDatabase"),
+            released.len() == 1 && released == minted,
             "{name}'s pooled buffer must be released by the type it is minted as:\n{ir}"
         );
     }

@@ -2916,6 +2916,13 @@ fn move_record(s: &mut State) {
     s.database.move_record_out(&v_data, &v_dest, v_tp);
 }
 
+fn move_field(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_dest = s.get_stack::<DbRef>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.move_field_out(&v_data, &v_dest, v_tp);
+}
+
 fn move_vector(s: &mut State) {
     let v_tp = s.code::<u16>();
     let v_src = s.get_stack::<DbRef>();
@@ -2923,12 +2930,6 @@ fn move_vector(s: &mut State) {
     s.database.move_vector(&v_dest, &v_src, v_tp);
 }
 
-fn move_field(s: &mut State) {
-    let v_tp = s.code::<u16>();
-    let v_dest = s.get_stack::<DbRef>();
-    let v_data = s.get_stack::<DbRef>();
-    s.database.move_field_out(&v_data, &v_dest, v_tp);
-}
 fn free_record_in(s: &mut State) {
     let v_tp = s.code::<u16>();
     let v_rec = s.get_stack::<DbRef>();

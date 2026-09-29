@@ -429,6 +429,8 @@ box idle for a measurement, and then for the suite, is how a verified unit sat f
   names a different, smaller set and measures the wrong thing.
 
 
+## After a red gate: recheck, do not restart
+
 **The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
 it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A recheck builds on the
 last gate in this tree (`.ci-gate-head`, written by `start`) and runs, each timed:
