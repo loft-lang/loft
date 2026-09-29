@@ -6455,19 +6455,22 @@ impl Parser {
         if a_type.is_unknown() {
             *a_type = tp.clone();
         }
-        // A field default is a store into the field, so an INTEGER one meets the field's
-        // narrowing the way a parameter default and a struct literal's field do — through
-        // `convert`.  It met nothing: `f: u8 = 256` read 0 with no diagnostic, and a
-        // `limit(0, 10)?` field defaulting to 12 held 12.  Only the integer question is asked
-        // here: a keyed collection's default is a `vector` literal until the function it is
-        // hoisted into delivers it at the field's type (loft#703).
+        // A field default is a store into the field, so it meets the field's conversion
+        // the way a parameter default and a struct literal's field do — through `convert`
+        // (`@FR-C-Num`, `@FR-C-Tuple`).  It met nothing: `f: u8 = 256` read 0 with no
+        // diagnostic, and `p: float = 7` stored the integer's BITS, so the field read
+        // 3.5e-323 on the interpreter and did not compile natively.  A collection is not
+        // asked here: a keyed collection's default is a `vector` literal until the function
+        // it is hoisted into delivers it at the field's type (loft#703), and that function
+        // converts its own result.
         let dtype_concrete = match &tp {
             Type::Rewritten(inner) => inner.as_ref(),
             other => other,
         };
         if !self.first_pass
-            && matches!(a_type.base(), Type::Integer(_))
-            && matches!(dtype_concrete.base(), Type::Integer(_))
+            && !a_type.is_unknown()
+            && !dtype_concrete.is_unknown()
+            && !crate::parser::vectors::is_collection(a_type)
             && !matches!(value, Value::Null)
             && !self.convert(value, &tp, a_type)
         {

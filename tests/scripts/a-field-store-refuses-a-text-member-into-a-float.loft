@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A tuple field reassigned with a member of another type is refused (formal/types.md D-types-19):
+// `w.p = ("x", 4)` into a `(float, integer)` field wrote the text as a float, printing an empty
+// line on the interpreter, and failed to compile natively (E0308) with rustc's message, not
+// loft's.
+//
+// @EXPECT_ERROR: expected (float, integer), got (text, integer) on assignment
+
+struct W { n: integer, p: (float, integer) }
+
+fn main() {
+  w = W { n: 1, p: (1.0, 2) };
+  w.p = ("x", 4);
+  println("{w.p.0} {w.p.1}");
+}

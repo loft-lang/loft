@@ -1307,6 +1307,19 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-18, D-types-19** *(opened 2026-09-29, CLOSED 2026-09-29)* — two field stores that
+  skipped `convert`, so `(C-Num)`, `(C-Tuple)` and the width rules did not reach them.  **-18**:
+  a field DEFAULT was converted only integer → integer, so `p: float = 7` stored the integer's
+  BITS — the field read 3.5e-323 on the interpreter and did not compile natively (E0308) — and a
+  `(float, integer) = (1, 2)` default likewise; the default now converts like a parameter's
+  (a collection's is still delivered at the field type by the function it is hoisted into).
+  **-19**: a tuple field REASSIGNED (`w.p = (3, 4)`) was written member by member with no
+  conversion and no check, so an `integer` member stored its bits into a `float`, `(300, 4)` into
+  a `(u8, integer)` field kept 44 on both backends, and a `text` member was written as a float;
+  the value is now converted and checked against the field.  Guards
+  `tests/scripts/a-field-store-converts-its-value.loft`,
+  `tests/scripts/a-field-store-refuses-a-narrowed-member.loft`,
+  `tests/scripts/a-field-store-refuses-a-text-member-into-a-float.loft`.
 * **D-types-17** *(opened 2026-09-29, CLOSED 2026-09-29, loft#1742)* — a tuple carrying a HEAP
   member (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out
   of a function was REFUSED when the returned value was a CALL: `fn back(k) -> (text, float) {

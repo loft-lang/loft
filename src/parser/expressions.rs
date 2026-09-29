@@ -7554,8 +7554,37 @@ use a separate collection or add after the loop"
                         .collect()
                 });
                 let host_field_pos = (first_pos as u16).saturating_sub(offsets[0]);
+                let rhs_pos = self.lexer.pos().clone();
                 let mut rhs = Value::Null;
-                let _rhs_type = self.expression(&mut rhs);
+                let rhs_type = self.expression(&mut rhs);
+                // The store meets the field's type like every other store does (`@FR-C-Tuple`
+                // over `@FR-C-Num`, and the width rules): the value was written member by
+                // member with no conversion and no check, so `w.p = (3, 4)` into a
+                // `(float, integer)` field stored the integer's BITS, `(300, 4)` into a
+                // `(u8, integer)` one kept 44, and a `text` member was written as a float.
+                // A KEYED member given a vector is not a conversion: `emit_tuple_set_ops` fills
+                // it by key (loft#1675), so that member is checked at its own type here.
+                let want = match &rhs_type {
+                    Type::Tuple(src) if src.len() == elems_vec.len() => Type::Tuple(
+                        elems_vec
+                            .iter()
+                            .zip(src.iter())
+                            .map(|(d, s)| {
+                                if crate::parser::vectors::is_keyed(d)
+                                    && matches!(s.base(), Type::Vector(_, _))
+                                {
+                                    s.clone()
+                                } else {
+                                    d.clone()
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => f_type.clone(),
+                };
+                if !rhs_type.is_unknown() && !self.convert(&mut rhs, &rhs_type, &want) {
+                    self.validate_convert("assignment", &rhs_type, &want, &rhs_pos);
+                }
                 let ops = self.emit_tuple_set_ops(&host_ref, host_field_pos, &elems_vec, rhs);
                 *code = crate::data::v_block(ops, Type::Void, "tuple_field_set_via_assign");
                 return Type::Void;
