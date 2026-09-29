@@ -559,7 +559,9 @@ for item in shapes {
 **Disambiguation:** `if s is Circle { radius } { body }` — the parser
 uses lookahead to distinguish field capture `{ ident [, ident]* }` from
 an if-body `{ statements }`.  If the `{` is followed by an identifier
-then `,` or `}`, it is a field capture; otherwise it is the if-body.
+then `,` or `}`, it is a field capture; otherwise it is the if-body.  A capture binds each field
+under its own name; to bind one under another name (`radius: r`), use `match` — `is Circle
+{ radius: r }` is refused with that advice.
 
 ---
 

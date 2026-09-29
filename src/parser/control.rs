@@ -7638,6 +7638,28 @@ impl Parser {
         self.lexer.token("}");
     }
 
+    /// After `is V {`, is `field: name` (then `,` or `}`) an attempted RENAME of a field of `V`,
+    /// rather than a body opening with a declaration?  Only when `field` is a field of the
+    /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
+    /// lookahead the caller reverts, after `field` has been read.
+    fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
+        let Some(field) = field else {
+            return false;
+        };
+        let is_field = self.data.def(variant_def_nr).attributes[1..]
+            .iter()
+            .any(|a| a.name == field);
+        if !is_field || !self.lexer.has_token(":") {
+            return false;
+        }
+        let Some(alias) = self.lexer.has_identifier() else {
+            return false;
+        };
+        Self::is_binding_name(&alias)
+            && self.data.def_nr(&alias) == u32::MAX
+            && (self.lexer.peek_token(",") || self.lexer.peek_token("}"))
+    }
+
     /// A field sub-pattern that is a plain binding NAME (`Circle { radius: r }`) — a rename of
     /// the capture, `@FR-P-Point` — consumed and answered; anything else (`r..5`, `_`, a
     /// variant, a literal) is left unread for the sub-pattern parse.  Only a name followed by
@@ -12262,8 +12284,11 @@ impl Parser {
         let is_field_capture = is_struct && self.lexer.peek_token("{") && {
             let link = self.lexer.link();
             self.lexer.token("{");
-            let is_capture = self.lexer.has_identifier().is_some()
-                && (self.lexer.peek_token(",") || self.lexer.peek_token("}"));
+            let first = self.lexer.has_identifier();
+            let is_capture = first.is_some()
+                && (self.lexer.peek_token(",")
+                    || self.lexer.peek_token("}")
+                    || self.is_capture_rename_attempt(variant_def_nr, first.as_deref()));
             self.lexer.revert(link);
             is_capture
         };
@@ -12302,6 +12327,25 @@ impl Parser {
                         "duplicate field binding '{}' in is-capture",
                         field_name
                     );
+                }
+                // `is Circle { radius: r }` — a `match` field pattern renames, an `is` capture
+                // does not (its list is `{ ident, … }`, told from a body by lookahead, and a
+                // body may open with the declaration `x: T`).  Consumed so the refusal is the
+                // only message, rather than the body parse's `Undefined type r`.
+                let mut rename: Option<String> = None;
+                if self.lexer.has_token(":") {
+                    let alias = self.lexer.has_identifier().unwrap_or_default();
+                    rename = Some(alias.clone());
+                    if !self.first_pass {
+                        let vn = self.data.def(variant_def_nr).name().to_string();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "an `is` capture binds a field under its own name — write `is {vn} \
+                             {{ {field_name} }}`; to bind it as `{alias}`, use `match`: \
+                             `{vn} {{ {field_name}: {alias} }} => …`"
+                        );
+                    }
                 }
                 seen_fields.insert(field_name.clone());
                 let attr_idx_and_type = {
@@ -12383,6 +12427,12 @@ impl Parser {
                             self.is_capture_bindings.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
+                            // The refused rename's name reads the same capture, so the body's
+                            // use of it adds no second error.
+                            if let Some(alias) = rename.as_ref().filter(|a| !a.is_empty()) {
+                                let old = self.vars.set_name(alias, v_nr);
+                                self.is_capture_aliases.push((alias.clone(), old));
+                            }
                         }
                     }
                     None => {
