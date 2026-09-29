@@ -545,3 +545,46 @@ and the `add_triangle` half.  **The prefill went the same day** (`(R-CompleteWri
 whole-record copy into a heap-free element covers the type): **1.22 → 0.94 ms per op
 (7.1× → 5.4×)**.  What is left is the growth, the two `add_triangle` writes and the
 trigonometry the twin also pays.
+
+## `pack_instances` (2026-09-29) — one text set kept three callees writing
+
+Traced (`LOFT_TRACE_HOIST_DECLINE`): the loop declined at `out += [frame_of(self, i) as
+single]`.  `frame_of` discharges `self.st_seqs[n.nd_seq] ?? Sequence { …, q_name: "" }`; the
+fallback's mint into its `__ref_p2_` buffer was already an allowance, its text field's
+`OpSetText` was not — outside the twelve scalar setters, it made the callee a writer, and
+`lit_colour`'s chain the same.  With the SET admitted as the mint is (the buffer's store is
+the site's own): **920 → 309 µs per op (24.3× → 8.4×)**, hash unchanged — 16 pushes through
+the push header, three vector headers, where before there were 16 general appends and 20
+store reads per node.  What the row still pays: the twenty field reads of `n` through the
+store (`(R-RecPtr)`'s remainder: `out` is the return buffer, never proven apart from `self`)
+and the three calls per node.
+
+## cbor `encode_bytes` and `decode` (2026-09-29) — profiled, not yet built
+
+`encode_bytes` (31.7× on the laptop): the byte-wise copy IS admitted (`LOFT_TRACE_BYTE_COPY`
+names `n_encode`'s `_mv_value_4` as one append), and the row's 100 encodes of a 64 × 256-byte
+array cost 33 µs each here — 2 ns a byte against a memcpy.  The profile is flat and all of
+it is per-CHILD buffer churn: `encode(items[i])` mints a result store (`op_database_inner`,
+`claim_block`, `claim_best_fit`), `head()` mints another and pushes one to three bytes into
+it, the parent appends the child (`vector_add`, `copy_block_cross_store`, `resize`) and frees
+it (`free_named`, `clear_vector_release`, `set_free_header`, `fl_insert`) — about 500 ns
+around 259 bytes.  The lever is the destination-directed build (§ Order item 6): `buf +=
+encode(x)` handing `buf` to the callee as the buffer it appends INTO, so a child neither mints
+nor is copied; `encode` is recursive, which is why the frame's buffer pool does not reach it.
+
+`decode` (21.8×, 42.6 ms against 2.0 ms — the largest absolute gap on the list, and
+pluginabi's `check_request` at 59.9× decodes every frame twice through it): `read_value`'s
+own code 19 %, and the CLAIMS machinery 40 % — `remove_claims_mode` 12 %, `owned_walk`
+9.6 %, `copy_claims` 6.8 %, `holds_no_heap` 3.2 %, `OpFreeRef` 2.9 %, and `malloc` /
+`cfree` / `finish_grow` 8 % from the child lists the walks allocate per record.  The shape:
+`sub = read_value(bytes, p); items += [sub.value]` deep-copies the child's heap into the
+parent's vector and then walks the temporary to free it, per node.  Two levers, the second
+cheap: (a) the cross-call MOVE — the child built where it will live (§ Order item 6 again),
+which removes both the copy and the free; (b) the walks themselves — `owned_walk` pushes a
+child per FIELD of a struct, scalars included, into a `Vec` allocated per record, and
+`remove_claims` re-asks `holds_no_heap` per child; a walk that visits heap-capable fields
+only, over a scratch kept in `Stores`, is a runtime unit for every free of a heap-owning
+record on both backends.  Beside them, `bytes[pos] ?? 0` reads through the runtime
+(`length_vector` 5.9 %, `get_vector` 5.3 %): a parameter read outside any loop holds no
+header, and the byte-range copies `for k in 0..arg { bs += [bytes[argpos + k] ?? 0] }` are
+the `(R-VecCopy)` shape with a RANGE, one `append_bytes` each if the rule takes it.

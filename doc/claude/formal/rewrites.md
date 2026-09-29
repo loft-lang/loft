@@ -734,7 +734,9 @@ in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 �
                  or whose only writes land fixed-width scalars in its own hidden
                  return buffer, is admitted under (R-InPlace) as a direct set is.
                  Its body is read with the header hoist's own allowances — a
-                 null-discharge buffer's mint and defaults, a lazy buffer's mint, a
+                 null-discharge buffer's mint, its defaults and the SETS of its
+                 fallback (a text field's included: the buffer's store is the
+                 site's own, reached by nothing a caller holds), a lazy buffer's mint, a
                  record free, and its DEAD buffers (R-ValueRecord: a tuple answer's
                  buffer is never minted, so its mint, clear and frees are nothing;
                  the fact is per FUNCTION, read off one program-wide table) — since
@@ -748,6 +750,15 @@ still walk below the call node, so a growing op inside one blocks on its own.
 Switches `LOFT_NO_INPLACE_CALLEE_HOIST`, `LOFT_NO_RETBUF_HOIST`.  Sites:
 `hoist::in_place_only_writer`, `hoist::retbuf_only_writer`,
 `hoist::call_writes_store`.
+*The set half of the discharge allowance (2026-09-29, `hoist::discharge_buffer_set`, under
+`LOFT_NO_NULL_BUFFER_HOIST` with the mint):* a callee whose `??` fallback carries a text
+field (`Sequence { …, q_name: "" }`) wrote it with `OpSetText`, the one op outside the
+twelve scalar setters, and was a WRITING callee for it — stage's `pack_instances` called
+three such and held no header at all.  Guard
+`tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft` (c3 is the write
+the allowance must not reach: a text set into an element of the walked vector, which grows
+that store); pin `tests/discharge_set.rs`.  `pack_instances` 920 → 309 µs per op (24.3× →
+8.4× of Rust) here, hash unchanged.
 
 ### A record scalar the body cannot write is read once
 

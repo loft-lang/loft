@@ -9,6 +9,22 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `??` fallback's text set is the discharge buffer's own (2026-09-29)
+
+`hoist::discharge_buffer_set` (`@FR-R-InPlace`'s hidden-buffer allowance, `@FR-R-Callee`):
+any `OpSet*` whose target is the pass-2 discharge buffer `null_buffer_alloc` admits the mint
+of — a text field's `OpSetText` included — is admitted beside the mint, in the loop body
+(`blocks_header_hoist`), in a callee's in-place verdict (`callee_allowance`) and in its write
+set (`body_writes`, as the buffer's own type).  The buffer's store is the site's own, reached
+by nothing a caller holds.  stage's `frame_of` (`q = self.st_seqs[n.nd_seq] ?? Sequence {…,
+q_name: ""}`) was a writing callee for that one op, and `pack_instances`, which calls it per
+node, held no header at all: 16 general appends and 20 store reads per node.  Now 16 pushes
+through the header and three vector headers: 920 → 309 µs per op (24.3× → 8.4× of Rust) here,
+hash unchanged.  Under `LOFT_NO_NULL_BUFFER_HOIST` with the mint.  Guard
+`tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft` (four cells; c3
+is a callee that sets a text INTO an element of the walked vector, which must keep the loop
+on the runtime); pin `tests/discharge_set.rs`.
+
 ### A whole-record copy into an appended element is a complete write (2026-09-29)
 
 `hoist::group_covers_type` (`@FR-R-CompleteWrite`) broke at the first statement that was not

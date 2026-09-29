@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A loop that calls a helper whose `??` fallback carries a text keeps its fast paths on
+`--native`.**  `q = seqs[n] ?? Seq { first: 0, count: 1, name: "" }` inside a helper made
+every loop calling it give up its headers, because the fallback's text field counted as a
+store write.  The fallback's buffer is the helper's own, so it no longer does.  stage's
+`pack_instances` runs 3× faster, same output.
+
 **A record passed by value and appended whole skips the field prefill on `--native`.**
 `self.items += [p]` with `p` a small record parameter wrote every field twice: the default
 fill, then the copy.  When the record owns no heap the fill is gone.  mesh3d's `sphere` is

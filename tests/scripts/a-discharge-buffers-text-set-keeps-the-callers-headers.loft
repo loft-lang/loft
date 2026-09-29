@@ -1,0 +1,119 @@
+// `@FR-R-Callee` / `@FR-R-InPlace`'s hidden-buffer allowance, the SET half: a `??` fallback
+// record is built into the site's private discharge buffer (`__ref_p2_N`), whose store no
+// header, base or address of a caller describes — so its mint was already admitted, and a
+// write into it is the same nothing, a text field's `OpSetText` included.  Until now that
+// one write kept every callee with a text-carrying fallback a WRITING callee, and the loop
+// calling it held no header at all (stage's `pack_instances`: 16 general appends and 20
+// store reads per node).  The interpreter applies no rewrite and is the oracle; every value
+// is hand-computed; `LOFT_NO_NULL_BUFFER_HOIST=1` and `LOFT_HOIST_VERIFY=1` must agree.
+//
+// The cells: c1 the shape (a push loop calling a scalar-answering callee that discharges
+// a text-carrying fallback), c2 the same fallback in the caller's own loop body, c3 the
+// write the allowance must NOT reach — a callee that sets a text into an ELEMENT of the
+// walked vector, which grows that store while the loop reads through it — and c4 a callee
+// whose fallback is taken on every call (the buffer re-minted per iteration).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-29) — the buffer-name test dropped from
+// `discharge_buffer_set`, so a text set into ANY plain record counts as the buffer's own:
+// `rename` becomes an admitted callee and c3's loop keeps a base for `ws` while the renames
+// move the store.  The plain `--native` run still answered 54120087 (the moved-away memory
+// was not reused yet — the same story as the growth cells'), and `LOFT_HOIST_VERIFY=1` panicked
+// at c3's first read after the move: "hoisted vector base is stale — a store grew or moved
+// under the loop".  The verifier is the falsifier for this cell, as it is for a growth; the
+// interpreter and `LOFT_NO_NULL_BUFFER_HOIST=1` kept every cell green.  Restored
+// byte-identically.  (A first c3 with three nodes and short names never moved the store
+// and was vacuous against the sabotage — which is why this one grows to 300.)
+
+struct Seq { first: integer, count: integer, name: text }
+struct Node { seq: integer, w: float, name: text }
+struct St { nodes: vector<Node>, seqs: vector<Seq>, ws: vector<float> }
+
+fn frame(st: const St, i: integer) -> integer {
+  n = st.nodes[i];
+  if n == null { return -1; }
+  q = st.seqs[n.seq] ?? Seq { first: 0, count: 1, name: "" };
+  q.first + q.count + len(q.name)
+}
+
+// c1 — the pack_instances shape: pushes beside the discharging callee.
+fn c1(st: const St) -> vector<single> {
+  out: vector<single> = [];
+  for i in 0..len(st.nodes) {
+    n = st.nodes[i];
+    if n == null { continue; }
+    out += [n.w as single];
+    out += [frame(st, i) as single];
+  }
+  out
+}
+
+// c2 — the fallback discharged in the loop body itself.
+fn c2(st: const St) -> integer {
+  s = 0;
+  for i in 0..len(st.nodes) {
+    n = st.nodes[i];
+    if n == null { continue; }
+    q = st.seqs[n.seq] ?? Seq { first: 100, count: 0, name: "fallback" };
+    s += q.first + len(q.name) + (n.w as integer);
+  }
+  s
+}
+
+// c3 — a callee that writes a text INTO the walked vector's element: that store grows
+// under the loop (300 nodes, an 85-byte name each — far past the store's first
+// capacity, so its memory MOVES), and the loop must read every element through the
+// runtime.  A base kept here for `ws` reads the moved-away memory.
+fn rename(st: St, i: integer, tag: text) {
+  n = st.nodes[i] ?? Node { seq: 0, w: 0.0, name: "" };
+  n.name = tag;
+}
+
+fn c3() -> integer {
+  st = St { nodes: [], seqs: [], ws: [] };
+  for i in 0..300 {
+    st.nodes += [Node { seq: i, w: (i % 7) as float, name: "n" }];
+    st.ws += [i as float];
+  }
+  s = 0;
+  for i in 0..len(st.nodes) {
+    n = st.nodes[i];
+    if n == null { continue; }
+    // `ws` is read through its element BASE when the loop holds one — a raw pointer into
+    // the store's memory, which the rename below moves.
+    s += (n.w as integer) * 10 + len(n.name) + (st.ws[i]? as integer);
+    rename(st, i, "a much longer name than the element held before, forcing the store to grow at index {i}");
+  }
+  s * 1000 + len(st.nodes[299]?.name)
+}
+
+// c4 — the fallback taken on every call: the buffer is re-minted and re-written per iteration.
+fn miss(st: const St, i: integer) -> integer {
+  q = st.seqs[99 + i] ?? Seq { first: i, count: 2, name: "xy" };
+  q.first * 10 + q.count + len(q.name)
+}
+
+fn c4(st: const St) -> integer {
+  s = 0;
+  for i in 0..4 { s += miss(st, i); }
+  s
+}
+
+fn main() {
+  st = St {
+    nodes: [Node { seq: 0, w: 1.5, name: "a" }, Node { seq: 5, w: 2.5, name: "bb" }, Node { seq: 1, w: 3.5, name: "ccc" }],
+    seqs: [Seq { first: 10, count: 2, name: "x" }, Seq { first: 20, count: 3, name: "yz" }],
+    ws: []
+  };
+  r1 = c1(st);
+  println("c1 {r1} {len(r1)}");
+  assert(len(r1) == 6 && r1[0]? == 1.5f && r1[1]? == 13.0f && r1[2]? == 2.5f && r1[3]? == 1.0f && r1[4]? == 3.5f && r1[5]? == 25.0f, "c1");
+  r2 = c2(st);
+  println("c2 {r2}");
+  assert(r2 == 147, "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == 54120087, "c3");
+  r4 = c4(st);
+  println("c4 {r4}");
+  assert(r4 == 76, "c4");
+}
