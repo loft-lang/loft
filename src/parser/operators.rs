@@ -4552,6 +4552,7 @@ impl Parser {
                 };
                 let nullable_cast = self.lexer.has_token("?");
                 let mut cast_subject: Option<u16> = None;
+                let mut cast_literal: Option<String> = None;
                 // @PLN25 DN4/DN5 — a scalar cast target has a DOMAIN: its integer value
                 // RANGE, and (when it is a plain non-null scalar) that domain EXCLUDES null.
                 // A value fits `as τ` (no `?`) only if it lies in the domain on BOTH
@@ -4723,6 +4724,10 @@ impl Parser {
                         Value::Var(v) => Some(*v),
                         _ => None,
                     };
+                    cast_literal = match code.unspan() {
+                        Value::Text(s) => Some(s.clone()),
+                        _ => None,
+                    };
                     let converted =
                         self.convert(code, cast_src, &tp) || self.cast(code, cast_src, &tp);
                     self.in_explicit_cast = outer_cast;
@@ -4870,6 +4875,71 @@ impl Parser {
                         rt = rt.depending(d);
                     }
                 }
+                // @C131, the text half — a text parsed `as E` for a plain enum.  A literal that
+                // names no variant is a provable miss and is refused; otherwise a text that names
+                // none answers E's DEFAULT, its first-declared variant (`(D-Enum)`), never null,
+                // and the cast WARNS unless it is checked: `as E?` (null on a miss) or a `??`
+                // straight after it, which discharges the checked form.
+                if let Type::Enum(e_nr, false, _) = rt.base().clone()
+                    && matches!(ctp.peel_link().base(), Type::Text(_))
+                    && !nullable_cast
+                {
+                    let en = rt.source_name(&self.data);
+                    if let Some(lit) = &cast_literal {
+                        if !self.data.def(e_nr).attr_names.contains_key(lit.as_str())
+                            && !self.first_pass
+                        {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "\"{lit}\" names no variant of `{en}` — the cast cannot succeed",
+                            );
+                        }
+                    } else if !self.lexer.peek_token("??") {
+                        if !self.first_pass {
+                            let first = self.data.attr_name(e_nr, 0);
+                            diagnostic!(
+                                self.lexer,
+                                Level::Warning,
+                                code = "enum-parse-default",
+                                "`as {en}` answers `{first}`, the first variant, when the text \
+                                 names no variant of `{en}`",
+                            );
+                            self.lexer.fix_last(crate::diagnostics::Fix {
+                                kind: crate::diagnostics::FixKind::Conditional,
+                                title: "give the parse a fallback: `?? <variant>`".to_string(),
+                                condition: Some(format!(
+                                    "another variant than `{first}` is the right answer for a text \
+                                     that names none"
+                                )),
+                                edit: None,
+                                concept: "null coalescing",
+                                concept_ref: "@F2",
+                            });
+                            self.lexer.fix_last(crate::diagnostics::Fix {
+                                kind: crate::diagnostics::FixKind::Conditional,
+                                title: "make the cast checked".to_string(),
+                                condition: Some(
+                                    "the result is then null on a miss, and every use of it must \
+                                     handle that"
+                                        .to_string(),
+                                ),
+                                edit: Some(crate::diagnostics::Edit {
+                                    line: type_end.0,
+                                    col: type_end.1,
+                                    len: 0,
+                                    text: "?".to_string(),
+                                }),
+                                concept: "checked cast",
+                                concept_ref: "@F5",
+                            });
+                        }
+                        let mut defaulted = Type::optional(rt.clone());
+                        self.expr_not_null = false;
+                        self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
+                        rt = defaulted;
+                    }
+                }
                 // @C131 — an enum value cast to one of its variants (`s as Circle`).  Where the
                 // miss is provable the cast is refused (a known `Rect` has no `as Circle`, above);
                 // where it is not, a miss answers the variant with every field at its default
@@ -4939,10 +5009,33 @@ impl Parser {
                                 concept_ref: "@F5",
                             });
                         }
-                        let mut defaulted = Type::optional(rt.clone());
-                        self.expr_not_null = false;
-                        self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
-                        rt = defaulted;
+                        // A VARIABLE subject lowers to `if s is V { s as V } else { (s as V?)? }`:
+                        // the hit is a plain bind of the proven cast, which COPIES the local
+                        // (`@FR-B-Copy`), and only a miss builds the default.  Through the `?`
+                        // discharge alone the subject is hoisted into a temp that VIEWS it, so
+                        // `bl = e as Block; bl.n = 9` wrote through to `e`.  A projection subject
+                        // (`v[i] as V`) keeps that path: a struct projection IS a view
+                        // (`@FR-B-View`), and writing through it reaches the element.
+                        let spelled = cast_subject.and_then(|v| {
+                            let n = self.vars.name(v).to_string();
+                            (self.vars.var(&n) == v).then_some(n)
+                        });
+                        if let Some(n) = spelled {
+                            let vn = rt.source_name(&self.data);
+                            let (lowered, lowered_tp) = self.subparse_default(
+                                &format!(
+                                    "if {n} is {vn} {{ {n} as {vn} }} else {{ ({n} as {vn}?)? }}"
+                                ),
+                                &rt,
+                            );
+                            *code = lowered;
+                            rt = lowered_tp;
+                        } else {
+                            let mut defaulted = Type::optional(rt.clone());
+                            self.expr_not_null = false;
+                            self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
+                            rt = defaulted;
+                        }
                     }
                 }
                 // #254: set the current type and fall through to `None` rather

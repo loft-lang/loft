@@ -90,10 +90,10 @@ fn main() {
   assert(c.describe() == "circle r=1", "describe circle");
   assert(r.describe() == "rect 4x5", "describe rect");
   assert(sq.describe() == "square 3", "describe square");
-  // --- Invalid text to enum formats as "null" (sentinel value 0) ---
-  bad_dir = "Purple" as Direction;
+  // --- Text naming no variant: the checked `as E?` is null (a bare literal miss is refused, @C131) ---
+  bad_dir = "Purple" as Direction?;
   assert("{bad_dir}" == "null", "invalid text to enum formats as null");
-  bad_dir2 = "" as Direction;
+  bad_dir2 = "" as Direction?;
   assert("{bad_dir2}" == "null", "empty string to enum formats as null");
   // --- Enum stored in a vector ---
   dirs: vector<Direction> = [North, East, South, West];

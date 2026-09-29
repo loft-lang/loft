@@ -3,7 +3,8 @@
 //
 // @C131 — A CAST TO A VARIANT IS REFUSED WHERE IT CANNOT KEEP ITS PROMISE.  A value known to be
 // another variant provably misses, and a variant with no `(D-Rec)` default (a bare enum field
-// with no `= <variant>`) has nothing to answer a miss with.  Both used to compile: the first as
+// with no `= <variant>`) has nothing to answer a miss with, and a text LITERAL that names no
+// variant of a plain enum provably fails to parse.  Both used to compile: the first as
 // "Unknown cast", the second answering null from a slot typed non-null.  The runtime cells are the
 // sibling file.
 //
@@ -15,6 +16,7 @@
 enum Col { Red, Blue }
 enum Shape { Circle { radius: integer }, Rect { w: integer } }
 enum Tinted { Dot { r: integer, c: Col }, Bar { w: integer } }
+enum Direction { North, East }
 
 fn main() {
   r = Rect { w: 1 };
@@ -23,4 +25,6 @@ fn main() {
   t: Tinted = Bar { w: 2 };
   // @EXPECT_ERROR: `as Dot` needs a default `Dot` for a value holding another variant
   y = t as Dot;
+  // @EXPECT_ERROR: "Purple" names no variant of `Direction`
+  z = "Purple" as Direction;
 }

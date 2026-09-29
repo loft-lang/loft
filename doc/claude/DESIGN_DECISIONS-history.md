@@ -4591,4 +4591,7 @@ a warning unless checked directly."  A provable miss is refused; an unproven cas
 miss giving `V` with its fields at their `(D-Rec)` defaults; the cast warns unless inside
 `if s is V { … }` or spelled `as V?`.  A variant with no default refuses the unchecked cast.
 `build_default` / `has_default` learned the variant record (`(D-Rec)` had always covered it); the
-text-to-enum parse (`"Purple" as Direction`) was left for its own decision.
+text-to-enum parse (`"Purple" as Direction`) was left for its own decision — and then taken the
+same day (owner: "yes, apply it to text as enum too"): a literal naming no variant is refused, a
+runtime text naming none answers the first-declared variant (`(D-Enum)`) with the
+`enum-parse-default` warning, and `as E?` or an immediate `?? d` is the checked spelling.

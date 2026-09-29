@@ -704,7 +704,7 @@ do by looking up the pair in this table:
 | Integer / float / boolean → `text` | **Format-only** | `"n={m}"` renders the value inline; `t = m` with `t: text` is a compile error.  If you want the rendered form as a standalone text value, assign through interpolation: `t = "{m}"` |
 | `character` → `integer` (codepoint)| Explicit `as` | `'a' as integer` yields 97 |
 | `character` ↔ `text`               | See § String literals | Indexing vs. slicing asymmetry; concatenation via interpolation |
-| `text` (of form `"VariantName"`) → plain enum | Explicit `as` | `"West" as Direction` — the name must match a declared variant |
+| `text` (of form `"VariantName"`) → plain enum | Explicit `as` / `as E?` | `"West" as Direction`; a literal naming no variant is refused, a runtime text naming none answers the first variant and warns unless written `as E?` (null) or followed by `?? <variant>` (`@C131`) |
 | Struct-enum variant → parent enum  | Implicit on assignment | `p: Shape = Circle { r: 1.0 }` works without `as` |
 | Struct-enum variant ← parent enum  | `as V` / `as V?` | `if s is V { s as V }` is checked; an unchecked `s as V` warns and a miss answers `V` with its fields defaulted, `s as V?` answers null (`@C131`) |
 | `text` → struct / vector<T>        | Explicit `as` or `.parse` | `raw as Program` or `Program.parse(raw)` |

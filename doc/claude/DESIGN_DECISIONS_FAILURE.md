@@ -91,7 +91,10 @@ the value is known to be another variant — is a compile error.  Otherwise the 
 `V`: on a miss, `V` with every field at its default (`(D-Rec)`), never null; a variant with no
 default refuses the cast.  An unchecked cast WARNS (`variant-cast-default`), as an unguarded
 division does, unless it is checked directly — inside `if s is V { … }` — or spelled `s as V?`, the
-checked form, which answers null on a miss.  **Why.** A cast that can answer null while typed
+checked form, which answers null on a miss.  A text parsed `as E` for a plain enum follows the
+same rule: a literal naming no variant is refused, and a runtime text naming none answers E's
+first-declared variant (`(D-Enum)`) and warns (`enum-parse-default`) unless written `as E?` or
+followed by `?? <variant>`.  **Why.** A cast that can answer null while typed
 non-null lied to every check after it (`!c` was reported "always false" and printed true); a
 default keeps the promised type, and the warning says where the default can be taken.
 
