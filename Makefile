@@ -549,7 +549,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate interp-gap rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: speed profile profile-corpus speed-gate interp-gap janitor-install rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -564,6 +564,14 @@ disk-headroom:  ## Make room for a gate: sweep scratch, incremental caches, this
 	@scripts/disk_headroom.sh --scratch $(TEST_SCRATCH)
 	@df -h / | tail -1
 
+janitor-install:  ## Run scripts/disk_janitor.sh beside every agent build on this box (a user-level Claude Code hook)
+	@install -m 755 scripts/disk_janitor.sh $$HOME/.local/bin/loft-disk-janitor
+	@f=$$HOME/.claude/settings.json; [ -f $$f ] || echo '{}' > $$f; \
+	if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | index("loft-disk-janitor --hook")' $$f >/dev/null; then \
+	  echo "hook already in $$f"; \
+	else \
+	  jq '.hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "loft-disk-janitor --hook", "timeout": 10}]}]' $$f > $$f.tmp && mv $$f.tmp $$f && echo "hook added to $$f"; \
+	fi
 sweep-target:  ## Drop cargo artefacts no build in two weeks has used (stale-hash test binaries)
 	@# `target/debug/deps` keeps every test binary of every dependency hash it ever built
 	@# (76-110 GB per checkout measured); cargo-sweep removes the ones no recent build
