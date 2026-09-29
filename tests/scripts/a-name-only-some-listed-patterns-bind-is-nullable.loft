@@ -16,6 +16,14 @@
 //                        it, repeated calls (a stale slot), a same-named outer local.
 //                        a field declared `S?` beside a pattern that lacks it.
 // Axes it HOLDS FIXED:   a struct-enum subject passed as a parameter.
+//
+// @falsified-at: 76d694e6c — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused every multi-pattern arm here, so no assertion ran on it.
+// @falsified-by: tests/falsified/a-name-only-some-listed-patterns-bind-is-nullable.patch — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+//   — a MUTATION on HEAD, not the pre-fix tree: it drops the null stores, so an absent name
+//   keeps whatever its slot held.  That is what scores the value cells on the interpreter;
+//   native scores it on exit only.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 struct P { x: integer, y: integer }
 enum Sub { Sp { x: integer }, Sq { y: text } }
