@@ -192,7 +192,9 @@ uses a fixed NEGATIVE index; reading from the run cursor `v[end + j]` instead di
 (the run's `end`, set in the arm condition, isn't reliably visible to a tail read appended after
 it — E0425 / wrong result). A variant tail's tag-test + field binds use the head path's DIRECT read
 (no cross-block temp — a temp assigned in the condition reads back null in the binds on native).
-Guard `tests/scripts/35o-tail-elements.loft`, `parse_errors::tail_and_rest_rejected`.
+Guard `tests/scripts/35o-tail-elements.loft`; `parse_errors::tail_and_rest_rejected` retired
+2026-09-29 — a tail before a `..rest` (and in a cursor match) now follows the run
+(`tests/scripts/a-tail-after-a-repetition-follows-the-run.loft`).
 
 **Next: Phase 7 (iterator input — the accumulating `read(pos)`, the only phase adding opcodes),
 then the PC1–PC5 sub-rule layer. §3a step 6 (fold hook) waits on PC.**

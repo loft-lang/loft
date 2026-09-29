@@ -278,17 +278,29 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 OPEN: **0** — the 2026-09-29 rule-led walk of the pattern rules found `D-match-7` to `-13`,
 each a refusal of a program those rules define, and all seven closed the same day; `D-match-14`
-opened and closed with them.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+and `-15` opened and closed with them.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
 The walk's finding is one shape seven times: each rule held on its own and was refused where two
 of them COMPOSE — a guard or a field sub-pattern on a multi-pattern arm, a capture inside an
 alternation, a capture a later pattern alone binds, a heap field under a repetition, a tail after
-a scalar repetition, an iterator of tuples.  Every one was a refusal, none a wrong answer, and
-every one said *"not yet supported"* or named a plan phase, which is how the register read
-`OPEN: 0` over them: a refusal worded as pending work was never entered as a deviation.  The
-open ones now say what holds and what to write instead.
+a scalar repetition, an iterator of tuples, a tail before a rest.  Each was a refusal worded
+*"not yet supported"*, *"(yet)"* or as a plan phase, which is how the register read `OPEN: 0`
+over them: a refusal worded as pending work was never entered as a deviation.  Behind two of
+them sat a quiet wrong answer the refusal had kept out of sight — a tuple element read as garbage
+(`D-match-13`), and a second rest that dropped the first one's binding (`D-match-14`).
 
+Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
+invocation `[ name: rule ]` are shipped but have no rules here yet; `D-match-15`'s cursor half
+follows `(P-Seq)` as a prefix reading of it.
+
+- **D-match-15 — OPENED AND CLOSED 2026-09-29.** `(P-Seq)` × `(P-Rep)` × `(P-Rest)`: a fixed
+  tail after a variant repetition, with a `..rest` after the tail, was refused ("cannot combine
+  with `..rest` (yet)"), and so was any tail after a repetition in a cursor match.  By `(P-Seq)`
+  the tail follows the run and the rest takes what is left; the lowering only knew a tail read
+  from the END, which `(P-Whole)` makes right when nothing follows it.  With a rest after it, or
+  in a cursor match, the tail is now read from the run's end and the rest (or the cursor) starts
+  after it (`tests/scripts/a-tail-after-a-repetition-follows-the-run.loft`).
 - **D-match-14 — OPENED AND CLOSED 2026-09-29.** `(P-Rest)` × `(P-Rest)`: a second rest in one
   slice was accepted and the FIRST one's binding dropped without a word — `[..a, ..b]` bound only
   `b`, to every element, and `a` read as an unknown variable.  Found while settling D-match-12.

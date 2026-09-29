@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Seq` × `@FR-P-Rep` × `@FR-P-Rest` — a fixed tail after a repetition FOLLOWS the run: the
+// run takes its maximal prefix, the tail matches the elements after it, and a `..rest` after
+// the tail takes what is left.  With nothing after the tail the arm consumes the whole input
+// (`@FR-P-Whole`), so there the tail sits at the end; with a rest after it, or in a cursor match
+// (which consumes a prefix), it is read from the run's end.  Both were refused — "a fixed tail
+// after a repetition cannot combine with `..rest` (yet)", and "… is not supported in a cursor
+// match" — worded as pending work, so the register never carried them (D-match-15).
+//
+// Axes this file MOVES:  what follows the tail (a rest, nothing, a cursor's remainder); `*` vs
+//                        `+`; the tail's length (one variant, a variant and a field-binding
+//                        variant); the run's length (empty, one, several); a subject too short
+//                        for the tail; the cursor's position after the match.
+// Axes it HOLDS FIXED:   a contiguous run (no separator); variant tail elements.
+
+enum Tok { Num { n: integer }, End { e: integer } }
+struct Cur { src: vector<Tok>, pos: integer }
+
+fn er(v: vector<Tok>) -> text { match v { [(Num)*, End { e }, ..rest] => "{e} {len(rest)}", _ => "none" } }
+fn pl(v: vector<Tok>) -> text { match v { [(x: Num)+, End { e }, ..rest] => "{len(x)} {e} {len(rest)}", _ => "none" } }
+fn two(v: vector<Tok>) -> text { match v { [(Num)*, End { e }, Num { n }, ..rest] => "{e} {n} {len(rest)}", _ => "none" } }
+fn nr(v: vector<Tok>) -> text { match v { [(Num)*, End { e }] => "{e}", _ => "none" } }
+
+fn test_vector() {
+  assert(er([Num { n: 1 }, Num { n: 2 }, End { e: 5 }, Num { n: 3 }]) == "5 1", "er1");
+  assert(er([End { e: 5 }]) == "5 0", "er2");
+  assert(er([Num { n: 1 }, Num { n: 2 }]) == "none", "er3");
+  assert(er([Num { n: 1 }, Num { n: 2 }, Num { n: 3 }, End { e: 9 }]) == "9 0", "er4");
+  assert(pl([End { e: 5 }]) == "none", "pl1");
+  assert(pl([Num { n: 1 }, End { e: 5 }, Num { n: 2 }, Num { n: 3 }]) == "1 5 2", "pl2");
+  assert(two([Num { n: 1 }, End { e: 5 }, Num { n: 7 }, Num { n: 8 }]) == "5 7 1", "two {two([Num { n: 1 }, End { e: 5 }, Num { n: 7 }, Num { n: 8 }])}");
+  assert(two([Num { n: 1 }, End { e: 5 }]) == "none", "two short");
+  assert(nr([Num { n: 1 }, End { e: 5 }]) == "5", "nr1");
+  assert(nr([Num { n: 1 }, End { e: 5 }, Num { n: 2 }]) == "none", "nr2");
+}
+
+fn test_cursor() {
+  c = Cur { src: [Num { n: 1 }, Num { n: 2 }, End { e: 5 }, Num { n: 3 }], pos: 0 };
+  r1 = match c { [(Num)*, End { e }] => e * 10 + c.pos, _ => -1 };
+  assert(r1 == 53, "cursor tail {r1}");
+  r2 = match c { [Num { n }] => n * 10 + c.pos, _ => -1 };
+  assert(r2 == 34, "after the tail {r2}");
+  d = Cur { src: [Num { n: 1 }, Num { n: 2 }], pos: 0 };
+  r3 = match d { [(Num)*, End { e }] => e, _ => -d.pos - 1 };
+  assert(r3 == -1, "no tail, pos unchanged {r3}");
+  f = Cur { src: [Num { n: 1 }, End { e: 5 }, Num { n: 2 }, Num { n: 3 }], pos: 0 };
+  r4 = match f { [(Num)*, End { e }, ..rest] => "{e} {len(rest)} {f.pos}", _ => "none" };
+  assert(r4 == "5 2 4", "cursor rest {r4}");
+}

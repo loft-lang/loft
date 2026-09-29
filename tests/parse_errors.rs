@@ -3175,14 +3175,6 @@ fn field_capture_unknown_field() {
         .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
 }
 
-// @PLN35 slice 3 — a fixed (non-`..rest`) tail after a repetition and a `..rest` are still
-// mutually exclusive.
-#[test]
-fn tail_and_rest_rejected() {
-    code!("enum Tok { Num { n: integer }, End { e: integer } }\nfn f(v: vector<Tok>) -> integer { match v { [ (Num)*, End { e }, ..rest ] => e + rest.len(), _ => -1 } }")
-        .error("a fixed tail after a repetition cannot combine with `..rest` (yet) at tail_and_rest_rejected:2:74");
-}
-
 // @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
 // pattern for now; mixing it with fixed elements (the running-pos + revert) is deferred.
 #[test]
