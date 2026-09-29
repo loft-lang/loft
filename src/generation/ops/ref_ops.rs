@@ -503,8 +503,17 @@ impl OpEmitter for OpCopyRecordEmitter {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
-                // The destination is derived ONCE: an element reached through an index
-                // re-resolved per field cost seven lookups for one record (`map_set_hex`).
+                // A destination that is a plain VARIABLE is named as itself, so a setter
+                // that holds its record address (`@FR-R-RecPtr`: a minted element inside
+                // its window) writes through it.  Any other destination is derived ONCE:
+                // an element reached through an index re-resolved per field cost seven
+                // lookups for one record (`map_set_hex`).
+                if matches!(dst.unspan(), Value::Var(_)) {
+                    write!(ctx.w, "{{ ")?;
+                    ctx.output
+                        .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
+                    return write!(ctx.w, "}}");
+                }
                 write!(ctx.w, "{{ let __cd: DbRef = ")?;
                 ctx.emit(dst)?;
                 write!(ctx.w, "; ")?;

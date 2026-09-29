@@ -9,6 +9,31 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A builder's tuple lands in the appended slot through the window (2026-09-29)
+
+`(R-PushFill)`'s record window and `(R-RecPtr)`'s mint window both declined the shape
+`out += [pt(…)]` beside a record view of another vector's element: the copy FROM a value
+local INTO the fresh element was not counted as a write of the element (it lowers to one
+setter per field, so it is one now, and `OpCopyRecordEmitter` names a variable destination
+directly so the setters take its address), a view of a no-heap RECORD was held to "may view
+the pushed vector" (it reads fields and never a length, so it cannot see a deferred length
+bump), and the window's write test asked without the variable table or the in-place tier, so
+a `?` discharge's default writes blocked it.  `LOFT_TRACE_HOIST_DECLINE` now names the
+innermost blocking node of a statement.  Drawing's `smooth` 884 → 742 ns per op on this box;
+cells m15 (and m12's moved pin) in `tests/scripts/158-mint-window.loft`.
+
+### A callee's own buffer is a fresh record: more parameters travel as tuples (2026-09-29)
+
+The tuple-parameter gate's fallback walk (`hoist::may_write_existing`) declined a by-value
+record parameter whenever a callee wrote a record of its type — including the callee's OWN
+return buffer, which no parameter can name.  It now seeds that buffer fresh in the callee's
+walk, keeps the frame's buffer fresh through a rebind of the local it was promoted onto, and
+counts a mint into a local that owns its store as fresh.  `resolve_move(from: Vec3, …)`
+carries its parameters and `vec3` becomes a value record: the moros/dryopea row 14.0× →
+5.3× of Rust (−60 %), `emit_to_material` −20 %, hashes equal.  `LOFT_TRACE_VALUEREC=1`
+names the op that keeps a parameter a record.  Cells
+`tests/scripts/158-a-callees-own-buffer-is-a-fresh-record.loft`.
+
 ### A growth is judged per store: a loop that appends elsewhere keeps its bases (2026-09-28)
 
 `(R-Base)`'s growth clause, `(R-RecPtr)`'s remainder clause and `(R-Alias)`: a loop that

@@ -2710,6 +2710,8 @@ impl Output<'_> {
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
                 .collect(),
             records: self.loop_records.keys().copied().collect(),
+            value_locals: self.value_record_locals.keys().copied().collect(),
+            dead_buffers: self.dead_buffers.clone(),
         };
         self.group_ends.clear();
         self.declared.clear();
@@ -3554,9 +3556,14 @@ impl Output<'_> {
         {
             return Ok(None);
         }
-        if let Err(why) =
-            hoist::push_window_ok(lp, &p, self.data, self.def_nr, &mut self.hoist_cache)
-        {
+        if let Err(why) = hoist::push_window_ok(
+            lp,
+            &p,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes — {why}",
@@ -3632,9 +3639,14 @@ impl Output<'_> {
         if self.push_window_disabled {
             return Ok(None);
         }
-        if let Err(why) =
-            hoist::mint_window_ok(lp, &m, self.data, self.def_nr, &mut self.hoist_cache)
-        {
+        if let Err(why) = hoist::mint_window_ok(
+            lp,
+            &m,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header mints — {why}",
@@ -4612,6 +4624,7 @@ impl Output<'_> {
                     owned: Some(&self.hoist_owned),
                 })
                 .as_ref(),
+            Some(&self.hoist_owned),
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -4627,6 +4640,7 @@ impl Output<'_> {
                     self.def_nr,
                     &mut self.hoist_cache,
                     !self.write_hoist_disabled,
+                    Some(&self.hoist_owned),
                 ) {
                     Ok((e, finish)) => {
                         window = Some(finish);

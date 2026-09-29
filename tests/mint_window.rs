@@ -34,13 +34,20 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_m7", 3, 6),
     ("n_m10", 1, 2),
     ("n_m11", 2, 4),
-    // The element is the callee's buffer: the caller has no write to serve.
-    ("n_m12", 0, 0),
-    ("n_m13", 0, 0),
+    // m12's and m13's callees answer a TUPLE (two and seven scalars), delivered into the
+    // element by a copy the emitter lowers to one setter per field — a fusable write of the
+    // element, so the mint window binds the address and every field goes through it.
+    ("n_m12", 1, 2),
+    ("n_m13", 1, 7),
     // A struct-enum element is a record too (`@FR-R-RecPtr`'s enum clause): two variants,
     // two windows, their three `integer` fields AND their two tags through the address
     // (`OpSetEnum` is a fusable setter: one byte, the write `set_byte(…, 0, v)` makes).
     ("n_m14", 2, 5),
+    // The `smooth` shape: three literal mints of `src` take `rec_ptr`, the loop's mint takes
+    // the WINDOW's address (a record view of another vector's element in the body is no
+    // length reader; the builder's tuple copied into the slot is the slot's own write);
+    // eight field writes through those addresses.
+    ("n_m15", 4, 8),
 ];
 
 const SWITCHES: [&str; 5] = [

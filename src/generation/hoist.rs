@@ -273,6 +273,12 @@ pub struct HoistOwned {
     /// mint or a re-establishment of its defaults — a write of r's whole TYPE and nothing
     /// else, so a scalar hoisted off that type is evicted and every other one stands.
     pub records: HashSet<u16>,
+    /// The `(R-ValueLocal)` locals the emitter carries as TUPLES: a copy FROM one is one
+    /// typed setter per field at the destination (`OpCopyRecordEmitter`), never a block copy.
+    pub value_locals: HashSet<u16>,
+    /// The DEAD buffers (`dead_buffers`): a value-record call's result buffer that is never
+    /// minted — its `OpDatabase`, `OpClear` and frees are emitted as nothing.
+    pub dead_buffers: HashSet<u16>,
 }
 
 /// The generation-time tiers of the hoist family — one flag per admitted rewrite, each an
@@ -320,7 +326,36 @@ fn innermost_blocking<'a>(
         let ops = match cur.unspan() {
             Value::Block(bl) | Value::Loop(bl) => &bl.operators,
             Value::Insert(ls) => ls,
-            _ => return (line, cur),
+            // A statement with no list of its own (a `Set`, an `If`, a call): descend to the
+            // first CHILD the admission declines — the culprit is inside it, and naming the
+            // whole statement names nothing.
+            other => {
+                let mut next: Option<&'a Value> = None;
+                other.for_each_child(&mut |c: &'a Value| {
+                    if next.is_none()
+                        && blocks_header_hoist(
+                            c,
+                            data,
+                            stores,
+                            cache,
+                            &mut HashSet::new(),
+                            vars,
+                            tiers,
+                            &mut HashSet::new(),
+                            owned,
+                        )
+                    {
+                        next = Some(c);
+                    }
+                });
+                match next {
+                    Some(o) => {
+                        cur = o;
+                        continue;
+                    }
+                    None => return (line, cur),
+                }
+            }
         };
         let mut next: Option<&'a Value> = None;
         let mut inner_line = line;
@@ -2187,9 +2222,10 @@ pub fn setter_kind(setter: &str) -> Option<&'static str> {
 /// The reason the statement declines, in the words `LOFT_TRACE_RECPTR=1` prints: not a
 /// binding, not a plain record, a remainder that may grow a store, one that frees a
 /// record before a use of the view, one that rebinds it, or no fusable use at all.
-// The eight parameters are the block and the statement, the two things that type it, the
-// function, the memo, the write tier and the twin parameters; a struct would put a name
-// between each and the one call site without removing anything.
+// The parameters are the block and the statement, the two things that type it, the
+// function, the memo, the write tier, the twin parameters, the store facts and the
+// emitter's owned buffers; a struct would put a name between each and the one call site
+// without removing anything.
 #[allow(clippy::too_many_arguments)]
 pub fn record_view_ptr(
     stmts: &[Value],
@@ -2201,6 +2237,7 @@ pub fn record_view_ptr(
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
+    owned: Option<&HoistOwned>,
 ) -> Result<u16, &'static str> {
     let Some(Value::Set(r, rhs)) = stmts.get(at).map(Value::unspan) else {
         return Err("not a binding");
@@ -2235,6 +2272,8 @@ pub fn record_view_ptr(
         allow_in_place,
         twin_params,
         facts,
+        owned,
+        None,
     )?;
     Ok(*r)
 }
@@ -2260,6 +2299,9 @@ pub fn record_view_ptr(
 /// # Errors
 ///
 /// The reason the statement declines, as `LOFT_TRACE_RECPTR=1` prints it.
+// The parameters are the block and the statement, the two things that type it, the
+// function, the memo, the write tier and the emitter's owned buffers, as `record_view_ptr`'s.
+#[allow(clippy::too_many_arguments)]
 pub fn mint_window(
     stmts: &[Value],
     at: usize,
@@ -2268,6 +2310,7 @@ pub fn mint_window(
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
+    owned: Option<&HoistOwned>,
 ) -> Result<(u16, usize), &'static str> {
     let Some(Value::Set(e, rhs)) = stmts.get(at).map(Value::unspan) else {
         return Err("not a binding");
@@ -2307,6 +2350,8 @@ pub fn mint_window(
         allow_in_place,
         &HashSet::new(),
         None,
+        owned,
+        Some(*e),
     )?;
     Ok((*e, finish))
 }
@@ -2523,9 +2568,14 @@ fn view_extent_verdict(
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
     facts: Option<&StoreFacts>,
+    owned: Option<&HoistOwned>,
+    fresh_e: Option<u16>,
 ) -> Result<(), &'static str> {
     let vars = data.def(def_nr).variables();
     let r = &r;
+    // A mint window's own element is FRESH for its extent: a copy into it is a write of
+    // its bytes, not a growth (`fresh_copy` in `blocks_header_hoist`).
+    let mut fresh: HashSet<u16> = fresh_e.into_iter().collect();
     // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
     // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
     // open exactly when every mover's root is distinct from `r`'s store.
@@ -2533,7 +2583,7 @@ fn view_extent_verdict(
         let roots = mover_roots(rest, data, stores, vars);
         !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
     });
-    if rest.iter().any(|op| {
+    if let Some(op) = rest.iter().find(|op| {
         blocks_header_hoist(
             op,
             data,
@@ -2547,10 +2597,18 @@ fn view_extent_verdict(
                 mint: movers_apart,
                 ..HoistTiers::default()
             },
-            &mut HashSet::new(),
-            None,
+            &mut fresh,
+            owned,
         )
     }) {
+        if std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+            let shown = format!("{op:?}");
+            eprintln!(
+                "recptr:   `{}` grows a store by {}",
+                vars.name(*r),
+                &shown[..shown.len().min(220)]
+            );
+        }
         return Err("the remainder may grow a store");
     }
     if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
@@ -2603,6 +2661,19 @@ fn view_extent_verdict(
                         && args.len() >= 2
                         && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == *r)
                         && (on_r || nested_field_enabled())
+                    {
+                        touched = true;
+                    }
+                    // A copy INTO the view FROM a value local — a builder's tuple delivered
+                    // into an appended element — lowers to one typed setter per field
+                    // (`OpCopyRecordEmitter`), each served by the address like a direct
+                    // write; a copy from a store record stays a block copy and asks no
+                    // address.
+                    if name == "OpCopyRecord"
+                        && args.len() == 3
+                        && matches!(args[1].unspan(), Value::Var(v) if *v == *r)
+                        && matches!(args[0].unspan(), Value::Var(s)
+                            if owned.is_some_and(|o| o.value_locals.contains(s)))
                     {
                         touched = true;
                     }
@@ -5031,6 +5102,7 @@ pub fn push_window_ok(
     p: &PushLoop,
     data: &Data,
     def_nr: u32,
+    stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
 ) -> Result<(), String> {
     if p.fill.is_some() {
@@ -5066,7 +5138,7 @@ pub fn push_window_ok(
             _ => parts.push(s),
         }
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
 }
 
 /// The window clause's aliasing test over the `parts` of a loop body that are NOT the
@@ -5079,6 +5151,7 @@ fn window_parts_ok(
     root_is_retbuf: bool,
     vars: &crate::variables::Function,
     data: &Data,
+    stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
 ) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
@@ -5088,11 +5161,19 @@ fn window_parts_ok(
             // `(R-Alias)`: a parameter cannot name a local's store, but it can name a
             // return buffer the caller offered.
             let separate_parameter = vars.is_argument(x) && !root_is_retbuf;
+            // A view of a plain NO-HEAP record (`sp_a = pts[i]?`) reads fields and never a
+            // length: the window defers only the root's length, and its slots lie past
+            // every element such a view can name — so even a view INTO the root sees what
+            // it saw.  A record with a vector or text field could name the root through
+            // that field, and stays a possible viewer.
+            let record_view = plain_record_type(data, vars.tp(x))
+                .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
             x != root
                 && !is_scalar(vars.tp(x))
                 && !matches!(vars.tp(x).base(), Type::Text(_))
                 && !owned_local(vars, x)
                 && !separate_parameter
+                && !record_view
         })
         .collect();
     for part in parts {
@@ -5105,7 +5186,25 @@ fn window_parts_ok(
                 vars.name(*x)
             ));
         }
-        if may_write_store(part, data, cache) {
+        // Asked as the header hoist asks it — with the variable table and the in-place
+        // tier — so its allowances hold here too: a null-discharge buffer's mint and its
+        // default writes, the frame's own return buffer, a record free, a scalar set in
+        // place.  None reallocates the root's store, which is all the window's address
+        // stands on; the root's LENGTH is protected by the naming tests above.
+        if blocks_header_hoist(
+            part,
+            data,
+            stores,
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            HoistTiers {
+                in_place: true,
+                ..HoistTiers::default()
+            },
+            &mut HashSet::new(),
+            None,
+        ) {
             return Err("the body writes a store beside its pushes".to_string());
         }
     }
@@ -5302,6 +5401,7 @@ pub fn mint_window_ok(
     m: &MintLoop,
     data: &Data,
     def_nr: u32,
+    stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
 ) -> Result<(), String> {
     let vars = data.def(def_nr).variables();
@@ -5386,6 +5486,16 @@ pub fn mint_window_ok(
                 // through its inline sub-records (`pos.x`): the value is the part.
                 parts.extend(args.iter().skip(1));
             }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpCopyRecord"
+                    && args.len() == 3
+                    && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e)) =>
+            {
+                // A whole-record copy INTO the fresh element — a builder's tuple delivered
+                // into the slot: writes of the element's own bytes; the source is the part.
+                parts.push(&args[0]);
+            }
             _ => parts.push(n),
         }
     }
@@ -5393,7 +5503,7 @@ pub fn mint_window_ok(
     for s in &body.operators {
         collect(s, data, &m.path, &fresh, &mut parts);
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
@@ -5918,6 +6028,25 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
                 && matches!(vars.tp(*v).base(), Type::Reference(_, _) | Type::Enum(_, true, _)))
 }
 
+/// `(R-ValueRecord)` — a DEAD buffer's mint, clear and free are emitted as nothing: the
+/// callee answers a tuple and the buffer serves no call.
+fn dead_buffer_op(name: &str, args: &[Value], owned: Option<&HoistOwned>) -> bool {
+    matches!(
+        name,
+        "OpDatabase" | "OpDatabaseNP" | "OpClear" | "OpFreeRef" | "OpFreeRefIfDistinct"
+    ) && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+        if owned.is_some_and(|o| o.dead_buffers.contains(b)))
+}
+
+/// `@FR-R-RecPtr`'s mint clause — a copy INTO the fresh element of the window being judged
+/// writes that element's own bytes and moves nothing; its free-source flag releases the
+/// builder's buffer, which no held address names.
+fn fresh_copy(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
+    name == "OpCopyRecord"
+        && args.len() == 3
+        && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
+}
+
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
 /// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
 /// not blocking (its target and value subtrees still walk, so a growing op INSIDE
@@ -5986,7 +6115,8 @@ fn blocks_header_hoist(
                     if vars.is_some_and(|vs| vs.is_argument(*b)
                         && (vs.name(*b) == "__retbuf" || vs.name(*b).starts_with("__ref_"))));
             let buffer_alloc = known
-                && (own_retbuf_mint
+                && (dead_buffer_op(data.def(*d).name(), args, owned)
+                    || own_retbuf_mint
                     || null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
                     || lazy_buffer_mint(data.def(*d).name(), args, vars)
                     || (tiers.rebound_movers
@@ -6035,6 +6165,7 @@ fn blocks_header_hoist(
             let record_copy = known
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
+            let fresh_copy = known && tiers.in_place && fresh_copy(data.def(*d).name(), args, fresh);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -6049,6 +6180,7 @@ fn blocks_header_hoist(
                 || record_mint
                 || fresh_delivery
                 || record_copy
+                || fresh_copy
             {
                 false
             } else if call_writes_store(*d, data, cache, active) {
@@ -9313,6 +9445,7 @@ fn may_write_existing(
     stores: &Stores,
     vars: &crate::variables::Function,
     fresh: &mut HashSet<u16>,
+    buffer: Option<u16>,
     memo: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
 ) -> bool {
@@ -9325,7 +9458,9 @@ fn may_write_existing(
                     && mint_path(data, stores, "OpNewRecord", args, vars).is_some())
             {
                 fresh.insert(*v);
-            } else {
+            } else if Some(*v) != buffer {
+                // The frame's own return buffer stays fresh through a rebind: the callee
+                // was handed that record to fill, or minted into it — never a parameter's.
                 fresh.remove(v);
             }
             false
@@ -9343,7 +9478,12 @@ fn may_write_existing(
                 } else if !active.insert(*d) {
                     true
                 } else {
-                    let mut inner_fresh: HashSet<u16> = HashSet::new();
+                    // The callee's own hidden return buffer is a record that does not
+                    // exist before the call — minted from its sentinel, or the CALLER's
+                    // owned local under `(R-Rebind)`, never a parameter's record — so its
+                    // mint and every write into it are writes of a FRESH record.
+                    let own = own_return_buffer(def);
+                    let mut inner_fresh: HashSet<u16> = own.into_iter().collect();
                     let k = may_write_existing(
                         def.code(),
                         tp,
@@ -9351,6 +9491,7 @@ fn may_write_existing(
                         stores,
                         def.variables(),
                         &mut inner_fresh,
+                        own,
                         memo,
                         active,
                     );
@@ -9359,6 +9500,11 @@ fn may_write_existing(
                     k
                 };
                 if callee {
+                    if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                        eprintln!(
+                            "[valuerec]   callee `{name}` may write an existing record of type {tp}"
+                        );
+                    }
                     hit = true;
                     return true;
                 }
@@ -9369,7 +9515,23 @@ fn may_write_existing(
             {
                 fresh.remove(e);
             }
+            // A mint into a local that OWNS its store — a fresh store, or the local's own
+            // previous one reused in place — is a record no parameter of this frame can
+            // name: what is written into it afterwards is not an existing record.
+            if matches!(name, "OpDatabase" | "OpDatabaseNP")
+                && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                && owning_local(vars, *b)
+            {
+                fresh.insert(*b);
+            }
             if native_writes_existing(def, args, tp, data, stores, vars, fresh) {
+                if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                    let shown = format!("{n:?}");
+                    eprintln!(
+                        "[valuerec]   `{name}` may write an existing record of type {tp}: {}",
+                        &shown[..shown.len().min(160)]
+                    );
+                }
                 hit = true;
                 return true;
             }
@@ -9382,6 +9544,33 @@ fn may_write_existing(
         _ => false,
     });
     hit
+}
+
+/// Does `v` own the store it names — a user or compiler local that is no parameter, no
+/// link, no capture, no inline element, and borrows from nothing but its own `__vdb_N`
+/// witness?  A record minted into such a local lives in a store no parameter of the frame
+/// can reach.
+fn owning_local(vars: &crate::variables::Function, v: u16) -> bool {
+    (v as usize) < vars.var_count()
+        && !vars.is_argument(v)
+        && !vars.is_captured(v)
+        && !vars.is_inline_ref(v)
+        && !vars.is_skip_free(v)
+        && !matches!(vars.tp(v).base(), Type::RefVar(_))
+        && vars
+            .tp(v)
+            .depend()
+            .iter()
+            .all(|d| *d == v || vars.name(*d).starts_with("__vdb"))
+}
+
+/// A function's hidden return-buffer variable, when it has one: the record the frame is
+/// handed to fill, which no by-value parameter of any frame can name.
+fn own_return_buffer(def: &crate::data::Definition) -> Option<u16> {
+    let vars = def.variables();
+    def.hidden_return_buffer_attr()
+        .map(|a| vars.var(&def.attributes()[a].name))
+        .filter(|v| *v != u16::MAX)
 }
 
 /// [`may_write_existing`]'s verdict for one NATIVE call: a scalar set and a whole copy are
@@ -9635,7 +9824,8 @@ fn tuple_param_candidates(
                 !w.reaches_record(tp)
             } else {
                 let pruned = without_terminal_copies(&body.operators, data);
-                let mut fresh: HashSet<u16> = HashSet::new();
+                let own = own_return_buffer(def);
+                let mut fresh: HashSet<u16> = own.into_iter().collect();
                 !pruned.iter().any(|op| {
                     may_write_existing(
                         op,
@@ -9644,6 +9834,7 @@ fn tuple_param_candidates(
                         stores,
                         vars,
                         &mut fresh,
+                        own,
                         &mut existing_memo,
                         &mut HashSet::new(),
                     )

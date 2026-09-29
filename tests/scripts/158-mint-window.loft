@@ -20,7 +20,9 @@
 // m7 is a keyed insert, whose claimed record takes the address too; m12 and m13 hand the
 // element to the callee as its buffer, so the caller has no write to serve; m14 is a
 // struct-enum element, a record like any other once the enum clause admits it: its
-// fields go through the address and its tag keeps its store write.
+// fields go through the address and its tag keeps its store write; m15 delivers a builder's
+// tuple into the slot beside a record view of another vector's element, and takes the
+// WINDOW (the `smooth` shape of loft#1570).
 //
 // @falsified-at: hand-measured (sabotage, 2026-09-21) — the window's verdict shown only the
 // element's own writes, so a nested mint inside it was admitted.  The FIRST run of that
@@ -171,6 +173,27 @@ fn m13() {
   assert(t == 11295, "m13");
 }
 
+// m15 — the `smooth` shape (loft#1570): a builder's TUPLE delivered into the appended slot,
+// beside a record VIEW of another vector's element named in the body.  A view of a no-heap
+// record reads fields and never a length, so it cannot observe the window's deferred length
+// bump; the copy into the fresh element is a write of the slot's own bytes.  Both admit the
+// window: the slot from `base + len·size`, two writes through it, one length bump.
+// Σ over i in 0..30 of (a.x·i + a.y + i) with a cycling (1,2),(3,4),(5,6): 290 + 620 + 990.
+struct Pt2 { x: float, y: float }
+fn pt2(a: float, b: float) -> Pt2 { Pt2 { x: a, y: b } }
+fn m15() {
+  src: vector<Pt2> = [pt2(1.0, 2.0), pt2(3.0, 4.0), pt2(5.0, 6.0)];
+  out: vector<Pt2> = [];
+  for i in 0..30 {
+    a = src[i % 3]?;
+    out += [pt2(a.x * (i as float), a.y + (i as float))];
+  }
+  t = 0.0;
+  for p in out { t += p.x + p.y; }
+  println("m15 {t} {len(out)}");
+  assert(t == 1900.0 && len(out) == 30, "m15");
+}
+
 // m14 — a struct-enum element: a window per variant.
 fn m14() {
   v: vector<Shape> = [];
@@ -182,6 +205,6 @@ fn m14() {
 }
 
 fn main() {
-  m1(); m2(); m3(); m4(); m4b(); m5(); m5b(); m6(); m7(); m10(); m11(); m12(); m13(); m14();
+  m1(); m2(); m3(); m4(); m4b(); m5(); m5b(); m6(); m7(); m10(); m11(); m12(); m13(); m14(); m15();
   println("mint window ok");
 }

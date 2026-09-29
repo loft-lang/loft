@@ -9,7 +9,7 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
-| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read; **2026-09-28:** R8 BUILT — a NESTED record rides the tuple (`sphere`-shaped probe −37 %; § Built 2026-09-28), the rows it stands behind wait for the x86-64 re-measure |
+| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read; **2026-09-28:** R8 BUILT — a NESTED record rides the tuple (`sphere`-shaped probe −37 %; § Built 2026-09-28), the rows it stands behind wait for the x86-64 re-measure; **2026-09-29:** the four slow rows PROFILED — half of each is store lifecycle, and each elimination rule's decline reason is named (§ The record lifecycle, profiled); the order there starts with callee write sets by store identity |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
 | `libraries-wide.md` | every class, from eleven libraries' own benches | **MEASURED 2026-09-24, NOT PRICED** — 32 rows, median 3.80×; text-build (the per-character append) and a constant vector literal rebuilt per call are the two class-wide gaps it found |
 | `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, `(R-WorkBuffer)` BUILT** (§ Built: scalar-element vector locals, pooled per frame, promotion transitive); left: record and text elements, result buffers, the 28 hand-offs, the allocator shave and the fn-ref result buffer, priced there |
@@ -27,7 +27,14 @@ functions gained bases: `bfs_flow` −27 %, `mesh_emit` −17 %, `sort_floats` �
 (`rules.md`'s decline table has the row).  The four functions the audit named need two further clauses, both
 in `rules.md`'s decline table: the heap-record rebind mint (`make_map`: `OpDatabase(ck, …)`
 on a fresh local blocks the hoist) and the "bound null" window (`panel_build`: a buffer
-pre-initialised null, minted later, takes no address).  Those are next.  The branch was A/B'd against
+pre-initialised null, minted later, takes no address).  Those are next — and before them, `records.md` § The record lifecycle, profiled (2026-09-29):
+half of every slow record row is mint / claim / copy / free of records the Rust twin keeps on
+the stack, each elimination rule declining on a NAMED condition; its § Order's first item is
+BUILT the same day (§ Built 2026-09-29: the callee's own buffer is a fresh record —
+`resolve_move` 14.0× → 5.3×, `emit_to_material` 10.6× → 8.1×); next in that order are the
+destination-directed builds (`panel_build`'s three locals) and the appended tuple
+(`vertex`); `smooth` of loft#1570 took the window the same day (5.4× → 4.6× here) and
+waits on the two open items in `records.md`'s smooth paragraph, both general.  The branch was A/B'd against
 `origin/main` on this box on the way (`rules.md` § Measured on the way): 71 of 79 routines
 within noise, the three movers explained, none a regression.
 
