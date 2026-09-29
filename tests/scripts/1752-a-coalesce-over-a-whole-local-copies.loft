@@ -1,0 +1,140 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1752 — a `??` whose subject is a WHOLE local reached through a cast, a branch or a block
+// copies it (`@FR-B-Copy`); one whose subject is a projection views it (`@FR-B-View`).
+//
+// A subject that is not a variable is hoisted into a `__ncc_N` temp that views what the
+// subject evaluated to.  For `(e as Block?) ?? d` that is the local `e` itself, and the
+// destination bound the temp, so writes through it reached `e` on the interpreter; `--native`
+// copied into the temp instead and nothing freed that copy.  The same held for
+// `(if c { s } else { null }) ?? d`, `{ os } ?? d` and a parameter subject, and for a plain
+// `t = { s }`, which aliased what `t = s` copies.  The view cells at the bottom are the other
+// half of the boundary: a cast of a PROJECTION names a place, and keeps viewing it.
+//
+// Every cell asserts the source AND the destination, so a fix that copies nothing (both read
+// 42) and a fix that loses the write (both read 1) each fail.
+//
+// @falsified-at: d3d38503f — pending
+
+enum Op { Block { length: integer }, Other { n: integer } }
+struct Code { code: vector<Op> }
+struct S { n: integer }
+struct O { inner: S }
+
+fn len_of(e: Op) -> integer { (e as Block?).length ?? -1 }
+
+// ── COPY: the subject is a whole local ────────────────────────────────────────────────
+fn test_cast_of_a_projected_local_copies() {
+  c = Code { code: [Block { length: 1 }, Other { n: 2 }] };
+  e = c.code[0] ?? Other { n: 0 };
+  bl = (e as Block?) ?? Block { length: 0 };
+  bl.length = 42;
+  assert(len_of(e) == 1, "the cast of a local aliased it: {len_of(e)}");
+  assert(bl.length == 42, "the destination lost its write: {bl.length}");
+}
+
+fn test_cast_of_a_local_copies_in_a_loop() {
+  e: Op = Block { length: 1 };
+  for i in 0..3 {
+    bl = (e as Block?) ?? Block { length: 0 };
+    bl.length = 42 + i;
+    assert(len_of(e) == 1, "iteration {i} aliased: {len_of(e)}");
+    assert(bl.length == 42 + i, "iteration {i} lost its write: {bl.length}");
+  }
+}
+
+fn keep_param(e: Op) -> integer {
+  bl = (e as Block?) ?? Block { length: 0 };
+  bl.length = 42;
+  bl.length
+}
+
+fn test_cast_of_a_parameter_copies() {
+  e: Op = Block { length: 1 };
+  r = keep_param(e);
+  assert(len_of(e) == 1, "the cast of a parameter reached the caller: {len_of(e)}");
+  assert(r == 42, "the destination lost its write: {r}");
+}
+
+fn cast_or_zero(e: Op) -> Block { (e as Block?) ?? Block { length: 0 } }
+
+fn test_returned_cast_copies() {
+  e: Op = Block { length: 1 };
+  r = cast_or_zero(e);
+  r.length = 42;
+  assert(len_of(e) == 1, "the returned cast aliased the argument: {len_of(e)}");
+  assert(r.length == 42, "the destination lost its write: {r.length}");
+}
+
+fn test_default_arm_is_its_own_record() {
+  e: Op = Other { n: 2 };
+  bl = (e as Block?) ?? Block { length: 7 };
+  bl.length = 42;
+  assert(bl.length == 42, "the default lost its write: {bl.length}");
+  assert((e as Other?).n == 2, "the default arm touched the source");
+}
+
+fn test_branch_over_a_local_copies() {
+  s = S { n: 1 };
+  flag = len("ab") == 2;
+  t = (if flag { s } else { null }) ?? S { n: 0 };
+  t.n = 42;
+  assert(s.n == 1 && t.n == 42, "a branch over a local aliased it: {s.n} {t.n}");
+}
+
+fn test_match_over_a_local_copies() {
+  s = S { n: 1 };
+  k = len("ab");
+  t = (match k { 2 => s, _ => null }) ?? S { n: 0 };
+  t.n = 42;
+  assert(s.n == 1 && t.n == 42, "a match over a local aliased it: {s.n} {t.n}");
+}
+
+fn test_block_over_a_local_copies() {
+  s = S { n: 1 };
+  os: S? = s;
+  t = { os } ?? S { n: 0 };
+  t.n = 42;
+  assert(os.n == 1 && t.n == 42, "a block over a local aliased it: {os.n} {t.n}");
+}
+
+fn test_plain_block_over_a_local_copies() {
+  s = S { n: 1 };
+  t = { s };
+  t.n = 42;
+  assert(s.n == 1 && t.n == 42, "`t = {{ s }}` aliased what `t = s` copies: {s.n} {t.n}");
+}
+
+fn test_rebound_destination_copies() {
+  s = S { n: 1 };
+  flag = len("ab") == 2;
+  t = S { n: 5 };
+  assert(t.n == 5, "first bind");
+  t = (if flag { s } else { null }) ?? S { n: 0 };
+  t.n = 42;
+  assert(s.n == 1 && t.n == 42, "a re-bound destination aliased the local: {s.n} {t.n}");
+}
+
+fn test_rebound_cast_destination_copies() {
+  e: Op = Block { length: 1 };
+  bl = Block { length: 5 };
+  assert(bl.length == 5, "first bind");
+  bl = (e as Block?) ?? Block { length: 0 };
+  bl.length = 42;
+  assert(len_of(e) == 1 && bl.length == 42, "a re-bound cast aliased: {len_of(e)} {bl.length}");
+}
+
+// ── VIEW: the subject is a projection ────────────────────────────────────────────────
+fn test_cast_of_an_element_is_a_view() {
+  c = Code { code: [Block { length: 1 }, Other { n: 2 }] };
+  bl = (c.code[0] as Block?) ?? Block { length: 0 };
+  bl.length = 42;
+  assert((c.code[0] as Block?).length == 42, "the cast of an element stopped viewing it");
+}
+
+fn test_cast_of_a_field_is_a_view() {
+  o = O { inner: S { n: 1 } };
+  t = (o.inner as S?) ?? S { n: 0 };
+  t.n = 42;
+  assert(o.inner.n == 42 && t.n == 42, "the cast of a field stopped viewing it: {o.inner.n}");
+}

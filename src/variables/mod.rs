@@ -3545,8 +3545,17 @@ impl Function {
     /// peels to one, `binding.md` D-bind-52), while a compiler view of the link — a tuple
     /// unbox's `__ref_N = t`, which keeps `["t"]` — is an alias that frees nothing, and a copy
     /// into it is a store nobody releases.
+    ///
+    /// A `??` hoist or a payload binding the parser mints as a VIEW
+    /// ([`Self::is_overwritten_view`]) copies nothing either, for the same reason: it releases
+    /// nothing, so `__ncc_N = s` copied on `--native` into a store nobody freed while the
+    /// interpreter bound the view (loft#1752).  A destination that must be independent of such
+    /// a hoist gets its copy where it binds the hoist (`Scopes::arm_bind`).
     #[must_use]
     pub fn record_copy_source(&self, v: u16, src: u16) -> Option<u32> {
+        if self.is_overwritten_view(v) {
+            return None;
+        }
         let src_tp = self.tp(src);
         if matches!(src_tp.base(), Type::RefVar(_)) {
             // @FR-O-Proxy asks copy — a destination with deps views the link; only an owner copies.

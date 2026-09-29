@@ -144,6 +144,8 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// The `??` hoists that hold a whole LOCAL rather than a projection ([`whole_value_hoists_in`]).
+    whole_value_hoists: HashSet<u16>,
     /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.
@@ -6282,6 +6284,7 @@ fn run_scan_phase(
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
         null_led_first: null_led_first_binds_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
@@ -7306,6 +7309,71 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
     counts
         .into_iter()
         .filter(|&(_, n)| n >= 2)
+        .map(|(v, _)| v)
+        .collect()
+}
+
+/// The `??` hoists (`__ncc_N`) whose every bind is a whole LOCAL or a null — never a projection,
+/// a call or a construction.  `@FR-B-Copy` / `@FR-B-View`.
+///
+/// A subject that is not a variable is hoisted into a temp that VIEWS what the subject
+/// evaluated to, and whether the binding of the `??` copies it depends on what that was.  A
+/// projection (`v[i] ?? d`, `o.inner ?? d`) is a place, and the binding views it as its plain
+/// spelling does.  A whole local reached through a cast or a branch (`(e as B?) ?? d`,
+/// `(if c { s } else { null }) ?? d`) is a VALUE, and the plain bind of a value copies — so
+/// the hoist has to be read as the local it holds, or the binding aliases it (loft#1752).
+///
+/// Read off the hoist's own `Set`s, so both the parser's single bind (`__ncc = if c { s }
+/// else { null }`) and the per-arm binds the sink writes out of it are seen.  A local counts
+/// only when the author wrote it: a compiler temp is a slot inside something else.
+fn whole_value_hoists_in(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
+    // `Some(true)`: a whole local on some path; `Some(false)`: only nulls; `None`: anything else.
+    fn tails(v: &Value, function: &Function, data: &Data) -> Option<bool> {
+        match v.unspan() {
+            Value::Var(x) => (!function.is_compiler_generated(*x)).then_some(true),
+            Value::Null => Some(false),
+            Value::Call(d, a)
+                if a.is_empty()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpNullRefSentinel" | "OpConvRefFromNull"
+                    ) =>
+            {
+                Some(false)
+            }
+            Value::If(_, t, f) => {
+                let (t, f) = (tails(t, function, data)?, tails(f, function, data)?);
+                Some(t || f)
+            }
+            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => {
+                tails(bl.operators.last()?, function, data)
+            }
+            _ => None,
+        }
+    }
+    let mut seen: HashMap<u16, bool> = HashMap::default();
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && is_discharge_hoist(function, *v)
+        {
+            let whole = tails(rhs, function, data);
+            let e = seen.entry(*v).or_insert(true);
+            // A `None` bind disqualifies; a bind that is only null neither makes nor breaks it.
+            *e = *e && whole.is_some();
+        }
+    });
+    // At least one bind must be a local: a hoist bound only to null holds no value to copy.
+    let mut has_local: HashSet<u16> = HashSet::default();
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && is_discharge_hoist(function, *v)
+            && tails(rhs, function, data) == Some(true)
+        {
+            has_local.insert(*v);
+        }
+    });
+    seen.into_iter()
+        .filter(|&(v, whole)| whole && has_local.contains(&v))
         .map(|(v, _)| v)
         .collect()
 }
@@ -13558,8 +13626,16 @@ impl Scopes<'_> {
         // the temp and the temp frees by store identity against its one base (or, for a
         // record, owns unconditionally through `OpBindOrCopy`).  `(O-Complete)` asks for the
         // fact per binding, per path; this gives each path a binding.
+        // A value BLOCK that ends in a local record (`t = { s }`) hands the binding that local as an
+        // arm would, and `(B-Copy)` copies it the same way: without it the block spelling
+        // aliased what the bare `t = s` copies (loft#1752).
         let rewritten_arms;
-        let value: &Value = if Self::is_value_branch(value)
+        // A RECORD only: a collection tail is lifted through `OpReplaceVector`, which reads an
+        // absent vector as empty (`[for z in v { z }]` over a `vector<integer>?` element).
+        let local_tail = matches!(value.unspan(), Value::Block(bl)
+            if matches!(bl.result.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+                && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(_))));
+        let value: &Value = if (Self::is_value_branch(value) || local_tail)
             && self.arm_tails_need_binding(value, v, data, function)
         {
             let mut rw = value.clone();
@@ -20159,7 +20235,12 @@ impl Scopes<'_> {
                 // Gated on the walk's answer and not on the shape, for the reason the
                 // projection arm states: a discharge whose container is NEVER disturbed must
                 // keep aliasing, and copying it would lose a write that lands today.
-                if function.is_compiler_generated(*x) {
+                //
+                // A hoist that holds a WHOLE local is the other exception, and it needs no walk:
+                // `(e as B?) ?? d`, `(if c { s } else { null }) ?? d` hand the binding the local
+                // itself, which `(B-Copy)` copies wherever it is spelled — the temp only saved a
+                // second evaluation of the subject (loft#1752, `whole_value_hoists_in`).
+                if function.is_compiler_generated(*x) && !self.whole_value_hoists.contains(x) {
                     if !(is_discharge_hoist(function, *x)
                         && self.views_to_materialise.contains_key(&bound))
                     {
@@ -20184,8 +20265,14 @@ impl Scopes<'_> {
                 // this question, so a `c = Box{…}; c = v[1] ?? Box{…}` differed from its
                 // inline twin only in which of the two arms the projection was spelled in
                 // (loft#1401).
+                // A whole-value hoist bound into a binding the parser typed as a VIEW is the
+                // same kind of fact: no runtime join bind copies into a borrow, so without the
+                // lift `t = S{…}; t = (if c { s } else { null }) ?? d` aliased `s` (loft#1752).
+                // An owner-typed binding keeps the runtime copy it already gets.
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
+                    && !(self.whole_value_hoists.contains(x)
+                        && !function.tp(bound).depend().is_empty())
                 {
                     return None;
                 }

@@ -324,7 +324,10 @@ order, so no program's value moves with it.  **`LOFT_COALESCE_LEFT_ASSOC=1`** pa
 and is the first bisect step for a wrong value, a leak or a double release out of a chain of three
 or more operands.  A chain the AUTHOR parenthesised still hands the parser a hoisted subject, and
 is right-associated in the SCOPES pass instead (**`LOFT_NO_COALESCE_REASSOC=1`** keeps loft#1591's
-destination gate, the bisect step for that spelling).  Beside them,
+destination gate, the bisect step for that spelling).  A hoist that holds a whole LOCAL rather
+than a projection — `(e as B?) ?? d`, `(if c { s } else { null }) ?? d` — is read by the arm lift
+as that local, so the destination copies it as `(B-Copy)` says (loft#1752); a projection subject
+keeps the view.  Beside them,
 **`LOFT_NO_CHAIN_ARM_SINK=1`** stops a chain BLOCK being a sunk ARM of a branch — with it off,
 `x: H = if c { s.h ?? b } else { mk(3) }` writes the chain out as a statement of its own, but ONLY
 where every arm of that chain is owned, since an arm that views a place the program can still
