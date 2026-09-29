@@ -12666,6 +12666,8 @@ impl Data {
             | Type::Sorted(_, _, _)
             | Type::RefVar(_)
             | Type::Enum(_, true, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
             | Type::Index(_, _, _) => "DbRef",
             Type::Routine(_) => "u32",
             Type::Unknown(_) => "??",
