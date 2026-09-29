@@ -2848,6 +2848,68 @@ impl Function {
         self.nullable_text_buffers.contains(&var_nr)
     }
 
+    /// The join of an inferred local's type `cur` with a new assignment's `new` where the two
+    /// differ only in which VARIANT of one enum they name: the enum (`@FR-C-Var`), optional
+    /// when either side is (`@FR-N-Join`), and element-wise through a tuple.  `None` when the
+    /// two differ in anything else, or not at all, so the caller's other arms still decide.
+    fn variant_join(cur: &Type, new: &Type, data: &Data) -> Option<Type> {
+        let enum_of = |t: &Type| match t.base() {
+            Type::Reference(d, _)
+                if matches!(data.def_type(*d), crate::data::DefType::EnumValue)
+                    && data.def(*d).parent != u32::MAX =>
+            {
+                Some(data.def(*d).parent)
+            }
+            _ => None,
+        };
+        let joined = match (cur.base(), new.base()) {
+            (Type::Tuple(ca), Type::Tuple(na)) if ca.len() == na.len() => {
+                let mut widened = false;
+                let mut out = Vec::with_capacity(ca.len());
+                for (c, n) in ca.iter().zip(na.iter()) {
+                    if let Some(j) = Self::variant_join(c, n, data) {
+                        widened = true;
+                        out.push(j);
+                    } else if c.is_equal(n) {
+                        out.push(c.clone());
+                    } else {
+                        return None;
+                    }
+                }
+                if !widened {
+                    return None;
+                }
+                Type::Tuple(out)
+            }
+            (Type::Reference(a, deps), Type::Reference(b, _)) if a != b => {
+                let e = enum_of(cur.base())?;
+                if enum_of(new.base()) != Some(e) {
+                    return None;
+                }
+                Type::Enum(e, true, deps.clone())
+            }
+            (Type::Reference(_, deps), Type::Enum(f, true, _)) => {
+                if enum_of(cur.base()) != Some(*f) {
+                    return None;
+                }
+                Type::Enum(*f, true, deps.clone())
+            }
+            // Already the enum: a variant joins into it unchanged (a tuple member needs the
+            // answer; a whole local takes the `lhs_shape` acceptance below either way).
+            (Type::Enum(e, true, _), Type::Reference(..)) if enum_of(new.base()) == Some(*e) => {
+                cur.base().clone()
+            }
+            _ => return None,
+        };
+        Some(
+            if matches!(cur, Type::Optional(_)) || matches!(new, Type::Optional(_)) {
+                Type::optional(joined)
+            } else {
+                joined
+            },
+        )
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn change_var_type(
         &mut self,
@@ -3139,6 +3201,21 @@ impl Function {
             let widened = Type::optional(base);
             self.trace_type_change(var_nr, &widened, "change_var_type(N-Join nullable)");
             self.variables[var_nr as usize].type_def = widened;
+            self.depend_all(var_nr, type_def);
+            return self.is_new(var_nr);
+        }
+        // @FR-I-Join with @FR-C-Var — an INFERRED local assigned two different variants of one
+        // enum, or a variant and the enum, has the ENUM for its type: that is their join, since
+        // `(C-Var)` licenses `Reference(S) ⤳ Enum(E)` for each variant and nothing between two
+        // of them.  `x = Circle {…}; x = Square {…}` was refused as a type change, and so was an
+        // `if`/`match` whose arms name two variants, because pass 1 types such an arm join by
+        // its first arm and pass 2 by the enum.  Element-wise through a tuple, as the arm join
+        // is (`join_tuple_arms`).  A DECLARED binding never widens (`@FR-N-Decl`).
+        if !self.is_declared(var_nr)
+            && let Some(joined) = Self::variant_join(var_tp, type_def, data)
+        {
+            self.trace_type_change(var_nr, &joined, "change_var_type(C-Var join)");
+            self.variables[var_nr as usize].type_def = joined;
             self.depend_all(var_nr, type_def);
             return self.is_new(var_nr);
         }

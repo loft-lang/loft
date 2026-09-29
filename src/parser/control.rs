@@ -5454,6 +5454,8 @@ impl Parser {
         // already an error and synthesises a `null` else for recovery; the DN1 widening below must
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
+        // Where the else arm starts: a tuple arm pair that does not join is reported there.
+        let else_pos = self.lexer.pos().clone();
         if had_else {
             self.vars.restore_write_state(&write_state);
             self.vars.clear_write_state();
@@ -5463,7 +5465,7 @@ impl Parser {
             // loft#1682 — a then arm answering a tuple WITH a `null` member has no type of
             // its own either: the member is the sibling's to name, and the two join
             // element-wise once the sibling is parsed (`join_tuple_arms`).
-            let then_tuple_nulls: Option<Type> = if Self::tuple_has_null_member(&true_type) {
+            let then_tuple_nulls: Option<Type> = if self.tuple_join_open(&true_type) {
                 Some(true_type.clone())
             } else {
                 None
@@ -5570,12 +5572,31 @@ impl Parser {
             }
             if true_type == Type::Unknown(0) {
                 if let Some(orig) = &then_tuple_nulls {
-                    // loft#1682 — both tails take the element-wise join; a pair of shapes
-                    // that does not join keeps the sibling's type, and the then tail's
-                    // conversion then reports the member that cannot land.
-                    let joined = self
-                        .join_tuple_arms(orig, &false_type)
-                        .unwrap_or_else(|| false_type.clone());
+                    // loft#1682 — both tails take the element-wise join.  A pair that does not
+                    // join is REFUSED here, as the plain else arm is: the tail conversion below
+                    // only answers whether it converted and reports nothing, so leaving it to
+                    // that read `(Tri {…}, 2)` at `(Circle, integer)`'s offsets in silence.  The
+                    // sibling's type is kept for recovery.
+                    let joined = if let Some(j) = self.join_tuple_arms(orig, &false_type) {
+                        j
+                    } else {
+                        if !self.first_pass
+                            && !matches!(
+                                false_type,
+                                Type::Void | Type::Never | Type::Null | Type::Unknown(_)
+                            )
+                        {
+                            let want = orig.source_name(&self.data);
+                            let have = false_type.source_name(&self.data);
+                            diagnostic_at!(
+                                self.lexer,
+                                &else_pos,
+                                Level::Error,
+                                "expected {want}, got {have} on else"
+                            );
+                        }
+                        false_type.clone()
+                    };
                     self.convert_arm_tail(&mut true_code, orig, &joined);
                     let false_orig = false_type.clone();
                     self.convert_arm_tail(&mut false_code, &false_orig, &joined);
@@ -5994,7 +6015,7 @@ impl Parser {
             {
                 self.expect_match_arm_arrow();
                 let mut arm_body = Value::Null;
-                let arm_expected = Self::match_arm_expected(&result_type);
+                let arm_expected = self.match_arm_expected(&result_type);
                 let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
                 // loft#978 — every arm can deliver this match's value, so the result carries
                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
@@ -6106,9 +6127,11 @@ impl Parser {
             };
 
             if pattern_name == "_" {
-                let was_null_tuple = Self::tuple_has_null_member(&result_type);
+                let before = self
+                    .tuple_join_open(&result_type)
+                    .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
-                if was_null_tuple && !Self::tuple_has_null_member(&result_type) {
+                if before.is_some_and(|b| !b.is_equal(&result_type)) {
                     // loft#1682 — the wildcard arm named the member; the earlier arms follow.
                     let joined = result_type.clone();
                     self.reconvert_null_tuple_arms(&mut arms, &joined);
@@ -6553,7 +6576,7 @@ impl Parser {
             // Save/restore write tracking so writes in one arm don't cause
             // false dead-assignment warnings in sibling arms.
             let mut arm_body = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
@@ -6853,10 +6876,10 @@ impl Parser {
 
     /// The type a match arm is expected to answer in: what the arms have agreed on so
     /// far, or `Unknown` while nothing is settled yet.
-    fn match_arm_expected(result_type: &Type) -> Type {
+    fn match_arm_expected(&self, result_type: &Type) -> Type {
         if result_type.is_unknown()
             || Self::match_result_unsettled(result_type)
-            || Self::tuple_has_null_member(result_type)
+            || self.tuple_join_open(result_type)
         {
             Type::Unknown(0)
         } else {
@@ -7042,7 +7065,7 @@ impl Parser {
         let is_exhaustive = guard_opt.is_none();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
-        let arm_expected = Self::match_arm_expected(result_type);
+        let arm_expected = self.match_arm_expected(result_type);
         let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         // loft#978 — see the arm sites above: the wildcard is an arm like any other.
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
@@ -7141,7 +7164,7 @@ impl Parser {
         }
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
-        let arm_expected = Self::match_arm_expected(result_type);
+        let arm_expected = self.match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
         if Self::match_result_unsettled(result_type) {
@@ -10191,7 +10214,7 @@ impl Parser {
 
             self.expect_match_arm_arrow();
             let mut arm_code = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
             // A `null`-first arm must NOT pin the result to `Null` — promote to
             // the first CONCRETE arm's type (else `match c { false => null, true
@@ -10209,7 +10232,7 @@ impl Parser {
             {
                 // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                 for prev in &mut arms {
-                    if Self::tuple_has_null_member(&prev.2) {
+                    if self.tuple_join_open(&prev.2) {
                         let prev_orig = prev.2.clone();
                         self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                         prev.2 = joined.clone();
@@ -11407,7 +11430,7 @@ impl Parser {
             // delegated to `parse_block("block", …, &Type::Void)`, which DROPS the trailing
             // result expression (`{ c = 5; c }` → `c = 5; drop c`) — the block then yielded void,
             // so native delivered 0 (interpret happened to still surface the value).
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
             // loft#978 — every arm can deliver this match's value, so the result carries
             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
@@ -11420,7 +11443,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if Self::tuple_has_null_member(prev_tp) {
+                    if self.tuple_join_open(prev_tp) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -11784,7 +11807,7 @@ impl Parser {
 
             self.expect_match_arm_arrow();
             let mut arm_body = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
@@ -11823,7 +11846,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if Self::tuple_has_null_member(prev_tp) {
+                    if self.tuple_join_open(prev_tp) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -14341,6 +14364,14 @@ impl Parser {
     ///
     /// `Definition::parent` makes this O(1) — a variant records its enum — so it is cheap
     /// enough to ask on every `if` that yields a record.
+    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
+    /// question without building the answer, for the predicates asked of every arm.
+    fn names_variant(&self, tp: &Type) -> bool {
+        matches!(tp.base(), Type::Reference(d, _)
+            if matches!(self.data.def_type(*d), DefType::EnumValue)
+                && self.data.def(*d).parent != u32::MAX)
+    }
+
     pub(super) fn variant_parent_enum(&self, tp: &Type) -> Option<Type> {
         let Type::Reference(d, deps) = tp else {
             return None;
@@ -14352,16 +14383,62 @@ impl Parser {
         Some(Type::Enum(def.parent, true, deps.clone()))
     }
 
-    /// loft#1682 — a tuple type with a `null` MEMBER, `(null, integer)`, is what a tuple
-    /// literal with a `null` element synthesises, and it is not a type a sibling arm can
-    /// answer in: nothing converts a concrete member to `null`.  A bare `null` arm has
-    /// long taken the carve-out that lets the sibling decide (`parse_if`,
-    /// `match_arm_expected`); this is the same fact one level down, asked where the
-    /// arm's type is read, so `if z { (null, 3) } else { (4, 5) }` joins to
-    /// `(integer?, integer)` (`@FR-T-Chk`, `@FR-I-Join`) exactly as the reversed order
-    /// always has.
-    fn tuple_has_null_member(tp: &Type) -> bool {
-        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| matches!(e.base(), Type::Null)))
+    /// A tuple type with every member that names a VARIANT widened to that variant's enum,
+    /// nested tuples included — `None` when no member does.  A vector ELEMENT is a record of
+    /// the enum whichever variant it holds (`[Circle {…}]` is a `vector<Shape>`), so an
+    /// inferred literal's tuple element takes the same type for its variant members
+    /// (`@FR-C-Var` through `@FR-C-Tuple`), and a later element or append naming another
+    /// variant then lands in the slot it would have as a bare element.
+    pub(super) fn widen_variant_members(&self, tp: &Type) -> Option<Type> {
+        let Type::Tuple(elems) = tp.base() else {
+            return None;
+        };
+        // Asked of every tuple element of every inferred literal, so answer "nothing to widen"
+        // without building anything.
+        if !elems
+            .iter()
+            .any(|e| self.names_variant(e.base()) || matches!(e.base(), Type::Tuple(_)))
+        {
+            return None;
+        }
+        let mut widened = false;
+        let out: Vec<Type> = elems
+            .iter()
+            .map(|e| {
+                if let Some(en) = self.variant_parent_enum(e.base()) {
+                    widened = true;
+                    if matches!(e, Type::Optional(_)) {
+                        Type::optional(en)
+                    } else {
+                        en
+                    }
+                } else if let Some(inner) = self.widen_variant_members(e) {
+                    widened = true;
+                    inner
+                } else {
+                    e.clone()
+                }
+            })
+            .collect();
+        widened.then_some(Type::Tuple(out))
+    }
+
+    /// Is a tuple arm type still OPEN to its siblings, so the first arm does not pin it?
+    ///
+    /// Two members leave it open.  A `null` member (loft#1682): `(null, integer)` is what a
+    /// tuple literal with a `null` element synthesises, and nothing converts a concrete member
+    /// to `null` — a bare `null` arm has long taken the carve-out that lets the sibling decide
+    /// (`parse_if`, `match_arm_expected`), and this is the same fact one level down, so
+    /// `if z { (null, 3) } else { (4, 5) }` joins to `(integer?, integer)` (`@FR-T-Chk`,
+    /// `@FR-I-Join`) exactly as the reversed order always has.  And a member naming one
+    /// VARIANT of an enum: a sibling naming another variant widens it to the enum
+    /// (`@FR-C-Var`), which converts nothing between two variants, so checking the sibling
+    /// against the first arm refused `if c { (Circle {…}, 1) } else { (Square {…}, 2) }` even
+    /// into a declared `(Shape, integer)`.  Either way the arms meet in `join_tuple_arms`.
+    fn tuple_join_open(&self, tp: &Type) -> bool {
+        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| {
+            matches!(e.base(), Type::Null) || self.names_variant(e.base()) || self.tuple_join_open(e)
+        }))
     }
 
     /// loft#1682 — the ELEMENT-WISE join of two tuple arm types: `null ⊔ τ = τ?`
@@ -14369,7 +14446,7 @@ impl Parser {
     /// settle, equal members keep their type, and two sibling variants join to their enum
     /// (`@FR-C-Var`, as `parse_if` does for a whole arm).  `None` where the shapes differ
     /// or a member pair joins to nothing, which keeps the refusal the caller would have made.
-    fn join_tuple_arms(&self, a: &Type, b: &Type) -> Option<Type> {
+    pub(super) fn join_tuple_arms(&self, a: &Type, b: &Type) -> Option<Type> {
         let (Type::Tuple(ea), Type::Tuple(eb)) = (a.base(), b.base()) else {
             return None;
         };
@@ -14385,13 +14462,41 @@ impl Parser {
                 (Type::Null, _) => Type::optional(y.clone()),
                 (_, Type::Null) => Type::optional(x.clone()),
                 _ => match (x, y) {
-                    // The member test is the arms' own (`match_arm_types_unify`), not equality:
-                    // a payload binding's `integer` and a literal's carry different specs and
-                    // are one type to the join, which keeps the first arm's spelling as the
-                    // whole-arm join does.
-                    (x, y) if x == y || match_arm_types_unify(x, y) => x.clone(),
-                    (x, y) => match self.variant_parent_enum(x) {
-                        Some(enum_tp) if self.joins_to_enum(&enum_tp, x, y) => enum_tp,
+                    // The member test is `is_equal`, not `==`: a payload binding's `integer`
+                    // and a literal's carry different specs and are one type to the join,
+                    // which keeps the first arm's spelling as the whole-arm join does.  Not
+                    // the arms' `match_arm_types_unify` either — that is `is_same`, a KIND
+                    // test to which any two records are one type, so `(Circle, 1)` joined
+                    // `(Tri, 2)` or `(P, 2)` and the second arm was read at the first's offsets.
+                    (x, y) if x == y || x.is_equal(y) => x.clone(),
+                    // A nested tuple joins by the same rule, member by member.
+                    (x, y) if matches!((x.base(), y.base()), (Type::Tuple(_), Type::Tuple(_))) => {
+                        self.join_tuple_arms(x, y)?
+                    }
+                    // Through the `?` (`@FR-N-Shape`): a member a sibling left optional joins
+                    // by its base, and the join stays optional (`@FR-N-Join`).
+                    // The member is the enum already and the arm names one of its variants:
+                    // the enum is the join, unchanged (`@FR-C-Var`).
+                    (x, y)
+                        if matches!(
+                            (x.base(), self.variant_parent_enum(y.base())),
+                            (Type::Enum(a, true, _), Some(Type::Enum(b, _, _))) if *a == b
+                        ) =>
+                    {
+                        if matches!(y, Type::Optional(_)) && !matches!(x, Type::Optional(_)) {
+                            Type::optional(x.clone())
+                        } else {
+                            x.clone()
+                        }
+                    }
+                    (x, y) => match self.variant_parent_enum(x.base()) {
+                        Some(enum_tp) if self.joins_to_enum(&enum_tp, x.base(), y.base()) => {
+                            if matches!(x, Type::Optional(_)) || matches!(y, Type::Optional(_)) {
+                                Type::optional(enum_tp)
+                            } else {
+                                enum_tp
+                            }
+                        }
                         _ => return None,
                     },
                 },
@@ -14436,10 +14541,33 @@ impl Parser {
         arm_body: &mut Value,
         arm_type: &mut Type,
     ) -> Option<Type> {
-        if !Self::tuple_has_null_member(result_type) {
+        if !self.tuple_join_open(result_type) {
             return None;
         }
-        let joined = self.join_tuple_arms(result_type, arm_type)?;
+        // An OPEN result hands its arms no expected type (`match_arm_expected`), so the arm's
+        // own conversion never ran and cannot refuse it: an arm that does not join is refused
+        // HERE, the one place every match site asks.  Left to the sites, the scalar match has
+        // no second check at all and answered `(Tri {…}, 2)` at `(Circle, integer)`'s offsets;
+        // a text member corrupted the store.  The flag keeps a site's own gate quiet.
+        let Some(joined) = self.join_tuple_arms(result_type, arm_type) else {
+            if !self.first_pass
+                && !self.arm_convert_reported
+                && !matches!(
+                    arm_type.base(),
+                    Type::Void | Type::Never | Type::Null | Type::Unknown(_)
+                )
+            {
+                let want = result_type.source_name(&self.data);
+                let have = arm_type.source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "expected {want}, got {have} on a match arm"
+                );
+                self.arm_convert_reported = true;
+            }
+            return None;
+        };
         let orig = arm_type.clone();
         self.convert_arm_tail(arm_body, &orig, &joined);
         *arm_type = joined.clone();
@@ -14449,7 +14577,7 @@ impl Parser {
     /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
     fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
         for prev in arms.iter_mut() {
-            if Self::tuple_has_null_member(&prev.tp) {
+            if self.tuple_join_open(&prev.tp) {
                 let prev_orig = prev.tp.clone();
                 self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                 prev.tp = joined.clone();
@@ -20183,7 +20311,6 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,

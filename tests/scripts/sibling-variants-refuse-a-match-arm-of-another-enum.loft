@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match` arm whose tuple does not join the arms before it is refused (formal/types.md
+// D-types-23).  An open result — a member that is null (loft#1682) or a variant — hands its
+// arms no expected type, and the join tested members by KIND, so `(3, Tri {…})` after
+// `(null, Circle {…})` joined and the `Tri` was read at `Circle`'s offsets.  The refusal half
+// of `sibling-variants-join-to-their-enum.loft`.
+// @falsified-at: b14cf5fe0 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/sibling-variants-refuse-a-match-arm-of-another-enum.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expect — the control compiled and printed `{r:2.5}`, the `Tri` read at `Circle`'s offsets, on both backends.
+// HOLDS: leak and panic are clean on both trees and both backends.
+//
+// @EXPECT_ERROR: expected (null, Circle), got (integer, Tri) on a match arm
+
+enum Shape { Circle { r: float }, Sq { s: float } }
+enum Other { Tri { a: float }, Hex { b: float } }
+
+fn main() {
+  k = 2;
+  t = match k { 1 => (null, Circle { r: 1.5 }), _ => (3, Tri { a: 2.5 }) };
+  println("{t.1}");
+}

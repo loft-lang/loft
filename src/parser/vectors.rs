@@ -5431,6 +5431,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(vt) = self.iterator_as_vector(&mut p, &t, &in_t.clone()) {
             t = vt;
         }
+        // @FR-C-Var — an inferred literal's tuple element stores its variant members as their
+        // enum, as a bare variant element is stored (`widen_variant_members`).
+        if !declared && let Some(wide) = self.widen_variant_members(&t) {
+            let from = t.clone();
+            self.convert(&mut p, &from, &wide);
+            t = wide;
+        }
         let elem_capturing_lambda = self.last_closure_work_var != u16::MAX;
         if let Type::Rewritten(tp) = in_t {
             *in_t = *tp.clone();

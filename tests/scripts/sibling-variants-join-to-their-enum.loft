@@ -1,0 +1,150 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-C-Var` — a variant converts to its enum and nothing is licensed between two variants —
+// composed with `@FR-I-Join` / `@FR-N-Join` (an inferred binding and an arm join have the JOIN
+// for their type) and `@FR-C-Tuple` (member by member).  Two different variants of one enum
+// therefore join to the ENUM wherever they meet (formal/types.md D-types-22, D-types-23):
+//
+//   - an INFERRED local assigned two variants — `x = if c { Circle {…} } else { Sq {…} }`, a
+//     `match`, an `else if` chain, or `x = Circle {…}; x = Sq {…}` — was refused "cannot change
+//     type from Circle to Shape": pass 1 types the join by its first arm, pass 2 by the enum,
+//     and `change_var_type` had no variant join;
+//   - TUPLE arms naming different variants in one member — `if c { (Circle {…}, 1) } else
+//     { (Sq {…}, 2) }` and every `match` form, nested tuples too — were refused even into a
+//     declared `(Shape, integer)`;
+//   - a vector LITERAL of such tuples, `[(Circle {…}, 1), (Sq {…}, 2)]`, was refused "No common
+//     type" while `[Circle {…}, Sq {…}]` compiled, and appending `(Sq {…}, 2)` to an inferred
+//     `[(Circle {…}, 1)]` was refused.
+//
+// Each cell prints the joined value with `{}`, which renders by the STATIC type: a `Shape`
+// prints `Sq {s:2.5}`, a `Circle` holding a `Sq` would print `{r:2.5}`.  A runtime dispatch
+// (`area`) cannot tell the two apart.  The refusal half — a pair that does NOT join is refused,
+// not read at the other's offsets — is `sibling-variants-refuse-*.loft`.
+//
+// Axes this file MOVES:  the site (inferred local, reassignment, if, else-if, match, tuple
+//                        member, nested member, null member, vector literal, append, argument,
+//                        return, `??` right side), the arm's spelling (literal, call, local),
+//                        evaluation count (a loop), heap members beside the variant (text,
+//                        struct), which arm names which variant, enum-vs-variant first.
+// Axes it HOLDS FIXED:   one struct-enum with two float-payload variants.
+// @falsified-at: b14cf5fe0 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/sibling-variants-join-to-their-enum.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — every join was refused on the control, so it does not compile this file.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+enum Shape { Circle { r: float }, Sq { s: float } }
+
+fn one() -> Shape { Sq { s: 3.5 } }
+fn pick(c: boolean) -> (Shape, integer) { if c { (Circle { r: 1.5 }, 11) } else { (Sq { s: 2.5 }, 22) } }
+fn build() -> vector<(Shape, integer)> { [(Circle { r: 1.5 }, 11), (Sq { s: 2.5 }, 22)] }
+struct P { name: text, k: integer }
+fn mkc() -> Circle { Circle { r: 1.5 } }
+fn mks() -> Sq { Sq { s: 2.5 } }
+fn count(v: vector<(Shape, integer)>) -> text {
+  a = v[0].0;
+  b = v[1].0;
+  "{a}|{b}|{len(v)}"
+}
+
+fn test_an_inferred_local_joins_two_variants() {
+  c = false;
+  a = if c { Circle { r: 1.5 } } else { Sq { s: 2.5 } };
+  k = 2;
+  b = match k { 1 => Circle { r: 1.5 }, _ => Sq { s: 2.5 } };
+  e = if k == 1 { Circle { r: 1.5 } } else if k == 3 { Circle { r: 4.5 } } else { Sq { s: 2.5 } };
+  t = true;
+  f = if t { Circle { r: 1.5 } } else { Sq { s: 2.5 } };
+  assert("{a} {b} {e} {f}" == "Sq {{s:2.5}} Sq {{s:2.5}} Sq {{s:2.5}} Circle {{r:1.5}}", "if/match/else-if join: {a} {b} {e} {f}");
+}
+
+fn test_a_reassigned_local_joins_two_variants() {
+  x = Circle { r: 1.5 };
+  first = "{x}";
+  x = Sq { s: 2.5 };
+  assert("{first} {x}" == "Circle {{r:1.5}} Sq {{s:2.5}}", "reassigned: {first} {x}");
+  y = one();
+  y_first = "{y}";
+  y = Circle { r: 1.5 };
+  assert("{y_first} {y}" == "Sq {{s:3.5}} Circle {{r:1.5}}", "enum then variant: {y_first} {y}");
+}
+
+fn test_tuple_arms_join_member_by_member() {
+  c = false;
+  t = if c { (Circle { r: 1.5 }, 11) } else { (Sq { s: 2.5 }, 22) };
+  d: (Shape, integer) = if c { (Circle { r: 1.5 }, 11) } else { (Sq { s: 2.5 }, 22) };
+  k = 3;
+  m = match k { 1 => (Circle { r: 1.5 }, 11), 2 => (Sq { s: 2.5 }, 22), _ => (Circle { r: 4.5 }, 33) };
+  p = pick(false);
+  t0 = t.0;
+  d0 = d.0;
+  m0 = m.0;
+  p0 = p.0;
+  got = "{t0},{t.1} {d0},{d.1} {m0},{m.1} {p0},{p.1}";
+  assert(got == "Sq {{s:2.5}},22 Sq {{s:2.5}},22 Circle {{r:4.5}},33 Sq {{s:2.5}},22", "tuple arms: {got}");
+  s = (Circle { r: 1.5 }, 11);
+  s = (Sq { s: 2.5 }, 22);
+  s0 = s.0;
+  assert("{s0},{s.1}" == "Sq {{s:2.5}},22", "reassigned tuple: {s0},{s.1}");
+}
+
+fn test_nested_null_and_enum_first_members_join() {
+  c = false;
+  n = if c { ((Circle { r: 1.5 }, 11), 7) } else { ((Sq { s: 2.5 }, 22), 8) };
+  k = 1;
+  q = match k { 1 => (null, 11), 2 => (Circle { r: 1.5 }, 22), _ => (Sq { s: 2.5 }, 33) };
+  r = match k { 1 => (one(), Circle { r: 1.5 }), _ => (Circle { r: 4.5 }, Sq { s: 2.5 }) };
+  n00 = n.0.0;
+  q0 = q.0 ?? Sq { s: 9.5 };
+  r0 = r.0;
+  r1 = r.1;
+  got = "{n00},{n.0.1},{n.1} {q0},{q.1} {r0},{r1}";
+  assert(got == "Sq {{s:2.5}},22,8 Sq {{s:9.5}},11 Sq {{s:3.5}},Circle {{r:1.5}}", "nested/null/enum-first: {got}");
+}
+
+fn test_a_vector_literal_of_tuples_joins_variants() {
+  w = [(Circle { r: 1.5 }, 11), (Sq { s: 2.5 }, 22)];
+  a = [(Circle { r: 1.5 }, 11)];
+  a += [(Sq { s: 2.5 }, 22)];
+  c = false;
+  v = if c { [(Circle { r: 1.5 }, 11)] } else { [(Sq { s: 2.5 }, 22)] };
+  sum = 0;
+  for e in w { sum += e.1; }
+  w0 = w[0].0;
+  w1 = w[1].0;
+  a1 = a[1].0;
+  v0 = v[0].0;
+  got = "{w0}|{w1}|{len(w)} {a1}|{len(a)} {v0} {sum}";
+  assert(got == "Circle {{r:1.5}}|Sq {{s:2.5}}|2 Sq {{s:2.5}}|2 Sq {{s:2.5}} 33", "vector literal: {got}");
+  assert("{count([(Circle { r: 1.5 }, 11), (Sq { s: 2.5 }, 22)])} {count(build())}" == "Circle {{r:1.5}}|Sq {{s:2.5}}|2 Circle {{r:1.5}}|Sq {{s:2.5}}|2",
+    "argument and return");
+}
+
+fn test_the_same_variant_twice_stays_that_variant() {
+  c = false;
+  t = if c { (Circle { r: 1.5 }, 11) } else { (Circle { r: 4.5 }, 22) };
+  x = if c { Circle { r: 1.5 } } else { Circle { r: 4.5 } };
+  t0 = t.0;
+  assert("{t0.r} {x.r}" == "4.5 4.5", "same variant keeps its fields: {t0.r} {x.r}");
+}
+
+fn test_joins_in_a_loop_with_heap_members_and_call_arms() {
+  x = Circle { r: 1.5 };
+  for i in 0..3 { if i == 1 { x = Sq { s: 2.5 }; } }
+  out = "";
+  for i in 0..4 {
+    t = if i % 2 == 0 { (Circle { r: 1.5 }, "ev{i}", P { name: "p{i}", k: i }) } else { (Sq { s: 2.5 }, "od{i}", P { name: "q{i}", k: i }) };
+    a = t.0;
+    out += "{a}/{t.1}/{t.2.name};";
+  }
+  c = false;
+  y = if c { mkc() } else { mks() };
+  o: Shape? = null;
+  z = o ?? (if c { Circle { r: 1.5 } } else { Sq { s: 4.5 } });
+  w = [(Circle { r: 1.5 }, "a")];
+  for i in 0..3 { w += [(Sq { s: 2.5 }, "b{i}")]; }
+  w3 = w[3].0;
+  assert("{x}" == "Sq {{s:2.5}}", "loop reassign: {x}");
+  assert(out == "Circle {{r:1.5}}/ev0/p0;Sq {{s:2.5}}/od1/q1;Circle {{r:1.5}}/ev2/p2;Sq {{s:2.5}}/od3/q3;", "loop join: {out}");
+  assert("{y} {z} {w3} {w[3].1} {len(w)}" == "Sq {{s:2.5}} Sq {{s:4.5}} Sq {{s:2.5}} b2 4", "calls, ??, appends: {y} {z} {w3} {w[3].1} {len(w)}");
+}

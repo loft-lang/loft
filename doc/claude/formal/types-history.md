@@ -1307,6 +1307,32 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-22, D-types-23** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Var)` composed with
+  `(I-Join)`/`(N-Join)` and `(C-Tuple)`: two DIFFERENT variants of one enum join to the enum
+  wherever they meet, and nothing is licensed between two variants.  Walking `(T-Sub)` found
+  `C-Var` holding at 24 of 25 checking positions; every failure was a JOIN.  **-22** (over-refusal):
+  an INFERRED local assigned two variants — an `if`, a `match`, an `else if` chain, or
+  `x = Circle {…}; x = Sq {…}` — was refused *"cannot change type from Circle to Shape"* (pass 1
+  types the arm join by its first arm, pass 2 by the enum, and `change_var_type` had no variant
+  join); tuple arms naming different variants in one member were refused in every `if` and
+  `match` form, even into a declared `(Shape, integer)`; and a vector literal of such tuples,
+  `[(Circle {…}, 1), (Sq {…}, 2)]`, was *"No common type"* while `[Circle {…}, Sq {…}]` compiled.
+  **-23** (silent-wrong, found by -22's refusal cells): the arm join's member test was
+  `Type::is_same`, a KIND test to which any two records are one type, so `(null, Circle {…})`
+  beside `(3, Tri {…})` — another enum — joined as `(integer?, Circle)` and the `Tri` was read at
+  `Circle`'s offsets on both backends; loft#1682's own join carried it.  Once -22 let variant
+  tuples reach that join, a pair that did not join was also converted SILENTLY in `parse_if`
+  and in the scalar `match`, which has no second check.  Before this change the null-member
+  shape already slipped through there: `(3, Tri {…})` after `(null, Circle {…})` printed the
+  `Tri` as `{r:2.5}`, and a text member stopped code generation with an internal compiler error.  **Fix.**  `Variables::variant_join` answers the inferred local's join,
+  element-wise; `Parser::tuple_join_open` makes a variant member leave a tuple arm unpinned, as a
+  `null` member did; `join_tuple_arms` tests members by `is_equal`, joins nested tuples and
+  either order of variant and enum, through a `?`; a pair that does not join is refused where
+  the join is asked (`parse_if`, `join_null_tuple_arm` for every match site); and an inferred
+  vector literal stores a tuple element's variant members as their enum
+  (`widen_variant_members`), as it stores a bare variant element.  Guards
+  `tests/scripts/sibling-variants-join-to-their-enum.loft` (the value half, scored by `{}`, which
+  renders by the STATIC type) and `sibling-variants-refuse-*.loft` (three refusals).
 * **D-types-20, D-types-21** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(T-Chk)` pushes the
   expected type "structurally into sub-expressions", and at an argument, a tail or a default
   it stopped at the literal's brackets.  **-20** `(T-Chk-Vec)`: the expected `vector<τ>` reached
