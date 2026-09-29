@@ -312,6 +312,16 @@ said.  It is refused now, as the `if` spelling always was.  (loft#1390)
   well.  It now reuses the standard library it already read, so a small program starts in about
   a sixth of the work it took before.  A changed standard library is still always read again.
 
+**A loop over a small list of scalars builds no list.**  `for i in [tri.a, tri.b, tri.c]`
+used to build a three-element vector on every pass and read it back; it now evaluates the
+three values once and walks them directly, on both backends.  mesh3d's `mesh_to_floats` runs
+1.5× faster, same output.
+
+**A vector literal that widens its element type is read correctly in every position.**
+`for f in [1, 2.5, 4]` read garbage for `f` (2.5's bits as an integer, and `1` stored as
+an integer under a float vector): the widening converted the wrong item.  A literal
+assigned to a variable was already right; the loop form now is too.
+
 **A loop that tests an element for `null` before using it keeps its fast paths on
 `--native`.**  `p = pts[i]; if p != null { out += [p.x, p.y] }` used to lose every hoisted
 header in the loop, so each append resolved its store again; the null test is a plain

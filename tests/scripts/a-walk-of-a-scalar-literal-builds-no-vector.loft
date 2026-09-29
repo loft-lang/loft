@@ -1,0 +1,246 @@
+// `@FR-R-LiteralWalk` — a `for` over a scalar vector literal of constant length walks its
+// items without building the vector: each item is evaluated once, in order, into its own
+// scalar temp before the loop, and the iterator is a counted select over the temps.  Every
+// value the body sees is what the vector would have held; `x#index` counts the same.
+// BOTH backends take the lowering (parse time), so agreement between them is no evidence:
+// every cell's value is hand-computed here, and `LOFT_NO_LITERAL_WALK=1` must answer
+// identically.  The cells vary what the rule's text names: the item kinds (fields, calls,
+// literals, a widening `[1, 2.5]`), the body's exits (`break`, `continue`, `return`), a
+// filter, `x#index`, a body that writes the loop variable or the items' sources, nesting,
+// `_`, and the declines (`rev(…)`, seventeen items, text items).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-29) — the select's index compare shifted
+// by one (`i == k + 1`, so step 0 yields the LAST item and the rest rotate): c6 answered 9,
+// c7 17, c8 [1,2,3,-3,-1,-2], c16 5 and c20 53 on both backends, the first assertion to
+// fail being c6's.  Every ORDER-FREE cell — the plain sums c1–c5, c9–c12, c14, c15, c17–c19
+// and the two declines c13, c21 — stayed green under the sabotage: a sum alone is vacuous
+// against an order fault, which is why the guard carries `break`, `x#index`, an evaluation
+// log, an early `return` and a positional fold.  `LOFT_NO_LITERAL_WALK=1` kept every cell
+// green, the switch's receipt.  Restored byte-identically.
+struct T { a: integer, b: integer, c: integer }
+
+// c1 — the mesh shape: three field reads of one record, summed with a weight.
+fn c1(t: T) -> integer {
+  s = 0;
+  for i in [t.a, t.b, t.c] { s += i * 10; }
+  s
+}
+
+// c2 — a widening literal: the integer items are floats once 2.5 joins them.
+fn c2() -> float {
+  s = 0.0;
+  for f in [1, 2.5, 4] { s += f; }
+  s
+}
+
+// c3 — booleans.
+fn c3() -> integer {
+  n = 0;
+  for b in [true, false, true] { if b { n += 1; } }
+  n
+}
+
+// c4 — characters, read as code points.
+fn c4() -> integer {
+  s = 0;
+  for ch in ['a', 'b', 'c'] { s += ch as integer; }
+  s
+}
+
+// c5 — one item.
+fn c5() -> integer {
+  s = 0;
+  n = 0;
+  for x in [7] { s += x; n += 1; }
+  s * 10 + n
+}
+
+// c6 — `continue` skips the second item, `break` leaves at the fourth.
+fn c6() -> integer {
+  s = 0;
+  for x in [1, 2, 3, 4, 5] {
+    if x == 2 { continue; }
+    if x == 4 { break; }
+    s += x;
+  }
+  s
+}
+
+// c7 — `x#index` counts 0, 1, 2.
+fn c7() -> integer {
+  s = 0;
+  for x in [5, 6, 7] { s += x#index * x; }
+  s
+}
+
+// c8 — every item is evaluated once, in order, before the first iteration runs.
+fn note(log: &vector<integer>, v: integer) -> integer {
+  log += [v];
+  v
+}
+
+fn c8() -> vector<integer> {
+  log: vector<integer> = [];
+  for x in [note(log, 1), note(log, 2), note(log, 3)] { log += [-x]; }
+  log
+}
+
+// c9 — the body writes the loop variable: its own copy.
+fn c9() -> integer {
+  s = 0;
+  for x in [1, 2, 3] { x = x * 100; s += x; }
+  s
+}
+
+// c10 — the items' sources change inside the loop: the walk holds the values at entry.
+fn c10() -> integer {
+  a = 1;
+  b = 2;
+  s = 0;
+  for x in [a, b] { a = 99; b = 99; s += x; }
+  s + a - 99
+}
+
+// c11 — nested literal walks.
+fn c11() -> integer {
+  s = 0;
+  for x in [1, 2] { for y in [10, 20, 30] { s += x * y; } }
+  s
+}
+
+// c12 — a filter.
+fn c12() -> integer {
+  s = 0;
+  for x in [1, 2, 3, 4] if x % 2 == 0 { s += x; }
+  s
+}
+
+// c13 — `rev(…)` keeps the vector walk; the order is reversed.
+fn c13() -> integer {
+  s = 0;
+  for x in rev([1, 2, 3]) { s = s * 10 + x; }
+  s
+}
+
+// c14 — seventeen items: over the rule's bound, the vector walk.
+fn c14() -> integer {
+  s = 0;
+  for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] { s += x; }
+  s
+}
+
+// c15 — the discard.
+fn c15() -> integer {
+  n = 0;
+  for _ in [1, 2, 3] { n += 1; }
+  n
+}
+
+// c16 — `return` from inside the walk.
+fn c16() -> integer {
+  for x in [3, 8, 5] { if x > 4 { return x; } }
+  -1
+}
+
+// c17 — text items are not scalars: the vector walk.
+fn c17() -> integer {
+  n = 0;
+  for t in ["a", "bb", "ccc"] { n += len(t); }
+  n
+}
+
+// c18 — the items index another vector (the mesh shape's use of them).
+fn c18(t: T) -> integer {
+  v = [100, 200, 300, 400];
+  s = 0;
+  for i in [t.a, t.b, t.c] { s += v[i]?; }
+  s
+}
+
+// c19 — a float first, an integer after.
+fn c19() -> float {
+  s = 0.0;
+  for f in [2.5, 1] { s += f; }
+  s
+}
+
+// c20 — the shape at its site: a literal walk per record of an outer walk.
+fn c20(ts: vector<T>) -> integer {
+  s = 0;
+  for t in ts { for i in [t.a, t.b, t.c] { s = s * 2 + i; } }
+  s
+}
+
+// c21 — the widening literal under the vector walk (`rev` declines the lowering): the
+// earlier item is converted when a later one widens the element type.
+fn c21() -> float {
+  s = 0.0;
+  for f in rev([1, 2.5, 4]) { s = s * 10.0 + f; }
+  s
+}
+
+fn main() {
+  r1 = c1(T { a: 1, b: 2, c: 3 });
+  println("c1 {r1}");
+  assert(r1 == 60, "c1");
+  r2 = c2();
+  println("c2 {r2}");
+  assert(r2 == 7.5, "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == 2, "c3");
+  r4 = c4();
+  println("c4 {r4}");
+  assert(r4 == 294, "c4");
+  r5 = c5();
+  println("c5 {r5}");
+  assert(r5 == 71, "c5");
+  r6 = c6();
+  println("c6 {r6}");
+  assert(r6 == 4, "c6");
+  r7 = c7();
+  println("c7 {r7}");
+  assert(r7 == 20, "c7");
+  r8 = c8();
+  println("c8 {r8}");
+  assert(len(r8) == 6 && r8[0]? == 1 && r8[1]? == 2 && r8[2]? == 3 && r8[3]? == -1 && r8[4]? == -2 && r8[5]? == -3, "c8");
+  r9 = c9();
+  println("c9 {r9}");
+  assert(r9 == 600, "c9");
+  r10 = c10();
+  println("c10 {r10}");
+  assert(r10 == 3, "c10");
+  r11 = c11();
+  println("c11 {r11}");
+  assert(r11 == 180, "c11");
+  r12 = c12();
+  println("c12 {r12}");
+  assert(r12 == 6, "c12");
+  r13 = c13();
+  println("c13 {r13}");
+  assert(r13 == 321, "c13");
+  r14 = c14();
+  println("c14 {r14}");
+  assert(r14 == 153, "c14");
+  r15 = c15();
+  println("c15 {r15}");
+  assert(r15 == 3, "c15");
+  r16 = c16();
+  println("c16 {r16}");
+  assert(r16 == 8, "c16");
+  r17 = c17();
+  println("c17 {r17}");
+  assert(r17 == 6, "c17");
+  r18 = c18(T { a: 1, b: 3, c: 0 });
+  println("c18 {r18}");
+  assert(r18 == 700, "c18");
+  r19 = c19();
+  println("c19 {r19}");
+  assert(r19 == 3.5, "c19");
+  r20 = c20([T { a: 1, b: 0, c: 1 }, T { a: 0, b: 1, c: 1 }]);
+  println("c20 {r20}");
+  assert(r20 == 43, "c20");
+  r21 = c21();
+  println("c21 {r21}");
+  assert(r21 == 426.0, "c21");
+}

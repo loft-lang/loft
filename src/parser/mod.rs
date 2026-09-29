@@ -912,6 +912,10 @@ pub struct Parser {
     iterable_context: bool,
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
+    /// `@FR-R-LiteralWalk` — the last scalar vector literal `parse_vector` built as a block:
+    /// the block, its items (each at the element type) and that type.  `parse_for` takes it
+    /// when the block is its iterable and walks the items without the vector.
+    pub(crate) literal_walk: Option<(Value, Vec<Value>, Type)>,
     pub(crate) last_range_till: Option<Value>,
     /// The default arms of the `??`s built last, each with the type it SYNTHESISED before it
     /// was brought to the coalesce's type.  A store whose value is a `??` checks its default
@@ -1732,6 +1736,7 @@ impl Parser {
             reverse_iterator: false,
             iterable_context: false,
             last_range_from: None,
+            literal_walk: None,
             last_range_till: None,
             coalesce_defaults: Vec::new(),
             block_path: Vec::new(),

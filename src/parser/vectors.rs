@@ -4108,7 +4108,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else {
             *val = Value::Insert(ls);
         }
+        // Offered only in a `for` head (`iterable_context`): the clone it costs is then paid
+        // by the literal a walk may take, not by every small literal a program builds.
+        if block && !is_var && !is_field && !keyed_dest && self.iterable_context {
+            self.offer_literal_walk(val, &res, &in_t);
+        }
         tp
+    }
+
+    /// `@FR-R-LiteralWalk` — a fresh literal of 1..=16 scalar items, every one at the
+    /// element type (a widening converted the earlier ones), no `[x; n]` repeat, is offered
+    /// to the `for` that may be walking it.
+    fn offer_literal_walk(&mut self, block: &Value, res: &[Value], in_t: &Type) {
+        if (1..=16).contains(&res.len())
+            && res.iter().all(|r| !matches!(r.unspan(), Value::Return(_)))
+            && crate::parser::collections::is_walkable_scalar(in_t)
+        {
+            self.literal_walk = Some((block.clone(), res.to_vec(), in_t.clone()));
+        }
     }
 
     /// Parse comma-separated vector items inside `[...]`, returning an early error type on failure.
@@ -5629,9 +5646,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         in_t.source_name(&self.data)
                     );
                 }
-            } else if self.convert(&mut p, in_t, &t) {
-                // INFERRED element type: widen to the common type
-                // (e.g. [1, 2.0] → vector<float>).
+            } else if self.widen_literal_items(elm, in_t, &t, res) {
                 *in_t = t.clone();
             } else {
                 diagnostic!(
@@ -5687,6 +5702,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// shape, so the element slot holds a plain fn-ref only; a struct FIELD holds a
     /// capturing closure, which is the route the message names
     /// (DESIGN_DECISIONS.md C116).
+    /// INFERRED element type: does `in_t` WIDEN to this item's `t` (`[1, 2.5]` →
+    /// vector<float>)?  Asked on a scratch, because the EARLIER items are what the widening
+    /// converts — the item itself is already of type `t`, and converting IT wrote 2.5's bits
+    /// through an integer conversion while `1` stayed an integer under a float vector.
+    /// `true` with every earlier item converted to `t`; the caller then widens `in_t`.
+    fn widen_literal_items(&mut self, elm: u16, in_t: &Type, t: &Type, res: &mut [Value]) -> bool {
+        let mut probe = Value::Var(elm);
+        if !self.convert(&mut probe, in_t, t) {
+            return false;
+        }
+        for earlier in res.iter_mut() {
+            if !matches!(earlier.unspan(), Value::Return(_)) {
+                self.convert(earlier, in_t, t);
+            }
+        }
+        true
+    }
+
     pub(crate) fn refuse_capturing_closure_in_collection(&mut self) {
         diagnostic!(
             self.lexer,
