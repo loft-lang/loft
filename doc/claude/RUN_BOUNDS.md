@@ -25,6 +25,7 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | what | who writes it | what removes it |
 |---|---|---|
 | `loft_native_bin_<pid>`, `loft_native_<pid>.rs` | a `--native` run's compile | the run itself when it ends normally; a run killed from OUTSIDE (a `timeout` wrapper, a harness kill, Ctrl-C) cannot, so **every native compile first sweeps the artefacts of dead processes** (`platform::reclaim_dead_native_scratch`, silent) |
+| `loft_native_cache_<checkout>/loft_native_<stem>{.rs,_bin,_bin.key}` | the native test harness (`tests/native.rs`): this checkout's per-program binary cache, in a directory named for the checkout so nothing else ever writes there | **the harness itself, at the start of a run against a loft build the directory has not seen** (`platform::sweep_own_native_cache`: the rlib's path and content hash are the stamp in `.build`; a new stamp drops every entry older than two minutes — a concurrent shard's are younger — so the tmpfs never holds two builds' binaries).  Only its own directory, so never another checkout's or another process's work.  `sweep_scratch.sh` runs its dead-pid rule inside it and removes the whole directory when nothing in it moved for a day |
 | `loft_test_native_<stem>_<key>_bin` (built in `loft_test_native_<pid>/`, published by rename) | `--tests --native`, a per-PROGRAM binary cache keyed by the native cache key — never a shared path a sibling process writes (loft#1626) | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
 | `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows | `sweep_scratch.sh` (entries older than a day) |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
@@ -33,6 +34,14 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (tens of GB per checkout) | `make sweep-target` (`cargo sweep --time 14`) |
 | `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_headroom.sh`, when the disk is short — it costs a rebuild's time, nothing else |
 | `/var/tmp/loft-test-scratch-<checkout>.<cksum>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
+
+**A build cleans up after the build before it, but only its own.**  The 4 259 binaries (13 GB
+of a 16 GB tmpfs) measured on 2026-09-29 were one checkout's native test cache compiled against
+the day's earlier loft builds by bare `cargo test` runs, and no rule removed them: each was
+younger than a day, and the harness only ever overwrote the entries a run reached.  The cache
+now lives in a per-checkout directory and forgets an older build at the next run's start; the
+boundary is the directory, not the file name, which is what keeps a sibling checkout's live
+run and every other program's files out of reach.
 
 **Every gate makes room before it starts.**  `make ci`, `make test`, `make quick` and
 `find_problems.sh` (both entry points) run `scripts/disk_headroom.sh` (`make disk-headroom` by
