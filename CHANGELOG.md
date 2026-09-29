@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A value made inside a block is released when the block ends.**  A binding inside an `if`
+arm or a plain `{ … }` now ends at that block's closing brace, as it does in Rust and as a `for`
+body always did — and a type with an `OpDrop` runs it there, where it used to run at the end of
+the function.  If your `OpDrop` releases something a later line still relies on — a transaction,
+a lock — declare the binding where you want the release to happen.
+
 **A loop that builds one vector while reading another runs its reads at full speed on
 `--native`.**  `out += [w[i]? * 2]`, `for e in ents { out += [e.q] }`, `out += [v[i]?.id]`:
 the reads of `w`, `ents` and `v` used to resolve their store per element because the loop

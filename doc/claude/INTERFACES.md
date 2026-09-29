@@ -536,9 +536,12 @@ What follows from all of this, and is worth knowing before you reach for it:
   libpq's `PQexec("ROLLBACK")` at a closing brace.
 - **Order within a scope is reverse-declaration**, matching the existing free
   order, or a statement would outlive the transaction it belongs to.
-- **A binding written inside an `if` block is hoisted to the function scope** —
-  that is where loft frees it, so that is where it drops. A `for` body is a scope
-  of its own, so a droppable made per iteration drops per iteration.
+- **A binding made inside a block drops at that block's closing brace** — an
+  `if` arm, a plain `{ … }` and a `for` body alike, so a droppable made per
+  iteration drops per iteration (`@FR-B-Scope`, as in Rust).  Until 2026-09 a
+  binding inside an `if` lived to the end of the function and dropped there;
+  code whose `OpDrop` releases something another line still expects — a
+  transaction, a lock — should declare the binding where it wants the release.
 - **A value that was never created never drops.** The free is null-tolerant and
   a drop is not, so the call is guarded by the same liveness test the free
   performs internally.
