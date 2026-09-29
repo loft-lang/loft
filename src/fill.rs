@@ -194,6 +194,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     put_ref,
     eq_ref,
     ne_ref,
+    eq_content,
+    ne_content,
     get_ref,
     set_ref,
     set_db_ref,
@@ -521,6 +523,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpPutRef",
     "OpEqRef",
     "OpNeRef",
+    "OpEqContent",
+    "OpNeContent",
     "OpGetRef",
     "OpSetRef",
     "OpSetDbRef",
@@ -1894,6 +1898,22 @@ fn ne_ref(s: &mut State) {
     } else {
         v_v1 != v_v2
     };
+    s.put_stack(new_value);
+}
+
+fn eq_content(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_v2 = s.get_stack::<DbRef>();
+    let v_v1 = s.get_stack::<DbRef>();
+    let new_value = s.database.eq_content(&v_v1, &v_v2, v_tp);
+    s.put_stack(new_value);
+}
+
+fn ne_content(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_v2 = s.get_stack::<DbRef>();
+    let v_v1 = s.get_stack::<DbRef>();
+    let new_value = !s.database.eq_content(&v_v1, &v_v2, v_tp);
     s.put_stack(new_value);
 }
 

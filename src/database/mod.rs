@@ -7,6 +7,7 @@
 mod allocation;
 pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
+mod equality;
 mod format;
 mod io;
 pub mod journal;
