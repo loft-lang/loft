@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 
 //! `@FR-E-Eq`, @C91 — content equality: the ONE runtime home of `a == b` for a value that lives
 //! in a store.  Both backends reach it through `OpEqContent` (`default/01_code.loft`).

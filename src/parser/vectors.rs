@@ -3237,8 +3237,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 );
             }
             self.skip_braced();
-            // The poison (@P376), not `null`: a `null` element made the literal a
-            // `vector<…>?` and every later use of it warned about an absence nobody wrote.
+            // The poison of an error already reported, not `null`: a `null` element made the
+            // literal a `vector<…>?` and every later use of it warned about an absence nobody
+            // wrote.
             return Type::Never;
         }
         let for_next = v_set(for_var, iter_next);

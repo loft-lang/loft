@@ -8800,7 +8800,7 @@ Returns true if `path` exists and is a regular file. Use to confirm a directory 
 pub fn is_symlink(path: text) -> boolean fs#read
 ```
 
-Returns true if `path` itself is a symbolic link, whatever it points at — is\_dir and is\_file answer for the TARGET, so a walk that must not follow a link asks this first (\@PLN179).  False on a browser host, which has no links.
+Returns true if `path` itself is a symbolic link, whatever it points at — is\_dir and is\_file answer for the TARGET, so a walk that must not follow a link asks this first.  False on a browser host, which has no links.
 
 ```rust
 pub fn list_dir(path: text) -> vector<text> ?fs#read

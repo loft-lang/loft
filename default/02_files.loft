@@ -333,7 +333,7 @@ pub fn is_file(path: text) -> boolean fs#read;
 #impure(io)
 // Returns true if `path` itself is a symbolic link, whatever it points at —
 // is_dir and is_file answer for the TARGET, so a walk that must not follow a
-// link asks this first (@PLN179).  False on a browser host, which has no links.
+// link asks this first.  False on a browser host, which has no links.
 pub fn is_symlink(path: text) -> boolean fs#read;
 #rust"codegen_runtime::fs_is_symlink(&s.database.resolve_path(@path))"
 #impure(io)

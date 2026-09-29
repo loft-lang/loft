@@ -3755,7 +3755,7 @@ impl Parser {
         // coalesce's own typing (`?? null` keeps the value nullable, a nullable default
         // widens it), not a store into a slot: @FR-N-Store admits it here and is asked
         // wherever the coalesced value lands.
-        // A value typed `never` is the poison of an error already reported (@P376) — an
+        // A value typed `never` is the poison of an error already reported — an
         // unknown function, an undefined type — so there is no value type for the default to
         // miss, and a report here is that one error said again for every `??` downstream of
         // it (a library's one unresolved name gave sixteen).

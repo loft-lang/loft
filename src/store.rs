@@ -715,6 +715,22 @@ fn discard_sink(len: usize) -> *mut u8 {
     })
 }
 
+/// An arena allocation that failed is a null pointer, and every caller writes through it at once
+/// — so a null here aborts through `handle_alloc_error`, as `Vec` and `Box` do on the same
+/// failure, instead of being written through (undefined behaviour).  The loader that can refuse
+/// an image (`Store::from_bytes`) keeps its own `None`.
+fn arena_or_abort(ptr: *mut u8, l: Layout) -> *mut u8 {
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(l);
+    }
+    ptr
+}
+
+/// The layout a `realloc` to `bytes` asked for, for `arena_or_abort`'s report.
+fn grown(bytes: usize) -> Layout {
+    Layout::from_size_align(bytes, 8).unwrap_or(Layout::new::<u64>())
+}
+
 impl Store {
     /// True when this store's memory IS a memory-mapped file
     /// (`store_persist_bind`) — its bytes are DURABLE state.
@@ -1008,7 +1024,7 @@ impl Store {
         // (0xc0000374).
         let size = size.max(2);
         let l = Layout::from_size_align(size as usize * 8, 8).expect("Problem");
-        let ptr = unsafe { A.alloc_zeroed(l) };
+        let ptr = arena_or_abort(unsafe { A.alloc_zeroed(l) }, l);
         // A fresh store has no type yet — `set_known_type` moves these bytes across
         // when `database_named` names it.
         crate::store_budget::add(u16::MAX, size as usize * 8, 0);
@@ -1215,7 +1231,7 @@ impl Store {
             "store load: image exceeds the {MAX_STORE_WORDS}-word store limit"
         );
         let l = Layout::from_size_align(words as usize * 8, 8).expect("Problem");
-        let ptr = unsafe { A.alloc_zeroed(l) };
+        let ptr = arena_or_abort(unsafe { A.alloc_zeroed(l) }, l);
         crate::store_budget::add(u16::MAX, words as usize * 8, 0);
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
@@ -2140,7 +2156,7 @@ impl Store {
         // it was and the report describes the growth that was stopped.
         crate::store_budget::grow(self.known_type, old_bytes, bytes, self.created_at);
         let l = Layout::from_size_align(old_bytes, 8).expect("Problem");
-        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+        self.ptr = arena_or_abort(unsafe { A.realloc(self.ptr, l, bytes) }, grown(bytes));
         if bytes > old_bytes {
             unsafe { self.ptr.add(old_bytes).write_bytes(0, bytes - old_bytes) };
         }
@@ -2226,7 +2242,7 @@ impl Store {
             return true;
         }
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
-        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+        self.ptr = arena_or_abort(unsafe { A.realloc(self.ptr, l, bytes) }, grown(bytes));
         crate::store_budget::shrink(
             self.known_type,
             self.size as usize * 8,
@@ -2467,7 +2483,7 @@ impl Store {
     /// The clone always has `locked = true`; the mmap file is not shared (data is copied).
     pub fn clone_locked(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
-        let ptr = unsafe { A.alloc(l) };
+        let ptr = arena_or_abort(unsafe { A.alloc(l) }, l);
         crate::store_budget::add(self.known_type, self.size as usize * 8, 0);
         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
         Store {
@@ -2520,7 +2536,7 @@ impl Store {
     #[must_use]
     pub(crate) fn snapshot_copy(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("snapshot layout");
-        let ptr = unsafe { A.alloc(l) };
+        let ptr = arena_or_abort(unsafe { A.alloc(l) }, l);
         crate::store_budget::add(self.known_type, self.size as usize * 8, self.created_at);
         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
         Store {

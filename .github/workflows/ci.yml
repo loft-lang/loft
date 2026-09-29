@@ -438,7 +438,9 @@ jobs:
       # `xvfb` + `libgl1-mesa-dri` give a headless software-GL (llvmpipe)
       # display so the GL-render golden
       # (graphics_gold::crystal_editor_gl_matches_gold) can run; the canvas
-      # goldens need no display.
+      # goldens need no display.  `libxkbcommon-x11-0` is loaded at run time by
+      # winit's X11 event loop — without it the window never opens and the gold
+      # produces no screenshot, which LOFT_REQUIRE_GL_GOLD below turns red.
       # `libsqlite3-0` is what the lazy DATABASE source (@F108) is tested
       # against: `tests/lazy_sql_source.rs` drives it through `c_call::resolve`,
       # so it needs the shared library at runtime and no headers.  It is
@@ -455,7 +457,7 @@ jobs:
       # 2106 KB on the run that caught this) and the name section never appears.
       - name: Install mold + ALSA + headless GL + sqlite + binaryen (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libsqlite3-0 binaryen
+        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
 
       # The repo's cache budget is 10 GB, evicted least-recently-used, and it is
       # the binding constraint on everything below.  Measured 2026-09-28: one run

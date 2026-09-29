@@ -293,6 +293,27 @@ def new_findings(path, rev):
     return out
 
 
+def moved_pool(rev):
+    """The findings of `rev`'s version of every file the change touched — deleted and renamed-away
+    files included — as a multiset.  A finding the change only MOVED (a section split out of one
+    doc into another, a history paragraph moved to its companion) is in this pool, so it is not
+    new: judged file by file, every stamp in a split's new file read as added, and the split that
+    brought every working doc under the ceiling failed the gate with 257 of them."""
+    r = subprocess.run(["git", "diff", "--name-status", "-M", rev], cwd=ROOT,
+                       capture_output=True, text=True, check=True)
+    pool = collections.Counter()
+    for line in r.stdout.splitlines():
+        parts = line.split("\t")
+        for old_path in parts[1:2]:          # the base-side path (the source of a rename)
+            if not lintable(old_path):
+                continue
+            before = old_text(old_path, rev)
+            if before is not None:
+                pool.update(key(rl, t) for _, rl, _, t in lint_text(old_path, before, False)
+                            if rl != "size")
+    return pool
+
+
 def lintable(path: str) -> bool:
     return path.endswith((".md", ".rs", ".loft")) and not path.startswith(("target/", "index/"))
 
@@ -370,8 +391,23 @@ def main(argv):
     paths = [p for p in dict.fromkeys(paths) if lintable(p) and os.path.exists(os.path.join(ROOT, p))]
 
     findings = []
+    pool = moved_pool(a.since) if a.changed else None
     for p in paths:
-        if a.since:
+        if pool is not None:
+            # Across the change, not file by file: what the change moved is not new.  The size
+            # rule stays per file (only CROSSING the ceiling is new), so it comes from
+            # `new_findings`; every other finding is matched against the pool.
+            fs = [f for f in new_findings(p, a.since) if f[1] == "size"]
+            text = open(os.path.join(ROOT, p), encoding="utf-8").read()
+            for f in lint_text(p, text):
+                if f[1] == "size":
+                    continue
+                k = key(f[1], f[3])
+                if pool[k] > 0:
+                    pool[k] -= 1
+                else:
+                    fs.append(f)
+        elif a.since:
             fs = new_findings(p, a.since)
         else:
             fs = lint_text(p, open(os.path.join(ROOT, p), encoding="utf-8", errors="replace").read())

@@ -696,7 +696,7 @@ pub struct Parser {
     #[cfg(feature = "registry")]
     root_dep_pins: Option<std::collections::HashMap<String, String>>,
     /// The declaration that governs the whole PROGRAM's registry versions, answered once
-    /// from the entry file (@PLN143 arc B) at the first registry lookup — a program that
+    /// from the entry file at the first registry lookup — a program that
     /// `use`s nothing never asks.  A `use` inside a dependency resolves through it too:
     /// read from the file doing the `use`, a dependency in the registry cache found its own
     /// cached `loft.toml` and a lock that never exists there, so the consumer's pin for a

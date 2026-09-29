@@ -129,7 +129,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn is_symlink(path: text) -&gt; boolean fs#read</code></pre>
-<p>Returns true if `path` itself is a symbolic link, whatever it points at — is_dir and is_file answer for the TARGET, so a walk that must not follow a link asks this first (@PLN179).  False on a browser host, which has no links.</p>
+<p>Returns true if `path` itself is a symbolic link, whatever it points at — is_dir and is_file answer for the TARGET, so a walk that must not follow a link asks this first.  False on a browser host, which has no links.</p>
 </div>
 <div class="item">
 <pre><code>pub fn list_dir(path: text) -&gt; vector&lt;text&gt; ?fs#read</code></pre>
