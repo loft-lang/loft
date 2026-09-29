@@ -16,6 +16,13 @@
 //                        comprehension); replace vs append; a root bound before the local; no
 //                        rebind; the root a returned value.
 // Axes it HOLDS FIXED:   a `vector<integer>` / `vector<boolean>` field one level down.
+//
+// @falsified-at: fdddb2b64 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0.  CHANNEL: values on the interpreter (the lost elements); native did not compile
+//   the fresh-root cells (E0425), so it scores on exit.
+// @falsified-by: tests/falsified/a-field-store-lands-in-the-record-bound-at-the-store.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// HOLDS: leak (the `wrap.rs` gate, and `LOFT_NATIVE_LEAK_CHECK=1` on a `main` run), panic and
+//   free-refusal are clean on both backends.
 
 struct M { b: vector<integer>, k: integer }
 struct R { b: vector<integer>, c: vector<boolean> }

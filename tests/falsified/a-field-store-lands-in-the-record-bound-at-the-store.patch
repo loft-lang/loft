@@ -1,0 +1,233 @@
+diff --git b/default/02_files.loft a/default/02_files.loft
+index 5a3be364a..0a62dc52a 100644
+--- b/default/02_files.loft
++++ a/default/02_files.loft
+@@ -333,7 +333,7 @@ pub fn is_file(path: text) -> boolean fs#read;
+ #impure(io)
+ // Returns true if `path` itself is a symbolic link, whatever it points at —
+ // is_dir and is_file answer for the TARGET, so a walk that must not follow a
+-// link asks this first.  False on a browser host, which has no links.
++// link asks this first (@PLN179).  False on a browser host, which has no links.
+ pub fn is_symlink(path: text) -> boolean fs#read;
+ #rust"codegen_runtime::fs_is_symlink(&s.database.resolve_path(@path))"
+ #impure(io)
+diff --git b/src/database/equality.rs a/src/database/equality.rs
+index 58231a1e1..0c68e1abc 100644
+--- b/src/database/equality.rs
++++ a/src/database/equality.rs
+@@ -1,6 +1,5 @@
+ // Copyright (c) 2026 Jurjen Stellingwerff
+ // SPDX-License-Identifier: LGPL-3.0-or-later
+-// @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
+ 
+ //! `@FR-E-Eq`, @C91 — content equality: the ONE runtime home of `a == b` for a value that lives
+ //! in a store.  Both backends reach it through `OpEqContent` (`default/01_code.loft`).
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 4d7823558..71d6dd4de 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -696,7 +696,7 @@ pub struct Parser {
+     #[cfg(feature = "registry")]
+     root_dep_pins: Option<std::collections::HashMap<String, String>>,
+     /// The declaration that governs the whole PROGRAM's registry versions, answered once
+-    /// from the entry file at the first registry lookup — a program that
++    /// from the entry file (@PLN143 arc B) at the first registry lookup — a program that
+     /// `use`s nothing never asks.  A `use` inside a dependency resolves through it too:
+     /// read from the file doing the `use`, a dependency in the registry cache found its own
+     /// cached `loft.toml` and a lock that never exists there, so the consumer's pin for a
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 0082a6f95..b51f3082f 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3755,7 +3755,7 @@ impl Parser {
+         // coalesce's own typing (`?? null` keeps the value nullable, a nullable default
+         // widens it), not a store into a slot: @FR-N-Store admits it here and is asked
+         // wherever the coalesced value lands.
+-        // A value typed `never` is the poison of an error already reported — an
++        // A value typed `never` is the poison of an error already reported (@P376) — an
+         // unknown function, an undefined type — so there is no value type for the default to
+         // miss, and a report here is that one error said again for every `??` downstream of
+         // it (a library's one unresolved name gave sixteen).
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index a54b20b36..f0ea5ddab 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3237,9 +3237,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 );
+             }
+             self.skip_braced();
+-            // The poison of an error already reported, not `null`: a `null` element made the
+-            // literal a `vector<…>?` and every later use of it warned about an absence nobody
+-            // wrote.
++            // The poison (@P376), not `null`: a `null` element made the literal a
++            // `vector<…>?` and every later use of it warned about an absence nobody wrote.
+             return Type::Never;
+         }
+         let for_next = v_set(for_var, iter_next);
+diff --git b/src/scopes.rs a/src/scopes.rs
+index e9d465ff6..115b26edb 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -8030,7 +8030,6 @@ fn construct_move_rewrite(
+         ambiguous,
+         vdb,
+         container,
+-        last_bind,
+         ..
+     } = sc;
+ 
+@@ -8081,14 +8080,6 @@ fn construct_move_rewrite(
+                     if bad_containers.contains(&cvar) {
+                         return false;
+                     }
+-                    // `@FR-R-MoveLast` — a container BOUND after the source's backing exists is
+-                    // not the record the retargeted build lands in: a rebind allocates nothing,
+-                    // so the order check below read it as a parameter (loft#1741).
+-                    if let (Some(&bound), Some(&v)) = (last_bind.get(&cvar), db_order.get(&vdb[s]))
+-                        && bound > v
+-                    {
+-                        return false;
+-                    }
+                     // container built before the source's backing (both locals), or a real param.
+                     match (db_order.get(&cvar), db_order.get(&vdb[s])) {
+                         (Some(&c), Some(&v)) => c < v,
+@@ -8153,9 +8144,6 @@ struct ConstructScan {
+     vdb: HashMap<u16, u16>,
+     /// Source → the destination's container var, when the destination is a field read.
+     container: HashMap<u16, Option<u16>>,
+-    /// Per var, the `OpDatabase` count at its LATEST binding (`Set`) — a container bound after
+-    /// a source's backing is allocated is not the one the source's build would land in.
+-    last_bind: HashMap<u16, usize>,
+     /// Walk state: the `OpDatabase` counter, the region-id counter, and the current path.
+     idx: usize,
+     next_region: u32,
+@@ -8207,10 +8195,6 @@ fn construct_prescan(node: &Value, co: &ConstructOps, con: &HashSet<u16>, sc: &m
+         }
+         _ => {}
+     }
+-    if let Value::Set(v, _) = node.unspan() {
+-        let at = sc.last_bind.entry(*v).or_insert(sc.idx);
+-        *at = (*at).max(sc.idx);
+-    }
+     // A node whose children do NOT run exactly once with it opens a region, so everything
+     // below carries a path the statements outside cannot match.  Scoped to the whole node
+     // rather than to the arms alone: an `if` CONDITION does run once, but charging it the
+@@ -8714,15 +8698,6 @@ fn try_replace_one(
+     if (bs..c2).any(|i| !chain.contains(&i) && refs_var(&b.operators[i], a)) {
+         return false;
+     }
+-    // `@FR-R-MoveLast` — nor may the region BIND `a`: the build lands in the `a.field` that exists
+-    // at `bs`, and a rebind before the store (`m9 = mo`, a call result, an arm of an `if`) puts a
+-    // different record there, so the built elements were lost with no diagnostic on both
+-    // backends — and on `--native` a FRESH `a` was used before its `let` (loft#1741).  An
+-    // `OpDatabase` of `a` after `bs` is refused above; a binding by assignment allocates nothing,
+-    // which is how it passed as "pre-existing".
+-    if (bs..c2).any(|i| !chain.contains(&i) && binds_var(&b.operators[i], a)) {
+-        return false;
+-    }
+ 
+     let clear = b.operators[c2 - 1].clone();
+     let ops = std::mem::take(&mut b.operators);
+@@ -8807,21 +8782,6 @@ fn refs_var(op: &Value, v: u16) -> bool {
+     found
+ }
+ 
+-/// Does `op` BIND `v` anywhere inside it — a `Set(v, …)`, at any depth?  `refs_var`'s twin for
+-/// the other half of a variable's life: a rebind names `v` as a target id, not as a `Var` node,
+-/// so a read-only walk passes over it (loft#1741).
+-fn binds_var(op: &Value, v: u16) -> bool {
+-    fn walk(node: &Value, v: u16, found: &mut bool) {
+-        if matches!(node.unspan(), Value::Set(x, _) if *x == v) {
+-            *found = true;
+-        }
+-        node.for_each_child(&mut |c| walk(c, v, found));
+-    }
+-    let mut found = false;
+-    walk(op, v, &mut found);
+-    found
+-}
+-
+ /// Is `Var(v)` referenced in any operator strictly after index `idx`?
+ fn references_var_after(b: &Block, v: u16, idx: usize) -> bool {
+     b.operators[idx + 1..].iter().any(|op| refs_var(op, v))
+diff --git b/src/store.rs a/src/store.rs
+index c05915df1..7825e6039 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -715,22 +715,6 @@ fn discard_sink(len: usize) -> *mut u8 {
+     })
+ }
+ 
+-/// An arena allocation that failed is a null pointer, and every caller writes through it at once
+-/// — so a null here aborts through `handle_alloc_error`, as `Vec` and `Box` do on the same
+-/// failure, instead of being written through (undefined behaviour).  The loader that can refuse
+-/// an image (`Store::from_bytes`) keeps its own `None`.
+-fn arena_or_abort(ptr: *mut u8, l: Layout) -> *mut u8 {
+-    if ptr.is_null() {
+-        std::alloc::handle_alloc_error(l);
+-    }
+-    ptr
+-}
+-
+-/// The layout a `realloc` to `bytes` asked for, for `arena_or_abort`'s report.
+-fn grown(bytes: usize) -> Layout {
+-    Layout::from_size_align(bytes, 8).unwrap_or(Layout::new::<u64>())
+-}
+-
+ impl Store {
+     /// True when this store's memory IS a memory-mapped file
+     /// (`store_persist_bind`) — its bytes are DURABLE state.
+@@ -1024,7 +1008,7 @@ impl Store {
+         // (0xc0000374).
+         let size = size.max(2);
+         let l = Layout::from_size_align(size as usize * 8, 8).expect("Problem");
+-        let ptr = arena_or_abort(unsafe { A.alloc_zeroed(l) }, l);
++        let ptr = unsafe { A.alloc_zeroed(l) };
+         // A fresh store has no type yet — `set_known_type` moves these bytes across
+         // when `database_named` names it.
+         crate::store_budget::add(u16::MAX, size as usize * 8, 0);
+@@ -1231,7 +1215,7 @@ impl Store {
+             "store load: image exceeds the {MAX_STORE_WORDS}-word store limit"
+         );
+         let l = Layout::from_size_align(words as usize * 8, 8).expect("Problem");
+-        let ptr = arena_or_abort(unsafe { A.alloc_zeroed(l) }, l);
++        let ptr = unsafe { A.alloc_zeroed(l) };
+         crate::store_budget::add(u16::MAX, words as usize * 8, 0);
+         unsafe {
+             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+@@ -2156,7 +2140,7 @@ impl Store {
+         // it was and the report describes the growth that was stopped.
+         crate::store_budget::grow(self.known_type, old_bytes, bytes, self.created_at);
+         let l = Layout::from_size_align(old_bytes, 8).expect("Problem");
+-        self.ptr = arena_or_abort(unsafe { A.realloc(self.ptr, l, bytes) }, grown(bytes));
++        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+         if bytes > old_bytes {
+             unsafe { self.ptr.add(old_bytes).write_bytes(0, bytes - old_bytes) };
+         }
+@@ -2242,7 +2226,7 @@ impl Store {
+             return true;
+         }
+         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
+-        self.ptr = arena_or_abort(unsafe { A.realloc(self.ptr, l, bytes) }, grown(bytes));
++        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+         crate::store_budget::shrink(
+             self.known_type,
+             self.size as usize * 8,
+@@ -2483,7 +2467,7 @@ impl Store {
+     /// The clone always has `locked = true`; the mmap file is not shared (data is copied).
+     pub fn clone_locked(&self) -> Store {
+         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
+-        let ptr = arena_or_abort(unsafe { A.alloc(l) }, l);
++        let ptr = unsafe { A.alloc(l) };
+         crate::store_budget::add(self.known_type, self.size as usize * 8, 0);
+         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
+         Store {
+@@ -2536,7 +2520,7 @@ impl Store {
+     #[must_use]
+     pub(crate) fn snapshot_copy(&self) -> Store {
+         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("snapshot layout");
+-        let ptr = arena_or_abort(unsafe { A.alloc(l) }, l);
++        let ptr = unsafe { A.alloc(l) };
+         crate::store_budget::add(self.known_type, self.size as usize * 8, self.created_at);
+         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
+         Store {
