@@ -255,6 +255,31 @@ fn crystal_editor_gl_matches_gold() {
     );
     let (actual, aw, ah) = decode_rgba8(&shot);
     let (expected, ew, eh) = decode_rgba8(&gold);
+    // One accepted render PER RENDERER: `crystal-editor-gl.png` is this repo's reference, and
+    // `crystal-editor-gl.<host>.png` beside it is the same scene on another software GL (the
+    // CI runner's llvmpipe rasterizes stroke edges and blends differently in 876 of 1e6
+    // pixels, the content identical).  Each is held to the same strict limits, so a missing
+    // or wrong element fails against every one of them.
+    let mut accepted: Vec<(String, Vec<u8>)> = vec![("crystal-editor-gl.png".into(), expected)];
+    if let Ok(dir) = std::fs::read_dir(root.join("tests/gold")) {
+        let mut others: Vec<PathBuf> = dir
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                    n.starts_with("crystal-editor-gl.")
+                        && n.ends_with(".png")
+                        && n != "crystal-editor-gl.png"
+                })
+            })
+            .collect();
+        others.sort();
+        for p in others {
+            let (px, w, h) = decode_rgba8(&p);
+            if (w, h) == (ew, eh) {
+                accepted.push((p.file_name().unwrap().to_string_lossy().into_owned(), px));
+            }
+        }
+    }
     // @P348 — HiDPI / display-scaled environments can hand the GL window a
     // SCALED framebuffer (observed 1333x1333 = 1000 × 1.333) even under
     // `xvfb-run`.  The controlled `make test-gl-golden` path (fixed Xvfb
@@ -267,15 +292,24 @@ fn crystal_editor_gl_matches_gold() {
         ));
         return;
     }
-    let diff = compare_rgba(&actual, &expected, aw as usize);
     let (max_abs, mean_abs) = (16u32, 2.0f64);
-    // The one-pixel measure, not the raw one: the gold is compared on whichever Mesa llvmpipe
-    // the host has, and two versions place a thin line's edge a pixel apart (876 of 1e6 pixels
-    // at 220 on the CI runner, none here).  The mean stays over the raw difference.
+    // The one-pixel measure, not the raw one: a thin line's edge may still land a pixel over
+    // between two runs of one renderer.  The mean stays over the raw difference.
+    let (best, diff) = accepted
+        .iter()
+        .map(|(name, px)| (name.clone(), compare_rgba(&actual, px, aw as usize)))
+        .min_by(|a, b| {
+            (a.1.max_abs_shifted, a.1.mean_abs)
+                .partial_cmp(&(b.1.max_abs_shifted, b.1.mean_abs))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .expect("at least the reference gold");
     assert!(
         diff.max_abs_shifted <= max_abs && diff.mean_abs <= mean_abs,
-        "crystal GL gold mismatch:\n  max_abs={} (within one pixel: {}, limit {max_abs})\n  mean_abs={:.4} (limit {mean_abs})\n  \
-         differing={}/{} pixels\n  to accept: UPDATE_GOLD=1 cargo test --test crystal_editor_gold",
+        "crystal GL gold mismatch (closest of {} accepted renders: {best}):\n  max_abs={} (within one pixel: {}, limit {max_abs})\n  mean_abs={:.4} (limit {mean_abs})\n  \
+         differing={}/{} pixels\n  to accept: UPDATE_GOLD=1 cargo test --test crystal_editor_gold\n  \
+         (a new renderer: look at the screenshot, then add it as tests/gold/crystal-editor-gl.<host>.png)",
+        accepted.len(),
         diff.max_abs,
         diff.max_abs_shifted,
         diff.mean_abs,
