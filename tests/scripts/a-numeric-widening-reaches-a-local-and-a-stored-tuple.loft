@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-C-Num` — `integer ⤳ float`, `integer ⤳ single`, `single ⤳ float` are implicit (LOFT.md's
+// conversion table).  Two ways a value reaches a slot REFUSED it although the four others took
+// it (formal/types.md D-types-15, D-types-16):
+//
+//   - a LOCAL: `f: float = a` was refused as "cannot change type from float to integer";
+//   - a tuple carrying a HEAP member, held in its stored spelling (`__tuple<…>`): a call's
+//     `(text, integer)` result into a `(text, float)` local or field had no conversion at all.
+//
+// The cells the pre-fix tree answered WRONG are in `a-tuple-converts-member-by-member.loft`.
+//
+// Axes this file MOVES:  the scalar local (declared, reassigned, `single` source and target), the
+//                        stored tuple's source (a variable, a call) and site (local, field, return),
+//                        repeated construction (a text member copied, not aliased).
+// Axes it HOLDS FIXED:   non-null tuples.
+//
+// @falsified-at: 9c3c6cf78 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-numeric-widening-reaches-a-local-and-a-stored-tuple.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — both defects were refusals, so the control does not compile this file.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+struct H { t: (text, float) }
+
+fn ret_text(k: integer) -> (text, float) { a: (text, integer) = ("r{k}", k); a }
+fn mk(k: integer) -> (text, integer) { ("m{k}", k) }
+
+fn test_a_scalar_local_takes_the_widening() {
+  a: integer = 2;
+  f: float = a;
+  g: float = 0.5;
+  was = g;
+  g = a + 1;
+  s: single = a;
+  d: float = 2.5f;
+  assert("{f} {was} {g} {s} {d}" == "2 0.5 3 2 2.5", "scalar locals: {f} {was} {g} {s} {d}");
+}
+
+fn test_a_heap_member_beside_the_converted_one_is_copied() {
+  for i in 0..3 {
+    a: (text, integer) = ("s{i}", i + 2);
+    x: (text, float) = a;
+    a.0 = "changed";
+    y: (text, float) = mk(i);
+    h = H { t: mk(i + 10) };
+    r = ret_text(i);
+    got = "{x.0},{x.1} {a.0} {y.0},{y.1} {h.t.0},{h.t.1} {r.0},{r.1}";
+    assert(got == "s{i},{i + 2} changed m{i},{i} m{i + 10},{i + 10} r{i},{i}", "heap members: {got}");
+  }
+}

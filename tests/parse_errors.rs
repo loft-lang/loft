@@ -5302,3 +5302,64 @@ fn a_par_method_on_a_captured_value_names_the_scalar_route() {
          function: `f(a, k)` at a_par_method_on_a_captured_value_names_the_scalar_route:3:77",
     );
 }
+
+// The narrowing rules across the ways a value reaches a narrow slot — the value cells are in
+// `tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft`.
+
+// A tuple literal's member that does not fit its declared narrow member is refused, as the member
+// write `t.1 = 256` already was (formal/types.md D-types-10).
+#[test]
+fn a_tuple_literal_member_that_does_not_fit_is_refused() {
+    code!("fn test() {\n  t: (integer, u8) = (1, 256);\n  println(\"{t.1}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
+}
+
+// A tuple whose member TYPE is wider than the slot's is refused by member (D-types-10).
+#[test]
+fn a_tuple_of_a_wider_member_type_is_refused() {
+    code!("fn test() {\n  n = 3 + len(\"\");\n  a = (1, n);\n  t: (integer, u8) = a;\n  println(\"{t.1}\");\n}")
+        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or take the checked cast `as u8?` at a_tuple_of_a_wider_member_type_is_refused:4:24");
+}
+
+// A `??` default is stored into the slot, so a constant default must fit it (D-types-11).
+#[test]
+fn a_coalesce_default_that_does_not_fit_is_refused() {
+    code!("fn g(n: integer) -> integer? { if n > 0 { n } else { null } }\nfn test() {\n  x: u8 = g(0) ?? 300;\n  println(\"{x}\");\n}")
+        .error("the `??` default (300) does not fit u8 — it is stored when the value is absent or does not fit, so give a default within u8's range at a_coalesce_default_that_does_not_fit_is_refused:3:23");
+}
+
+// …and a default of a wider TYPE is refused, as the same value stored directly is (D-types-11).
+#[test]
+fn a_coalesce_default_of_a_wider_type_is_refused() {
+    code!("fn g(n: integer) -> integer? { if n > 0 { n } else { null } }\nfn test() {\n  big = 1000 + len(\"\");\n  x: u8 = g(0) ?? big;\n  println(\"{x}\");\n}")
+        .error("the `??` default (integer) does not fit u8 — it is stored when the value is absent or does not fit, so give a default within u8's range at a_coalesce_default_of_a_wider_type_is_refused:4:23");
+}
+
+// A struct field default is a store into the field and meets its type (D-types-12).
+#[test]
+fn a_field_default_that_does_not_fit_is_refused() {
+    code!("struct S { f: u8 = 256, k: integer }\nfn test() {\n  s = S { k: 1 };\n  println(\"{s.f}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_field_default_that_does_not_fit_is_refused:1:24");
+}
+
+// An `if` whose arms all fit is a fitting value (D-types-13); one arm that does not is still refused.
+#[test]
+fn an_arm_that_does_not_fit_is_refused() {
+    code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_arm_that_does_not_fit_is_refused:3:35");
+}
+
+// `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign
+// change is no containment.  The widening cells are in
+// `tests/scripts/a-narrow-integer-widens-into-any-superset.loft`.
+#[test]
+fn a_signed_value_does_not_widen_into_an_unsigned_one() {
+    code!("fn test() {\n  a: i8 = -5;\n  x: u8 = a;\n  println(\"{x}\");\n}")
+        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
+}
+
+#[test]
+fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
+    code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
+        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
+}

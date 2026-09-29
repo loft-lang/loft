@@ -3833,6 +3833,7 @@ impl Parser {
             let mut lhs = code.clone();
             let null_check = null_check_builder(self, code);
             self.convert(&mut lhs, lhs_type, &result_type);
+            self.record_coalesce_default(&rhs, &rhs_type);
             *code = v_if(null_check, lhs, rhs);
         } else {
             // Non-trivial expression: materialise into a temp to avoid double
@@ -3936,6 +3937,7 @@ impl Parser {
             let mut true_branch = Value::Var(tmp);
             self.convert(&mut true_branch, lhs_type, &result_type);
             self.wrap_dense_default_as_some(&result_type, &rhs_type, &mut rhs);
+            self.record_coalesce_default(&rhs, &rhs_type);
             let if_expr = v_if(null_check, true_branch, rhs);
             // @PLN102 `??` Vector view-model (OWNED subject only): the subject
             // `__ncc_N` is a function-scope OWNER freed by `get_free_vars` (see
@@ -3980,6 +3982,17 @@ impl Parser {
             *code = v_block(vec![set_tmp, if_expr], result_type.clone(), "ncc");
         }
         *ctp = Self::wrap_if_fallback_nullable(result_type, fallback_nullable);
+    }
+
+    /// Remember a `??`'s default arm with its synthesised type (see `coalesce_defaults`).
+    fn record_coalesce_default(&mut self, rhs: &Value, rhs_type: &Type) {
+        if self.first_pass {
+            return;
+        }
+        if self.coalesce_defaults.len() >= 16 {
+            self.coalesce_defaults.remove(0);
+        }
+        self.coalesce_defaults.push((rhs.clone(), rhs_type.clone()));
     }
 
     /// Does this `??` subject deliver a RECORD store the frame must own?
@@ -4369,6 +4382,21 @@ impl Parser {
         // tail that turned `i64::MIN` into 0 and destroyed the null; that hazard is now fixed
         // at the `rust_type` seam, so the narrow τ is preserved.)
         let res_tp = Type::optional(tp.clone());
+        // A CONSTANT has its answer now — itself when it fits, the null when it does not —
+        // so it takes no temporary.  The temporary is what made a parameter default meeting a
+        // `u8?` look unreplayable in pass 2 only (`fn g(a: u8? = 5)` stopped parsing).
+        if let Some(n) = self.const_int(code) {
+            if n < i64::from(min) || n > max {
+                *code = self.cl("OpConvIntFromNull", &[]);
+            }
+            return res_tp;
+        }
+        // The integer null is already the answer a miss gives (a range guard folds an
+        // out-of-range constant to it).
+        if matches!(code.unspan(), Value::Call(d, a) if a.is_empty() && self.data.def(*d).name() == "OpConvIntFromNull")
+        {
+            return res_tp;
+        }
         let tmp = self.create_unique("_dn4", src_tp);
         let set = v_set(tmp, code.clone());
         let cond_lo = self.cl("OpLeInt", &[Value::Int(min), Value::Var(tmp)]);
