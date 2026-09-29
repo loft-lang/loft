@@ -9735,7 +9735,7 @@ extern crate loft;"
                         self.output_native_direct_call(w, def_nr, &qualified)?;
                     }
                 } else {
-                    // P269: refuse to emit a runtime panic for a reachable
+                    // P269, @C67: refuse to emit a runtime panic for a reachable
                     // unimplemented native — convert to a compile-time error
                     // per the "fail at startup, not runtime" principle.
                     // Unreachable defs keep the `todo!()` shim so unused

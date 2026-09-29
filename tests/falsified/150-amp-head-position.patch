@@ -1,0 +1,12 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -3864,7 +3864,7 @@
+         // where a leading `&` binds a reference, so open the head there.  A COMPOUND
+         // assignment (`b += &a`) is excluded on purpose: it mutates `b`, it does not
+         // give `b` a reference type, so it is not a bind site.
+-        self.amp_head = if op == "=" {
++        self.amp_head = if false && op == "=" {
+             AmpHead::AssignRhs
+         } else {
+             AmpHead::No

@@ -137,7 +137,9 @@ wrong value, while a developer wants the loud stop.
 **Revisit when.** A deployment shape surfaces where log-and-continue is wrong.  Decided
 2026-05-11, calculation faults revised by C80 on 2026-06-24 —
 [record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
-**Holds at:** `tests/panic_halts_both_backends.rs`; LOGGER.md.
+**Holds at:** `@C66` — `panic_halts_both_backends.rs::production_mode_logs_and_continues_on_both_backends`
+(production continues, both backends; the halting rows above it are its control); LOGGER.md.
+The locked-store write keeps the same promise: `@C80`, `tests/locked_writes.rs`.
 **Catalogue:** @F38 (arithmetic safety), @F44 (logging — panic/assert).
 
 ## C67 — Fail at startup, not at runtime (no programmer-side try/catch for internal bugs)
@@ -152,6 +154,10 @@ every programmer and hides crashes from the supervisor.
 more boilerplate than a catch would — the typed-error mechanism may then evolve; try/catch for
 internal-bug recovery stays closed.  Decided 2026-05-13 —
 [record](DESIGN_DECISIONS-history.md#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs).
+**Holds at:** `try`/`catch` refused by name (`src/parser/control.rs`,
+`tests/scripts/c67-a-try-block-is-refused-by-name.loft`); a reachable unimplemented native is a
+compile error, not a runtime panic (`src/generation/mod.rs`, P269), and the interpreter refuses
+the same program at startup (`tests/exit_codes.rs::a_called_native_with_no_implementation_stops_the_program_at_startup`).
 **Catalogue:** @F44 (logging — panic/assert).
 
 ## C68 — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)
@@ -210,11 +216,13 @@ consumer.  Decided 2026-06-04 — [record](DESIGN_DECISIONS-history.md#c71--nati
 
 **Decision.** Resume restores stored values verbatim but not the random generator's state; the
 generator continues fresh, seeded from entropy as on any launch.  A reproducible stream is an
-explicit `random_seed`.  **Why.** A saved generator state would let anyone who reads the session
-file predict future `random()` output, and an explicit seed already covers determinism.
+explicit `rand_seed`.  **Why.** A saved generator state would let anyone who reads the session
+file predict future `rand()` output, and an explicit seed already covers determinism.
 
 **Revisit when.** A non-security use case needs byte-identical RNG continuation across resume
 that an explicit seed cannot give.  Decided 2026-06-08 — [record](DESIGN_DECISIONS-history.md#c72--repl-session-resume-does-not-persist-rng-generator-state).
+**Holds at:** the session records definitions and binding VALUES, never a statement
+(`src/repl.rs`, `record_input`); `tests/repl_session.rs::a_resumed_session_does_not_continue_the_random_stream`.
 **Catalogue:** @F49 (REPL), @F43 (random numbers).
 
 ## C73 — `boolean` is three-state (false / true / null); `==` is raw, truthiness coerces
@@ -389,14 +397,20 @@ being clipped (then fix that path).  Decided 2026-06-24 — [record](DESIGN_DECI
 
 ## C84 — `server` ships as minimal TCP/WS primitives, not a fully-featured HTTP framework
 
-**Decision.** `server` ships HTTP `listen` / `next` / `respond*`, single-client WebSocket and a
-multi-client event pump; an application routes with its own `match` on the request path.  No
-`App`/route/middleware/auth/TLS/session framework is on any roadmap.  **Why.** Every consumer
-needed only "answer a request" and "run a WebSocket"; auth, certificate automation and rate
-limiting are each a library-sized problem to solve when a consumer needs one.
+**Decision.** `server` ships transport primitives and nothing above them: HTTP `listen` (TLS
+included) / `next` / `respond*`, single-client WebSocket and a multi-client event pump.  A program
+may route with its own `match` on the request path.  A framework — a route table, middleware,
+authentication, sessions, certificate automation — is a SEPARATE library over `server`, never
+folded into it; @PLN148 builds that stack as `webapp`, `auth`, `acme` and `sql`
+([WEB_STACK.md](WEB_STACK.md)).  **Why.** Every consumer of `server` needs "answer a request" and
+"run a WebSocket"; auth, certificates and routing are each a library-sized problem, and one that
+lives in `server` forces its dependencies on every program that only answers requests.
 
-**Revisit when.** A real consumer hits a wall that primitives plus `match` cannot clear; then add
-the one piece it needs (auth, TLS or static serving), not the framework.  Decided 2026-07-02 — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+**Revisit when.** A primitive `server` lacks blocks a library above it; then add that primitive
+(as @PLN148's `reload_tls`), not the layer.  Decided 2026-07-02, amended 2026-09-29 (owner: the
+framework is on the roadmap, as its own libraries) — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+**Holds at:** `@C84` — `loft-libs-net` `server/tests/c84_surface.loft` (the package's public
+surface is the transport set; a new name fails its CI until someone adds it on purpose).
 **Catalogue:** the `server` library (`loft-lang/loft-libs-net`).
 
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)
@@ -431,15 +445,20 @@ widened — which argues for widening `ElidePlan`, never for flipping the semant
 
 ## C87 — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
 
-**Decision.** The `#rust"..."` template path stays: inline `#rust` is a public library-authoring
-mechanism for BRIDGING a capability loft lacks, not stdlib-internal debt.  It is not a speed-up
-for a routine loft can express — that is cured in the engine or the loft algorithm
-(`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).  **Why.** Deleting the template
-path breaks the documented library route and makes a new operator cost a struct and a
+**Decision.** The `#rust"..."` template path stays as the STANDARD LIBRARY's way to write an
+operator or builtin in one line.  It is not a library route: outside `default/`, `#rust` and
+`#iterator` are refused by name, and the refusal points at `#native` with a native crate, which
+reaches all four targets.  A native crate bridges a capability loft lacks; it is never a speed-up
+for a routine loft can express (`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).
+**Why.** Migrating the ~200 templates to per-Op emitters makes a new operator cost a struct and a
 registration instead of one line; the emission-bug class is better served by hardening the path.
+The library reading the 2026-07-08 decision rested on never held: the parser accepted `#rust`
+only in `default/`, and no published library used it (owner, 2026-09-29).
 
 **Revisit when.** Emission genuinely needs one source of truth — then fold the few hand-written
-emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-25 — [record](DESIGN_DECISIONS-history.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed).
+emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-25 and 2026-09-29 — [record](DESIGN_DECISIONS-history.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed).
+**Holds at:** `@C87` — `tests/scripts/c87-a-rust-template-outside-the-stdlib-names-native.loft`
+(the refusal and its cure) and `stdlib_rust_templates_resolve_on_wasm` (the stdlib's templates).
 
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
@@ -645,6 +664,7 @@ not to install a toolchain, so "install Rust and rebuild" on a run that succeeds
 warning; gating on a per-user marker file was rejected because a fresh container has no `~/.loft`.
 
 **Revisit when.** No trigger recorded.  Decided 2026-07-24 — [record](DESIGN_DECISIONS-history.md#c102--a-release-binary-says-nothing-when-it-falls-back-to-the-interpreter).
+**Holds at:** `src/main.rs`'s fallback arms; `tests/exit_codes.rs::a_missing_rustc_falls_back_quietly_except_where_asked`.
 
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
@@ -669,7 +689,7 @@ fetching slice would make `xs[0..10]`, `for x in xs` and `len(xs)` disagree.
 **Revisit when.** A consumer shows the explicit call is a real burden AND the honesty question has
 an answer (e.g. a streaming collection whose `len` and iteration mean something else by
 declaration).  Decided 2026-08-06 — [record](DESIGN_DECISIONS-history.md#c104--a-slice-on-a-lazily-bound-collection-never-fetches-a-range-is-an-explicit-call).
-**Holds at:** `tests/lazy_sql_source.rs`.
+**Holds at:** `tests/lazy_sql_source.rs::a_slice_reads_what_is_resident_and_fetches_nothing`.
 **Catalogue:** @F108 (lazy store binding)
 
 ## C105 — a hash lookup keeps its TWO random reads (no hash-in-slot, no entries in the bucket table)

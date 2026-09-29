@@ -19,7 +19,7 @@ variant ([PACKAGES.md § Target matrix](../../../doc/claude/PACKAGES.md)):
 
 | | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
-| Pure loft / `#rust` inline | ✓ | ✓ | ✓ | ✓ |
+| Pure loft | ✓ | ✓ | ✓ | ✓ |
 | `#native` external (Rust) | ✓ rlib | ✓ rlib | ✓ wasm rlib | **✗ → needs a `wasm.bridge` crate** |
 
 **The master invariant: `interpret == native == native-wasm == browser`.** A library is not
@@ -31,16 +31,16 @@ invariant is the whole job — everything below serves it.
 Before scaffolding anything, classify the library — this is the single most leverage-saving
 step, because the two tiers differ by an order of magnitude:
 
-- **Tier 1 — pure loft, or `#rust` inline only.** The matrix is ✓ across all four columns:
-  the compiler emits the variant for each target automatically. **There is no bridge to
-  build.** Shipping = write → `loft.toml` → cross-mode test → publish. Most libraries are
-  here; keep them here (prefer `#rust` inline over `#native` external whenever the Rust is
-  small) precisely so you never enter Tier 2.  `#rust` bridges a CAPABILITY loft lacks; it
-  is never a speed-up for a routine loft can express (formal/performance.md `(Perf-Cure)`).
+- **Tier 1 — pure loft.** The matrix is ✓ across all four columns: the compiler emits the
+  variant for each target automatically. **There is no bridge to build.** Shipping = write →
+  `loft.toml` → cross-mode test → publish. Most libraries are here; keep them here.
+  (`#rust"…"` is NOT a library route: it is the standard library's own template, and the
+  parser refuses it outside `default/` — C87.)
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
-  is where the real cost and nearly all the bugs live. Only pay it when the binding genuinely
-  can't be `#rust` inline (it calls a real host capability: crypto, sockets, the DOM, files).
+  is where the real cost and nearly all the bugs live. Only pay it when the library needs a
+  CAPABILITY loft lacks (a real host capability: crypto, sockets, the DOM, files) — never
+  for speed on a routine loft can express (formal/performance.md `(Perf-Cure)`).
 
 State which tier you're in out loud — it sets expectations and stops you from over-building a
 Tier 1 library or under-estimating a Tier 2 one.

@@ -610,6 +610,11 @@ pub fn satisfies(version: &str, constraint: &str) -> bool {
     if c.is_empty() || c == "*" {
         return true;
     }
+    // A comma list is every part at once, and it is split FIRST: read after the `^` and `~`
+    // tests, `^0.1, <0.1.5` was taken for a caret whose minor part was `1, <0`.
+    if c.contains(',') {
+        return c.split(',').all(|p| satisfies(version, p.trim()));
+    }
     if let Some(rest) = c.strip_prefix('^') {
         let parts: Vec<u32> = rest.split('.').filter_map(|p| p.parse().ok()).collect();
         if parts.len() < 2 {
@@ -639,9 +644,6 @@ pub fn satisfies(version: &str, constraint: &str) -> bool {
         let hi = format!("{}.{}.0", parts[0], parts[1].saturating_add(1));
         return compare_semver(version, &lo) != std::cmp::Ordering::Less
             && compare_semver(version, &hi) == std::cmp::Ordering::Less;
-    }
-    if c.contains(',') {
-        return c.split(',').all(|p| satisfies(version, p.trim()));
     }
     if let Some(rest) = c.strip_prefix(">=") {
         return compare_semver(version, rest.trim()) != std::cmp::Ordering::Less;
@@ -2171,6 +2173,16 @@ mod tests {
         assert!(satisfies("0.2.5", ">=0.2, <0.3"));
         assert!(!satisfies("0.3.0", ">=0.2, <0.3"));
         assert!(!satisfies("0.1.9", ">=0.2, <0.3"));
+    }
+
+    #[test]
+    fn satisfies_a_comma_list_whose_first_part_is_a_caret_or_tilde() {
+        assert!(satisfies("0.1.3", "^0.1, <0.1.5"));
+        assert!(!satisfies("0.1.6", "^0.1, <0.1.5"));
+        assert!(satisfies("0.1.0", "^0.1, =0.1.0"));
+        assert!(!satisfies("0.2.0", "^0.1, =0.2.0"));
+        assert!(satisfies("0.1.4", "~0.1.2, >=0.1.4"));
+        assert!(!satisfies("0.1.3", "~0.1.2, >=0.1.4"));
     }
 
     #[test]

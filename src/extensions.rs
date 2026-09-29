@@ -878,7 +878,7 @@ pub fn wire_native_fns(state: &mut crate::state::State, data: &crate::data::Data
             // build, so it is NOT an unresolved native — reporting it (and telling
             // the user to "rebuild the cdylib") is wrong. (Run in the interpreter
             // it is genuinely unavailable, but that is a "use --html" matter.)
-            if data.wasm_bridge_routes.contains_key(sym) {
+            if data.wasm_bridge_routes.contains_key(sym) || dest_served(state, data, d_nr) {
                 continue;
             }
             // Neither the registry nor `try_dlsym` (phase 1) found it: the owning
@@ -1026,17 +1026,28 @@ mod bridgeless_report_tests {
 /// Grouped by the owning crate (via `native_symbol_crates`) so the message names
 /// the library to rebuild, not just orphan symbols.  Non-fatal — a declared but
 /// never-called native must still let the program run, so this warns rather than
-/// aborts; the matching panic stub still fires if the function is actually called,
-/// but the operator has already seen which library to rebuild.
+/// aborts; one the program CALLS is refused before it starts
+/// ([`reachable_unimplemented_natives`], @C67).
 #[cfg(feature = "native-extensions")]
 fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
     use std::collections::BTreeMap;
-    let mut by_crate: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    // A package with no native part at all never registered one, so the symbol→crate map
+    // cannot name it; the library that DECLARED the function can (`qualified_type_name`'s
+    // most-qualified rule), and naming it is the difference between a cure and a guess.
+    let declared_in = |sym: &str| -> Option<String> {
+        let d = (0..data.definitions()).find(|&d| data.def(d).native == sym)?;
+        let q = data.qualified_type_name(d);
+        let (lib, _) = q.rsplit_once("::")?;
+        (!lib.starts_with("src")).then(|| lib.to_string())
+    };
+    let mut by_crate: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for sym in unresolved {
         let krate = data
             .native_symbol_crates
             .get(sym)
-            .map_or("<unknown library>", String::as_str);
+            .cloned()
+            .or_else(|| declared_in(sym))
+            .unwrap_or_else(|| "<unknown library>".to_string());
         by_crate.entry(krate).or_default().push(sym.as_str());
     }
     for (krate, mut syms) in by_crate {
@@ -1050,13 +1061,73 @@ fn report_unresolved_natives(data: &crate::data::Data, unresolved: &[String]) {
         };
         eprintln!(
             "loft: native library '{krate}' did not load — {n} of its #native function(s) are \
-             unavailable and will panic if called ({shown}{more_txt}). Its cdylib is missing or \
+             unavailable ({shown}{more_txt}), and a program that calls one does not start. Its cdylib is missing or \
              stale (commonly built against a different libloft.rlib / loft-ffi). Rebuild it with \
              `make rebuild-native-cdylibs` (in the loft tree) or `cargo build --release` in the \
              library's native/ dir, then re-run.",
             n = syms.len(),
         );
     }
+}
+
+/// Is definition `d` a text producer the interpreter calls through its registered `_dest`
+/// twin (`is_text_dest_native`)?  Its own symbol then stays a stub that no call reaches, so
+/// it is neither missing nor worth a warning — the engine-host kernel natives live inside the
+/// loft binary this way and were reported as a library that "did not load".
+#[cfg(feature = "native-extensions")]
+fn dest_served(state: &crate::state::State, data: &crate::data::Data, d: u32) -> bool {
+    let def = data.def(d);
+    crate::state::codegen::is_text_dest_native(def.name())
+        && state
+            .library_names
+            .contains_key(&format!("{}_dest", def.native))
+}
+
+/// @C67 — the `#native` symbols `entry` can reach that nothing implements: no cdylib
+/// registered them, and no wasm bridge serves them.  Asked after [`wire_native_fns`], by a
+/// caller about to RUN `entry`, so a missing implementation is refused before the program
+/// starts rather than panicking when the call is reached.  A merely DECLARED native is not
+/// here — it stays the load-time warning [`report_unresolved_natives`] prints.  Reachability
+/// is the one `--native` asks for its own refusal (P269), so the two backends agree on which
+/// programs a missing native stops.
+#[cfg(feature = "native-extensions")]
+#[must_use]
+pub fn reachable_unimplemented_natives(
+    state: &crate::state::State,
+    data: &crate::data::Data,
+    entry: u32,
+) -> Vec<String> {
+    let guard = NATIVE_REGISTRY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut out: Vec<String> = crate::generation::reachable_functions(data, &[entry])
+        .into_iter()
+        .filter(|&d| {
+            let def = data.def(d);
+            let sym = &def.native;
+            !sym.is_empty()
+                && !sym.starts_with("loft_shared_")
+                && !sym.starts_with("loft_placed_")
+                && state.native_stub_symbols.contains(sym)
+                && !guard.as_ref().is_some_and(|r| r.contains_key(sym))
+                && !data.wasm_bridge_routes.contains_key(sym)
+                && !dest_served(state, data, d)
+        })
+        .map(|d| data.def(d).native.clone())
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+#[cfg(not(feature = "native-extensions"))]
+#[must_use]
+pub fn reachable_unimplemented_natives(
+    _state: &crate::state::State,
+    _data: &crate::data::Data,
+    _entry: u32,
+) -> Vec<String> {
+    Vec::new()
 }
 
 #[cfg(not(feature = "native-extensions"))]

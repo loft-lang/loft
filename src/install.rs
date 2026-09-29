@@ -170,12 +170,13 @@ pub fn install_one(
 ) -> Result<InstallReport, String> {
     let index = load_index(opts)?;
     let mut graph: Vec<ResolvedPackage> = Vec::new();
-    resolve_recursive(
+    resolve_declared(
         &index,
         package_name,
         constraint,
         opts,
         &held_versions(opts),
+        &declared_requirements(opts),
         &mut graph,
     )?;
     check_against_lockfile(&graph, opts)?;
@@ -722,6 +723,28 @@ fn held_versions(opts: &InstallOptions) -> std::collections::BTreeMap<String, St
     }
 }
 
+/// What the project's `loft.toml` declares for each registry dependency — the manifest
+/// beside the governing lock, read the way [`held_versions`] reads the lock.
+///
+/// Path dependencies carry no requirement and are left out.  Empty where no declaration is
+/// in force.
+fn declared_requirements(opts: &InstallOptions) -> std::collections::BTreeMap<String, String> {
+    let Some(manifest) = governing_lock_path(opts)
+        .and_then(|lock| lock.parent().map(|dir| dir.join("loft.toml")))
+        .and_then(|path| crate::manifest::read_manifest(&path.to_string_lossy()))
+    else {
+        return std::collections::BTreeMap::new();
+    };
+    manifest
+        .dependencies
+        .iter()
+        .filter(|(_, value)| crate::manifest::extract_path_dep(value).is_none())
+        .filter_map(|(name, value)| {
+            crate::manifest::extract_version_req(value).map(|req| (name.clone(), req.to_string()))
+        })
+        .collect()
+}
+
 /// Refuse to install when the index now serves DIFFERENT bytes for a version this
 /// project already locked.
 ///
@@ -784,12 +807,37 @@ fn locked_hashes(opts: &InstallOptions) -> std::collections::BTreeMap<String, (S
 /// `graph`.  Diamond resolution: when a package appears twice via
 /// different dep paths, pick the **highest** version satisfying both
 /// constraints; conflict otherwise.
+#[cfg(test)]
 fn resolve_recursive(
     index: &RegistryIndex,
     name: &str,
     constraint: Option<&str>,
     opts: &InstallOptions,
     held: &std::collections::BTreeMap<String, String>,
+    graph: &mut Vec<ResolvedPackage>,
+) -> Result<(), String> {
+    let declared = std::collections::BTreeMap::new();
+    resolve_declared(index, name, constraint, opts, held, &declared, graph)
+}
+
+/// [`resolve_recursive`] under the project's own declarations: what `loft.toml` declares
+/// for a package binds it wherever in the tree it is pulled (PACKAGES.md: *the root
+/// project's declared constraints pin the whole tree*), on top of what the package pulling
+/// it requires.
+///
+/// The source-level load already honoured the root's pin for a transitive package, and the
+/// install did not: `zp = "=0.1.0"` beside a `zq` that requires `zp ^0.1` loaded 0.1.0 but
+/// locked whichever `zp` the LAST resolution picked — 0.1.2 when `zq` came later in the
+/// manifest — and a root pin no dependency could accept installed without a word and failed
+/// at the first run.  The package NAMED at the top is not bound this way, because
+/// `loft install zp@0.2.0` is how a declaration is changed.
+fn resolve_declared(
+    index: &RegistryIndex,
+    name: &str,
+    constraint: Option<&str>,
+    opts: &InstallOptions,
+    held: &std::collections::BTreeMap<String, String>,
+    declared: &std::collections::BTreeMap<String, String>,
     graph: &mut Vec<ResolvedPackage>,
 ) -> Result<(), String> {
     if graph.iter().any(|r| r.name == name) {
@@ -899,7 +947,20 @@ fn resolve_recursive(
         version,
     });
     for (dep_name, dep_constraint) in dep_pairs {
-        resolve_recursive(index, &dep_name, Some(&dep_constraint), opts, held, graph)?;
+        let both = match declared.get(&dep_name) {
+            Some(root) if *root != dep_constraint => format!("{dep_constraint}, {root}"),
+            _ => dep_constraint.clone(),
+        };
+        resolve_declared(index, &dep_name, Some(&both), opts, held, declared, graph).map_err(
+            |e| match declared.get(&dep_name) {
+                Some(root) if *root != dep_constraint => format!(
+                    "{e} — `{name}` requires `{dep_name} {dep_constraint}` and this project \
+                     declares `{dep_name} = \"{root}\"`; change the declaration to a version \
+                     `{name}` accepts"
+                ),
+                _ => e,
+            },
+        )?;
     }
     Ok(())
 }
@@ -1098,6 +1159,56 @@ mod tests {
             packages: pmap,
             skipped: Vec::new(),
         }
+    }
+
+    // ── resolve_declared — the project's declaration binds a transitive package ──
+
+    #[test]
+    fn a_declaration_binds_a_transitive_package_but_not_the_one_named() {
+        let idx = index(vec![
+            pkg("a", vec![ver("0.1.0", &[("b", "^0.1")])]),
+            pkg(
+                "b",
+                vec![ver("0.1.0", &[]), ver("0.1.2", &[]), ver("0.2.0", &[])],
+            ),
+        ]);
+        let declared: BTreeMap<String, String> = [("b".to_string(), "=0.1.0".to_string())]
+            .into_iter()
+            .collect();
+        let held = BTreeMap::default();
+        let mut graph = Vec::new();
+        resolve_declared(&idx, "a", None, &opts(), &held, &declared, &mut graph).unwrap();
+        let b = graph.iter().find(|r| r.name == "b").expect("b");
+        assert_eq!(
+            b.version.semver, "0.1.0",
+            "the project's `=0.1.0` binds `a`'s `^0.1`"
+        );
+
+        // Named at the top, the package is what the user asked for: `loft install b@0.1.2`
+        // is how the declaration is changed.
+        let mut graph = Vec::new();
+        resolve_declared(
+            &idx,
+            "b",
+            Some("=0.1.2"),
+            &opts(),
+            &held,
+            &declared,
+            &mut graph,
+        )
+        .unwrap();
+        assert_eq!(graph[0].version.semver, "0.1.2");
+
+        let declared: BTreeMap<String, String> = [("b".to_string(), "=0.2.0".to_string())]
+            .into_iter()
+            .collect();
+        let mut graph = Vec::new();
+        let err =
+            resolve_declared(&idx, "a", None, &opts(), &held, &declared, &mut graph).unwrap_err();
+        assert!(
+            err.contains("`a` requires `b ^0.1` and this project declares `b = \"=0.2.0\"`"),
+            "{err}"
+        );
     }
 
     fn opts() -> InstallOptions {

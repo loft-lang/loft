@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/c87-a-rust-template-outside-the-stdlib-names-native.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//
+// @C87 — `#rust` / `#iterator` are the standard library's own Rust templates; everything
+// else binds Rust with `#native` and a native crate.
+//
+// Outside `default/` both annotations were a bare `Syntax error: unexpected '#'`, on every
+// backend, while C87, the loft-ship skill and PACKAGES.md all offered `#rust` as a library
+// route.  The owner kept the stdlib-only reading (2026-09-29); the refusal now says so and
+// names the route that works.  A program's own file and a library's are parsed alike here
+// (`!self.default`), so one file pins both.
+//
+// @EXPECT_ERROR: #rust is the standard library's own Rust template, not a library route; bind Rust with a bare `#native`
+// @EXPECT_ERROR: #iterator is the standard library's own Rust template, not a library route
+
+fn clamp01(x: float) -> float;
+#rust"@x.max(0.0).min(1.0)"
+
+fn walk(n: integer) -> integer;
+#iterator"0" "1"
+
+fn main() {
+  println("{clamp01(1.5)} {walk(3)}");
+}

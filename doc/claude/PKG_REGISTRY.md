@@ -614,6 +614,14 @@ it governs, and `loft pin <script>` wrote it for that script.
 run from two directories resolved two different ways, from a file an earlier run
 had written.
 
+**The script is the ENTRY file.**  A `use` inside a dependency resolves under the
+program's scope, not one read from the dependency's own location: read there, a
+package in the registry cache found its cached `loft.toml` and a lock that never
+exists beside it, so the consumer's pin for a transitive package was ignored.
+What a dependency declares for its own `use` still binds that `use` in every scope
+(failure path 5), and a lock entry any declaration in force has since excluded is
+stale — the declaration wins ([PACKAGES.md § Lock file](PACKAGES.md#lock-file)).
+
 ### Failure paths — what has to keep working
 
 Enumerated first, because this is where the design earns its shape:

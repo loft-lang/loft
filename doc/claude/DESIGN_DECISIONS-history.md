@@ -1898,6 +1898,19 @@ A **real consumer** hits a concrete wall that primitives-plus-`match` cannot rea
 e.g. a genuine need for pluggable auth or automatic TLS certificate management in a shipping loft
 program. Bring that consumer's use case as the evidence; scope the *specific* piece it needs (auth,
 or TLS, or static serving) as its own addition, not the whole framework at once.
+
+### Amendment (2026-09-29) — the framework is a separate library, and it is on the roadmap
+
+@PLN148 (WEB_STACK.md, 2026-09-08) designs the web stack this entry said was on no roadmap: a
+`webapp` library with a route table, `.auth()` and sessions, plus `acme` (certificates with
+rotation), `auth` and `sql`.  The owner kept the plan and amended this entry: the part that
+stands is that `server` stays transport primitives; what changes is that a framework is a
+separate library above it rather than declined outright.  WEB_STACK.md already splits it into
+four libraries for this entry's own reason — each is library-sized, and fusing them forces
+unrelated dependencies on every consumer.  `server` gains only a primitive a layer needs
+(`reload_tls`).  `listen_tls` was already in `server` when this amendment was written: TLS
+listening is a primitive; certificate automation is not.
+
 ## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
@@ -2186,10 +2199,23 @@ inline over `#native` external whenever the Rust is small"; ✓ across all four 
 PACKAGES.md), so it is a **kept public feature**, not stdlib-internal debt. Deleting the template
 path would break the documented `#rust` inline library route.
 
+### Amendment (2026-09-29) — stdlib-only
+
+The library half of the decision above never held.  The parser accepted `#rust` only while
+parsing `default/` (`self.default`), so a library's `#rust` was `Syntax error: unexpected '#'`
+on every backend, and no published library used one; on the interpreter it could only have
+worked by compiling the template.  The owner chose to correct the claim rather than build the
+route: `#rust` / `#iterator` are the standard library's templates, a library binds Rust with
+`#native` and a native crate, and the parser now refuses the annotation outside `default/` with
+that cure.  The loft-ship skill's Tier 1, PACKAGES.md's target matrix and LIBRARY_AUTHORING's
+rule 7 were corrected with it.  The operator-authoring half — one line per stdlib operator, no
+migration to per-Op emitters — stands.
+
 ### Rationale
 
 - Premise inverted since @PLN81 was filed (2026-05-02): what looked like a redundant second path
-  became the ecosystem's small-native-code path.
+  became the ecosystem's small-native-code path.  (Superseded 2026-09-29: it never was one —
+  see the amendment above.)
 - Authoring cost cuts the wrong way: a new Op is a one-line `#rust` annotation today vs a struct +
   impl + register call after — @PLN81's own "cost" section flags this regression.
 - The real concern (one less-bug-prone emission path — the @P203 double-substitution class) is

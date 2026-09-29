@@ -2070,3 +2070,112 @@ fn a_nullable_local_evaluates_at_a_paused_frame() {
     );
     assert!(!s.debug_continue());
 }
+
+/// @C72 — a resumed session restores its VALUES and not the random generator's position.
+///
+/// The generator is the `random` library's process state, so a resume in THIS process meets
+/// whatever that state is — and the test sets it: after the first session seeds 7 and binds
+/// one draw, the generator is re-seeded to 12345 before the resume.  The resumed session's
+/// next draw must then be seed 12345's FIRST number.  A saved position would have given seed
+/// 7's second, and a replayed `rand_seed(7)` seed 7's first — each a different, known
+/// number, so the three outcomes cannot be confused.  The binding itself comes back
+/// verbatim: the recorded entry is its value, not its right-hand side.
+#[test]
+fn a_resumed_session_does_not_continue_the_random_stream() {
+    let path = tmp_session("c72");
+    let _ = std::fs::remove_file(&path);
+    let draw = "rand(0, 1000000000)";
+    let numbers = |s: &mut ReplSession, stmts: &str, expr: &str| -> i64 {
+        let r = s.eval("use random::*;");
+        assert!(matches!(r, Eval::Ran), "use random: {r:?}");
+        for st in stmts.lines().filter(|l| !l.is_empty()) {
+            assert!(matches!(s.eval(st), Eval::Ran), "{st}");
+        }
+        assert!(
+            matches!(s.eval(&format!("__c72 = {expr}")), Eval::Ran),
+            "{expr}"
+        );
+        s.env_value("__c72")
+            .and_then(|v| v.trim().parse().ok())
+            .expect("an integer")
+    };
+    let seven_1 = numbers(&mut session(), "rand_seed(7)", draw);
+    let seven_2 = {
+        let mut s = session();
+        numbers(&mut s, "rand_seed(7)", draw);
+        numbers(&mut s, "", draw)
+    };
+    let other_1 = numbers(&mut session(), "rand_seed(12345)", draw);
+    assert!(
+        seven_1 != seven_2 && seven_1 != other_1 && seven_2 != other_1,
+        "the three outcomes must be distinguishable: {seven_1} {seven_2} {other_1}"
+    );
+    {
+        let mut a = session();
+        a.enable_persistence(&path).expect("enable persistence");
+        assert!(matches!(a.eval("use random::*;"), Eval::Ran));
+        assert!(matches!(a.eval("rand_seed(7)"), Eval::Ran));
+        assert!(matches!(a.eval(&format!("x = {draw}")), Eval::Ran));
+        assert_eq!(
+            a.env_value("x").map(|v| v.trim().to_string()),
+            Some(seven_1.to_string())
+        );
+    }
+    let saved = std::fs::read_to_string(&path).expect("the session file");
+    assert!(
+        !saved.contains("rand_seed"),
+        "a statement is not persisted: {saved:?}"
+    );
+    // The process's generator moves on without the session, as a new process's would.
+    numbers(&mut session(), "rand_seed(12345)", "0");
+    let mut b = session();
+    let stats = b.resume_from(&path);
+    assert_eq!(stats.skipped, 0, "{stats:?}");
+    assert_eq!(
+        b.env_value("x").map(|v| v.trim().to_string()),
+        Some(seven_1.to_string()),
+        "the binding comes back verbatim"
+    );
+    let next = numbers(&mut b, "", draw);
+    assert_ne!(next, seven_2, "the generator's position was restored");
+    assert_ne!(next, seven_1, "the seed was replayed");
+    assert_eq!(
+        next, other_1,
+        "the draw continues the process's own generator"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A BINDING whose right-hand side calls a library's native function runs.  The binding's
+/// value snapshot compiled its own state and never wired the session's libraries, so
+/// `x = rand(0, 9)` answered "native function `n_rand` not loaded" while
+/// `println("{rand(0, 9)}")` — the statement path, which wired — worked one input earlier.
+#[test]
+fn a_binding_can_call_a_library_native() {
+    let mut s = session();
+    assert!(matches!(s.eval("use random::*;"), Eval::Ran));
+    let r = s.eval("x = rand(3, 3)");
+    assert!(matches!(r, Eval::Ran), "{r:?}");
+    assert_eq!(
+        s.env_value("x").map(|v| v.trim().to_string()),
+        Some("3".to_string())
+    );
+}
+
+/// A library `use`d twice in one session is loaded once.  Each input is a fresh parse, and
+/// the parse forgets the `use` table unless the session freezes what it loaded (loft#925), so
+/// the second `use` read the library again and reported every one of its names as redefined
+/// — also for a different selector, `use random::(rand);` after `use random::*;`.
+#[test]
+fn a_library_used_twice_in_a_session_loads_once() {
+    let mut s = session();
+    assert!(matches!(s.eval("use random::*;"), Eval::Ran));
+    let again = s.eval("use random::*;");
+    assert!(matches!(again, Eval::Ran), "{again:?}");
+    let narrower = s.eval("use random::(rand);");
+    assert!(matches!(narrower, Eval::Ran), "{narrower:?}");
+    assert!(matches!(
+        s.eval("assert(rand(4, 4) == 4, \"still callable\")"),
+        Eval::Ran
+    ));
+}

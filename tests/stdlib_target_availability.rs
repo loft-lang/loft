@@ -169,6 +169,9 @@ fn wasm_reachable(sources: &[(PathBuf, String)], item: &str) -> Option<bool> {
 
 /// Every `crate::`-qualified item a stdlib template names must survive the wasm build.
 ///
+/// @C87 — the `#rust"…"` template path is kept: this walks every stdlib template, so a change
+/// that retired the path for per-Op emitters fails here.
+///
 /// The failure this prevents is not subtle once seen, and impossible to see before:
 /// `store_durable_seal` ran on `--interpret` and `--native` and made `--native-wasm`
 /// fail inside rustc, naming `loft::store::Store`.

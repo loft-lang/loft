@@ -795,6 +795,55 @@ fn test() {{
     assert_eq!(spent, 3, "1 range query + 2 one-off schema probes");
 }
 
+/// @C104 — a SLICE on a lazily-bound collection reads the resident set and never fetches;
+/// a range is the explicit `store_lazy_range`.  The source holds 20 rows and five are
+/// resident, so a slice that consulted the source would walk 19 records over `1..20` and
+/// cost a query; the resident-set answer is 5, and the query count stays the range's own.
+/// `len` agrees with the walk, which is the decision's reason: a fetching slice would make
+/// `xs[lo..hi]`, `for x in xs` and `len(xs)` disagree.
+#[test]
+fn a_slice_reads_what_is_resident_and_fetches_nothing() {
+    let Some(_sqlite) = sqlite_guard("a_slice_reads_what_is_resident_and_fetches_nothing") else {
+        return;
+    };
+    let path = scratch("slice_count").with_file_name("evslice.db");
+    let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
+    seed(
+        &path,
+        &format!(
+            "CREATE TABLE sqsliced(at INTEGER PRIMARY KEY, what TEXT); \
+             INSERT INTO sqsliced VALUES {}",
+            rows.join(",")
+        ),
+    );
+    let src = format!(
+        r#"
+struct SqSliced {{ at: integer, what: text }}
+
+fn test() {{
+  events: sorted<SqSliced[at]> = [];
+  assert(store_bind_lazy(events, "sqlite:{}"), "bind");
+  assert(store_lazy_range(events, 5, 9) == 5, "five records by the explicit range");
+  walked = 0;
+  keys = "";
+  for e in events[1..20] {{ walked += 1; keys += "{{e.at}} "; }}
+  assert(walked == 5, "the slice walks the resident five, not the source's 19: {{walked}}");
+  assert(keys == "5 6 7 8 9 ", "in key order: {{keys}}");
+  assert(events.len() == 5, "and made nothing resident: {{events.len()}}");
+}}
+"#,
+        path.to_string_lossy()
+    );
+
+    let target = path.to_string_lossy().to_string();
+    let before = queries_run(&target);
+    run_loft(&src);
+    let spent = queries_run(&target) - before;
+    // The range's one query and the two one-off schema probes — the same count
+    // `a_range_of_five_records_costs_one_query` pins without a slice.
+    assert_eq!(spent, 3, "the slice issued a query");
+}
+
 // ── B4's shape: a collection-valued field as an owner-parameterised query ─────
 
 /// @PLN129 arc B4 — `company.people` is `WHERE company_id = <this company>`,

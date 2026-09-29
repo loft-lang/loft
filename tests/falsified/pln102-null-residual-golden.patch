@@ -1,0 +1,24 @@
+diff --git a/src/fill.rs b/src/fill.rs
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -1450,7 +1450,7 @@
+ 
+ fn conv_bool_from_float(s: &mut State) {
+     let v_v1 = s.get_stack::<f64>();
+-    let new_value = !v_v1.is_nan();
++    let new_value = v_v1.is_finite();
+     s.put_stack(new_value);
+ }
+ 
+diff --git a/default/01_code.loft b/default/01_code.loft
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -662,7 +662,7 @@
+ fn OpCastIntFromFloat(v1: float) -> integer;
+ #rust"if @v1.is_nan() {{ i64::MIN }} else if !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&@v1) {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ let r = ops::op_cast_int_from_float(@v1); if r == i64::MIN {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); i64::MIN }} else {{ r }} }}"
+ fn OpConvBoolFromFloat(v1: float) -> boolean;
+-#rust"!@v1.is_nan()"
++#rust"@v1.is_finite()"
+ fn OpAddFloat(v1: float, v2: float) -> float;
+ #rust"@v1 + @v2"
+ fn OpMinFloat(v1: float, v2: float) -> float;

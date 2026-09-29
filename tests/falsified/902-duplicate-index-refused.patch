@@ -1,0 +1,12 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -4952,7 +4952,7 @@
+             let earlier = self.data.attr_name(d_nr, a_nr);
+             // The same NAME is the same field declared twice — a re-derivation
+             // (generic instantiation, a stub refilled), not two indexes.
+-            if earlier == a_name {
++            if true || earlier == a_name {
+                 continue;
+             }
+             // Spelled the way the user wrote it — `Type::show` renders an index as

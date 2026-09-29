@@ -1,0 +1,22 @@
+diff --git a/src/database/search.rs b/src/database/search.rs
+--- a/src/database/search.rs
++++ b/src/database/search.rs
+@@ -673,7 +673,7 @@
+             None => keys::get_key(value, &self.allocations, &keys),
+         };
+         let existing = self.find(coll, db, &key);
+-        if existing.rec != 0 {
++        if false && existing.rec != 0 {
+             // dedup: free the old record's nested heap, then unlink it.
+             self.remove_claims(&existing, content_tp);
+             self.remove(coll, &existing, db);
+@@ -871,6 +871,9 @@
+         content_tp: u16,
+         secondary: bool,
+     ) {
++        if true {
++            return;
++        }
+         let slot = self.unlink(data, existing, db);
+         if !secondary {
+             self.remove_claims(existing, content_tp);

@@ -1849,6 +1849,18 @@ impl ReplSession {
     /// into native code — `use web; sleep_ms(5)` — while the same file ran fine
     /// under `--interpret`. Importing the package was harmless; calling the part
     /// of it that is native was not, which is why it looked like a package problem.
+    /// A state that can RUN this session's code: compiled, with the native functions of every
+    /// library the session has `use`d wired in.  The one way the session builds one, because
+    /// a path that compiled without wiring ran `x = rand(0, 9)` into "native function
+    /// `n_rand` not loaded" while `println("{rand(0, 9)}")` one input earlier worked — the
+    /// statement path wired, the binding-snapshot path did not.
+    fn runnable_state(&mut self) -> State {
+        let mut state = State::new(self.parser.database.clone());
+        compile::byte_code(&mut state, &mut self.parser.data);
+        self.wire_natives(&mut state);
+        state
+    }
+
     fn wire_natives(&self, state: &mut State) {
         let pending = self.parser.pending_native_libs.clone();
         crate::extensions::load_all(state, pending);
@@ -1993,8 +2005,7 @@ impl ReplSession {
         }
         self.counter = next;
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-        let mut state = State::new(self.parser.database.clone());
-        compile::byte_code(&mut state, &mut self.parser.data);
+        let mut state = self.runnable_state();
         state.execute_argv(&name, &self.parser.data, &[]);
         let out = if state.database.runtime_error.take().is_some() {
             None
@@ -3510,6 +3521,9 @@ impl ReplSession {
     /// occurs in loft source, so a multi-line statement survives verbatim and
     /// splits back out unambiguously.  Best-effort — a write failure is dropped
     /// rather than allowed to break the live session.
+    ///
+    /// The inputs are a definition or a binding's VALUE snapshot, never a statement, so
+    /// nothing that moves a library's hidden state (`rand_seed`) is replayed on resume (@C72).
     fn record_input(&mut self, input: &str) {
         if self.replaying {
             return;
@@ -3591,6 +3605,11 @@ impl ReplSession {
                 self.rewind(sp);
                 return Eval::Error(produced);
             }
+            // A library this input loaded stays loaded: every later input is a fresh parse,
+            // and `Data::reset` forgets the `use` table except for the libraries frozen here
+            // (loft#925).  Unfrozen, a second `use random::*;` — or `use random::(rand);`
+            // after it — read the library again and reported every name as redefined.
+            self.parser.data.freeze_uses();
             self.record_input(input); // a def changes session state — persist it
             return Eval::Ran;
         }
@@ -3753,9 +3772,7 @@ impl ReplSession {
             // sidesteps the @P381 CONST_STORE re-lock and isolates a runtime
             // panic to the throwaway clone.
             crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-            let mut state = State::new(self.parser.database.clone());
-            compile::byte_code(&mut state, &mut self.parser.data);
-            self.wire_natives(&mut state);
+            let mut state = self.runnable_state();
             // @PLN16 G1 — apply the session's breakpoints to this run.  In stepping
             // mode a hit *suspends* execution; otherwise it records-and-continues.
             // Only on a real observing run (`debug`), not the value-render re-runs
@@ -3932,8 +3949,7 @@ impl ReplSession {
         // cannot tell from "this does not evaluate" (loft#1459).
         let schema_name = ret_ty.name(&self.parser.data);
         crate::scopes::check(&mut self.parser.data, &mut self.parser.database);
-        let mut state = State::new(self.parser.database.clone());
-        compile::byte_code(&mut state, &mut self.parser.data);
+        let mut state = self.runnable_state();
         state.keep_entry_return();
         state.execute_argv(&name, &self.parser.data, &[]);
         // The RHS just ran (its side effect happened once).  A fault here is a

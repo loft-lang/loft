@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/902-duplicate-index-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
 // @C113 — two same-key `index` collections are refused.
 //
 // @EXPECT_ERROR: are both 'index<E1[k]>' in the same structure

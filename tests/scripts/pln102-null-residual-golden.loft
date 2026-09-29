@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/pln102-null-residual-golden.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @C85 @C90 — each nullable scalar reserves one bit-pattern for null.
 //
 // @PLN102 keystone step 5 — GOLDEN pin for the accepted null-model residual (C90).

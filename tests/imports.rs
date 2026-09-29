@@ -860,3 +860,114 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
          generics must still resolve; got stdout {stdout:?} stderr {stderr:?}"
     );
 }
+
+/// @C98 — the error for a name a facade package uses without passing it on names the RIGHT
+/// package, and prescribes only a cure that compiles.
+///
+/// Two packages each ship a module called `inner`; `fac`'s holds the struct.  With the other
+/// package loaded, the short name `inner` answers for whichever package bound it last, so:
+/// - the error blamed `fac2` for a name only `fac` uses (the bare `use` was looked up again by
+///   name, and found `fac2`'s module);
+/// - it prescribed `inner::Thing` where `inner` names the other module, and a
+///   `fac::inner::Thing` spelling does not parse at all.
+///
+/// Now the facade is the one whose `use` bound the module, `inner::Thing` is offered only
+/// where it resolves to that module, and each cure the message names is written and run.
+#[test]
+fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
+    let tmp = std::env::temp_dir().join(format!("loft_c98_fac_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let pkg = |name: &str, entry: &str, inner: &str| {
+        let d = tmp.join(name);
+        std::fs::create_dir_all(d.join("src")).expect("package dir");
+        std::fs::write(
+            d.join("loft.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
+                 [library]\nentry = \"src/{name}.loft\"\n"
+            ),
+        )
+        .expect("manifest");
+        std::fs::write(d.join(format!("src/{name}.loft")), entry).expect("entry");
+        std::fs::write(d.join("src/inner.loft"), inner).expect("module");
+        d
+    };
+    let fac = pkg(
+        "fac",
+        "use inner;\npub fn mk() -> inner::Thing { inner::Thing { a: 3 } }\n",
+        "pub struct Thing { a: integer }\n",
+    );
+    let fac2 = pkg(
+        "fac2",
+        "use inner;\npub fn mk2() -> integer { inner::other() }\n",
+        "pub fn other() -> integer { 9 }\n",
+    );
+    let facp = pkg(
+        "facp",
+        "use inner;\npub use inner::(Thing);\npub fn mk() -> inner::Thing { inner::Thing { a: 3 } }\n",
+        "pub struct Thing { a: integer }\n",
+    );
+    let run = |libs: &[&std::path::Path], program: &str| {
+        let src = tmp.join("prog.loft");
+        std::fs::write(&src, program).expect("program");
+        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_loft"));
+        c.arg("--interpret").arg(&src);
+        for l in libs {
+            c.arg("--lib").arg(l);
+        }
+        let out = c
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let bare = "fn main() { t: Thing = mk(); println(\"{t.a}\"); }\n";
+    let qualified = "fn main() { t: inner::Thing = mk(); println(\"{t.a}\"); }\n";
+
+    // `fac` loaded after `fac2`: `inner` names fac's module, so the qualifier is a cure.
+    let (_, err) = run(
+        &[&fac, &fac2],
+        &format!("use fac2::*;\nuse fac::*;\n{bare}"),
+    );
+    assert!(
+        err.contains("`fac` uses it from `inner`") && err.contains("write `inner::Thing`"),
+        "names fac and the qualifier:\n{err}"
+    );
+    let (out, err) = run(
+        &[&fac, &fac2],
+        &format!("use fac2::*;\nuse fac::*;\n{qualified}"),
+    );
+    assert_eq!(out, "3\n", "the qualifier it names compiles:\n{err}");
+
+    // `fac2` loaded after `fac`: `inner` names fac2's module, so only the facade can cure it.
+    let (_, err) = run(
+        &[&fac, &fac2],
+        &format!("use fac::*;\nuse fac2::*;\n{bare}"),
+    );
+    assert!(
+        err.contains("`fac` uses it from its module `inner`")
+            && err.contains("has no name this file can write")
+            && !err.contains("write `inner::Thing`"),
+        "names fac, and offers no qualifier that resolves elsewhere:\n{err}"
+    );
+    let (_, err) = run(
+        &[&fac, &fac2],
+        &format!("use fac::*;\nuse fac2::*;\n{qualified}"),
+    );
+    assert!(
+        err.contains("Undefined type inner"),
+        "that qualifier would not compile:\n{err}"
+    );
+
+    // The facade's cure, as the message spells it, compiles in the same order.
+    let (out, err) = run(
+        &[&facp, &fac2],
+        &format!("use facp::*;\nuse fac2::*;\n{bare}"),
+    );
+    assert_eq!(out, "3\n", "`pub use inner::(Thing);` passes it on:\n{err}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

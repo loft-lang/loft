@@ -74,6 +74,8 @@ fn run_ok(args: &[&str], env: &[(&str, &str)]) {
     );
 }
 
+/// @C122 — the contract is what a program computes, so a rewrite may be on or off: every cell
+/// answers the same in every switch state, on both backends, under the falsifiers.
 #[test]
 fn the_cells_hold_on_both_backends_in_every_switch_state_under_the_falsifiers() {
     run_ok(&["--interpret"], &[("LOFT_STRICT_STORES", "1")]);

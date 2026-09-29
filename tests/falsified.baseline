@@ -120,7 +120,6 @@
 126-keyed-field-clear.loft
 126-store-coalesce.loft
 126-store-release-keeps-everything.loft
-127-keyed-indexed-set.loft
 128-struct-keyed-field-init.loft
 129-lazy-bind.loft
 129-lazy-graph.loft
@@ -164,9 +163,7 @@
 148-plan51-gridmesh-real-lib.loft
 148-view-liveness-across-reshape.loft
 149-plan51-moros-map-real-lib.loft
-149-reference-survives-callee-reshape.loft
 14-formatting.loft
-150-amp-head-position.loft
 150-i306-view-return-ownership.loft
 150-plan51-cluster5c-lambda-with-captures.loft
 150-plan52-text-coalesce.loft
@@ -226,7 +223,6 @@
 199-nwb-text-owned-string.loft
 19-files.loft
 200-vector-stays-dense.loft
-201-bind-copies-projection-views.loft
 20-binary.loft
 21-binary-ops.loft
 22b-par-fold.loft
@@ -262,7 +258,6 @@
 285-json-surrogate-bom.loft
 28-references.loft
 291-native-self-assign-deepcopy-keyed-field.loft
-292-pln17-three-state-boolean.loft
 293-text-self-ref-wide-shapes.loft
 294-vector-element-view-semantics.loft
 295-i339-wrapper-arity.loft
@@ -381,7 +376,6 @@
 511-first-grade-operators.loft
 512-first-grade-format.loft
 513-first-grade-conversions.loft
-514-null-equality-struct-ref.loft
 515-datetime-first-grade.loft
 516-value-struct-copy.loft
 517-value-struct-lifetime.loft
@@ -478,7 +472,6 @@
 76-struct-vector-return.loft
 771-nullable-field-text-return.loft
 772-amp-vector-reassign.loft
-774-view-outlives-reassigned-container.loft
 775-amp-field-writeback-view.loft
 776-generator-heap-locals.loft
 77-exponentiation.loft
@@ -525,7 +518,6 @@
 850b-collision-import-order.loft
 850-cross-package-method-name-collision.loft
 850c-two-packages-one-enum-name.loft
-852-local-shadows-a-function-name.loft
 857-vector-tuple-element-read-borrow.loft
 859-nullable-retype-advice.loft
 859-nullable-retype-cures.loft
@@ -619,8 +611,6 @@
 89-sizeof.loft
 900-linked-group-remove.loft
 901-linked-group-fill.loft
-902-duplicate-index-allowed.loft
-902-duplicate-index-refused.loft
 903-loop-remove.loft
 904-ordered-iteration.loft
 905-temp-does-not-own-what-it-names.loft
@@ -705,7 +695,6 @@ discard-slot-per-type-795.loft
 filter-frees-borrowed-element.loft
 fn-ref-assigned-into-a-field.loft
 fn-ref-field-inline-sources.loft
-fn-ref-field-non-inline-refused.loft
 fn-ref-in-a-nested-tuple.loft
 fn-ref-reassignment-tops-up-the-pair.loft
 format-hook-early-return.loft
@@ -752,16 +741,11 @@ nullable-field-starts-null.loft
 nullable-heap-return-of-call-793.loft
 order-forward-declared-enum-variants.loft
 persist-bind-field-store-757.loft
-pln102-c93-par-captured-ref.loft
-pln102-c93-par-write.loft
 pln102-c94-floor-mod.loft
-pln102-c95-redefine-shadow.loft
 pln102-cast-collision-guard.loft
 pln102-const-out-of-range.loft
-pln102-f2-place-once.loft
 pln102-float-exact-eq.loft
 pln102-null-comparison-uniform.loft
-pln102-null-residual-golden.loft
 pln102-pow-neg-precedence.loft
 pln102-shift-collision-guard.loft
 pln105-expose-iterate.loft

@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C82 — loft's surface is deliberately not context-free, and these are the three points the
+// decision keeps: a name that is a TYPE or a VARIABLE depending on what it names, `S { … }`
+// as a record literal where `{ … }` in the same position is a block, and `"{e}"` switching
+// the lexer into an expression inside a string.  Each cell writes the ambiguous spelling next
+// to its twin and reads a hand-computed value back, so a grammar change that dropped one of
+// the points — to make the surface context-free — fails here rather than in a reader's
+// program.
+//
+// @falsified-at: none — a LOCK.  No build lacked these constructs; the file holds them in
+//   place against a change that would remove one.
+
+struct Cp82 { a: integer, b: integer }
+
+fn test_a_name_is_a_type_or_a_variable_by_what_it_names() {
+  cp = Cp82 { a: 1, b: 2 };
+  c = Cp82.parse(`{{"a":7,"b":8}}`);
+  assert(cp.a + cp.b == 3, "the variable reads its record: {cp.a + cp.b}");
+  assert(c.a + c.b == 15, "the type parses one: {c.a + c.b}");
+}
+
+fn test_a_brace_is_a_record_or_a_block_by_what_precedes_it() {
+  r = Cp82 { a: 4, b: 5 };
+  v = { x = 6; x * 2 };
+  assert(r.a * r.b == 20, "a record literal: {r.a * r.b}");
+  assert(v == 12, "a block yields its last expression: {v}");
+  if r.a == 4 { v = 13; }
+  assert(v == 13, "a block after a condition: {v}");
+}
+
+fn test_a_string_switches_into_an_expression_and_back() {
+  n = 3;
+  s = "n={n * 2} r={Cp82 { a: n, b: 1 }.a} lit={{n}}";
+  assert(s == "n=6 r=3 lit={{n}}", "interpolation, a record inside it, and an escaped brace: {s}");
+}

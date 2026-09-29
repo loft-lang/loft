@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/149-reference-survives-callee-reshape.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control condemns a view at the disturbance instead of at its next use (existence, not liveness), and refuses the dead-reference cells — the refusal IS the defect this file guards.
 // @C79 — ownership is internal; a refusal only where `&` cannot be honoured.
 //
 // @PLN130 F9 / loft#779 — the programs the reshape refusal must NOT swallow.
