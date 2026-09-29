@@ -95,6 +95,45 @@ one bar seen from two sides.
 | release gate (`release-gate.yml`) | green | never green in three runs; 2026.9.0 shipped on hand-run substitutes |
 | shipped routines vs Rust twin (`make perf-portal`) | median 2×, none over 3× | median 2.80×, 73 of 162 over 3× |
 
+**Re-read (2026-09-29), one day on — the same meters, measured again.**  Asked by the
+owner as a re-evaluation; the verdict does not move, three rows do, and one row turns out
+to have been failing silently.
+
+| meter | stable when | measured 2026-09-29 | moved |
+|---|---|---|---|
+| `contract:strained` share of judged fixes | 0 for two weeks | 21 of 147 closes in the seven days to this date (14 %) | 16 % over 60 days → 14 % this week |
+| owner rulings asked for | 0 | 2 this week (C129, C130), both *a rule that does not exist yet* — the kind that may reach the owner; 0 of the process-defect kind | first count |
+| the consumer gate | green two weeks running | **red 2026-09-27 and 2026-09-28, `dryopea` only (3 of 4 jobs green)**: the interpreted suite hits the 600 s watchdog in `loot_rate` (`wallet.loft:289`) and again during the parse of `tests/23_k1_composition.loft`, then SIGABRT — twenty minutes both nights, so deterministic; **no issue tracks it** | red, and untracked |
+| `silent-wrong` open on main | 0 | 0 (loft#1710 closed in the #1730 join) | 1 → 0 |
+| rule coverage (`make rule-coverage`) | 70 % / 40 % floors | 73.9 % annotated / 57.7 % guarded over 395 rules | 73.4 / 57.6 → up |
+| release gate (`release-gate.yml`) | green | last run 2026-09-08, red; not dispatched since | unmoved |
+| shipped routines vs Rust twin (`make perf-portal`) | median 2×, none over 3× | median 2.80×, 73 of 162 over 3× (portal of 2026-09-27, `7df5a4f4b`) | not re-measured |
+| open deviations (`rule_tags.py registers`) | 0 that block a tag | 3: `D-op-1`, `D-op-2` (definitional, never resolvable in a release) and `D-perf-1` (loft#1570) | 6 → 3: D-bind-38/39/44 and D-heap-8/9 closed by #1715–#1729 |
+| the tracker | — (not a meter) | 4 open, 0 pick-up work: 3 `fixed-pending-merge` (one parser message, two `ci-advisory` regressions on main's 70079f138 — the browser `make game` and the pinned lib fixtures), 1 `status:planned` | — |
+
+**What the day moved.**  The join to main (#1730) closed five of the six deviations that
+blocked the 2026.10.0 tag and the one open `silent-wrong`; the walk's yield is now hygiene
+gates on new files rather than wrong answers (this branch's own day: a store in condition
+position refused on both backends, a `default/` that does not match its binary refused at
+load, and [C130](DESIGN_DECISIONS.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
+with [@PLN178](plans/178-store-else.md) as the language's answer to a dropped write —
+each a refusal or a rule, none a fix to a wrong answer).  Two advisory CI regressions
+appeared on main the same morning and were fixed within two hours; that is the cadence
+the meters want, and it is the ONLY meter that read well two days running.
+
+**What it changes — one priority, and it is the consumer gate.**  The read of 2026-09-28
+recorded the consumers as dormant *by design* and the gate as the instrument that sees loft
+moving under them.  The instrument has been red for a week with nothing on the tracker,
+which is the meter failing in the one way a meter must not: silently.  So the first item
+is not a rule walk — it is to reproduce `dryopea`'s interpreted `loot_rate` on main from a
+scratch copy under `LOFT_MAX_OPS` (a count tells a hang from a long run, which a 600 s
+watchdog cannot), file it with `hit-by:dryopea` or fix it in the session, and make the
+consumer nightly file its own issue the way `advisory-failures.yml` already does for CI —
+a red that files nothing is the shape this read caught.  Second, with the deviations at
+three and two of them definitional, **dispatch `release-gate.yml` against main once**: it
+has not run in three weeks, and its verdict is the only thing that turns "the tag is not
+blocked" from a register count into evidence.  Nothing else in the order above moves.
+
 **What the read says is working.** The tracker took 552 issues in the 30 days to this
 date and closed 559; 522 of them were found by loft's own rule-led walk, 259 were
 `silent-wrong`, 191 `sev:high`.  That is the walk reaching cells no consumer program
