@@ -94,14 +94,58 @@ def measure(argv):
     argv = [x for x in argv if x != "--no-packages"]
     with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False) as tmp:
         fresh = tmp.name
-    cmd = [sys.executable, os.path.join(BENCH, "stats.py"), "--tsv", fresh, *packages, *argv]
+    builds = fresh + ".builds"
+    cmd = [sys.executable, os.path.join(BENCH, "stats.py"), "--tsv", fresh, "--build-tsv", builds,
+           *packages, *argv]
     print(" ".join(cmd), flush=True)
     code = subprocess.call(cmd)
-    if code != 0:
-        os.remove(fresh)
-        sys.exit(code)
-    merge_run(fresh)
+    # A program that did not build exits 1 after the others were measured: their rows are
+    # still this machine's latest, so they are kept; a hash disagreement exits before any
+    # row is written, and leaves nothing to merge.
+    if os.path.exists(fresh) and os.path.getsize(fresh) > 0:
+        merge_run(fresh)
+    if os.path.exists(builds):
+        merge_builds(builds)
+        os.remove(builds)
     os.remove(fresh)
+    if code != 0:
+        sys.exit(code)
+
+
+def merge_builds(fresh):
+    """Merge one run's build costs into `results/<host>-builds.tsv`: per program and step,
+    the wall-clock and CPU seconds and the peak memory of its latest build on this machine.
+    The CPU figure compares across runs; the wall-clock one depends on what built beside it."""
+    import platform
+    out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}-builds.tsv")
+
+    def rows_of(path):
+        meta, head, rows = [], None, []
+        with open(path) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if line.startswith("#"):
+                    meta.append(line)
+                elif head is None:
+                    head = line.split("\t")
+                elif line:
+                    rows.append(dict(zip(head, line.split("\t"))))
+        return meta, head, rows
+
+    meta, head, rows = rows_of(fresh)
+    if not rows:
+        return
+    kept = []
+    if os.path.exists(out):
+        _, _, old = rows_of(out)
+        redone = {(r["bench"], r["step"]) for r in rows}
+        kept = [r for r in old if (r["bench"], r["step"]) not in redone]
+    with open(out, "w") as f:
+        f.write("\n".join(meta) + "\n" if meta else "")
+        f.write("\t".join(head) + "\n")
+        for r in sorted(kept + rows, key=lambda r: (r["bench"], r["step"])):
+            f.write("\t".join(r.get(k, "") for k in head) + "\n")
+    print(f"saved {os.path.relpath(out, ROOT)}: {len(rows)} build step(s) measured, {len(kept)} kept")
 
 
 def merge_run(fresh):
