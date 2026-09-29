@@ -15,8 +15,9 @@
 //
 // @falsified-at: aa4348da7 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 3/4, native exit 1 -> 0, native expectations FAIL/4 -> 3/4 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/an-unknown-subject-of-a-coalesce-reports-once.patch — the same channels.
-//   CHANNEL: the EXPECTATIONS — on the control the three field and element fns report a
-//   `coalesce-default-type-mismatch` behind their own error, and the file fails.
+//   CHANNEL: the EXPECTATIONS — on the control every fn reports a
+//   `coalesce-default-type-mismatch` behind its own error (nine errors for four), and the
+//   file fails.
 //   WITNESS: "`??` default of type `integer` is not assignable to `never`" in `c_field`.
 //   HOLDS: no leak and no panic on either tree; every fn reports its own unknown name.
 
