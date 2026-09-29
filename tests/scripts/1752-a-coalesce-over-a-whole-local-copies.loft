@@ -14,7 +14,18 @@
 // Every cell asserts the source AND the destination, so a fix that copies nothing (both read
 // 42) and a fix that loses the write (both read 1) each fail.
 //
-// @falsified-at: d3d38503f — pending
+// @falsified-at: d3d38503f — interpret exit 1 -> 0, interpret 9 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+// @falsified-by: tests/falsified/1752-a-coalesce-over-a-whole-local-copies.patch — interpret exit 1 -> 0, interpret 9 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0
+//   CHANNEL: the assertion channel on both backends — a destination that aliases its source
+//   reads the source as 42, and a lost write reads the destination as 1.
+//   WITNESS: on the control the interpreter fails nine cells — the cast (plain, in a loop, of
+//   a parameter), the branch, the match, both blocks and both re-bound destinations, each
+//   reading the source as `42` where the file says `1`; the returned cast passes there.  Native
+//   fails the two block cells only: it COPIED into the `??` hoist, so the cast and branch cells
+//   answer right on the control and leak the copy instead, which this runner does not score —
+//   `tests/leak_cases.rs` carries that half.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
+//   requires HERE to be clean, so all four are clean on both; the two view cells pass on both.
 
 enum Op { Block { length: integer }, Other { n: integer } }
 struct Code { code: vector<Op> }

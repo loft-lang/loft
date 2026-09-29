@@ -7345,7 +7345,7 @@ fn whole_value_hoists_in(code: &Value, function: &Function, data: &Data) -> Hash
                 let (t, f) = (tails(t, function, data)?, tails(f, function, data)?);
                 Some(t || f)
             }
-            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => {
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
                 tails(bl.operators.last()?, function, data)
             }
             _ => None,
@@ -13632,9 +13632,13 @@ impl Scopes<'_> {
         let rewritten_arms;
         // A RECORD only: a collection tail is lifted through `OpReplaceVector`, which reads an
         // absent vector as empty (`[for z in v { z }]` over a `vector<integer>?` element).
-        let local_tail = matches!(value.unspan(), Value::Block(bl)
-            if matches!(bl.result.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
-                && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(_))));
+        let local_tail = if let Value::Block(bl) = value.unspan()
+            && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(_)))
+        {
+            bl.result.base().heap_def_nr().is_some()
+        } else {
+            false
+        };
         let value: &Value = if (Self::is_value_branch(value) || local_tail)
             && self.arm_tails_need_binding(value, v, data, function)
         {
@@ -20269,6 +20273,7 @@ impl Scopes<'_> {
                 // same kind of fact: no runtime join bind copies into a borrow, so without the
                 // lift `t = S{…}; t = (if c { s } else { null }) ?? d` aliased `s` (loft#1752).
                 // An owner-typed binding keeps the runtime copy it already gets.
+                // @FR-O-Proxy asks copy — chooses whether this arm copies; authorises no free.
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
                     && !(self.whole_value_hoists.contains(x)

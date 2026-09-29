@@ -1,0 +1,18 @@
+// loft#1752 — `--native` copied a whole local into the never-freed `??` hoist and leaked the
+// copy; the fix copies at the destination, which owns and frees it.
+enum Op { Block { length: integer }, Other { n: integer } }
+struct S { n: integer }
+pub fn test() {
+  e: Op = Block { length: 1 };
+  for i in 0..3 {
+    bl = (e as Block?) ?? Block { length: 0 };
+    bl.length = 42 + i;
+    assert(bl.length == 42 + i, "bl={bl.length}");
+  }
+  s = S { n: 1 };
+  flag = len("ab") == 2;
+  t = (if flag { s } else { null }) ?? S { n: 0 };
+  t.n = 42;
+  assert(s.n == 1 && t.n == 42, "s={s.n} t={t.n}");
+  assert((e as Block?).length == 1, "e={(e as Block?).length}");
+}
