@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A GENERIC FORMAT HOLE IS REFUSED WHERE ITS INSTANCE IS (`@FR-G-Mono`, `@FR-F-Spec-Exec`).  The
+// spec parts of a hole over a bound type variable are judged per INSTANCE, by the check its
+// concrete twin gets: `0N` on a `text` or `boolean` instance, `.P` on an `integer` one and `x` on a
+// `float` one are
+// refused at the call that makes the instance.  The template used to render the first two as
+// `ab000` and `true0` in silence.  The instances that render are the sibling file.
+//
+// @falsified-at: 62b857086 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-generic-format-hole-is-refused-where-its-instance-is.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control refuses the TEMPLATE ("no effect on T") and
+//   renders `zp("ab")` and `zp(true)` in silence, so the four expected errors are unmet.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+fn zp<T: Printable>(x: T) -> text { "{x:05}" }
+fn fl<T: Printable>(x: T) -> text { "{x:08.2}" }
+fn hx<T: Printable>(x: T) -> text { "{x:#x}" }
+
+fn main() {
+  // @EXPECT_ERROR: Zero-padding has no effect on text
+  a = zp("ab");
+  // @EXPECT_ERROR: Zero-padding has no effect on boolean
+  b = zp(true);
+  // @EXPECT_ERROR: a precision has no effect on integer
+  c = fl(5);
+  // @EXPECT_ERROR: `x` has no effect on float
+  e = hx(2.5);
+}

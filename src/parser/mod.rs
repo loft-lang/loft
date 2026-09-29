@@ -9214,6 +9214,49 @@ impl Parser {
     /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
     const CONTENT_EQ_PENDING: i32 = i32::MIN;
 
+    /// The marker a format hole over a bound type variable carries until its instance lowers
+    /// it (`append_data`, `@FR-G-Mono`).
+    pub(crate) const FORMAT_PENDING: i32 = i32::MIN + 1;
+
+    /// Lower each marked format hole of a fresh monomorph with the type the instance binds its
+    /// type variable to: `append_data`, the lowering a concrete hole gets, spec checks and all.
+    /// Run inside the instance's frame, as [`Self::resolve_content_eq`] is.
+    fn resolve_pending_formats(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(_, args) = code.unspan_mut()
+            && args.len() == 14
+            && matches!(args[5].unspan(), Value::Int(Self::FORMAT_PENDING))
+            && let (Value::Var(append), Value::Int(holder), Value::Int(append_value)) =
+                (args[0].unspan(), args[6].unspan(), args[7].unspan())
+            && let (Value::Int(dir), Value::Int(radix)) = (args[3].unspan(), args[8].unspan())
+            && let (Value::Boolean(plus), Value::Boolean(note), Value::Boolean(float)) =
+                (args[9].unspan(), args[10].unspan(), args[11].unspan())
+            && let (Value::Text(spec), Value::Text(token)) = (args[12].unspan(), args[13].unspan())
+        {
+            let concrete = bindings
+                .iter()
+                .find(|(h, _)| *h as i32 == *holder)
+                .map_or(Type::Unknown(0), |(_, t)| t.clone());
+            let (append, append_value) = (*append, *append_value as u16);
+            let (spec, token) = (spec.clone(), token.clone());
+            let state = OutputState {
+                radix: *radix,
+                width: args[2].clone(),
+                token: &token,
+                plus: *plus,
+                note: *note,
+                dir: *dir,
+                float: *float,
+                spec: &spec,
+            };
+            let format = args[1].clone();
+            let mut list = Vec::new();
+            self.append_data(concrete, &mut list, append, append_value, &format, state);
+            *code = Value::Insert(list);
+            return;
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_pending_formats(c, bindings));
+    }
+
     /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
     /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
     /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
@@ -9332,6 +9375,7 @@ impl Parser {
         // Inside the instance's own frame (its variables, its context), so a comparison that
         // needs a temporary — a tuple's element-wise one — makes it in the right function.
         self.resolve_content_eq(&mut code, bindings);
+        self.resolve_pending_formats(&mut code, bindings);
         let returned = self.data.def(d_nr).returned().clone();
         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
         {

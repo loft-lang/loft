@@ -2879,6 +2879,40 @@ use #count instead"
         } else {
             "OpFormat"
         };
+        // `@FR-G-Mono` — a hole whose type is a BOUND type variable is lowered per instance,
+        // with the concrete type, by this same function: the rendering a builtin lowers to is
+        // a constant derived from the type, and the instance behaves as its hand-written twin
+        // (`{x:05}` on an integer `T` is `00042`, a `text` `T` is refused as its twin is).
+        // Lowered here, through `to_text` and a TEXT append, the template fixed text's
+        // alignment and text's zero-fill for every instance.  The hole is marked with its
+        // whole spec; `Parser::resolve_pending_formats` lowers it inside the instance.
+        if let Type::Reference(tv, _) = tp
+            && self.data.is_type_var_placeholder(tv)
+            && self.has_bound_for_method("to_text", tv, None)
+        {
+            list.push(self.cl(
+                &(start.to_owned() + "Text"),
+                &[
+                    var,
+                    format.clone(),
+                    state.width.clone(),
+                    Value::Int(state.dir),
+                    Value::Int(i32::from(
+                        state.token.as_bytes().first().copied().unwrap_or(b' '),
+                    )),
+                    Value::Int(Self::FORMAT_PENDING),
+                    Value::Int(tv as i32),
+                    Value::Int(i32::from(append_value)),
+                    Value::Int(state.radix),
+                    Value::Boolean(state.plus),
+                    Value::Boolean(state.note),
+                    Value::Boolean(state.float),
+                    Value::Text(state.spec.to_string()),
+                    Value::Text(state.token.to_string()),
+                ],
+            ));
+            return;
+        }
         // L9: escalate format-specifier mismatches to compile errors.
         // A specifier that can never have any effect on the value type is always a bug.
         if !self.first_pass {
