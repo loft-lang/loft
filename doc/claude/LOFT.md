@@ -580,7 +580,8 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 - Functions without a `->` clause return `void`.
 - A function body ending in an expression (without `;`) returns that value.
 
-External (Rust-implemented) functions are declared without a body, followed by `#rust "..."`:
+A standard-library function implemented in Rust is declared without a body, followed by
+`#rust "..."` — in `default/` only; a library binds Rust with `#native` (C87):
 ```
 pub fn starts_with(self: text, value: text) -> boolean;
 #rust "@self.starts_with(@value)"
@@ -3072,7 +3073,9 @@ Guard: `tests/scripts/88-imports.loft` (a `use` after a declaration is refused).
 
 ## External function annotations (`#rust`, `#iterator`)
 
-Used only in default/library files to bind loft declarations to Rust implementations:
+Used only in the standard library (`default/`) to bind loft declarations to Rust
+implementations; anywhere else they are refused, and a library binds Rust with `#native` and a
+native crate instead ([PACKAGES.md § Function binding model](PACKAGES.md#function-binding-model), C87):
 
 <!-- from default/03_text.loft -->
 ```loft

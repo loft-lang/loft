@@ -2004,7 +2004,7 @@ directory's — a package whose directory differs landed under a name no `use` c
 | Feature | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
 | Pure loft code | ✓ bytecode | ✓ compiled Rust | ✓ compiled WASM | ✓ compiled WASM |
-| `#rust` inline | ✓ fill.rs dispatch | ✓ emitted inline | ✓ emitted inline | ✓ emitted inline |
+| `#rust` inline (standard library only — C87) | ✓ fill.rs dispatch | ✓ emitted inline | ✓ emitted inline | ✓ emitted inline |
 | `#native` external | ✓ dlopen rlib | ✓ linked rlib | ✓ linked wasm rlib | ✓ wasm.bridge crate (see below) |
 | File I/O | ✓ OS calls | ✓ OS calls | ✓ VirtFS bridge | ✗ embedded assets only |
 | OpenGL | ✓ glutin/gl | ✓ glutin/gl | ✗ WebGL (different API) | ✓ WebGL2 (via loft-gl-wasm.js) |

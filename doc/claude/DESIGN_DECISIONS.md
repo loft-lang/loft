@@ -437,15 +437,20 @@ widened — which argues for widening `ElidePlan`, never for flipping the semant
 
 ## C87 — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
 
-**Decision.** The `#rust"..."` template path stays: inline `#rust` is a public library-authoring
-mechanism for BRIDGING a capability loft lacks, not stdlib-internal debt.  It is not a speed-up
-for a routine loft can express — that is cured in the engine or the loft algorithm
-(`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).  **Why.** Deleting the template
-path breaks the documented library route and makes a new operator cost a struct and a
+**Decision.** The `#rust"..."` template path stays as the STANDARD LIBRARY's way to write an
+operator or builtin in one line.  It is not a library route: outside `default/`, `#rust` and
+`#iterator` are refused by name, and the refusal points at `#native` with a native crate, which
+reaches all four targets.  A native crate bridges a capability loft lacks; it is never a speed-up
+for a routine loft can express (`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).
+**Why.** Migrating the ~200 templates to per-Op emitters makes a new operator cost a struct and a
 registration instead of one line; the emission-bug class is better served by hardening the path.
+The library reading the 2026-07-08 decision rested on never held: the parser accepted `#rust`
+only in `default/`, and no published library used it (owner, 2026-09-29).
 
 **Revisit when.** Emission genuinely needs one source of truth — then fold the few hand-written
-emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-25 — [record](DESIGN_DECISIONS-history.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed).
+emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-25 and 2026-09-29 — [record](DESIGN_DECISIONS-history.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed).
+**Holds at:** `@C87` — `tests/scripts/c87-a-rust-template-outside-the-stdlib-names-native.loft`
+(the refusal and its cure) and `stdlib_rust_templates_resolve_on_wasm` (the stdlib's templates).
 
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 

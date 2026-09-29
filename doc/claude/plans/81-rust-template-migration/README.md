@@ -16,6 +16,11 @@ the correct direction is the REVERSE (fold the ~5 emitters into `#rust`), which 
 this one. See [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md). The design sketch below is retained
 as a historical record.
 
+**Amended 2026-09-29 (C87):** the library half of that premise never held — the parser accepted
+`#rust` only in `default/`, and no library used it.  `#rust` is now stated and enforced as the
+standard library's template (refused elsewhere, pointing at `#native`); the reason to keep it —
+one line per stdlib operator — stands.
+
 ---
 
 ## Goal

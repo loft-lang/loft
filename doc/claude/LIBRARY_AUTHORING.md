@@ -50,7 +50,8 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 
 7. **Written in loft, readable first.**  A slow routine is cured in the engine or in its own
    loft algorithm; a native rewrite is a per-routine exception with its reason beside it.
-   `#rust` and a native crate bridge a capability loft lacks, never speed.
+   A native crate (`#native`) bridges a capability loft lacks, never speed; `#rust` is the
+   standard library's own template and is refused in a library (C87).
    [formal/performance.md](formal/performance.md) `(Perf-Cure)`
 8. **Every public routine pulls its weight**: measured per release against a same-hash
    reference twin in an industry language, within 3× per routine and 2× at the median.
