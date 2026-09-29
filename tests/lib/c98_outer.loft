@@ -1,0 +1,6 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C98 — a facade over `c98_private`: it passes c98_private's names on, and those do
+// not include c98_math's, which c98_private imports for its own file only.
+pub use c98_private::*;

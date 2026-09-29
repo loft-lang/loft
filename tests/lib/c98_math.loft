@@ -4,3 +4,4 @@
 // A library that declares; `c98_facade` passes it on and `c98_private` does not (@C98).
 pub struct C98Vec { cx: integer, cy: integer, cz: integer }
 pub fn c98_len(v: C98Vec) -> integer { v.cx + v.cy + v.cz }
+pub fn c98_unit() -> integer { 1 }
