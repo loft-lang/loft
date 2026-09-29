@@ -208,7 +208,48 @@ body always did — and a type with an `OpDrop` runs it there, where it used to 
 the function.  If your `OpDrop` releases something a later line still relies on — a transaction,
 a lock — declare the binding where you want the release to happen.
 
+**A cast to a variant answers that variant, never `null`.**  `s as Circle` on a `Shape` used to
+answer `null` when `s` held a `Rect`, while its type said it could not be null — so `c.radius`
+read a hole and a null test on `c` was reported as always false.  Now a miss answers a `Circle`
+with every field at its default, and the cast warns (`variant-cast-default`) unless you checked
+first (`if s is Circle { … }`) or wrote `s as Circle?`, which is the spelling that answers `null`
+on a miss.  A miss the compiler can already see — a known `Rect` cast to `Circle` — is an error.
+Parsing text into a plain enum works the same way: `t as Color` answers the first variant for a
+text that names none and warns (`enum-parse-default`); write `t as Color?` or `t as Color ?? Blue`.
+
+**A name after `:` in a `match` field pattern binds.**  `Circle { radius: r } => r * 2` compared
+the field against an `r` already in scope (and fell to the next arm when it differed), or was
+refused when there was none.  It now binds `r`, the way `Circle { radius }` binds `radius`.  An
+`is` capture still takes bare names only — `if s is Circle { radius: r }` is refused, and the
+error says to use `match` for the rename.
+
+**`0N` zero-pads a number, and is refused on anything else.**  `{flag:05}` on a boolean rendered
+`true0`, and `{v:010}` on a vector or `{p:012}` on a struct put the zeros after the whole text.
+A character, an enum, a struct, a list and a boolean now refuse `0N`, as text already did; use a
+fill for them (`{flag:*>6}`).  A `for` inside a hole still pads each number it produces
+(`{for n in v {n}:03}`).
+
 ### Everything else
+
+**A generic format hole renders as the type it is called with.**  Inside
+`fn show<T: Printable>(x: T)`, `"{x:05}"` rendered `show(42)` as `42000` and `"{x:5}"` put a
+number on the left, because the hole was rendered as text for every caller.  It now renders
+exactly as the same hole with the concrete type: `00042`, `   42`.  A precision (`{x:.2}`) or a
+radix (`{x:#x}`) now works for the types that have one, and is refused, at the call, for those
+that do not.
+
+**A list literal holding `null` can be passed where the parameter says its elements may be
+null.**  `f(["a", null])` against `fn f(v: vector<text?>)` was refused, although the same list
+could be stored in a `vector<text?>` variable; so was a list of records with a `null` in it, and
+a list of lists.  They are all accepted now.
+
+**Checking an element for `null` narrows it.**  In `for e in v { if e != null { s += e.a } }`
+over a `vector<P?>`, `e.a` still counted as possibly `null`, and the function returning `s`
+warned about it.  The check now does for a list element what it does for a variable.
+
+**Assigning a whole variable always copies it.**  `b = { a }`, `b = if c { a } else { … }` and
+`b = a as Circle` — each assigned to a `b` that already held a value — made `b` and `a` the same
+value, so a change through `b` showed up in `a`.  They copy, as `b = a` does.
 
 **Bytes can be read without copying them.**
 
