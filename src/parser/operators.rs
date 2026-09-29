@@ -4199,13 +4199,10 @@ impl Parser {
         self.build_null_coalesce_default(var_tp, code, parent_tp, OPERATORS.len(), ctp, &lhs_type);
     }
 
-    /// @PLN116 — build type `tp`'s default VALUE (the single source both `x?` and, in
-    /// time, `S{}` consult).  `None` means `tp` has no well-defined default (the caller
-    /// raises the compile error).  `tp` is the already-peeled non-null base.
     /// The discriminant of `target` when `src as target` casts a struct-enum value to one of
     /// its own variants (`@C131`), else `None`.
     fn variant_cast_disc(&self, src: &Type, target: &Type) -> Option<i32> {
-        let Type::Reference(v_nr, _) = target else {
+        let Type::Reference(v_nr, _) = target.base() else {
             return None;
         };
         if self.data.def_type(*v_nr) != crate::data::DefType::EnumValue {
@@ -4223,6 +4220,9 @@ impl Parser {
         }
     }
 
+    /// @PLN116 — build type `tp`'s default VALUE (the single source both `x?` and, in
+    /// time, `S{}` consult).  `None` means `tp` has no well-defined default (the caller
+    /// raises the compile error).  `tp` is the already-peeled non-null base.
     pub(crate) fn build_default(&mut self, tp: &Type) -> Option<(Value, Type)> {
         match tp {
             Type::Integer(_) | Type::Float | Type::Single | Type::Boolean => {
