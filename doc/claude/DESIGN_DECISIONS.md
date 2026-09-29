@@ -397,14 +397,20 @@ being clipped (then fix that path).  Decided 2026-06-24 — [record](DESIGN_DECI
 
 ## C84 — `server` ships as minimal TCP/WS primitives, not a fully-featured HTTP framework
 
-**Decision.** `server` ships HTTP `listen` / `next` / `respond*`, single-client WebSocket and a
-multi-client event pump; an application routes with its own `match` on the request path.  No
-`App`/route/middleware/auth/TLS/session framework is on any roadmap.  **Why.** Every consumer
-needed only "answer a request" and "run a WebSocket"; auth, certificate automation and rate
-limiting are each a library-sized problem to solve when a consumer needs one.
+**Decision.** `server` ships transport primitives and nothing above them: HTTP `listen` (TLS
+included) / `next` / `respond*`, single-client WebSocket and a multi-client event pump.  A program
+may route with its own `match` on the request path.  A framework — a route table, middleware,
+authentication, sessions, certificate automation — is a SEPARATE library over `server`, never
+folded into it; @PLN148 builds that stack as `webapp`, `auth`, `acme` and `sql`
+([WEB_STACK.md](WEB_STACK.md)).  **Why.** Every consumer of `server` needs "answer a request" and
+"run a WebSocket"; auth, certificates and routing are each a library-sized problem, and one that
+lives in `server` forces its dependencies on every program that only answers requests.
 
-**Revisit when.** A real consumer hits a wall that primitives plus `match` cannot clear; then add
-the one piece it needs (auth, TLS or static serving), not the framework.  Decided 2026-07-02 — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+**Revisit when.** A primitive `server` lacks blocks a library above it; then add that primitive
+(as @PLN148's `reload_tls`), not the layer.  Decided 2026-07-02, amended 2026-09-29 (owner: the
+framework is on the roadmap, as its own libraries) — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+**Holds at:** `@C84` — `loft-libs-net` `server/tests/c84_surface.loft` (the package's public
+surface is the transport set; a new name fails its CI until someone adds it on purpose).
 **Catalogue:** the `server` library (`loft-lang/loft-libs-net`).
 
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)

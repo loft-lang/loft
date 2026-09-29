@@ -1898,6 +1898,19 @@ A **real consumer** hits a concrete wall that primitives-plus-`match` cannot rea
 e.g. a genuine need for pluggable auth or automatic TLS certificate management in a shipping loft
 program. Bring that consumer's use case as the evidence; scope the *specific* piece it needs (auth,
 or TLS, or static serving) as its own addition, not the whole framework at once.
+
+### Amendment (2026-09-29) — the framework is a separate library, and it is on the roadmap
+
+@PLN148 (WEB_STACK.md, 2026-09-08) designs the web stack this entry said was on no roadmap: a
+`webapp` library with a route table, `.auth()` and sessions, plus `acme` (certificates with
+rotation), `auth` and `sql`.  The owner kept the plan and amended this entry: the part that
+stands is that `server` stays transport primitives; what changes is that a framework is a
+separate library above it rather than declined outright.  WEB_STACK.md already splits it into
+four libraries for this entry's own reason — each is library-sized, and fusing them forces
+unrelated dependencies on every consumer.  `server` gains only a primitive a layer needs
+(`reload_tls`).  `listen_tls` was already in `server` when this amendment was written: TLS
+listening is a primitive; certificate automation is not.
+
 ## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
