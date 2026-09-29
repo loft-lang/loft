@@ -12,7 +12,40 @@ invariants, internal phase numbers)?  See
 
 ---
 
-## 2026-09
+## 2026-10
+
+The **one-meaning** release.  A spelling now means one thing wherever it is written: `==`
+compares what two values hold, whatever their type; an import brings in exactly what it names;
+a `const` value stays read-only wherever it is handed.  Compiling does about half the work it did,
+and a file or a library's bytes can be read without copying them.
+
+**`==` compares what two values hold, for every type.**  `b = a; a == b` answered `false` for a
+struct: every variable is its own value, and `==` compared which record each name held.  Now two
+structs are equal when their fields are, a list when its elements are (in order), a `hash`,
+`sorted`, `index`, `spatial` or `trie` when it holds the same records whatever order they went
+in, and an enum value when its variant and fields are.  A `reference<T>` field is followed to the
+record it names, and a value that points back at itself still gets an answer.  `vector ==
+vector`, which was refused, works.  A type's own `OpEq` still decides for it, `x == null` still
+asks whether it is there, and a generic `same<T: Equatable>(a, b)` now takes a struct, a list, a
+tuple or an enum.  **If you used `==` on structs to ask "is this the same record?"**, write
+`&a == &b` — the one spelling of that question, and `&` on one side only is refused.
+
+**`0.0` and `-0.0` are one key.**  A `hash`, `sorted` or `index` keyed on a `float` or `single`
+held them as two entries while `0.0 == -0.0` answered `true`.  They are one entry now: the later
+insert replaces the earlier, as with any equal key.
+
+**`use lib;` brings in the name `lib` — and nothing else.**  A bare `use` poured every public
+name of the library into your file, and a name could even arrive from a library you never
+mentioned, by way of one you did.  Now `use lib;` lets you write `lib::name`; `use lib::*;`
+brings every public name in bare, which is what the old spelling did for your own file; and
+`use lib::(a, b);` brings in just those.  An import serves the file it is written in — a library
+that wants to hand names on to its users writes `pub use`.  Code that calls a library's functions
+bare after `use lib;` now stops with an error naming the library and both cures.
+
+**A library reaches Rust through `#native`.**  `#rust "…"` and `#iterator` are the standard
+library's own templates for the compiler, and a library using them is now refused by name, with
+the cure: a bare `#native` on the function and a native crate beside the library, which reaches
+all four targets.
 
 **A loop that builds one vector while reading another runs its reads at full speed on
 `--native`.**  `out += [w[i]? * 2]`, `for e in ents { out += [e.q] }`, `out += [v[i]?.id]`:
@@ -365,7 +398,7 @@ whose parameter is plain, through a function reference, to a `map` or `filter` c
 closure that captured it.  Each of those now says so.  A write through a lambda's `const`
 parameter, through a closure's capture, or through a short `|p|` callback over a `const`
 collection is an error, like any other write to a `const` value.  Handing the value to a plain
-parameter is a warning for now: declare that parameter `const` if the function only reads it
+parameter is an error too: declare that parameter `const` if the function only reads it
 (`fn(const T)` for a function type), or pass a copy.  The standard library's readers — `len`,
 `sum`, `join`, the `JsonValue` accessors and more — already declare theirs.
 
@@ -679,110 +712,6 @@ mentioned: *"Variable 'c' cannot change type from &hash<Row,[\"id\"]> to vector<
 now lands in the caller's collection, on compiled and interpreted programs alike.  Two of the
 five kinds — `trie` and `spatial` — went further and stopped the compiler outright when passed
 with `&` at all, even for `c[key] = value`, which the other three accepted.
-**Reading from a collection that is empty-because-absent now tells you it can be absent — and
-`if c != null` finally counts as the check.**  A `vector<Thing>?` or a `hash<Thing[k]>?` holding
-`null` has no element to give, so `m[0]` reads as absent.  The compiler used to say so only when
-you indexed with a variable: written `m[0]`, with a number you typed, the same read on the same
-absent collection was silently promised non-null and handed you the absent value anyway.  The
-number you type is a promise about the INDEX, and it was being read as a promise that the
-collection exists.  Both spellings now ask you to handle the absence, on every collection kind.
-
-Guarding used to be a promise the compiler did not read: `if things != null { things[0] }` was
-reported exactly like the unguarded version, because the check was understood for numbers and
-text but not for structs, vectors or the keyed collections.  It is understood for all of them
-now, so the ordinary way of writing this is quiet again — the guard, `?? default`, `match`, or
-declaring the slot `Thing?`.  Writing still works the way it always has: `c[k] = v` on an absent
-collection creates it and inserts, and needs no check.
-
-Related: a variable you declared as possibly-absent no longer complains when you assign a
-possibly-absent value back into it after a guard.  It is doing what you declared it to do.
-
-**A closure you return keeps its captured value even if you change that variable afterwards.**
-Writing `s: Thing? = Thing { … }`, building a closure that reads `s`, and then assigning `s`
-something else released the value the closure had taken — so the returned closure read freed
-memory, and the value it should have kept was gone.  It reads what it was built with now, which
-is what changing a variable has always meant: replacing a variable is not the same as changing
-what it points at.  One closure is enough to have hit this; two, with one of them returned, hit
-it as well.  The answer usually looked right, because released memory keeps its contents until
-something else takes it — which is exactly what made it worth finding.
-
-**Two methods on an enum where one builds its text in a branch both work now.**  If one
-variant's implementation returned a plain `"text"` and another built its answer inside an `if`,
-the enum dispatch quietly stopped existing and the call failed with a message about a field that
-has no storage.  And where one implementation genuinely takes a parameter the others do not, you
-are now told that where you wrote it, instead of at the call.
-
-**A value captured by two closures survives when one of them is returned.**  Both closures took
-the value as theirs, so whichever was left behind released it and the returned closure read
-freed memory.  One of them owns it now — the one that leaves, whichever order you wrote them in.
-
-**A closure you return keeps the value it captured, when that value may be absent.**  Writing
-`n: Thing? = Thing { … }` and returning a closure that reads `n` handed back a closure whose
-value had already been released — the answer was whatever happened to be in that memory next,
-usually still right, sometimes a huge meaningless number.  The dense spelling `n: Thing` was
-never affected.
-
-**A view into a value that may be absent is copied out when you replace that value.**  `v = o.p;
-o = Other { … }` copies `v` first and tells you it did — writes through `v` stop reaching `o` —
-but only when `o` was declared `Other`.  Declared `Other?` it did neither: no copy, no note, and
-reading `v` afterwards read released memory.
-
-**A method you write for one variant of an enum is found even when its receiver is `Square?`.**
-Writing `fn area(self: Square?)` — the way to say "this works even when the shape is absent" —
-made the method invisible to the dispatcher that routes `shape.area()` to the right variant, so
-that call answered a meaningless number (or `0`) while calling `area()` on a `Square` directly
-answered correctly.  It also warned that the variant had no implementation, with one written
-right above it.  Both are fixed: the `?` says what the implementation tolerates, not which type
-it belongs to.
-
-**Two methods on one enum both get dispatched now.**  If you wrote `area()` and `describe()` for
-every variant, only one of them could be called through the enum — the other failed with a
-message about a field that has no storage — and if their signatures differed enough, neither
-worked.  Every method now gets its own dispatcher.
-
-**Two `index` collections over the same records are refused however you spell them.**  Writing
-the second one `index<E[k]>?` slipped past the check that says two indexes cannot share a record
-set, and the two then overwrote each other's bookkeeping: a lookup answered "not found" for a
-record the same collection would happily list back to you.
-
-**A key that may be absent is refused where absence has no key.**  `spatial<Point[x, y]>` with a
-`text?` axis compiled and then answered `null` for a point you had just inserted; a `trie` with a
-`text?` key was refused with advice about coordinates.  Both now say what is wrong — an absent
-text has no bytes to walk, an absent coordinate has no position — and point at `hash`, `sorted`
-or `index`, which key on the value and hold an absent key like any other.
-
-**A `?` on a tuple type now says why it cannot be one.**  `t: (integer, integer)? = …` reported
-*"Expect token ;"* and left you looking at the semicolon.  A tuple has nowhere to keep "absent" —
-it is just its members' bytes — so the type is refused, and the message now says that and names
-the two things you can do instead: make the MEMBERS nullable (`(integer?, text?)`), or wrap the
-tuple in a `struct`, which can be `?`.
-
-**Reading a tuple out of a vector at a position that may not exist now behaves like every other
-type.**  `v[i]` where `i` might be past the end gives "a tuple or nothing", and `v[i]?` is how
-you ask for the tuple with its defaults — but it was answering `null` in both members while the
-same program written with a struct answered `0`.  It now gives the members' defaults.  Reading
-`.0` off the undischarged value, or destructuring it, is refused with a message that names the
-discharge instead of complaining about a field name or claiming the value is not a tuple.
-
-**Pattern matching now works over a vector whose elements may be absent.**  `match v { [Id { x }]
-=> x, … }` over a `vector<Tok?>` was refused with an error that pointed at a comma and explained
-nothing, and the shorter spelling `[Id]` was worse: it quietly matched EVERY element — a
-different variant, and an absent one — because the pattern had turned into a plain binding named
-`Id`.  Both spellings now ask the same question the dense `vector<Tok>` asks, and an absent
-element matches no variant, so it simply falls to the next arm.  The same fix covers a nullable
-field inside a pattern (`A { t: Id { x } }`) and a cursor whose source holds absences.
-
-**An element you bind out of a vector keeps that vector alive.**  `match v { [a, ..] => a }`
-handed back the first element of a `vector<Tok?>` without recording that the value points INTO
-the vector, so the vector's memory was released when the function returned and the caller read
-whatever was stored there next — a wrong value, quietly, on both backends.  The dense
-`vector<Tok>` was right all along; the nullable one now says what it borrows.
-
-**A slice pattern over the wrong kind of struct now says which field is wrong.**  `match c {
-[Id { x }] => … }` needs a cursor — a struct with a `vector<…>` to read from and an integer
-`pos`.  Given a struct that is neither, loft used to report *"Expect token }"* three times and
-stop.  It now says *"a slice pattern `[ … ]` matches a vector or a cursor; `Cur` is neither — its
-`pos` field is `integer?`, and a cursor's position must be an integer"*, once, and keeps parsing.
 
 **A `match` arm now has to answer in the type its siblings answer in.**  Every arm was parsed
 without knowing what type the `match` as a whole was expected to produce, so an arm of another
@@ -860,10 +789,6 @@ and you got a copy), and `pe = &e; pe = [2, 2]` gave `pe` a new list instead of 
 `e`'s contents.  Writing the link with the `&` on the type instead of the value
 (`pc: &text = c`) could crash outright.  All of these now do what the plain-language rule
 says, on both backends, and a `&` to a struct no longer leaks the value it replaces.
-
-The **say-what-you-do** release. Two threads, and they turned out to be one: every page of
-the language reference was read against the compiler that ships, and most of what came back
-was not a wrong sentence but a promise nothing was keeping.
 
 **A value chosen by an `if` keeps what it was given.**  `x = if k > 0 { h.inner } else
 { mk(0) }` used to start reading the NEW `h` as soon as `h` was replaced — on both backends
@@ -1150,6 +1075,30 @@ did.  One shape stays open: a nullable local assigned both a field like `o.opt` 
 `S?` value keeps only the last assignment's representation (loft#1367, being folded into
 the null model's one bind junction; use a separate local per source until then).
 
+### Smaller things you may notice
+
+- A tuple with a heap member is a value: `u = t` copies the member, `(s, 5)` copies a struct
+  member in, and `a = t.0` / `(a, b) = t` copy a collection member out of a tuple you own —
+  on both backends.  A struct member read out is still a view, as a struct field is; and the
+  `lost-write` warning no longer fires on a write through that view.
+- `scripts/install.sh` — the `curl | sh` path — installs the whole bundle now: the README,
+  the examples and the reference PDF beside `bin/` and `default/`, which is also what
+  `loft self-update` installs. It used to copy the runtime only and then hand
+  `loft verify-self` the manifest of the full bundle, so every installation it made ended
+  in *the installation does not verify*. A test now runs the script against a bundle built
+  the way a release builds one.
+- `try { … }` is refused by name, saying what loft does instead (an operation that can fail
+  answers a value you test with `== null` or `??`), where it used to stop at a bare
+  *"Expect token ;"*.
+
+---
+
+## 2026-09
+
+The **say-what-you-do** release. Two threads, and they turned out to be one: every page of
+the language reference was read against the compiler that ships, and most of what came back
+was not a wrong sentence but a promise nothing was keeping.
+
 **Every text buffer a frame mints is released.**  A handful of shapes answered the right
 value on both backends while the interpreter left one text buffer behind per call: a
 lambda returning a captured text through `??`, a nullable text local returned, a
@@ -1349,10 +1298,6 @@ shell idiom there is.
 
 ### Smaller things you may notice
 
-- A tuple with a heap member is a value: `u = t` copies the member, `(s, 5)` copies a struct
-  member in, and `a = t.0` / `(a, b) = t` copy a collection member out of a tuple you own —
-  on both backends.  A struct member read out is still a view, as a struct field is; and the
-  `lost-write` warning no longer fires on a write through that view.
 - A struct or vector yielded from a generator's LOOP body compiles on `--native`, and the
   consumer reads the value as it was at the yield; the statements after the loop run too
   (they were silently dropped).
@@ -1394,12 +1339,6 @@ shell idiom there is.
 - A tuple carrying text can be handed to an `if` binding and the original still read
   afterwards on `--native` — `t = if c { pair } else { (0, "z") }; pair.1` used to refuse
   to compile, because the arm had moved the value.
-- `scripts/install.sh` — the `curl | sh` path — installs the whole bundle now: the README,
-  the examples and the reference PDF beside `bin/` and `default/`, which is also what
-  `loft self-update` installs. It used to copy the runtime only and then hand
-  `loft verify-self` the manifest of the full bundle, so every installation it made ended
-  in *the installation does not verify*. A test now runs the script against a bundle built
-  the way a release builds one.
 
 ---
 
