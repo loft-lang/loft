@@ -7,7 +7,9 @@
 // side of a word — and a `character` and a plain enum took the same text-side fill.  A number
 // still pads, and an iterator applies the spec to each element, so neither is refused.
 //
-// @falsified-at: PENDING
+// @falsified-at: 47ba568c6 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/zero-padding-is-refused-on-every-scalar-that-is-not-a-number.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree refuses only the text hole.
 
 enum Dir { North, South }
 
