@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Rep-Scalar` — a scalar repetition `xs:T*` names the vector's own element type, so every
+// element matches it and the run is a TYPED REST: `@FR-P-Rest` with `t` the fixed patterns after
+// it, and `xs:T+` asking one element more.  A fixed tail after it is read from the END, whatever
+// its form — a bare name, `_`, a literal.  Only a literal tail was accepted; a bare name was
+// refused ("only a literal can follow the scalar repetition"), though a `..xs` in the same place
+// took it (loft#1736).  A second variable-length part after it — `..rest`, or another rest — is
+// refused in `tests/parse_errors.rs` (`scalar_rep_rest_is_a_second_rest`,
+// `two_rests_are_refused`).
+//
+// Axes this file MOVES:  the tail form (literal, bare name, `_`, literal + name), a fixed head
+//                        before the run, `*` vs `+`, the subject length at each boundary
+//                        (empty, exactly the fixed count, one more), the element type (integer,
+//                        text).
+// Axes it HOLDS FIXED:   a vector subject (not an iterator, not a cursor); one arm per function.
+
+fn lit(v: vector<integer>) -> text { match v { [xs: integer*, 9] => "{xs}", _ => "none" } }
+fn last(v: vector<integer>) -> text { match v { [xs: integer*, l] => "{xs} {l}", _ => "none" } }
+fn last_plus(v: vector<integer>) -> text { match v { [xs: integer+, l] => "{xs} {l}", _ => "none" } }
+fn both_ends(v: vector<integer>) -> text {
+  match v { [h, xs: integer*, a, b] => "{h} {xs} {a} {b}", _ => "none" }
+}
+fn gap(v: vector<integer>) -> text { match v { [h, xs: integer*, _, b] => "{h} {xs} {b}", _ => "none" } }
+fn lit_then_name(v: vector<integer>) -> text { match v { [xs: integer*, 9, l] => "{xs} {l}", _ => "none" } }
+fn words(v: vector<text>) -> text { match v { [ws: text*, l] => "{ws} {l}", _ => "none" } }
+
+fn test_a_literal_tail_is_read_from_the_end() {
+  got = "{lit([1, 9, 2, 9])}|{lit([9])}|{lit([1, 2])}";
+  assert(got == "[1,9,2]|[]|none", "literal tail: {got}");
+}
+
+fn test_a_bare_name_tail_is_the_last_element() {
+  got = "{last([1, 9, 2, 9])}|{last([5])}|{last([])}";
+  assert(got == "[1,9,2] 9|[] 5|none", "bare-name tail: {got}");
+  got2 = "{last_plus([5])}|{last_plus([4, 5])}";
+  assert(got2 == "none|[4] 5", "`+` asks one element more: {got2}");
+}
+
+fn test_a_head_and_a_tail_around_the_run() {
+  got = "{both_ends([1, 2, 3, 4, 5])}|{both_ends([1, 2, 3])}|{both_ends([1, 2])}";
+  assert(got == "1 [2,3] 4 5|1 [] 2 3|none", "head and tail: {got}");
+  got2 = "{gap([1, 2])}|{gap([1, 2, 3])}";
+  assert(got2 == "none|1 [] 3", "`_` in the tail: {got2}");
+  got3 = "{lit_then_name([1, 9, 7])}|{lit_then_name([1, 8, 7])}";
+  assert(got3 == "[1] 7|none", "literal then name: {got3}");
+}
+
+fn test_a_text_run() {
+  got = words(["a", "bb", "c"]);
+  assert(got == "[\"a\",\"bb\"] c", "text run: {got}");
+}

@@ -159,6 +159,13 @@ index `i` into a source `src`, with `elem(src,i)` / `len(src)` **null past the e
   (P-Cap)    ⟨name:p, κ⟩: run p; on Match(bs,κ') ⟹ Match(bs ∪ {name ↦ p's result}, κ').
   (P-Rest)   ⟨..name, κ=⟨i,src⟩⟩ ⟹ Match({name ↦ a FRESH vector of src[i .. len−t]}, ⟨len−t, src⟩),
              t = fixed patterns after the rest (H-Alloc — a new store, independent of src).
+             A slice holds AT MOST ONE rest: a second has no length of its own (the first takes
+             every element the fixed ones leave), so it is a STATIC ERROR.
+  (P-Rep-Scalar) a SCALAR repetition `xs:T*` names the vector's own element type T, so every
+             element matches it and (P-Rep)'s greedy run would take all of them.  It is instead
+             the slice's ONE rest, typed: `xs:T*` ≡ `..xs`, and `xs:T+` ≡ `..xs` with ≥ 1
+             element.  Whatever follows it is (P-Rest)'s fixed tail, read from the END — a
+             literal, `_`, a bare name, a variant: `[xs:integer*, last]` binds last = v[len−1].
   (P-Multi)  a MULTI-PATTERN arm `pat_a, pat_b => body`: try pat_a from ⟨0,v⟩ (whole-match); else
              pat_b; the FIRST whole-match commits.  (P-Alt at arm granularity — no new cursor work.)
   (P-Guard)  a GUARDED arm `pat if cond => body`: run `pat` from κ; on Match(binds,κ') evaluate
@@ -269,9 +276,9 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **4** — `D-match-10` to `D-match-13`, each a refusal of a program the pattern rules
+OPEN: **3** — `D-match-10`, `-11` and `-13`, each a refusal of a program the pattern rules
 define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`,
-which it closed.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+which it closed, and `D-match-12`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
 The walk's finding is one shape seven times: each rule held on its own and was refused where two
@@ -282,15 +289,23 @@ every one said *"not yet supported"* or named a plan phase, which is how the reg
 `OPEN: 0` over them: a refusal worded as pending work was never entered as a deviation.  The
 open four now say what holds and what to write instead.
 
+- **D-match-14 — OPENED AND CLOSED 2026-09-29.** `(P-Rest)` × `(P-Rest)`: a second rest in one
+  slice was accepted and the FIRST one's binding dropped without a word — `[..a, ..b]` bound only
+  `b`, to every element, and `a` read as an unknown variable.  Found while settling D-match-12.
+  A second rest (or a scalar repetition beside one) is now refused at parse time
+  (`two_rests_are_refused`, `scalar_rep_rest_is_a_second_rest` in `tests/parse_errors.rs`).
 - **D-match-13 — OPEN (loft#1737).** A `match` over an `iterator<(τ, …)>` is refused and must be
   collected first, where the iterator-input rule materialises its subject whatever the element
   type and a `vector<(τ, …)>` subject matches tuple patterns.  Closes when the stream path takes
   tuple elements (`stream_match_complex_deferred` in `tests/parse_errors.rs` is its pin).
-- **D-match-12 — OPEN (loft#1736).** A `..rest` or a non-literal element after a scalar
-  repetition `xs:T*` is refused.  It waits on a decision rather than on code: read as `(P-Rep)`'s
-  greedy run, `xs` takes every element and a rest is always empty; read as the literal-tail
-  lowering already does it — the run is the middle, the tail anchored at the end — a trailing
-  `last` is `v[len-1]` and a rest has no length of its own.
+- **D-match-12 — OPENED AND CLOSED 2026-09-29 (loft#1736).** A `..rest` or a non-literal element
+  after a scalar repetition `xs:T*` was refused, over a question the rules had not answered: read
+  as `(P-Rep)`'s greedy run, `xs` takes every element and any tail never matches — which the
+  shipped literal tail already contradicted, `[xs:integer*, 9]` binding the middle exactly as
+  `[..xs, 9]` does.  The owner took the reading the code shipped (2026-09-29): `(P-Rep-Scalar)`
+  makes the run the slice's one rest, typed, so a tail of any form is `(P-Rest)`'s `t`, and a
+  `..rest` after it is the second rest `(P-Rest)` refuses.  The scalar path is now parsed AS a
+  rest rather than beside one (`tests/scripts/a-scalar-repetition-is-a-typed-rest.loft`).
 - **D-match-11 — OPEN (loft#1735).** `(P-Rep-Ty)` collects a capture inside `(a)*` into a
   `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) is refused, because each
   inner store must be copied into the fresh vector (`(H-Alloc)`).  The workaround the message

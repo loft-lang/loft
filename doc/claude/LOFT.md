@@ -2118,7 +2118,7 @@ what lets a single arm describe the shape of a token sequence:
 | `(x: Num)*` | zero or more `Num` elements, collected into `x` |
 | `(x: Num)+` | one or more |
 | `(x: Num)*(Comma)` | a run with a separator between items; the separator is not collected |
-| `xs:integer*` | the same for a plain scalar element type |
+| `xs:integer*` | a plain scalar element type: every element matches, so this is a typed `..xs` — what follows it is read from the end, `[xs:integer*, last]` |
 | `(Kw { k } Op { o })?` | an optional group — if absent, its captures read `null` |
 
 ```

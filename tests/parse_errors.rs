@@ -3151,20 +3151,20 @@ fn scalar_rep_type_mismatch() {
         .error("a scalar repetition `xs:text*` must match the vector's element type integer at scalar_rep_type_mismatch:1:59");
 }
 
-// @PLN35 slice 1 — a `..rest` after a scalar repetition is refused (a clean error,
-// not a silent mis-parse).
+// `@FR-P-Rep-Scalar` — a scalar repetition is a typed rest, so a `..rest` after it is a SECOND
+// variable-length part and refused like `[..a, ..b]` (loft#1736).  A non-literal tail is no
+// longer refused: `a-scalar-repetition-is-a-typed-rest.loft` matches it.
 #[test]
-fn scalar_rep_rest_unsupported() {
+fn scalar_rep_rest_is_a_second_rest() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, .. ] => xs.len(), _ => -1 } }")
-        .error("a `..rest` cannot follow the scalar repetition `xs:integer*` — the repetition already takes every element the pattern leaves; drop the rest at scalar_rep_rest_unsupported:1:66");
+        .error("a slice pattern holds one variable-length part, and `..` is a second one after `xs:integer*` — the first already takes every element the fixed ones leave; drop one of them at scalar_rep_rest_is_a_second_rest:1:68");
 }
 
-// @PLN35 slice 1 — a non-literal element after a scalar repetition is rejected (recovers to
-// `]` so this is the primary error, not a cascade).
+// `@FR-P-Rest` — two rests: accepting the second dropped the first rest's binding without a word.
 #[test]
-fn scalar_rep_nonliteral_tail() {
-    code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, y ] => xs.len(), _ => -1 } }")
-        .error("only a literal can follow the scalar repetition `xs:integer*` — capture the tail with an arm of its own, or read it from `xs`'s end at scalar_rep_nonliteral_tail:1:65");
+fn two_rests_are_refused() {
+    code!("fn f(v: vector<integer>) -> integer { match v { [ ..a, ..b ] => len(a) + len(b), _ => -1 } }")
+        .error("a slice pattern holds one variable-length part, and `..b` is a second one after `..a` — the first already takes every element the fixed ones leave; drop one of them at two_rests_are_refused:1:61");
 }
 
 // @PLN35 slice 2 — a per-iteration capture of a NON-scalar field `( V { heap } )*` is deferred
