@@ -653,6 +653,25 @@ of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygie
 `frontend_counts` through nextest — seconds of tests, minutes of compiling when the release
 test binaries are stale, so not the default).
 
+## A gate cut short resumes on the same tree
+
+**Passes carry over only on an IDENTICAL tree.** Every gate records the tests that passed,
+keyed by a fingerprint of the whole working tree (`scripts/gate_ledger.py`, in
+`target/gate-ledger/`), and that includes a run the budget cancelled or a signal killed.  A gate
+started on the same fingerprint runs only the tests with no pass on record, so a gate the
+budget cut off at 5468 of 5486 tests reruns 18 instead of 5486.  On a changed tree every test
+runs.  Every test binary links `libloft`, and 156 of 375 read repository files at run time,
+some through helpers in `tests/common`, so a pass taken before a change proves nothing about the
+tree after it.  A change of known reach is `recheck`'s job (above).  `make ci` names a resumed
+run (`RESUMED on an identical tree — N of M tests …`), and so does the verdict.  `CI_FULL=1`
+runs everything.
+
+**The budget counts from the lock.** The 20 minutes start when the gate holds the box's gate
+lock (`.ci-lock-held`), not when it is queued.  A gate that waited behind another checkout's
+gate was charged the wait and cancelled before it had compiled anything.  A budget cancel
+reports as `CANCELLED`, with passed / failed / not-run counts.  Before this it fell through to
+`FAILED 0 tests — toolchain/box`.
+
 ## Where the 31 minutes actually are (2026-08-10) — measured, and one axis untried
 
 Per-job wall-clock on the last green PR run (`31359676983`). **One job is the whole

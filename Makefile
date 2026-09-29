@@ -2161,8 +2161,15 @@ CI_MAX_FAIL ?= 5
 # the leg's output — the one thing that would have said why it ran long.
 CI_BUDGET_SECS ?= 1200
 
+# ⚠ `make -n ci` is NOT a dry run: the recipe's long line holds `$(MAKE)`, and make runs
+# any line that does even under `-n` — so it takes the box's gate lock and runs the gate.
+# Read the recipe here instead.
 ci: ci-guard
 	@echo $$PPID > .ci-running
+	@# The budget counts from `.ci-lock-held`, written once this gate holds the box lock, so
+	@# time QUEUED behind another checkout's gate is not charged to this one.  A pending test
+	@# plan from a run that died before recording belongs to that run, not this one.
+	@rm -f .ci-lock-held target/gate-ledger/pending.json
 	@# The 20-minute budget — a hard cancel, in scripts/ci_budget.sh so the tree-kill and the
 	@# pid-reuse guard are readable and testable rather than a wall of Makefile continuations.
 	@# Backgrounded here and self-terminating: it polls `.ci-running`, so it exits within one
@@ -2313,6 +2320,7 @@ ci: ci-guard
 	    fi; \
 	    scripts/gate_lock.sh claim $$$$ "$$(pwd -P)"; \
 	  fi; } && \
+	date +%s > .ci-lock-held && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
@@ -2329,6 +2337,7 @@ ci: ci-guard
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_failure_digest.py selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_timing.py selftest >> result.txt 2>&1 && \
+	python3 scripts/gate_ledger.py selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/unreleased-work.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
@@ -2344,8 +2353,16 @@ ci: ci-guard
 	python3 scripts/rewrite_census.py >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
-	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
-	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1 && \
+	{ sel=$$(python3 scripts/gate_ledger.py plan 2>>result.txt); \
+	  case "$$sel" in \
+	    NONE) rc=0 ;; \
+	    FILTER) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first --no-tests=pass \
+	              -E "$$(cat target/gate-ledger/filter)" >> result.txt 2>&1; rc=$$? ;; \
+	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1; rc=$$? ;; \
+	  esac; \
+	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
+	  [ $$rc -eq 0 ]; } && \
+	{ [ "$$sel" = NONE ] || python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1; } && \
 	bash scripts/native_ratio.sh --gate >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-

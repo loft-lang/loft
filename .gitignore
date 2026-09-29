@@ -167,6 +167,7 @@ target-*/
 .ci-failed
 .ci-recheck
 .ci-recheck.log
+.ci-lock-held
 
 # ⚠ A ROOT `loft.toml` MAKES THIS REPO A LOFT PACKAGE, and that changes two
 # repo-wide behaviours at once — neither of them anywhere near the file:
