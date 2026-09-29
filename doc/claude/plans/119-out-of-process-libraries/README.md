@@ -46,7 +46,8 @@ The library interface carries typed signatures, structs, enums, vectors, tuples,
 methods, coroutines, effects and capability admission; a `{stdout, stderr, code}`
 triple carries bytes and an exit status, and every consumer of it re-parses text
 loft already knows how to type.  A general `run()` stays declined
-([DESIGN_DECISIONS.md C101](../../DESIGN_DECISIONS.md)); `lib_plans/67-process` is
+(this section is its record — no `DESIGN_DECISIONS.md` entry exists, and @PLN179 relies
+on it); `lib_plans/67-process` is
 superseded, and its whole consumer list was served by the typed-library route.
 
 The one thing experience added: **"sealed behind the contract" has to be taken
@@ -163,7 +164,7 @@ The behavioural probes graduated to the gates listed under Status.
 
 - [PLACEMENT.md](../../PLACEMENT.md) — the mechanism and the authoring rules.
 - [PACKAGES.md](../../PACKAGES.md) — declaring `placement`; what a consumer sees.
-- [DESIGN_DECISIONS.md C101](../../DESIGN_DECISIONS.md) — a general `run()` declined.
+- § Why not a subprocess primitive, above
 - [lib_plans/67-process](../../lib_plans/67-process/README.md) — superseded; its
   consumer list is fully discharged.
 - @PLN119 — <https://github.com/loft-lang/plans/issues/119> (this plan).

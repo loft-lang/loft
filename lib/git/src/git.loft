@@ -4,7 +4,8 @@
 // @PLN119 arc F — git, as the typed interface loft already has rather than as a
 // second one.
 //
-// loft declines a general `run(cmd, args)` (DESIGN_DECISIONS C101): it hands
+// loft declines a general `run(cmd, args)` (@PLN119 § Why not a subprocess
+// primitive; no `C` entry records it): it hands
 // back bytes and an exit status, and every caller then re-parses text loft
 // already knows how to type.  So the external command lives in here, behind
 // `log()` and `changed()`, and the `execve` is an implementation detail.  The
