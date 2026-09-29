@@ -49,9 +49,11 @@
 #     definitely-lost text buffer is red here where the ASan leak gate suppresses the
 #     frame (loft#1338, loft#1357); a leaked STORE is not its question, the arena being
 #     one valid allocation.  Nightly-only: ~1200 memchecks is over the PR ceiling alone.
-#   - release-gate-sweeps — the two `#[ignore]`d tests whose reason names the release
-#     gate (the ownership fuzz map's full both-backends replay, the ownership oracle's
-#     backend fact-identity check), each needing rustc per cell.  Nightly-only.
+#   - release-gate-sweeps — the `#[ignore]`d tests whose reason names this job: the
+#     ownership fuzz map's full both-backends replay, the ownership oracle's backend
+#     fact-identity check, the whole corpus in one process, the cross-mode and native
+#     leak gates, the keyed-collection poison sweep and differential, the seed-corpus
+#     replay.  Nightly-only.
 #   - toolchain-matrix — the suite under beta + nightly rustc, the early-warning
 #     for toolchain-sensitivity (the @P383 trigger).  Non-blocking: nightly/beta
 #     std/lint churn must never page us.
@@ -1008,6 +1010,30 @@ jobs:
       # reason names this job.
       - name: Interpreter corpus — whole, in one process
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
+
+      # Four heavy gates whose `#[ignore]` reason names this job: each needs rustc per
+      # program or a long poison run, so they sit over the PR ceiling, and until they ran
+      # here nothing ran them at all.  `--native` links the canonical
+      # `target/release/libloft.rlib`, which `cargo test` does not produce, so build it
+      # first (as ci.yml's test job does).  The fuzzing leg rebuilds the lib with an extra
+      # feature, so it runs last.
+      - name: Build the native link rlib
+        run: cargo build --release --lib --bin loft
+
+      - name: Leak, cross-mode — both backends leak-free
+        run: cargo test --release --test leak_cross_mode -- --ignored
+
+      - name: Leak corpus — native
+        run: cargo test --release --test leak_cases leak_cases_native -- --ignored
+
+      - name: Keyed collections — wide poison sweep (F2.6)
+        run: cargo test --release --lib fuzz_keyed::tests::f26_wide_poison_sweep -- --ignored
+
+      - name: Seed-corpus replay — no front-end panic on any .loft in the repo (F1)
+        run: cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored
+
+      - name: Keyed collections — generated programs agree across backends (F3)
+        run: cargo test --release --features fuzzing --test fuzz_differential -- --ignored
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

@@ -536,6 +536,15 @@ fn stub_symbol_now() -> String {
     }
 }
 
+/// Is `msg` the panic of a native-function stub (below): a `#native` symbol whose library was
+/// not loaded?  The seed-corpus replay reads a program that needs a native library it cannot
+/// load as an ENVIRONMENT condition, not a language finding, and this is how it knows one.
+/// Kept beside the message it reads, so a rewording of the message meets its one reader here.
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) fn is_native_not_loaded(msg: &str) -> bool {
+    msg.starts_with("native function ") && msg.contains(" not loaded. Either")
+}
+
 /// PKG.1: For each `#native "symbol"` declaration, register a stub function
 /// that panics when called.  This lets codegen emit `OpStaticCall` with the
 /// correct library index.  `extensions::load_all()` replaces the stubs with

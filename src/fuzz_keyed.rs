@@ -417,7 +417,7 @@ mod tests {
     /// naming the culprit spec under `LOFT_F2_TRACE`. `#[ignore]` (heavy) — run
     /// with `--ignored`. Reproducible: fixed PRNG seed.
     #[test]
-    #[ignore = "F2.6 wide poison sweep — heavy; run with --ignored"]
+    #[ignore = "F2.6 wide poison sweep — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_keyed::tests::f26_wide_poison_sweep -- --ignored`"]
     fn f26_wide_poison_sweep() {
         let trace = std::env::var_os("LOFT_F2_TRACE").is_some();
         // xorshift64 with a fixed seed — deterministic + reproducible.

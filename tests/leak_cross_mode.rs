@@ -31,7 +31,7 @@ use common::cross_mode::run_cross_mode_leak_free;
 /// `tests/leak.rs::p297_nested_call_arg_temp_no_leak`; this verifies the
 /// native codegen path frees the temporary too.
 #[test]
-#[ignore = "heavy (shells out + rustc) — run with --test leak_cross_mode -- --ignored"]
+#[ignore = "heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`"]
 fn p297_nested_call_arg_temp_leak_free_both_backends() {
     run_cross_mode_leak_free(
         "p297_nested_call_arg_temp",
@@ -59,7 +59,7 @@ fn test() {
 /// and from @P298 (callee takes no `const`-struct arg).  A regression
 /// that broke this plain path would be caught here.
 #[test]
-#[ignore = "heavy (shells out + rustc) — run with --test leak_cross_mode -- --ignored"]
+#[ignore = "heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`"]
 fn plain_call_to_loop_local_leak_free_both_backends() {
     run_cross_mode_leak_free(
         "plain_call_to_loop_local",
@@ -84,7 +84,7 @@ fn test() {
 /// source-free bit into the deep-copy `OpCopyRecord` (with a borrowed-view
 /// guard), mirroring the interpreter's `gen_set_first_ref_call_copy`.
 #[test]
-#[ignore = "heavy (shells out + rustc) — run with --test leak_cross_mode -- --ignored"]
+#[ignore = "heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`"]
 fn p298_const_struct_arg_call_leak_free_both_backends() {
     run_cross_mode_leak_free(
         "p298_const_struct_arg_call",
@@ -118,7 +118,7 @@ fn test() {
 /// and is really a missing displacement release.  `absent` and `present` are both exercised
 /// here so the fix cannot be a blanket free: a present source must still recycle, not free.
 #[test]
-#[ignore = "heavy (shells out + rustc) — run with --test leak_cross_mode -- --ignored"]
+#[ignore = "heavy (shells out + rustc) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cross_mode -- --ignored`"]
 fn issue1369_nullable_rebind_absent_source_leak_free_both_backends() {
     run_cross_mode_leak_free(
         "issue1369_nullable_rebind_absent_source",

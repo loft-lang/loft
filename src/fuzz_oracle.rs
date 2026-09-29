@@ -298,7 +298,7 @@ mod tests {
     /// context (or an integration test needing external resources). Keyed on the
     /// message so it survives file moves.
     fn is_environment(first_line: &str) -> bool {
-        first_line.contains("native function not loaded")
+        crate::compile::is_native_not_loaded(first_line)
     }
 
     /// Triaged panics — each an entry in the @PLN53 F1 findings catalogue
@@ -328,7 +328,7 @@ mod tests {
     /// a finding. `#[ignore]` (heavy) — run with:
     ///   cargo test --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored --nocapture
     #[test]
-    #[ignore = "F1 seed-corpus replay — heavy; run with --ignored"]
+    #[ignore = "F1 seed-corpus replay — heavy; runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --lib fuzz_oracle::tests::seed_corpus_replay -- --ignored`"]
     fn seed_corpus_replay() {
         use std::fmt::Write as _;
         let base = Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -30,7 +30,7 @@ use loft::fuzz_keyed::{KeyedSpec, Kind, generate_keyed_summary};
 /// failure path 3 names). The closures axis puts the slot-allocator path in the
 /// cross-backend diff (F3.2).
 #[test]
-#[ignore = "F3 differential (rustc per program) — run with --features fuzzing --ignored"]
+#[ignore = "F3 differential (rustc per program) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --features fuzzing --test fuzz_differential -- --ignored`"]
 fn keyed_generated_agree_across_backends() {
     let mut corpus: Vec<KeyedSpec> = Vec::new();
     for closures in [false, true] {
