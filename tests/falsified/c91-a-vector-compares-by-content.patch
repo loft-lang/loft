@@ -1,0 +1,72 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index aca3d01cf..c68078173 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -15006,25 +15006,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// The schema row both operands of a vector comparison are stored as, when they are two
+-    /// vectors of one element type — the `tp` `OpEqContent` walks them by.
+-    fn vector_content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+-        let [a, b] = types else {
+-            return None;
+-        };
+-        let peel = |t: &Type| match t {
+-            Type::RefVar(inner) => inner.base().clone(),
+-            _ => t.base().clone(),
+-        };
+-        let (Type::Vector(ea, _), Type::Vector(eb, _)) = (peel(a), peel(b)) else {
+-            return None;
+-        };
+-        if !ea.is_equal(&eb) || ea.is_unknown() {
+-            return None;
+-        }
+-        Some(self.vector_of(&ea))
+-    }
+-
+     /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
+     /// @C91): every field compared with its own type's `==`, left to right, stopping at the
+     /// first that differs — a float field by float equality, a text by its characters, a
+@@ -15339,22 +15320,6 @@ impl Parser {
+                     }
+                 }
+             }
+-            // `@FR-E-Eq`, @C91 — two vectors of one element type compare by CONTENT: length,
+-            // then element by element with the element's own `==` (`Stores::eq_content`).
+-            if matches!(op, "==" | "!=")
+-                && list.len() == 2
+-                && let Some(tp) = self.vector_content_eq_type(types)
+-            {
+-                *code = self.cl(
+-                    if op == "==" {
+-                        "OpEqContent"
+-                    } else {
+-                        "OpNeContent"
+-                    },
+-                    &[list[0].clone(), list[1].clone(), Value::Int(i32::from(tp))],
+-                );
+-                return Type::Boolean;
+-            }
+             // `@FR-E-Eq`, loft#1580 — a `value struct` is a VALUE, and values compare
+             // by content over their own storage.  Without a user `OpEq` the loop below matched
+             // `OpEqRef` and compared identity, so a copy was unequal to its source.
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index cf2f5be73..f47618335 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -4782,13 +4782,7 @@ impl Parser {
+             self.expr_not_null = false;
+             let mut second_code = Value::Null;
+             let tp = parent_tp.clone();
+-            // The right operand is a VALUE of its own, never a destination inside the left
+-            // one: a vector literal given the left operand's deps as its parent built its
+-            // elements into a store it never created (`a == [1, 2]`, an ICE).
+-            *parent_tp = match ctp.base() {
+-                Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
+-                _ => ctp.clone(),
+-            };
++            *parent_tp = ctp.clone();
+             let second_pos = self.lexer.peek_pos().clone();
+             let is_eq = operator == "==" || operator == "!=";
+             let left_amp = self.eq_amp_left.take();

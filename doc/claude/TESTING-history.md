@@ -1078,7 +1078,7 @@ All three are zero-cost in release builds.
 > during ordinary `cargo test` runs, in both dev AND `--release` profiles.
 > The only builds that check them are the cargo-fuzz target (which forces
 > `-Cdebug-assertions`) and an explicit calibration run — see
-> [DEBUG.md § The debug-assertions calibration run](DEBUG.md#the-debug-assertions-calibration-run-target-da).
+> [DEBUG_STORES.md § The debug-assertions calibration run](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da).
 > The first-ever such calibration (2026-07-03, @PLN85) found four
 > long-latent H5 producers and a latent-assert inventory; believing "the
 > suite is green" for a DA-gated invariant is a calibration failure — the

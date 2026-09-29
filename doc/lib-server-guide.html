@@ -28,8 +28,8 @@
 <p>It is not the client half — that is <code>web</code> (<code>http_get</code>, <code>ws_handler</code>), which this package depends on and which the round trip below uses. It is not a framework: there is no router, no middleware and no template engine, because a <code>for</code> loop over the server and an <code>if</code> on <code>req.path</code> are already those things. And it is not the game wire format — that is <code>game_protocol</code>, which is built on this.</p>
 <h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
 <p>A server that answers one request, and the client that asks — in one program, because that is the shortest thing you can actually run:</p>
-<pre><code><span class="kw">use</span> server;
-<span class="kw">use</span> web;</code></pre>
+<pre><code><span class="kw">use</span> server::*;
+<span class="kw">use</span> web::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   port = <span class="nm">18741</span>;
   parallel {

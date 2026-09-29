@@ -21,8 +21,10 @@
 // loop) w8 w9 (one window, both guarded arms) w10 w11 w12, and d8 / a1-a4 — a result
 // vector that reads a PARAMETER's vector.  The admission reaches and DECLINES, each for its
 // own reason: d1 reads the vector it pushes to, d7 a sibling field of the pushed record
-// (both name the root), d4 reads it through a view taken before the loop, d5 writes another
-// vector in place.  NEVER REACH the admission, so they say nothing about it: d2 (`len(v)`
+// (both name the root), d4 reads it through a view taken before the loop; d5, which writes
+// ANOTHER vector in place beside its push, took the window once the admission asked its
+// write test as the header hoist does (an in-place set reallocates nothing).  NEVER REACH
+// the admission, so they say nothing about it: d2 (`len(v)`
 // is a stdlib wrapper call, which the counted-push recogniser reads as another write to the
 // path — no reservation either), d3 (a callee handed the pushed vector declines the whole
 // hoist), d5b (two pushed paths), d6 (filtered: a `continue`).

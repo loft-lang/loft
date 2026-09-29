@@ -4608,8 +4608,8 @@ std::thread_local! {
 ///
 /// `ownership_of` re-derives the whole function's definitions per question, and the native
 /// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
-/// square of its size: a 1 500-function program spent 2 s in codegen where the build of
-/// 2026-09-10 spent 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
+/// square of its size: a 1 500-function program spent 2 s in codegen where it had spent
+/// 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
 /// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
 /// the emission of a single function — keyed by this `Data` and this function, and it restores
 /// whatever it replaced when dropped, so a nested span leaves the outer one intact.
@@ -6632,7 +6632,7 @@ impl DoubleMove<'_> {
             // still in it, whichever of the two goes back to the caller.
             Value::Return(v) => {
                 self.scan(v, st);
-                // heap.md D-heap-7 family 2 — a parameter's MEMBER returned.  The callee copies
+                // heap-history.md D-heap-7 family 2 — a parameter's MEMBER returned.  The callee copies
                 // nothing: the caller copies the view it is handed (`(O-Move)`), while its
                 // argument still owns the member.  A WHOLE parameter returned is a plain value,
                 // which is a release to get right rather than to warn about (heap.md § Standalone
@@ -6821,7 +6821,7 @@ impl DoubleMove<'_> {
     /// Record one `OpCopyRecord` that hands its source's ownership away, and report the
     /// SECOND such hand-off of the same variable.
     fn record(&mut self, args: &[Value], st: &mut Handoffs) {
-        // heap.md D-heap-7 family 4 — a MEMBER of a container the frame still holds, copied into
+        // heap-history.md D-heap-7 family 4 — a MEMBER of a container the frame still holds, copied into
         // another container: the source container keeps owning that member and its cascade
         // releases it, while the destination releases its copy, so the FIRST copy is already the
         // double.  Pending until the root's release is certain, or retired if the member is
@@ -7138,7 +7138,7 @@ pub fn warn_double_move(
                 concept_ref: "@F106",
             });
         }
-        // heap.md D-heap-7 family 4 — a member of a container copied into another container.
+        // heap-history.md D-heap-7 family 4 — a member of a container copied into another container.
         for (root, at) in std::mem::take(&mut cx.proj_found) {
             let name = def.variables.name(root);
             let file = if at.file.is_empty() {
@@ -7185,7 +7185,7 @@ pub fn warn_double_move(
                 concept_ref: "@F106",
             });
         }
-        // heap.md D-heap-7 family 2 — a parameter's member returned.
+        // heap-history.md D-heap-7 family 2 — a parameter's member returned.
         for (root, at) in std::mem::take(&mut cx.ret_found) {
             let file = if at.file.is_empty() {
                 def_file
@@ -7203,7 +7203,7 @@ pub fn warn_double_move(
     }
 }
 
-/// The report for a PARAMETER, or a member of one, copied into a container (heap.md D-heap-7
+/// The report for a PARAMETER, or a member of one, copied into a container (heap-history.md D-heap-7
 /// family 2): the caller still owns what it passed, and the container owns a copy.
 fn report_caller_owned_copy(
     diags: &mut crate::diagnostics::Diagnostics,
@@ -7251,7 +7251,7 @@ fn report_caller_owned_copy(
     });
 }
 
-/// The report for a `return` of a PARAMETER's member (heap.md D-heap-7 family 2): the caller
+/// The report for a `return` of a PARAMETER's member (heap-history.md D-heap-7 family 2): the caller
 /// still owns the member through its argument, and the caller's copy of the result owns it too.
 fn report_returned_parameter_member(
     diags: &mut crate::diagnostics::Diagnostics,

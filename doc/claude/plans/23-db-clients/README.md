@@ -32,14 +32,14 @@ saw a nested record and gave no handle to descend into it (`field_value` answere
 `RecordKind` with no payload), so an inline struct could not be flattened by a
 walk that names no field. `field_value` now takes a PATH —
 `field_value(doc, [8, 0])` — and this mapping is its first consumer
-([STDLIB.md § Reading a value](../../STDLIB.md)). The offsets are walked, never
+([STDLIB_RUNTIME.md § Reading a value](../../STDLIB_RUNTIME.md)). The offsets are walked, never
 summed: a position must BEGIN a field of the type it is read against, which is
 what keeps reflection from being a pointer.
 
 S5 needed a third language gap closed, and closing it is what unblocked the write
 half: reflection described a TYPE and nothing could read a VALUE's field, which is
 where @PLN133 S13 stopped. `field_value(x, position)` now does
-([STDLIB.md § Reflection](../../STDLIB.md)).
+([STDLIB_RUNTIME.md § Reflection](../../STDLIB_RUNTIME.md)).
 
 **Linux x86-64, macOS and Windows all run these tests** — macOS and Windows prove the
 sqlite cell on both loft backends (`@PLN23 backends exercised: ["sqlite"]`), with the

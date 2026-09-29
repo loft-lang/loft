@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `for` whose source is refused — here a NULLABLE collection, which `(I-For)` refuses with
+// the discharge named (iteration.md: no implicit unwrap) — reports that refusal and nothing
+// else, and the parse resumes after the loop.
+//
+// The statement bailed without consuming its body and left `Null` as its code, so the body's
+// `{` met the enclosing parse and a `;` a loop never needs was asked for: "Expect token ;",
+// then a block typed from wherever the parse landed ("expected integer, got void").  A
+// comprehension was worse — its fallback line spoke on top of the refusal, and its `]`,
+// `;` and `}` were each reported missing: seven errors for one.  Both now consume the body;
+// the statement answers an empty block, the comprehension the `never` poison.
+//
+// Each fn has its own source name, statements FOLLOW every loop so a parse that did not
+// resume would report there, and `@EXPECT_ERROR` is fatal when unmatched while an unexpected
+// error fails the file: the count is the assertion, ONE report per fn.
+//
+// @falsified-at: 0a455420e — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 4/4, native exit 1 -> 0, native expectations FAIL/4 -> 4/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-refused-loop-source-reports-once.patch — the same channels.
+//   CHANNEL: the EXPECTATIONS — the control reports sixteen errors for the four refusals.
+//   WITNESS: "Expect token ;" four times, "expected integer, got void" four times, and the
+//   comprehension's "Need an iterable expression", "Expect token ]", "Expect token }" and
+//   "Syntax error: unexpected ']'".
+//   HOLDS: no leak and no panic on either tree; the four refusals read the same on both.
+struct E { k: integer, v: integer }
+
+// @EXPECT_ERROR: cannot iterate over vector<integer>? because it is NULLABLE
+fn r_vector(ov: vector<integer>?) -> integer {
+  c = 0;
+  for e in ov {
+    c += e;
+  }
+  c + 1
+}
+
+// @EXPECT_ERROR: cannot iterate over hash<E[k]>? because it is NULLABLE
+fn r_hash(oh: hash<E[k]>?) -> integer {
+  c = 0;
+  for e in oh { c += e.v; }
+  c + 2
+}
+
+// @EXPECT_ERROR: cannot iterate over text? because it is NULLABLE
+fn r_text(ot: text?) -> integer {
+  c = 0;
+  for ch in ot { c += 1; }
+  c + 3
+}
+
+// @EXPECT_ERROR: cannot iterate over sorted<E[k]>? because it is NULLABLE
+fn r_comprehension(os: sorted<E[k]>?) -> integer {
+  w = [for e in os { e.v * 2 }];
+  len(w) + 4
+}

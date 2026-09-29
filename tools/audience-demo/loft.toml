@@ -14,11 +14,11 @@
 [package]
 name    = "audience_demo"
 version = "0.0.0"
-loft    = ">=0.8"
+loft    = ">=2026.10.0"
 
 [dependencies]
-web                = ">=0.1"
-server             = ">=0.1"
+web                = ">=0.4.2"
+server             = ">=0.7.1"
 audience_crystal   = { path = "../../lib/audience_crystal" }
-gridmesh           = ">=0.1"
-graphics           = ">=0.1"
+gridmesh           = ">=0.2.3"
+graphics           = ">=0.9.4"

@@ -250,7 +250,7 @@ the signal explicit). `size_code` (`stack.rs`) is the same family, same disposit
       The store-reuse-after-free 3-deep substrate IS fixed and IS unblocking, but it
       was never the real blocker for the bind-site cases (A/C).
       **#426A/C (`a = vv[0]`, `c = o.inner.v`) "must COPY" is FALSE per the docs.**
-      LOFT.md § Vectors/§ Variables (#338) documents vector-ELEMENT reads as
+      LOFT_DATA.md § Vectors/§ Variables (#338) documents vector-ELEMENT reads as
       dep-tracked VIEWS: `a = vv[0]` for `vector<vector<T>>` is a VIEW on base
       (`vv[0] += [9]` ⇒ `len(a) == 4`), CONSISTENTLY with the struct-element view that
       `tests/scripts/294-vector-element-view-semantics.loft` PINS and that #415

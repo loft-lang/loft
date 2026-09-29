@@ -42,7 +42,7 @@
 // Then open tools/audience-demo/index.html in multiple browser tabs.
 // Each tap on one client paints + broadcasts; every tab redraws.
 
-use server;
+use server::*;
 
 // ── Leaf helpers — TOP of file per @P281 (pass-1 fn return type) ─────────────
 

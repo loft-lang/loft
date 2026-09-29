@@ -13,7 +13,7 @@
 //   ./target/release/loft --interpret --no-warnings --lib lib \
 //       tools/audience-demo-50/probe_server_kernel.loft
 
-use engine_host;
+use engine_host::*;
 
 const PORT: integer = 18084;
 const TICK_INTERVAL_US: integer = 33333;   // 30 Hz

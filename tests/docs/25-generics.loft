@@ -6,7 +6,7 @@
 // Write the function once; the compiler creates a specialised copy for each
 // concrete type you call it with.
 // ## Declaring a generic function
-// Place a single type variable in angle brackets after the function name.
+// Place a type variable in angle brackets after the function name.
 // The type variable must appear in a parameter (directly or as a container
 // element like vector<T>) — any parameter; a T that appears only in the return
 // type is refused, since a call infers T from its arguments.  A header may
@@ -41,7 +41,8 @@ fn first_element<T>(gen_v: vector<T>) -> T {
   gen_v[0]
 }
 // A computed index `gen_v.len() - 1` is not provably in-bounds, so the
-// read is nullable; a generic has no `?? default`, so the honest result type is `T?`.
+// read is nullable; a generic has no value of T of its own to write after `??`, so the
+// honest result type is `T?` (or take the fallback as a parameter: `v[i] ?? d`).
 fn last_element<T>(gen_v: vector<T>) -> T? {
   gen_v[gen_v.len() - 1]
 }
@@ -143,6 +144,10 @@ fn test_combined_bounds() {
 //   Printable  fn to_text(self: T) -> text
 //   Walkable   fn children(self: T) -> vector<T>
 //
+// `Equatable` is the exception: every type satisfies it, because `==` compares
+// what two values hold — a struct field by field.  Define `OpEq` only when
+// equality should mean something else.
+//
 // The same definition serves the bare operator: once `Money` has `OpLt`, both
 // `a < b` and `<T: Ordered>` work on it. Miss one and the error names it —
 // "'Money' does not satisfy interface 'Ordered': missing OpLt" — at the CALL
@@ -159,6 +164,8 @@ fn test_user_type_bounds() {
   assert(best.cents == 700, "Ordered on a user type: {best.cents}");
   assert(cheap < dear, "…and the bare operator, from the same definition");
   assert(same(cheap, Money { cents: 300 }), "Equatable on a user type");
+  assert(same(Tile { height: 1, name: "t" }, Tile { height: 1, name: "t" }), "…and on one that defines no OpEq");
+  assert(!same(Tile { height: 1, name: "t" }, Tile { height: 2, name: "t" }), "…comparing every field");
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");

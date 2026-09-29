@@ -46,7 +46,7 @@ structural and not planned.  The sharpest remaining trap is the sorted
 slicing row: the syntax is shared with vector but the meaning is not.
 
 **Status (2026-04-13):** Documented in
-[LOFT.md § Key-based collections](LOFT.md) under a "Gotcha (INC#2)"
+[LOFT_DATA.md § Key-based collections](LOFT_DATA.md) under a "Gotcha (INC#2)"
 paragraph covering the comprehension gap, the `#index`-on-index compile
 error, and the shared `for` / `+=` / subscript-removal contract that
 *does* cross collection types.  Two regression guards in
@@ -84,7 +84,7 @@ user still cannot predict whether the METHOD form exists without looking the
 declaration up; the free form now always works.
 
 **Status (2026-04-13, table refreshed 2026-07-02):** Documented in
-[LOFT.md § Methods and function calls](LOFT.md) under a "Gotcha (INC#8)"
+[LOFT_DATA.md § Methods and function calls](LOFT_DATA.md) under a "Gotcha (INC#8)"
 paragraph.  The call-form classes have since converged: a `self:` method is
 also callable free, so only the free-only→method direction still errors.
 Regression guards in `tests/issues.rs`:
@@ -127,7 +127,7 @@ Making `x#attr` sometimes an expression and sometimes a jump instruction complic
 mental model for the `#` notation.
 
 **Status (2026-04-13):** Documented in
-[LOFT.md § Break and continue](LOFT.md) under a "Labelled break — `loop_var#break`"
+[LOFT_CONTROL.md § Break and continue](LOFT_CONTROL.md) under a "Labelled break — `loop_var#break`"
 paragraph with a worked nested-loop example and an explicit gotcha callout
 (not a value expression; `x#continue` is the labelled-continue pair — see
 entry 27).  Two regression guards
@@ -197,7 +197,7 @@ kept for read-only loop metadata (`#first`, `#count`, `#index`) and `#remove`, w
 are genuine attribute reads.
 
 **Status (2026-04-13):** Documented in
-[LOFT.md § Break and continue](LOFT.md) — the feature is implemented:
+[LOFT_CONTROL.md § Break and continue](LOFT_CONTROL.md) — the feature is implemented:
 `x#continue` is a true labelled-continue symmetric to `x#break`.
 Regression guard `inc27_x_continue_is_labelled_continue` uses an
 outer-body operation (inner-vs-outer counter pair) that distinguishes
@@ -260,18 +260,18 @@ ones, not silent surprises.  Removed from the severity tables above.
 |---|---|---|
 | 33 | `const` applied to locals + parameters but not struct fields.  **Resolved by @PLN40** (2026-07-16): a field may be marked `const` (write-once at construction); a later reassignment is a compile error at the parse-time write guard, and `const` now applies uniformly to locals, parameters, and fields.  Freezes the binding, not contents. | LOFT.md § Fields (`const` prefix modifier); `pln40_const_*` in `tests/issues.rs`, `tests/scripts/40-const-fields.loft` |
 | 34 | Definitions shared one flat namespace — two enums couldn't share a variant, user types collided with stdlib names.  **Resolved by @PLN22** (2026-06-14): variants are enum-scoped (`variant_of` chokepoint), user defs shadow the prelude (`std::Name` escapes), built-in type-keywords stay reserved.  Design point: a bare variant as a *value* needs a type context; defining a new untyped variable from one (`x = Red`) is a hard error.  See CHANGELOG_TECHNICAL.md + LOFT.md § Enum-scoped variants | LOFT.md § Shadowing / § Enum-scoped variants; `tests/scripts/369-pln22-shared-enum-variants.loft`, `370-pln22-prelude-shadowing.loft`, `tests/imports.rs` |
-| 2 | Vector has comprehensions; sorted / index / hash do not, and `#index` is invalid on index collections | LOFT.md § Key-based collections (Gotcha block); `inc02_vector_comprehension_works`, `inc02_sorted_is_iterable` |
+| 2 | Vector has comprehensions; sorted / index / hash do not, and `#index` is invalid on index collections | LOFT_DATA.md § Key-based collections (Gotcha block); `inc02_vector_comprehension_works`, `inc02_sorted_is_iterable` |
 | 3 | `#index` byte-offset on text vs. element-position on vector | LOFT.md § Loop attributes (Gotcha block); `inc3_*` regression tests |
-| 8 | Method vs. free function is the stdlib author's per-function choice (`self:` / `both:` / free-only) | LOFT.md § Methods and function calls (Gotcha block); `inc08_starts_with_is_method_not_free_function`, `inc08_sum_of_is_free_function_only`, `inc08_len_with_both_works_either_way` |
-| 9 | `txt[i]` returns `character`, `txt[i..j]` returns `text` — deliberate asymmetry (character is a distinct scalar, not a length-1 text); LOFT.md § String literals carries a Gotcha callout with concat rules + the B7-family SIGSEGV caveat | `inc9_text_index_returns_character`, `inc9_text_slice_returns_text`, `inc9_text_slices_concatenate_with_plus`, `inc9_character_plus_is_arithmetic_not_concat` |
+| 8 | Method vs. free function is the stdlib author's per-function choice (`self:` / `both:` / free-only) | LOFT_DATA.md § Methods and function calls (Gotcha block); `inc08_starts_with_is_method_not_free_function`, `inc08_sum_of_is_free_function_only`, `inc08_len_with_both_works_either_way` |
+| 9 | `txt[i]` returns `character`, `txt[i..j]` returns `text` — deliberate asymmetry (character is a distinct scalar, not a length-1 text); LOFT_LITERALS.md § String literals carries a Gotcha callout with concat rules + the B7-family SIGSEGV caveat | `inc9_text_index_returns_character`, `inc9_text_slice_returns_text`, `inc9_text_slices_concatenate_with_plus`, `inc9_character_plus_is_arithmetic_not_concat` |
 | 12 | Sort direction declared on struct drives iteration direction of every query | LOFT.md § Collection types (Gotcha block); `inc12_sorted_ascending_*` / `inc12_sorted_descending_*` regression tests |
-| 18 | `x#break` is a jump statement, reusing the `#attribute` expression syntax | LOFT.md § Break and continue (Labelled break + Gotcha block); `inc18_labelled_break_exits_outer_loop`, `inc18_bare_break_exits_innermost_only` |
+| 18 | `x#break` is a jump statement, reusing the `#attribute` expression syntax | LOFT_CONTROL.md § Break and continue (Labelled break + Gotcha block); `inc18_labelled_break_exits_outer_loop`, `inc18_bare_break_exits_innermost_only` |
 | 17 | Type-conversion rules stratified into implicit / format-only / explicit modes, mode driven by type pair not context.  LOFT.md § The `as` operator now carries a "Type-conversion rules" table covering 11 pairs with a rule-of-thumb: fallible conversions explicit, infallible implicit, format-interpolation is its own mode | `inc17_any_to_boolean_is_implicit`, `inc17_integer_widens_to_float_in_arithmetic`, `inc17_float_to_integer_requires_as`, `inc17_text_to_integer_requires_as`, `inc17_integer_to_text_is_format_only`, `inc17_plain_enum_name_to_enum_requires_as` |
 | 26 | Match exhaustiveness ignores guarded arms — wildcard still required | LOFT.md § Pattern matching (Guard clauses paragraph); `inc26_*` regression tests |
-| 27 | `x#continue` is a true LABELLED continue (advances the `x` loop's next iteration from inside an inner loop) — the pair to `x#break`; the `break x` / `continue x` keyword forms remain unimplemented | LOFT.md § Break and continue (Labelled continue paragraph); `inc27_x_continue_is_labelled_continue` |
+| 27 | `x#continue` is a true LABELLED continue (advances the `x` loop's next iteration from inside an inner loop) — the pair to `x#break`; the `break x` / `continue x` keyword forms remain unimplemented | LOFT_CONTROL.md § Break and continue (Labelled continue paragraph); `inc27_x_continue_is_labelled_continue` |
 | 29 | `!b` on boolean catches false and null; `!n` on integer catches null only | LOFT.md null-sentinel table (`!value` asymmetry subsection); `inc29_*` regression tests |
 | 30 | `{...}` double-duty (struct init vs. block) — claimed silent-typo case is not reproducible on current loft; the `{ x, y }` typo parses as a struct-init attempt and fails on the missing colon | `inc30_struct_init_with_colons_works`, `inc30_block_expression_returns_last_value`, `inc30_typo_comma_without_colon_is_rejected` |
-| 28 | Vector slice grammar — exclusive, inclusive (`v[start..=end]`), open-start and open-end forms all work, and since @P384 negative bounds count from the END (`v[2..-1]` = element 2 up to the last; `v[-2..]` = last two).  A **text** slice takes the same bounds, counted in BYTES (`s[-2..]` is the last two bytes, snapped to a character boundary) — one rule, both kinds, either end.  LOFT.md § Vectors documents the forms | `inc28_slice_exclusive_range`, `inc28_slice_inclusive_range`, `inc28_slice_open_end`, `inc28_slice_open_start`, `inc28_negative_slice_counts_from_end`, `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft` |
+| 28 | Vector slice grammar — exclusive, inclusive (`v[start..=end]`), open-start and open-end forms all work, and since @P384 negative bounds count from the END (`v[2..-1]` = element 2 up to the last; `v[-2..]` = last two).  A **text** slice takes the same bounds, counted in BYTES (`s[-2..]` is the last two bytes, snapped to a character boundary) — one rule, both kinds, either end.  LOFT_DATA.md § Vectors documents the forms | `inc28_slice_exclusive_range`, `inc28_slice_inclusive_range`, `inc28_slice_open_end`, `inc28_slice_open_start`, `inc28_negative_slice_counts_from_end`, `tests/scripts/a-negative-slice-bound-counts-from-the-end.loft` |
 | 31 | Open-ended range patterns (`10..`, `..10`) in match arms were silently broken (interpreter: never matches; native: rustc crash).  Parser now emits a compile-time diagnostic pointing at the two-sided form or a guard idiom | `inc31_two_sided_exclusive_range_matches`, `inc31_two_sided_inclusive_range_matches`, `inc31_open_end_range_is_rejected`, `inc31_open_start_range_is_rejected` |
 
 ---

@@ -805,7 +805,7 @@ impl Parser {
                 // as a value is a construction.
                 if !self.lexer.peek_token("=") {
                     // A `&` member is the VALUE read through its reference, as every other
-                    // use of a `&` binding is (LOFT.md § References): the member's type is the
+                    // use of a `&` binding is (LOFT_DECLARATIONS.md § References): the member's type is the
                     // pointee, and the load of the `&` variable reads through the link by that
                     // type.  Kept as the link, the member had a type no tuple slot can hold and
                     // `(n, 2)` over `n: &integer` stopped code generation (loft#1526).  A
@@ -3089,6 +3089,41 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     }
 
     // <for-vector> ::= 'for' <id> 'in' <range> ['if' <cond>] '{' <expr> '}'
+    /// A `for` comprehension beside other elements — `[0, for x in v { … }]`, `[for x in v { … },
+    /// 5]`.  A comprehension is a whole vector literal, so this is reported once, naming the form
+    /// that builds the same vector, and the rest of the literal is skipped to its closing `]`, so
+    /// the parse resumes after it instead of cascading ("Expect token ;").
+    fn refuse_mixed_comprehension(&mut self) {
+        // The caret goes on the token that makes the literal mixed (the `for`, or the `,` after
+        // a comprehension), read before the skip moves the scan past it.
+        let at = self.lexer.peek().position.clone();
+        if !self.first_pass {
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "a `for` comprehension is a whole vector literal and takes no other elements \
+                 beside it — build it on its own, `[for x in v {{ … }}]`, and add the others \
+                 with `+=`"
+            );
+        }
+        let mut depth = 0i32;
+        loop {
+            match &self.lexer.peek().has {
+                crate::lexer::LexItem::None => break,
+                crate::lexer::LexItem::Token(t) if depth == 0 && t == "]" => break,
+                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => {
+                    depth += 1;
+                }
+                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                    depth -= 1;
+                }
+                _ => {}
+            }
+            self.lexer.cont();
+        }
+    }
+
     // Implements [for n in range { body }] vector comprehensions.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -3186,14 +3221,26 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let src_coll = expr.clone();
         let mut create_iter = expr;
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
+        let errors_before_iterable = self.lexer.diagnostics().error_count();
         let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
         if !self.first_pass && iter_next == Value::Null {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "Need an iterable expression in a for statement"
-            );
-            return Type::Null;
+            // The `for` statement's two recovery rules (loft#1453): the fallback line only
+            // when `iterator` reported nothing of its own — a nullable source is refused
+            // there, naming the `?` and both discharges — and the body consumed, so the
+            // literal's `]` is where the parse resumes.  Without them a refused source
+            // cascaded into six errors about the parser's own state.
+            if self.lexer.diagnostics().error_count() == errors_before_iterable {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Need an iterable expression in a for statement"
+                );
+            }
+            self.skip_braced();
+            // The poison of an error already reported, not `null`: a `null` element made the
+            // literal a `vector<…>?` and every later use of it warned about an absence nobody
+            // wrote.
+            return Type::Never;
         }
         let for_next = v_set(for_var, iter_next);
         self.vars.loop_var(for_var);
@@ -3968,6 +4015,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.lexer.has_token("for");
                 let tp = self
                     .parse_vector_for(vec, elm, &mut in_t, val, is_var, is_field, block, parent_tp);
+                if self.lexer.peek_token(",") {
+                    self.refuse_mixed_comprehension();
+                }
                 self.lexer.token("]");
                 return tp;
             }
@@ -5320,13 +5370,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // a Block, not a bare FnRef); a non-capturing lambda / non-lambda leaves
         // it MAX.  Reset first so a prior element's value can't leak in.
         self.last_closure_work_var = u16::MAX;
-        let mut t = if self.lexer.has_token("for") {
-            //self.iter_for(&mut p)
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "For inside a vector is not yet implemented"
-            );
+        let mut t = if self.lexer.peek_token("for") {
+            // The early return ends the whole literal, so its `]` is consumed here.
+            self.refuse_mixed_comprehension();
+            self.lexer.has_token("]");
             return Some(Type::Unknown(0));
         } else {
             let mut parent_tp = Type::Null;
@@ -6871,7 +6918,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // Which member this hold is a view OF — the one fact its own type cannot carry.
             // The dep above names the base variable and nothing else, so a copy reading a
             // leaf through this hold has no way back to the tuple whose type pairs that leaf
-            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap.md D-heap-1`).
+            // with its work-ref (`scopes::tuple_member_backing`, `formal/heap-history.md D-heap-1`).
             let member = match &src {
                 Value::TupleGet(_, i) => Some(*i),
                 _ => None,

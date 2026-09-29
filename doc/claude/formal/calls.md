@@ -177,7 +177,7 @@ shipped documents.** `binding.md` `(B-Copy)` says a plain bind COPIES — `c = b
 w += [9]` leaves `a` alone. Neither fact is about parameters. A parameter aliases
 (`F-ParamHeap`), which `binding.md` `(B-Ref-Reshape)` already says in as many words: *"A plain
 PARAMETER is NOT exempt: it aliases the caller's element exactly as a `&` one does (calls.md
-F-ParamHeap), so the rule keys on the aliasing relation, not on the token."* LOFT.md § Ref-param
+F-ParamHeap), so the rule keys on the aliasing relation, not on the token."* LOFT_DESIGN.md § Ref-param
 vector append and the reference's Vector chapter both promised that `v += [x]` on a non-`&`
 parameter was callee-local; it never was, on either backend, and the rules said so from the other
 end (loft#1251). Pinned by
@@ -324,7 +324,7 @@ DESIGN_DECISIONS.md C123.
 
 ## Deviations
 
-**OPEN: 0.**  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
+**OPEN: 0.**  `D-call-24` opened and closed 2026-09-29 (a nullable vector local at the tail lost its writes).  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
 alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
 in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
 bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,

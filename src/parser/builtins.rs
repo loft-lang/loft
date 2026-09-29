@@ -628,15 +628,21 @@ impl Parser {
             // ── Form 3: c.method(a) — deferred ───────────────────────────────
             // Consume the rest of the call so parsing can continue.
             self.lexer.has_token(".");
-            if self.lexer.has_identifier().is_some() && self.lexer.has_token("(") {
+            let method = self.lexer.has_identifier().unwrap_or_default();
+            if !method.is_empty() && self.lexer.has_token("(") {
                 self.consume_call_args();
             }
+            // A worker runs on an isolated store clone, so a context argument is a SCALAR: the
+            // receiver itself cannot be passed (a captured reference is refused), and the cure
+            // names the scalar route rather than one that is refused in turn.
             if !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Parallel form '{first_id}.method({elem_var})' (captured receiver) \
-                     is not yet supported; define a wrapper function and use func({elem_var}) instead"
+                    "a parallel worker is a function, not a method of a captured value \
+                     (`{first_id}.{method}(…)`) — read what `{method}` needs from `{first_id}` \
+                     into scalars first, and pass them after the element to a function: \
+                     `f({elem_var}, k)`"
                 );
             }
             (u32::MAX, Type::Unknown(0), Vec::new(), Vec::new())

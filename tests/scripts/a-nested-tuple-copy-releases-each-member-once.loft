@@ -50,7 +50,7 @@
 //   `a41,41,41`; `c_nullable_inner` reads `afalse,81,81`; `c_vector_member` reads
 //   `a1312,131,131`; `c_chain` reads `a141,141,141,141` — three releases, one per name the
 //   value wore.  `c_outer_and_inner` reads `a3132,32,31,31,32`: BOTH members released twice,
-//   including the outer one, which is why `formal/heap.md` D-heap-1's earlier scope ("not
+//   including the outer one, which is why `formal/heap-history.md` D-heap-1's earlier scope ("not
 //   nesting as such but a droppable reached THROUGH an inner tuple") did not survive being
 //   measured with a droppable on each side.
 // HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
@@ -61,7 +61,7 @@
 //   both.
 //
 // Two neighbouring shapes are deliberately ABSENT because they still release twice and
-// `formal/heap.md` D-heap-1 carries them: a tuple with a dep-carrying `text` member beside the
+// `formal/heap-history.md` D-heap-1 carries them: a tuple with a dep-carrying `text` member beside the
 // droppable (`t = ((s, 1), w)`), where the list counts the text's dep and the leaf walk does
 // not, so the counts disagree and the pairing is unread; and a copy off a tuple PARAMETER,
 // where the deps are the CALLER's and the argument rule is the one that applies.  Asserting

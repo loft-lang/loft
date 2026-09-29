@@ -8,7 +8,7 @@
 // and the call arm is left for `x` to own.  The scope pass's arm lift then turns `x` into a
 // borrow of per-arm temps, and gave a temp only to the `a` arm: the call's store had no owner.
 // A record type leaked one store per evaluation, on both backends, and a droppable also lost
-// its release (`formal/heap.md` D-heap-16).  The `if` spelling of the same join was clean.
+// its release (`formal/heap-history.md` D-heap-16).  The `if` spelling of the same join was clean.
 //
 // Placing such a local again released twice (D-heap-18): the lift keeps each release with the
 // arm's SOURCE, so `y = x`, `S { h: x }`, `v += [x]` and `return x` stopped a binding that

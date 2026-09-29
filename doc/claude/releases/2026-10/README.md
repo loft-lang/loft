@@ -15,6 +15,45 @@ bound to the tag candidate is re-measured on the candidate and only ticked there
 shipped on 2026-09-05; this cycle ships at the start of October, gated on stability rather than on
 a feature set.
 
+## The pre-work view — `--version 2026.10.0 --phase pre`, measured on `3ff073ddd` (2026-09-29)
+
+The month's last days: every `[pre]` row can be finished now; the rows bound to the release
+window (the bump, the tag, publishing) and the `[cand]` rows' ticks wait for the candidate.
+**Automatic: 5 of 15 pass, 3 could not run, 7 failing.  Manual: 2 of 8 done.  Reports: 6 of 10 read.**
+
+**Green:** `A-main`, `A-registry-prev`, `A-changelog-tech`, `A-pdf-content` (172/173 stdlib pub
+fns named), `A-ignores` (35, each with a rationale); ticked 09-16 and still standing:
+`M-monthly-docs`, `M-monthly-bugs`, `M-perf-pass`, `M-file-sizes`, `M-liveness`,
+`M-falsify-receipts`, `M-close-plans`, `M-libs`.
+
+**Worklist — can be done now, in this order:**
+
+| row | state | the work |
+|---|---|---|
+| `A-ci` | ❌ | full gate on `e953b54d9`: 5476 of 5477; its one failure (`frontend_counts`, +24 from a longer stdlib comment) is fixed in `3ff073ddd` and clean in a fresh worktree; a recheck is the evidence until the candidate's own gate |
+| `A-deviations` | ❌ | one open: **D-perf-1** (loft#1570 — @PLN157's four bench rows).  D-gen-6 closed 09-29 (`197013a03`, Fixes #1738) |
+| `A-changelog` | ✅ | `## 2026-10` written 09-29: the cycle's entries had accumulated under `## 2026-09`, which is again byte-identical to what v2026.9.0 shipped; `M-changelog-read` is the owner's read of it |
+| `A-pdf` | ❌ | `cargo run --bin gendoc && make pdf` now; `A-pdf-version` needs the bump, so it is re-run in the window |
+| `A-docs-lint` | ❌ | +128 findings over the baseline, nearly all `timeline` in the formal chapters (rewrites +20, binding +13, closures +9, collections +9, CI_BUDGET +8): move them to the `-history` companions, or re-pin only what is meant |
+| `A-reference-review` | report | 12 of 40 chapters owe a read (Standard Library 13 commits since, vs Rust / vs Python, Closures, Coroutines, Match, Feature catalogue, …) — `make reference-review` |
+| `A-skills-review` | report | 10 of 12 skills moved past their watermark (15–36 commits each) — `make skills-review` |
+| `M-ops-census` | report | `make ops-census` — `OpEqContent` / `OpNeContent` are new this cycle |
+| `M-docs-review` | report | step 4 left: `formal/heap.md`'s history move (scoped above) |
+| `M-file-split` | open | `make file-sizes ARGS="--pick 2"`, one pure-move PR |
+| `A-audit` | ❓ | `cargo install cargo-audit --locked`, then the row measures itself |
+| `A-release-gate` | ❓ | `make release-gate` on the pushed branch — every nightly, one run, one verdict |
+| `A-validator-dryrun` | ❓ | structural gates pass at exit 3, not the full verdict |
+
+**Owner calls:** `M-ignores` (sign-off on every ignore and skip entry); the C98 library conversion
+and its republish order — it gates `M-libs`'s remainder (graphics / regex warning-clean), the
+consumer census re-run (`scripts/eq_census.sh`: 1280 consumer files did not compile on 09-29)
+and `A-consumers` at the tag; `M-ndb` (the native-debug paths changed since the last tag); when
+to bump `Cargo.toml`; and the PR that brings this branch to `main` — the candidate is cut from it.
+
+**Release window only:** `A-version`, `A-pdf-version`, `M-valgrind` / `M-wasm` (satisfied by the
+release gate's jobs on the candidate's commit), the tag, the draft, `M-install-sh`, publish, the
+registry splice and the rows after it.
+
 ## The mid-cycle audit — `--version 2026.10.0 --phase mid`, measured on `0b8bccef914b`
 
 Cargo.toml still names `2026.9.0`, which is tagged, so the checklist is asked for the next version

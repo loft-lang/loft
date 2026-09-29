@@ -8,7 +8,7 @@
 > ([formal/matching.md](../../formal/matching.md), [formal/VERIFICATION.md](../../formal/VERIFICATION.md))
 > is reconciled to SHIPPED; every PEG rule (P-Seq/Alt/Opt/Rep/Cap/Rest/Multi/Atomic) is
 > verified on both backends via `tests/scripts/35*.loft`.  Extends the base
-> match syntax ([LOFT.md](../../LOFT.md) § Match expressions) with sequence patterns,
+> match syntax ([LOFT_CONTROL.md](../../LOFT.md) § Match expressions) with sequence patterns,
 > alternation, optionals, repetition, and multi-variable capture.  Backtracking is
 > modelled on the existing `Lexer::link()` / `revert()` anchor mechanic so a
 > partially-matched branch can be cleanly undone.  **Build plan:**
@@ -616,7 +616,7 @@ memo buffer.  Worth revisiting once L3.6 is on the critical path.
 
 ## See also
 
-- [LOFT.md](../../LOFT.md) § Match expressions — base match syntax reference.
+- [LOFT_CONTROL.md](../../LOFT.md) § Match expressions — base match syntax reference.
 - [REGEX.md](../../lib_plans/57-regex/README.md) — standalone regex library for rich text matching;
   the intentional complement to this PEG extension.
 - [TUPLES.md](../../TUPLES.md) — fixed-arity sequence captures.

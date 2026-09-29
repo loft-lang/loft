@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/capabilities-history.md — the deviation register for [capabilities.md](capabilities.md)
 
 > **The rules are next door.**  [capabilities.md](capabilities.md) states what must always be true of the

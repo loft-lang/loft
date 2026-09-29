@@ -1,0 +1,12 @@
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -1210,7 +1210,7 @@
+             // come from `at_binding_name`, so the sites cannot disagree again.
+             if fn_d_nr != u32::MAX
+                 && matches!(self.data.def_type(fn_d_nr), DefType::Function)
+-                && !self.at_binding_name()
++                && (true || !self.at_binding_name())
+             {
+                 *code = Value::Int(fn_d_nr as i32);
+                 self.data.def_used(fn_d_nr);

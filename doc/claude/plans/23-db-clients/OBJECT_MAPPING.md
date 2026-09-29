@@ -215,7 +215,7 @@ VALUES. @PLN133 S13 stopped exactly here — *"the GENERIC struct walk stays @PL
 S5: reflection reports types, not values"* — because reflection described a TYPE
 and nothing could read a value's field. `field_value(x, position)` is the half
 that was missing, and it is now in the stdlib beside `type_of`
-([STDLIB.md § Reflection](../../STDLIB.md)).
+([STDLIB_RUNTIME.md § Reflection](../../STDLIB_RUNTIME.md)).
 
 **The walk is over the DEFINITION's columns, not the type's fields.** Each
 `ColumnDef` already carries the byte `position` of the loft field that fills it,
@@ -461,7 +461,7 @@ naming `d.origin` in source — but then the row walk names a FIELD, and *"it na
 no column and no field"* is the property S5 and S6 exist to keep.
 
 So `field_value` gained a PATH form — `field_value(doc, [8, 0])` — and the
-mapping is its first consumer ([STDLIB.md § Reading a value](../../STDLIB.md)).
+mapping is its first consumer ([STDLIB_RUNTIME.md § Reading a value](../../STDLIB_RUNTIME.md)).
 
 **The offsets are not added up, and that is the design rather than a
 limitation.** The check that makes this reflection and not a pointer is that a

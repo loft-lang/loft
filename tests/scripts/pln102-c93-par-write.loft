@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/pln102-c93-par-write.patch — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
 //
 // @PLN102 @C93 — a `par(worker, n)` worker may only READ; the loop ELEMENT it
 // receives is a per-worker clone, so WRITING it (directly or via a helper) is a

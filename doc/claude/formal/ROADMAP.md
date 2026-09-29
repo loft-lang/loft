@@ -35,7 +35,7 @@ Closing a row means the implementation obeys the rule (then the deviation entry 
 | [layout.md](layout.md) | 0 | ✓ **D-layout-1** CLOSED 2026-09-21 (loft#1562) — the bind of an existing file and the whole-image URL loaders now ask the `.dschema` gate that `store_load` and the paged loaders already asked. Before: no version guard on persisted bytes (#477: same types, different bytes, silently misread; `L-Sound`). **Mechanism shipped (@PLN97):** the golden byte-layout test catches a change at commit; the `.dschema` sidecar (`CorruptReason::SchemaMismatch`) detects a stale store at load → the `on_corruption` rebuild. **Residual:** the durable store ([plans/43](../plans/43-loft-store-durable/)) isn't loft-driven yet, so nothing auto-invokes the load-time gate — closes when a persistence consumer wires `check_beside` into its open path |
 
 **Six open, in five chapters** — `D-op-1`/`D-op-2` (operational), `D-layout-1`, `D-heap-1`,
-`D-tup-10` and `D-perf-1`.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
+`D-tup-10` and `D-perf-2`.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
 to how the mechanism functions, and `D-Domain-Guard` the same day by widening the lattice.)  Counted 2026-09-12 by `rule_tags.py registers`, which
 reads each chapter's stated `OPEN: n` against the entries it lists rather than restating it here;
 the line below was hand-maintained and read **four** for nine days.  This paragraph is prose beside
@@ -114,8 +114,8 @@ These are **spec-may-adjust** — your call resolves them, then they close or re
 | # | deviation | the decision | likely outcome |
 |---|---|---|---|
 | ~~B1~~ | ~~**D-gram-3**~~ **DONE** | `**` is now **right**-associative (`2**3**2 == 512`) — the maker-centric call (don't carry a surprise). | code→spec, landed; `tests/issues.rs::power_is_right_associative` |
-| ~~B2~~ | ~~**D-gram-2**~~ **DONE** | loft's surface IS deliberately not context-free — accepted on purpose. | reclassified → decided edge, [DESIGN_DECISIONS C82](../DESIGN_DECISIONS.md#c82--lofts-surface-is-deliberately-not-context-free) |
-| ~~B3~~ | ~~**D-gram-4**~~ **DONE** | A1 made prefix `&` total — keep one `&` token, disambiguated by position (like Rust). | reclassified → decided edge, [DESIGN_DECISIONS C81](../DESIGN_DECISIONS.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference) |
+| ~~B2~~ | ~~**D-gram-2**~~ **DONE** | loft's surface IS deliberately not context-free — accepted on purpose. | reclassified → decided edge, [DESIGN_DECISIONS C82](../DESIGN_DECISIONS_SYNTAX.md#c82--lofts-surface-is-deliberately-not-context-free) |
+| ~~B3~~ | ~~**D-gram-4**~~ **DONE** | A1 made prefix `&` total — keep one `&` token, disambiguated by position (like Rust). | reclassified → decided edge, [DESIGN_DECISIONS C81](../DESIGN_DECISIONS_SYNTAX.md#c81---stays-one-token-disambiguated-by-position-bitwise-and-vs-reference) |
 | ~~B4~~ | ~~**D-clo-18**~~ (+ **D-clo-20**) **DONE** | A closure cannot write through a captured `&` SCALAR parameter, nor rebind a captured heap parameter: `(L-CapScalar)` hands the closure a COPY, so there is no shared record for the write to land in, and the repoint that looks like the cure was MEASURED to move the wrong answer from caller to callee rather than remove it. Both were silent wrong answers before the refusal. | reclassified → decided edge, [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md); closures.md 3 → 2 with no code change |
 
 ## Phase C — tracked projects (have or need a plan; weeks)

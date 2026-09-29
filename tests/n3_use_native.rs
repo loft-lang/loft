@@ -1434,3 +1434,118 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// A registry library's auto-native artifact is named by the PACKAGES compiled into it, not
+/// only by the type layout: a dependency's version is part of what the artifact is.
+///
+/// `chainver` calls into `depver`, so its cdylib carries `depver`'s code.  Two consumers
+/// that resolve `depver` differently — one locks 0.1.0, the other takes the newest `^0.1`,
+/// 0.1.2 — have identical type layouts, and the artifact name (#461, loft#715) was the
+/// layout alone.  So whichever consumer built first decided the answer for the other, in
+/// either order, without a word; `chainver`'s `native-auto/` is shared by every consumer on
+/// the box.  Measured before the fix: the second run printed the first run's version.
+#[test]
+fn a_dependency_version_is_part_of_its_users_native_artifact() {
+    if Command::new("rustc").arg("--version").output().is_err() {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_depver_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let reg = tmp.join("home/.loft/registry");
+    let put = |path: std::path::PathBuf, body: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    for v in ["0.1.0", "0.1.2"] {
+        let dir = reg.join(format!("depver-{v}"));
+        put(
+            dir.join("loft.toml"),
+            &format!(
+                "[package]\nname = \"depver\"\nversion = \"{v}\"\nloft = \">=0.8\"\n\n\
+                 [library]\nentry = \"src/depver.loft\"\n"
+            ),
+        );
+        put(
+            dir.join("src/depver.loft"),
+            &format!("pub fn dep_id() -> text {{ return \"depver-{v}\"; }}\n"),
+        );
+    }
+    let chain = reg.join("chainver-0.1.0");
+    put(
+        chain.join("loft.toml"),
+        "[package]\nname = \"chainver\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
+         [library]\nentry = \"src/chainver.loft\"\n\n[dependencies]\ndepver = \"^0.1\"\n",
+    );
+    put(
+        chain.join("src/chainver.loft"),
+        "use depver;\npub fn chain_id() -> text { return \"via {depver::dep_id()}\"; }\n",
+    );
+    let lock = |pins: &[(&str, &str)]| {
+        let mut out = String::from("schema_version = 1\n");
+        for (name, v) in pins {
+            out.push_str(&format!(
+                "\n[[package]]\nname = \"{name}\"\nversion = \"{v}\"\nurl = \"http://127.0.0.1:1/x\"\n\
+                 sha256 = \"00\"\nsource = \"registry\"\n"
+            ));
+        }
+        out
+    };
+    let project = |tag: &str, pins: &[(&str, &str)]| {
+        let dir = tmp.join(tag);
+        put(
+            dir.join("loft.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\nchainver = \"=0.1.0\"\n",
+        );
+        put(dir.join("loft.lock"), &lock(pins));
+        put(
+            dir.join("src/s.loft"),
+            "use chainver;\nfn main() { println(chainver::chain_id()); }\n",
+        );
+        dir
+    };
+    let locked = project("locked", &[("chainver", "0.1.0"), ("depver", "0.1.0")]);
+    let newest = project("newest", &[("chainver", "0.1.0")]);
+    let run = |dir: &std::path::Path| {
+        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("src/s.loft")
+            .current_dir(dir)
+            .env("LOFT_HOME", tmp.join("home"))
+            .env("LOFT_OFFLINE", "1")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_REGISTRY_URL", "http://127.0.0.1:1/index.json")
+            .output()
+            .expect("run the loft binary");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    // Both orders: the defect let whichever ran FIRST decide for the other.
+    let first = [run(&locked), run(&newest)];
+    let _ = std::fs::remove_dir_all(chain.join("native-auto"));
+    let second = [run(&newest), run(&locked)];
+    let artifacts = std::fs::read_dir(chain.join("native-auto"))
+        .map(|d| {
+            d.flatten()
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    [".so", ".dylib", ".dll"].iter().any(|x| name.ends_with(x))
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert_eq!(
+        first,
+        ["via depver-0.1.0", "via depver-0.1.2"],
+        "locked, then newest"
+    );
+    assert_eq!(
+        second,
+        ["via depver-0.1.2", "via depver-0.1.0"],
+        "newest, then locked"
+    );
+    assert_eq!(
+        artifacts, 2,
+        "each resolution names its own artifact, so the second order built two as well"
+    );
+}

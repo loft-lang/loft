@@ -332,6 +332,45 @@ fn arc_c1_a_declared_scope_does_not_take_the_newest_cached() {
     );
 }
 
+/// A lock the manifest has since OVERRULED does not decide which version loads.
+///
+/// `loft.toml` says `probepkg = "=0.2.0"`; the `loft.lock` beside it was written before that
+/// edit and still pins 0.1.0; both copies are cached.  The pin was loaded because its files
+/// were on disk, so the program ran the version its own declaration excludes, silently
+/// (a fixture pinning `graphics = "=0.9.3"` over a stale 0.3.0 lock).  The control is the
+/// same lock under a range it still satisfies (`^0.1`): there the lock is the resolved form
+/// of the range and must keep deciding, not drift to the newest cached copy.
+#[test]
+fn a_lock_the_manifest_overrules_does_not_decide_the_load() {
+    let home = empty_home("lock_overruled");
+    cache_pkg(&home, "probepkg", "0.1.0", ">=0.8");
+    cache_pkg(&home, "probepkg", "0.2.0", ">=0.8");
+    let run = |dep: &str| {
+        let pkg = home.join(format!("proj_{}", dep.replace(['=', '^', '.'], "")));
+        write(
+            &pkg.join("loft.toml"),
+            &format!(
+                "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\nprobepkg = \"{dep}\"\n"
+            ),
+        );
+        write(&pkg.join("loft.lock"), &pin_lock("0.1.0"));
+        probe_script(&pkg.join("src"));
+        run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")])
+    };
+    let overruled = run("=0.2.0");
+    let kept = run("^0.1");
+    let _ = std::fs::remove_dir_all(&home);
+
+    assert!(
+        overruled.contains("probepkg-0.2.0") && !overruled.contains("probepkg-0.1.0"),
+        "the manifest pins =0.2.0, so the stale 0.1.0 lock must not load:\n{overruled}"
+    );
+    assert!(
+        kept.contains("probepkg-0.1.0"),
+        "control: `^0.1` still admits the locked 0.1.0, which keeps deciding:\n{kept}"
+    );
+}
+
 // ── arc D: `loft install` in a directory that is not a package declares one ────────
 
 /// Build a one-package registry on disk and return its `file://` index URL.
@@ -861,4 +900,264 @@ fn offline_a_cached_librarys_dependency_resolves_under_its_declared_range() {
             ),
         }
     }
+}
+
+// ── a lock is the RESOLVED form of the declarations, never a declaration of its own ──
+
+/// A cached package whose library `use`s `dep` under the range `req`, and answers
+/// `<name>-<version> -> <what dep resolved to>`.
+fn cache_chain_pkg(home: &Path, name: &str, version: &str, dep: &str, req: &str) {
+    let dir = home
+        .join(".loft/registry")
+        .join(format!("{name}-{version}"));
+    write(
+        &dir.join("loft.toml"),
+        &format!(
+            "[package]\nname = \"{name}\"\nversion = \"{version}\"\nloft = \">=0.8\"\n\n\
+             [library]\nentry = \"src/{name}.loft\"\n\n[dependencies]\n{dep} = \"{req}\"\n"
+        ),
+    );
+    write(
+        &dir.join("src").join(format!("{name}.loft")),
+        &format!(
+            "use {dep};\npub fn chain_id() -> text {{ return \"{name}-{version} -> {{{dep}::probe_id()}}\"; }}\n"
+        ),
+    );
+}
+
+/// A `loft.lock` pinning each `(name, version)`, unreachable url/sha as in [`pin_lock`].
+fn lock_of(pins: &[(&str, &str)]) -> String {
+    let mut out = String::from("schema_version = 1\n");
+    for (name, version) in pins {
+        out.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n\
+             url = \"http://127.0.0.1:1/{name}-{version}.tar.gz\"\n\
+             sha256 = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             source = \"registry\"\n"
+        ));
+    }
+    out
+}
+
+/// A package `proj` under `home` declaring `deps`, holding `lock`, whose `src/s.loft` runs
+/// `body` after `use <used>;` — the resolved version is what it prints.
+fn project(
+    home: &Path,
+    tag: &str,
+    deps: &str,
+    lock: Option<String>,
+    used: &str,
+    body: &str,
+) -> PathBuf {
+    let pkg = home.join(tag);
+    write(
+        &pkg.join("loft.toml"),
+        &format!("[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\n{deps}\n"),
+    );
+    if let Some(lock) = lock {
+        write(&pkg.join("loft.lock"), &lock);
+    }
+    write(
+        &pkg.join("src/s.loft"),
+        &format!("use {used};\nfn main() {{ println({body}); }}\n"),
+    );
+    pkg
+}
+
+/// A lock entry the manifest has since moved away from does not decide which version
+/// loads — the manifest does, as cargo's `Cargo.lock` yields to an edited `Cargo.toml`.
+///
+/// The load took the lock's pin without asking the declaration, while the install beside it
+/// did ask (`install::constraint_for`): so editing `=0.1.0` into `loft.toml` over an older
+/// `loft.lock` changed nothing, silently.  Each cell names a version the lock does NOT, so
+/// none can pass by the lock deciding; the control cell is the other direction — a lock
+/// the declaration still admits beats the newest cached copy, which is what a lock is for.
+#[test]
+fn a_lock_pin_the_manifest_has_moved_away_from_does_not_load() {
+    let home = empty_home("stale_lock");
+    for v in ["0.1.0", "0.1.2", "0.2.0"] {
+        cache_pkg(&home, "probepkg", v, ">=0.8");
+    }
+    let cells = [
+        ("exact", "probepkg = \"=0.1.0\"", "0.2.0", "probepkg-0.1.0"),
+        (
+            "bare-exact",
+            "probepkg = \"0.1.2\"",
+            "0.1.0",
+            "probepkg-0.1.2",
+        ),
+        (
+            "table",
+            "probepkg = { version = \"=0.1.0\" }",
+            "0.2.0",
+            "probepkg-0.1.0",
+        ),
+        ("floor", "probepkg = \">=0.1.2\"", "0.1.0", "probepkg-0.2.0"),
+        ("control", "probepkg = \"^0.1\"", "0.1.0", "probepkg-0.1.0"),
+    ];
+    let mut got = Vec::new();
+    for (tag, deps, locked, _) in cells {
+        let pkg = project(
+            &home,
+            tag,
+            deps,
+            Some(lock_of(&[("probepkg", locked)])),
+            "probepkg",
+            "probepkg::probe_id()",
+        );
+        got.push(run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]));
+    }
+    let _ = std::fs::remove_dir_all(&home);
+    for ((tag, deps, locked, want), out) in cells.iter().zip(&got) {
+        assert!(
+            out.lines().any(|l| l == *want),
+            "{tag}: `{deps}` over a lock of {locked} must load {want}:\n{out}"
+        );
+    }
+}
+
+/// A `use` inside a DEPENDENCY resolves through the consumer's lock — the program has one
+/// scope, and it is the entry file's.
+///
+/// It was read from the file doing the `use`, so inside the registry cache it found the
+/// dependency's own cached `loft.toml` and a lock that never exists there: the consumer's
+/// pin for a transitive package was ignored and the newest cached copy loaded.  The third
+/// cell is the bound on the fix: a lock pin the REQUIRING package's range excludes is stale
+/// too, so it cannot drag a dependency outside what its user declared.
+#[test]
+fn a_dependency_resolves_its_use_through_the_consumer_lock() {
+    let home = empty_home("transitive_lock");
+    for v in ["0.1.0", "0.1.2", "0.2.0"] {
+        cache_pkg(&home, "probepkg", v, ">=0.8");
+    }
+    cache_chain_pkg(&home, "chainpkg", "0.1.0", "probepkg", "^0.1");
+    let deps = "chainpkg = \"=0.1.0\"";
+    let cells = [
+        (
+            "locked",
+            vec![("chainpkg", "0.1.0"), ("probepkg", "0.1.0")],
+            "chainpkg-0.1.0 -> probepkg-0.1.0",
+        ),
+        (
+            "unlocked",
+            vec![("chainpkg", "0.1.0")],
+            "chainpkg-0.1.0 -> probepkg-0.1.2",
+        ),
+        (
+            "out-of-range",
+            vec![("chainpkg", "0.1.0"), ("probepkg", "0.2.0")],
+            "chainpkg-0.1.0 -> probepkg-0.1.2",
+        ),
+    ];
+    let mut got = Vec::new();
+    for (tag, pins, _) in &cells {
+        let pkg = project(
+            &home,
+            tag,
+            deps,
+            Some(lock_of(pins)),
+            "chainpkg",
+            "chainpkg::chain_id()",
+        );
+        got.push(run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]));
+    }
+    let _ = std::fs::remove_dir_all(&home);
+    for ((tag, pins, want), out) in cells.iter().zip(&got) {
+        assert!(
+            out.lines().any(|l| l == *want),
+            "{tag}: lock {pins:?} must load `{want}`:\n{out}"
+        );
+    }
+}
+
+/// `loft install` binds a TRANSITIVE package to what the project declares for it, so the
+/// lock records the version the program loads — whatever order `[dependencies]` lists.
+///
+/// The install resolved each declared package on its own, a dependency's dependencies under
+/// that dependency's range only, and merged the results into one lock: with `probepkg =
+/// "=0.1.0"` listed BEFORE a `chainpkg` requiring `^0.1`, the lock ended on 0.1.2 while the
+/// program loaded 0.1.0.  And a declaration no dependency can accept installed without a
+/// word, then failed at the first run.  Offline against an extracted cache and a hand-built
+/// index, so the cells measure resolution, not the network.
+#[test]
+fn install_binds_a_transitive_package_to_the_project_declaration() {
+    let home = empty_home("install_declared");
+    for v in ["0.1.0", "0.1.2", "0.2.0"] {
+        cache_pkg(&home, "probepkg", v, ">=0.8");
+    }
+    cache_chain_pkg(&home, "chainpkg", "0.1.0", "probepkg", "^0.1");
+    let entry = |name: &str, v: &str, deps: &str| {
+        format!(
+            r#""{v}":{{"url":"http://127.0.0.1:1/{name}-{v}.tar.gz","sha256":"00","size":1,"loft":">=0.8",{deps}"published":"2026-09-29T00:00:00Z"}}"#
+        )
+    };
+    write(
+        &home.join(".loft/registry/index.json"),
+        &format!(
+            r#"{{"schema_version":1,"packages":{{"probepkg":{{"versions":{{{},{},{}}}}},"chainpkg":{{"versions":{{{}}}}}}}}}"#,
+            entry("probepkg", "0.1.0", ""),
+            entry("probepkg", "0.1.2", ""),
+            entry("probepkg", "0.2.0", ""),
+            entry("chainpkg", "0.1.0", r#""deps":{"probepkg":"^0.1"},"#),
+        ),
+    );
+    let run = |tag: &str, deps: &str| {
+        let pkg = project(&home, tag, deps, None, "chainpkg", "chainpkg::chain_id()");
+        let url = "http://127.0.0.1:1/index.json";
+        let out = Command::new(loft_bin())
+            .args(["install"])
+            .env("LOFT_HOME", &home)
+            .env("HOME", &home)
+            .env("LOFT_REGISTRY_URL", url)
+            .env("LOFT_OFFLINE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(&pkg)
+            .output()
+            .expect("spawn loft");
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lock = std::fs::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
+        let ran = run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]);
+        (said, lock, ran)
+    };
+    let pinned_first = run("first", "probepkg = \"=0.1.0\"\nchainpkg = \"=0.1.0\"");
+    let pinned_last = run("last", "chainpkg = \"=0.1.0\"\nprobepkg = \"=0.1.0\"");
+    let conflict = run("conflict", "chainpkg = \"=0.1.0\"\nprobepkg = \"=0.2.0\"");
+    let _ = std::fs::remove_dir_all(&home);
+
+    let locked = |lock: &str| -> Vec<String> {
+        let mut out = Vec::new();
+        let mut name = "";
+        for line in lock.lines() {
+            if let Some(n) = line.strip_prefix("name = ") {
+                name = n.trim_matches('"');
+            } else if let Some(v) = line.strip_prefix("version = ")
+                && name == "probepkg"
+            {
+                out.push(v.trim_matches('"').to_string());
+            }
+        }
+        out
+    };
+    for (order, (said, lock, ran)) in [("first", &pinned_first), ("last", &pinned_last)] {
+        assert_eq!(
+            locked(lock),
+            vec!["0.1.0".to_string()],
+            "probepkg declared {order}: the lock records the declared 0.1.0 and nothing else:\n{said}\n{lock}"
+        );
+        assert!(
+            ran.lines().any(|l| l == "chainpkg-0.1.0 -> probepkg-0.1.0"),
+            "and the program loads what the lock records:\n{ran}"
+        );
+    }
+    let (said, _, _) = &conflict;
+    assert!(
+        said.contains(
+            "`chainpkg` requires `probepkg ^0.1` and this project declares `probepkg = \"=0.2.0\"`"
+        ),
+        "a declaration no dependency accepts is refused at install, naming both sides:\n{said}"
+    );
 }

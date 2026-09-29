@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/127-keyed-indexed-set.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The patch removes BOTH layers that keep C68: `set_keyed`'s find-and-remove (the
+//   `coll[key] = value` spelling) and `displace_keyed` at record finish (the `+=` spelling).
+//   Either alone reads INERT, because the other layer still dedups.
 // @C68 — a keyed collection dedups on insert, `+=` and `coll[key] = value` alike.
 //
 // @P305 — `coll[key] = value` insert-or-replace into a keyed collection

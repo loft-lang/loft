@@ -112,6 +112,20 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
                                          #   adds a library's own bench.  A REPORT, never a gate
+make perf-check [ARGS="--only 16,17"]     # BEFORE COMMITTING a compiler change: measures the
+                                         #   lanes the census says the change touched (or
+                                         #   ARGS' lanes) and compares each routine's ratio to
+                                         #   Rust with this machine's last committed row
+                                         #   (bench/portal/results/<host>.tsv); a move ≥ 15 %
+                                         #   is listed, a slowdown exits 1.  `--record` makes
+                                         #   the run the new baseline — commit it with the
+                                         #   change, that file IS the trend history
+make perf-trend [ARGS="--routine ease"]   # how each routine MOVED over the committed portal
+                                         #   history: the movers between their last two
+                                         #   measurements, or one routine's whole series with
+                                         #   the commits each point sits between (the bisect
+                                         #   range).  A report; ratios compare within one
+                                         #   machine only
 python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the
@@ -196,9 +210,10 @@ the `features-check` drift guard fails on hand-edits).
 File a NEW plan as a `loft-lang/plans` issue with one `status:*` + one `subject:*` label. Look refs
 up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for queries).
 
-**A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of
-DESIGN_DECISIONS.md — code, doc, and at least one guard under `tests/` — cite it, and
-`./scripts/idx decisions` shows which entries nothing verifies.  A decision no site can keep is
+**A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of the register
+(DESIGN_DECISIONS.md indexes its subject files) — code, doc, and at least one guard under `tests/`
+— cite it, and `./scripts/idx decisions` shows which entries nothing verifies; a new entry takes
+the id `./scripts/idx next-decision` names.  A decision no site can keep is
 reopened, not documented.
 
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
@@ -465,7 +480,11 @@ Neither blocks.
 ## Documentation index
 
 **Writing or changing any doc or comment: [DOC_CONTRACT.md](doc/claude/DOC_CONTRACT.md) is the
-rule set** (one line per rule, each pointing at its home).
+rule set** (one line per rule, each pointing at its home). ⚠ **Two hard rules, broken most:
+history — anything dated, a past measurement, a finished item, how a thing came to be — goes to
+the doc's `<doc>-history.md` companion, never into the working doc; and no working doc passes 1000
+lines, ever (move its history out, then split by subject). Load the `doc-quality` skill before
+adding to any doc.**
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 ⚠ **a LIMITATION stated on either page is a claim, not a fact** — before repeating one ("loft

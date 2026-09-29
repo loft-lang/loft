@@ -248,7 +248,7 @@ The `State` struct in production carries additional fields for
 source-position lookup, coroutine frames, parallel arms, the
 shadow call-frame vector, and `data_ptr` — see `src/state/mod.rs`
 for the canonical definition.  See also
-[DATABASE.md § Constant store (`CONST_STORE`)](DATABASE.md#constant-store-const_store)
+[DATABASE_STORES.md § Constant store (`CONST_STORE`)](DATABASE_STORES.md#constant-store-const_store)
 for the storage-side view of `OpConstRef` and the lifetime + safety
 properties.
 
@@ -503,7 +503,7 @@ and dispatches `OPERATORS[255 + ext]`. `ext` is a `u8`, so the addressable
 range is `0..=510`: **511 opcodes**, not 256.
 
 The table is **not** near saturation, and work parked on the belief that it
-is should be re-read: `PLANNING.md` § O1 and `ROADMAP.md` still defer
+is should be re-read: `PLANNING_NATIVE.md` § O1 and `ROADMAP.md` still defer
 superinstruction merging as *"opcode table full (254/256)"*, which describes
 a one-byte-only encoding that no longer exists. `PERFORMANCE.md` § P1
 corrected this in 2026-06 and O1 can proceed — a superinstruction lands in

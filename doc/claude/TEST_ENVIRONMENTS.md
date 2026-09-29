@@ -183,6 +183,18 @@ values.
 
 ---
 
+## A private `HOME` hides the Rust toolchain
+
+A test that runs `loft` with `HOME` pointed at a scratch directory (the usual way to give it a
+private registry cache) also moves rustup, which finds its toolchains through `HOME`.  With no
+`rustc` reachable, every `use`d library interprets and prints *"has no native build and no
+Rust toolchain"* — so the auto-native path is silently untested, and a defect that lives
+only there shows up as an "intermittent" failure in whichever runner happens to expose
+`rustc` (nextest does).  Point `LOFT_HOME` at the scratch directory and leave `HOME` alone,
+or set `RUSTUP_HOME` / `CARGO_HOME` to the real ones, when the native half is part of what
+the test claims.  `n3_use_native.rs::a_dependency_version_is_part_of_its_users_native_artifact`
+is the worked example; the defect it guards read as a flake in `manifest_less_resolution.rs`.
+
 ## Occasional valgrind pass (Linux)
 
 The loft codebase has a large `unsafe` surface in `src/store.rs`,
@@ -242,7 +254,7 @@ Two decisions are built in, and both are measurements rather than taste:
   path, and this sweep measured that premise false (a text returned from a call on two arms,
   or read straight out of a vector element, loses one buffer PER CALL with no fault at all).
 - **A leaked or over-freed STORE is not a valgrind error.**  The store arena is one valid
-  allocation (DEBUG.md § Debugging store-ownership bugs), so that half of the release's
+  allocation (DEBUG_STORES.md § Debugging store-ownership bugs), so that half of the release's
   memory gate is `M-leaks` under `LOFT_STRICT_STORES=1`, and this sweep does not pretend to
   cover it.
 

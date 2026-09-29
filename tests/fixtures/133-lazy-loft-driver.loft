@@ -69,7 +69,7 @@ fn main() {
   // the two lookups answer the same RECORD. Identity falling out of the
   // collection is the whole model.
   b = w.people[7];
-  println("again={b.nm ?? "-"} same={a == b}");
+  println("again={b.nm ?? "-"} same={&a == &b}");
 
   // Reached the source, and it does not hold this key. A genuine absence leaves
   // the error channel EMPTY — that is the distinction the channel exists for.

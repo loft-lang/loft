@@ -56,7 +56,7 @@ GitHub Actions using a `REGISTRY_SIGNING_KEY_BASE64` secret.
 
 We removed it.  Signing happens locally on the maintainer's
 laptop via `loft-keygen sign` — see [REGISTRY_BOOTSTRAP.md § Step 4](../REGISTRY_BOOTSTRAP.md)
-maintainer side, and the rationale in [PKG_REGISTRY.md § Index signing](../PKG_REGISTRY.md#index-signing--indexjsonsig).
+maintainer side, and the rationale in [PKG_REGISTRY.md § Index signing](../PKG_REGISTRY_TRUST.md#index-signing--indexjsonsig).
 
 Short version: an early-stage ecosystem publishes weekly at most;
 a human maintainer is always in the merge loop anyway; the

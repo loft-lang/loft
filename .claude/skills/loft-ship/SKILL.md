@@ -15,11 +15,11 @@ description: >-
 # loft-ship — one source, four targets, identical behavior
 
 A loft library ships to **four targets**, and the runtime — not the consumer — picks the
-variant ([PACKAGES.md § Target matrix](../../../doc/claude/PACKAGES.md)):
+variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD.md)):
 
 | | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
-| Pure loft / `#rust` inline | ✓ | ✓ | ✓ | ✓ |
+| Pure loft | ✓ | ✓ | ✓ | ✓ |
 | `#native` external (Rust) | ✓ rlib | ✓ rlib | ✓ wasm rlib | **✗ → needs a `wasm.bridge` crate** |
 
 **The master invariant: `interpret == native == native-wasm == browser`.** A library is not
@@ -31,16 +31,16 @@ invariant is the whole job — everything below serves it.
 Before scaffolding anything, classify the library — this is the single most leverage-saving
 step, because the two tiers differ by an order of magnitude:
 
-- **Tier 1 — pure loft, or `#rust` inline only.** The matrix is ✓ across all four columns:
-  the compiler emits the variant for each target automatically. **There is no bridge to
-  build.** Shipping = write → `loft.toml` → cross-mode test → publish. Most libraries are
-  here; keep them here (prefer `#rust` inline over `#native` external whenever the Rust is
-  small) precisely so you never enter Tier 2.  `#rust` bridges a CAPABILITY loft lacks; it
-  is never a speed-up for a routine loft can express (formal/performance.md `(Perf-Cure)`).
+- **Tier 1 — pure loft.** The matrix is ✓ across all four columns: the compiler emits the
+  variant for each target automatically. **There is no bridge to build.** Shipping = write →
+  `loft.toml` → cross-mode test → publish. Most libraries are here; keep them here.
+  (`#rust"…"` is NOT a library route: it is the standard library's own template, and the
+  parser refuses it outside `default/` — C87.)
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
-  is where the real cost and nearly all the bugs live. Only pay it when the binding genuinely
-  can't be `#rust` inline (it calls a real host capability: crypto, sockets, the DOM, files).
+  is where the real cost and nearly all the bugs live. Only pay it when the library needs a
+  CAPABILITY loft lacks (a real host capability: crypto, sockets, the DOM, files) — never
+  for speed on a routine loft can express (formal/performance.md `(Perf-Cure)`).
 
 State which tier you're in out loud — it sets expectations and stops you from over-building a
 Tier 1 library or under-estimating a Tier 2 one.
@@ -57,7 +57,8 @@ rewrite for speed is a per-routine edge case with its reason recorded.
 
 1. **Scaffold** — `loft new <name>` (or copy a sibling library's `loft.toml`). See
    [LIBRARY_AUTHORING.md](../../../doc/claude/LIBRARY_AUTHORING.md) for the full author
-   narrative.
+   narrative (testbed → develop), [LIBRARY_PUBLISH.md](../../../doc/claude/LIBRARY_PUBLISH.md)
+   for publish → maintain.
 2. **Write the loft surface** — the `.loft` API. For naming/types/format-strings/known-bugs,
    use the **`loft-write` skill** (this skill is about *shipping*, that one is about *writing
    `.loft`*). Keep the public surface clean per
@@ -65,7 +66,7 @@ rewrite for speed is a per-routine edge case with its reason recorded.
    library; the stdlib is just the library every program imports).
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
    knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
-   (PACKAGES.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
+   (PACKAGES_BUILD.md § The build phase), plus a `.wasm_exempt` marker for a justified wasm
    opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test` and `loft test --native`;
    the test runner has no wasm mode, so the wasm target is checked by the library CI's
    WASM cross-build and by a program entry, `loft --native-wasm <program>.loft`. Tier 2 adds a
@@ -95,10 +96,9 @@ is green" does **not** close a wasm/browser divergence — that divergence **is*
 the same failure mode the stability red-flags chase: two generators reading one IR, drifting).
 Add a leak check where the library allocates (`LOFT_STORES=warn`, `LOFT_NATIVE_LEAK_CHECK`).
 
-## Pitfall index — the things that actually cost hours (hard-won, @PLN84)
+## Pitfall index — the things that actually cost hours
 
-These are not theoretical; each one bit a real ZT library this cycle. Skim them before you
-start, not after you're stuck.
+Each of these has broken a real library. Skim them before you start, not after you're stuck.
 
 - **The re-sign foot-gun (publish).** Editing the registry `index.json` *without re-signing*
   it breaks **all** `loft install`s — every install fails with "registry index
@@ -121,9 +121,8 @@ start, not after you're stuck.
 ## References (read on demand — don't inline them)
 
 - `references/wasm-bridge.md` — the Tier-2 `[wasm.bridge]` recipe: host-import module, host
-  shim (`host.js` browser / Node headless), asyncify, the marshalling traps, and the @PLN84
-  history. Read it
-  the moment a library needs the browser target.
+  shim (`host.js` browser / Node headless), asyncify, the marshalling traps. Read it the
+  moment a library needs the browser target.
 - `references/publish.md` — the registry publish runbook: `loft.toml` targets, per-target
   build, Ed25519 sign + **re-sign**, sha256/size, the CDN gotcha. Read it before any registry
   submission.

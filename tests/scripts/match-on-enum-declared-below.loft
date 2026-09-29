@@ -1,6 +1,6 @@
 // `match` on an enum declared LOWER in the file is typed from the enum, not from `void`.
 //
-// LOFT.md § File structure: "A loft file may contain (in any order)" its declarations.  The
+// LOFT_DECLARATIONS.md § File structure: "A loft file may contain (in any order)" its declarations.  The
 // two-pass parser exists to make that true, and `match` did not honour it.  On pass 1 the
 // subject's type is not linked yet, so `parse_match`'s dispatch could not recognise it, the
 // arms contributed nothing, and the `!valid_enum` exit returned `Type::Void` — its comment

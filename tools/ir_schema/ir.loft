@@ -317,6 +317,7 @@ struct DbField {
   default: vector<DbContent>, // Content (box-of-one)
   other_indexes: vector<integer>,
   nullable: boolean, // @PLN127 arc D — declared nullable; not a layout fact
+  target: integer, // @C91 — u16 known_type a stored `reference<T>` names; 65535 otherwise
 }
 
 struct EnumPair {

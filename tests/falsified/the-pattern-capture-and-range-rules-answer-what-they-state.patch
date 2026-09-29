@@ -1,0 +1,11 @@
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -9951,7 +9951,7 @@
+             let mut hi_cond = Value::Null;
+             self.call_op(
+                 &mut hi_cond,
+-                if inclusive { "<=" } else { "<" },
++                if inclusive { "<" } else { "<" },
+                 &[Value::Var(subject_var), hi],
+                 &[subject_type.clone(), subject_type.clone()],
+             );

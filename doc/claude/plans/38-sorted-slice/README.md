@@ -555,7 +555,7 @@ assert(labels == "TFf", "match inside range loop");
 ## See also
 - [PLANNING.md](../../PLANNING.md) — A8 entry (when added)
 - [DATABASE.md](../../DATABASE.md) — `sorted` / `index` storage layout; `OpIterate` / `OpStep`
-- [LOFT.md](../../LOFT.md) § Key-based collections — user-facing reference
+- [LOFT_DATA.md](../../LOFT.md) § Key-based collections — user-facing reference
 - `src/parser/fields.rs` — `parse_key`, `fill_iter`
 - `src/codegen_runtime.rs` — `OpIterate`, `OpStep`
 - `src/tree.rs` — `find`, `first`, `last`, `next`, `previous`

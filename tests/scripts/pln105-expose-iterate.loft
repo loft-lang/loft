@@ -60,5 +60,13 @@ fn main() {
   assert(first_over(h, 2) == 3, "return out of an exposed loop");  // scope-exit free
   release(2, h);
 
+  // `deliver` — the short-lived sibling of `expose` (OpDeliver): hands the record's
+  // descriptor handle to the host and leaves it untouched.  Off the --html target the
+  // loopback host prints `deliver tag=3 type=Tile bytes=03000000000000001e00000000000000`
+  // (tkey=3, ox=30 as little-endian i64s); tests/deliver_parity.rs pins those bytes.
+  dt = Tile{ tkey: 3, ox: 30 };
+  deliver(3, dt);
+  assert(dt.tkey == 3 && dt.ox == 30, "deliver leaves the value untouched");
+
   println("pln105-expose-iterate ok");
 }

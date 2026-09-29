@@ -212,20 +212,24 @@ fn read_valid_plans() -> vector<text> {
 }
 
 // Build the set of design-decision ids from the register's headings: every
-// `## C<digits>[.<Upper>] — …` line of DESIGN_DECISIONS.md defines one, so an
-// `@C<n>` citation resolves exactly when its entry exists.  Returned bare (`98`,
-// `54.D`), the shape `tag_is_valid` compares against.
+// `## C<digits>[.<Upper>] — …` line of a `DESIGN_DECISIONS_<SUBJECT>.md` file
+// defines one, so an `@C<n>` citation resolves exactly when its entry exists.
+// Returned bare (`98`, `54.D`), the shape `tag_is_valid` compares against.
 fn read_valid_decisions() -> vector<text> {
     out: vector<text> = [];
-    f = file("doc/claude/DESIGN_DECISIONS.md");
-    if f.format == Format.NotExists { return out; }
-    for line in f.content().split('\n')? {
-        ll = line.size();
-        if ll < 5 || !line.starts_with("## C") || !is_digit_leaf(line[4]) { continue; }
-        j = 4;
-        while j < ll && is_digit_leaf(line[j]) { j = j + 1; }
-        if j + 2 < ll && line[j] == '.' && line[j + 1] >= 'A' && line[j + 1] <= 'Z' { j = j + 2; }
-        if j < ll && line[j] == ' ' { out += [line[4..j]]; }
+    dir = file("doc/claude");
+    if dir.format != Format.Directory { return out; }
+    for entry in dir.files() {
+        base = entry.path.basename();
+        if !base.starts_with("DESIGN_DECISIONS_") || !base.ends_with(".md") { continue; }
+        for line in entry.content().split('\n')? {
+            ll = line.size();
+            if ll < 5 || !line.starts_with("## C") || !is_digit_leaf(line[4]) { continue; }
+            j = 4;
+            while j < ll && is_digit_leaf(line[j]) { j = j + 1; }
+            if j + 2 < ll && line[j] == '.' && line[j + 1] >= 'A' && line[j + 1] <= 'Z' { j = j + 2; }
+            if j < ll && line[j] == ' ' { out += [line[4..j]]; }
+        }
     }
     out
 }
@@ -415,7 +419,7 @@ const BYTE_H_UPPER  = 72;   // 'H'
 const BYTE_F_UPPER  = 70;   // 'F'  (@F<n> — loft-lang/features feature)
 const BYTE_R_UPPER  = 82;   // 'R'  (@FR-<Rule> — a formal-rule citation)
 const BYTE_I_UPPER  = 73;   // 'I'  (@I<n> — loft-lang/features infrastructure)
-const BYTE_C_UPPER  = 67;   // 'C'  (@C<n> — a design decision in DESIGN_DECISIONS.md)
+const BYTE_C_UPPER  = 67;   // 'C'  (@C<n> — a design decision in DESIGN_DECISIONS_<SUBJECT>.md)
 const BYTE_P_LOWER  = 112;  // 'p'
 const BYTE_L        = 76;   // 'L'
 const BYTE_A        = 65;   // 'A'
@@ -584,7 +588,7 @@ fn scan_line(file_path: text, line_no: integer, line: text, out: vector<RawRef>)
             continue;
         }
         // @C<digits>[.<Upper>] — a DESIGN-DECISION citation (@PLN175): a code, doc or
-        // test site that keeps a decision of DESIGN_DECISIONS.md cites it, so
+        // test site that keeps a decision of the register cites it, so
         // `idx tag:@C98` answers "where does loft hold this decision?".  Boundary-exact  <!--noindex-->
         // like the others: `@C3` never matches inside `@C38`.  The dotted form exists for  <!--noindex-->
         // one id (`C54.D`) and is taken only when a non-word byte follows the letter, so

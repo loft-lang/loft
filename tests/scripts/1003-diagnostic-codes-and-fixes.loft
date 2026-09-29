@@ -42,6 +42,7 @@
 
 struct Tile1003 {
   name: text,
+  level: u8,
   // `not null` is inert — the type is non-null already.  advice[not-null-deprecated].
   tag: text not null,
 }
@@ -55,11 +56,13 @@ fn after_return1003() -> integer {
 
 // @FTR-029 — a diagnostic's code is its frozen handle, and none of the six change the answer
 fn main() {
-  t = Tile1003 { name: "grass", tag: "x" };
+  t = Tile1003 { name: "grass", level: 3, tag: "x" };
 
-  // `name` is non-null, so the default can never be used.  warning[redundant-coalesce].
-  shown = t.name ?? "none";
-  assert(shown == "grass", "coalesce on a non-null field = '{shown}', want 'grass'");
+  // A `u8` field has no null (C127), so the default can never be used.
+  // warning[redundant-coalesce].  Not `t.name`: a `text` field holds the null `(N-Store)`
+  // lets into it, so a `??` there is a real default.
+  shown = t.level ?? 9;
+  assert(shown == 3, "coalesce on a non-null field = {shown}, want 3");
 
   // An UPPER_CASE local.  advice[upper-case-local] — the value is unaffected.
   MAX_TILES = 4;

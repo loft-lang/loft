@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C67 — loft has no `try { … } catch { … }`: an operation that can fail answers a value the
+// program tests (`== null`, `??`), and an internal fault stops the program for its supervisor
+// to see.  The construct was refused only as a bare "Expect token ;" at the `{`, which named
+// neither the decision nor what to write; now it is refused by name, once, with both blocks
+// skipped so nothing cascades.  The running cell is the other half: only `try` followed by
+// `{` is the construct, and a variable called `try` stays an ordinary name.
+//
+// @falsified-at: efb2bbc7f — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1, native
+//   exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches).
+// @falsified-by: tests/falsified/c67-a-try-block-is-refused-by-name.patch
+//   CHANNEL: the expectation channel — the refusal's wording.
+//   WITNESS: on the control the `try` block is refused as "Expect token ;", so the
+//   `@EXPECT_ERROR` finds no match.
+//   HOLDS: assertions, leak, panic and free-refusal are equal on BOTH trees; `falsify`
+//   requires HERE to be clean, so each is clean on both.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+
+// @EXPECT_ERROR: loft has no `try`/`catch` — an operation that can fail answers a value you test
+fn test_a_try_block() {
+  try {
+    x = 1;
+    if x > 0 { x = 2; }
+  } catch err {
+    x = 3;
+  }
+}
+
+fn test_try_is_an_ordinary_name() {
+  try = 3;
+  catch = try + 1;
+  assert(catch == 4, "`try` and `catch` are names: {catch}");
+}

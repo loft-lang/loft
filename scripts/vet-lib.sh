@@ -60,7 +60,8 @@ name=$(sed -n 's/^name *= *"\(.*\)"/\1/p'    "$DIR/loft.toml" | head -1)
 ver=$( sed -n 's/^version *= *"\(.*\)"/\1/p' "$DIR/loft.toml" | head -1)
 echo "V5 metadata      : name=${name:-?} version=${ver:-?}"
 [ -n "$ver" ] || { echo "   ✗ no version"; fail=1; }
-[ "$name" = "$PKG" ] || { echo "   ✗ name '$name' != package dir '$PKG'"; fail=1; }
+# A package in a subdirectory (`lib/lavition_ui`) is named after its LAST component.
+[ "$name" = "$(basename "$PKG")" ] || { echo "   ✗ name '$name' != package dir '$PKG'"; fail=1; }
 if ! ls "$DIR"/LICENSE* >/dev/null 2>&1 && ! grep -rqi "SPDX-License-Identifier" "$DIR/src" 2>/dev/null; then
   echo "   ⚠ no license marker (LICENSE file or SPDX header)"
 fi
@@ -81,7 +82,7 @@ printf "V2/V3 interpret  : "
 if ( cd "$DIR" && loft --interpret --tests tests ) >"$tmp/i.log" 2>&1; then
   echo "✓ green (parses/types/tests against this loft)"
 else
-  echo "✗ FAILED — see below"; { grep -iE 'error|fail' "$tmp/i.log" || true; } | sed 's/^/     /' | head -5; fail=1
+  echo "✗ FAILED — see below"; { grep -iE 'error|fail' "$tmp/i.log" || true; } | sed -n '1,5s/^/     /p'; fail=1
 fi
 if [ "$WITH_NATIVE" = 1 ]; then
   printf "V2 native        : "
@@ -95,7 +96,9 @@ fi
 # V4 — public API surface (informational)
 echo "V4 API surface   :"
 if ( cd "$DIR" && loft api . ) >"$tmp/api.txt" 2>/dev/null && [ -s "$tmp/api.txt" ]; then
-  sed -n 's/^/     /p' "$tmp/api.txt" | head -25
+  # Not `| head -25`: under `pipefail` a surface past 25 lines ends the script
+  # with SIGPIPE (141), which reads as a FAILED vet.
+  sed -n '1,25s/^/     /p' "$tmp/api.txt"
   [ "$(wc -l <"$tmp/api.txt")" -gt 25 ] && echo "     … ($(wc -l <"$tmp/api.txt") lines total)"
 else
   echo "     (api-surface unavailable for this package)"

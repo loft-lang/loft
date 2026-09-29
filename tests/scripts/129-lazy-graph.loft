@@ -55,7 +55,7 @@ fn main() {
   grace = persons[2];
   c2 = companies[grace.employer];
   println("hop2 {grace.name}@{c2.name} p={persons.len()} c={companies.len()}");
-  println("identity={c1 == c2}");
+  println("identity={&c1 == &c2}");
 
   alan = persons[3];
   c3 = companies[alan.employer];

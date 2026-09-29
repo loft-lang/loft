@@ -35,7 +35,7 @@
 <pre><code>pub interface Equatable {
   op == (self: Self, other: Self) -&gt; boolean
 }</code></pre>
-<p>Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.</p>
+<p>Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.</p>
 <p>`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.</p>
 </div>
 <div class="item">

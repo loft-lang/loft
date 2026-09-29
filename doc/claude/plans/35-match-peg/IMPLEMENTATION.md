@@ -192,7 +192,9 @@ uses a fixed NEGATIVE index; reading from the run cursor `v[end + j]` instead di
 (the run's `end`, set in the arm condition, isn't reliably visible to a tail read appended after
 it — E0425 / wrong result). A variant tail's tag-test + field binds use the head path's DIRECT read
 (no cross-block temp — a temp assigned in the condition reads back null in the binds on native).
-Guard `tests/scripts/35o-tail-elements.loft`, `parse_errors::tail_and_rest_rejected`.
+Guard `tests/scripts/35o-tail-elements.loft`; `parse_errors::tail_and_rest_rejected` retired
+2026-09-29 — a tail before a `..rest` (and in a cursor match) now follows the run
+(`tests/scripts/a-tail-after-a-repetition-follows-the-run.loft`).
 
 **Next: Phase 7 (iterator input — the accumulating `read(pos)`, the only phase adding opcodes),
 then the PC1–PC5 sub-rule layer. §3a step 6 (fold hook) waits on PC.**
@@ -1018,7 +1020,9 @@ is fed.** So:
    evaporated** — the buffer holds all pulled items, so backtracking is a free index (no anchor/
    revert, no eviction).  text / vector / tuple elements ride a different `next` channel → deferred
    with a clean diagnostic (collect-idiom hint).  Guard `tests/scripts/35p-iterator-match.loft`,
-   `parse_errors::stream_match_complex_deferred`.
+   `parse_errors::stream_match_complex_deferred` (retired 2026-09-29: every element type streams
+   since the buffer appends through `append_element_ops`, the comprehension's own append —
+   loft#1737, `tests/scripts/a-match-streams-an-iterator-of-any-element.loft`).
 2b. **DONE (text + struct-enum element channels).** `iterator<text>` (token strings) and
    `iterator<StructEnum>` (struct-enum token streams) now stream-match on both backends, leak-clean.
    The one fix: the append record var (`stream_elm`) needed `skip_free` — without it scope cleanup

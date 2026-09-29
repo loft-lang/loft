@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: STDLIB.md § Lazy store binding — a miss on a lazily bound collection is a null, and
+// @PAGE: STDLIB_FILES.md § Lazy store binding — a miss on a lazily bound collection is a null, and
 // `store_lazy_error` says whether it was a real absence or a fetch that failed.
 
 struct Person { id: integer, name: text }

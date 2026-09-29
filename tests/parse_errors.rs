@@ -1796,7 +1796,7 @@ fn generic_fn_struct_as_bound_errors() {
 #[test]
 fn interface_factory_method_rejected() {
     code!("interface Creatable { fn create() -> Self }\nfn test() {}")
-        .error("factory methods not yet supported: 'create' returns Self without a 'self: Self' parameter at interface_factory_method_rejected:1:44");
+        .error("'create' returns Self without a 'self: Self' first parameter, and that parameter is what names the type Self stands for — take the starting value as a parameter instead (`fn f<T: I>(…, start: T) -> T`) at interface_factory_method_rejected:1:44");
 }
 
 // ── I6/I10 — Satisfaction checking diagnostics ───────────────────────────────
@@ -2745,17 +2745,14 @@ fn gh256_bool_null_coalesce_supported() {
 /// @C69 — `!x` on a non-boolean is a null test.
 #[test]
 fn gh253_bang_on_not_null_warns() {
-    // Genuinely exercises `not null` (the `!x`-is-always-false diagnostic depends on the
-    // value being non-null), so it KEEPS `not null` and asserts the deprecation too.
-    code!("fn test() { h: integer not null = 3; if !h { h = 4; } }")
-        .advice(
-            "`not null` is deprecated and has no effect — a type is non-null by default now at gh253_bang_on_not_null_warns:1:34",
-        )
-        .warning(
-            "'!' on a 'not null' integer is always false — '!x' tests whether x \
-             is null, and a 'not null' value is never null at \
-             gh253_bang_on_not_null_warns:1:45",
-        );
+    // The `!x`-is-always-false diagnostic needs a slot with no null, which is a narrow range
+    // (C127).  It was spelled `integer not null` until that flag was measured to have no
+    // effect: such a local still reads null after an overflow, so `!h` on it is a real test.
+    code!("fn test() { h: u8 = 3; if !h { h = 4; } }").warning(
+        "'!' on a 'not null' integer(0, 255) is always false — '!x' tests whether x \
+         is null, and a 'not null' value is never null at \
+         gh253_bang_on_not_null_warns:1:31",
+    );
 }
 
 /// GitHub #253 companion — `!` on a *nullable* operand is the sanctioned null
@@ -3048,10 +3045,10 @@ fn vector_match_not_exhaustive() {
         .error("match on vector is not exhaustive — a slice pattern can fail (a length no arm matches); add a '_ =>' or a bare-binding final arm at vector_match_not_exhaustive:1:78");
 }
 
-// @PLN35 Phase 3 (L3.7, P-Multi): comma-separated multi-pattern arms bind the SAME
-// captures (D-simple) from whichever variant matched.  The guards below pin the
-// D-simple boundary: mismatched capture types, partial name overlap, and the
-// combinations deferred to Phase 4 (a guard / a field sub-pattern on such an arm).
+// @PLN35 Phase 3 (L3.7, P-Multi): comma-separated multi-pattern arms bind their captures from
+// whichever variant matched.  A same-named capture joins across the patterns (`@FR-P-Alt-Same`);
+// a name only some bind is `τ?` (`@FR-P-Alt-Diff`).  The value cells are in
+// `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`.
 
 // A same-named capture must have the SAME type in every listed pattern.
 #[test]
@@ -3060,26 +3057,40 @@ fn multi_pattern_capture_type_mismatch() {
         .error("multi-pattern arm: capture 'k' is text in this pattern but integer in the first — every listed pattern must bind the same captures at the same type at multi_pattern_capture_type_mismatch:2:55");
 }
 
-// Partial name overlap (a capture in only some patterns → option<T>) is Phase 4.
+// A name only some listed patterns bind is `τ?`, null when another pattern matched (loft#1734).
 #[test]
 fn multi_pattern_partial_overlap() {
-    code!("enum Rec { Ra { u: integer }, Rb { w: integer } }\nfn f(r: Rec) -> integer { match r { Ra { u }, Rb { w } => u, _ => 0 } }")
-        .error("multi-pattern arm: capture 'w' is not bound by the first pattern (partial overlap → option<T> is Phase 4) at multi_pattern_partial_overlap:2:55")
-        .error("multi-pattern arm: every listed pattern must bind the same captures (u) at multi_pattern_partial_overlap:2:58");
+    code!("enum Rec { Ra { u: integer }, Rb { w: integer } }\nfn f(r: Rec) -> integer { match r { Ra { u }, Rb { w } => (u ?? 0) * 10 + (w ?? 0), _ => 0 } }")
+        .expr("f(Ra { u: 3 }) * 100 + f(Rb { w: 4 })")
+        .result(Value::Int(3004));
 }
 
-// A guard on a multi-pattern arm (must hold for whichever pattern matched) is Phase 4.
+// A guard on a multi-pattern arm holds for whichever pattern matched (`@FR-P-Guard` ×
+// `@FR-P-Multi`); it was refused as deferred work.  The value cells, the fall-through and a
+// text capture are in `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
 #[test]
-fn multi_pattern_guard_deferred() {
+fn multi_pattern_guard_holds() {
     code!("enum Rec { Ra { k: integer }, Rb { k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { k } if k > 0 => k, _ => 0 } }")
-        .error("a guard is not yet supported on a multi-pattern arm (Phase 4) at multi_pattern_guard_deferred:2:67");
+        .expr("f(Rb { k: 4 }) * 100 + f(Ra { k: -3 })")
+        .result(Value::Int(400));
 }
 
-// A field sub-pattern inside a non-first listed pattern is Phase 4.
+// A field sub-pattern TESTS its field and captures nothing, so `Ra { i }, Rb { i: Sp }` binds `i`
+// in one listed pattern only: `i` is `Sub?`, null when `Rb` matched.
 #[test]
-fn multi_pattern_subpattern_deferred() {
-    code!("enum Sub { Sp, Sq }\nenum Rec { Ra { i: Sub }, Rb { i: Sub } }\nfn f(r: Rec) -> integer { match r { Ra { i }, Rb { i: Sp } => 0, _ => 1 } }")
-        .error("a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4) at multi_pattern_subpattern_deferred:3:57");
+fn multi_pattern_subpattern_binds_no_capture() {
+    code!("enum Sub { Sp, Sq }\nenum Rec { Ra { i: Sub }, Rb { i: Sub } }\nfn f(r: Rec) -> integer { match r { Ra { i }, Rb { i: Sp } => if i == null { 2 } else { 3 }, _ => 1 } }")
+        .expr("f(Ra { i: Sq }) * 100 + f(Rb { i: Sp }) * 10 + f(Rb { i: Sq })")
+        .result(Value::Int(321));
+}
+
+/// A sub-pattern in a LATER listed pattern may bind a name: the arm body reads it, null when
+/// another pattern matched.
+#[test]
+fn a_capture_in_a_later_listed_patterns_sub_pattern_is_nullable() {
+    code!("enum Sub { Sp { x: integer }, Sq }\nenum Rec { Ra { i: Sub, k: integer }, Rb { i: Sub, k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { i: Sp { x }, k } => k * 10 + (x ?? 0), _ => 0 } }")
+        .expr("f(Ra { i: Sq, k: 1 }) * 100 + f(Rb { i: Sp { x: 7 }, k: 2 })")
+        .result(Value::Int(1027));
 }
 
 // Union exhaustiveness: the listed variants are ALL covered by the multi-pattern
@@ -3141,28 +3152,20 @@ fn scalar_rep_type_mismatch() {
         .error("a scalar repetition `xs:text*` must match the vector's element type integer at scalar_rep_type_mismatch:1:59");
 }
 
-// @PLN35 slice 1 — a `..rest` after a scalar repetition is not yet supported (a clean error,
-// not a silent mis-parse).
+// `@FR-P-Rep-Scalar` — a scalar repetition is a typed rest, so a `..rest` after it is a SECOND
+// variable-length part and refused like `[..a, ..b]` (loft#1736).  A non-literal tail is no
+// longer refused: `a-scalar-repetition-is-a-typed-rest.loft` matches it.
 #[test]
-fn scalar_rep_rest_unsupported() {
+fn scalar_rep_rest_is_a_second_rest() {
     code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, .. ] => xs.len(), _ => -1 } }")
-        .error("a `..rest` after a scalar repetition `xs:integer*` is not yet supported at scalar_rep_rest_unsupported:1:66");
+        .error("a slice pattern holds one variable-length part, and `..` is a second one after `xs:integer*` — the first already takes every element the fixed ones leave; drop one of them at scalar_rep_rest_is_a_second_rest:1:68");
 }
 
-// @PLN35 slice 1 — a non-literal element after a scalar repetition is rejected (recovers to
-// `]` so this is the primary error, not a cascade).
+// `@FR-P-Rest` — two rests: accepting the second dropped the first rest's binding without a word.
 #[test]
-fn scalar_rep_nonliteral_tail() {
-    code!("fn f(v: vector<integer>) -> integer { match v { [ xs:integer*, y ] => xs.len(), _ => -1 } }")
-        .error("only literal elements are supported after a scalar repetition `xs:integer*` at scalar_rep_nonliteral_tail:1:65");
-}
-
-// @PLN35 slice 2 — a per-iteration capture of a NON-scalar field `( V { heap } )*` is deferred
-// (only scalar/text fields project into a vector today).
-#[test]
-fn field_capture_nonscalar_deferred() {
-    code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:60");
+fn two_rests_are_refused() {
+    code!("fn f(v: vector<integer>) -> integer { match v { [ ..a, ..b ] => len(a) + len(b), _ => -1 } }")
+        .error("a slice pattern holds one variable-length part, and `..b` is a second one after `..a` — the first already takes every element the fixed ones leave; drop one of them at two_rests_are_refused:1:61");
 }
 
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
@@ -3170,22 +3173,6 @@ fn field_capture_nonscalar_deferred() {
 fn field_capture_unknown_field() {
     code!("enum Tok { Num { n: integer } }\nfn f(v: vector<Tok>) -> integer { match v { [ ( Num { nope } )* ] => 1, _ => -1 } }")
         .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
-}
-
-// @PLN35 slice 3 — a fixed (non-`..rest`) tail after a repetition and a `..rest` are still
-// mutually exclusive.
-#[test]
-fn tail_and_rest_rejected() {
-    code!("enum Tok { Num { n: integer }, End { e: integer } }\nfn f(v: vector<Tok>) -> integer { match v { [ (Num)*, End { e }, ..rest ] => e + rest.len(), _ => -1 } }")
-        .error("a fixed tail after a repetition cannot combine with `..rest` (yet) at tail_and_rest_rejected:2:74");
-}
-
-// @PLN35 Phase 7 — streaming `match` over an unsupported element type (a tuple; scalar / text /
-// struct-enum DO work) is deferred with a clean error pointing at the collect idiom.
-#[test]
-fn stream_match_complex_deferred() {
-    code!("fn g() -> iterator<(integer, integer)> { yield (1, 2); }\nfn f() -> integer { match g() { [ _ ] => 1, _ => -1 } }")
-        .error("streaming `match` over an `iterator<(integer, integer)>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
 }
 
 // @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
@@ -3706,7 +3693,7 @@ fn b_ref_reshape_callee_growth_two_frames_down_is_error() {
 /// keys on `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so
 /// `b.v.remove(0)` — a removal from a field of `b` — was collected by nothing.
 ///
-/// It is the cell that corrects `heap.md` D-heap-11's Boundary paragraph, which claimed a
+/// It is the cell that corrects `heap-history.md` D-heap-11's Boundary paragraph, which claimed a
 /// callee's removal already refused while only its growth did not.  Neither did.
 #[test]
 fn b_ref_reshape_callee_removal_from_a_field_is_error() {
@@ -4414,20 +4401,10 @@ fn a_nullable_keyed_collection_is_refused_in_the_source_spelling() {
              type's default, an empty collection) or `?? []`; either spelling gives an absent \
              collection zero iterations at \
              a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48",
-    )
-    // The one below is CASCADE, not a finding: the refusal above bails out of the `for`
-    // without consuming its body, so the statement parse fails once more at the same
-    // position.  It is asserted because the harness matches the whole list, and named here
-    // so that collapsing it to the one real error reads as the fix it is rather than as a
-    // broken test.
-    //
-    // There were TWO.  *"Need an iterable expression in a for statement"* went with
-    // loft#1453: `collections::iterator` reports the refusal above and then returns
-    // `Value::Null`, which the caller could not tell from "no iterable at all", so it added
-    // its own line on top.  It now asks `Diagnostics::error_count()` first and speaks only
-    // when nothing else did — the fallback itself stays, because the case its own comment
-    // names reports nothing of its own.
-    .error("Expect token ; at a_nullable_keyed_collection_is_refused_in_the_source_spelling:2:48");
+    );
+    // The refusal stands alone: the `for` now consumes its body and answers an empty block
+    // when its source is refused, so the cascade this test once had to assert — "Expect
+    // token ;" at the same position — is gone (loft#1453's second half).
 }
 
 /// loft#1449 — a keyed collection nested inside a FUNCTION type is spelled as its author
@@ -5239,4 +5216,150 @@ fn a_refused_limit_does_not_silence_the_next_declaration() {
          type holds with `limit(lo, hi)`, or drop the `size(…)` at \
          a_refused_limit_does_not_silence_the_next_declaration:2:31",
     );
+}
+
+/// loft#1733 — `Sh.Dot { r: 1 }` names a struct variant through its enum and then gives it
+/// fields.  `Sh.Dot` alone is the variant with every field at its default, so the braces are
+/// what a reader writes next, and the parser read them as the end of a statement: *"Expect
+/// token ;"*.  One error now, naming the constructor spellings, and no cascade after it.
+#[test]
+fn a_qualified_struct_variant_given_fields_names_the_constructor() {
+    code!(
+        "enum Sh1733 { Dot { r: integer }, Sq { w: integer } }\n\
+         fn test() { x = Sh1733.Dot { r: 1 }; assert(x is Dot, \"dot\"); }"
+    )
+    .error(
+        "`Sh1733.Dot` is the variant with every field at its default, and does not take \
+         fields — build it with `Sh1733::Dot { … }` or `Dot { … }` at \
+         a_qualified_struct_variant_given_fields_names_the_constructor:2:29",
+    );
+}
+
+/// The control for the case above: a `{` after a qualified variant is also an `if` body, and
+/// one that starts with a typed local declaration begins with the same `name :` tokens.  It
+/// must stay a body — and so must one that starts with an assignment.
+#[test]
+fn a_block_after_a_qualified_struct_variant_is_still_a_block() {
+    code!(
+        "enum Sh1733b { Dot { r: integer }, Sq { w: integer } }\n\
+         fn probe() -> integer {\n\
+         \x20 x = Sh1733b.Dot;\n\
+         \x20 t = 0;\n\
+         \x20 if x == Sh1733b.Dot { r: integer = 5; t += r; }\n\
+         \x20 if x == Sh1733b.Dot { t += 10; }\n\
+         \x20 t\n\
+         }"
+    )
+    .expr("probe()")
+    .result(Value::Int(15));
+}
+
+/// `@FR-M-Total` for a guarded multi-pattern arm: a guard can reject, so the arm covers none of
+/// its variants, and a match whose only arm is guarded is not exhaustive.
+#[test]
+fn a_guarded_multi_pattern_arm_covers_nothing() {
+    code!(
+        "enum Tg { A { v: integer }, B { v: integer } }\n\
+         fn test() { t = A { v: 5 }; r = match t { A { v }, B { v } if v > 2 => v }; assert(r == 5, \"r\"); }"
+    )
+    .error(
+        "match on Tg is not exhaustive — missing: A, B; add the missing variants or a '_ =>' \
+         wildcard at a_guarded_multi_pattern_arm_covers_nothing:2:40",
+    );
+}
+
+/// A `for` comprehension beside other elements, in either position, is ONE error naming the form
+/// that builds the same vector — it used to say "not yet implemented" and then cascade
+/// ("Expect token ;"), or, with the comprehension first, only "Expect token ]".
+#[test]
+fn a_comprehension_beside_other_elements_is_one_error() {
+    code!("fn test() { v = [1, 2]; w = [0, for x in v { x * 10 }]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:33",
+        );
+    code!("fn test() { v = [1, 2]; w = [for x in v { x * 10 }, 5]; assert(len(w) == 3, \"w\"); }")
+        .error(
+            "a `for` comprehension is a whole vector literal and takes no other elements beside \
+             it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
+             a_comprehension_beside_other_elements_is_one_error:1:51",
+        );
+}
+
+/// A captured receiver as a `par` worker names the method and a cure that compiles: a context
+/// argument must be a scalar, so the receiver itself cannot be passed.
+#[test]
+fn a_par_method_on_a_captured_value_names_the_scalar_route() {
+    code!(
+        "struct Cp { k: integer }\n\
+         fn scale(self: Cp, e: integer) -> integer { self.k * e }\n\
+         fn test() { c = Cp { k: 3 }; v = [1, 2]; s = 0; for a in v par(b=c.scale(a), 2) { s += b; } assert(s == 9, \"s\"); }"
+    )
+    .error(
+        "a parallel worker is a function, not a method of a captured value (`c.scale(…)`) — read \
+         what `scale` needs from `c` into scalars first, and pass them after the element to a \
+         function: `f(a, k)` at a_par_method_on_a_captured_value_names_the_scalar_route:3:77",
+    );
+}
+
+// The narrowing rules across the ways a value reaches a narrow slot — the value cells are in
+// `tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft`.
+
+// A tuple literal's member that does not fit its declared narrow member is refused, as the member
+// write `t.1 = 256` already was (formal/types.md D-types-10).
+#[test]
+fn a_tuple_literal_member_that_does_not_fit_is_refused() {
+    code!("fn test() {\n  t: (integer, u8) = (1, 256);\n  println(\"{t.1}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
+}
+
+// A tuple whose member TYPE is wider than the slot's is refused by member (D-types-10).
+#[test]
+fn a_tuple_of_a_wider_member_type_is_refused() {
+    code!("fn test() {\n  n = 3 + len(\"\");\n  a = (1, n);\n  t: (integer, u8) = a;\n  println(\"{t.1}\");\n}")
+        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or take the checked cast `as u8?` at a_tuple_of_a_wider_member_type_is_refused:4:24");
+}
+
+// A `??` default is stored into the slot, so a constant default must fit it (D-types-11).
+#[test]
+fn a_coalesce_default_that_does_not_fit_is_refused() {
+    code!("fn g(n: integer) -> integer? { if n > 0 { n } else { null } }\nfn test() {\n  x: u8 = g(0) ?? 300;\n  println(\"{x}\");\n}")
+        .error("the `??` default (300) does not fit u8 — it is stored when the value is absent or does not fit, so give a default within u8's range at a_coalesce_default_that_does_not_fit_is_refused:3:23");
+}
+
+// …and a default of a wider TYPE is refused, as the same value stored directly is (D-types-11).
+#[test]
+fn a_coalesce_default_of_a_wider_type_is_refused() {
+    code!("fn g(n: integer) -> integer? { if n > 0 { n } else { null } }\nfn test() {\n  big = 1000 + len(\"\");\n  x: u8 = g(0) ?? big;\n  println(\"{x}\");\n}")
+        .error("the `??` default (integer) does not fit u8 — it is stored when the value is absent or does not fit, so give a default within u8's range at a_coalesce_default_of_a_wider_type_is_refused:4:23");
+}
+
+// A struct field default is a store into the field and meets its type (D-types-12).
+#[test]
+fn a_field_default_that_does_not_fit_is_refused() {
+    code!("struct S { f: u8 = 256, k: integer }\nfn test() {\n  s = S { k: 1 };\n  println(\"{s.f}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_field_default_that_does_not_fit_is_refused:1:24");
+}
+
+// An `if` whose arms all fit is a fitting value (D-types-13); one arm that does not is still refused.
+#[test]
+fn an_arm_that_does_not_fit_is_refused() {
+    code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_arm_that_does_not_fit_is_refused:3:35");
+}
+
+// `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign
+// change is no containment.  The widening cells are in
+// `tests/scripts/a-narrow-integer-widens-into-any-superset.loft`.
+#[test]
+fn a_signed_value_does_not_widen_into_an_unsigned_one() {
+    code!("fn test() {\n  a: i8 = -5;\n  x: u8 = a;\n  println(\"{x}\");\n}")
+        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
+}
+
+#[test]
+fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
+    code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
+        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
 }

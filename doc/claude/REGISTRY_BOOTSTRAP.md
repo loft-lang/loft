@@ -279,7 +279,7 @@ working.
    trust dependency we don't need.  Publishes are rare enough
    (weekly at most for an early ecosystem) that one manual
    command per merge is the right trade.  Detail in
-   [PKG_REGISTRY.md § Why laptop signing](PKG_REGISTRY.md#index-signing--indexjsonsig).
+   [PKG_REGISTRY.md § Why laptop signing](PKG_REGISTRY_TRUST.md#index-signing--indexjsonsig).
 
 ---
 
@@ -378,7 +378,7 @@ via `scripts/registry-sign.sh`:
 1. Generate a new keypair (Step 1).
 2. Embed the new public key **alongside** the existing ones in
    `TRUSTED_PUBLIC_KEYS` (a one-line slice append, per
-   [PKG_REGISTRY.md § Multi-maintainer support](PKG_REGISTRY.md#multi-maintainer-support)).
+   [PKG_REGISTRY.md § Multi-maintainer support](PKG_REGISTRY_TRUST.md#multi-maintainer-support)).
    Ship a loft release.
 3. Re-sign `index.json` locally with the new key:
    `scripts/registry-sign.sh --key <new-key>.bin`.  It stages

@@ -21,7 +21,7 @@
 
 // --- What a pack holds ---
 
-use shapes;
+use shapes::*;
 
 /// What a blob's bytes are, so a loader knows what to do with them without
 /// sniffing the content. `Rgba` is a texture page's own pixels — premultiplied,

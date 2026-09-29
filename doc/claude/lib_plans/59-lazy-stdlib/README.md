@@ -1024,7 +1024,7 @@ section — `use`-loading already provides them, and existing
 ## Related documents
 
 - [REGEX.md](../57-regex/README.md) — regex library design; the first lazy consumer.
-- [LOFT.md](../../LOFT.md) § Match expressions — base match semantics (regex
+- [LOFT_CONTROL.md](../../LOFT.md) § Match expressions — base match semantics (regex
   is a library, not a match-pattern kind).
 - [BROADENING.md](../../BROADENING.md) — why cold-start matters for
   loft's non-game reach.
@@ -1035,7 +1035,7 @@ section — `use`-loading already provides them, and existing
   (CONST_STORE + OpConstRef), Phase D shipped-then-retired
   (.loftc cache), Phase B + C deferred.
   Reference for shipped Phase A in
-  [DATABASE.md § Constant store](../../DATABASE.md#constant-store-const_store).
+  [DATABASE_STORES.md § Constant store](../../DATABASE_STORES.md#constant-store-const_store).
 - [PACKAGES.md](../../PACKAGES.md) — external-package loading model that
   this mechanism generalises to.
 - [INTERNALS.md](../../INTERNALS.md) § Native Function Registry —

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § String comparisons containing `{` or `}` — a literal brace in a format
+// @PAGE: LOFT_DESIGN.md § String comparisons containing `{` or `}` — a literal brace in a format
 // string is written doubled.  The wrong spelling is in format-braces-refused.loft.
 
 struct Rgb { r: integer, g: integer, b: integer }

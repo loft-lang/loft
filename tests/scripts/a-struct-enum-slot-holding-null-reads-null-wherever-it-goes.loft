@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A non-optional struct-enum slot holding null reads back null wherever the value goes.
+//
+// `(N-Store)` lets a `null` into an `e: Sh` field with a warning, and the slot then holds it:
+// `(L-Null)` gives `Sh` and `Sh?` one layout, so the absence is the same pointer word `0` a
+// nullable slot spells it with.  `(L-Null-Which)` reads a value LEAVING such a slot through
+// that word — for a local, an argument, a return, a `??`/`?` subject — and until this guard
+// that read was gated on the slot being declared `?`.  So `s.e == null` said true while
+// `s.e ?? d`, `x = s.e; x == null`, an `Sh?` argument, an `Sh?` return, a `match` and a
+// `vector<Sh>` element all said present, on both backends, and nothing said anything.
+//
+// Every absent cell is paired with a PRESENT one through the same spelling, because a cure
+// that read every slot as absent would pass the absent half alone.
+//
+// The last function is the other half of one question.  A local bound from a call that
+// returns an element (`b = head(v)`) has deps naming the vector, so the slot test was asked
+// of it, and it holds a whole HANDLE — `nullref` when the callee answered absent.  Read
+// through that handle the slot word said present: `head([])` answered a value on every
+// build, and `head([null])` too once a returned element was read through to `nullref`.
+//
+// Axes this file MOVES:  where the value goes (`??`, `?`, local, argument, return, match,
+//                        element), the slot's declaration (`Sh` · `Sh?` element), presence.
+// Axes it HOLDS FIXED:   the enum (two payload variants), the backend (both run it).
+//
+// A `for e in v` loop variable is the third spelling, and its guard is
+// `a-loop-variable-over-a-vector-of-a-struct-enum-is-the-enum.loft`: on the build before it the
+// loop cells did not compile, which here would have hidden every value cell behind a refusal.
+//
+// @falsified-at: 8bd1fec16 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/a-struct-enum-slot-holding-null-reads-null-wherever-it-goes.patch
+//   — the same channels.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+enum Sh { Dot { r: integer }, Sq { w: integer } }
+struct S { e: Sh }
+
+fn show(e: Sh?) -> text {
+  match e { null => "none", Dot { r } => "Dot{r}", Sq { w } => "Sq{w}" }
+}
+fn takes(p: Sh?) -> text { if p == null { "absent" } else { "present {show(p)}" } }
+fn gives(s: S) -> Sh? { s.e }
+
+fn cells(s: S) -> text {
+  c = s.e ?? Dot { r: 5 };
+  q = s.e?;
+  x = s.e;
+  y = x ?? Dot { r: 6 };
+  g = gives(s);
+  "coal={show(c)} q={show(q)} local={x == null} local-coal={show(y)} arg={takes(s.e)} ret={g == null} match={show(s.e)}"
+}
+
+fn test_an_absent_slot_reads_null_wherever_it_goes() {
+  s = S { e: null };
+  got = cells(s);
+  want = "coal=Dot5 q=Dot0 local=true local-coal=Dot6 arg=absent ret=true match=none";
+  assert(got == want, "absent: {got}");
+}
+
+fn test_a_present_slot_keeps_its_value_through_the_same_spellings() {
+  s = S { e: Sq { w: 3 } };
+  got = cells(s);
+  want = "coal=Sq3 q=Sq3 local=false local-coal=Sq3 arg=present Sq3 ret=false match=Sq3";
+  assert(got == want, "present: {got}");
+}
+
+fn test_an_element_of_a_vector_of_the_bare_enum() {
+  vs: vector<Sh> = [Dot { r: 1 }, Sq { w: 2 }];
+  vs[0] = null;
+  a = vs[0] ?? Sq { w: 7 };
+  b = vs[1] ?? Sq { w: 8 };
+  assert("{show(a)} {show(b)} {len(vs)}" == "Sq7 Sq2 2", "elements: {show(a)} {show(b)} {len(vs)}");
+}
+
+
+fn head(v: vector<Sh?>) -> Sh? { if len(v) == 0 { return null; } v[0] }
+fn head_bare(v: vector<Sh>) -> Sh? { if len(v) == 0 { return null; } v[0] }
+
+fn test_a_local_bound_from_a_call_that_returns_an_element() {
+  e: vector<Sh?> = [];
+  a = head(e);
+  f: vector<Sh?> = [null, Dot { r: 1 }];
+  b = head(f);
+  g: vector<Sh?> = [Sq { w: 3 }];
+  c = head(g);
+  h: vector<Sh> = [];
+  d = head_bare(h);
+  k: vector<Sh> = [Dot { r: 2 }];
+  k[0] = null;
+  m = head_bare(k);
+  got = "{a == null} {b == null} {c == null} {show(c)} {d == null} {m == null}";
+  assert(got == "true true false Sq3 true true", "call-bound: {got}");
+}
+

@@ -30,7 +30,7 @@
   stock: <span class="ty"><a href="stdlib-types.html">integer</a></span>
 }</code></pre>
 <h2 id="field-constraints">Field Constraints</h2>
-<p>You can restrict what values a field may hold. <code>limit(min, max)</code> gives the field a smaller range. It is not a rejection and it never stops your program: a value outside the range cannot be represented, so the field takes the same answer any uncomputable number takes (see the Integers page). That is null when the field is nullable, and the type's default when it is not — 0 for a range that includes zero. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.</p>
+<p>You can restrict what values a field may hold. <code>limit(min, max)</code> gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback (<code>over ?? 0</code>), the checked cast <code>as integer(0, 255)?</code> (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, <code>c.r += 100</code>, takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you (<code>narrow-fallback</code>). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.</p>
 <p>You may meet <code>not null</code> on a field in older code. It has no effect — a type is non-null by default now — and the compiler advises removing it.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Colour</span> {
   r: <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="kw">limit</span>(<span class="nm">0</span>, <span class="nm">255</span>),
@@ -158,8 +158,14 @@
 <pre><code>  linked = &amp;item;
   linked.stock = <span class="nm">1</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(item.stock == <span class="nm">1</span>, <span class="st">"'&amp;' binds a live link"</span>);</code></pre>
+<h2 id="comparing-structs">Comparing structs</h2>
+<p><code>==</code> compares what two structs hold, field by field — a plain struct and a value struct alike, with no <code>OpEq</code> to write. To ask whether two names are the SAME record, put <code>&amp;</code> on both sides.</p>
+<pre><code>  twin = <span class="en">Product</span> {name: <span class="st">"Pear"</span>, price: <span class="nm">90</span>, stock: <span class="nm">3</span> };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(spare == twin, <span class="st">"equal fields make equal structs"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!(&amp;spare == &amp;twin), <span class="st">"…held in two different records"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(&amp;linked == &amp;item, <span class="st">"a '&amp;' link names the record it links to"</span>);</code></pre>
 <h2 id="sizeof">sizeof</h2>
-<p><code>sizeof(Type)</code> returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 4-byte stack slot size.</p>
+<p><code>sizeof(Type)</code> returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) == <span class="nm">8</span>, <span class="st">"integer: 8 bytes (i64 storage)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u8</a></span>) == <span class="nm">1</span>, <span class="st">"u8: 1 byte (packed)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u16</a></span>) == <span class="nm">2</span>, <span class="st">"u16: 2 bytes (packed)"</span>);
@@ -194,11 +200,13 @@ struct Product {
 }
 // ## Field Constraints
 // You can restrict what values a field may hold.
-// 'limit(min, max)' gives the field a smaller range. It is not a rejection and it
-// never stops your program: a value outside the range cannot be represented, so the
-// field takes the same answer any uncomputable number takes (see the Integers page).
-// That is null when the field is nullable, and the type's default when it is not —
-// 0 for a range that includes zero.
+// 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove
+// fits is refused where you write it, and the error names the cures: a fallback
+// ('over ?? 0'), the checked cast 'as integer(0, 255)?' (the value or null), or a value
+// that provably fits. It never stops a running program: a step the compiler cannot ask
+// about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a
+// range that includes zero — and loft advises you ('narrow-fallback'). A nullable
+// field takes null instead.
 // Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back
 // as three zeros, with nothing extra to write.
 // Fields you omit in a constructor receive zero (or null for nullable fields) by default.
@@ -379,10 +387,18 @@ fn main() {
   linked = &amp;item;
   linked.stock = 1;
   assert(item.stock == 1, "'&amp;' binds a live link");
+  // ## Comparing structs
+  // '==' compares what two structs hold, field by field — a plain struct and a value
+  // struct alike, with no 'OpEq' to write. To ask whether two names are the SAME
+  // record, put '&amp;' on both sides.
+  twin = Product {name: "Pear", price: 90, stock: 3 };
+  assert(spare == twin, "equal fields make equal structs");
+  assert(!(&amp;spare == &amp;twin), "…held in two different records");
+  assert(&amp;linked == &amp;item, "a '&amp;' link names the record it links to");
   // ## sizeof
   // 'sizeof(Type)' returns the packed byte size used when the type is stored
   // as a struct field or vector element. Range-constrained integer types like
-  // u8 and u16 report their packed size, not the 4-byte stack slot size.
+  // u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");

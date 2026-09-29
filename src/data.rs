@@ -608,8 +608,13 @@ impl IntegerSpec {
     ///    is a real test and must not be flagged;
     /// 2. every other non-nullable spec is a declared NARROW range, and by C127 it has no
     ///    null at all: a value that does not fit takes the type's DEFAULT, so `!x` on it is
-    ///    always false.  `not_null` is the same answer reached by declaration rather than by
-    ///    width, and is kept as an early return because it also covers the wide templates.
+    ///    always false.
+    ///
+    /// `not_null` is NOT read.  It once was, as "the same answer reached by declaration", but
+    /// every non-nullable struct field's spec carries it and `not null` itself has no effect,
+    /// so on a wide template it claimed a null the bytes still hold: `s.i = a * b` overflowing
+    /// into an `i: integer` field reads null with nothing reported (C85), and the lint called
+    /// the only test that sees it always false.  The width families above are the whole answer.
     ///
     /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
     /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
@@ -635,9 +640,6 @@ impl IntegerSpec {
     /// this comment claimed *"two readers, one fact"*; that was never true.
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
-        if self.not_null {
-            return false;
-        }
         self.is_wide_template() || self.is_signed32_template()
     }
 
@@ -2388,6 +2390,33 @@ impl Type {
         }
     }
 
+    /// @FR-N-Store, (E-Truthy-1) — can a value read from a NON-nullable slot of this type be
+    /// null?  The one home for the question every "this is never null" lint asks
+    /// (`redundant-null-negation`, `redundant-null-check`, `redundant-coalesce`,
+    /// `redundant-default-fallback`, `constant-condition`).
+    ///
+    /// Yes for every kind that spells absence IN BAND — a wide integer, `boolean`, `float`,
+    /// `single`, `character`, `text` and an enum: `(N-Store)` lets a null into such a slot with
+    /// a warning and the slot then holds it, and an overflow reaches a plain `integer` with no
+    /// warning at all (C85).  No for a declared narrow range (C127: an unfitting value takes
+    /// the default) and for a dense record or a collection, whose slot has no room for absence
+    /// and reads a record or an empty collection instead.
+    #[must_use]
+    pub fn non_null_slot_reads_null(&self) -> bool {
+        match self {
+            // Asked of a `τ?` the answer is trivially yes; spelled so the question is total.
+            Type::Optional(_) => true,
+            Type::Integer(spec) => spec.non_null_reads_null(),
+            Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Text(_)
+            | Type::Enum(..) => true,
+            _ => false,
+        }
+    }
+
     /// @PLN25 — the base type with any `Optional` wrapper removed (the agnostic peel).
     pub fn base(&self) -> &Type {
         self.peel_optional().0
@@ -3763,6 +3792,7 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Enum(_, true, _)
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (C125).
         // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
         // member of one overlapped its neighbours.
         | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
@@ -6005,11 +6035,13 @@ pub struct Data {
     /// is parsed as a fresh source that re-declares no `use`, and inheriting the
     /// program's imports is exactly what lets it name the frame's own vocabulary.
     applied: Vec<AppliedImport>,
-    /// Every bare `use lib;` as `(importing source, qualifier)`, noted when the statement
-    /// is parsed — before the library may even be loaded.  A bare `use` binds only the
-    /// qualifier (@C98), so a name of the library written bare does not resolve; this is
-    /// what lets that error name the library and the two cures.
-    bare_uses: Vec<(u16, String)>,
+    /// Every bare `use lib;` as `(importing source, qualifier, the source it bound)`, noted
+    /// where the `use` binds.  A bare `use` binds only the qualifier (@C98), so a name of the
+    /// library written bare does not resolve; this is what lets that error name the library
+    /// and the two cures.  The SOURCE is kept, not re-resolved from the qualifier later: two
+    /// packages' modules can share a short name, and the name then answers for whichever
+    /// bound it last — which blamed the wrong package for a name it never used.
+    bare_uses: Vec<(u16, String, u16)>,
     /// Names a plain `use` bound in a source, as `source → key → (the def it bound, the
     /// library the import read it from)`: they
     /// serve that source only and are not passed on to whoever imports it; a `pub use`
@@ -8611,6 +8643,20 @@ impl Data {
         Self::mangle_method(&h, method)
     }
 
+    /// Is `name` a bound-method stub ([`Self::bound_stub_name`]) for `method` at `arity`, of
+    /// any holder?
+    #[must_use]
+    pub fn is_bound_stub_for(name: &str, method: &str, arity: usize) -> bool {
+        // Compared piece by piece: this is asked of every two-operand call a monomorph's
+        // body makes, and a `format!` per call is what the front end's allocation pin counts.
+        name.starts_with("t_")
+            && name
+                .strip_suffix(method)
+                .and_then(|r| r.strip_suffix('_'))
+                .and_then(|r| r.strip_suffix(char::from_digit(arity as u32, 10)?))
+                .is_some_and(|r| r.ends_with(Self::HOLDER_MARK))
+    }
+
     /// Is `name` taken by a definition in ANY source?
     ///
     /// [`Self::def_nr`] answers for the CURRENT source plus the stdlib, which is the right
@@ -10802,7 +10848,7 @@ impl Data {
     /// The DROP sites' own narrow question, and deliberately not [`Type::heap_def_nr`]
     /// widened: that predicate's `Reference | Enum` pattern is written out across the parser,
     /// the scope pass, both backends and the hoist, so widening IT moves all of them at once
-    /// (`formal/heap.md` D-heap-13 records the count).  Keyed exactly as `vector_def` keys the
+    /// (`formal/heap-history.md` D-heap-13 records the count).  Keyed exactly as `vector_def` keys the
     /// def it creates — the element's `Type::name`, which is what separates two element DEFS
     /// that share a spelling (`vector_wrapper_is_per_element_def_not_per_spelling`) — so the
     /// lookup and the mint cannot disagree, and deps are dropped first because a binding's
@@ -11500,8 +11546,8 @@ impl Data {
     }
 
     /// Note a bare `use <qualifier>;` in `into_source`.
-    pub fn record_bare_use(&mut self, into_source: u16, qualifier: &str) {
-        let entry = (into_source, qualifier.to_string());
+    pub fn record_bare_use(&mut self, into_source: u16, qualifier: &str, lib_source: u16) {
+        let entry = (into_source, qualifier.to_string(), lib_source);
         if !self.bare_uses.contains(&entry) {
             self.bare_uses.push(entry);
         }
@@ -11515,21 +11561,24 @@ impl Data {
     pub fn bare_use_provider(&self, name: &str, into_source: u16) -> Option<&str> {
         // Asked for every unresolved name, forward references in pass 1 included, so a
         // file with no bare `use` answers before anything is allocated.
-        if !self.bare_uses.iter().any(|(into, _)| *into == into_source) {
+        if !self
+            .bare_uses
+            .iter()
+            .any(|(into, _, _)| *into == into_source)
+        {
             return None;
         }
         let fn_key = format!("n_{name}");
         self.bare_uses
             .iter()
-            .filter(|(into, _)| *into == into_source)
-            .find(|(_, q)| {
-                let lib = self.get_source(q);
+            .filter(|(into, _, _)| *into == into_source)
+            .find(|&&(_, _, lib)| {
                 lib != u16::MAX
                     && [name, fn_key.as_str()]
                         .iter()
                         .any(|key| self.exported(key, lib).is_some())
             })
-            .map(|(_, q)| q.as_str())
+            .map(|(_, q, _)| q.as_str())
     }
 
     /// A library `into_source` imports that uses `name` without passing it on: `(the
@@ -11538,12 +11587,16 @@ impl Data {
     /// wrote `use math;` where it meant `pub use math::*;` answers here — whether its
     /// `use` was a wildcard that kept the name, or bare and never took it.
     #[must_use]
-    pub fn hidden_import_provider(&self, name: &str, into_source: u16) -> Option<(String, String)> {
+    pub fn hidden_import_provider(
+        &self,
+        name: &str,
+        into_source: u16,
+    ) -> Option<(String, String, Option<String>)> {
         if !self.imports_into(into_source) {
             return None;
         }
         let fn_key = format!("n_{name}");
-        let libs = self
+        let mut libs: Vec<u16> = self
             .applied
             .iter()
             .filter(|imp| imp.into_source == into_source)
@@ -11551,37 +11604,58 @@ impl Data {
             .chain(
                 self.bare_uses
                     .iter()
-                    .filter(|(into, _)| *into == into_source)
-                    .map(|(_, q)| self.get_source(q)),
-            );
+                    .filter(|(into, _, _)| *into == into_source)
+                    .map(|&(_, _, lib)| lib),
+            )
+            .collect();
+        // A library reached through a `pub use` is one the program imports too, so the
+        // one that kept the name may sit below a facade: `moros_sim` passes `player` on,
+        // and `player`'s plain `use moros_render::*;` is where `hex_to_world` stopped.
+        // Nearest first, so the library the program named answers before its modules.
+        let mut i = 0;
+        while i < libs.len() {
+            let lib = libs[i];
+            for imp in &self.applied {
+                if imp.public && imp.into_source == lib && !libs.contains(&imp.lib_source) {
+                    libs.push(imp.lib_source);
+                }
+            }
+            i += 1;
+        }
         for lib in libs {
+            let Some(via) = self.qualifier_of(lib) else {
+                continue;
+            };
             for key in [name, fn_key.as_str()] {
                 if let Some(&(_, from)) = self
                     .private_imports
                     .get(&lib)
                     .and_then(|keys| keys.get(key))
-                    && let (Some(via), Some(from)) =
-                        (self.qualifier_of(lib), self.qualifier_of(from))
+                    && let Some(q) = self.qualifier_of(from)
                 {
-                    return Some((via, from));
+                    let module = q.rsplit("::").next().unwrap_or(&q).to_string();
+                    return Some((via, module, self.writable_qualifier(&q, from)));
                 }
             }
-            let bare_hit = self
-                .bare_uses
-                .iter()
-                .filter(|(into, _)| *into == lib)
-                .find(|(_, q)| {
-                    let from = self.get_source(q);
-                    from != u16::MAX
-                        && [name, fn_key.as_str()]
-                            .iter()
-                            .any(|key| self.exported(key, from).is_some())
-                });
-            if let (Some((_, from)), Some(via)) = (bare_hit, self.qualifier_of(lib)) {
-                return Some((via, from.clone()));
+            let bare_hit = self.bare_uses.iter().find(|&&(into, _, from)| {
+                into == lib
+                    && from != u16::MAX
+                    && [name, fn_key.as_str()]
+                        .iter()
+                        .any(|key| self.exported(key, from).is_some())
+            });
+            if let Some((_, q, from)) = bare_hit {
+                return Some((via, q.clone(), self.writable_qualifier(q, *from)));
             }
         }
         None
+    }
+
+    /// `q` as a qualifier the reader can WRITE for `source`: one segment (a `a::b::name` path
+    /// does not parse), and naming that source rather than a same-named module of another
+    /// package.  `None` when there is no such spelling — the cure is then the facade's.
+    fn writable_qualifier(&self, q: &str, source: u16) -> Option<String> {
+        (!q.contains("::") && self.get_source(q) == source).then(|| q.to_string())
     }
 
     /// The `use` name a source is known by, shortest first, or `None`.
@@ -11596,19 +11670,37 @@ impl Data {
 
     /// The error for a name a library in between uses but does not pass on.
     #[must_use]
-    pub fn hidden_import_cure(what: &str, name: &str, via: &str, from: &str) -> String {
-        format!(
-            "{what} {name} — `{via}` uses it from `{from}` but does not pass it on, because a \
-             plain `use` binds for its own file only: write `{from}::{name}`, or have `{via}` \
-             pass it on with `pub use {from}::({name});`"
-        )
+    ///
+    /// `module` is the module as `via` names it, for the `pub use` cure; `writable` the
+    /// qualifier the reader can write, when there is one.  Without one the only cure is
+    /// `via`'s: a same-named module in another package takes the short name, and a two-step
+    /// `via::module::name` path does not parse.
+    pub fn hidden_import_cure(
+        what: &str,
+        name: &str,
+        via: &str,
+        module: &str,
+        writable: Option<&str>,
+    ) -> String {
+        match writable {
+            Some(q) => format!(
+                "{what} {name} — `{via}` uses it from `{q}` but does not pass it on, because a \
+                 plain `use` binds for its own file only: write `{q}::{name}`, or have `{via}` \
+                 pass it on with `pub use {module}::({name});`"
+            ),
+            None => format!(
+                "{what} {name} — `{via}` uses it from its module `{module}` but does not pass it \
+                 on, and that module has no name this file can write: have `{via}` pass it on \
+                 with `pub use {module}::({name});`"
+            ),
+        }
     }
 
     /// Does `source` import anything — a `use` that bound names, or a bare one?
     #[must_use]
     pub fn imports_into(&self, source: u16) -> bool {
         self.applied.iter().any(|imp| imp.into_source == source)
-            || self.bare_uses.iter().any(|(into, _)| *into == source)
+            || self.bare_uses.iter().any(|(into, _, _)| *into == source)
     }
 
     /// The error for a name that does not resolve because of how it was imported (@C98),
@@ -11620,7 +11712,9 @@ impl Data {
             return Some(Self::bare_use_cure(what, name, q));
         }
         self.hidden_import_provider(name, source)
-            .map(|(via, from)| Self::hidden_import_cure(what, name, &via, &from))
+            .map(|(via, module, writable)| {
+                Self::hidden_import_cure(what, name, &via, &module, writable.as_deref())
+            })
     }
 
     /// The error for a name a bare `use` did not bring in: `what` is the message's
@@ -11836,8 +11930,8 @@ impl Data {
             .chain(
                 self.bare_uses
                     .iter()
-                    .filter(|(into, q)| *into != me && self.get_source(q) == me)
-                    .map(|(into, _)| *into),
+                    .filter(|&&(into, _, lib)| into != me && lib == me)
+                    .map(|&(into, _, _)| into),
             )
             .collect();
         importers.into_iter().find_map(|into_source| {
@@ -12630,6 +12724,8 @@ impl Data {
             | Type::Sorted(_, _, _)
             | Type::RefVar(_)
             | Type::Enum(_, true, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
             | Type::Index(_, _, _) => "DbRef",
             Type::Routine(_) => "u32",
             Type::Unknown(_) => "??",

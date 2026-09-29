@@ -1,0 +1,13 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index ae2f9949c..15acc84c5 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -4735,7 +4735,7 @@ impl Parser {
+         if d.forced_size.is_none() && (d.is_signed32_template() || d.is_wide_template()) {
+             return false;
+         }
+-        s.min < d.min || s.max > d.max
++        s.min < d.min || s.max > d.max || s.max < d.max // MUTATION: a wider target narrows
+     }
+ 
+     /// The narrowing test for an IMPLICIT store — a local annotation, an argument, a

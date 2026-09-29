@@ -14,7 +14,7 @@
 //! shapes.  `[[build.asset]]` steps (Slice 3) turn `inputs` into `outputs`, re-run
 //! only when stale; `[[test]]` entries (Slice 4) run over execution-backend
 //! `targets`, gated on `needs`, with a cached green run.  See
-//! `doc/claude/PACKAGES.md § The build phase` and the @PLN100 plan.
+//! `doc/claude/PACKAGES_BUILD.md § The build phase` and the @PLN100 plan.
 
 use crate::manifest::{BuildAsset, BuildTest, Manifest};
 use std::path::{Path, PathBuf};

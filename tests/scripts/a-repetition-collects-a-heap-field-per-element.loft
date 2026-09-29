@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Rep-Ty` — a capture inside `( V { f } )*` collects into `vector<τ>`, whatever `τ` is:
+// a heap field (a vector, a struct) projects exactly as a scalar or text field does, each
+// element a FRESH copy (`@FR-H-Alloc`), independent of the subject.  A heap field was refused
+// ("a repetition collects the field … only when it is a scalar or text", loft#1735).
+//
+// Widening the refusal alone answered every value right and freed the SUBJECT: the
+// per-element read of a heap field is a view into the subject's store, and typed as an owned
+// value its scope-end free released the subject's record on every iteration — a
+// use-after-free, on both backends, that a value check on the projection alone does not see.
+// So the cells below also read the subject AFTER the match, and mutate an escaped projection.
+//
+// Axes this file MOVES:  the field's type (vector<integer>, text beside it, struct), `*` vs
+//                        `+`, a fixed tail after the run, a separated run `(V)*(Sep)`, the
+//                        projection escaping by return and then mutated, an empty run.
+// Axes it HOLDS FIXED:   a `vector<Tok>` subject passed as a parameter; one level of nesting.
+//
+// @falsified-at: ffa1a80a2 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused the heap field, so no assertion ran on it.  The use-after-free is scored
+//   apart by a mutation that drops only the read's borrow dep (`element_view_of`): unarmed,
+//   interpret 3 assertion failures -> 0, native 6 -> 0 (the subject read after the match is
+//   what fails); with `LOFT_STRICT_STORES=1`, interpret 1 -> 0, native 2 -> 0.
+// @falsified-by: tests/falsified/a-repetition-collects-a-heap-field-per-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak (the `wrap.rs` gate, and `LOFT_NATIVE_LEAK_CHECK=1` on a `main` run), panic and
+//   free-refusal are clean on both backends.
+
+struct Point { x: integer, y: integer }
+enum Tok { Num { n: integer }, Grp { items: vector<integer>, tag: text }, Pt { p: Point } }
+
+fn g(i: vector<integer>, t: text) -> Tok { Grp { items: i, tag: t } }
+
+fn lens(v: vector<Tok>) -> text {
+  match v {
+    [(Grp { items })*] => {
+      s = "{len(items)}:";
+      for it in items { s += "{len(it)},"; }
+      s
+    },
+    _ => "none"
+  }
+}
+fn both(v: vector<Tok>) -> text { match v { [(Grp { items, tag })*] => "{items} {tag}", _ => "none" } }
+fn points(v: vector<Tok>) -> text { match v { [(Pt { p })*] => "{len(p)} {p[1].y}", _ => "none" } }
+fn then_num(v: vector<Tok>) -> text { match v { [(Grp { items })+, Num { n }] => "{items} n{n}", _ => "none" } }
+fn escaped(v: vector<Tok>) -> vector<vector<integer>> { match v { [(Grp { items })*] => items, _ => [] } }
+fn separated(v: vector<Tok>) -> text { match v { [(Grp { items })*(Num)] => "{items}", _ => "none" } }
+
+fn test_a_vector_field_projects() {
+  v = [g([1, 2], "a"), g([3], "b")];
+  assert(lens(v) == "2:2,1,", "lengths {lens(v)}");
+  e: vector<Tok> = [];
+  assert(lens(e) == "0:", "empty run {lens(e)}");
+  assert(both(v) == "[[1,2],[3]] [\"a\",\"b\"]", "beside a text field {both(v)}");
+  assert("{v[0]}" == "{g([1, 2], "a")}", "the subject after the match");
+}
+
+fn test_a_struct_field_projects() {
+  w = [Pt { p: Point { x: 1, y: 2 } }, Pt { p: Point { x: 3, y: 4 } }];
+  assert(points(w) == "2 4", "struct field {points(w)}");
+  assert(points(w) == "2 4", "the subject survives a second match");
+}
+
+fn test_a_tail_and_a_separator() {
+  t = [g([5], "c"), Num { n: 7 }];
+  assert(then_num(t) == "[[5]] n7", "tail {then_num(t)}");
+  t2 = [Num { n: 7 }];
+  assert(then_num(t2) == "none", "`+` needs one {then_num(t2)}");
+  s = [g([1], "a"), Num { n: 0 }, g([2, 3], "b")];
+  assert(separated(s) == "[[1],[2,3]]", "separated {separated(s)}");
+}
+
+fn test_the_projection_is_a_fresh_copy() {
+  v = [g([1, 2], "a"), g([3], "b")];
+  r = escaped(v);
+  r[0] += [9];
+  assert("{r}" == "[[1,2,9],[3]]", "escaped and mutated {r}");
+  assert(both(v) == "[[1,2],[3]] [\"a\",\"b\"]", "the subject is unchanged {both(v)}");
+}

@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Shape` — a nullable vector local returned at a function's tail keeps what was
+// written into it after its null.
+//
+// The tail local used to be renamed onto the caller's return buffer, so its `null` lowered to
+// the null sentinel written OVER the caller's handle, and every write after that landed in no
+// store.  `v: vector<integer>? = null; v = [k]; v` answered null, on both backends, silently.
+// A nullable vector local now keeps a store of its own and is copied, or its null delivered,
+// into the buffer at the exit.
+//
+// Every value is hand-computed.  Each cell reads the value, the length and the null test, and
+// the loop cell calls each shape many times so a store kept per call shows as a leak.
+//
+// @falsified-at: 3d4f1036a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-nullable-vector-local-at-the-tail-keeps-its-writes.patch — the same channels.
+//   CHANNEL: the ASSERTS — `assigned(4)` answers null on the control tree.
+//   WITNESS: "assigned: [4, 5]" on --interpret; --native also panics in a store accessor.
+//   HOLDS: on --interpret the null-path and many-calls cells pass on both trees (one assert
+//   fails there, the value path's); no leak on either; every cell is clean under
+//   LOFT_STRICT_STORES and LOFT_POISON on this one.
+
+fn assigned(k: integer) -> vector<integer>? {
+  v: vector<integer>? = null;
+  v = [k, k + 1];
+  v
+}
+
+fn in_arm(k: integer) -> vector<integer>? {
+  v: vector<integer>? = null;
+  if k > 0 { v = [k]; }
+  v
+}
+
+fn appended(k: integer) -> vector<integer>? {
+  v: vector<integer>? = null;
+  if k > 0 { v += [k]; v += [k * 2]; }
+  v
+}
+
+fn discharged(k: integer) -> vector<integer> {
+  v: vector<integer>? = null;
+  if k > 0 { v = [k, 5]; }
+  v ?? [0]
+}
+
+fn read_inside(k: integer) -> integer {
+  v: vector<integer>? = null;
+  v = [k];
+  len(v ?? []) * 100 + (v ?? [0])[0]
+}
+
+fn test_the_value_path() {
+  a = assigned(4);
+  assert(!!a && len(a ?? []) == 2 && (a ?? [0])[1] == 5, "assigned: [4, 5]");
+  b = in_arm(9);
+  assert(!!b && len(b ?? []) == 1 && (b ?? [0])[0] == 9, "in_arm: [9]");
+  c = appended(3);
+  assert(!!c && len(c ?? []) == 2 && (c ?? [0, 0])[1] == 6, "appended: [3, 6]");
+  d = discharged(7);
+  assert(len(d) == 2 && d[0] == 7 && d[1] == 5, "discharged: [7, 5]");
+  assert(read_inside(8) == 108, "read_inside: one element, 8");
+}
+
+fn test_the_null_path() {
+  assert(!in_arm(0), "in_arm(0) is null");
+  assert(!appended(0), "appended(0) is null");
+  z = discharged(0);
+  assert(len(z) == 1 && z[0] == 0, "discharged(0): the default [0]");
+}
+
+fn test_many_calls() {
+  t = 0;
+  for i in 0..50 {
+    t += len(in_arm(i % 3) ?? []) + len(appended(i % 2) ?? []) + len(discharged(i % 4));
+  }
+  // in_arm: 1 for i%3 != 0 -> 33 of 50; appended: 2 for odd i -> 50; discharged: 2 or 1 ->
+  // 2 * 37 + 13 = 87 (i%4 == 0 for 13 of 50).
+  assert(t == 33 + 50 + 87, "many calls: {t}");
+}

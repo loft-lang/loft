@@ -184,7 +184,7 @@ it at all — it gets the copy described below.
 > **CORRECTED (2026-07-03, C86 — maker's call).** The earlier text ("a binding to a heap
 > value aliases; it does not copy") was empirically FALSE on both backends for whole-value
 > binds and never matched the ecosystem's behaviour. The 2026-06-23 correction (the `&`
-> reading) stands. See [DESIGN_DECISIONS C86](DESIGN_DECISIONS.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)
+> reading) stands. See [DESIGN_DECISIONS C86](DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)
 > and [plans/87-reference-default-binding.md](plans/87-reference-default-binding.md).
 
 **Whole-value heap binds COPY** — `p = o` (struct), `b = x` (vector), `af = bx.v` (a

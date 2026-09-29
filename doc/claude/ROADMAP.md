@@ -350,7 +350,7 @@ Performance, refactor, internal cleanup with clear payoff.
 | O4 | Native: direct-emit local collections | M | ✓ | PERFORMANCE.md § Open performance work (N1) |
 | O5 | Native: omit `stores` from pure functions | M | ✓ | PERFORMANCE.md § Open performance work (N2) |
 | A12 | Lazy work-variable initialization | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
-| O2 | Stack raw pointer cache | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
+| O2 | Stack raw pointer cache | M | ✓ | PLANNING_NATIVE.md (no PERFORMANCE.md design yet) |
 | @P393 | Vector store-lifetime watermark — function-local vectors free at scope-end not last-use; literal-init double-allocates.  Stage A: verified **no leak** (exit gate passes); benign watermark + noisy `LOFT_STORES=warn` floor.  Quickest win = raise heuristic threshold (XS) | S-M (XS heuristic / S cluster II / M cluster I) | Stage A ✓; Stage B/C pending (design call) | plans/2-vector-store-watermark/README.md |
 
 ### Constant store deferred-tail
@@ -444,6 +444,7 @@ For per-phase status (what's shipped, what's in flight, what's blocked) **read t
 
 | Plan | E | Depends on | Notes |
 |---|---|---|---|
+| [`plans/179-scripts-in-loft/README.md`](plans/179-scripts-in-loft/README.md) (`@PLN179`) | L, in S–M tranches | @PLN119 (typed tools), @PLN142 (installed binary for hooks) | **FUTURE.** The repo's 231 Python/bash scripts ported to loft, each proven against its original on four channels by a twin harness; the pairs become the scripting comparison beside `00-vs-python.html` |
 | [`plans/34-native-debug/`](plans/34-native-debug) | XS-MH | — | NDB.0 / NDB.1 / NDB.2 — GDB / LLDB integration for `--native` |
 | [`plans/32-event-loop/`](plans/32-event-loop) | MH | **@P213 v4** (compiler bug) | Bidirectional event-loop abstraction (client + server) |
 | [`plans/33-multiplayer-editor/`](plans/33-multiplayer-editor) | M | **plans/32 TIC_TAC_TOE v2 ground layer** (now active) | First real-game milestone |

@@ -1988,7 +1988,7 @@ impl Lexer {
             val += &exp;
         }
         if f {
-            // loft#1146 — `f` is the ONLY suffix a decimal literal takes (LOFT.md § Literals),
+            // loft#1146 — `f` is the ONLY suffix a decimal literal takes (LOFT_LITERALS.md § Literals),
             // so any other letter glued to one is a suffix the author guessed.  Left to the
             // parser it became "Expect token ;", which names nothing: the `s` was lexed as a
             // separate identifier and the reader was told a semicolon was missing.  Say what

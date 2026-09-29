@@ -39,7 +39,7 @@ open/unfinished work — all are future-triggered, language-blocked, or hardware
 Build the **lavition engine host**: a semantics-free Rust kernel (frame cycle, socket
 pumps, queue machinery for three traffic classes, wire-schema-as-data, store-resident
 bulk accumulation) plus the **N9 per-function dispatch table** over the shared store —
-[C71](../../DESIGN_DECISIONS.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
+[C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
 made buildable, with the tier model
 ([LAVITION § Execution granularity](../../LAVITION.md#execution-granularity--per-function-interpret-over-a-compiled-baseline)
 is the canonical statement: edit → interpret instantly → background wasm swap).

@@ -40,7 +40,7 @@ hand), which reclaims in the order of what it costs to lose — the standing swe
 incremental caches, this checkout's whole gate scratch, `cargo sweep` — until 20 GB is free,
 prints one line when it acted and nothing when it did not, and REFUSES below 2 GB so the gate
 stops there instead of reporting truncated object files and missing rlibs as test failures
-(measured 2026-09-28: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
+(measured: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
 alone runs on the checkout's scratch at the start of every gate, and `make sweep-scratch` runs
 it on the checkout's scratch and on `TMPDIR` with the session prune, printing `df` after.  All
 of them touch only loft's own names, only dead pids or aged entries, and never a sibling
@@ -260,7 +260,7 @@ corruption spreads:
 width warnings) — are **silent during ordinary `cargo test` runs on every platform**, in both
 dev and `--release`, because of the `Cargo.toml` line in § [Hang guard](#hang-guard-loft_max_ops).
 Only the cargo-fuzz target (which forces `-Cdebug-assertions`) and an explicit calibration run
-check them — [DEBUG.md § The debug-assertions calibration run](DEBUG.md#the-debug-assertions-calibration-run-target-da).
+check them — [DEBUG_STORES.md § The debug-assertions calibration run](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da).
 A green suite is therefore no evidence for an invariant only these checks assert.  Latent
 out-of-bounds writes inside `Store` are also absorbed by Linux's allocator slack (16-byte chunk
 minimum) and caught by Windows as `STATUS_HEAP_CORRUPTION (0xc0000374)` at deallocation;

@@ -4564,6 +4564,47 @@ use a separate collection or add after the loop"
         if op == "=" && var_nr != u16::MAX && !self.first_pass && self.vars.exists(var_nr) {
             self.vars.track_write(var_nr, &mut self.lexer);
         }
+        // @FR-N-Store / @FR-N-Join — a bare `null` written to a LOCAL is the same store a `τ?`
+        // is, and takes the same two arms the `τ?` takes further down: a DECLARED local keeps
+        // its type and asks the store face (a warning at full width, the local then holds the
+        // null; an error at a narrow one), an INFERRED one widens to `τ?` through
+        // `change_var_type`'s join arm.  Left as `Null`, it met `change_var_type`'s "cannot
+        // hold both" refusal — the one position a bare `null` was refused at full width, and
+        // the inferred `x = 5; x = null` refused where `(N-Join)` widens.  A narrow inferred
+        // integer is left to that refusal: its join with `null` has no width of its own.
+        if s_type == Type::Null
+            && op == "="
+            && var_nr != u16::MAX
+            && self.vars.exists(var_nr)
+            && matches!(to.unspan(), Value::Var(vn) if *vn == var_nr)
+            && !self.vars.is_nullable_text_buffer(var_nr)
+            && !matches!(
+                f_type,
+                Type::Optional(_) | Type::RefVar(_) | Type::Null | Type::Void | Type::Never
+            )
+            && !f_type.is_unknown()
+            && (Self::is_non_null_scalar(f_type)
+                || crate::data::is_dbref(f_type)
+                || matches!(f_type, Type::Enum(_, false, _)))
+        {
+            if self.author_declared(var_nr) {
+                let what = format!(
+                    "{} `{}`",
+                    if self.vars.is_argument(var_nr) {
+                        "the parameter"
+                    } else {
+                        "the local"
+                    },
+                    self.vars.name(var_nr)
+                );
+                self.convert_store(code, &Type::Null, f_type, &what, None);
+                s_type = f_type.clone();
+            } else if !Self::nstore_narrow(f_type, false) {
+                let joined = Type::optional(f_type.clone());
+                self.convert_store(code, &Type::Null, &joined, "the assignment target", None);
+                s_type = joined;
+            }
+        }
         // Convert untyped null to typed null for scalar assignments (not collections).
         // `is_dbref`, not a spelled list: the list this used to carry named six heap kinds
         // and not `spatial` or `trie`, so `g.sp = null` took the SCALAR sentinel path —
@@ -5324,7 +5365,7 @@ use a separate collection or add after the loop"
             // branch and keeps its dep by not being converted at all.  The `?` is what makes
             // the two types differ, which is what routes it here, which is what loses the
             // backing.  A copy of the tuple then had no work-ref to hand its release to and
-            // released the member's resource TWICE (`formal/heap.md` D-heap-1).
+            // released the member's resource TWICE (`formal/heap-history.md` D-heap-1).
             if s_type.depend().is_empty() {
                 f_type.clone()
             } else {
@@ -5689,6 +5730,19 @@ use a separate collection or add after the loop"
                 copied
             };
             *code = crate::data::v_if(test, sentinel, copy);
+        }
+        // `@FR-C-Num` — a numeric WIDENING into a variable is the same implicit conversion it is
+        // into an argument, a field, an element or a return, all of which reach `convert`; the
+        // variable seam instead retyped the variable to the value's type, so `f: float = a`
+        // (and `f = a` on a `float` local) was refused as "cannot change type from float to
+        // integer" — naming the change backwards, for a program the conversion table admits.
+        if op == "="
+            && let Value::Var(v) = to.unspan()
+            && let target = self.vars.tp(*v).clone()
+            && self.changes_representation(&s_type, &target)
+            && self.convert(code, &s_type, &target)
+        {
+            s_type = target;
         }
         self.change_var(to, &s_type);
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
@@ -8585,6 +8639,11 @@ use a separate collection or add after the loop"
         if self.first_pass {
             return false;
         }
+        if let (Type::Tuple(slots), Type::Tuple(values)) = (store_tp.base(), s_type.base()) {
+            let (slots, values) = (slots.clone(), values.clone());
+            self.narrow_tuple_members(code, &slots, &values);
+            return false;
+        }
         if self.range_guard_inside_discharge(code, store_tp) {
             return true;
         }
@@ -8606,6 +8665,73 @@ use a separate collection or add after the loop"
             }
         }
         false
+    }
+
+    /// `@FR-I-Narrow` per MEMBER — a tuple is stored member by member, so each member owes the
+    /// narrowing its own slot would (`layout.md` `(L-Tuple)` makes a member a field).  loft#1640
+    /// gave the member WRITE `t.1 = 300` this check; the whole-tuple store did not look inside,
+    /// and `t: (integer, u8) = (1, 256)` held 256.  A literal tuple is asked value by value (a
+    /// nullable member takes the checked narrowing); any other tuple by its member types.
+    pub(crate) fn narrow_tuple_members(
+        &mut self,
+        code: &mut Value,
+        slots: &[Type],
+        values: &[Type],
+    ) {
+        if slots.len() != values.len() {
+            return;
+        }
+        match code.unspan_mut() {
+            Value::Tuple(members) if members.len() == slots.len() => {
+                for (i, member) in members.iter_mut().enumerate() {
+                    if matches!(slots[i], Type::Optional(_)) {
+                        self.implicit_checked_narrow(member, &values[i], &slots[i]);
+                    } else {
+                        self.narrow_store_checks(member, &slots[i], &values[i]);
+                    }
+                }
+                return;
+            }
+            // A join passes the slot to each arm, as `int_value_fits` asks an `if`'s arms:
+            // `if z { (null, 7) } else { (4, 5) }` fits `(u8?, u8)` arm by arm while the joined
+            // member type is `integer`.
+            Value::If(_, then, other) => {
+                self.narrow_tuple_members(then, slots, values);
+                self.narrow_tuple_members(other, slots, values);
+                return;
+            }
+            Value::Block(bl) if bl.name != "ncc" => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.narrow_tuple_members(last, slots, values);
+                }
+                return;
+            }
+            _ => {}
+        }
+        for (i, (slot, value)) in slots.iter().zip(values).enumerate() {
+            if !matches!(slot, Type::Optional(_))
+                && Self::is_narrowing_int_store(value.base(), slot)
+            {
+                let src = self.int_type_name(value);
+                let dst = self.int_type_name(slot);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot implicitly narrow member {i} ({src}) to {dst} (may lose data) — build \
+                     the tuple with a value that fits, or take the checked cast `as {dst}?`"
+                );
+            }
+        }
+    }
+
+    /// `@FR-C-Num` — the numeric widenings the conversion table makes implicit: an integer or
+    /// a `single` into a `float`, and an integer into a `single`.  Asked of the BASE types, so
+    /// a nullable side takes the same answer (the null rules are asked apart).
+    pub(crate) fn is_numeric_widening(from: &Type, to: &Type) -> bool {
+        matches!(
+            (from.base(), to.base()),
+            (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
+        )
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?
@@ -8677,6 +8803,7 @@ use a separate collection or add after the loop"
         }) {
             return true;
         }
+        self.refuse_unfitting_coalesce_default(code, &Type::Integer(spec));
         let guarded: Vec<Value> = subjects
             .into_iter()
             .map(|mut sub| {
@@ -8704,6 +8831,64 @@ use a separate collection or add after the loop"
             _ => return false,
         }
         true
+    }
+
+    /// `@FR-I-Narrow` — the default of a `??` is stored into the slot whenever the subject is
+    /// absent or does not fit, so it owes the slot's narrowing check itself: a constant must
+    /// fit, and any other default must not be wider than the slot.  The discharge exempts the
+    /// SUBJECT, whose miss the default answers; nothing answers a default that misses, and
+    /// `x: u8 = g() ?? 300` held 300.
+    fn refuse_unfitting_coalesce_default(&mut self, code: &mut Value, target: &Type) {
+        let slot = match code.unspan_mut() {
+            Value::Block(bl) => match bl.operators.last_mut().map(Value::unspan_mut) {
+                Some(Value::If(_, _, d)) => d,
+                _ => return,
+            },
+            Value::If(_, _, d) => d,
+            _ => return,
+        };
+        let mut default = (**slot).clone();
+        // A chain `a ?? b ?? c` is `a ?? (b ?? c)`: the default is itself a discharge, whose
+        // subject is guarded and whose own default is asked, exactly as the outer one's are.
+        if self.range_guard_inside_discharge(&mut default, target) {
+            if let Value::Block(bl) = code.unspan_mut()
+                && let Some(Value::If(_, _, d)) = bl.operators.last_mut().map(Value::unspan_mut)
+            {
+                **d = default;
+            } else if let Value::If(_, _, d) = code.unspan_mut() {
+                **d = default;
+            }
+            return;
+        }
+        if self.int_value_fits(&default, target) || self.is_null_source(&default) {
+            return;
+        }
+        // The arm's own type, recorded where the `??` was built; a stale record (another
+        // `??` built since) leaves only the constant question, which needs no type.
+        let recorded = self
+            .coalesce_defaults
+            .iter()
+            .rev()
+            .find(|(v, _)| v.unspan() == default.unspan())
+            .map(|(_, t)| t.clone());
+        let constant = self.const_int(&default).is_some();
+        let wider = recorded
+            .as_ref()
+            .is_some_and(|t| Self::is_narrowing_int_store(t.base(), target));
+        if !constant && !wider {
+            return;
+        }
+        let dst = self.int_type_name(target);
+        let what = match self.const_int(&default) {
+            Some(n) => format!("{n}"),
+            None => recorded.map_or_else(|| "integer".to_string(), |t| self.int_type_name(&t)),
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "the `??` default ({what}) does not fit {dst} — it is stored when the value is \
+             absent or does not fit, so give a default within {dst}'s range"
+        );
     }
 
     /// `@FR-N-Coal` — the variable `v` when this `if` is the lowering of `v ?? d` for a BARE
@@ -8819,6 +9004,19 @@ use a separate collection or add after the loop"
         if let Value::Call(d, _) = code.unspan()
             && self.data.def(*d).name() == "OpRangeDefault"
         {
+            return;
+        }
+        // A CONSTANT has its answer now: itself inside the range, the guard's default outside
+        // it.  A guard left around a literal is a runtime test that can never differ, and the
+        // `u8?` parameter default it wrapped looked unreplayable to pass 2 only.
+        if let Some(n) = self.const_int(code) {
+            if n < lo || n > hi {
+                *code = if nullable {
+                    self.cl("OpConvIntFromNull", &[])
+                } else {
+                    Value::Long(dflt)
+                };
+            }
             return;
         }
         // Already inside the slot's range for every value the source can take → no guard.
@@ -9960,6 +10158,69 @@ use a separate collection or add after the loop"
         deps.len() == 1 && self.vars.name(deps[0]).starts_with("__vdb_")
     }
 
+    /// Append one element `src` to the vector `var_nr` as a fresh record `elm_var`: the
+    /// `OpNewRecord` / write / `OpFinishRecord` triple, with the write the ELEMENT TYPE needs —
+    /// a `vector<T>` element deep-copied (`OpCopyRecord`), a type variable in the shape each
+    /// monomorph re-lowers, a narrow integer at its own width, anything else through
+    /// `set_field`.  The one home for that choice: the comprehension and the `match` stream
+    /// buffer both append through it.
+    pub(crate) fn append_element_ops(
+        &mut self,
+        var_nr: u16,
+        elm_tp: &Type,
+        elm_var: u16,
+        src: Value,
+    ) -> Vec<Value> {
+        let elm_tp = elm_tp.clone();
+        let ed_nr = self.data.type_def_nr(&elm_tp);
+        let fld = Value::Int(i32::from(u16::MAX));
+        let mut ops = Vec::new();
+        let container_id = Value::Int(i32::from(self.vector_of(&elm_tp)));
+        let element_id = Value::Int(i32::from(
+            self.data
+                .vector_element_type(&elm_tp, &mut self.database)
+                .unwrap_or(u16::MAX),
+        ));
+        ops.push(v_set(
+            elm_var,
+            self.cl(
+                "OpNewRecord",
+                &[Value::Var(var_nr), container_id.clone(), fld.clone()],
+            ),
+        ));
+        // A `vector<T>` element is an AGGREGATE — deep-copy the whole element into the fresh
+        // record (as the struct/Reference case does).  `set_field(ed_nr, f_nr=MAX, …)` PEELS
+        // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
+        // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
+        // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
+        if matches!(elm_tp.base(), Type::Vector(_, _)) {
+            ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), element_id]));
+        } else if self.is_type_var_element(&elm_tp) {
+            // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+            // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
+            // which each monomorph re-lowers at its concrete element type
+            // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
+            // in a field read the rewrite does not match, so every scalar instance kept a
+            // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
+            // constant store on the interpreter and was E0610 on native.
+            let row = i32::from(self.data.def(ed_nr).known_type())
+                | i32::from(crate::keys::COPY_FRESH_DEST);
+            ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), Value::Int(row)]));
+        } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &src) {
+            // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
+            // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
+            // 1-byte element slots at once.  Shared with the `+=` append site.
+            ops.push(op);
+        } else {
+            ops.push(self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm_var), src));
+        }
+        ops.push(self.cl(
+            "OpFinishRecord",
+            &[Value::Var(var_nr), Value::Var(elm_var), container_id, fld],
+        ));
+        ops
+    }
+
     pub(crate) fn materialize_iterator(
         &mut self,
         code: &mut Value,
@@ -9979,8 +10240,6 @@ use a separate collection or add after the loop"
             && let Value::Iter(_, init, next, _) = code.clone()
             && matches!(*next, Value::Block(_))
         {
-            let ed_nr = self.data.type_def_nr(&elm_tp);
-            let fld = Value::Int(i32::from(u16::MAX));
             let elm_var = self.unique_elm_var(lhs_parent_tp, &elm_tp, var_nr);
             let for_var = self.create_unique("slice_elm", &elm_tp);
             // The per-element source is `for_var = next`, a READ of `subject[i]`.  `for_var`
@@ -10024,61 +10283,7 @@ use a separate collection or add after the loop"
             // `u8`/`u16`/4-byte subtypes pack at 1/2/4 bytes, not the wide integer
             // row) and a nested `vector<T>` element (#553 — a 4-byte handle row)
             // land on the same ids the append uses.
-            let container_id = Value::Int(i32::from(self.vector_of(&elm_tp)));
-            let element_id = Value::Int(i32::from(
-                self.data
-                    .vector_element_type(&elm_tp, &mut self.database)
-                    .unwrap_or(u16::MAX),
-            ));
-            lp.push(v_set(
-                elm_var,
-                self.cl(
-                    "OpNewRecord",
-                    &[Value::Var(var_nr), container_id.clone(), fld.clone()],
-                ),
-            ));
-            // A `vector<T>` element is an AGGREGATE — deep-copy the whole element into the fresh
-            // record (as the struct/Reference case does).  `set_field(ed_nr, f_nr=MAX, …)` PEELS
-            // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
-            // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
-            // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
-            if matches!(elm_tp, Type::Vector(_, _)) {
-                lp.push(self.cl(
-                    "OpCopyRecord",
-                    &[Value::Var(for_var), Value::Var(elm_var), element_id],
-                ));
-            } else if self.is_type_var_element(&elm_tp) {
-                // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
-                // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
-                // which each monomorph re-lowers at its concrete element type
-                // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
-                // in a field read the rewrite does not match, so every scalar instance kept a
-                // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
-                // constant store on the interpreter and was E0610 on native.
-                let row = i32::from(self.data.def(ed_nr).known_type())
-                    | i32::from(crate::keys::COPY_FRESH_DEST);
-                lp.push(self.cl(
-                    "OpCopyRecord",
-                    &[Value::Var(for_var), Value::Var(elm_var), Value::Int(row)],
-                ));
-            } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &Value::Var(for_var)) {
-                // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
-                // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
-                // 1-byte element slots at once.  Shared with the `+=` append site.
-                lp.push(op);
-            } else {
-                lp.push(self.set_field(
-                    ed_nr,
-                    usize::MAX,
-                    0,
-                    Value::Var(elm_var),
-                    Value::Var(for_var),
-                ));
-            }
-            lp.push(self.cl(
-                "OpFinishRecord",
-                &[Value::Var(var_nr), Value::Var(elm_var), container_id, fld],
-            ));
+            lp.extend(self.append_element_ops(var_nr, &elm_tp, elm_var, Value::Var(for_var)));
             let needs_db = self.vector_needs_db(var_nr, &elm_tp, true);
             let mut stmts = Vec::new();
             if op == "=" && !needs_db {

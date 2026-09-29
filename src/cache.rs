@@ -742,6 +742,10 @@ pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> 
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+/// The reason [`rustc_mismatch`] gives when there is no `rustc` at all — a missing toolchain,
+/// which no runtime rebuild can cure, as opposed to a changed one.
+pub const RUSTC_NOT_FOUND: &str = "rustc not found";
+
 /// The rustc this loft was BUILT with (the `LOFT_BUILD_RUSTC` stamp from
 /// build.rs) vs the one a plain `rustc` resolves RIGHT NOW — which depends
 /// on PATH and rustup's cwd-sensitive toolchain overrides, so it can
@@ -775,7 +779,7 @@ pub fn rustc_mismatch() -> Option<&'static str> {
                 Some(v) => Some(format!(
                     "rustc changed since this loft was built ({stamp} → {v})"
                 )),
-                None => Some("rustc not found".to_string()),
+                None => Some(RUSTC_NOT_FOUND.to_string()),
             }
         })
         .as_deref()

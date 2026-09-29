@@ -16,7 +16,7 @@
 //   ./target/release/loft --interpret --no-warnings --lib lib \
 //       tools/audience-demo/server_kernel.loft
 
-use engine_host;
+use engine_host::*;
 
 struct Cell {
   ck:    text,

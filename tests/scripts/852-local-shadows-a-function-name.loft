@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/852-local-shadows-a-function-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control reads a binding position as the function reference again, and refuses the program — the refusal IS the defect this file guards.
 // @C112 — a binding position mints a local; the function stays callable.
 //
 // Regression (GitHub #852, and the second half of #756): a local binding may

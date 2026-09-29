@@ -27,7 +27,7 @@
 <p><code>hex_grid</code> is the coordinate layer the whole <code>hex_*</code> family rests on: hex ↔ world-plane conversion, the six neighbours, distance, corners, and the canonical name of an edge. Pure functions over <code>(q, r)</code> — no structs, no state, nothing to construct or free.</p>
 <p>It is not the map. <code>hex_field</code> holds occupancy and outlines, <code>hex_shape</code> the line/box/arc vocabulary, <code>hex_form</code> turtle forms, <code>hex_terrain</code> heights and water. Reach for <code>hex_grid</code> when you need to know WHERE a cell is; reach for one of those when you need to know what is in it.</p>
 <p>The convention is pointy-top, <strong>odd-r offset</strong>, <code>L = √3</code> per hex step. It is shared executable ground with the games built on it, which is the point of the package: two programs that disagree about where a hex centre is do not interoperate.</p>
-<pre><code><span class="kw">use</span> hex_grid;</code></pre>
+<pre><code><span class="kw">use</span> hex_grid::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   (x, y) = hex_grid::<span class="fn-call">hex_to_px</span>(<span class="nm">2</span>, <span class="nm">3</span>);
   (q, r) = hex_grid::<span class="fn-call">px_to_hex</span>(x, y);</code></pre>

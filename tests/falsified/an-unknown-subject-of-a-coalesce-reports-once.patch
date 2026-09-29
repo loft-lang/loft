@@ -1,0 +1,20 @@
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 285c9ba9d..fed38c33e 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3688,14 +3688,7 @@ impl Parser {
+         // coalesce's own typing (`?? null` keeps the value nullable, a nullable default
+         // widens it), not a store into a slot: @FR-N-Store admits it here and is asked
+         // wherever the coalesced value lands.
+-        // A value typed `never` is the poison of an error already reported (@P376) — an
+-        // unknown function, an undefined type — so there is no value type for the default to
+-        // miss, and a report here is that one error said again for every `??` downstream of
+-        // it (a library's one unresolved name gave sixteen).
+-        if !self.convert_admitting(&mut rhs, &rhs_type, &result_type)
+-            && !self.first_pass
+-            && !matches!(result_type.unrewritten(), Type::Never)
+-        {
++        if !self.convert_admitting(&mut rhs, &rhs_type, &result_type) && !self.first_pass {
+             // @PLN102 arc-E — `convert` FAILED: the default `d` is not assignable to the
+             // coalesce type, i.e. `τ? ?? d` with `d` not usable where a `τ` is expected.
+             // Left unreported (the old dead `can_convert` call), this built a MISMATCHED

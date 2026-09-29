@@ -41,7 +41,11 @@ for repo in "${REPOS[@]}"; do
     if [ "${#files[@]}" -eq 0 ] || "${G[@]}" diff --quiet "origin/$def" "origin/$b" -- "${files[@]}" 2>/dev/null; then
       status="merged (content on $def — safe to delete)"
     else
-      last=$("${G[@]}" log -1 --format='%s' "origin/$b" 2>/dev/null | cut -c1-46)
+      # 46 CHARACTERS, not bytes: GNU `cut -c` counts bytes, so a subject whose 46th byte fell
+      # inside a `—` wrote half a character, and the report stopped being UTF-8 (the link
+      # checker then crashed reading it).
+      last=$("${G[@]}" log -1 --format='%s' "origin/$b" 2>/dev/null \
+             | python3 -c 'import sys; print(sys.stdin.buffer.read().decode("utf-8", "replace").rstrip("\n")[:46])')
       status="UNMERGED (${#files[@]} files) — $last"
     fi
     pr=$(gh pr list --repo "$R" --head "$b" --state all --json number,state,isDraft \

@@ -92,7 +92,7 @@ whether the chain tiled the store at all. So A0 shipped a fact, not a check:
 strips the lib's `debug_assert!`s. An earlier draft of this step named that suite
 as its verification, which would have been a calibration failure of its own:
 green there says nothing about a DA-guarded claim. Run the
-[`target-da` calibration lens](../../DEBUG.md#the-debug-assertions-calibration-run-target-da).
+[`target-da` calibration lens](../../DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da).
 
 The non-vacuity test is `#[cfg(debug_assertions)]` for the same reason: it
 compiles away together with the instrument it proves, so it can never pass by

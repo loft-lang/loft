@@ -1774,7 +1774,7 @@ pub fn render_pkg_api_text(pkg_dir: &std::path::Path) -> std::io::Result<String>
     let mut out = String::new();
     let _ = writeln!(out, "# {pkg_name} {version} — public API surface");
     let _ = writeln!(out, "# generated from {}", pkg_dir.display());
-    let _ = writeln!(out, "# use it with: use {pkg_name};");
+    let _ = writeln!(out, "# use it with: use {pkg_name}::*;");
 
     let src_dir = pkg_dir.join("src");
     let mut files: Vec<std::path::PathBuf> = match std::fs::read_dir(&src_dir) {

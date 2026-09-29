@@ -1617,18 +1617,12 @@ fn a_nullable_collection_is_refused_with_its_discharge() {
          type's default, an empty collection) or `?? []`; either spelling gives an absent \
          collection zero iterations at \
          a_nullable_collection_is_refused_with_its_discharge:3:17",
-    )
-    // The one that follows is the parser's generic recovery after a `for` whose source did
-    // not resolve — not part of this refusal, and asserted only because the harness matches
-    // the diagnostics EXACTLY.
-    //
-    // There were TWO.  *"Need an iterable expression in a for statement"* went with loft#1453:
-    // `collections::iterator` reports the refusal above and then returns `Value::Null`, which
-    // the caller could not tell from "no iterable at all", so it added its own line on top of
-    // a message that had already named the problem.  It now asks `Diagnostics::error_count()`
-    // and speaks only when nothing else did.  The remaining line is a different cause — the
-    // `for` bails without consuming its body — and is still open on loft#1453.
-    .error("Expect token ; at a_nullable_collection_is_refused_with_its_discharge:3:17");
+    );
+    // And nothing follows it.  There were two recovery lines: *"Need an iterable expression
+    // in a for statement"* (the `for`'s fallback, which now speaks only when nothing else
+    // did) and *"Expect token ;"* (the `for` bailed without consuming its body, and its
+    // `Null` code asked for a `;` a loop never needs).  The harness matches the diagnostics
+    // EXACTLY, so the refusal standing alone is the assertion (loft#1453).
 }
 
 /// loft#1403 — the refusal names the kind the AUTHOR wrote.
@@ -4539,7 +4533,7 @@ fn p54_chained_access_on_nested_object() {
     .result(Value::str("Alice"));
 }
 
-/// P54 step 4 — locks the LOFT.md § Match expressions JsonValue
+/// P54 step 4 — locks the LOFT_CONTROL.md § Match expressions JsonValue
 /// example.  Exercises destructuring of every JsonValue variant
 /// (JObject / JArray / JNumber / JNull / wildcard) so that the
 /// documented `match json_parse(raw) { ... }` patterns stay
@@ -8431,7 +8425,7 @@ fn p54_step4_nonempty_array_to_json_text_shape() {
 /// Tests mirror the array second-slice guards: discriminant,
 /// length, field lookup (hit + miss), has_field, to_json, and
 /// a round-trip.  Every loft string with `{` / `}` doubles them
-/// to `{{` / `}}` per LOFT.md § String literals.
+/// to `{{` / `}}` per LOFT_LITERALS.md § String literals.
 #[test]
 fn p54_step4_nonempty_primitive_object_has_jobject_kind() {
     code!(
@@ -9360,7 +9354,7 @@ fn q2_has_field_gates_conditional_safely() {
 }
 
 // INC#18 — `x#break` is a labelled-break statement that reuses the
-// `#attribute` syntax.  Documented in LOFT.md § Break and continue;
+// `#attribute` syntax.  Documented in LOFT_CONTROL.md § Break and continue;
 // these tests lock the behaviour so the two-mechanism design cannot
 // silently regress.
 
@@ -9490,7 +9484,7 @@ fn run() -> integer {
 }
 
 // INC#2 — vector has comprehensions; sorted/index do not.  Documented
-// in LOFT.md § Key-based collections (gotcha block).  These tests
+// in LOFT_DATA.md § Key-based collections (gotcha block).  These tests
 // lock the vector-vs-keyed-collection asymmetry so a future uniformity
 // refactor cannot silently flip either half without updating the doc.
 
@@ -9527,7 +9521,7 @@ fn run() -> integer {
 }
 
 // INC#8 — method-vs-free-function is the stdlib author's choice per
-// function.  Documented in LOFT.md § Methods and function calls
+// function.  Documented in LOFT_DATA.md § Methods and function calls
 // (gotcha block).  These tests lock concrete examples so the
 // stdlib's declared call-forms cannot silently drift.
 
@@ -9543,7 +9537,7 @@ fn inc08_sum_of_is_free_function_only() {
 }"
     )
     .expr("run()")
-    .error("Unknown field vector<integer>.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
+    .error("Unknown field vector<integer>.sum_of — did you mean the free function `sum_of(…)` ? (stdlib declared `sum_of` as free-only; see LOFT_DATA.md § Methods and function calls) at inc08_sum_of_is_free_function_only:3:14");
 }
 
 /// `text.starts_with(s)` is declared with `self: text` — method syntax
@@ -9794,7 +9788,7 @@ fn quality_6c_free_call_on_wrong_type_suggests_method() {
     starts_with(5, \"he\")
 }"
     )
-    .error("Unknown function starts_with — did you mean the method `x.starts_with(…)` on text? (stdlib declared `starts_with` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_on_wrong_type_suggests_method:2:5");
+    .error("Unknown function starts_with — did you mean the method `x.starts_with(…)` on text? (stdlib declared `starts_with` as a method; see LOFT_DATA.md § Methods and function calls) at quality_6c_free_call_on_wrong_type_suggests_method:2:5");
 }
 
 /// QUALITY-history.md 6c follow-on — methods declared on several receiver types
@@ -9807,7 +9801,7 @@ fn quality_6c_free_call_lists_all_method_receivers() {
     is_numeric(5)
 }"
     )
-    .error("Unknown function is_numeric — did you mean the method `x.is_numeric(…)` on text / character? (stdlib declared `is_numeric` as a method; see LOFT.md § Methods and function calls) at quality_6c_free_call_lists_all_method_receivers:2:5");
+    .error("Unknown function is_numeric — did you mean the method `x.is_numeric(…)` on text / character? (stdlib declared `is_numeric` as a method; see LOFT_DATA.md § Methods and function calls) at quality_6c_free_call_lists_all_method_receivers:2:5");
 }
 
 /// QUALITY-history.md 6c follow-on — the hint must stay silent when no method
@@ -11895,16 +11889,19 @@ fn test() {
 
 /// @P285 control — a GENUINE redundant check (`not_null_field == null`,
 /// no lookup) must STILL warn.  Guards against the fix over-suppressing.
+/// A narrow `u8` field, because that is a slot with no null (C127); a plain
+/// `text` or `integer` field holds the null `(N-Store)` lets into it, so the
+/// same check there is a real test (`Type::non_null_slot_reads_null`).
 #[test]
 fn p285_genuine_redundant_check_still_warns() {
     code!(
-        "struct P285G { name: text }
+        "struct P285G { level: u8 }
 fn test() {
-    g = P285G{name: \"x\"};
-    if g.name == null { assert(false, \"unreachable\"); }
+    g = P285G{level: 3};
+    if g.level == null { assert(false, \"unreachable\"); }
 }"
     )
-    .warning("Redundant null check — 'name' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:24")
+    .warning("Redundant null check — 'level' is 'not null', so this is false unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read) at p285_genuine_redundant_check_still_warns:4:25")
     .result(Value::Null);
 }
 

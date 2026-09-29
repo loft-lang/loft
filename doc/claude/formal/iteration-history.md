@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/iteration-history.md — the deviation register for [iteration.md](iteration.md)
 
 > **The rules are next door.**  [iteration.md](iteration.md) states what must always be true of the

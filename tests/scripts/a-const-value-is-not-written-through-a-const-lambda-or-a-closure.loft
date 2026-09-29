@@ -7,7 +7,7 @@
 // - a LAMBDA's `const` parameter: `fn(x: const Account) { x.balance = 7 }` wrote, because a
 //   lambda's parameters never took the flag a named function's take;
 // - a CLOSURE capturing a `const` value, or a view of one: a record or collection capture shares
-//   the value (LOFT.md § Closures), and the body reached it through the closure record, where
+//   the value (LOFT_LITERALS.md § Closures), and the body reached it through the closure record, where
 //   nothing said it was read-only — LOFT.md already promised *"mutating a `const` parameter
 //   through a closure is rejected"*, and only the scalar capture kept that promise;
 // - a short `|p|` callback over a `const` collection: `map(ps, |p| { p.x = 5; 1 })` wrote every

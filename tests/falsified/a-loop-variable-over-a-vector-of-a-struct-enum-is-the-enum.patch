@@ -1,0 +1,115 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 29ef711a6..f66a309c5 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5904,15 +5904,7 @@ impl Parser {
+                 // sentinel, and covers no variant — an absent subject is not a variant of
+                 // anything, which is why exhaustiveness is untouched for it.
+                 let (discs, cond) = if heap_null_subject {
+-                    // `null_test` is the one home for "is this absent?": a struct-enum
+-                    // subject bound from an `E` slot is a sub-reference whose absence is its
+-                    // discriminant, which the bare sentinel test called present, so the
+-                    // match fell through every arm.
+-                    let is_null = self
+-                        .null_test(subject_val.clone(), &subject_type, false)
+-                        .unwrap_or_else(|| {
+-                            self.cl("OpRefIsNull", std::slice::from_ref(&subject_val))
+-                        });
++                    let is_null = self.cl("OpRefIsNull", std::slice::from_ref(&subject_val));
+                     (Vec::new(), Some(is_null))
+                 } else {
+                     (vec![0], None)
+@@ -12053,15 +12045,19 @@ impl Parser {
+             return self.for_type(inner);
+         }
+         if let Type::Vector(t_nr, dep) = &in_type {
+-            // A struct-enum element stays the ENUM for the loop variable, as an index read
+-            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  It used to become
+-            // `Reference(E)` for a hand-written enum — a record spelling of the same value
+-            // that the null tests, the `E?` parameter and the variant join of a `??` default
+-            // do not recognise, so `for e in v` refused `f(e)` into an `E?` parameter and
+-            // `e ?? Variant {…}`, and read an absent element as present.  Variant field
+-            // access, narrowing, captures, `match` and writes through the variable answer
+-            // the same in either spelling.
+             let mut t = *t_nr.clone();
++            if let Type::Enum(nr, true, _) = t
++                && !self.data.def(nr).name.starts_with("__nullable<")
++            {
++                // @PLN25 E2 — keep a synthetic `__nullable<S>` element in `Enum`
++                // form for the loop variable: field access on `Type::Enum(.., true)`
++                // unwraps to the `Some` variant via `find_poly_enum_field`
++                // (fields.rs), whereas `Reference(enum_def)` does not (the enum
++                // itself has no payload field) → "Unknown field __nullable<S>.f".
++                // Hand-written struct-enums keep the Reference conversion (variant
++                // field-access resolves against the variant def, not the parent).
++                t = Type::Reference(nr, Deps::none());
++            }
+             // P189b: vector elements that are tuples live as inline bytes
+             // in the vector record.  Iteration yields a 12-byte DbRef
+             // pointing at those bytes; treat the loop var as a reference
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 01005b58a..285c9ba9d 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -949,18 +949,8 @@ impl Parser {
+                 // chain: the loop variable's own dep names ITSELF, and only its
+                 // declaration's dep names the vector. A plain local, parameter or return
+                 // reaches no collection that way and keeps the handle test.
+-                //
+-                // A variable that views the vector is not always a slot, though: a local
+-                // bound from a call that returns an element (`b = head(v)`) has the same
+-                // deps and holds a whole HANDLE, `nullref` when the callee answered absent.
+-                // Read through that handle the word says "present" — `head([])` answered a
+-                // value, and since loft#1529 read a returned element through to `nullref`,
+-                // `head([null])` did too.  So the handle's own null is asked first and the
+-                // slot word only of a handle that exists; each shape answers exactly.
+-                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
+                 let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
+-                let empty_slot = self.cl("OpEqInt", &[word, Value::Int(0)]);
+-                v_if(null_handle, Value::Boolean(true), empty_slot)
++                self.cl("OpEqInt", &[word, Value::Int(0)])
+             } else if let Some((base, fld)) = self.inline_slot_word(&operand) {
+                 // loft#1071 — an INLINE slot (a struct field) is a four-byte RECORD
+                 // POINTER, which cannot hold the twelve-byte store_nr sentinel at all.
+@@ -975,24 +965,10 @@ impl Parser {
+                 // for an absent field even once the write was right.
+                 let word = self.cl("OpGetInt4", &[base, fld]);
+                 self.cl("OpEqInt", &[word, Value::Int(0)])
+-            } else if Self::is_repeatable_place(&self.data, &operand) {
+-                // A struct-enum reference in a HANDLE (a local, a parameter, a return):
+-                // null is the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
+-                // enum is inline on native).  But a handle is not the only thing a local
+-                // holds.  `(L-Null)` gives `E` and `E?` one layout and `(N-Store)` lets a
+-                // `null` into an `E` field or element, so `x = s.e` can bind a
+-                // sub-reference to a slot whose discriminant is 0 — present to the
+-                // sentinel, absent to its own bytes.  A present value, handle or slot,
+-                // always has a variant (they are numbered from 1) in its first word, so
+-                // "the handle is null, else its first word is 0" is exact for both, and it
+-                // costs only where a test is written.
+-                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
+-                let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
+-                let empty = self.cl("OpEqInt", &[word, Value::Int(0)]);
+-                v_if(null_handle, Value::Boolean(true), empty)
+             } else {
+-                // A CALL result is a handle the callee built, and reading it twice would
+-                // build it twice.
++                // A struct-enum reference in a HANDLE (a local, a parameter, a return):
++                // null IS the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
++                // enum is inline on native).
+                 self.cl("OpRefIsNull", &[operand])
+             }
+         } else if matches!(tp, Type::Optional(_)) && matches!(tp.base(), Type::Reference(_, _)) {
+@@ -3204,12 +3180,9 @@ impl Parser {
+             // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
+             // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
+             // present.  Its tag says, through the one null test that already reads it.
+-            //
+-            // Every struct-enum asks `null_test` now, not only a slot view: an `E` slot holds
+-            // the null `(N-Store)` lets into it, and a local bound from one is a sub-reference
+-            // the `rec` test calls present — `x = s.e; x ?? d` never took its default.
+             let as_optional = Type::Optional(Box::new(tp.clone()));
+             if matches!(tp.base(), Type::Enum(_, true, _))
++                && self.enum_slot_view(src, &as_optional)
+                 && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
+             {
+                 not_null

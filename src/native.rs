@@ -160,6 +160,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_arguments", n_arguments),
     ("n_mtime", n_mtime),
     ("n_is_dir", n_is_dir),
+    ("n_is_symlink", n_is_symlink),
     ("n_is_file", n_is_file),
     ("n_list_dir", n_list_dir),
     ("n_read_bytes", n_read_bytes),
@@ -1249,6 +1250,14 @@ fn n_mtime(stores: &mut Stores, stack: &mut DbRef) {
 fn n_is_dir(stores: &mut Stores, stack: &mut DbRef) {
     let v_path = stores.get::<Str>(stack);
     let new_value = crate::codegen_runtime::fs_is_dir(&stores.resolve_path(v_path.str()));
+    stores.put(stack, new_value);
+}
+
+/// Interpreter handler for `is_symlink` — mirrors the `#rust` template in
+/// `default/02_files.loft`.
+fn n_is_symlink(stores: &mut Stores, stack: &mut DbRef) {
+    let v_path = stores.get::<Str>(stack);
+    let new_value = crate::codegen_runtime::fs_is_symlink(&stores.resolve_path(v_path.str()));
     stores.put(stack, new_value);
 }
 

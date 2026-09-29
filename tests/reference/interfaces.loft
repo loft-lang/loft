@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Interfaces and bounded generics — an interface is satisfied structurally,
+// @PAGE: LOFT_DESIGN.md § Interfaces and bounded generics — an interface is satisfied structurally,
 // a bound admits the operations the interface names, and an operator can be one of them.
 // The unbounded refusal is in interfaces-refused.loft.
 

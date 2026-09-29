@@ -1,0 +1,12 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -20990,7 +20990,7 @@
+                 Value::Int(n) => Value::Int(n),
+                 Value::Null => Value::Int(0),
+                 _ => {
+-                    if !p.first_pass {
++                    if false && !p.first_pass {
+                         diagnostic!(
+                             p.lexer,
+                             Level::Error,

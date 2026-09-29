@@ -25,11 +25,11 @@
 //   LOFT_AUD_CLIENTS  — if set > 0, run a SINGLE tier of this many
 //                       clients instead of the default 3 → 12 → 30 ramp.
 
-use web;
+use web::*;
 
 fn env_int(name: text, dflt: integer) -> integer {
   raw = env_variable(name) ?? "";
-  if raw == "" { dflt } else { raw as integer }
+  if raw == "" { dflt } else { raw as integer ?? dflt }
 }
 
 // Drive one load tier: connect `n` clients, paint `paints` rounds, drain

@@ -1,0 +1,24 @@
+diff --git a/src/fill.rs b/src/fill.rs
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -2822,7 +2822,7 @@
+ fn eq_bool(s: &mut State) {
+     let v_v2 = s.get_stack::<u8>();
+     let v_v1 = s.get_stack::<u8>();
+-    let new_value = v_v1 == v_v2;
++    let new_value = (v_v1 == 1) == (v_v2 == 1);
+     s.put_stack(new_value);
+ }
+ 
+diff --git a/default/01_code.loft b/default/01_code.loft
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -1455,7 +1455,7 @@
+ #rust"i64::from(tree::count(&@r, @fields, &s.database.allocations))"
+ 
+ fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
+-#rust"@v1 == @v2"
++#rust"(@v1 == 1) == (@v2 == 1)"
+ fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
+ #rust"@v1 != @v2"
+ // --- Output and Diagnostics ---

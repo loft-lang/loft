@@ -59,6 +59,20 @@ What it does, and why each part is there:
   when all of it is outside, `unclear` otherwise.  A row the tool cannot decide says so.
 - **Requires the hashes to agree** across lanes.  A disagreement is fatal: the lanes are not
   computing the same thing and their times do not compare.
+- **Builds before it measures, and never beside a measurement.**  The programs go in sets of
+  `--batch` (20): a set is compiled `--build-jobs` (5) at a time — each worker takes the next
+  program the moment its last one is built, at `nice 10`, waiting while the machine has less
+  than `--build-mem-reserve-gb` (3) available — and only then measured, one program at a
+  time on the quiet machine.  A program that does not build is listed at the end (exit 1)
+  and the others are still measured.
+- **Records what each build step cost**: wall-clock and CPU seconds and peak memory, per
+  program and step (`native-emit`, `native-rustc`, `rust-rustc`, a package's
+  `native-release`), printed as it lands and written by `--build-tsv`; the portal keeps them
+  in `results/<host>-builds.tsv`.  Compare the CPU figure across runs — the wall-clock one
+  depends on what built beside it.  Measured 2026-09-29: a cold package build is 2.5–8.6 s
+  and under 350 MB, an in-repo bench about a second, so a full portal run is spent almost
+  entirely MEASURING — a package is calibrated to `--package-target-ms` (4 s) per run, about
+  80 s per package over its calibration, warm-up and seven samples in two lanes.
 
 Measured on a quiet x86-64 laptop the spreads are 0.0–2.7 % and two full runs reproduce
 every ratio to within about 1 % (the threaded row to about 4 %).  A spread above `--noisy`

@@ -81,7 +81,25 @@ case "${1:-status}" in
         make ci > /dev/null 2>&1
       fi
       rc=$?
-      if   [ $rc -eq 0 ];   then note PASSED ""
+      # Whatever ended the run, its passes on this tree are kept (a no-op when make recorded
+      # them itself): scripts/gate_ledger.py.
+      python3 scripts/gate_ledger.py record > /dev/null 2>&1
+      # A gate that resumed on an identical tree says how much of its verdict it carried.
+      resumed=$(grep -m1 -oE "RESUMED on an identical tree — ([0-9]+ of [0-9]+ tests|all [0-9]+ tests) passed" result.txt 2>/dev/null \
+                | sed -E "s/RESUMED on an identical tree — /resumed: /; s/ passed$/ carried/")
+      # The run itself: its total from the nextest header, and each test counted once.
+      total=$(grep -m1 -oE "Starting [0-9]+ tests" result.txt 2>/dev/null | grep -oE "[0-9]+")
+      npass=$(grep -oE "PASS \[[^]]*\].*$" result.txt 2>/dev/null | awk "{ print \$(NF-1), \$NF }" | sort -u | grep -c . || true)
+      nfail=$(grep -oE "FAIL \[[^]]*\].*$" result.txt 2>/dev/null | awk "{ print \$(NF-1), \$NF }" | sort -u | grep -c . || true)
+      if   [ $rc -eq 0 ];   then note PASSED "${resumed}"
+      elif grep -q "CI-RESULT: CANCELLED" result.txt 2>/dev/null; then
+        # The budget cancelled it (scripts/ci_budget.sh).  Read as a FAILED with zero tests it
+        # was reported as the toolchain or the box, while 5468 of 5486 tests had passed.
+        if [ -n "$total" ]; then
+          note CANCELLED "over the budget: $npass passed, $nfail failed, $(( total - npass - nfail )) not run of $total${resumed:+ ($resumed)} — ci-run.sh start on this tree runs only the rest"
+        else
+          note CANCELLED "over the budget before the tests started — the build phase alone ran past it"
+        fi
       elif [ $rc -gt 128 ]; then
         snapshot
         sender=$(grep -oE "SIG[A-Z]+ \{[^}]*\}" target/gate-signals.log 2>/dev/null | tail -1)
@@ -213,7 +231,12 @@ case "${1:-status}" in
     [ -f $V ] || { echo "no gate has run here — start one: ci-run.sh start"; exit 1; }
     [ -f .ci-gate-head ] || { echo "the last gate predates recheck (no .ci-gate-head) — run one full gate"; exit 1; }
     read -r st _ < $V; read -r base _ < .ci-gate-head
-    case "$st" in PASSED|FAILED) ;; *) echo "the last gate ended $st, which is no result to build on — run a full gate"; exit 1 ;; esac
+    case "$st" in
+      PASSED|FAILED) ;;
+      CANCELLED|KILLED|DIED)
+        echo "the last gate ended $st, which is no result to build on — ci-run.sh start: on an unchanged tree it runs only the tests without a pass"; exit 1 ;;
+      *) echo "the last gate ended $st, which is no result to build on — run a full gate"; exit 1 ;;
+    esac
     head=$(git rev-parse HEAD)
     echo "recheck $(git rev-parse --short HEAD) against the $st gate on $(git rev-parse --short "$base"):"
     : > .ci-recheck.log
@@ -230,7 +253,21 @@ case "${1:-status}" in
       run "clippy all" cargo clippy --all-targets --all-features -- -D warnings
     fi
     if [ "$st" = FAILED ] && [ -s .ci-failed ]; then
-      expr=$(awk '{ printf "%s(binary_id(=%s) & test(=%s))", (NR > 1 ? " | " : ""), $1, $2 }' .ci-failed)
+      # A failed test whose function is gone since the gate (renamed or deleted) would make
+      # nextest answer "no tests to run", which read as a red recheck of a fix that renamed
+      # the pin it corrected.  Name it and run its whole binary instead, so a rename is
+      # measured and a deletion is visible rather than silently green.
+      expr=""
+      while read -r bin tst _; do
+        [ -n "$bin" ] || continue
+        if grep -rqw --include='*.rs' "fn ${tst##*::}" tests src 2>/dev/null; then
+          one="(binary_id(=$bin) & test(=$tst))"
+        else
+          echo "  gone  $bin $tst — no longer in the tree; running all of $bin" | tee -a .ci-recheck.log
+          one="binary_id(=$bin)"
+        fi
+        expr="${expr:+$expr | }$one"
+      done < .ci-failed
       run "failed tests" cargo nextest run --no-fail-fast -E "$expr"
     fi
     run "changed" scripts/find_problems.sh --changed "$base"

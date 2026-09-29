@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `for e in v` variable over a `vector<E>` of a struct-enum is the enum, as `v[i]` is.
+//
+// `Parser::for_type` typed it as `Reference(E)` — a RECORD spelling of the same value — for a
+// hand-written struct-enum (a `vector<E?>` element already stayed the enum).  Nothing that
+// asks about an enum recognised that spelling: an `E?` parameter refused `show(e)` ("expected
+// Sh?, got Sh"), the variant join of a `??` default refused `e ?? Sq {…}`, and `e == null`
+// asked a record's sentinel, so an element `(N-Store)` had written null into read present.
+// All three since at least 2026.9.0, on both backends.
+//
+// The write-through cell is the control for the spelling change: a loop variable is a VIEW
+// of its element, and a write through it must still land in the vector.
+//
+// Axes this file MOVES:  the element's declaration (`Sh` · `Sh?`), presence, read vs write.
+// Axes it HOLDS FIXED:   the collection (a `vector`; keyed collections iterate records).
+//
+// @falsified-at: 8bd1fec16 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit, and it
+//   is a COMPILE refusal (no assertion ran on the control): `show(e)` and `e ?? Sq {…}` were
+//   refused, which is the defect's loudest face.  The null-read face is scored by the slot
+//   guard's element cell.
+// @falsified-by: tests/falsified/a-loop-variable-over-a-vector-of-a-struct-enum-is-the-enum.patch
+//   — the same channel.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+enum Sh { Dot { r: integer }, Sq { w: integer } }
+
+fn show(e: Sh?) -> text {
+  match e { null => "none", Dot { r } => "Dot{r}", Sq { w } => "Sq{w}" }
+}
+
+fn test_a_loop_variable_over_a_vector_of_the_bare_enum() {
+  vs: vector<Sh> = [Dot { r: 1 }, Sq { w: 2 }];
+  vs[0] = null;
+  acc = "";
+  for e in vs {
+    d = e ?? Sq { w: 9 };
+    acc += "{e == null}:{show(e)}:{show(d)} ";
+  }
+  assert(acc == "true:none:Sq9 false:Sq2:Sq2 ", "bare loop: {acc}");
+  ws: vector<Sh?> = [null, Dot { r: 4 }];
+  acc2 = "";
+  for f in ws { acc2 += "{f == null}:{show(f)} "; }
+  assert(acc2 == "true:none false:Dot4 ", "optional loop: {acc2}");
+}
+
+fn test_a_write_through_the_loop_variable_still_lands() {
+  vs: vector<Sh> = [Dot { r: 1 }, Sq { w: 2 }, Dot { r: 3 }];
+  for e in vs { if e is Dot { r } { e.r = r * 10; } }
+  acc = "";
+  for e in vs { acc += "{show(e)} "; }
+  assert(acc == "Dot10 Sq2 Dot30 ", "write-through: {acc}");
+}

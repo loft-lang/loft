@@ -155,7 +155,7 @@ jobs:
           # costs one platform's time (see the `workflow_dispatch` note above).
           #
           # The PR leg is additionally SPLIT IN TWO, along the `heavy-serial` test
-          # group boundary (@CI_BUDGET "Where the 31 minutes actually are").  That
+          # group boundary (@CI_BUDGET, CI_BUDGET-history.md "Where the 31 minutes actually are").  That
           # group is 77 of 3937 tests and 57% of the suite's COLD wall clock: it is
           # `max-threads = 1`, so it cannot overlap itself, and cold it does not
           # overlap the other 3860 either — measured 226s + 174s = 398s, additive.
@@ -438,7 +438,9 @@ jobs:
       # `xvfb` + `libgl1-mesa-dri` give a headless software-GL (llvmpipe)
       # display so the GL-render golden
       # (graphics_gold::crystal_editor_gl_matches_gold) can run; the canvas
-      # goldens need no display.
+      # goldens need no display.  `libxkbcommon-x11-0` is loaded at run time by
+      # winit's X11 event loop — without it the window never opens and the gold
+      # produces no screenshot, which LOFT_REQUIRE_GL_GOLD below turns red.
       # `libsqlite3-0` is what the lazy DATABASE source (@F108) is tested
       # against: `tests/lazy_sql_source.rs` drives it through `c_call::resolve`,
       # so it needs the shared library at runtime and no headers.  It is
@@ -455,7 +457,7 @@ jobs:
       # 2106 KB on the run that caught this) and the name section never appears.
       - name: Install mold + ALSA + headless GL + sqlite + binaryen (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libsqlite3-0 binaryen
+        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
 
       # The repo's cache budget is 10 GB, evicted least-recently-used, and it is
       # the binding constraint on everything below.  Measured 2026-09-28: one run
@@ -764,6 +766,11 @@ jobs:
           # macOS/Windows: those resolve the library differently (or not at all),
           # and a skip there is surfaced by the ledger rather than enforced.
           LOFT_REQUIRE_SQLITE: ${{ runner.os == 'Linux' && '1' || '' }}
+          # Same bargain for the crystal editor's GL gold: Linux installs Xvfb
+          # and Mesa above for that test alone.  It skipped on every run for
+          # months behind a gate on a path that had left the repo, and the demo
+          # it guards stopped compiling without anything turning red.
+          LOFT_REQUIRE_GL_GOLD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           # The exclusions and the shard boundary both live in the script — the
           # sharded PR legs and the unsharded push/nightly legs have to agree on
@@ -845,6 +852,17 @@ jobs:
         with:
           name: nextest-junit-${{ matrix.os }}-${{ matrix.shard || 'full' }}
           path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+      # The GL gold's own screenshot, when the test step went red: the gold is compared on the
+      # runner's Mesa, and a mismatch reported only as pixel counts cannot be told apart from a
+      # rendering regression without the picture.
+      - name: Keep the GL gold screenshot
+        if: ${{ failure() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: crystal-editor-gl-${{ matrix.shard || 'full' }}
+          path: /tmp/crystal_editor_gold.png
           retention-days: 14
           if-no-files-found: ignore
 
@@ -1363,7 +1381,7 @@ jobs:
         # not block — external chunk-repo availability is outside this repo's
         # control.  When the drift is intentional (a dogfood lib shipped a new
         # version), bump PINNED_REFS + re-sync in the same PR — see
-        # LIBRARY_AUTHORING.md § 5d.
+        # LIBRARY_PUBLISH.md § 5d.
         run: scripts/sync-fixtures.sh --check
 
   fixtures-unreleased:
@@ -1417,6 +1435,22 @@ jobs:
         # surface as GitHub warning annotations, never block the PR.  Standard
         # + baseline ratchet + cleanup workflow: doc/claude/DOC_QUALITY.md § Check.
         run: scripts/lint_comments.sh --check
+
+  # A contract doc states what holds now; its history goes to `<doc>-history.md` (DOC_QUALITY
+  # § Maintainer docs 4).  The rule is a judgement, so it is not a merge gate (RELEASE.md
+  # § 5b): this job only turns RED when a PR adds a timeline finding — a date, a hash or a
+  # status word in a contract doc — so the regrowth is seen on the PR that brings it rather
+  # than found at release.  Not a required check; `advisory-failures.yml` files it as an issue.
+  doc-timeline:
+    name: documentation timeline (ubuntu, advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: No new date, hash or status word in a contract doc
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 scripts/doc_lint.py --since FETCH_HEAD --changed --fail-on timeline
 
   # @PLAN53 Wave 2 — the per-PR ASan gate.  ASan is cheap enough (~few min,
   # ubuntu-only, parallel under the windows `Test` long pole) to gate every PR,

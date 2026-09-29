@@ -3,8 +3,8 @@ name: split-file
 description: >-
   Split one over-bar source file in the loft repo into files that each hold ONE
   subject, or carve the small subjects out of a file that is mostly one. Use it for the
-  release checklist's M-file-split row (the pick from `make file-sizes ARGS=--pick`,
-  twice a month on the release cadence), and when asked to "split", "break up" or
+  release checklist's M-file-split row (the pick from `make file-sizes ARGS="--pick 2"`,
+  one or two files per monthly release), and when asked to "split", "break up" or
   "carve out" a file. File size is never limited per PR — this is release work. The result is always a PURE MOVE in its own
   PR: no signature, behaviour or comment changes. Not for refactoring — a long function
   found on the way is split only if the split is itself a move; otherwise it keeps or
@@ -73,18 +73,24 @@ chapter, not a defect.
 
 ## Prove it
 
+`<base>` is the commit the split started from.
+
 ```bash
-git diff -M --color-moved=dimmed-zebra --stat origin/main    # should read as moves
-git diff -M origin/main | grep -cE '^[+-][^+-]'               # non-move lines: a handful (mod lines, headers) at most
-make ci                                                       # green, both clippy legs
-make file-sizes ARGS="--all"                                  # the source shrank, no part is over the bar
+git diff -M --color-moved=dimmed-zebra <base>   # read it: moved lines dim, the rest stand out
+# non-move lines — a line removed with no identical added twin, or the reverse (indent ignored):
+diff <(git diff -U0 <base> | grep '^-[^-]' | cut -c2- | sed 's/^[[:space:]]*//' | sort) \
+     <(git diff -U0 <base> | grep '^+[^+]' | cut -c2- | sed 's/^[[:space:]]*//' | sort) | grep -c '^[<>]'
+scripts/ci-run.sh start                         # the full gate, both clippy legs
+make file-sizes ARGS="--all"                    # the source shrank, no part is over the bar
 ```
 
-If the non-move count is more than the `mod` lines and part headers account for, something
-changed that should not have; find it and revert it.
+A plain `grep -c '^[+-]'` over the diff counts every moved line twice and says nothing.  If
+the non-move count is more than the `mod` lines and part headers account for, something
+changed that should not have; find it and undo it with the inverse edit.
 
 ## The PR
 
 Title `split <file> into N parts` or `carve <subject> out of <file>`; body is the parts and
-one line each on what they hold.  Nothing else in the PR.  Tick `M-file-split` with the
-PR link and the pick's commit.
+one line each on what they hold.  Nothing else in the PR.  Tick the row with the PR link
+and the pick's commit:
+`scripts/release-checklist.py --done M-file-split --note "<PR link>, pick at <sha>"`.

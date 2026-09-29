@@ -27,7 +27,7 @@
 <p><code>arguments</code> is GNU-style command-line parsing: you declare what your program accepts, hand it <code>argv</code>, and then ask. It understands <code>--name value</code>, <code>--name=value</code>, <code>-n value</code>, glued <code>-nvalue</code>, bundled <code>-abc</code>, unambiguous prefix abbreviation (<code>--verb</code> for <code>--verbose</code>), <code>--</code> to end option parsing, and options interspersed with positionals.</p>
 <p>It is not a subcommand framework — there is no <code>git commit</code>-shaped dispatch — and it does not read the environment, a config file or a completion script. It parses one <code>argv</code> and answers questions about it.</p>
 <p>Three steps, always in this order: <strong>declare, parse, query.</strong> Declaring after parsing is not an error and simply comes too late.</p>
-<pre><code><span class="kw">use</span> arguments;</code></pre>
+<pre><code><span class="kw">use</span> arguments::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   a = arguments::<span class="fn-call">create</span>(<span class="st">"greet"</span>, <span class="st">"1.2"</span>, <span class="st">"Greet somebody"</span>);
   a.<span class="fn-call">flag</span>(<span class="st">"v"</span>, <span class="st">"verbose"</span>, <span class="st">"Say more"</span>);

@@ -30,7 +30,7 @@ fn api_path_form_prints_public_surface() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "loft api failed: {text}");
     assert!(
-        text.contains("public API surface") && text.contains("use imaging;"),
+        text.contains("public API surface") && text.contains("use imaging::*;"),
         "missing stub header: {text}"
     );
     assert!(text.contains("pub fn "), "no pub signatures: {text}");

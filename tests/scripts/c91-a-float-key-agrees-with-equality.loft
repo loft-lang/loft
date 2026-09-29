@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq-Key` — A FLOAT KEY AGREES WITH `==`.  Two keys are one entry of a keyed
+// collection exactly when `==` answers true for them, and `0.0 == -0.0` is true.  The key
+// comparator ordered by `total_cmp`, which puts `-0.0` before `0.0`, so a `hash`, `sorted` or
+// `index` keyed on a `float` or `single` held them as TWO entries (deviation D-op-22), while
+// every other question about the two answered that they are equal.
+//
+// Every expected value is worked out by hand: a second insert under an equal key replaces the
+// first (last write wins, as for an integer key), so the length is 1 and the value is the
+// second one's; a lookup by either zero finds it; `1.0` and `-1.0` stay two keys.
+//
+// @falsified-at: a57dfed9d — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native
+//   exit 1 -> 0, native 10 assertion failures -> 0.
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.
+//   Score it again with `scripts/falsify.sh <this file> a57dfed9d`.
+
+struct F { k: float, v: integer }
+struct S { k: single, v: integer }
+
+fn test_hash_on_float() {
+  h: hash<F[k]> = [F { k: 0.0, v: 1 }];
+  h += [F { k: -0.0, v: 2 }];
+  assert(len(h) == 1, "0.0 and -0.0 are one key");
+  assert(h[0.0].v == 2, "the second insert replaced the first");
+  assert(h[-0.0].v == 2, "and either zero finds it");
+  h += [F { k: 1.0, v: 3 }, F { k: -1.0, v: 4 }];
+  assert(len(h) == 3, "1.0 and -1.0 stay two keys");
+}
+
+fn test_sorted_on_float() {
+  s: sorted<F[k]> = [F { k: -0.0, v: 1 }];
+  s += [F { k: 0.0, v: 2 }, F { k: -1.0, v: 3 }, F { k: 1.0, v: 4 }];
+  assert(len(s) == 3, "0.0 and -0.0 are one key");
+  assert(s[0.0].v == 2, "the second insert replaced the first");
+  order = "";
+  for e in s {
+    order += "{e.v},";
+  }
+  assert(order == "3,2,4,", "ascending: -1, 0, 1 — got {order}");
+}
+
+fn test_index_on_float() {
+  i: index<F[k]> = [F { k: 0.0, v: 1 }];
+  i += [F { k: -0.0, v: 2 }];
+  assert(len(i) == 1, "0.0 and -0.0 are one key");
+  assert(i[-0.0].v == 2, "the second insert replaced the first");
+}
+
+fn test_hash_on_single() {
+  h: hash<S[k]> = [S { k: 0.0f, v: 1 }];
+  h += [S { k: -0.0f, v: 2 }];
+  assert(len(h) == 1, "0.0f and -0.0f are one key");
+  assert(h[0.0f].v == 2, "the second insert replaced the first");
+}
+
+fn test_sorted_on_single() {
+  s: sorted<S[k]> = [S { k: 0.0f, v: 1 }];
+  s += [S { k: -0.0f, v: 2 }, S { k: 2.0f, v: 3 }];
+  assert(len(s) == 2, "0.0f and -0.0f are one key");
+  assert(s[-0.0f].v == 2, "the second insert replaced the first");
+}

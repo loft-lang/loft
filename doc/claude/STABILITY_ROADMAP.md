@@ -95,6 +95,96 @@ one bar seen from two sides.
 | release gate (`release-gate.yml`) | green | never green in three runs; 2026.9.0 shipped on hand-run substitutes |
 | shipped routines vs Rust twin (`make perf-portal`) | median 2×, none over 3× | median 2.80×, 73 of 162 over 3× |
 
+**Re-read (2026-09-29), one day on — the same meters, measured again.**  Asked by the
+owner as a re-evaluation; the verdict does not move, three rows do, and one row turns out
+to have been failing silently.
+
+| meter | stable when | measured 2026-09-29 | moved |
+|---|---|---|---|
+| `contract:strained` share of judged fixes | 0 for two weeks | 21 of 147 closes in the seven days to this date (14 %) | 16 % over 60 days → 14 % this week |
+| owner rulings asked for | 0 | 2 this week (C129, C130), both *a rule that does not exist yet* — the kind that may reach the owner; 0 of the process-defect kind | first count |
+| the consumer gate | green two weeks running | **red 2026-09-27 and 2026-09-28, `dryopea` only (3 of 4 jobs green)**: the interpreted suite hits the 600 s watchdog in `loot_rate` (`wallet.loft:289`) and again during the parse of `tests/23_k1_composition.loft`, then SIGABRT — twenty minutes both nights, so deterministic; **no issue tracks it** | red, and untracked |
+| `silent-wrong` open on main | 0 | 0 (loft#1710 closed in the #1730 join) | 1 → 0 |
+| rule coverage (`make rule-coverage`) | 70 % / 40 % floors | 73.9 % annotated / 57.7 % guarded over 395 rules | 73.4 / 57.6 → up |
+| release gate (`release-gate.yml`) | green | last run 2026-09-08, red; not dispatched since | unmoved |
+| shipped routines vs Rust twin (`make perf-portal`) | median 2×, none over 3× | median 2.80×, 73 of 162 over 3× (portal of 2026-09-27, `7df5a4f4b`) | not re-measured |
+| open deviations (`rule_tags.py registers`) | 0 that block a tag | 3: `D-op-1`, `D-op-2` (definitional, never resolvable in a release) and `D-perf-1` (loft#1570) | 6 → 3: D-bind-38/39/44 and D-heap-8/9 closed by #1715–#1729 |
+| the tracker | — (not a meter) | 4 open, 0 pick-up work: 3 `fixed-pending-merge` (one parser message, two `ci-advisory` regressions on main's 70079f138 — the browser `make game` and the pinned lib fixtures), 1 `status:planned` | — |
+
+**Trend read (2026-09-29) — the same meters as ten weekly points, not one.**  Asked by
+the owner: *are we reaching language stability?*  The tracker by week filed (`created:`
+queries), the trailers on `main`'s merge commits by week (the `contract:` meter as
+`make bug-review` § 5 reads it), and the tree at each week's end.  Labels begin in the
+week of 08-17, `hit-by:` in the week of 08-31; the last row is two days.
+
+| week of | issues filed | `silent-wrong` (share) | not found by loft | `regression` | strained / settled (share) | merges | fixes referenced | guard files | rules defined |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 08-03 | 86 | — | — | — | — | 11 | 80 | 636 | 233 |
+| 08-10 | 105 | — | — | — | — | 8 | 103 | 740 | 240 |
+| 08-17 | 119 | 26 (22 %) | 50 | — | — | 11 | 119 | 841 | 244 |
+| 08-24 | 140 | 52 (37 %) | — | — | 8 / 60 (12 %) | 9 | 108 | 961 | 259 |
+| 08-31 | 166 | 80 (48 %) | 4 | 2 | 29 / 158 (16 %) | 9 | 166 | 1206 | 277 |
+| 09-07 | 114 | 55 (48 %) | 5 | 0 | 20 / 142 (12 %) | 7 | 109 | 1371 | 321 |
+| 09-14 | 28 | 10 (36 %) | 3 | 0 | 13 / 42 (24 %) | 4 | 23 | 1475 | 349 |
+| 09-21 | 138 | 73 (53 %) | 9 | 2 | 54 / 236 (19 %) | 14 | 136 | 1789 | 388 |
+| 09-28 † | 27 | 11 (41 %) | 0 | 3 | 5 / 20 (20 %) | 2 | 20 | 1835 | 390 |
+
+Beside the table: open deviations 6 → 3 in the last week (two of the three definitional);
+`silent-wrong` open on main 0; the consumer nightly red on every night it has existed
+(five, since 09-24); the release gate never green (three runs, last 09-08); `main`'s own
+push CI green on 7 of its last 60 runs, a figure that counts the advisory jobs and so says
+only that the advisory surface has never been steadily green.
+
+**What the series say.**  Two things are moving in opposite directions, and "stable" is
+the second one.
+
+- *The contract is converging.*  Rules defined +72 % in ten weeks and +41 in the last two;
+  guard files ×3.3; the deviation registers at three with one resolvable; nothing
+  `silent-wrong` open on main; regressions two or three a week and mostly CI-advisory
+  shape; consumer-found issues in single digits since the consumers went quiet.  That is
+  coverage, and it is what the walk is for.
+- *Discovery is not converging.*  The week's yield tracks the week's effort — 166 with nine
+  merges, 28 with four, 138 with fourteen — and the `silent-wrong` share of what is found
+  is RISING (22 % → 53 %), which is the walk reaching the cells the freeze will bind, not a
+  language running out of wrong answers.  And the `contract:strained` share, the one meter
+  that measures whether a fix still moves a rule or a surface, reads 12 → 16 → 12 → 24 →
+  19 → 20 %: flat to rising over six weeks, against a target of 0 for two consecutive
+  weeks.  One fix in five still changes what the language promises.
+
+**Verdict.**  Not reaching stability yet, on the evidence; reaching it on the path.  The
+meters that will call it stable are the strained share and the consumer gate, and neither
+has begun to fall — the first because the walk is still in the chapters that yield (the
+owner's October is `heap.md`, the least-walked core chapter), the second because it has
+never been green.  The shape to expect if the path is right: `silent-wrong` per walked
+week falling chapter by chapter once the core chapters are exhausted, and the strained
+share falling with it, since a rule already written is a fix that settles.  The shape that
+would say the path is wrong: the strained share still at 20 % after `heap.md` closes, which
+would mean the rules are being written to match the code after all.  The December read is
+where that is decided; nothing in these ten weeks decides it earlier.
+
+**What the day moved.**  The join to main (#1730) closed five of the six deviations that
+blocked the 2026.10.0 tag and the one open `silent-wrong`; the walk's yield is now hygiene
+gates on new files rather than wrong answers (this branch's own day: a store in condition
+position refused on both backends, a `default/` that does not match its binary refused at
+load, and [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
+with [@PLN178](plans/178-store-else.md) as the language's answer to a dropped write —
+each a refusal or a rule, none a fix to a wrong answer).  Two advisory CI regressions
+appeared on main the same morning and were fixed within two hours; that is the cadence
+the meters want, and it is the ONLY meter that read well two days running.
+
+**What it changes — one priority, and it is the consumer gate.**  The read of 2026-09-28
+recorded the consumers as dormant *by design* and the gate as the instrument that sees loft
+moving under them.  The instrument has been red for a week with nothing on the tracker,
+which is the meter failing in the one way a meter must not: silently.  So the first item
+is not a rule walk — it is to reproduce `dryopea`'s interpreted `loot_rate` on main from a
+scratch copy under `LOFT_MAX_OPS` (a count tells a hang from a long run, which a 600 s
+watchdog cannot), file it with `hit-by:dryopea` or fix it in the session, and make the
+consumer nightly file its own issue the way `advisory-failures.yml` already does for CI —
+a red that files nothing is the shape this read caught.  Second, with the deviations at
+three and two of them definitional, **dispatch `release-gate.yml` against main once**: it
+has not run in three weeks, and its verdict is the only thing that turns "the tag is not
+blocked" from a register count into evidence.  Nothing else in the order above moves.
+
 **What the read says is working.** The tracker took 552 issues in the 30 days to this
 date and closed 559; 522 of them were found by loft's own rule-led walk, 259 were
 `silent-wrong`, 191 `sev:high`.  That is the walk reaching cells no consumer program
@@ -121,7 +211,7 @@ warm native run 23× fewer) and is gated by the allocation ratchet.
   the local `make ci` (`make native-ratio-gate` runs it alone), kept out of ci.yml because a
   shared runner's timing is noise.  The oracle's bars still sit at 5–8 against the stated
   ceiling of 3: **the ratchet is what is left**, one row at a time as its ratio falls.
-- *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-1)
+- *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-2)
   block the 2026.10.0 tag, and `release.yml`'s docs job has failed on every release
   since 2026.7.2.  **Get `release-gate.yml` green once**; a language that cannot pass its
   own release gate is not operationally stable whatever the bug meters say.
@@ -512,7 +602,7 @@ either conclusion.
    (caught + closed 2 real bugs in its first five minutes), `LOFT_POISON=1 cargo test`
    fully green (24 latent memory bugs fixed across the poison campaign), and the
    debug-assertions calibration run
-   ([DEBUG.md](DEBUG.md#the-debug-assertions-calibration-run-target-da)).  The residue
+   ([DEBUG.md](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da)).  The residue
    is enumerated, not anecdotal: the open DA cells + unfuzzed axes in
    [plans/85 fuzz-proof-gate.md](plans/85-store-lifetime-retirement/fuzz-proof-gate.md).
    **Build-order dependency — RESOLVED.** Gate 1 was blocked by gate 2: the ownership invariant

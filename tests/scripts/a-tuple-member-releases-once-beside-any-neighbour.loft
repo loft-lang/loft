@@ -149,7 +149,7 @@ fn c_vector_beside() { s = nb_mk(151); w = "wx"; v: vector<integer> = [7, 8]; t 
 // move the member positions without moving the dep list.
 fn c_scalars_beside() { s = nb_mk(161); w = "wx"; f = 1.5; b = true; t = (s, w, f, b); u = t; note("alive{u.0.id}{u.3}"); }
 // A NESTED tuple member whose own member is NULLABLE, beside the text — the two axes that each
-// closed a shape of `heap.md` D-heap-1 on their own, crossed.
+// closed a shape of `heap-history.md` D-heap-1 on their own, crossed.
 fn c_nested_nullable() { s = nb_mk(171); w = "wx"; h = nb_mk(172); inner: (NbH?, text) = (h, w); t = (s, w, inner); u = t; note("alive{u.0.id}{u.2.0.id ?? 0}"); }
 // CONTROL — the tuple comes back from a CALL rather than from a literal in this frame.  Its
 // members' backings are the callee's, and the return buffer's own release is what covers them,

@@ -27,7 +27,7 @@
 // served from port 18083 connects ws://localhost:18083/ws back to this
 // same server.
 
-use server;
+use server::*;
 
 // Leaf helpers FIRST so @P281 (pass-1 fn return-type inference) doesn't
 // trip the typer when callers are defined above them.

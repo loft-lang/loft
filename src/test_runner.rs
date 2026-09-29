@@ -1593,7 +1593,7 @@ pub(crate) fn run_tests(
                     let gen_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut buf: Vec<u8> = Vec::new();
                         let mut out = generation::Output::new(&native_data, &native_db);
-                        // Host-native backend: C-ABI cdylib link (NATIVE.md § Resolution).
+                        // Host-native backend: C-ABI cdylib link (NATIVE_ARTIFACT_IDENTITY.md § Resolution).
                         out.native_cabi = native_utils::native_cabi_enabled();
                         // #621 — when this harness supplies the crate's `main`
                         // below, suppress the generator's own bootstrap.

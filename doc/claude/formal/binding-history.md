@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/binding-history.md — the deviation register for [binding.md](binding.md)
 
 > **The rules are next door.**  [binding.md](binding.md) states what must always be true of the
@@ -1268,3 +1269,924 @@ refusal names it.
 
 **0 open** — D-bind-11 CLOSED 2026-09-03 (a `&(τ, …)` with a heap element is a reference to the `__tuple<…>` record; it had read: `&(τ, …)` admits only SCALAR elements, against B-Ref-Alias/B-Ref-Uniform) and D-bind-16 CLOSED the same day (a join binds every arm a plain bind would copy through its own temp, loft#1321); (the D-bind-11 entry read: — the two backends represent a reference tuple differently and `text` is the first element where that shows; loft#1006) — **B-Ref-AnnotationOnly is now total** (D-bind-10, 2026-08-09): a `&` that was the LAST operand of an expression (`b = 1 + &a`, `b += &a`, a block-final `1 + &a`, `S { x: &a }`) used to compile, because the guard peeked only the token AFTER the operand; `B-Ref-StoredRef` records the one legal non-binding position, a `reference<τ>` field. **B-Ref-Reshape** landed (@PLN130 F9, loft#779): disturbing a container while a `&` reference into it is LIVE is a compile error, for all three of `B-Disturb`'s events (removal, re-key, container reassignment). It is the first application of C79's 2026-08-05 *decline-what-we-cannot-implement-safely* revisit, whose reason is forward compatibility: an error can be dropped later, a silently different semantics cannot. Also closed: `&` is a TYPE ANNOTATION (`&τ` = `Type::RefVar`), @PLN87 ladder L1–L6 + D-bind-7 closed; the @PLN40 two-level `const` model (Const-Bind/Value/…) shipped, and D-const-1 (enum-variant const) closed via @PLN102 K1 — enforced identically to struct fields, both backends
 
+## Deviations carried by binding.md until 2026-09-29
+
+Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
+
+* **D-bind-68** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1717)* — `(B-Scope)`: a `for f in
+  x#fields` walk is unrolled at compile time and created its variable BY NAME, so it missed
+  loft#915's per-loop binding twice over.  Pass 1 leaves the name naming the LAST walk's
+  variable, so pass 2's first of two same-name walks took the second's slot; the body's pass-1
+  deps then named a binding pass 2 never set, and `--native` declared it inside one field's
+  block and freed it outside (`cannot find value var_f`) while `--interpret` ran.  And the walk
+  never registered its variable as a loop's (it ends its loop before the body, which has no
+  run-time loop for a `break`), so a later `for f` over anything was refused as shadowing "a
+  local named 'f'".  **Fix.**  `Parser::create_loop_var`, keyed per loop, and
+  `Variables::served_as_loop_var`, which records the fact without making a loop current.  Guards
+  `tests/scripts/1717-two-fields-walks-spelling-one-name-are-two-bindings.loft` (native),
+  `tests/scripts/1717b-a-loop-beside-a-fields-walk-may-reuse-its-name.loft`.
+
+* **D-bind-67** *(opened 2026-09-27, CLOSED 2026-09-27; loft#1700)* — `(B-Scope)`: a bind after
+  the block that bound its name had ended was refused when it had another type (`if c { w = 1 }
+  w = "x"` — *"cannot change type from integer to text"*), because the parser keeps one
+  variable per name and the new binding inherited the ended one's type.  The rule already
+  called it a new binding; whether it may retype was left open until the owner ruled it may.
+  **Fix.**  Where the ended binding would refuse the new type (loft#1145's
+  `retype_would_be_refused`, so a program that compiled is unchanged), the bind gets a
+  variable of its own — named by the statement's position, which both passes agree on — and
+  the spelling names it until the enclosing block ends.  Deciding "ended" on pass 1 as well
+  needed the binding's block recorded on both passes (the innermost block ordinal, which
+  allocates nothing); a body local rebound in ANOTHER loop stays loft#1145's split, asked by
+  loop ordinal because loop numbers differ between the passes; a `&` link bind keeps its own
+  refusals.  `retype_would_be_refused` now also answers a vector against a scalar, a text or a
+  record, which every arm of `change_var_type` refuses.  Guard
+  `tests/scripts/1700-a-bind-after-its-block-ended-is-a-new-binding-at-any-type.loft`.
+
+* **D-bind-66** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`, the silent half of
+  D-bind-65: a variant's field bound inside a SUB-pattern — a slice element (`[Vn { rs }]`), a
+  slice tail, a tuple element, a struct field (`S { w: Vn { rs } }`) — pointed the name at its
+  binding, and the list recording what the name meant before was dropped at all five sites.  So
+  after the `match` an outer `rs` read the capture (`4` where the program holds `100`), on both
+  backends with no diagnostic, and a later local of that name was refused naming `_mv_rs_1`.
+  Only the top-level enum arm restored its names.  **Fix.**  Each site hands its list to the
+  arm's frame, which `end_pattern_arm` restores.  Alongside it, `pattern_variant_enum` maps a
+  value typed as one VARIANT to its enum, as the top-level dispatch does: `w = Vn { rs: 4 }`
+  in a tuple was refused as "Vn, which has no variants".  Guard
+  `tests/scripts/a-sub-pattern-capture-leaves-the-outer-name-alone.loft`.
+
+* **D-bind-65** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`: a pattern's names were
+  bound BY NAME (`add_variable`) at every site but the struct-enum field and the `is` capture —
+  slice elements (`[e, ..]`), `..rest`, repetitions, bare names, `v @ pat`, tuple elements and
+  plain-struct fields.  So a later `match` binding the same name reused the first arm's
+  variable, and a different type was refused as a type change (`match a { [e, ..] => … }` then
+  `match b { [e, ..] => … }` over `vector<Pt>` and `vector<text>`); a local of that name after
+  the `match` was refused the same way; and a capture spelled like a PARAMETER bound into the
+  parameter.  **Fix.**  One home, `Parser::pattern_binding`: a new binding per occurrence, as
+  a `for` loop's variable is (loft#915) — own name `e#N`, reported as `e` — with the spelling
+  pointed at it for the arm.  The arrow seals the arm's names and the end of its body
+  restores what they named before (`end_pattern_arm`), so frames nest with nested `match`es.
+  The `never-read` lint now reports a `name#N` binding under its spelling, which also covers a
+  second `for i` loop it used to skip.  Guard
+  `tests/scripts/a-patterns-names-end-with-its-arm.loft`.
+
+* **D-bind-64** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1690)* — `(B-Copy)`: a vector bind
+  written into the arms of a `??` copies through `lower_vec_copy_bind`, which minted the element
+  temp `_elm_N` on the SECOND parser pass only for a plain-variable copy (its `in_arm` leg forces
+  the allocation there).  Every later element temp in the function shifted between the passes,
+  and a valid program was refused naming one: *"Variable '_elm_3' cannot change type …"*.
+  **Fix.**  The `in_arm` copy mints on pass 1 too — the one leg of the allocation test that
+  answers the same on both passes.  Guard
+  `tests/scripts/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.loft`.
+
+* **D-bind-63** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1686)* — `(B-Copy)` / heap.md
+  `(H-Copy)`: a local bound from a top-level VECTOR constant did not copy.  The constant is
+  pre-built once in the write-locked constant store and its use site answers a view of it
+  (`OpConstRef`); the bind kept the view, so the first write through the local reached the
+  lock — an internal panic, "Write to read-only store … locked by: Store::lock", on both
+  backends and in every spelling (`v = NAMES; v += […]`, an index write, a `??` or `if` arm,
+  a typed local).  The corpus never wrote through such a bind (the `x ?? GLOBAL` crossing:
+  two files).  **Fix.**  `Parser::classify_vec_bind` gives a constant read the bare-variable
+  verdict, `CopyVar`, so the bind takes `lower_vec_copy_bind`'s copy on every route (an arm
+  reaches the same classifier); read positions — the index, the length, the iteration —
+  keep the view.  The one route that is not a bind, a callee writing through a PARAMETER
+  handed the constant, was left a runtime fault here; `(R-Const)` makes it `(B-Copy)`'s copy
+  too, and C80 rules the halt out — rewrites.md `D-rw-6` (loft#1729).  The constant store
+  stays locked as a user lock (`Store::lock_constant`, both backends), `(H-WriteLocked)`'s
+  backstop for a route no rule copies.  Guard
+  `tests/scripts/1686-a-local-bound-from-a-vector-constant-copies-it.loft`; the parameter
+  route `tests/exit_codes.rs` `a_constant_handed_to_a_writing_parameter_is_copied_for_the_call`.
+
+* **D-bind-62** *(opened 2026-09-25, CLOSED 2026-09-25; loft#1679)* — `(B-Scope)` at the CALL
+  spelling, both halves of it.  The rule says a bind after the `}` starts a NEW binding and a
+  read of the ended one is refused; a fn-ref local got neither.  With a rebind,
+  `for f in fs { … } f = two; f(1)` called the ENDED binding — `one` where that binding was
+  still live (an `if` arm: a silently wrong FUNCTION, answering 101 where the program spells
+  201) and the exhausted sentinel, printed `null`, where it was a loop variable, on
+  `--interpret` only.  With no rebind, `for f in fs { … } f(1)` was not refused at all, on both
+  backends, where `for i in 0..3 { } i` is.  **Where (measured).**  One question — is a fn-ref
+  callee name a READ of that variable? — answered at two places, and each missed it.  The scopes
+  pass gives the second binding its own slot (`scan_set`'s `copy_variable`) and remaps every
+  read through `var_mapping`: `Var`, `TupleGet`, `TuplePut`, `FnRef`, `FnRefDnr` — @PLAN53
+  cluster 2 extended that list once and stopped one member short of `CallRef`, whose callee
+  index `scan` copied through verbatim.  And the parser's two indirect-call sites (one per
+  ARITY) resolve the name with `self.vars.var(name)` instead of through the bare-name read that
+  asks `check_block_scope`, so `(B-Scope)`'s refusal had a hole exactly at the one kind of local
+  a program can only use by calling.  `--native` ran the first half because it names its locals
+  `var_<name>`: both bindings are one Rust local there and the rebind shadows it — right by
+  accident, which is why one backend answered and the other did not.  **Closed** by remapping
+  the `CallRef` arm and by asking `check_block_scope` at both call sites (it is `pub(crate)`
+  now, and its doc names itself the one home for the question).  Guards:
+  `tests/scripts/1679-a-call-through-a-rebound-name-reaches-the-new-binding.loft` (11 cells: what
+  ended the binding, the later value, arity 0 and 1, integer and text return, the call in a
+  nested block / a later loop / a comprehension, plus the reads that were never wrong) and
+  `tests/scripts/1679b-a-call-through-a-name-whose-block-has-ended-is-refused.loft` (the refusal
+  half; `1600b`/`1600c` remain the homes of the READ spelling, and neither called the name).
+
+* **D-bind-61** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-View)` for a KEYED
+  payload binding.  `match k { Ky { k_look } => { k = Ky { … }; k_look += [r]; len(k_look) } }`
+  answered a wrong length on the interpreter and panicked `--native` with *"Store access out of
+  bounds"*, in a linked group or out of one: the binding kept naming a store its subject no
+  longer owned.  **Where (measured).**  The disturbance walk opened a view only for a binding
+  typed `Reference | Enum | Vector`, so a keyed binding was never condemned, and the materialise
+  arm had no keyed copy.  **Closed** for the PAYLOAD binding (`scopes::keyed_payload_view`: a
+  keyed `_mv_` binding the parser marked never-free) — the walk opens it, and the materialise
+  copies it at the bind through `OpReplaceKeyed` into a buffer, the keyed twin of the vector
+  arm's `OpReplaceVector`.  Asked of the payload binding only, because widening the walk's type
+  list alone was measured unsound: a keyed projection bound off an owned base already copies
+  (`(B-View-Base)`).  Guard: cells a6 and b2 of
+  `tests/scripts/1664-a-group-member-payload-binding-materialises-like-any-view.loft`.
+
+* **D-bind-60** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-Ref-Reshape)` for a
+  `&` link to a whole COLLECTION.  `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an
+  advice, where the record spelling (`p = &o.r`) and the scalar one (`p = &o.r.n`, D-bind-56 the
+  day before) of the same program are refused — and this rule is explicit that the copy is the
+  one answer a `&` may not be given: *"loft will not quietly downgrade the reference to a
+  copy"*.  **Where (measured).**  A FOURTH spelling of *"did the author write `&`?"*.  The
+  refusal gate asked `is_amp_link` (the struct projection the parser leaves unlowered) and
+  `is_place_link` (the `RefVar` local a scalar or text place lowers to); a collection link is
+  neither and carries `is_amp_container_link`, which the MATERIALISE walk already read — to
+  spare the link from its own container's growth — while the REFUSAL walk beside it did not.
+  The parser's own note beside `amp_container_link` had written the question down as open and
+  named this rule's answer to it.  **Closed** by the third disjunct at the refusal gate.  A
+  PLAIN collection bind off a borrowed base is deliberately NOT in the set: `(B-View)` says that
+  one materialises, which is what the marker exists to distinguish.  Radius, measured: TWO
+  cells tree-wide and ZERO published libraries (42/42 against a current index).  One is a
+  control that pinned the materialise, moved to
+  `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error` exactly as the
+  reference-INTO cell in the same file was; the other is a `@PLN157` bytecode-comparison cell
+  under `doc/claude/plans/`, found by a sibling's gate after the first measurement said "one"
+  having walked `tests/scripts` alone.  A refusal's radius is every `.loft` in the tree, and
+  `doc/` holds 1376 of them.  The three events that do NOT disturb a reference TO a container are
+  unchanged.  It is also what makes [collections.md](collections.md)'s `D-col-6` answerable for
+  this spelling: a link that can never become a copy still names its origin field at every
+  write.
+
+* **D-bind-59** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1665)* — `(B-View)` for a `text`
+  PAYLOAD binding.  A `text` binding holds a copy of the characters, and #673 makes a write
+  through it mean the field write by MIRRORING the copy back into the subject after each write.
+  The mirror was unconditional, so `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`
+  wrote `"abx"` into the NEW `e`, on both backends and with no advice line, where a record
+  payload binding in the same program materialises and says so.  **Where (measured).**  The
+  disturbance walk opened a view only for a binding typed `Reference | Enum | Vector` (or a
+  place link), and the mirror was a parse-time statement the scope pass could not tell from an
+  author's own `e.v = v`.  **Closed** at the walk, which is the home of the question: a mirrored
+  binding is recorded on the `Function` (`text_payload_views`), the walk opens it as a view of
+  the place its `OpGetText` read names (`scopes::text_payload_place`), and the mirror is emitted
+  inside a `text_mirror` block, which the scan drops for a binding the walk condemned.  The
+  binding keeps the copy taken at the bind, which is what materialising a text view means, and
+  the advice is the record view's.  A per-binding verdict, loops included — a parser-linear
+  *"reassigned since the bind"* flag would have answered wrongly through a back edge (the m5
+  cell).  The same change makes every materialise advice name a payload binding as the author
+  wrote it (`v`, not `_mv_v_1`), through one helper, `variables::author_spelling`.  Guard
+  `tests/scripts/1665-a-text-payload-binding-stops-writing-into-a-reassigned-subject.loft`, 7
+  cells, falsified at `a75a4d1ed` on both backends.
+
+* **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
+  `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
+  (`v[1]` stayed 22), `t = &v[1].s` read `null` after a growth, and `c = &v[1].n` crashed
+  `--native` on a misaligned store address — on both backends, where the same program with a
+  record link is refused.  **Where (measured).**  The view walk opened a view only for a binding
+  typed `Reference | Enum | Vector`, and the refusal read `is_amp_link`, a marker set only where
+  the parser leaves a struct projection unlowered.  A scalar or text place is LOWERED to a
+  `RefVar` local (@PLN167 A3, B1, C1), so it reached neither.  And one step further in: the walk
+  took every `Set(c, …)` for a re-binding, while on a scalar link `c = 99` writes the place — so
+  a write after the disturbance cleared the shake it should have reported.  **Closed** by
+  `scopes::is_place_link` (a non-argument `RefVar` local is a `&` link by construction) at the
+  two readers, and by `scopes::link_set_repoints`, the one re-point-or-write test, now asked by
+  both the walk and the interpreter's `set_var` (it was that function's private arm, D-bind-36).
+  A link to a LOCAL is unchanged: `OpCreateStack` names no container.  Measured: twelve refused
+  cells over integer, `u8`, float and text links, element / element field / record field, and
+  all four events plus a callee's growth, both backends; the controls (dead at the event,
+  another container, re-pointed after it, a link to a local) unchanged.  Guards
+  `tests/scripts/167-a-scalar-or-text-link-refuses-a-disturbance-of-its-container.loft`,
+  `tests/scripts/167-a-scalar-or-text-link-survives-what-does-not-disturb-it.loft`.
+  **R4 of the plan asked whether overwriting a linked text while a borrowed read of it is live
+  dangles** (`for c in t { o.a = … }`): measured no — a text walk binds its source once
+  (`(I-Text)`), both backends under `LOFT_POISON` and `LOFT_STRICT_STORES` — so no clause is
+  owed; the `loop-source-written` warning now reaches a write through the link as it reaches a
+  write to the field.
+
+* **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
+  read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
+  with a borrow dep on the link, so `y` VIEWED the record and `y.n = 9` wrote `z` — where a
+  whole-value bind copies and a plain local source (`y = z`) does.  Both backends agreed.
+  **Where (measured), three places.**  The parser's link peel gave a record read a borrow dep
+  (the `&`-parameter half on purpose, loft#772: without it `w` owned the caller's store — a copy
+  settles that the other way, since `w` then owns the copy and nothing else).  Both emitters'
+  whole-record copy arms asked the SOURCE's shape through `base()`, which does not see through a
+  `&`, so a link source took the plain alias; native also spelled the source `var_<src>`, the
+  pointer rather than the record behind it.  And a NULLABLE destination (`y: S?`) pre-inits its
+  slot before the value runs, but `intervals.rs` gave only the bare `Reference` an early
+  `first_def`, so `y` was handed the slot of the `&S?` link it was about to read — a link frees
+  nothing, so its range ended at that read — and the pre-init zeroed it (interpreter panic).
+  **Closed** by peeling a record link read to an OWNED value, asking `peel_link()` at every copy
+  arm (and rendering native's source through the Var emitter, one `OpBindOrCopy` witness helper
+  on the interpreter), and asking the early-`first_def` test through `base()`.  A program that
+  wrote a `&` record parameter through a plain alias (`w = p; w.n = 9`) no longer writes it, and
+  is told so: the `&` is then unused.  Guard
+  `tests/scripts/a-record-read-through-a-link-is-copied.loft`.  Found while closing D-bind-51.
+
+* **D-bind-51** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
+  bind from a LOCAL link.  `y = e` with `e = &z` kept the link's `&τ` type into the bind, so `y`
+  became a second link: `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`, on both
+  backends; the annotated `y: integer = e` was refused as "cannot change type from integer to
+  &integer"; and a record there panicked the interpreter's allocator and emitted Rust that did not
+  compile.  **Where (measured).**  `parse_assign_op_inner` peels a bare link read to its value
+  type, but asked only of a `&` PARAMETER — its comment took every other `RefVar` source for an
+  explicit `&` bind, which by then has already been lowered to `OpCreateStack` / `OpVarRef` and is
+  no bare `Var`.  **Closed** by peeling a local link's read the same way.  Guard
+  `tests/scripts/a-plain-bind-from-a-link-copies-the-value-it-reads.loft`.  Found while fixing
+  loft#1614.
+
+* **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
+  destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
+  value, and the two-operand spelling does: it is lowered per arm, and an arm's bind is that
+  copy.  `??` is left-associative, so a longer chain hoisted its subject into a `__ncc_N` temp
+  and bound the destination to THAT — and the temp views the operand it chose, by the rule that
+  makes it a borrow (loft#723: freeing it would be a use-after-free).  So the destination shared
+  the chosen operand's store: on the interpreter for a record, on BOTH backends for a vector and
+  for a chain whose first operand is a call.  Silent — the shared store reads right until the
+  operand is rebound, and then the destination reads the new value, or freed memory once both
+  release it.  `(O-NoDiverge)` was broken with it, since `--native` copies a record's temp.
+  **Closed** in the PARSER, by making `??` RIGHT-associative (`grammar.md` (G-Assoc): its RHS
+  parses at its own level, the one place associativity is decided).  `??` is associative as a
+  value — either grouping answers the first present operand, in the same order, short-circuiting
+  the same way — so no program's meaning moves; what moves is the SHAPE.  Right-associated there
+  is no chain subject to hoist: every operand is an ARM of a plain `if`, and an arm's bind is the
+  copy `(B-Copy)` describes, which is exactly why the two-operand spelling was always right.
+  `LOFT_COALESCE_LEFT_ASSOC=1` parses the left-associated form again.
+  A chain the AUTHOR parenthesised — `(x ?? y) ?? d` — still hands the parser a subject that is
+  not a variable, so that one is right-associated in the scopes pass instead
+  (`reassociate_coalesce_chains`, loft#1591's rewrite with its destination gate lifted;
+  `LOFT_NO_COALESCE_REASSOC=1` keeps the gate).  Without it the parenthesised spelling kept the
+  hoisted form and the destination VIEWED the operand — on the interpreter only, so it was a
+  `(O-NoDiverge)` divergence as well (guard cell `c27`).
+  A SECOND defect was in the way, pre-existing and reachable by hand as `b = x ?? (c() ?? d())`:
+  a chain BLOCK as an arm is not a tail a plain bind may take (its tail is the compiler temp),
+  so `sink_set_into_arms` declined the whole branch — and then the chosen VARIABLE's arm beside
+  it recorded no hand-off, so at a droppable type `x`'s record was released from the destination
+  AND from `x`, the second release on freed memory (`M8,R8,D8,D8`; loft2-21 measured this shape
+  on the first cure, and a value cell cannot see it — which is why the guard's droppable cells
+  exist).  Closed with it: the chain block is sunk as a UNIT, the arm binding the join exactly as
+  a statement of its own would, and a chain block handed to the sink as the VALUE declines, since
+  that statement is already what a sunk arm writes.  Guard
+  `tests/scripts/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft`.
+
+* **D-bind-49** *(opened 2026-09-21, CLOSED 2026-09-21; loft#1554)* — the CALL-SITE half of
+  `(B-Ref-Reshape)` read one spelling of one event.  A call handed both a container and a
+  reference into it (`shift(v[2], v)`) was refused only where the callee REMOVES through a bare
+  `&vector` parameter — `removed_params_map`, built from `OpRemoveVector`/`OpRemove` over a `Var`
+  typed `RefVar`.  The rule exempts no spelling (*"A plain PARAMETER is NOT exempt"*), `(B-Disturb)`
+  names four events *"wherever they happen"*, and `calls.md` `F-ParamHeap` states the call-site
+  reach in so many words — so every other shape was a deviation, and a silent one: the program
+  compiled and read or wrote the element that moved, identically on both backends.
+  **Measured**, 14 hazard cells and 9 controls, on the build before the cure: ONE hazard refused
+  (`t = &v[2]; shift(t, v)`, and that by the FRAME half).  The other 13 compiled — a plain
+  `vector` container (a lost write: `33` for `99`), a struct FIELD as the container, the field
+  itself handed in (`shift(b.items[2], b.items)`), a GROWTH of either (`11` for `99`; the issue's
+  `0` once the vector reallocates), a growth two frames down, a `&vector` growth, a `&` element
+  parameter, an element bound earlier from a field, a reference INTO an element
+  (`shift(v[1].inner, v)`), a struct-enum element, a `?`-discharged element, and the `&vector`
+  removal itself once the call sat inside a FORMAT STRING, where the element argument is the
+  nullable read `OpGetVectorNullable` — a second spelling the element test did not know.
+  **Cure:** the call-site half reads `disturbed_params_map` (@PLN164 C3's fact, the one the frame
+  half and the materialise already read), unioned with `removed` so `LOFT_NO_CALLEE_DISTURB=1`
+  keeps the narrower refusal; the argument's place is composed with the callee's
+  (`call_arg_place` · `compose_param_place`), and the element test names places through
+  `value_view_places` (`arg_references_element_in`, `names_element_in`) — a local bound earlier
+  from a field is resolved by its own bindings, an unresolved one is taken to name the container.
+  No new fact and no new predicate.  The message gained the growth form (*"`stash` grows `bag`,
+  and a container that outgrows its allocation moves every element…"*); the removal form is
+  byte-identical.
+  **What keeps it from over-reaching, each a compiling control with a hand-computed answer on
+  both backends:** a SIBLING field's growth (`100`), a callee disturbing ANOTHER container
+  parameter (`94`), a SCALAR read out of an element (`35`), an element of another container
+  (`123`), a callee that only reads, scalar elements, and the index workaround the message names.
+  A call through a FN-REF is the one edge the refusal cannot follow; it compiles and loses the
+  write (`33`), as before.
+  **Blast radius (measured, not predicted):** `loft --check` over the 1628-file corpus names
+  **0** files (the harness proven able to fail on a hazard cell first); over the consumer sources
+  (crawler, dryopea, moros, zero-trust-shared-files, loft-libs-*) every file that parses names 0,
+  and a syntactic scan of all 325 for a call handed an indexed element beside its container or a
+  prefix of it finds ONE site, whose element argument is an integer (`hud.itex[i] ?? 0`).
+  ⚠ **How it stayed open while reading CLOSED.**  This was cured once, on 2026-09-17, and the
+  cure was lost in a JOIN: two streams had each numbered a D-bind-47 the same day, the join kept
+  the other stream's `scopes.rs` and merged the PROSE — so D-bind-48's *"Two shapes the call-site
+  half also missed"* paragraph below and `calls.md` both described a call-site half that read
+  `value_view_places` while the code read `removed`, the six tests were gone, and the issue
+  closed on a `Fixes` trailer with `main` still answering `2 2 0` on its own repro.  Nothing
+  gated the difference: a register entry is prose, and the merged tree's guards were the other
+  stream's.  The check that found it is the cheap one — run the issue's repro on the joined
+  tree — and it belongs to every join that squashes a stream carrying a `Fixes`.
+
+* **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
+  never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states
+  the reach outright — *"The disturbance may be in this frame or in anything the frame CALLS"* —
+  and `(B-Disturb)` states it for all four events: *"an event disturbs WHEREVER IT HAPPENS … at any
+  depth."*  @PLN164 C3 gave that reach to the MATERIALISE walk and not to the refusal.
+  **Measured**, 17 cells, both backends byte-identical.  The purest is all-`&`, with the callee
+  disturbing the very parameter it was handed: `fn vgrow(v: &vector<H>, n) { v += [mk(n)] }` under
+  a live `e = &v[0]` compiled and released one resource TWICE (`M1 M2 R1 D1 D1 D2`).  The droppable
+  population `(H-View-Drop)` owns the same shape without the `&`, and a callee's REMOVAL from a
+  FIELD of a parameter was not refused either — `removed_ref_params` keys on
+  `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so producer 1
+  reached only a parameter named DIRECTLY (`fn drop_last(all: &vector<Box>) { all.remove(2) }`,
+  pinned by `b_ref_reshape_callee_removal_under_local_amp_link_is_error`).  Producer 2 — a call
+  handed BOTH a container and a reference into it, `shift(v[2], v)` — is a separate route with its
+  own message and was never in question here.
+  **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
+  passed, `disturbed` withheld.
+  **Two shapes the call-site half also missed, and the blast radius, measured before landing.**
+  Its element test did not count the nullable element read a FORMAT string passes
+  (`print("{shift(v[2], v)}")` printed the moved element's stale bytes) nor a `?`-discharged one;
+  the test reads the place through `value_view_places` now, and a SIBLING field's growth still
+  compiles.  Over the 1629-file corpus and the consumer sources (crawler, dryopea, moros,
+  zero-trust-shared-files, loft-libs-*) the wider refusal names ONE program —
+  `164-element-place`'s `g27`, written to hand a container and its element in, now called
+  through a fn-ref, which is the one edge the refusal cannot follow.
+  ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
+  `ViewWalk::shake_plain_places`'s doc SAID it works *"over PLAIN views only, leaving every `&`
+  link alone"*, which described its INTENT for the materialise consumer and not what it does.  The
+  code has no `&` test anywhere: `shake_places_keyed` builds its hit list from `same_place &&
+  !spared && !names_container_itself`.  So a link INTO a disturbed container was already shaken and
+  already MATERIALISED — the silent `&`-to-copy downgrade this rule exists to forbid, emitted with
+  the copy-out advice — and what was missing was only a CONSUMER reading that answer.  A comment
+  that states intent where a reader will take it for behaviour is worth more care than a wrong one,
+  because it is believed.  That doc now states what the function does: the shake is followed by a
+  restore keyed by VIEW over `whole_container`, which is `(B-Ref-Alias)`'s in-versus-to distinction
+  and not a `&`-versus-plain one.  The quotation is kept in the PAST tense deliberately — nothing
+  gates a doc that quotes a code comment, since `check_doc_drift.sh` reads plan links, time
+  projections and retired-feature claims, so the next edit of that comment cannot report this line.
+  **Cure:** `reshape_refusals` builds `disturbed_params_map` and threads it into
+  `def_reshape_refusals` → `ViewWalk::run`'s fifth argument.  Two hunks; no new fact and no new
+  predicate.
+  **What keeps it from over-reaching, both measured as controls:** `names_container_itself` still
+  spares a link TO a container, so `157-view-header`'s `grown_between` keeps reading 11 — D-bind-46's
+  in-versus-to distinction does the work — and the gate is unchanged (`amp || drops`), so a
+  NON-droppable plain view across a callee's growth still compiles, still materialises and still
+  says so.  That last cell is the one that decides the unit, and it holds.
+  **Consequence worth stating:** the refusal reads the same `callee_disturb_enabled` switch as the
+  scope pass, so `LOFT_NO_CALLEE_DISTURB=1` restores pre-C3 blindness on BOTH sides at once and is
+  no longer a clean A/B for the materialise alone.  That is the switch's honest meaning — one
+  rule's reach, two consumers — and the halves stay tellable apart at the symptom, a refusal being
+  loud where a materialise is quiet.
+  **Blast radius (measured, not predicted):** corpus A/B over 1591 files, **0 changed** — no
+  program in the tree writes the shape, which is why the corpus could not have caught it and is
+  also why it is not evidence of safety for real code.
+  The message gained a population-dependent joiner: the callee form names the callee's act before
+  the reason, and for a droppable view the growth CAUSES the copy (`so`) where for a `&` link the
+  two are parallel facts (`and`).  With one joiner both read *"would grow `b`, and … and …"*.
+  Found while re-measuring `heap-history.md` D-heap-11, whose own **Boundary** paragraph described this
+  asymmetry incorrectly and is corrected there.
+
+* **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
+  see a GROWTH of a container held in a FIELD, so the rule's answer depended on where the
+  container was stored.  Measured on both backends, four cells varying only the container's home
+  and the disturbance: `v = [...]; c = &v[0]; v.remove(1)` refused, `v += [x]` refused,
+  `b.v.remove(1)` refused — and `c = &b.v[0]; b.v += [x]` **compiled**, materialising the link
+  into a copy with the copy-out advice.  So a `&` was silently downgraded exactly where this rule
+  says REFUSE: a write through the link is lost, and where the element owns a droppable the
+  resource is released TWICE (`M1 M2 R1 D1 D1 D2`, both backends).  `is_amp_link` is not the axis
+  — the identical binding refuses under `remove`.
+  **Where (measured).**  A growth names its container by field NUMBER (`OpNewRecord(b, tp, 1)`)
+  while a view carries a byte OFFSET; `Stores::field_position` is the only converter, and
+  `grown_containers` returns early without a store, leaving every field-qualified growth
+  UNCOLLECTED.  `def_reshape_refusals` ran `ViewWalk::run` with `database: None`, which
+  `binding-history.md` records as deliberate — *"the `&`-refusal path has no store to convert with
+  and keeps the conservative answer, which for a REFUSAL is the safe direction"*.  That is an
+  AVAILABILITY premise, and it no longer holds: the parser owns `pub database: Stores` at
+  `check_reshape_under_reference`, the layouts are registered when each struct is declared, and
+  `field_position` answers `u16::MAX` — *cannot say* — for anything it does not know.  A missed
+  disturbance is still the safe direction; it was not a reason to leave one whole class invisible.
+  **Cure:** the refusal walk is handed the same store the materialise walk has always had.  The
+  callee reach (`disturbed`) stays `None` deliberately — that is @PLN164 C3's separable widening.
+  **Blast radius (measured, not predicted):** one corpus file, this rule's own guard
+  `a-link-to-a-whole-container-survives-that-containers-growth.loft`, whose control cell
+  `a_link_into_the_container_is_unchanged` asserted the unrefused answer in so many words
+  (*"keeps today's answer"*).  It pinned the compiler, not the rule, and is now
+  `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error` — a cell that
+  refuses belongs in the refusal harness, because it takes a whole `.loft` file with it.
+  Found while measuring `heap-history.md` D-heap-11, whose cure reuses this gate.
+
+* **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
+  distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
+  (d[2] ?? -1) + len(d)` read **0** where 11 is right, on both backends, with the copy-out advice
+  rather than silence.  The SAME body with the two appends moved into a CALLEE read 11 — and that
+  half is pinned by `157-view-header`'s `grown_between` — so one program had two meanings
+  depending on which side of a call the append sat on.  A `remove` under the live link behaved
+  the same way, and a write through the link after a growth was lost (`d[0] = 99` left `cv.data[0]`
+  at 1).  **Where (measured).**  `record_target` already draws the distinction the rule needs —
+  *"`pe = &e` names no container while `pw = &w[0]` names `w`"* — but through `base_container_var`,
+  which reaches only a whole VARIABLE.  A link to a container held in a field IS a projection, so
+  it named `(cv, off_data)`: the same place `cv.data[0]` names, the place model carrying one
+  variable and one field OFFSET.  `(B-Disturb)`'s growth ends only the second of those — it moves
+  every ELEMENT, while it merely repoints the field SLOT that a reference TO the container
+  re-reads.  **Closed** by reporting, off the walk that already answers the place
+  (`projection_place_of`, exposed as `use_analysis::view_source_place_indexed`), whether the chain
+  read an element; `ViewWalk` records the place such a binding names DIRECTLY and
+  `names_container_itself` spares it from `Grown` and `Reshaped`.  `Reassigned` still shakes it —
+  that is the one event which leaves the slot itself with nothing to point at, and sparing it
+  would hand out a link to a store the reassignment released.  The DIRECT place is matched, never
+  `resolve_view_root`'s: a binding whose own container is a view resolves to the OUTER container,
+  and growing THAT does move the record holding this binding's slot.
+  Measured on both backends, byte-identical across a 19-cell matrix, clean under `LOFT_POISON`,
+  the interpreter leak gate and the native leak check, and identical under `LOFT_HOIST_VERIFY=1`
+  and `LOFT_NO_VIEW_HOIST=1` — the native header hoist being the one place the cure could have
+  gone wrong on a single backend.
+  ⚠ **The `&` has to be asked for, and the first cut did not ask.**  A plain whole-collection bind
+  copies at PARSE time into its own `__vdb_N` backing — identically off an owned base and off a
+  borrowed PARAMETER — which read as licence to key the mark on the collection TYPE alone.  Off a
+  LOOP VARIABLE it does not copy: `for b in bv { c = b.vecf; b.vecf += [9] }` aliases and
+  materialises today, and `(B-View)` says it must keep doing so, because a plain bind already meant
+  value semantics.  Hence `amp_container_link`, set where `amp_collection_bind` is decided, and NOT
+  a widening of `is_amp_link`, whose readers are struct-shaped (the whole-record write route gates
+  on `Reference`/`Enum`; the re-key refusal and `(B-Ref-Reshape)`'s refusal would decline different
+  programs).
+  Guard `tests/scripts/a-link-to-a-whole-container-survives-that-containers-growth.loft`.
+  ⚠ Two of its cells passed BEFORE the fix and are controls rather than coverage, which matters
+  before either is cited as evidence: a keyed `a = &s.h` across an add, and a nested
+  `d = &o.inner.data` across a growth.  The nested one passes only because `grown_containers`
+  cannot name a nested place at all (its `OpGetField` arm requires the container to be a bare
+  `Var`), so it is a MISSED disturbance rather than a considered answer — it would pass the same
+  way with the cure reverted.
+  **Left open, and it is the same rule's other half:** a collection link is still quietly
+  downgraded where the rules say REFUSE.  `c = &s.h; s = Host{…}` materialises in silence, which
+  `(B-Ref-Reshape)` calls a compile-time error, because that refusal reads `is_amp_link` and a
+  collection bind is not in its population.  Closing it widens which programs the refusal declines
+  and needs its own measurement over the corpus and the published libraries.
+  Found via @PLN164 C3's matrix (loft#1543).  ⚠ That issue's body names
+  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed.
+  Both are live code now — C3 merged in `46aaf2967` — but neither existed when the issue was
+  filed: the body describes a design sketch as though it had shipped.  Date what it claims against
+  that merge rather than reading it as a record of the tree.
+
+* **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
+  value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
+  caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
+  `bump(acct)` with `acct: const Account` wrote the caller's balance on both backends with no
+  diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
+  declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
+  the line and the signatures it names (C121), and a proof about a body stays an optimisation's
+  (C122).  **Built, as a WARNING first — an error since 2026-09-28, when every shipped library had declared its read-only parameters** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
+  C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
+  gate, reading the parameter's `const` from
+  the definition's attribute (`Attribute.value_const`, now serialised in the IR store so a cached
+  stdlib or library keeps it); the standard library declares its read-only heap parameters `const`;
+  a generic instance, an interface stub, a bound-method stub, a default-value function and an
+  overload dispatcher carry the `const` of what they copy; an `Op*` primitive is exempt, since only
+  the standard library's own bodies can call one and `const` there means an immediate operand.
+  Guards `tests/scripts/a-const-value-reaches-only-a-const-parameter.loft` and
+  `…-passed-to-a-const-parameter-is-legal.loft`.  **Closed with the function-reference half:** a function type spells `const` (`fn(const T)`,
+  carried as `ConstParams` beside the parameter types rather than as a wrapper on them), so a call
+  through a reference, a builtin's callback (`map` / `filter` / `any` / `all` / `count_if` /
+  `reduce`) and a lambda's own `const` parameter are judged by the same signature rule; a
+  plain-parameter function is refused where `fn(const T)` is expected, a join of functions keeps the
+  `const` every arm declares, and a closure's capture of a value-const value is a value-const field
+  of its record.  Guards `tests/scripts/a-const-value-reaches-a-function-reference-only-through-const.loft`,
+  `…-is-not-written-through-a-const-lambda-or-a-closure.loft` and
+  `…-through-a-const-function-type-is-legal.loft`.  loft#1540.
+
+* **D-bind-44** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` through a VIEW: a value-const
+  value was written, in silence and on both backends, through a loop variable over its elements
+  (`for f in ps { f.x = 5 }`), an element or field bound to a local (`p = ps[0]`, `q = w.p`,
+  `r = &ps[0]`), a loop over such a view, a loop over a value-const FIELD, and `f#remove`; and it could
+  be handed to a `&` parameter, whose callee wrote it.  `ps[0].x = 5` was refused, which made the rest
+  look enforced.  **Where (measured).**  The guards resolve a write to its ROOT variable and ask that
+  variable's flag; a view is a variable of its own, bound by a projection, and nothing gave it the flag.
+  **Closed** by marking the view at its bind (`Parser::mark_const_view`): a projection, a `&` link or a
+  loop over a value-const value — the binds `(B-View)` and `(B-Ref-Alias)` make aliases — gives the view
+  the value's read-only flag, so every existing guard refuses a write through it, and the refusal names
+  the view and what it views.  A bare-variable bind (`(B-Copy)`) and a call's result (`(O-Move)`) are
+  not views and stay writable, as does a scalar or `text` copied out.  A value-const value or view
+  handed to a `&` parameter is refused at the call (plan 40 rule 4).  Measured on both backends over
+  25 cells, and by `--check` over 8566 `.loft` files (this repository and the consumer checkouts):
+  no file gained or lost a refusal, 461 of them never reaching pass 2; one over-approximation remains — the mark follows the bind, so a view local rebound to a
+  fresh value is still refused.  Guards `tests/scripts/a-view-of-a-const-value-is-read-only.loft` and
+  `…-leaves-its-copies-writable.loft`.  loft#1540.
+
+* **D-bind-43** *(opened 2026-09-14, CLOSED 2026-09-15)* — `(B-Ref-Write)` for a VECTOR written through a
+  local `&` link from a named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a`
+  must make `n` a copy of `a`, and left `n` at `[7, 8]` on both backends while `c` read a copy of `a` — the
+  write was lost and the link named a store of its own.  The same from another vector link and in a loop.
+  Silent; the same on 2cff47dfc.  A literal build or an append through the link was right.  **Where
+  (measured).**  The link is typed a plain vector sharing `n`'s store and registered in
+  `amp_vector_locals`; `c = a` lowered to a fresh store filled from `a` (`OpDatabase`, `c = OpGetField(…)`,
+  `OpAppendVector(c, a, 0)`).  The clear-and-refill it needs lives in `Parser::assign_refvar_vector`, which
+  took only a `&vector` PARAMETER or annotated local (`RefVar(Vector)`).  **Closed** by letting that
+  handler also take a plain vector local registered in `amp_vector_locals`, for `=` only, and never for the
+  statement that makes the link: that statement registers the local a moment earlier, and claiming it
+  left the local without a slot (a compile error on every vector link, caught by the first build).
+  Measured on both backends, plain, under LOFT_POISON and with the native leak check; a literal, an append
+  and a write-through onto the vector the link names are unchanged, and no existing corpus program's
+  emission moved.  Guard `tests/scripts/a-vector-written-through-a-local-link-refills-what-it-names.loft`.
+  Found while sizing D-bind-42 over the heap kinds.
+
+* **D-bind-42** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD
+  written through a LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9`
+  must leave `a` at 1 and `n` at 9, and left both at 9 on both backends; `…; c = a; a.v = 5` then read 5
+  through `n`.  The write-through made `n` and `a` one record.  The same held from another link, in a
+  loop, for a struct-enum link, and in the shape `157-link-repoint.loft`'s struct cell uses — that cell
+  only reads after the write-through, so it passed on the alias.  The `&S` PARAMETER write-back copied
+  and was right.  Silent; the same on 2cff47dfc.  **Where (measured).**  `Parser::assign_refvar_reference`
+  materialises the copy (`OpDatabase`, `OpCopyRecord`) for a bare variable only when the target is a
+  PARAMETER, because the same function once also saw a `&` local bind that must link.  A local link's
+  `c = a` stayed `c = a`, and the interpreter installed `a`'s record reference (`SetStackRef`).
+  **Closed** by dropping the parameter restriction: a `&` bind that must link reaches that function
+  already lowered (`OpCreateStack`, or `OpVarRef` since D-bind-41), so a bare variable there is always the
+  write-through.  Measured on both backends, plain, under LOFT_POISON and with the native leak check,
+  across every shape above; a `&` re-point, a text write-through and the parameter write-back are
+  unchanged, and `c = n` onto the record `c` already names copies that record onto itself, which gives the
+  same values.  The copy is real now, so `advice[avoidable-copy]` reports it where the source is still
+  used.  Guard `tests/scripts/a-record-written-through-a-local-link-is-copied-into-it.loft`.  Found while
+  measuring D-bind-41's struct cells.
+
+* **D-bind-41** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when
+  the SOURCE is itself a link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s
+  value through `c`; both lowered to the same IR, `c = b`, so each backend gave one answer to both
+  spellings, silently.  With `a = 1; n = 7; b = &a; c = &n;`, `c = &b; c = 9` wrote `n` on `--interpret`
+  (`A1 N9`) and `a` on `--native`, and `c = b` copied on `--interpret` and re-pointed on `--native`
+  (`N7`).  The same split held in a loop, in one arm, for a local link re-pointed to a `&` parameter,
+  and for `text` links; a `&` parameter re-pointed to another link wrote through on both backends,
+  and a `&text` or `&S` parameter re-pointed to a callee-local link wrote through the same way.  A
+  first bind was right on both.  **Where (measured).**  The parser's `&` lowering had no arm for a
+  source whose type is a link, so the `&` was dropped; the interpreter's link write-through and
+  native's local link-to-link arm each read the resulting `c = b` one way.  **Closed** by spelling
+  the re-point: the parser lowers `c = &b` to `c = OpVarRef(b)`, the raw link cell `b` holds — the op
+  the interpreter's first-bind link copy already emits.  The interpreter routes it to the link's
+  slot like the install op, for every kind of link; native takes `b`'s pointer in the local, record
+  and parameter arms, and its local link-to-link arm now serves only a FIRST bind, so a reassignment
+  `c = b` writes through.  Measured on both backends, plain, under LOFT_POISON and with the native
+  leak check, across every shape above.  The one corpus program with a first bind from a link
+  (`434-pln87-scalar-reference.loft`) changes its IR spelling and native's record-link representation
+  and passes on both backends.  Guard
+  `tests/scripts/a-link-re-pointed-to-another-link-takes-what-that-link-names.loft`.  Found while
+  measuring D-bind-37's repoint of one `&` parameter to another.
+
+* **D-bind-40** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Alias)`, `(B-Ref-Write)` and
+  `(F-ParamRef)` for a value ENUM: a `&` to an enum local, element or field was silently a copy, and
+  a write through a `&` enum parameter crashed the interpreter.
+  - `e = Col.Green; c = &e; c = Col.Blue` left `e` Green on both backends, and so did a link to an
+    element (`e = &es[1]`), a field (`e = &o.k`) and a nullable local.
+  - `fn f(c: &Col) { c = Col.Blue; }` overflowed the interpreter's call stack; native answered right.
+  **Where (measured).**  Four sites, each on one path the enum takes:
+  - The parser lowers a `&` only for a scalar, and its own scalar list left the value enum out while
+    `data::is_scalar` counts it, so the bind copied.  The same list made a tuple with an enum member
+    take the record-backed link (`tuples.md` D-tup-14).
+  - On the first pass an enum element read is the bare `OpGetVector` place, before its enum getter
+    wraps it, and the lowering knew only the wrapped spelling.  The first pass typed the local as
+    the enum and the second as its link: "cannot change type from Col to &Col".
+  - The interpreter read and wrote an enum link with `OpGetByte` / `OpSetByte`, which take a range
+    minimum the site never wrote.  The next instruction was read as that minimum, the code stream
+    lost its alignment, and control fell back into the caller's code, which called again.
+  - Native's local-link arms had no enum, so the bind emitted no right-hand side; and a bare variant
+    written through the link did not resolve, because the enum context read the type without
+    peeling the link.
+  Closed at each: the lowering asks `data::is_scalar` and accepts the bare element op, the link ops
+  are `OpGetEnum` / `OpSetEnum`, native links an enum as a `*mut u8`, and `enum_context` and the
+  variant resolver read through `peel_link`.  Guard
+  `tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft`.  Found while measuring
+  D-bind-39's enum element face.
+
+* **D-bind-39** *(opened 2026-09-14, loft#1567; CLOSED 2026-09-23)* —
+  `(B-Ref-Lvalue)` for an integer STORE place stored in fewer than 8 bytes — an element or a field
+  of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a
+  place links; it was refused on both backends with one error per `&`, at the `&` bind and at a
+  `&` parameter, naming two ways out (copy into a local and write it back, or declare the place
+  `integer`).  **The refusal is lifted and every such place now links**, measured on both backends
+  across 17 cells: each narrow kind read and written through a field link and an element link, a
+  nested field, a nullable element and field (absence survives both ways), two links naming one
+  place, a re-point between two elements and between two fields, and a bare `&u8` parameter taking
+  a field and an element — with the neighbouring field, the neighbouring element and the length
+  read back untouched in every cell.
+  **What the entry said had to happen first, and what actually did.**  It said the deviation
+  *"closes when a link carries its target's width — a representation decision"*, on the premise
+  that *"a link to a `u8` local (an 8-byte frame slot) and a link to a `u8` element (a 1-byte store
+  slot) have the same type"*.  `@PLN167` decision 1 dissolved that premise — a linked narrow local
+  holds its type's FIELD encoding, so the two are one representation — and `state/codegen.rs`
+  already read and wrote through `NarrowSlot::of_type` for *"a linked local, a field, an element"*.
+  So no representation work remained.  What remained were **two gates that had been written to the
+  old premise**, and finding them is the whole of this closure:
+  1. `Parser::scalar_place_ref`, which turns a place expression into the link's target, matched an
+     `OpGet*` with exactly TWO arguments (`else if let [base, fld] = gargs.as_slice()`).  A narrow
+     read carries a THIRD — the `min` its encoding is biased by, `OpGetByte(v1, fld, min)` — so it
+     fell to `None`, the `&` was silently dropped, and the local was typed a plain `int`
+     (`LOFT_VAR_TABLE` reads `pa int` beside `pn &int`).  That is why writes were "lost": there was
+     no link to write through, only a copy.  The `min` is decoding information and not part of the
+     address, so the place is the same `OpGetField(base, fld)` every other field read yields.
+  2. The re-point branch's `scalar_link` test read `spec.byte_width(false) == 8`, excluding narrow
+     integers on purpose — *"a link does not yet honour a narrow place's width (D-bind-39)"*.  With
+     the first gate fixed, a re-point fell through to the write-through path and wrote the 12-byte
+     stack CELL through the kind's own `set_op`: the interpreter panicked in the store for an
+     element (`rec=1748762626`, a corrupt reference) and wrote the read-only CONST store for a
+     field, while **native was already correct**, because it routes a re-point by the value's shape
+     rather than by the target's width.  A re-point is not a value write at any width.
+  **Both gates cited this entry by number, and that is the lesson.**  Each was a correct guard
+  against a defect that no longer existed, and each read as settled because it named the deviation
+  it was protecting.  A deviation's closure has to sweep its own citations rather than only its
+  headline behaviour — the second gate was reachable only through the first, so fixing the
+  first is what made the interpreter crash where it had merely refused.
+  **Uniformity is what the guard scores**, not just success: an unfitting compound step answers the
+  type's default through the link exactly as it does at the place (C127), drawing the same
+  `narrow-fallback` advice, and a direct write beside two links reaches both.  Guard
+  `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, which
+  replaces `a-link-to-a-narrow-integer-store-place-is-refused.loft` and keeps its seven shapes,
+  scored by value instead of by diagnostic.  `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`
+  still pins the frame half.  D-bind-38, the TEXT face of the same rule, is closed too (loft#1566).
+
+* **D-bind-54** *(opened 2026-09-23, CLOSED 2026-09-23; found by loft3-ca on the wide spelling,
+  where it was recorded as D-bind-53 — a number this tree had already given loft#1639's entry, so
+  the two were reconciled on contact rather than on the join)* — `(B-Ref-Lvalue)` for a field of a
+  STRUCT ELEMENT: `p = &v[0].f`.  The place a link is given is built by `Parser::scalar_place_ref`,
+  whose first arm answered the ELEMENT for any read through an element accessor — **the field
+  operand was not mis-offset, it was dropped**.  The introspect is the whole story, two different
+  fields of one element yielding byte-identical places:
+  `p1(1):&integer(0, 255) = OpGetVector(v(1), 10i32, 0i32);` beside
+  `q1(1):&integer = OpGetVector(v(1), 10i32, 0i32);`, and natively
+  `addr_mut::<u8>(__ed.rec, __ed.pos)` with no offset added.
+  **Measured**, both backends identical, with `struct E { a: u8, b: u8, c: integer }` — whose
+  layout puts `c` at offset 0, `a` at 8 and `b` at 9: `&v[0].a` and `&v[0].b` each wrote `c`, and
+  `&v[0].c` was **right by accident**, its offset being zero.  With
+  `struct W { a: integer, b: u8, c: integer }`, `&x[0].b` wrote `a`.  loft3-ca reached it from the
+  text side (`&v[0].s` with `struct O { s: text, n: integer }` lands on `n`) and reported `49 2 3`
+  for `1 42 9` on a wide field — the same defect seen through a layout whose wide field was not at
+  offset zero.
+  **Closed** by naming the field unless its operand is literally zero, where the element's base
+  address and the field's ARE the same address — which is exactly what lets `vector<integer>`'s
+  `&v[0]` and a struct element's `&v[0].f` share one IR shape without ambiguity.  Written once, for
+  reads of ANY arity, so a NARROW read's third operand (the `min` its encoding is biased by) is
+  covered by the same code rather than by a second arm that would have to agree with the first
+  forever — that reconciliation was the join hazard loft3-ca flagged, and removing the second arm
+  removes it.
+  **Why it surfaced now.**  The narrow spelling was unreachable while D-bind-39 refused a link to a
+  narrow store place; lifting that refusal in the same commit admitted it onto this broken path.  So
+  a refusal was hiding a defect one layer down, and the lift is what made it reachable — the reason
+  the lift's own guard scores neighbours rather than targets, and the reason it is closed here
+  rather than filed: shipping the lift without it would have been a silent-wrong introduced by a
+  fix, which is `(B-Ref-Reshape)`'s own objection to a link that cannot be honoured.
+  Guard `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, six
+  cells linking every field of both layouts in turn and reading all three fields back each time, so
+  a write landing on a neighbour is caught BY the neighbour.  loft3-ca's `#1566` guard keeps the
+  integer and text cells on the same rule.
+
+* **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1639)* — ⚠ opened as `D-bind-44`,
+  a number already taken by a CLOSED entry of 2026-09-15 that lived on a branch this tree had
+  not yet joined.  Renumbered on the join: a deviation number is repo-WIDE, and the check has
+  to span every in-flight branch rather than the tree in hand. — `(B-Ref-Intro)` says a `&`-annotated binding
+  gives the variable type `&(typeof a)`, so the link's type comes from the TARGET and an explicit
+  annotation naming a different type is a mismatch `(C-Ref)` has no conversion for.  It is not
+  refused: the link reads and writes the target's slot at the ANNOTATION's width and bias, handing
+  the stored code back as a value.  `b: i8 = -1; pb: &u16 = &b` reads `127` (`enc_byte(-1, -128)`,
+  the raw byte); `d: integer limit(1000, 1100) = 1050; pd: &u8 = &d` reads `50`; `h: u16 = 65535;
+  ph: &u8 = &h` reads `255`.  The writes corrupt the target — `pf: &u16 = &(f: i8 = -1); pf = 5`
+  leaves `f == -123`, `pg: &u8 = &(g: Lim = 1050); pg = 200` leaves `g == 1200`, and
+  `pi: &u8 = &(i: u16 = 65535); pi = 200` leaves `i == 65480`, one byte written over two.  The
+  annotation IS consulted for the value check, against the wrong type: `pg = 1060` is refused as
+  not fitting `u8` over a slot that holds `1000..=1100`.  `--native` does not compile at all
+  (`*mut u16 = addr_of_mut!(var_a)` over a `u8`, rustc E0308 per link), so the backends diverge
+  too.  **Where (measured).**  `u8` is the one row that reads correctly, because its bias is zero
+  and its encoding is the identity — the covered spelling is the one that cannot fail, which is why
+  nothing caught it.  Same class as the frame readers @PLN167 A0–A2 closed (#1632): a reader taking
+  the stored code for a value, here with the wrong width supplied by the annotation rather than by
+  the reader.  Belongs to A3 with D-bind-38 and D-bind-39.  Found when a peer's rules-side read
+  predicted the spelling was already refused.  **Closed** the same day: an annotation naming a
+  different integer type than the target is now REFUSED, which is what `(B-Ref-Intro)`'s
+  `b : &(typeof a)` and `(C-Ref)`'s single τ already required.  One home,
+  `Parser::amp_annotation_mismatch`, asked at the `&` site.  It compares (min, max,
+  `forced_size`) and deliberately NOT `IntegerSpec` whole, because `not_null` is a claim about
+  the SLOT that an annotation and a declaration can disagree on without naming different types
+  — the same flag that caught `non_null_reads_null` and `Data::integer_alias` out the same day.
+  An UNANNOTATED `p = &x` arrives with its type already inferred from the target, compares
+  equal, and is never refused.  Scoped to integers, which is what was measured.  The message
+  names both types through loft#1641's `int_type_name`, so the cure it offers can be typed back
+  in.  Guards `tests/scripts/1639-a-link-takes-its-targets-type-not-its-annotations.loft` for
+  what must still link, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` — the
+  narrower direction pinning a two-message cascade rather than hiding it.  **D-bind-39**
+  (loft#1567) CLOSED the same week: a link to a narrow STORE place now links, and the
+  representation decision its entry asked for turned out to have been made already.
+
+* **D-bind-38** *(opened 2026-09-14, CLOSED 2026-09-23; loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+  vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
+  addressable operand — a variable, struct field, or vector element", on both backends and already
+  on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
+  rule names a field and an element as lvalues without an exception for text.  **Where (measured).**
+  A text place reads through its own op — `OpGetText(OpGetVector(a, 4, 0), 0)`, `OpGetText(o, 8)` —
+  and `Parser::is_amp_place` does not list it.  Lifting the refusal is not the whole cure: a local
+  `&text` link is a `*mut String` on `--native`, and a store's text slot is not a `String`, so the
+  link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
+  entry first carried are narrow integer places and left with D-bind-39, which closed 2026-09-23;
+  text is the only face of this rule still refused.)  Found while probing D-bind-36's repoint over every element kind.
+  **Closed** by @PLN167 C1: a text field or element is a place, and a `&` bind to one makes the
+  STORE kind of a text link — a link holding the slot's `DbRef` (the place `scalar_place_ref`
+  already gives a scalar), whose every mention is parsed as that field
+  (`OpGetText(OpVarRef(t), 0)`), so its read is the field read and its write the field's setter on
+  both backends.  The kind is a fact of the VARIABLE (`Variable::store_text_link`), carried
+  through the IR snapshot, and a bind of the other kind is refused — in either order and across
+  the arms of an `if` — because `(B-Ref-Repoint)` keeps a link's type.  A link to a text VARIABLE
+  is unchanged and its emission byte-identical.  Guards:
+  `tests/scripts/167-a-text-link-into-a-store.loft`,
+  `tests/scripts/167-a-text-link-keeps-its-kind.loft`.  The PARAMETER face is D-bind-55.
+
+* **D-bind-55** *(opened 2026-09-23, CLOSED 2026-09-24; loft#1566, loft#1602, @PLN167 C3)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)`: a text field or element — or a store-kind text link —
+  handed to a `&text` PARAMETER was refused (loft#1602's stopgap; before it the call copied and
+  dropped the callee's write), where the rules say the parameter links to the place as the `&`
+  bind does.  **Closed** by instantiating the function per text-link KIND, decision 2's route:
+  the call hands the slot's `DbRef` (`scalar_place_ref`, the place the bind takes) and is pointed
+  at the function's STORE instance, minted after pass 2 (`parser/store_text.rs`) as a clone whose
+  parameter carries `store_text_link` and whose body is rewritten to C1's spelling — a read
+  `OpGetText(OpVarRef(t), 0)`, a write the field's setter.  The rewrite is total over a measured
+  closed set: across the 206 functions with a `&text` parameter in the stdlib and the corpus the
+  parameter is written only by `Set` and the `Op…Stack…` write ops, each of which has a twin on a
+  text variable.  The stack instance is the function as written, byte-identical
+  (`scripts/introspect_diff.sh`).  Instances close transitively (forwarding, recursion, a local
+  link bound from the parameter).  `(B-Ref-Reshape)`'s callee clause now reaches the text
+  spelling (`grow(h.v[0], h)` is refused; it crashed on both backends while admitted).  An
+  instance's key is `n_f@st<mask>` and every name decoder cuts at `@`, so messages, traces and
+  profiles name `f`.  Guards `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`,
+  `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`, and the warm-cache
+  cell `a_store_text_instance_reads_the_same_warm` (`tests/arc_e_program_cache.rs`).  The
+  FUNCTION-VALUE spelling is D-bind-57.
+
+* **D-bind-57** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1656, @PLN167 R5a)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)` through a FUNCTION VALUE: `g = app; g(o.a)` with
+  `fn app(t: &text)`.  On `main` both backends compiled it and answered `alpha`: the conversion
+  copied the field and the callee's write was lost with nothing said.  C3 first refused it,
+  because a store instance is picked per call site and a function value is fixed before the
+  call.  **Closed** by letting the CALL pick, since only the call knows the argument's kind: the
+  argument is lowered to the place as a direct call's is, the call's store mask
+  (`Data::store_text_mask`, the one test both backends ask) selects the STORE instance of
+  whichever function the value holds, and after pass 2 an instance is minted for every
+  candidate of the value's type (`fnref::dispatch_arms`, the candidate set's one home).  The
+  interpreter dispatches through `OpCallRefStore`, `OpCallRef` with the function swapped for its
+  instance for that one call (the slot is left as it was).  Native's arms call each candidate's
+  instance, and an instance is reachable with the function it copies.  **Found on the way, and
+  closed with it:** a `&text` parameter through a function value did not compile on `--native`
+  in EITHER kind.  `dispatch_arms` and the synthetic-argument loop took every `RefVar(Text)`
+  attribute for a text-return work buffer, so `fn(&text)` matched no function (an empty
+  `match`) and the argument was spelled empty.  The rule is now positional
+  (`fnref::visible_fnref_attrs`): the buffers follow every user parameter.  An instance is never
+  a candidate itself (`Definition::is_store_text_instance`), or `rec`'s instance acquired an
+  instance of its own.  Guards: `test_through_a_function_value` in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft` (a named function
+  re-pointed between two, the stack kind through the same value, a capturing lambda, a
+  text-returning one, an element of a vector of functions and an absent one), and the
+  warm-cache cell.  Not expressible yet, and not a deviation of this rule: a function TYPE
+  spelled with a `&` parameter (`fn(&text)`), so such a value arises by inference only.
+
+* **D-bind-58** *(opened 2026-09-24, CLOSED 2026-09-24; found by @PLN167 C3's K9 cell)* —
+  `(O-NoDiverge)` for a `&text?` PARAMETER on `--native`: any read of it (`t == null`,
+  `t == "x"`) emitted `*var_t`, a MOVE of the `String` behind the `&mut`, and rustc refused the
+  program (E0507) while the interpreter ran it.  The parameter arm tested `**inner` for `Text`
+  exactly, where the local-link arm beside it reads `inner.base()`.  **Closed** by asking the same
+  question as that arm.  A loud divergence, never a wrong value.  Guard: K9 in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`
+  (`test_a_nullable_text_field`, the variable half).
+
+* **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
+  `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
+  on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
+  a field, and an empty right-hand side (`*var_c = ;`, or `u8::from()` for a boolean) for a callee
+  local.  A loud divergence, never a wrong value.  **Where (measured).**  The native generator treats
+  every assignment to a `&` parameter as the write-back, so a place wrote its reference into the
+  caller's variable.  **Closed** by a repoint arm at the top of that branch: for a scalar parameter,
+  a place op on the right binds a borrow of the store slot, and `OpCreateStack(m)` a borrow of the
+  local; the slot pointer is built by the same helper a local link uses.  Measured on both backends,
+  plain, under LOFT_POISON and with the native leak check: an element, an element then a write, a
+  field, a loop, a callee local, read-repoint-read-write, and float, enum, boolean and character
+  parameters; the write-through control is unchanged.  A `&` parameter re-pointed to ANOTHER link is
+  D-bind-41, which this arm does not reach.  Guard
+  `tests/scripts/a-reference-parameter-re-points-to-an-element-a-field-or-a-local.loft`.
+
+* **D-bind-36** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` on `--interpret` for
+  a link to a SCALAR whose new source is an element or a field: `c = &w[0]; c = &v[0]` and `f =
+  &o.x; f = &o.y` panicked (a store access out of bounds; in the allocator for a float element),
+  while native re-pointed.  The parser lowers the place to its own op (`OpGetVector`, `OpGetField`),
+  not to the install op D-bind-32 routed to the link's slot, so `set_var` took the write-through
+  path.  For a link to a scalar the right-hand side's TYPE separates
+  the two spellings: a place op is declared to return a reference, a value read out of the place is
+  the scalar.  `set_var` routes the former to the link's slot as well, at every integer width since
+  D-bind-39 closed — the exclusion of a narrow place was that deviation's, and outlived it by one
+  commit, during which a narrow re-point wrote a stack cell through the kind's own `set_op`.  A link to a record or a
+  collection reads an element's VALUE as a reference too, so there the type cannot tell them apart
+  and only the install op is routed.  (A struct element bound with `&` is typed as a view of its
+  vector, `ref(P)`, rather than as a `&P` link; rebinding it already left the first element alone,
+  and a cell pins that.)  Guard `tests/scripts/a-scalar-link-re-points-to-an-element-or-a-field.loft`.
+
+* **D-bind-35** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Disturb)` did not hold for a view
+  bound inside ONE ARM of an `if` whose other arm assigns the same local: `x = mk(4); if k > 0 { x =
+  h.inner } else { x = mk(0) }; h = Hold{…}` left `x` reading the new container on both backends,
+  where the unbranched bind and the value join materialise.  The materialisation walk (`ViewWalk`)
+  walked the two arms one after the other, so the second arm's assignment ended the view the first
+  arm had bound — the same program with the arms swapped materialised.  The arms are now walked as
+  alternatives: each from the views open before the `if`, keeping what either leaves open or
+  disturbed, and a literal key only where both agree.  Found by D-bind-34's closure, which lowers the
+  value join to exactly that statement form.  The walk's imprecision in the other direction is
+  unchanged and deliberate: a view bound before the `if` and disturbed on one path only is
+  materialised on both, and the author is told.  On `--native` the newly materialised copy then
+  LEAKED: a displacement free emptied the slot first, so the copy landed in a fresh store, and the
+  generator's owner tracker records a copy only on a first declaration — the reassignment branch
+  left it unnamed, and nothing released it.  Falsifying the guard caught it in the leak column; that
+  branch now asks `materialises_element` too, the question the first declaration already asked.
+  Guard
+  `tests/scripts/a-projection-assigned-in-an-arm-views-until-its-container-is-reassigned.loft`.
+
+* **D-bind-34** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
+  value join whose taken arm is a struct PROJECTION copies on `--interpret` and views on `--native`.
+  `h = Hold{inner: mk(1), …}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) }; x.a = 9` leaves
+  `h.inner.a` at 1 on the interpreter and at 9 natively, while the unbranched `x = h.inner` and the
+  author's statement form `if k > 0 { x = h.inner } else { x = mk(0) }` view on both backends.  The
+  container is not disturbed, so `(B-View)` gives the view and the interpreter is the deviating
+  side.  Found while closing D-bind-33: that cure, first built wider, wrote this join out as
+  statements too, and native then copied as well — the rule's answer lost on the one side that had
+  it.  Narrowed to local arms, the split is back to what it was, and it is recorded here.
+  **Where it happens (measured).**  The author's statement form carries an owner witness
+  (`(O-Witness)`: `__own_x`, released by store identity at the projection's assignment), so the
+  projection arm is a view on both backends.  The value join gets none: `owner_witness_locals` runs
+  before the scan and does not read the join's projection arm as a view assignment, so `x` stays an
+  owning slot, and the interpreter lowers an owning slot's reassignment from an `Own::Join` value to
+  `OpBindOrCopy`, which copies the borrowed arm.  The boundary agrees — a binding whose previous
+  assignment was itself a view views on the interpreter too.  It is the third fact a pass before the
+  scan reads off the join where the author's spelling has it (family 7's per-path flags and
+  D-bind-33's call-arm owner were the other two, `heap-history.md` D-heap-7).
+  **Closed by carrying the scan's own decision.**  The first scan records, by the address of each
+  `Set`'s value node, the reassignments it writes out per arm; the caller rewrites exactly those in
+  the original code, strips the arm locals' deps the parser gave the binding, and scans again — so
+  every analysis before the scan, the owner witness among them, reads the per-arm form.  A structural
+  "is this a reassignment" was measured first and rejected: it disagreed with the scan at 52 of 899
+  corpus sites.  The lowered family-7 cells now emit exactly what their author-written twins emit,
+  and the value join views on both backends.  Closing it exposed D-bind-35.
+
+* **D-bind-33** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Copy)` did not hold for a
+  REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
+  else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
+  through `x`, on both backends; the first bind from the same join copied.  The releases went wrong
+  with it (`heap-history.md` D-heap-7, `p_j1`/`p_j2`): the displaced `mk(9)` was never released, and neither
+  was a record assigned to `x` after the join, because the binding stayed typed as a view of `a`.
+  **Between two mechanisms.**  A first bind lifts each arm into a temp of its own (D-bind-16,
+  loft#1321); a reassignment cannot borrow those temps (`(O-Latest)`), so it is written out per arm
+  instead (`scopes::sink_set_into_arms`).  The parser had already given the call arm an owner for the
+  value form's view-typed join (`materialise_owned_call`'s `join-arm-owner` block), whose tail is a
+  compiler temp, and the write-out declined every compiler-temp tail — so this reassignment kept the
+  value form, which binds the chosen arm's STORE.  The write-out now accepts that block and writes the
+  arm out as its call, wherever every other arm is a local or `null`.  Beside a projection arm it
+  still declines: written out, a projection arm lost the dep that keeps it a `(B-View)` view, which
+  was measured and is D-bind-34.  Guard
+  `tests/scripts/a-reassignment-from-a-join-with-a-call-arm-copies-its-local-arm.loft`.
+
+* **D-bind-32** *(opened 2026-09-09, CLOSED 2026-09-09; numbered 30 on its own branch, where
+  `D-bind-30` was already spent by the `(B-Ref-Reshape)` entry closed a day earlier — the join is
+  what showed the collision)* — `(B-Ref-Repoint)` on `--interpret`,
+  at every τ but a vector.  The rule was not written: B-Ref-Write said what a heap write
+  through a link does ("it does not re-point the link") and nothing said what `p = &q` on an
+  existing link does, while the parser had long lowered it to the link's install op
+  (`Set(p, OpCreateStack(q))`) and native ran it as a re-point (`var_p = addr_of_mut!(var_q)`).
+  The interpreter's `set_var` link branch recognised the install value only to keep a fn-ref
+  off the write-through, and every other kind fell into the write-through: the cell went
+  THROUGH the link into the old source's slot and the displaced-store free ran on a stack ref
+  (`BUG (#306)`), so a struct read a garbage word and lost the second record's field, a text
+  was cleared through the link and read empty, an integer kept its first source.  Found by
+  @PLN157 § V-p's cell c18 (a plain-record `&` view rebound in a loop), whose interpreter
+  oracle answered 34359738373 for 13.  Closed with the rule written and the install routed
+  to the link's own slot FIRST, before any kind's write-through — `state/codegen.rs::set_var`
+  cites it; `tests/scripts/157-link-repoint.loft` carries the six kinds and the control.
+
+* **D-bind-31** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(B-Copy)` did not hold for
+  a bind out of a CLOSURE CAPTURE.  `e = q` inside a lambda ALIASED the captured collection or
+  record: `e += […]` grew the outer `q`, `e[0].a = 99` and `e.a = 99` reached it, on both
+  backends, with nothing saying so.  The same bind out of a PARAMETER — the identical shared heap
+  value, `(F-ParamHeap)` and `(L-CapHeap)` being one sentence — copied throughout, which is what
+  named the difference.
+  **One op, two notions.**  A closure reaches its capture through the closure record, so the
+  source arrives as `OpGetDbRef(__closure, off)`: a PROJECTION's spelling for a whole value the
+  author bound by name.  Every reader that had to tell `(B-Copy)`'s whole value from
+  `(B-View)`'s interior place tested for a bare `Var` or an `OpGetField` and answered "not a
+  bind" — the FIFTH time this family's selector has been the narrow part while its lowering was
+  already right (P261, loft#917, loft#1279, loft#1326).  `reads_a_capture_whole` is the one home
+  now, and it asks about the BASE, because the loose spelling also admits an auto-`Reference`
+  POINTER FIELD read (`h.link`), which really is the projection this is not.
+  The two passes did not agree either: on pass 1 a capture is still a placeholder `Var`, so the
+  vector selector answered `CopyVar` there and `NotABind` on pass 2 for one body.
+  Guard `1489-a-capture-is-bound-and-returned-as-a-whole-value.loft`, whose `(B-View)` and
+  `(B-Ref-Alias)` cells are what say the copy did not swallow the aliasing that is meant to
+  stay.
+
+* **D-bind-29** *(opened 2026-09-08, CLOSED 2026-09-08, loft#1463)* — the FUNCTION half of
+  `(B-Ref-Uniform)`, on `--native` only.  A write through a `&fn(…) -> τ` link did not land when
+  the caller's slot already held a CAPTURING closure: the interpreter wrote it, native left the
+  old value in place and said nothing.
+  **The special case was in the DISPATCH, not in the write.**  A fn-ref call passes the closure
+  environment beside the tag, and the emitter took it from the caller's own `___clos_N` local
+  whenever one existed — re-deriving *which environment does this slot hold* from the MINT SITE,
+  which is right only while nothing else can write the slot.  A `&fn(…)` link is what can.  The
+  environment now always comes from the slot's own `.1`: where the mint put it, and where a
+  rebind puts the next one.
+  The entry as opened guessed the 20-byte stack form was the axis — 8 B `d_nr` plus a 12 B
+  closure `DbRef` against a `d_nr` alone — and the LAYOUT was a symptom rather than the cause.
+  Capturing is what makes a `___clos_N` local EXIST for the emitter to prefer; the widths never
+  entered the decision.  Worth keeping, because the layout reading is the one a reader arrives
+  at from the report and it costs a session: the two `loft introspect` dumps differ in the
+  dispatch line, not in any width.
+  Guarded by `1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.loft`, whose
+  CONTROLS are loft#1443's non-capturing cells — the shape that always worked — so the file says
+  both are closed rather than one traded for the other.

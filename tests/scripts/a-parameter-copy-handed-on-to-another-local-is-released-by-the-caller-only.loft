@@ -15,7 +15,7 @@
 // made — and that boundary is pinned below beside the clean shapes around it.
 //
 // NOT here: a carrier made in a branch arm (`x = mk(); if c { x = p; } y = x`), whose answer is per
-// path — heap.md D-heap-7 family 2 records it OPEN.
+// path — heap-history.md D-heap-7 family 2 records it OPEN.
 //
 // @falsified-at: 7f3944128 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

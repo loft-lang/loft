@@ -221,37 +221,7 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 0.**  D-gen-hold opened and closed 2026-09-27 (loft#1708, below); D-gen-lambda opened
-and closed 2026-09-25 (loft#1676, below).
-
-- **D-gen-hold** *(CLOSED 2026-09-27, loft#1708)* — `(G-Hold)` named the holders that release a
-  frame and gave the frame ONE release, and it said nothing about a handle given to a
-  PARAMETER.  So the first holder to end released it while another still named it: a function
-  that stored the handle it was given (`g = gen(); wrap(g)`, returned) answered null from then
-  on, as did a local bound from a parameter (`h = g` freed the caller's generator), a tuple
-  member, a copied member and a generator holding a parameter past its caller's local — on both
-  backends, with no diagnostic.  A MOVE would have fixed those and broken the adapter spelling
-  that worked (a prefix through `fwd(g)`, then `g` continued), so the owner ruled for SHARED
-  HOLDS, written into `(G-Hold)` above: each frame counts its holders (`CoroutineFrame::holds`,
-  native `NATIVE_COROUTINE_HOLDS`), `OpCoroutineRetain` takes a hold where the scope pass's
-  `retain_shared_handles` finds a second holder, a generator gives its parameters' holds back
-  at its end and when abandoned (a never-advanced frame included), and an inline handle
-  argument is lifted for every non-generator callee.  Guard:
-  `tests/scripts/1708-every-holder-of-a-generator-releases-its-own-hold.loft` (22 cells).
-
-- **D-gen-lambda** *(CLOSED 2026-09-25, loft#1676)* — `(G-Own)` named no rule for a yielded
-  LAMBDA, and the code gave the closure record a handle into the generator's frame.  A lambda
-  kept past its generator read a released store; two lambdas over one local corrupted the
-  generator's copy of it, differently per backend and silently on `--native`; a drained `for`
-  over lambdas freed a value the exhausting advance never produced (`BUG (#306)`, and on
-  `--native` the generator's own store); and `--native` refused `yield from` of lambdas with
-  the loop-body collector's message.  Closed by the owner's ruling, written into `(G-Own)`
-  above: a yielded lambda's heap captures are copied into stores its record owns, and an
-  implementation may still share a store where that is safe.  The exhausted fn-ref is the
-  fn-ref NULL on both backends, the eager collector carries a fn-ref as two slots, and a
-  `yield from` advance asks `next_operands` for its channel.  Guards:
-  `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft` and its refused
-  twin `1676b-…`.
+**OPEN: 0.**  The closed entries are in [coroutines-history.md](coroutines-history.md).
 
 Every deviation this doc has carried is closed; the record is in the companion
 [coroutines-history.md](coroutines-history.md).
@@ -273,7 +243,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   helper that is not itself a generator is REFUSED, identically on both backends — *"yield is
   only allowed inside generator functions (return type must be iterator<T>)"*.
   ⚠ This line read *"a `yield` inside a helper called from the generator produces the value and
-  resumes correctly past the helper"* until 2026-09-25, when it was measured and does not.
+  resumes correctly past the helper"* until it was measured, and it does not.
   [VERIFICATION.md](VERIFICATION.md) had said so in three places — *"deferred G-YieldDepth — a
   `yield` INSIDE a helper (true stackful) needs `yield from`"* — so the two records disagreed
   about the same rule, and this is the one a reader of the rules meets.  A conformance line is a

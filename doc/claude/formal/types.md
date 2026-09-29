@@ -68,6 +68,10 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
               Enum ⤳ Integer tag).  NB: the null INTRO `S ⤳ S?` is `(N-Intro)`; there is
               NO implicit `S? ⤳ S` unwrap (that is `(N-Store)`-illegal — discharge via `??`)
   (C-Int)     Integer[a,b] ⤳ Integer[c,d]   ⟸   [a,b] ⊆ [c,d]         (see I-*)
+  (C-Num)     Integer ⤳ float,  Integer ⤳ single,  single ⤳ float     (a numeric WIDENING;
+              the value is converted, never reinterpreted — and through (C-Tuple) a tuple
+              member is converted like any other slot.  `float ⤳ single` is not one: it
+              narrows, and takes an explicit `as`.)
   (C-Ref)     &τ ⤳ σ   ⟸   τ ⤳ σ      (a reference reads through to its referent; there
               is NO  σ ⤳ &τ  — a reference is made only by `&` at a binding, never coerced)
 ```
@@ -76,6 +80,8 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
 `σ` is wanted, no cast needed." The rules list the safe cases: the same type; a `Never`
 (a `return`/`break`, which fits anywhere); tuples element-by-element; a struct used as one
 of an enum's variants (and the nullable/tag duals); and an integer into a *wider* integer.
+`(C-Num)` is the numeric table in [LOFT.md § Type-conversion rules](../LOFT.md) — it was
+promised there and implemented at four of the five store sites before it was written here.
 `(C-Int)` means **width lives inside `⤳`**: an integer flows into another integer iff its
 range fits. There is no separate width authority. `is_equal` answers only the *width-free*
 base-type question ("is this `integer`?" — correctly *yes* for every width); `convert` and
@@ -217,7 +223,7 @@ the UB class**: a slot of type `τ` never holds a non-`τ` value — it either f
 op is non-null) or it's `null` (and `(N-Store)` forces you to discharge it). We do **not**
 fake non-null on an op that can miss.
 
-> **The one decided exception — overflow arithmetic ([C85](../DESIGN_DECISIONS.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
+> **The one decided exception — overflow arithmetic ([C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
 > `a+b` / `a*b` / `a-b` stay typed **non-null `integer`** (forcing `integer?` on every
 > arithmetic op would poison the common path to guard a fault that essentially never fires),
 > yet on overflow they write the reserved `i64::MIN` sentinel into that non-null slot — which
@@ -537,7 +543,7 @@ old auto-`τ?` reading. Design record:
             room its declared range leaves inside the width.  `limit(-100, 100) size(1)` is
             201 values in 256 and the 55 codes left over are NOT a place to keep a null:
             a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
-            ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
+            ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
             Spareness is arithmetic the author did not do, so it cannot decide semantics.
             The plain `integer` and `i32` TEMPLATES keep their sentinel, and that is an
             EXEMPTION rather than a distinction the rule draws: it costs one value in 2^32
@@ -684,107 +690,15 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1** — D-types-17.
 
-* **D-types-6** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1720)* — `(N-Store)` with
-  `(C-Var)`: a nullable value reached a non-null slot in silence in three shapes.  A declared
-  ENUM local written a nullable VARIANT (`d: Shape = mc(i)`, `mc -> Circle?`): the store face
-  asked only when the value's base EQUALLED the slot's type, and a variant does not.  A FIELD or
-  ELEMENT written a nullable `text`, enum or record: a scalar slot is asked at the typed store,
-  and these three leave the assignment before it (`assign_text`; `towards_set`'s copy) — a text
-  or plain-enum slot then held null, and a dense record, which has no null to hold, kept the
-  value it had (`h.p = q` with `q` null left `h.p` as it was).  And the cure the issue itself
-  named, `mc(i) ?? Shape::Square {…}`, was refused: the result took the value's VARIANT type,
-  and a sibling variant does not convert to it.  **Fix.**  `Parser::slot_takes_base` admits a
-  variant of the slot's enum wherever the store face asks; the assignment asks `(N-Store)` at a
-  place for the three kinds the typed store never sees, with the consequence the slot has — a
-  dense record or payload enum keeps its value (loft#1404's clause for a bare `null`), a
-  `reference<T>` pointer field repoints and holds null; and `??` joins a sibling variant (or the
-  enum) to the enum, as `if`/`else` does.  Guards
-  `tests/scripts/1720-a-nullable-written-to-an-enum-text-or-record-slot-is-reported.loft`,
-  `tests/scripts/1720b-a-nullable-written-to-an-element-is-reported.loft`.
-* **D-types-5** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1714)* — `(N-Join)`: a branch that
-  joins `null` with a struct, a collection or an enum typed the result NON-optional — `a = if n ==
-  0 { null } else { [n] }` gave `a: vector<integer>` while the integer twin gave `int?` — on the
-  premise *"heap types stay nullable"*, which `(N-Opt)` contradicts.  The cost was a lost write:
-  `(Col-Insert-Absent)` is written for `<kind>?`, so `a += [7]` after the null arm wrote through
-  a null handle, silently, on both backends; and the tuple and vector `match` chains did not
-  widen at all, scalars included.  **Fix.**  One home for the question, `Parser::null_arm_widens`
-  (every type `data::has_null` admits), asked by all five constructs (`if`; `match` over an enum,
-  a scalar, a tuple, a vector).  What a `null` arm IS is read from the SOURCE token
-  (`block_tail_null_literal`, `null_literal_arms`): the lowered arm is its sibling's typed null by
-  then, and on the first pass a comprehension arm is a placeholder of the same shape — reading
-  the lowered code widened `if c { [for …] } else { … }`.  Two consumers of the wider type were
-  closed with it: a variant joined with null is admitted into its enum through the `?`
-  (`change_var_type`), and a cursor sub-rule may be declared `-> N?` (`peek_subrule_capture`).
-  **Measured before the change** with `loft --check` over every file containing `null` in the
-  corpus, the libraries, the consumers and the registry: 65 sites, all functions declared `-> T`
-  whose branch returns `null` — a warning, as `(N-Store)` says — plus one library signature that
-  was wrong (`imaging` `png() -> Image`, which answers null; published as 0.4.0 `-> Image?`).
-  Guards `tests/scripts/a-branch-joining-null-is-optional-for-every-kind.loft`,
-  `tests/scripts/a-sub-rule-may-answer-an-optional.loft`.
-* **D-types-4** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1692)* — `(N-Reserve)` /
-  `layout.md (L-Narrow-Enc)`: the loop variable of `for x in v`, over a vector of a NULLABLE
-  narrow integer, read a null element as its stored code — `255` for `u8?`, `-32768` for
-  `i16?`, `2` for `u16?` — so `x ?? d` never discharged and `!x` never fired, on both backends,
-  while `v[i]`, a copy and a struct field decoded the same element as null.  **Where.**  The
-  loop's element read (`collections.rs`) called `get_val` with nullability hard-coded `false`;
-  the indexed read (`fields.rs`) passes the element's declared nullability.  One question —
-  does this slot decode a null — and two decoders.  **Fix.**  The loop passes it too.  Guard
-  `tests/scripts/1692-a-loop-variable-reads-a-nullable-narrow-element-as-null.loft`, which also
-  pins `(N-Reserve)`'s edge: a `255` written into a `u8?` slot IS its null.  Found at the
-  narrow × `??` crossing (16 corpus files).
-* **D-types-3** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1682)* — `(T-Chk)` / `(I-Join)`: a
-  value-position `if` or `match` whose FIRST arm is a tuple literal with a `null` member was
-  REFUSED — *"expected (null, integer), got (integer, integer) on else"* — whatever the declared
-  destination (a `(τ?, τ)` return, a typed local, no annotation), in an `if`, an `else if`
-  chain and every `match` form, while the same program with the concrete arm first compiled
-  and answered.  **Where (measured).**  A sibling arm is parsed against the type the arms so
-  far settled on (`parse_if`'s else arm, `match_arm_expected`), and a tuple literal with a
-  `null` element synthesises `(null, integer)`, a type nothing converts a concrete member to;
-  a bare scalar `null` arm had the carve-out that leaves the sibling to decide (`Type::Null`
-  is "not settled"), and a tuple WITH a null member did not.  `(I-Join)` says the join is
-  `⨆ τᵢ`, optional iff some member is — `(null, τ) ⊔ (τ, τ) = (τ?, τ)` — and `(T-Chk)` pushes
-  the expected type into sub-expressions, so the first arm's synthesised member was never the
-  type to hand down.  **Fix.**  `Parser::tuple_has_null_member` makes such a result "not
-  settled" wherever a sibling is handed its expected type; `join_tuple_arms` joins the arms
-  ELEMENT-WISE (`null ⊔ τ = τ?`, two sibling variants to their enum, `(C-Var)`); both tails
-  are converted to the join (`convert_arm_tail`), and every match site reconverts the arms
-  it had already assembled — measured necessary: with the TYPE alone joined, the first arm
-  of `match z { 1 => (null, 3), _ => (4, 5) }` read `1` for its null member, silently.  Six
-  sites parse a match arm against the settled type (the enum loop, its `null`-arm and
-  wildcard paths, the scalar, vector and tuple pattern matches); the join is one helper
-  (`join_null_tuple_arm`) and each site owns its reconversion.  Guard:
-  `tests/scripts/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft`.
-  Found by `matrix_axes.py cross A7 A3`: the corpus's thinnest crossing was a nested
-  container in a tuple-element position, and the probe there met the refusal on its ninth
-  cell.
-* **D-types-2** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
-  type is not bounded by its declared range on a plain assignment.  `t: (u8, u8) = (250, 7);
-  t.0 = 300` stores `300`, and `t.0 >= 0 and t.0 <= 255` — the type's own range, written out
-  — reads `false` for a value the type is holding; copying that tuple into a
-  `vector<(u8, u8)>` element then reads `44`, the low byte, with nothing reported at either
-  step.  `i8` takes `5000` and `u16` takes `999999` the same way.  The three slots the rule
-  DOES name refuse it: a local, a struct field and a vector element all answer *"cannot
-  implicitly narrow integer to u8"*.  **Where (measured).**  The COMPOUND path is correct —
-  `t.0 += 10` from 250 answers `0` like the local — because loft#1228 routed tuple members
-  through the one seam `Parser::guard_compound_range` sits at; it is the compile-time
-  `is_narrowing_int_store` check on the PLAIN assignment that does not see a tuple member as
-  a narrow store place.  Both backends agree, so a coverage gap and not a divergence.  A
-  tuple member inside a CONTAINER is a second, louder gap: `v: vector<(u8, u8)> = [(1, 2)];
-  v[0].0 += 10` is refused with *"Not implemented operation + for type integer(0, 255)"*, a
-  message about an operator that is plainly implemented — loft#1228's own shape one level
-  deeper.  Found by `scripts/matrix_axes.py`, which reports `A3 … MISSING tuple-element`
-  against the C127 guards.  **Closed** the same day: the narrowing refusal and loft#984's range
-  guard now live in one method (`Parser::narrow_store_checks`) that the general assign path and
-  the tuple branch both call, so a tuple member is bounded like every other slot and the third
-  slot kind that reaches neither has one place to be added to.  Guard
-  `tests/scripts/1640-a-tuple-member-is-a-narrow-slot-like-any-other.loft` for what must still
-  be true, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` for the refusal itself.
-  The second half — `v[0].0 += 10` on a `vector<(u8, u8)>` refused as *"Not implemented
-  operation +"* — is a tuple-in-a-container ROUTING question rather than a narrowing one and
-  stays open on the issue.
-
+* **D-types-17** *(opened 2026-09-29, OPEN — loft#1742)* — a tuple carrying a HEAP member
+  (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out of a
+  function is REFUSED when the returned value is a CALL: `fn back(k) -> (text, float) { mk(k) }`
+  over `mk -> (text, integer)` says *"expected (text, float), got (text, integer) on return
+  from block"*.  The same value held in a variable first returns correctly (D-types-15).  The
+  return rewrite (`rewrite_tail_tuple_with_work_ref`) stores a stored-spelling tail as it is;
+  converting it before the rewrite answered `null` — a refusal kept over a wrong answer.
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
 so `(N-Domain)`'s one promise now holds over all three families.  A comparison against zero

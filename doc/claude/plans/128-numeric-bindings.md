@@ -186,7 +186,7 @@ both backends — which is what makes binding the numeric stack worth doing at a
 | **D** — make Fortran argument lists bindable | this doc | **DONE** |
 | **E** — one numeric library bound end-to-end and dogfooded | this doc | **DONE** |
 
-**A (done).** `PACKAGES.md § Numeric libraries` carries the matrix, the
+**A (done).** `PACKAGES_C_BINDING.md § Numeric libraries` carries the matrix, the
 scalar-by-1-element-vector idiom, the two-slots-per-Fortran-scalar arithmetic that sizes the
 ceiling, and the retention hazard.  The mapping table's `float` row and the arity paragraph
 were both corrected; the latter claimed the ceiling was "checked on every build", which
@@ -475,7 +475,7 @@ several sessions on the strength of two facts (nothing numeric installed, no pas
 
 ## See also
 
-- [PACKAGES.md § Direct C binding — `#c`](../PACKAGES.md) — the binding contract; arc A's
+- [PACKAGES_C_BINDING.md](../PACKAGES_C_BINDING.md) — the binding contract; arc A's
   home, and where the bare-pointer idiom is written for an author.
 - [`src/c_signature.rs`](../../../src/c_signature.rs) — `plan` (the slot assignment, arc D),
   `boundary_refusals` (the float refusal, arc B), `MAX_C_ARITY` (arc C).

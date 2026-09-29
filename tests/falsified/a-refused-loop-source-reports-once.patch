@@ -1,0 +1,68 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index d42c7ba09..e0bc3d186 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3814,14 +3814,6 @@ use #count instead"
+                 // reused name keeps the first type, so a field access on the
+                 // second loop var fails to resolve and yields no iterator.
+                 self.vars.finish_loop(loop_nr);
+-                // And stand in for the statement the loop would have been: its body consumed,
+-                // an empty block as its code.  Left unread, the body's `{` met the enclosing
+-                // parse, and a `Null` statement asked for a `;` a loop never needs — "Expect
+-                // token ;" and a block typed from wherever the parse landed, two errors about
+-                // the parser's own state behind a message that had already named the fault
+-                // (loft#1453's second half).
+-                self.skip_braced();
+-                *code = v_block(Vec::new(), Type::Void, "for");
+                 return;
+             }
+             // P235 step 2: with for_var resolved, define each destructured
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 868b6f81e..44f4bef7a 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -5256,7 +5256,7 @@ impl Parser {
+     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
+     /// what a literal refused before its fields are typed leaves behind, so the parser stays
+     /// aligned for the next statement.
+-    pub(crate) fn skip_braced(&mut self) {
++    fn skip_braced(&mut self) {
+         if self.lexer.has_token("{") {
+             self.skip_to_close("{", "}");
+         }
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 3fbc1f63a..44e3ebd8a 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3186,25 +3186,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         let src_coll = expr.clone();
+         let mut create_iter = expr;
+         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
+-        let errors_before_iterable = self.lexer.diagnostics().error_count();
+         let iter_next = self.iterator(&mut create_iter, &in_type, &it, iter_var, pre_var);
+         if !self.first_pass && iter_next == Value::Null {
+-            // The `for` statement's two recovery rules (loft#1453): the fallback line only
+-            // when `iterator` reported nothing of its own — a nullable source is refused
+-            // there, naming the `?` and both discharges — and the body consumed, so the
+-            // literal's `]` is where the parse resumes.  Without them a refused source
+-            // cascaded into six errors about the parser's own state.
+-            if self.lexer.diagnostics().error_count() == errors_before_iterable {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "Need an iterable expression in a for statement"
+-                );
+-            }
+-            self.skip_braced();
+-            // The poison (@P376), not `null`: a `null` element made the literal a
+-            // `vector<…>?` and every later use of it warned about an absence nobody wrote.
+-            return Type::Never;
++            diagnostic!(
++                self.lexer,
++                Level::Error,
++                "Need an iterable expression in a for statement"
++            );
++            return Type::Null;
+         }
+         let for_next = v_set(for_var, iter_next);
+         self.vars.loop_var(for_var);

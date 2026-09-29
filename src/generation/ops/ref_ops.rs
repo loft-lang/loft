@@ -268,12 +268,19 @@ impl OpEmitter for OpFreeRefEmitter {
             } else {
                 (String::new(), String::new())
             };
-            write!(ctx.w, "OpFreeRef(cell,")?;
-            ctx.emit(db_val)?;
-            write!(ctx.w, ", \"{label}\")")?;
-            // Reset variable to null sentinel after free.
+            // A VARIABLE's free is guarded by its own null test, inline: a discharge or
+            // result buffer that was never minted on this path (the common case of a `?`
+            // that found its element) then costs a compare instead of a call the runtime
+            // answers with the same test.  The reset to the sentinel stays inside.
             if let Value::Var(_) = db_val {
-                write!(ctx.w, "; {lvalue}.store_nr = u16::MAX")?;
+                write!(
+                    ctx.w,
+                    "if {lvalue}.store_nr != u16::MAX {{ OpFreeRef(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
+                )?;
+            } else {
+                write!(ctx.w, "OpFreeRef(cell,")?;
+                ctx.emit(db_val)?;
+                write!(ctx.w, ", \"{label}\")")?;
             }
         }
         Ok(())
@@ -503,8 +510,17 @@ impl OpEmitter for OpCopyRecordEmitter {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
-                // The destination is derived ONCE: an element reached through an index
-                // re-resolved per field cost seven lookups for one record (`map_set_hex`).
+                // A destination that is a plain VARIABLE is named as itself, so a setter
+                // that holds its record address (`@FR-R-RecPtr`: a minted element inside
+                // its window) writes through it.  Any other destination is derived ONCE:
+                // an element reached through an index re-resolved per field cost seven
+                // lookups for one record (`map_set_hex`).
+                if matches!(dst.unspan(), Value::Var(_)) {
+                    write!(ctx.w, "{{ ")?;
+                    ctx.output
+                        .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
+                    return write!(ctx.w, "}}");
+                }
                 write!(ctx.w, "{{ let __cd: DbRef = ")?;
                 ctx.emit(dst)?;
                 write!(ctx.w, "; ")?;

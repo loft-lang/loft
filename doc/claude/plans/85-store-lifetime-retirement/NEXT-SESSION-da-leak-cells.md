@@ -114,7 +114,7 @@ built for this class, keep using it.
 ## Cell t2 — n8 `&Data = null` default: **interp-only, kt=65535 ×2**
 
 - Test: `issues::n8_no_empty_pre_eval_binding`.  Probe `t2_n8.loft`.  Native
-  is CLEAN — matches the documented eager-`OpInitRef` class (DEBUG.md § leak
+  is CLEAN — matches the documented eager-`OpInitRef` class (DEBUG_STORES.md § leak
   debugging: interp null-init allocates, native lowers to `DbRef::NULL`), but
   ×2 untyped stores for ONE call pair suggests the `&Data = null` default
   param's hidden buffer allocates per CALL SITE and never frees.  Read the
@@ -187,5 +187,5 @@ To re-verify each standalone: `target-da/release/loft --path <repo> --interpret 
 RUSTFLAGS="-C debug-assertions=on" CARGO_TARGET_DIR=target-da \
   cargo test --release --no-fail-fast --test issues --test expressions --lib
 # never set RUSTFLAGS against the MAIN target (deps double-generation —
-# recovery documented in DEBUG.md § the calibration run).
+# recovery documented in DEBUG_STORES.md § the calibration run).
 ```

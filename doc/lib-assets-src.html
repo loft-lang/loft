@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>assets source</h1>
 <article>
-<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.2.1</p>
-<p class="lib-legend">5 file(s), 945 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.2.3</p>
+<p class="lib-legend">5 file(s), 947 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -51,9 +51,9 @@
 <tr><td><code>prefetch</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L283">283</a></td><td>—</td><td><a href="#tests-pack-loft-L97">97</a> <a href="#tests-pack-loft-L106">106</a> <a href="#tests-pack-loft-L120">120</a> <a href="#tests-pack-loft-L147">147</a></td></tr>
 <tr><td><code>PROXY_ALPHA_ON</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L309">309</a></td><td>—</td><td><a href="#src-assets-loft-L345">345</a> <a href="#src-assets-loft-L387">387</a> <a href="#src-assets-loft-L423">423</a></td></tr>
 <tr><td><code>PROXY_BANDS</code> <span class="search-kind">const</span></td><td><a href="#src-assets-loft-L318">318</a></td><td>—</td><td><a href="#src-assets-loft-L444">444</a></td></tr>
-<tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L418">418</a></td><td>—</td><td><a href="#tests-proxy-loft-L76">76</a> <a href="#tests-proxy-loft-L94">94</a> <a href="#tests-proxy-loft-L112">112</a> <a href="#tests-proxy-loft-L127">127</a></td></tr>
-<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L443">443</a></td><td>—</td><td><a href="#tests-proxy-loft-L61">61</a> <a href="#tests-proxy-loft-L79">79</a> <a href="#tests-proxy-loft-L95">95</a> <a href="#tests-proxy-loft-L113">113</a> <a href="#tests-proxy-loft-L128">128</a></td></tr>
-<tr><td><code>proxy_overshoot</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L457">457</a></td><td>—</td><td><a href="#tests-proxy-loft-L80">80</a> <a href="#tests-proxy-loft-L85">85</a> <a href="#tests-proxy-loft-L100">100</a> <a href="#tests-proxy-loft-L130">130</a></td></tr>
+<tr><td><code>opaque_texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L418">418</a></td><td>—</td><td><a href="#tests-proxy-loft-L78">78</a> <a href="#tests-proxy-loft-L96">96</a> <a href="#tests-proxy-loft-L114">114</a> <a href="#tests-proxy-loft-L129">129</a></td></tr>
+<tr><td><code>cell_proxy</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L443">443</a></td><td>—</td><td><a href="#tests-proxy-loft-L63">63</a> <a href="#tests-proxy-loft-L81">81</a> <a href="#tests-proxy-loft-L97">97</a> <a href="#tests-proxy-loft-L115">115</a> <a href="#tests-proxy-loft-L130">130</a></td></tr>
+<tr><td><code>proxy_overshoot</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L457">457</a></td><td>—</td><td><a href="#tests-proxy-loft-L82">82</a> <a href="#tests-proxy-loft-L87">87</a> <a href="#tests-proxy-loft-L102">102</a> <a href="#tests-proxy-loft-L132">132</a></td></tr>
 <tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L469">469</a></td><td>—</td><td><a href="#src-assets-loft-L493">493</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
 <tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L491">491</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
 </table>
@@ -81,7 +81,7 @@
 <span id="src-assets-loft-L21"></span>
 <span id="src-assets-loft-L22"><span class="cm">// --- What a pack holds ---</span></span>
 <span id="src-assets-loft-L23"></span>
-<span id="src-assets-loft-L24"><span class="kw">use</span> shapes;</span>
+<span id="src-assets-loft-L24"><span class="kw">use</span> shapes::*;</span>
 <span id="src-assets-loft-L25"></span>
 <span id="src-assets-loft-L26"><span class="cm">/// What a blob's bytes are, so a loader knows what to do with them without</span></span>
 <span id="src-assets-loft-L27"><span class="cm">/// sniffing the content. `Rgba` is a texture page's own pixels — premultiplied,</span></span>
@@ -564,7 +564,7 @@
 <span id="tests-layout-loft-L4"><span class="cm">// The pack's layout IS its file format, so this suite is the format's regression</span></span>
 <span id="tests-layout-loft-L5"><span class="cm">// test: the struct definitions decide where every byte of a written pack lands, and</span></span>
 <span id="tests-layout-loft-L6"><span class="cm">// a field that moves reads a neighbour's value out of packs already in the wild.</span></span>
-<span id="tests-layout-loft-L7"><span class="kw">use</span> assets;</span>
+<span id="tests-layout-loft-L7"><span class="kw">use</span> assets::*;</span>
 <span id="tests-layout-loft-L8"></span>
 <span id="tests-layout-loft-L9"><span class="cm">/// What the layout of `assets` 0.2.0 hashes to.</span></span>
 <span id="tests-layout-loft-L10"><span class="cm">///</span></span>
@@ -625,7 +625,7 @@
 <span id="tests-pack-loft-L3"><span class="cm">//</span></span>
 <span id="tests-pack-loft-L4"><span class="cm">// The pack round-trip: what is written comes back, byte for byte, and a key can be</span></span>
 <span id="tests-pack-loft-L5"><span class="cm">// read out of the bulk half without reading the rest of it.</span></span>
-<span id="tests-pack-loft-L6"><span class="kw">use</span> assets;</span>
+<span id="tests-pack-loft-L6"><span class="kw">use</span> assets::*;</span>
 <span id="tests-pack-loft-L7"></span>
 <span id="tests-pack-loft-L8"><span class="cm">/// A deterministic byte pattern.  A run of zeroes would pass a loader that returned</span></span>
 <span id="tests-pack-loft-L9"><span class="cm">/// nothing, so every fixture byte depends on its own index.</span></span>
@@ -801,8 +801,8 @@
 <span id="tests-proxy-loft-L8"><span class="cm">// hit but never miss one), and its OVERSHOOT must be bounded (or a screen-sized</span></span>
 <span id="tests-proxy-loft-L9"><span class="cm">// box would satisfy containment perfectly and be useless).  Every test below is</span></span>
 <span id="tests-proxy-loft-L10"><span class="cm">// one of those two.</span></span>
-<span id="tests-proxy-loft-L11"><span class="kw">use</span> assets;</span>
-<span id="tests-proxy-loft-L12"><span class="kw">use</span> shapes;</span>
+<span id="tests-proxy-loft-L11"><span class="kw">use</span> assets::*;</span>
+<span id="tests-proxy-loft-L12"><span class="kw">use</span> shapes::*;</span>
 <span id="tests-proxy-loft-L13"></span>
 <span id="tests-proxy-loft-L14"><span class="cm">// A blank RGBA page, `w * h` texels, every one fully transparent.</span></span>
 <span id="tests-proxy-loft-L15"><span class="kw">fn</span> <span class="fn-call">blank_page</span>(bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt; {</span>
@@ -814,115 +814,117 @@
 <span id="tests-proxy-loft-L21">  bp</span>
 <span id="tests-proxy-loft-L22">}</span>
 <span id="tests-proxy-loft-L23"></span>
-<span id="tests-proxy-loft-L24"><span class="cm">// Paint one texel opaque (or to a given alpha).</span></span>
-<span id="tests-proxy-loft-L25"><span class="kw">fn</span> <span class="fn-call">put</span>(pu_px: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pu_stride: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="tests-proxy-loft-L26">       pu_a: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="tests-proxy-loft-L27">  pu_i = (pu_y * pu_stride + pu_x) * <span class="nm">4</span>;</span>
-<span id="tests-proxy-loft-L28">  pu_px[pu_i] = <span class="nm">200</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L29">  pu_px[pu_i + <span class="nm">1</span>] = <span class="nm">100</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L30">  pu_px[pu_i + <span class="nm">2</span>] = <span class="nm">50</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L31">  pu_px[pu_i + <span class="nm">3</span>] = pu_a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>?;</span>
-<span id="tests-proxy-loft-L32">}</span>
-<span id="tests-proxy-loft-L33"></span>
-<span id="tests-proxy-loft-L34"><span class="kw">fn</span> <span class="fn-call">a_cell</span>(ac_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ac_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">Cell</span> {</span>
-<span id="tests-proxy-loft-L35">  assets::<span class="en">Cell</span>{ce_key: <span class="st">"c"</span>, ce_page: <span class="st">"p"</span>, ce_x: <span class="nm">0</span>, ce_y: <span class="nm">0</span>, ce_w: ac_w, ce_h: ac_h}</span>
-<span id="tests-proxy-loft-L36">}</span>
-<span id="tests-proxy-loft-L37"></span>
-<span id="tests-proxy-loft-L38"><span class="kw">fn</span> <span class="fn-call">a_page</span>(ap_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ap_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">PageInfo</span> {</span>
-<span id="tests-proxy-loft-L39">  assets::<span class="en">PageInfo</span>{pi_name: <span class="st">"p"</span>, pi_w: ap_w, pi_h: ap_h, pi_blob: <span class="st">"b"</span>}</span>
-<span id="tests-proxy-loft-L40">}</span>
-<span id="tests-proxy-loft-L41"></span>
-<span id="tests-proxy-loft-L42"><span class="cm">// Is (x, y) inside any box?  The containment check, written here rather than</span></span>
-<span id="tests-proxy-loft-L43"><span class="cm">// reused, so the test does not depend on the predicate it is checking.</span></span>
-<span id="tests-proxy-loft-L44"><span class="kw">fn</span> <span class="fn-call">covered</span>(cv: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="tests-proxy-loft-L45">  <span class="kw">for</span> r <span class="kw">in</span> cv {</span>
-<span id="tests-proxy-loft-L46">    <span class="kw">if</span> (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.rx &amp;&amp; (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.rx + r.rw</span>
-<span id="tests-proxy-loft-L47">      &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.ry &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.ry + r.rh { <span class="kw">return</span> <span class="kw">true</span> }</span>
-<span id="tests-proxy-loft-L48">  }</span>
-<span id="tests-proxy-loft-L49">  <span class="kw">false</span></span>
-<span id="tests-proxy-loft-L50">}</span>
-<span id="tests-proxy-loft-L51"></span>
-<span id="tests-proxy-loft-L52"><span class="cm">// CONTAINMENT is the half that makes substitution safe: a system validated</span></span>
-<span id="tests-proxy-loft-L53"><span class="cm">// against the proxy stays valid when the art changes, because the proxy can only</span></span>
-<span id="tests-proxy-loft-L54"><span class="cm">// ever be bigger than the art.  Checked texel by texel on a diagonal — the shape</span></span>
-<span id="tests-proxy-loft-L55"><span class="cm">// a single box is worst at.</span></span>
-<span id="tests-proxy-loft-L56"><span class="kw">fn</span> <span class="fn-call">test_every_opaque_texel_is_inside_the_proxy</span>() {</span>
-<span id="tests-proxy-loft-L57">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L58">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L59">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L60">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L61">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L62">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) &gt; <span class="nm">1</span>, <span class="st">"a diagonal derives more than one band"</span>);</span>
-<span id="tests-proxy-loft-L63">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="tests-proxy-loft-L64">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, i), <span class="st">"texel ({i},{i}) is inside the proxy"</span>);</span>
-<span id="tests-proxy-loft-L65">  }</span>
-<span id="tests-proxy-loft-L66">}</span>
-<span id="tests-proxy-loft-L67"></span>
-<span id="tests-proxy-loft-L68"><span class="cm">// And the BOUND is what stops containment being satisfied by a screen-sized box.</span></span>
-<span id="tests-proxy-loft-L69"><span class="cm">// A 32x32 diagonal is 32 opaque texels; its single tight box is 1024, which is</span></span>
-<span id="tests-proxy-loft-L70"><span class="cm">// +3100 %.  The banded proxy has to come in far under that, and under F7's +100 %.</span></span>
-<span id="tests-proxy-loft-L71"><span class="kw">fn</span> <span class="fn-call">test_the_proxy_is_bounded_where_a_single_box_is_not</span>() {</span>
-<span id="tests-proxy-loft-L72">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L73">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L74">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L75">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L76">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
-<span id="tests-proxy-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(solid == <span class="nm">32</span>, <span class="st">"32 opaque texels"</span>);</span>
-<span id="tests-proxy-loft-L78"></span>
-<span id="tests-proxy-loft-L79">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L80">  over = assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid);</span>
-<span id="tests-proxy-loft-L81">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over &lt;= <span class="nm">1.0</span>, <span class="st">"the derived proxy is inside F7's +100% bound, at {over}"</span>);</span>
-<span id="tests-proxy-loft-L82"></span>
-<span id="tests-proxy-loft-L83">  <span class="cm">// The single box it replaces is not, by a wide margin — that is the gain.</span></span>
-<span id="tests-proxy-loft-L84">  one: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; = [shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">32.0</span>, rh: <span class="nm">32.0</span>}];</span>
-<span id="tests-proxy-loft-L85">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(one, solid) &gt; <span class="nm">30.0</span>, <span class="st">"one box is +3100%"</span>);</span>
-<span id="tests-proxy-loft-L86">}</span>
-<span id="tests-proxy-loft-L87"></span>
-<span id="tests-proxy-loft-L88"><span class="cm">// A cell with nothing opaque derives NOTHING, and an empty proxy hits nothing.</span></span>
-<span id="tests-proxy-loft-L89"><span class="cm">// A single box around an empty cell would collide with whatever stood there.</span></span>
-<span id="tests-proxy-loft-L90"><span class="kw">fn</span> <span class="fn-call">test_a_transparent_cell_derives_an_empty_proxy</span>() {</span>
-<span id="tests-proxy-loft-L91">  px = <span class="fn-call">blank_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L92">  page = <span class="fn-call">a_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L93">  cell = <span class="fn-call">a_cell</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-proxy-loft-L94">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">0</span>, <span class="st">"nothing opaque"</span>);</span>
-<span id="tests-proxy-loft-L95">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) == <span class="nm">0</span>, <span class="st">"and nothing derived"</span>);</span>
-<span id="tests-proxy-loft-L97">  p = shapes::<span class="en">Proxy</span>{boxes: boxes};</span>
-<span id="tests-proxy-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!p.<span class="fn-call">proxy_hits</span>(shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">16.0</span>, rh: <span class="nm">16.0</span>}),</span>
-<span id="tests-proxy-loft-L99">         <span class="st">"an empty proxy hits nothing"</span>);</span>
-<span id="tests-proxy-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, <span class="nm">0</span>) == <span class="nm">0.0</span>, <span class="st">"and no art to be a multiple of"</span>);</span>
-<span id="tests-proxy-loft-L101">}</span>
-<span id="tests-proxy-loft-L102"></span>
-<span id="tests-proxy-loft-L103"><span class="cm">// The alpha threshold is a threshold, not `== 255`: antialiased art has a fringe</span></span>
-<span id="tests-proxy-loft-L104"><span class="cm">// of partly-transparent texels that belong to the silhouette.  At or below</span></span>
-<span id="tests-proxy-loft-L105"><span class="cm">// PROXY_ALPHA_ON a texel is not art.</span></span>
-<span id="tests-proxy-loft-L106"><span class="kw">fn</span> <span class="fn-call">test_the_alpha_cutoff_decides_what_is_art</span>() {</span>
-<span id="tests-proxy-loft-L107">  px = <span class="fn-call">blank_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L108">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">255</span>);   <span class="cm">// solid</span></span>
-<span id="tests-proxy-loft-L109">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">6</span>, <span class="nm">6</span>, <span class="nm">4</span>);     <span class="cm">// below the cutoff — a stray almost-clear texel</span></span>
-<span id="tests-proxy-loft-L110">  page = <span class="fn-call">a_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L111">  cell = <span class="fn-call">a_cell</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
-<span id="tests-proxy-loft-L112">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">1</span>, <span class="st">"only the solid one counts"</span>);</span>
-<span id="tests-proxy-loft-L113">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, <span class="nm">1</span>, <span class="nm">1</span>), <span class="st">"the solid texel is in"</span>);</span>
-<span id="tests-proxy-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">covered</span>(boxes, <span class="nm">6</span>, <span class="nm">6</span>), <span class="st">"the near-transparent one is not"</span>);</span>
-<span id="tests-proxy-loft-L116">}</span>
-<span id="tests-proxy-loft-L117"></span>
-<span id="tests-proxy-loft-L118"><span class="cm">// The axis is chosen PER SPRITE, not fixed.  A wide, short bar bands badly by row</span></span>
-<span id="tests-proxy-loft-L119"><span class="cm">// (one band holds the whole bar) and well by column, so the derivation must run</span></span>
-<span id="tests-proxy-loft-L120"><span class="cm">// both and keep the smaller — 17 of 36 corpus sprites are tighter by column.</span></span>
-<span id="tests-proxy-loft-L121"><span class="kw">fn</span> <span class="fn-call">test_the_tighter_axis_is_chosen_per_sprite</span>() {</span>
-<span id="tests-proxy-loft-L122">  <span class="cm">// A horizontal staircase: wide, only a few rows tall, with big empty corners.</span></span>
-<span id="tests-proxy-loft-L123">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L124">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, <span class="nm">10</span> + (i / <span class="nm">8</span>), <span class="nm">255</span>); }</span>
-<span id="tests-proxy-loft-L125">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L126">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
-<span id="tests-proxy-loft-L127">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
-<span id="tests-proxy-loft-L128">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
-<span id="tests-proxy-loft-L129">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, <span class="nm">10</span> + (i / <span class="nm">8</span>)), <span class="st">"contains texel {i}"</span>); }</span>
-<span id="tests-proxy-loft-L130">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid) &lt;= <span class="nm">1.0</span>,</span>
-<span id="tests-proxy-loft-L131">         <span class="st">"the chosen axis keeps it inside the bound"</span>);</span>
-<span id="tests-proxy-loft-L132">}</span>
+<span id="tests-proxy-loft-L24"><span class="cm">// Paint one texel opaque (or to a given alpha).  The alpha is a `u8`, so its range is</span></span>
+<span id="tests-proxy-loft-L25"><span class="cm">// the parameter's type and not a cast at the store: `pu_a as u8?` put a nullable into a</span></span>
+<span id="tests-proxy-loft-L26"><span class="cm">// `vector&lt;u8&gt;`, where an alpha that did not fit became 0 in silence (loft#1660).</span></span>
+<span id="tests-proxy-loft-L27"><span class="kw">fn</span> <span class="fn-call">put</span>(pu_px: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;, pu_stride: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pu_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="tests-proxy-loft-L28">       pu_a: <span class="ty"><a href="stdlib-types.html">u8</a></span>) {</span>
+<span id="tests-proxy-loft-L29">  pu_i = (pu_y * pu_stride + pu_x) * <span class="nm">4</span>;</span>
+<span id="tests-proxy-loft-L30">  pu_px[pu_i] = <span class="nm">200</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="tests-proxy-loft-L31">  pu_px[pu_i + <span class="nm">1</span>] = <span class="nm">100</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="tests-proxy-loft-L32">  pu_px[pu_i + <span class="nm">2</span>] = <span class="nm">50</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
+<span id="tests-proxy-loft-L33">  pu_px[pu_i + <span class="nm">3</span>] = pu_a;</span>
+<span id="tests-proxy-loft-L34">}</span>
+<span id="tests-proxy-loft-L35"></span>
+<span id="tests-proxy-loft-L36"><span class="kw">fn</span> <span class="fn-call">a_cell</span>(ac_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ac_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">Cell</span> {</span>
+<span id="tests-proxy-loft-L37">  assets::<span class="en">Cell</span>{ce_key: <span class="st">"c"</span>, ce_page: <span class="st">"p"</span>, ce_x: <span class="nm">0</span>, ce_y: <span class="nm">0</span>, ce_w: ac_w, ce_h: ac_h}</span>
+<span id="tests-proxy-loft-L38">}</span>
+<span id="tests-proxy-loft-L39"></span>
+<span id="tests-proxy-loft-L40"><span class="kw">fn</span> <span class="fn-call">a_page</span>(ap_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ap_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; assets::<span class="en">PageInfo</span> {</span>
+<span id="tests-proxy-loft-L41">  assets::<span class="en">PageInfo</span>{pi_name: <span class="st">"p"</span>, pi_w: ap_w, pi_h: ap_h, pi_blob: <span class="st">"b"</span>}</span>
+<span id="tests-proxy-loft-L42">}</span>
+<span id="tests-proxy-loft-L43"></span>
+<span id="tests-proxy-loft-L44"><span class="cm">// Is (x, y) inside any box?  The containment check, written here rather than</span></span>
+<span id="tests-proxy-loft-L45"><span class="cm">// reused, so the test does not depend on the predicate it is checking.</span></span>
+<span id="tests-proxy-loft-L46"><span class="kw">fn</span> <span class="fn-call">covered</span>(cv: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-proxy-loft-L47">  <span class="kw">for</span> r <span class="kw">in</span> cv {</span>
+<span id="tests-proxy-loft-L48">    <span class="kw">if</span> (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.rx &amp;&amp; (cx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.rx + r.rw</span>
+<span id="tests-proxy-loft-L49">      &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &gt;= r.ry &amp;&amp; (cy <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) &lt; r.ry + r.rh { <span class="kw">return</span> <span class="kw">true</span> }</span>
+<span id="tests-proxy-loft-L50">  }</span>
+<span id="tests-proxy-loft-L51">  <span class="kw">false</span></span>
+<span id="tests-proxy-loft-L52">}</span>
+<span id="tests-proxy-loft-L53"></span>
+<span id="tests-proxy-loft-L54"><span class="cm">// CONTAINMENT is the half that makes substitution safe: a system validated</span></span>
+<span id="tests-proxy-loft-L55"><span class="cm">// against the proxy stays valid when the art changes, because the proxy can only</span></span>
+<span id="tests-proxy-loft-L56"><span class="cm">// ever be bigger than the art.  Checked texel by texel on a diagonal — the shape</span></span>
+<span id="tests-proxy-loft-L57"><span class="cm">// a single box is worst at.</span></span>
+<span id="tests-proxy-loft-L58"><span class="kw">fn</span> <span class="fn-call">test_every_opaque_texel_is_inside_the_proxy</span>() {</span>
+<span id="tests-proxy-loft-L59">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L60">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L61">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L62">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L63">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) &gt; <span class="nm">1</span>, <span class="st">"a diagonal derives more than one band"</span>);</span>
+<span id="tests-proxy-loft-L65">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> {</span>
+<span id="tests-proxy-loft-L66">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, i), <span class="st">"texel ({i},{i}) is inside the proxy"</span>);</span>
+<span id="tests-proxy-loft-L67">  }</span>
+<span id="tests-proxy-loft-L68">}</span>
+<span id="tests-proxy-loft-L69"></span>
+<span id="tests-proxy-loft-L70"><span class="cm">// And the BOUND is what stops containment being satisfied by a screen-sized box.</span></span>
+<span id="tests-proxy-loft-L71"><span class="cm">// A 32x32 diagonal is 32 opaque texels; its single tight box is 1024, which is</span></span>
+<span id="tests-proxy-loft-L72"><span class="cm">// +3100 %.  The banded proxy has to come in far under that, and under F7's +100 %.</span></span>
+<span id="tests-proxy-loft-L73"><span class="kw">fn</span> <span class="fn-call">test_the_proxy_is_bounded_where_a_single_box_is_not</span>() {</span>
+<span id="tests-proxy-loft-L74">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L75">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, i, <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L76">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L77">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L78">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
+<span id="tests-proxy-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(solid == <span class="nm">32</span>, <span class="st">"32 opaque texels"</span>);</span>
+<span id="tests-proxy-loft-L80"></span>
+<span id="tests-proxy-loft-L81">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L82">  over = assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid);</span>
+<span id="tests-proxy-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(over &lt;= <span class="nm">1.0</span>, <span class="st">"the derived proxy is inside F7's +100% bound, at {over}"</span>);</span>
+<span id="tests-proxy-loft-L84"></span>
+<span id="tests-proxy-loft-L85">  <span class="cm">// The single box it replaces is not, by a wide margin — that is the gain.</span></span>
+<span id="tests-proxy-loft-L86">  one: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt; = [shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">32.0</span>, rh: <span class="nm">32.0</span>}];</span>
+<span id="tests-proxy-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(one, solid) &gt; <span class="nm">30.0</span>, <span class="st">"one box is +3100%"</span>);</span>
+<span id="tests-proxy-loft-L88">}</span>
+<span id="tests-proxy-loft-L89"></span>
+<span id="tests-proxy-loft-L90"><span class="cm">// A cell with nothing opaque derives NOTHING, and an empty proxy hits nothing.</span></span>
+<span id="tests-proxy-loft-L91"><span class="cm">// A single box around an empty cell would collide with whatever stood there.</span></span>
+<span id="tests-proxy-loft-L92"><span class="kw">fn</span> <span class="fn-call">test_a_transparent_cell_derives_an_empty_proxy</span>() {</span>
+<span id="tests-proxy-loft-L93">  px = <span class="fn-call">blank_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L94">  page = <span class="fn-call">a_page</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L95">  cell = <span class="fn-call">a_cell</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-proxy-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">0</span>, <span class="st">"nothing opaque"</span>);</span>
+<span id="tests-proxy-loft-L97">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(boxes) == <span class="nm">0</span>, <span class="st">"and nothing derived"</span>);</span>
+<span id="tests-proxy-loft-L99">  p = shapes::<span class="en">Proxy</span>{boxes: boxes};</span>
+<span id="tests-proxy-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!p.<span class="fn-call">proxy_hits</span>(shapes::<span class="en">Rect</span>{rx: <span class="nm">0.0</span>, ry: <span class="nm">0.0</span>, rw: <span class="nm">16.0</span>, rh: <span class="nm">16.0</span>}),</span>
+<span id="tests-proxy-loft-L101">         <span class="st">"an empty proxy hits nothing"</span>);</span>
+<span id="tests-proxy-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, <span class="nm">0</span>) == <span class="nm">0.0</span>, <span class="st">"and no art to be a multiple of"</span>);</span>
+<span id="tests-proxy-loft-L103">}</span>
+<span id="tests-proxy-loft-L104"></span>
+<span id="tests-proxy-loft-L105"><span class="cm">// The alpha threshold is a threshold, not `== 255`: antialiased art has a fringe</span></span>
+<span id="tests-proxy-loft-L106"><span class="cm">// of partly-transparent texels that belong to the silhouette.  At or below</span></span>
+<span id="tests-proxy-loft-L107"><span class="cm">// PROXY_ALPHA_ON a texel is not art.</span></span>
+<span id="tests-proxy-loft-L108"><span class="kw">fn</span> <span class="fn-call">test_the_alpha_cutoff_decides_what_is_art</span>() {</span>
+<span id="tests-proxy-loft-L109">  px = <span class="fn-call">blank_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L110">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">255</span>);   <span class="cm">// solid</span></span>
+<span id="tests-proxy-loft-L111">  <span class="fn-call">put</span>(px, <span class="nm">8</span>, <span class="nm">6</span>, <span class="nm">6</span>, <span class="nm">4</span>);     <span class="cm">// below the cutoff — a stray almost-clear texel</span></span>
+<span id="tests-proxy-loft-L112">  page = <span class="fn-call">a_page</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L113">  cell = <span class="fn-call">a_cell</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-proxy-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">opaque_texels</span>(px, page, cell) == <span class="nm">1</span>, <span class="st">"only the solid one counts"</span>);</span>
+<span id="tests-proxy-loft-L115">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, <span class="nm">1</span>, <span class="nm">1</span>), <span class="st">"the solid texel is in"</span>);</span>
+<span id="tests-proxy-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">covered</span>(boxes, <span class="nm">6</span>, <span class="nm">6</span>), <span class="st">"the near-transparent one is not"</span>);</span>
+<span id="tests-proxy-loft-L118">}</span>
+<span id="tests-proxy-loft-L119"></span>
+<span id="tests-proxy-loft-L120"><span class="cm">// The axis is chosen PER SPRITE, not fixed.  A wide, short bar bands badly by row</span></span>
+<span id="tests-proxy-loft-L121"><span class="cm">// (one band holds the whole bar) and well by column, so the derivation must run</span></span>
+<span id="tests-proxy-loft-L122"><span class="cm">// both and keep the smaller — 17 of 36 corpus sprites are tighter by column.</span></span>
+<span id="tests-proxy-loft-L123"><span class="kw">fn</span> <span class="fn-call">test_the_tighter_axis_is_chosen_per_sprite</span>() {</span>
+<span id="tests-proxy-loft-L124">  <span class="cm">// A horizontal staircase: wide, only a few rows tall, with big empty corners.</span></span>
+<span id="tests-proxy-loft-L125">  px = <span class="fn-call">blank_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L126">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="fn-call">put</span>(px, <span class="nm">32</span>, i, <span class="nm">10</span> + (i / <span class="nm">8</span>), <span class="nm">255</span>); }</span>
+<span id="tests-proxy-loft-L127">  page = <span class="fn-call">a_page</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L128">  cell = <span class="fn-call">a_cell</span>(<span class="nm">32</span>, <span class="nm">32</span>);</span>
+<span id="tests-proxy-loft-L129">  solid = assets::<span class="fn-call">opaque_texels</span>(px, page, cell);</span>
+<span id="tests-proxy-loft-L130">  boxes = assets::<span class="fn-call">cell_proxy</span>(cell, page, px);</span>
+<span id="tests-proxy-loft-L131">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..32</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">covered</span>(boxes, i, <span class="nm">10</span> + (i / <span class="nm">8</span>)), <span class="st">"contains texel {i}"</span>); }</span>
+<span id="tests-proxy-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(assets::<span class="fn-call">proxy_overshoot</span>(boxes, solid) &lt;= <span class="nm">1.0</span>,</span>
+<span id="tests-proxy-loft-L133">         <span class="st">"the chosen axis keeps it inside the bound"</span>);</span>
+<span id="tests-proxy-loft-L134">}</span>
 </code></pre>
 <h2 id="tests-scene-loft">tests/scene.loft</h2>
 <pre class="src"><code><span id="tests-scene-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -930,7 +932,7 @@
 <span id="tests-scene-loft-L3"><span class="cm">//</span></span>
 <span id="tests-scene-loft-L4"><span class="cm">// What a pack can be ASKED: which sequence an action maps to, and which blobs a</span></span>
 <span id="tests-scene-loft-L5"><span class="cm">// scene is about to draw from.</span></span>
-<span id="tests-scene-loft-L6"><span class="kw">use</span> assets;</span>
+<span id="tests-scene-loft-L6"><span class="kw">use</span> assets::*;</span>
 <span id="tests-scene-loft-L7"></span>
 <span id="tests-scene-loft-L8"><span class="cm">/// A room with two goblins drawn from one page, a potion from another, and a light</span></span>
 <span id="tests-scene-loft-L9"><span class="cm">/// that draws nothing — so every clause of `keys_near` has something to act on.</span></span>

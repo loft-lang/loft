@@ -21,7 +21,7 @@ must survive the round trip.
 
 Closures in loft are represented as a function-pointer + captured
 environment record (DbRef into a closure store).  See LIFETIME.md and
-LOFT.md § Closures.  The tuple element occupies the slot size of a
+LOFT_LITERALS.md § Closures.  The tuple element occupies the slot size of a
 `Type::Function` value — typically `fn-id (4) + dep DbRef (12)` =
 16 bytes; verified per cell.
 
@@ -108,6 +108,6 @@ first-class type — but the dep-tracker side may need an
 ## Cross-references
 
 - [LIFETIME.md](../../../LIFETIME.md) — closure dep semantics
-- [LOFT.md § Closures](../../../LOFT.md)
+- [LOFT_LITERALS.md § Closures](../../../LOFT_LITERALS.md)
 - `src/data.rs::Type::Function`, `Type::owned_elements`
 - `src/scopes.rs:578` — tuple scope-exit gate

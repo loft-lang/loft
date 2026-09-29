@@ -949,8 +949,18 @@ impl Parser {
                 // chain: the loop variable's own dep names ITSELF, and only its
                 // declaration's dep names the vector. A plain local, parameter or return
                 // reaches no collection that way and keeps the handle test.
+                //
+                // A variable that views the vector is not always a slot, though: a local
+                // bound from a call that returns an element (`b = head(v)`) has the same
+                // deps and holds a whole HANDLE, `nullref` when the callee answered absent.
+                // Read through that handle the word says "present" — `head([])` answered a
+                // value, and since loft#1529 read a returned element through to `nullref`,
+                // `head([null])` did too.  So the handle's own null is asked first and the
+                // slot word only of a handle that exists; each shape answers exactly.
+                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
                 let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
-                self.cl("OpEqInt", &[word, Value::Int(0)])
+                let empty_slot = self.cl("OpEqInt", &[word, Value::Int(0)]);
+                v_if(null_handle, Value::Boolean(true), empty_slot)
             } else if let Some((base, fld)) = self.inline_slot_word(&operand) {
                 // loft#1071 — an INLINE slot (a struct field) is a four-byte RECORD
                 // POINTER, which cannot hold the twelve-byte store_nr sentinel at all.
@@ -965,10 +975,24 @@ impl Parser {
                 // for an absent field even once the write was right.
                 let word = self.cl("OpGetInt4", &[base, fld]);
                 self.cl("OpEqInt", &[word, Value::Int(0)])
-            } else {
+            } else if Self::is_repeatable_place(&self.data, &operand) {
                 // A struct-enum reference in a HANDLE (a local, a parameter, a return):
-                // null IS the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
-                // enum is inline on native).
+                // null is the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
+                // enum is inline on native).  But a handle is not the only thing a local
+                // holds.  `(L-Null)` gives `E` and `E?` one layout and `(N-Store)` lets a
+                // `null` into an `E` field or element, so `x = s.e` can bind a
+                // sub-reference to a slot whose discriminant is 0 — present to the
+                // sentinel, absent to its own bytes.  A present value, handle or slot,
+                // always has a variant (they are numbered from 1) in its first word, so
+                // "the handle is null, else its first word is 0" is exact for both, and it
+                // costs only where a test is written.
+                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
+                let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
+                let empty = self.cl("OpEqInt", &[word, Value::Int(0)]);
+                v_if(null_handle, Value::Boolean(true), empty)
+            } else {
+                // A CALL result is a handle the callee built, and reading it twice would
+                // build it twice.
                 self.cl("OpRefIsNull", &[operand])
             }
         } else if matches!(tp, Type::Optional(_)) && matches!(tp.base(), Type::Reference(_, _)) {
@@ -1313,9 +1337,33 @@ impl Parser {
             // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
             // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
             // logical-and.)
+            let amp_start = {
+                let p = self.lexer.peek_pos();
+                (p.line, p.pos)
+            };
             if self.lexer.has_token("&") {
                 self.amp_pending = true;
                 let t = self.parse_part(var_tp, code, parent_tp);
+                // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
+                // just before a `==` / `!=`, or opening the right operand of one, is recorded
+                // rather than refused; the comparison claims it only when it is that whole
+                // operand, and refuses it otherwise (`handle_operator`).
+                if self.lexer.peek_token("==")
+                    || self.lexer.peek_token("!=")
+                    || self.eq_rhs_at == Some(amp_start)
+                {
+                    self.amp_pending = false;
+                    let end = {
+                        let p = self.lexer.peek_pos();
+                        (p.line, p.pos)
+                    };
+                    self.amp_identity = Some(super::AmpIdentity {
+                        start: amp_start,
+                        end,
+                        place: Self::is_amp_place(code, &self.data),
+                    });
+                    return t;
+                }
                 // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
                 // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
                 // since loft statements are `;`-terminated — is always followed by `;`
@@ -1474,6 +1522,10 @@ impl Parser {
             // points at the operator token (e.g. the `/`), not at whatever
             // the lexer drifted to while parsing the RHS.
             let op_pos = self.lexer.pos().clone();
+            let op_start = {
+                let p = self.lexer.peek_pos();
+                (p.line, p.pos)
+            };
             let mut operator = "";
             for op in OPERATORS[precedence] {
                 if self.lexer.has_token(op) {
@@ -1619,6 +1671,18 @@ impl Parser {
                     }
                 }
                 return current_type;
+            }
+            // `@FR-E-Eq` — a recorded `&<operand>` is the LEFT side of `&a == &b` only when it
+            // spans this whole operand, from `operand_pos` to the operator.
+            if let Some(amp) = self.amp_identity.take() {
+                let whole = amp.start == (operand_pos.line, operand_pos.pos)
+                    && amp.end == op_start
+                    && matches!(operator, "==" | "!=");
+                if whole {
+                    self.eq_amp_left = Some(amp);
+                } else {
+                    self.refuse_amp_operand();
+                }
             }
             // @PLN102 — non-associative comparison guard (see `compared_at_this_level`).
             if matches!(operator, "==" | "!=" | "<" | "<=" | ">" | ">=") {
@@ -3180,9 +3244,12 @@ impl Parser {
             // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
             // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
             // present.  Its tag says, through the one null test that already reads it.
+            //
+            // Every struct-enum asks `null_test` now, not only a slot view: an `E` slot holds
+            // the null `(N-Store)` lets into it, and a local bound from one is a sub-reference
+            // the `rec` test calls present — `x = s.e; x ?? d` never took its default.
             let as_optional = Type::Optional(Box::new(tp.clone()));
             if matches!(tp.base(), Type::Enum(_, true, _))
-                && self.enum_slot_view(src, &as_optional)
                 && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
             {
                 not_null
@@ -3688,7 +3755,14 @@ impl Parser {
         // coalesce's own typing (`?? null` keeps the value nullable, a nullable default
         // widens it), not a store into a slot: @FR-N-Store admits it here and is asked
         // wherever the coalesced value lands.
-        if !self.convert_admitting(&mut rhs, &rhs_type, &result_type) && !self.first_pass {
+        // A value typed `never` is the poison of an error already reported — an
+        // unknown function, an undefined type — so there is no value type for the default to
+        // miss, and a report here is that one error said again for every `??` downstream of
+        // it (a library's one unresolved name gave sixteen).
+        if !self.convert_admitting(&mut rhs, &rhs_type, &result_type)
+            && !self.first_pass
+            && !matches!(result_type.unrewritten(), Type::Never)
+        {
             // @PLN102 arc-E — `convert` FAILED: the default `d` is not assignable to the
             // coalesce type, i.e. `τ? ?? d` with `d` not usable where a `τ` is expected.
             // Left unreported (the old dead `can_convert` call), this built a MISMATCHED
@@ -3759,6 +3833,7 @@ impl Parser {
             let mut lhs = code.clone();
             let null_check = null_check_builder(self, code);
             self.convert(&mut lhs, lhs_type, &result_type);
+            self.record_coalesce_default(&rhs, &rhs_type);
             *code = v_if(null_check, lhs, rhs);
         } else {
             // Non-trivial expression: materialise into a temp to avoid double
@@ -3862,6 +3937,7 @@ impl Parser {
             let mut true_branch = Value::Var(tmp);
             self.convert(&mut true_branch, lhs_type, &result_type);
             self.wrap_dense_default_as_some(&result_type, &rhs_type, &mut rhs);
+            self.record_coalesce_default(&rhs, &rhs_type);
             let if_expr = v_if(null_check, true_branch, rhs);
             // @PLN102 `??` Vector view-model (OWNED subject only): the subject
             // `__ncc_N` is a function-scope OWNER freed by `get_free_vars` (see
@@ -3889,7 +3965,7 @@ impl Parser {
                 *ctp = Self::wrap_if_fallback_nullable(view, fallback_nullable);
                 return;
             }
-            // loft#1506 / `formal/heap.md` D-heap-3 — the same view-model for an OWNED
+            // loft#1506 / `formal/heap-history.md` D-heap-3 — the same view-model for an OWNED
             // RECORD subject, and for the same reason.  The join's value is `if __ncc_N
             // { __ncc_N } else { <default> }`: both arms are vars THIS FRAME owns and
             // frees, so a result typed as a bare owner hands a second owner to whoever
@@ -3906,6 +3982,17 @@ impl Parser {
             *code = v_block(vec![set_tmp, if_expr], result_type.clone(), "ncc");
         }
         *ctp = Self::wrap_if_fallback_nullable(result_type, fallback_nullable);
+    }
+
+    /// Remember a `??`'s default arm with its synthesised type (see `coalesce_defaults`).
+    fn record_coalesce_default(&mut self, rhs: &Value, rhs_type: &Type) {
+        if self.first_pass {
+            return;
+        }
+        if self.coalesce_defaults.len() >= 16 {
+            self.coalesce_defaults.remove(0);
+        }
+        self.coalesce_defaults.push((rhs.clone(), rhs_type.clone()));
     }
 
     /// Does this `??` subject deliver a RECORD store the frame must own?
@@ -4295,6 +4382,21 @@ impl Parser {
         // tail that turned `i64::MIN` into 0 and destroyed the null; that hazard is now fixed
         // at the `rust_type` seam, so the narrow τ is preserved.)
         let res_tp = Type::optional(tp.clone());
+        // A CONSTANT has its answer now — itself when it fits, the null when it does not —
+        // so it takes no temporary.  The temporary is what made a parameter default meeting a
+        // `u8?` look unreplayable in pass 2 only (`fn g(a: u8? = 5)` stopped parsing).
+        if let Some(n) = self.const_int(code) {
+            if n < i64::from(min) || n > max {
+                *code = self.cl("OpConvIntFromNull", &[]);
+            }
+            return res_tp;
+        }
+        // The integer null is already the answer a miss gives (a range guard folds an
+        // out-of-range constant to it).
+        if matches!(code.unspan(), Value::Call(d, a) if a.is_empty() && self.data.def(*d).name() == "OpConvIntFromNull")
+        {
+            return res_tp;
+        }
         let tmp = self.create_unique("_dn4", src_tp);
         let set = v_set(tmp, code.clone());
         let cond_lo = self.cl("OpLeInt", &[Value::Int(min), Value::Var(tmp)]);
@@ -4742,11 +4844,46 @@ impl Parser {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
             let tp = parent_tp.clone();
-            *parent_tp = ctp.clone();
+            // The right operand is a VALUE of its own, never a destination inside the left
+            // one: a vector literal given the left operand's deps as its parent built its
+            // elements into a store it never created (`a == [1, 2]`, an ICE).
+            *parent_tp = match ctp.base() {
+                Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
+                _ => ctp.clone(),
+            };
             let second_pos = self.lexer.peek_pos().clone();
+            let is_eq = operator == "==" || operator == "!=";
+            let left_amp = self.eq_amp_left.take();
+            let outer_rhs = std::mem::replace(
+                &mut self.eq_rhs_at,
+                is_eq.then_some((second_pos.line, second_pos.pos)),
+            );
             let second_type =
                 self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+            self.eq_rhs_at = outer_rhs;
             self.known_var_or_type(&second_code, &second_pos);
+            let right_amp = self.amp_identity.take().and_then(|amp| {
+                let end = self.lexer.peek_pos();
+                if amp.start == (second_pos.line, second_pos.pos) && amp.end == (end.line, end.pos)
+                {
+                    Some(amp)
+                } else {
+                    self.refuse_amp_operand();
+                    None
+                }
+            });
+            if is_eq && (left_amp.is_some() || right_amp.is_some()) {
+                self.identity_compare(
+                    code,
+                    operator,
+                    second_code,
+                    [ctp, &second_type],
+                    [left_amp, right_amp],
+                );
+                *ctp = Type::Boolean;
+                *parent_tp = tp;
+                return None;
+            }
             if !self.first_pass && (operator == "==" || operator == "!=") {
                 if second_type == Type::Null
                     && lhs_not_null
@@ -5252,6 +5389,100 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         None
+    }
+
+    /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of
+    /// a wider operand (`x + &a == y`, `&a + 1 == y`): the sub-expression `&` the binding rule
+    /// refuses.
+    fn refuse_amp_operand(&mut self) {
+        if !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&` is not a general operator — it binds a reference only as the whole \
+                 right-hand side of an assignment (`a = &b`), and asks identity only as a whole \
+                 side of `&a == &b`; do not use `&` in an argument or sub-expression"
+            );
+        }
+    }
+
+    /// `&a == &b` / `&a != &b` — `@FR-E-Eq`, @C91: whether both names are ONE record, which
+    /// `==` never asks (it compares content).  Both sides must be `&<place>` of one heap type;
+    /// `&` on one side only asks nothing and is refused with both spellings.
+    fn identity_compare(
+        &mut self,
+        code: &mut Value,
+        operator: &str,
+        second_code: Value,
+        types: [&Type; 2],
+        amps: [Option<super::AmpIdentity>; 2],
+    ) {
+        let lowered = self.cl(
+            if operator == "==" {
+                "OpEqRef"
+            } else {
+                "OpNeRef"
+            },
+            &[code.clone(), second_code],
+        );
+        *code = lowered;
+        if self.first_pass {
+            return;
+        }
+        let [Some(left), Some(right)] = amps else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&` on one side of `{operator}` asks nothing — `&a {operator} &b` asks whether \
+                 two names are one record, `a {operator} b` compares what they hold; write `&` \
+                 on both sides or on neither"
+            );
+            return;
+        };
+        if !left.place || !right.place {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` compares two places — a variable, struct field or vector \
+                 element — and a temporary (a literal, computed value or call result) is no \
+                 record anything else can name; compare its content with `a {operator} b`"
+            );
+            return;
+        }
+        // A link to a heap value (`c = &a`) holds the same record handle as its target, so
+        // the `&` of the TYPE is peeled and the handle compared as it is.
+        let heap = |t: &Type| {
+            matches!(
+                t.peel_link(),
+                Type::Reference(..)
+                    | Type::Vector(..)
+                    | Type::Hash(..)
+                    | Type::Sorted(..)
+                    | Type::Index(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+                    | Type::Enum(_, true, _)
+            )
+        };
+        let (l, r) = (types[0].peel_link(), types[1].peel_link());
+        if !heap(l) || !heap(r) {
+            let scalar = if heap(l) { r } else { l };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` asks whether two names are one record, and `{}` is a value \
+                 held in place, not a record — compare the values with `a {operator} b`",
+                scalar.source_name(&self.data)
+            );
+        } else if !l.is_equal(r) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` compares two places of one type, not a `{}` and a `{}`",
+                l.source_name(&self.data),
+                r.source_name(&self.data)
+            );
+        }
     }
 }
 

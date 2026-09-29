@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/formatting-history.md — the deviation register for [formatting.md](formatting.md)
 
 > **The rules are next door.**  [formatting.md](formatting.md) states what must always be true of the

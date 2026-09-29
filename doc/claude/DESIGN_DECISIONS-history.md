@@ -52,6 +52,8 @@ that uses `par` and falls back to the sequential one — saying so — when the 
 atomics std needs is missing.  The plan changed this decision without the register saying so; the
 walk found it and the entry now states the current rule.
 
+**Moved from the register entry (2026-09-29).**  Reopened and changed by @PLN117 (owner, finished).  The original reasons for running `par` sequentially — bundle size, worker start-up, COOP/COEP — became costs paid only by a page that uses `par`.
+
 ## C38 — Closure capture is copy-at-definition
 
 **Catalogue:** @F22 (closures & lambdas).
@@ -315,6 +317,8 @@ local, a call return, a vector element, a struct field and a loop variable alike
 member is a copy.  That is `(B-View)` / `(B-Copy)` (formal/binding.md), not the move this entry
 described; the entry now points at those rules.
 
+**Moved from the register entry (2026-09-29).**  The entry was superseded by the binding rules on 2026-09-28.  The MOVE this entry originally described is not what either backend does: after `(a, _) = t`, `t` is still read and a write through `a` reaches `t.0`, as `(B-View)` says it must.
+
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
 **Catalogue:** @F11 (tuples).
@@ -346,6 +350,8 @@ value structs (none on the roadmap) would re-open the row.
 **Superseded 2026-09-28 (@PLN175).**  This entry's revisit trigger — "a feature introduces inline
 value structs" — fired with `value struct` (@PLN101).  Measured on both backends: a `value struct`
 tuple member destructures, projects and copies as a value.
+
+**Moved from the register entry (2026-09-29).**  Superseded by `value struct` on 2026-09-28: the entry's premise — loft has no inline by-value struct — ended with `value struct` (@PLN101), which was its own revisit trigger.
 
 ## C66 — Production loft programs never abort on user-attributable edge cases (development may halt)
 
@@ -1725,6 +1731,8 @@ never a halt.
 
 ---
 
+**Moved from the register entry (2026-09-29).**  The "No runtime exceptions — ever" paragraph is an owner ruling of 2026-09-28.
+
 ## C81 — `&` stays one token, disambiguated by position (bitwise-and vs reference)
 
 **Catalogue:** @F21 (references `&T`), @F37 (operators — bitwise `&`).
@@ -1898,6 +1906,21 @@ A **real consumer** hits a concrete wall that primitives-plus-`match` cannot rea
 e.g. a genuine need for pluggable auth or automatic TLS certificate management in a shipping loft
 program. Bring that consumer's use case as the evidence; scope the *specific* piece it needs (auth,
 or TLS, or static serving) as its own addition, not the whole framework at once.
+
+### Amendment (2026-09-29) — the framework is a separate library, and it is on the roadmap
+
+@PLN148 (WEB_STACK.md, 2026-09-08) designs the web stack this entry said was on no roadmap: a
+`webapp` library with a route table, `.auth()` and sessions, plus `acme` (certificates with
+rotation), `auth` and `sql`.  The owner kept the plan and amended this entry: the part that
+stands is that `server` stays transport primitives; what changes is that a framework is a
+separate library above it rather than declined outright.  WEB_STACK.md already splits it into
+four libraries for this entry's own reason — each is library-sized, and fusing them forces
+unrelated dependencies on every consumer.  `server` gains only a primitive a layer needs
+(`reload_tls`).  `listen_tls` was already in `server` when this amendment was written: TLS
+listening is a primitive; certificate automation is not.
+
+**Moved from the register entry (2026-09-29).**  Amended 2026-09-29 (owner): the framework is on the roadmap, as its own libraries.
+
 ## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
@@ -2186,10 +2209,23 @@ inline over `#native` external whenever the Rust is small"; ✓ across all four 
 PACKAGES.md), so it is a **kept public feature**, not stdlib-internal debt. Deleting the template
 path would break the documented `#rust` inline library route.
 
+### Amendment (2026-09-29) — stdlib-only
+
+The library half of the decision above never held.  The parser accepted `#rust` only while
+parsing `default/` (`self.default`), so a library's `#rust` was `Syntax error: unexpected '#'`
+on every backend, and no published library used one; on the interpreter it could only have
+worked by compiling the template.  The owner chose to correct the claim rather than build the
+route: `#rust` / `#iterator` are the standard library's templates, a library binds Rust with
+`#native` and a native crate, and the parser now refuses the annotation outside `default/` with
+that cure.  The loft-ship skill's Tier 1, PACKAGES.md's target matrix and LIBRARY_AUTHORING's
+rule 7 were corrected with it.  The operator-authoring half — one line per stdlib operator, no
+migration to per-Op emitters — stands.
+
 ### Rationale
 
 - Premise inverted since @PLN81 was filed (2026-05-02): what looked like a redundant second path
-  became the ecosystem's small-native-code path.
+  became the ecosystem's small-native-code path.  (Superseded 2026-09-29: it never was one —
+  see the amendment above.)
 - Authoring cost cuts the wrong way: a new Op is a one-line `#rust` annotation today vs a struct +
   impl + register call after — @PLN81's own "cost" section flags this regression.
 - The real concern (one less-bug-prone emission path — the @P203 double-substitution class) is
@@ -2203,6 +2239,8 @@ REVERSE (fold the ~5 hand-written emitters INTO `#rust`, making `#rust` the sing
 truth), a fresh plan, NOT @PLN81's "everything → emitters, delete the template path."
 
 **Later (2026-09-25):** "recommended" is for BRIDGING a capability loft lacks. `#rust` is not a speed-up for a routine loft can express — that is `(Perf-Cure)` in [formal/performance.md](formal/performance.md): a slow routine is cured in the engine or in its loft algorithm.
+
+**Moved from the register.**  The library reading the 2026-07-08 decision rested on never held: the parser accepted `#rust` only in `default/`, and no published library used it (owner, 2026-09-29).
 
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
@@ -2369,6 +2407,8 @@ identity only as the fast path and cyclic values compared coinductively; and bec
 answers a construction with syntax, identity is asked as `&a == &b`, which reuses `&`'s one
 meaning (the link, not the value) and was refused before, so giving it a meaning only loosens.
 The census of `==` whose answer this changes is recorded with the change that builds it.
+
+**Moved from the register.**  The reasoning as first written: an identity `==` reported where a value is stored — `b = a; a == b` answered false, and `value struct` versus `struct`, a speed choice, flipped the answer.  Built by @PLN175 in ten steps, census before every flip.
 
 ## C92 — Compound assignment evaluates its place expression exactly once
 
@@ -2572,7 +2612,7 @@ So absolute compat holds both ways — bare-`use` programs qualify (no collision
 ⚠ **The shipped `use lib;` is NOT the bind this ruling describes — re-measured 2026-09-01.** A
 bare `use lib;` wildcard-imports every `pub` name into the unqualified namespace, which is what
 the parser says it does (*"Plain `use foo` (no spec) wildcard-imports all pub defs"*) and what
-[LOFT.md § Library imports](LOFT.md) documents as deliberate under loft#1094 — the clash rule
+[LOFT_DECLARATIONS.md § Library imports](LOFT_DECLARATIONS.md) documents as deliberate under loft#1094 — the clash rule
 there (declaring a name a bare import brought in is refused, naming both sites) only exists
 *because* the bare form imports. So the "Already shipped" line above is a status claim that does
 not hold, and the two documents have been describing opposite languages: the reference chapter
@@ -2622,7 +2662,7 @@ So `s[i]` single-subscript is *already* a key lookup — the core, documented so
 
 - **Keep the uniform key-addressed subscript.** For every keyed collection (`sorted` / `index` / `hash` / `spatial`), `coll[k]` is a **key lookup**, `coll[k] = null` a **key removal**, and (where ordered — `sorted`/`spatial`) `coll[lo..hi]` a **key-range / proximity query**. None is positional. This is deliberate and matches [C68](#c68--keyed-collections-dedup-on-insert--and-collkeyvalue) (keyed insert) and the `spatial` proximity API.
 - **Consciously ACCEPTED, not fixed** — the design is internally consistent and defensible; the audit's "reject positional-shaped slices" was based on treating `[a..b]` as a special case, but the single subscript is already key-addressed, so there is no inconsistency *within* sorted to fix.
-- **Freeze guards:** the key-range semantics are golden-locked in `tests/expressions.rs` (`sorted_range_iteration` — `sum_range(2,4)` over keys `1..4` = `50`, i.e. keys 2,3, *not* positions 2,3 = `70`), and made un-missable by `sorted_subscript_is_key_addressed_not_positional` (keys far from positions). Documented as a Gotcha in `LOFT.md § Key-based collections` and `INCONSISTENCIES.md #2`.
+- **Freeze guards:** the key-range semantics are golden-locked in `tests/expressions.rs` (`sorted_range_iteration` — `sum_range(2,4)` over keys `1..4` = `50`, i.e. keys 2,3, *not* positions 2,3 = `70`), and made un-missable by `sorted_subscript_is_key_addressed_not_positional` (keys far from positions). Documented as a Gotcha in `LOFT_DATA.md § Key-based collections` and `INCONSISTENCIES.md #2`.
 - Owner-reviewable; reverses the lib-audit's H8 lean on the strength of the `s[i]`-is-already-key-addressed finding. Reversible at contract 0 if the owner prefers the reject-and-add-`.range()` path (which would then also have to re-home `s[key]` for coherence and carve out `spatial`).
 
 ---
@@ -2989,7 +3029,7 @@ removed working programs to fix a problem that a loosening fixes for free.
   ([DIAGNOSTICS.md](DIAGNOSTICS.md)), so the row moved and the name did not.
 - **Why this refuses the declaration when the wasm rule does not.** `#c` on the wasm targets
   is refused at the CALL only, deliberately, "so a declaration is still portable"
-  ([PACKAGES.md](PACKAGES.md) § *The wasm and browser targets*) — a `#c` binding that wasm
+  ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md) § *The wasm and browser targets*) — a `#c` binding that wasm
   cannot reach is still perfectly good on native and interpret, so failing the declaration
   would break a legitimate cross-target library. Arity is not target-conditional: an
   over-ceiling binding can never work **anywhere**, so there is no target on which the
@@ -3000,6 +3040,8 @@ removed working programs to fix a problem that a loosening fixes for free.
   at once either way. Float-by-value does NOT reopen it: there is no cheap ladder move there
   (the trampolines are integer-class by construction), and arc B's pointer idiom covers the
   need.
+
+**Moved from the register entry (2026-09-29).**  Raising the ceiling was chosen over lowering it because extending the trampoline ladder was mechanical.
 
 ## C107 — the C signature decides whether a `vector` carries a count, not the loft type
 
@@ -3957,7 +3999,7 @@ bind, a field, an element, a return — which copy releases it?
 C111 moved the release with a copy into a container, and on 2026-09-04 extended that to every
 whole-value copy: the copy owns, the source stops dropping.  The drop gate then measured 94
 cells releasing wrongly, and cure after cure met a shape where the compiler could not tell which
-copy should release (`formal/heap.md` D-heap-1, D-heap-7).  On the morning of 2026-09-15 the
+copy should release (`formal/heap-history.md` D-heap-1, D-heap-7).  On the morning of 2026-09-15 the
 shapes inside a structure were closed as `warning[double-move]`.
 
 ### Evaluation — from the use cases
@@ -4226,7 +4268,7 @@ own), and the IR store keeps it.  From there the rule is read exactly as for a d
   is refused as any write through a `const` binding is.
 - A lambda's `const` parameter is read-only in its body, as a named function's is; and a closure
   capturing a value-const value (a view of one included) holds it as a read-only field of its
-  record, which LOFT.md § Closures already promised for a scalar.
+  record, which LOFT_LITERALS.md § Closures already promised for a scalar.
 
 No rollout table: before `fn(const T)` parsed nothing could be declared that way, and the
 population is measured in the commit that closed it.
@@ -4282,6 +4324,8 @@ A row shows a class of temporaries that cannot be removed or reused and costs mo
 percent — measured on the release binary with `perf`, not from a count.
 
 ---
+
+**Moved from the register.**  Owner, 2026-09-29: a foreign-data view that still presents a store (@PLN174) is the model working — every read routine served it unchanged.
 
 ## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set
 
@@ -4525,3 +4569,6 @@ program itself locked is a program error.  So an unguarded write to a locked sto
 development run with the lock report, and a production run logs and discards it
 (`@FR-H-WriteLocked`, `tests/locked_writes.rs`); an `else` on it runs as for any other store
 that did not take.
+
+**Moved from the register entry (2026-09-29).**  "A lock fault is not a dropped write" is an owner ruling of 2026-09-28.
+

@@ -283,7 +283,7 @@ hands.  Sources of suspicion:
 **Also use this procedure for planned key rotations** —
 notably the **interim `K_tmp` → permanent `K_real`** transition
 documented in [REGISTRY_BOOTSTRAP.md § Two bootstrap paths](REGISTRY_BOOTSTRAP.md#two-bootstrap-paths)
-and [PKG_REGISTRY.md § Two-stage bootstrap](PKG_REGISTRY.md#two-stage-bootstrap--interim-k_tmp--permanent-k_real).
+and [PKG_REGISTRY.md § Two-stage bootstrap](PKG_REGISTRY_TRUST.md#two-stage-bootstrap--interim-k_tmp--permanent-k_real).
 Same mechanic (embed new key, remove old, re-sign artefacts,
 ship release), different urgency.  Running the procedure as a
 planned rotation dogfoods the recovery path before it's needed

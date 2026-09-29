@@ -191,6 +191,10 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
 /// word (O(1)); key-free, mirroring `hash::count`.
 #[must_use]
 pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+    // An absent collection has no records; tested before any store is indexed.
+    if coll.is_null() {
+        return 0;
+    }
     let store = keys::store(coll, stores);
     let tree = store.get_u32_raw(coll.rec, coll.pos);
     if tree == 0 {

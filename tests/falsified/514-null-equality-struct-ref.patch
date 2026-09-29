@@ -1,0 +1,12 @@
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -4886,7 +4886,7 @@
+                 matches!(*ctp, Type::Optional(_)) && matches!(ctp.base(), Type::Reference(_, _));
+             let opt_ref_r = matches!(second_type, Type::Optional(_))
+                 && matches!(second_type.base(), Type::Reference(_, _));
+-            let ref_null = (operator == "==" || operator == "!=")
++            let ref_null = false
+                 && ((opt_ref_l && second_type == Type::Null) || (*ctp == Type::Null && opt_ref_r));
+             // loft#1065 — a nullable STRUCT-enum (`Shape?`) is the third shape that
+             // reaches here, and it was the one with no arm: `s == null` was refused

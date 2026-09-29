@@ -42,11 +42,14 @@ descendants() {
   done
 }
 
-start=$(date +%s)
+# The clock starts when the gate HOLDS the box lock (`make ci` writes `.ci-lock-held`), not
+# when it starts: a gate queued behind another checkout's gate compiles nothing, and charging
+# that wait to its budget cancelled gates that had not yet begun (2026-09-29).
 while sleep "$interval"; do
   read -r rec < .ci-running 2>/dev/null || exit 0   # gate finished and tidied up
   [ "$rec" = "$gate" ] || exit 0                    # a different run owns the file now
   kill -0 "$gate" 2>/dev/null || exit 0             # gate died on its own
+  { read -r start < .ci-lock-held; } 2>/dev/null || continue   # still queued for the lock
   [ $(( $(date +%s) - start )) -ge "$budget" ] || continue
 
   if [ "$budget" -ge 60 ]; then over="$(( budget / 60 ))m"; else over="${budget}s"; fi
@@ -58,6 +61,8 @@ while sleep "$interval"; do
     printf '  While iterating use scripts/find_problems.sh --changed (or --subject <name>) —\n'
     printf '  seconds, not minutes.  make ci is the ONE run before committing, and the PR\n'
     printf '  re-runs the same gate on the same sha anyway.\n'
+    printf '  The tests that passed are recorded: a gate started again on this SAME tree runs\n'
+    printf '  only the rest (scripts/gate_ledger.py; CI_FULL=1 runs everything).\n'
     printf '  A sibling checkout running its own gate roughly doubles this one; for that case\n'
     printf '  only, CI_BUDGET_SECS=... make ci raises it for a single run (CI_BUDGET.md).\n'
     printf '  WARNING: the next cargo test may fail with `undefined symbol: anon.*.llvm.*` — a\n'
@@ -74,5 +79,8 @@ while sleep "$interval"; do
 
   sleep 3
   for p in $tree $gate; do kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null; done
+  # The tests that passed before the cancel stay passed on this tree: the next gate on it
+  # runs only the rest (scripts/gate_ledger.py).
+  python3 scripts/gate_ledger.py record >> result.txt 2>&1
   exit 0
 done

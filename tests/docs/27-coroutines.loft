@@ -14,8 +14,8 @@
 // Use 'break' to stop early without consuming the rest.
 // ## The body really is suspended
 // Calling a generator runs none of its body; each advance runs exactly one
-// more slice, up to the next 'yield'.  Write the loop so its body ENDS in a
-// single 'yield' and this holds on both backends.
+// more slice, up to the next 'yield'.  Give the loop one unconditional 'yield'
+// of a number or a text and this holds on both backends.
 // ## Manual advance with next() and exhausted()
 // Call 'next(gen)' yourself when you need fine-grained control.
 // ## Generators with parameters
@@ -127,7 +127,8 @@ fn main() {
   // ⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while'
   // loop with one 'yield' on its body's straight line, statements after it
   // included.  Other shapes — a yield inside an 'if' or 'match', two yields in
-  // one iteration, a nested loop, a 'continue' — still run the whole loop
+  // one iteration, a nested loop, a 'continue', a yield of a struct, vector or
+  // tuple — still run the whole loop
   // eagerly on --native, so their side effects happen for values the consumer
   // never asks for.  The VALUES are the same either way; it is the side effects
   // that differ.  An ENDLESS eager loop never hands out a value at all: on

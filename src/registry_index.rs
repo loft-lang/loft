@@ -464,6 +464,20 @@ fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, 
 
 // ── Version resolution ────────────────────────────────────────────
 
+/// Does `constraint` name ONE release?  Both spellings [`satisfies`] reads that way: the bare
+/// `0.9.3` a lockfile and `pkg@0.9.3` write, and the `=0.9.3` a manifest writes.  The two
+/// sites that ask were reading only the bare one, so a manifest's exact pin was filtered by
+/// what the lock held — "no version satisfies `=0.9.3`" beside a list naming 0.9.3 — and a
+/// yanked version it named was skipped.
+#[must_use]
+pub fn is_exact_pin(constraint: &str) -> bool {
+    let c = constraint.trim();
+    c.strip_prefix('=')
+        .unwrap_or(c)
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_digit())
+}
+
 /// Find the best version of `pkg` matching `constraint`.  Skips
 /// yanked versions and (unless `allow_prerelease`) prereleases.
 ///
@@ -491,7 +505,7 @@ pub fn find_best_version<'a>(
     let yanked: std::collections::HashSet<&str> = pkg.yanked.iter().map(String::as_str).collect();
     // An exact pin names one release and is what a lockfile records; anything else is the
     // resolver choosing on the consumer's behalf, where a yanked version must stay excluded.
-    let exact_pin = constraint.trim().starts_with(|c: char| c.is_ascii_digit());
+    let exact_pin = is_exact_pin(constraint);
     let mut best: Option<&Version> = None;
     for ver in pkg.versions.values() {
         if yanked.contains(ver.semver.as_str()) && !exact_pin {
@@ -549,6 +563,10 @@ pub struct Resolution<'a> {
 ///   already chosen. Filtering it would report "no version satisfies the
 ///   constraint" for a version that plainly exists, which reads as a broken
 ///   registry rather than the deliberate step across a break that it is.
+/// - **`constraint` excludes `held`** — a floor raised past what the lock holds
+///   (`>=0.1.3` over a held 0.1.0) says the same thing as a pin: the consumer
+///   has already moved. Withholding would leave the lock on a release the
+///   manifest itself refuses, with no way through but editing the lock by hand.
 #[must_use]
 pub fn find_compatible_version<'a>(
     pkg: &'a Package,
@@ -556,8 +574,8 @@ pub fn find_compatible_version<'a>(
     allow_prerelease: bool,
     held: Option<&str>,
 ) -> Resolution<'a> {
-    let exact_pin = constraint.trim().starts_with(|c: char| c.is_ascii_digit());
-    let Some(held) = held.filter(|_| !exact_pin) else {
+    let exact_pin = is_exact_pin(constraint);
+    let Some(held) = held.filter(|h| !exact_pin && satisfies(h, constraint)) else {
         return Resolution {
             best: find_best_version(pkg, constraint, allow_prerelease),
             withheld: Vec::new(),
@@ -606,6 +624,11 @@ pub fn satisfies(version: &str, constraint: &str) -> bool {
     if c.is_empty() || c == "*" {
         return true;
     }
+    // A comma list is every part at once, and it is split FIRST: read after the `^` and `~`
+    // tests, `^0.1, <0.1.5` was taken for a caret whose minor part was `1, <0`.
+    if c.contains(',') {
+        return c.split(',').all(|p| satisfies(version, p.trim()));
+    }
     if let Some(rest) = c.strip_prefix('^') {
         let parts: Vec<u32> = rest.split('.').filter_map(|p| p.parse().ok()).collect();
         if parts.len() < 2 {
@@ -635,9 +658,6 @@ pub fn satisfies(version: &str, constraint: &str) -> bool {
         let hi = format!("{}.{}.0", parts[0], parts[1].saturating_add(1));
         return compare_semver(version, &lo) != std::cmp::Ordering::Less
             && compare_semver(version, &hi) == std::cmp::Ordering::Less;
-    }
-    if c.contains(',') {
-        return c.split(',').all(|p| satisfies(version, p.trim()));
     }
     if let Some(rest) = c.strip_prefix(">=") {
         return compare_semver(version, rest.trim()) != std::cmp::Ordering::Less;
@@ -2072,9 +2092,33 @@ mod tests {
     fn an_exact_pin_crosses_a_declared_break() {
         let idx = parse_index(FLOORS).expect("parse");
         let lib = idx.packages.get("lib").expect("lib");
-        let r = find_compatible_version(lib, "0.4.0", false, Some("0.1.0"));
+        // Both spellings of one release: the bare pin a lockfile writes and the `=` pin a
+        // manifest writes.  The `=` spelling was filtered by the held version and answered
+        // no version at all.
+        for pin in ["0.4.0", "=0.4.0", " = 0.4.0"] {
+            let r = find_compatible_version(lib, pin, false, Some("0.1.0"));
+            assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"), "`{pin}`");
+            assert!(r.withheld.is_empty(), "`{pin}`");
+        }
+        // A range is not a pin: the held version still keeps the declared break back.
+        let r = find_compatible_version(lib, ">=0.1.0", false, Some("0.1.0"));
+        assert_ne!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
+    }
+
+    /// A floor raised past the held release is the same deliberate step as a pin:
+    /// the manifest already refuses what the lock holds.
+    #[test]
+    fn a_floor_past_the_held_release_crosses_a_declared_break() {
+        let idx = parse_index(FLOORS).expect("parse");
+        let lib = idx.packages.get("lib").expect("lib");
+        let r = find_compatible_version(lib, ">=0.3.0", false, Some("0.1.0"));
         assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
         assert!(r.withheld.is_empty());
+        // A floor the held release still satisfies asks for nothing new, so the
+        // break is still honoured there.
+        let r = find_compatible_version(lib, ">=0.1.0", false, Some("0.1.0"));
+        assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.2.0"));
+        assert_eq!(r.withheld.len(), 2);
     }
 
     /// The floors travel in the index, so a resolver reads a release's promise
@@ -2111,6 +2155,11 @@ mod tests {
             find_best_version(crypto, "0.1.0", false).map(|v| v.semver.as_str()),
             Some("0.1.0"),
             "a lockfile pin to a yanked version must still resolve"
+        );
+        assert_eq!(
+            find_best_version(crypto, "=0.1.0", false).map(|v| v.semver.as_str()),
+            Some("0.1.0"),
+            "a manifest's `=` pin to a yanked version must resolve too"
         );
         // ...while nothing that lets the RESOLVER choose ever picks one up.
         for c in ["*", "^0.1", ">=0.1"] {
@@ -2151,6 +2200,16 @@ mod tests {
         assert!(satisfies("0.2.5", ">=0.2, <0.3"));
         assert!(!satisfies("0.3.0", ">=0.2, <0.3"));
         assert!(!satisfies("0.1.9", ">=0.2, <0.3"));
+    }
+
+    #[test]
+    fn satisfies_a_comma_list_whose_first_part_is_a_caret_or_tilde() {
+        assert!(satisfies("0.1.3", "^0.1, <0.1.5"));
+        assert!(!satisfies("0.1.6", "^0.1, <0.1.5"));
+        assert!(satisfies("0.1.0", "^0.1, =0.1.0"));
+        assert!(!satisfies("0.2.0", "^0.1, =0.2.0"));
+        assert!(satisfies("0.1.4", "~0.1.2, >=0.1.4"));
+        assert!(!satisfies("0.1.3", "~0.1.2, >=0.1.4"));
     }
 
     #[test]

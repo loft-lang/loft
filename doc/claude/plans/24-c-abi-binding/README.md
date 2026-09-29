@@ -11,7 +11,7 @@ A loft library binds directly to a system C library — **no rustc anywhere in t
 library**, no libffi — and reaches the same standard of proof as a Rust `#native`
 library.
 
-**The reference lives in [PACKAGES.md § Direct C binding](../../PACKAGES.md#direct-c-binding--c-pln24)**:
+**The reference lives in [PACKAGES.md § Direct C binding](../../PACKAGES_C_BINDING.md#direct-c-binding--c-pln24)**:
 the declaration and its type mapping, the `char *` return, `[c] libs` /
 `optional-libs` / `shim`, `c_library_available`, the wasm refusal, and the sandbox
 rule. Read that to *use* `#c`. What follows is the closure record — why it is

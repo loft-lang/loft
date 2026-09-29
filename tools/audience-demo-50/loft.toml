@@ -7,8 +7,8 @@
 [package]
 name    = "audience_demo_50"
 version = "0.0.0"
-loft    = ">=0.8"
+loft    = ">=2026.10.0"
 
 [dependencies]
-web    = ">=0.1"
-server = ">=0.1"
+web    = ">=0.4.2"
+server = ">=0.7.1"

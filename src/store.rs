@@ -1009,6 +1009,12 @@ impl Store {
         let size = size.max(2);
         let l = Layout::from_size_align(size as usize * 8, 8).expect("Problem");
         let ptr = unsafe { A.alloc_zeroed(l) };
+        // The value used on is the GUARDED one: an allocation that failed is null.
+        let ptr = if ptr.is_null() {
+            std::alloc::handle_alloc_error(l)
+        } else {
+            ptr
+        };
         // A fresh store has no type yet — `set_known_type` moves these bytes across
         // when `database_named` names it.
         crate::store_budget::add(u16::MAX, size as usize * 8, 0);
@@ -1216,6 +1222,12 @@ impl Store {
         );
         let l = Layout::from_size_align(words as usize * 8, 8).expect("Problem");
         let ptr = unsafe { A.alloc_zeroed(l) };
+        // The value used on is the GUARDED one: an allocation that failed is null.
+        let ptr = if ptr.is_null() {
+            std::alloc::handle_alloc_error(l)
+        } else {
+            ptr
+        };
         crate::store_budget::add(u16::MAX, words as usize * 8, 0);
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
@@ -1418,7 +1430,7 @@ impl Store {
     /// turns NON-deterministic uninitialised-arena bugs — which valgrind
     /// cannot see, because the arena buffer is itself validly allocated — into
     /// deterministic, reproducible failures.  Read once (cached); zero cost
-    /// when off.  See `doc/claude/DEBUG.md` § store-ownership debugging.
+    /// when off.  See `doc/claude/DEBUG_STORES.md` § store-ownership debugging.
     fn zero_claim_enabled() -> bool {
         // Default ON: a claimed block's PAYLOAD must read as zero.  `claim` reuses freed blocks
         // WITHOUT clearing them, so a caller that relies on zero-init — e.g. an empty `[]`
@@ -2140,7 +2152,14 @@ impl Store {
         // it was and the report describes the growth that was stopped.
         crate::store_budget::grow(self.known_type, old_bytes, bytes, self.created_at);
         let l = Layout::from_size_align(old_bytes, 8).expect("Problem");
-        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+        let grown = unsafe { A.realloc(self.ptr, l, bytes) };
+        self.ptr = if grown.is_null() {
+            // The old block is still valid after a failed realloc, but nothing here can
+            // continue without the new size (`Vec` aborts the same way).
+            std::alloc::handle_alloc_error(Layout::from_size_align(bytes, 8).unwrap_or(l))
+        } else {
+            grown
+        };
         if bytes > old_bytes {
             unsafe { self.ptr.add(old_bytes).write_bytes(0, bytes - old_bytes) };
         }
@@ -2226,7 +2245,14 @@ impl Store {
             return true;
         }
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
-        self.ptr = unsafe { A.realloc(self.ptr, l, bytes) };
+        let grown = unsafe { A.realloc(self.ptr, l, bytes) };
+        self.ptr = if grown.is_null() {
+            // The old block is still valid after a failed realloc, but nothing here can
+            // continue without the new size (`Vec` aborts the same way).
+            std::alloc::handle_alloc_error(Layout::from_size_align(bytes, 8).unwrap_or(l))
+        } else {
+            grown
+        };
         crate::store_budget::shrink(
             self.known_type,
             self.size as usize * 8,
@@ -2468,6 +2494,12 @@ impl Store {
     pub fn clone_locked(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
         let ptr = unsafe { A.alloc(l) };
+        // The value used on is the GUARDED one: an allocation that failed is null.
+        let ptr = if ptr.is_null() {
+            std::alloc::handle_alloc_error(l)
+        } else {
+            ptr
+        };
         crate::store_budget::add(self.known_type, self.size as usize * 8, 0);
         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
         Store {
@@ -2521,6 +2553,12 @@ impl Store {
     pub(crate) fn snapshot_copy(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("snapshot layout");
         let ptr = unsafe { A.alloc(l) };
+        // The value used on is the GUARDED one: an allocation that failed is null.
+        let ptr = if ptr.is_null() {
+            std::alloc::handle_alloc_error(l)
+        } else {
+            ptr
+        };
         crate::store_budget::add(self.known_type, self.size as usize * 8, self.created_at);
         unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.size as usize * 8) };
         Store {

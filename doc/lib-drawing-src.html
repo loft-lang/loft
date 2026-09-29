@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>drawing source</h1>
 <article>
-<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.3.0</p>
-<p class="lib-legend">7 file(s), 2688 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.3.1</p>
+<p class="lib-legend">7 file(s), 2692 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -68,21 +68,21 @@
 <tr><td><code>fill_poly</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L240">240</a></td><td>—</td><td><a href="#src-drawing-loft-L1181">1181</a> <a href="#src-drawing-loft-L1280">1280</a> <a href="#src-drawing-loft-L1349">1349</a> <a href="#tests-raster-agreement-loft-L36">36</a> <a href="#tests-raster-agreement-loft-L48">48</a> <a href="#tests-raster-agreement-loft-L60">60</a> … (7 total)</td></tr>
 <tr><td><code>wide_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L294">294</a></td><td>—</td><td><a href="#src-drawing-loft-L1303">1303</a> <a href="#tests-raster-agreement-loft-L82">82</a></td></tr>
 <tr><td><code>thin_line</code> <span class="search-kind">fn</span></td><td><a href="#src-raster-loft-L330">330</a></td><td>—</td><td><a href="#src-drawing-loft-L1173">1173</a> <a href="#src-drawing-loft-L1301">1301</a> <a href="#tests-raster-agreement-loft-L93">93</a></td></tr>
-<tr><td><code>Scan</code> <span class="search-kind">struct</span></td><td><a href="#src-scan-loft-L23">23</a></td><td>—</td><td><a href="#src-drawing-loft-L572">572</a> <a href="#src-drawing-loft-L574">574</a> <a href="#src-drawing-loft-L576">576</a> <a href="#src-drawing-loft-L994">994</a> <a href="#src-drawing-loft-L1004">1004</a> <a href="#src-scan-loft-L29">29</a> … (16 total)</td></tr>
-<tr><td><code>scan_fail</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L29">29</a></td><td>—</td><td><a href="#src-drawing-loft-L1009">1009</a> <a href="#src-scan-loft-L95">95</a> <a href="#src-scan-loft-L110">110</a> <a href="#src-scan-loft-L117">117</a> <a href="#src-scan-loft-L119">119</a> <a href="#src-scan-loft-L141">141</a> … (7 total)</td></tr>
-<tr><td><code>is_digit</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L31">31</a></td><td>—</td><td><a href="#src-scan-loft-L84">84</a> <a href="#src-scan-loft-L103">103</a> <a href="#src-scan-loft-L116">116</a></td></tr>
-<tr><td><code>is_word_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L34">34</a></td><td>—</td><td><a href="#src-drawing-loft-L807">807</a> <a href="#src-scan-loft-L72">72</a></td></tr>
-<tr><td><code>is_space_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L39">39</a></td><td>—</td><td><a href="#src-drawing-loft-L1046">1046</a> <a href="#src-scan-loft-L55">55</a></td></tr>
-<tr><td><code>at</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L45">45</a></td><td>—</td><td><a href="#src-drawing-loft-L180">180</a> <a href="#src-drawing-loft-L189">189</a> <a href="#src-drawing-loft-L193">193</a> <a href="#src-drawing-loft-L194">194</a> <a href="#src-drawing-loft-L197">197</a> <a href="#src-drawing-loft-L198">198</a> … (116 total)</td></tr>
-<tr><td><code>lower_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L50">50</a></td><td>—</td><td><a href="#src-drawing-loft-L489">489</a> <a href="#src-drawing-loft-L496">496</a> <a href="#src-drawing-loft-L630">630</a> <a href="#src-drawing-loft-L794">794</a> <a href="#src-scan-loft-L64">64</a></td></tr>
-<tr><td><code>skip_space</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L53">53</a></td><td>—</td><td><a href="#src-drawing-loft-L190">190</a> <a href="#src-drawing-loft-L193">193</a> <a href="#src-drawing-loft-L195">195</a> <a href="#src-drawing-loft-L197">197</a> <a href="#src-drawing-loft-L199">199</a> <a href="#src-drawing-loft-L269">269</a> … (62 total)</td></tr>
-<tr><td><code>matches_at</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L60">60</a></td><td>—</td><td><a href="#src-drawing-loft-L502">502</a> <a href="#src-drawing-loft-L637">637</a> <a href="#src-drawing-loft-L788">788</a> <a href="#src-scan-loft-L133">133</a> <a href="#src-scan-loft-L155">155</a></td></tr>
-<tr><td><code>word_boundary</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L70">70</a></td><td>—</td><td><a href="#src-drawing-loft-L998">998</a> <a href="#src-scan-loft-L133">133</a></td></tr>
-<tr><td><code>read_number</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L80">80</a></td><td>—</td><td><a href="#src-drawing-loft-L288">288</a> <a href="#src-drawing-loft-L321">321</a> <a href="#src-drawing-loft-L325">325</a> <a href="#src-drawing-loft-L336">336</a> <a href="#src-drawing-loft-L480">480</a> <a href="#src-drawing-loft-L484">484</a> … (20 total)</td></tr>
-<tr><td><code>read_unsigned</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L99">99</a></td><td>—</td><td><a href="#src-drawing-loft-L253">253</a> <a href="#src-drawing-loft-L778">778</a> <a href="#src-drawing-loft-L779">779</a> <a href="#src-drawing-loft-L976">976</a> <a href="#src-drawing-loft-L1003">1003</a></td></tr>
-<tr><td><code>read_uint</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L114">114</a></td><td>—</td><td><a href="#src-drawing-loft-L180">180</a> <a href="#src-drawing-loft-L191">191</a> <a href="#src-drawing-loft-L195">195</a> <a href="#src-drawing-loft-L199">199</a> <a href="#src-drawing-loft-L497">497</a> <a href="#src-drawing-loft-L633">633</a> … (8 total)</td></tr>
-<tr><td><code>find_option</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L129">129</a></td><td>—</td><td><a href="#src-drawing-loft-L178">178</a> <a href="#src-drawing-loft-L220">220</a> <a href="#src-drawing-loft-L230">230</a> <a href="#src-drawing-loft-L238">238</a> <a href="#src-drawing-loft-L246">246</a> <a href="#src-drawing-loft-L251">251</a> … (13 total)</td></tr>
-<tr><td><code>find_word_from</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L151">151</a></td><td>—</td><td><a href="#src-drawing-loft-L475">475</a> <a href="#src-drawing-loft-L524">524</a> <a href="#src-drawing-loft-L602">602</a></td></tr>
+<tr><td><code>Scan</code> <span class="search-kind">struct</span></td><td><a href="#src-scan-loft-L23">23</a></td><td>—</td><td><a href="#src-drawing-loft-L572">572</a> <a href="#src-drawing-loft-L574">574</a> <a href="#src-drawing-loft-L576">576</a> <a href="#src-drawing-loft-L994">994</a> <a href="#src-drawing-loft-L1004">1004</a> <a href="#src-scan-loft-L31">31</a> … (16 total)</td></tr>
+<tr><td><code>scan_fail</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L31">31</a></td><td>—</td><td><a href="#src-drawing-loft-L1009">1009</a> <a href="#src-scan-loft-L99">99</a> <a href="#src-scan-loft-L114">114</a> <a href="#src-scan-loft-L121">121</a> <a href="#src-scan-loft-L123">123</a> <a href="#src-scan-loft-L145">145</a> … (7 total)</td></tr>
+<tr><td><code>is_digit</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L35">35</a></td><td>—</td><td><a href="#src-scan-loft-L88">88</a> <a href="#src-scan-loft-L107">107</a> <a href="#src-scan-loft-L120">120</a></td></tr>
+<tr><td><code>is_word_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L38">38</a></td><td>—</td><td><a href="#src-drawing-loft-L807">807</a> <a href="#src-scan-loft-L76">76</a></td></tr>
+<tr><td><code>is_space_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L43">43</a></td><td>—</td><td><a href="#src-drawing-loft-L1046">1046</a> <a href="#src-scan-loft-L59">59</a></td></tr>
+<tr><td><code>at</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L49">49</a></td><td>—</td><td><a href="#src-drawing-loft-L180">180</a> <a href="#src-drawing-loft-L189">189</a> <a href="#src-drawing-loft-L193">193</a> <a href="#src-drawing-loft-L194">194</a> <a href="#src-drawing-loft-L197">197</a> <a href="#src-drawing-loft-L198">198</a> … (116 total)</td></tr>
+<tr><td><code>lower_byte</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L54">54</a></td><td>—</td><td><a href="#src-drawing-loft-L489">489</a> <a href="#src-drawing-loft-L496">496</a> <a href="#src-drawing-loft-L630">630</a> <a href="#src-drawing-loft-L794">794</a> <a href="#src-scan-loft-L68">68</a></td></tr>
+<tr><td><code>skip_space</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L57">57</a></td><td>—</td><td><a href="#src-drawing-loft-L190">190</a> <a href="#src-drawing-loft-L193">193</a> <a href="#src-drawing-loft-L195">195</a> <a href="#src-drawing-loft-L197">197</a> <a href="#src-drawing-loft-L199">199</a> <a href="#src-drawing-loft-L269">269</a> … (62 total)</td></tr>
+<tr><td><code>matches_at</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L64">64</a></td><td>—</td><td><a href="#src-drawing-loft-L502">502</a> <a href="#src-drawing-loft-L637">637</a> <a href="#src-drawing-loft-L788">788</a> <a href="#src-scan-loft-L137">137</a> <a href="#src-scan-loft-L159">159</a></td></tr>
+<tr><td><code>word_boundary</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L74">74</a></td><td>—</td><td><a href="#src-drawing-loft-L998">998</a> <a href="#src-scan-loft-L137">137</a></td></tr>
+<tr><td><code>read_number</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L84">84</a></td><td>—</td><td><a href="#src-drawing-loft-L288">288</a> <a href="#src-drawing-loft-L321">321</a> <a href="#src-drawing-loft-L325">325</a> <a href="#src-drawing-loft-L336">336</a> <a href="#src-drawing-loft-L480">480</a> <a href="#src-drawing-loft-L484">484</a> … (20 total)</td></tr>
+<tr><td><code>read_unsigned</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L103">103</a></td><td>—</td><td><a href="#src-drawing-loft-L253">253</a> <a href="#src-drawing-loft-L778">778</a> <a href="#src-drawing-loft-L779">779</a> <a href="#src-drawing-loft-L976">976</a> <a href="#src-drawing-loft-L1003">1003</a></td></tr>
+<tr><td><code>read_uint</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L118">118</a></td><td>—</td><td><a href="#src-drawing-loft-L180">180</a> <a href="#src-drawing-loft-L191">191</a> <a href="#src-drawing-loft-L195">195</a> <a href="#src-drawing-loft-L199">199</a> <a href="#src-drawing-loft-L497">497</a> <a href="#src-drawing-loft-L633">633</a> … (8 total)</td></tr>
+<tr><td><code>find_option</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L133">133</a></td><td>—</td><td><a href="#src-drawing-loft-L178">178</a> <a href="#src-drawing-loft-L220">220</a> <a href="#src-drawing-loft-L230">230</a> <a href="#src-drawing-loft-L238">238</a> <a href="#src-drawing-loft-L246">246</a> <a href="#src-drawing-loft-L251">251</a> … (13 total)</td></tr>
+<tr><td><code>find_word_from</code> <span class="search-kind">fn</span></td><td><a href="#src-scan-loft-L155">155</a></td><td>—</td><td><a href="#src-drawing-loft-L475">475</a> <a href="#src-drawing-loft-L524">524</a> <a href="#src-drawing-loft-L602">602</a></td></tr>
 </table>
 <h2 id="src-drawing-loft">src/drawing.loft</h2>
 <pre class="src"><code><span id="src-drawing-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -129,9 +129,9 @@
 <span id="src-drawing-loft-L42"><span class="cm">// per-point `@N` taper), and smooth points (`~`).  `grad=` / `radial=` fills and</span></span>
 <span id="src-drawing-loft-L43"><span class="cm">// the `Petals` / `Fronds` arrays parse and are listed in `Sketch.deferred` — they</span></span>
 <span id="src-drawing-loft-L44"><span class="cm">// are recognised, and a caller can see they were not drawn.</span></span>
-<span id="src-drawing-loft-L45"><span class="kw">use</span> graphics;</span>
-<span id="src-drawing-loft-L46"><span class="kw">use</span> raster;</span>
-<span id="src-drawing-loft-L47"><span class="kw">use</span> scan;</span>
+<span id="src-drawing-loft-L45"><span class="kw">use</span> graphics::*;</span>
+<span id="src-drawing-loft-L46"><span class="kw">pub</span> <span class="kw">use</span> raster::*;</span>
+<span id="src-drawing-loft-L47"><span class="kw">pub</span> <span class="kw">use</span> scan::*;</span>
 <span id="src-drawing-loft-L48"></span>
 <span id="src-drawing-loft-L49"><span class="cm">/// The supersample factor the corpus is drawn at.  Not adjustable: every golden</span></span>
 <span id="src-drawing-loft-L50"><span class="cm">/// in the corpus carries it, and a scene rendered at any other factor is a</span></span>
@@ -1658,7 +1658,7 @@
 <span id="src-raster-loft-L31"><span class="cm">// on both backends.</span></span>
 <span id="src-raster-loft-L32"><span class="cm">//</span></span>
 <span id="src-raster-loft-L33"><span class="cm">// Ported from Pillow 10.2.0, `src/libImaging/Draw.c` + `src/_imaging.c`.</span></span>
-<span id="src-raster-loft-L34"><span class="kw">use</span> graphics;</span>
+<span id="src-raster-loft-L34"><span class="kw">use</span> graphics::*;</span>
 <span id="src-raster-loft-L35"></span>
 <span id="src-raster-loft-L36"><span class="cm">/// A point in canvas pixels, before Pillow truncates it to a whole pixel.</span></span>
 <span id="src-raster-loft-L37"><span class="cm">///</span></span>
@@ -2048,137 +2048,141 @@
 <span id="src-scan-loft-L26">  value: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-scan-loft-L27">}</span>
 <span id="src-scan-loft-L28"></span>
-<span id="src-scan-loft-L29"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scan_fail</span>() -&gt; <span class="en">Scan</span> { <span class="en">Scan</span> { ok: <span class="kw">false</span>, at: <span class="nm">0</span>, value: <span class="nm">0.0</span> } }</span>
-<span id="src-scan-loft-L30"></span>
-<span id="src-scan-loft-L31"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_digit</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { b &gt;= <span class="nm">48</span> &amp;&amp; b &lt;= <span class="nm">57</span> }</span>
+<span id="src-scan-loft-L29"><span class="cm">/// The did-not-land answer, which every reader below returns when it cannot</span></span>
+<span id="src-scan-loft-L30"><span class="cm">/// match.  A caller tests `ok` and never has to know a sentinel position.</span></span>
+<span id="src-scan-loft-L31"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scan_fail</span>() -&gt; <span class="en">Scan</span> { <span class="en">Scan</span> { ok: <span class="kw">false</span>, at: <span class="nm">0</span>, value: <span class="nm">0.0</span> } }</span>
 <span id="src-scan-loft-L32"></span>
-<span id="src-scan-loft-L33"><span class="cm">/// A regex `\w`: letters, digits and underscore.</span></span>
-<span id="src-scan-loft-L34"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_word_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-scan-loft-L35">  (b &gt;= <span class="nm">48</span> &amp;&amp; b &lt;= <span class="nm">57</span>) || (b &gt;= <span class="nm">65</span> &amp;&amp; b &lt;= <span class="nm">90</span>) || (b &gt;= <span class="nm">97</span> &amp;&amp; b &lt;= <span class="nm">122</span>) || b == <span class="nm">95</span></span>
-<span id="src-scan-loft-L36">}</span>
-<span id="src-scan-loft-L37"></span>
-<span id="src-scan-loft-L38"><span class="cm">/// A regex `\s`: space, tab, and the line endings a stray `\r` leaves behind.</span></span>
-<span id="src-scan-loft-L39"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_space_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-scan-loft-L40">  b == <span class="nm">32</span> || b == <span class="nm">9</span> || b == <span class="nm">10</span> || b == <span class="nm">13</span> || b == <span class="nm">12</span> || b == <span class="nm">11</span></span>
-<span id="src-scan-loft-L41">}</span>
-<span id="src-scan-loft-L42"></span>
-<span id="src-scan-loft-L43"><span class="cm">/// The byte at `i`, or -1 past either end — a value no byte can take, so a</span></span>
-<span id="src-scan-loft-L44"><span class="cm">/// caller never has to bound-check before asking.</span></span>
-<span id="src-scan-loft-L45"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">at</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-scan-loft-L46">  <span class="kw">if</span> i &lt; <span class="nm">0</span> || i &gt;= <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s) { -<span class="nm">1</span> } <span class="kw">else</span> { s.<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(i) }</span>
-<span id="src-scan-loft-L47">}</span>
-<span id="src-scan-loft-L48"></span>
-<span id="src-scan-loft-L49"><span class="cm">/// ASCII lowercase of one byte.</span></span>
-<span id="src-scan-loft-L50"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">lower_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="kw">if</span> b &gt;= <span class="nm">65</span> &amp;&amp; b &lt;= <span class="nm">90</span> { b + <span class="nm">32</span> } <span class="kw">else</span> { b } }</span>
-<span id="src-scan-loft-L51"></span>
-<span id="src-scan-loft-L52"><span class="cm">/// Past any run of spaces starting at `i`.</span></span>
-<span id="src-scan-loft-L53"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">skip_space</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-scan-loft-L54">  sk_i = i;</span>
-<span id="src-scan-loft-L55">  while <span class="fn-call">is_space_byte</span>(<span class="fn-call">at</span>(s, sk_i)) { sk_i += <span class="nm">1</span>; }</span>
-<span id="src-scan-loft-L56">  sk_i</span>
-<span id="src-scan-loft-L57">}</span>
-<span id="src-scan-loft-L58"></span>
-<span id="src-scan-loft-L59"><span class="cm">/// Does `s` carry `word` at byte `i`, ignoring case?  (`word` must be lowercase.)</span></span>
-<span id="src-scan-loft-L60"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">matches_at</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-scan-loft-L61">  ma_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(word);</span>
-<span id="src-scan-loft-L62">  <span class="kw">if</span> i + ma_n &gt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s) { <span class="kw">return</span> <span class="kw">false</span> }</span>
-<span id="src-scan-loft-L63">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>ma_n {</span>
-<span id="src-scan-loft-L64">    <span class="kw">if</span> <span class="fn-call">lower_byte</span>(<span class="fn-call">at</span>(s, i + k)) != word.<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(k) { <span class="kw">return</span> <span class="kw">false</span> }</span>
-<span id="src-scan-loft-L65">  }</span>
-<span id="src-scan-loft-L66">  <span class="kw">true</span></span>
-<span id="src-scan-loft-L67">}</span>
-<span id="src-scan-loft-L68"></span>
-<span id="src-scan-loft-L69"><span class="cm">/// A regex `\b` before byte `i`: position 0, or a non-word byte to the left.</span></span>
-<span id="src-scan-loft-L70"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">word_boundary</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-scan-loft-L71">  <span class="kw">if</span> i &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">true</span> }</span>
-<span id="src-scan-loft-L72">  !<span class="fn-call">is_word_byte</span>(<span class="fn-call">at</span>(s, i - <span class="nm">1</span>))</span>
-<span id="src-scan-loft-L73">}</span>
-<span id="src-scan-loft-L74"></span>
-<span id="src-scan-loft-L75"><span class="cm">/// A regex `([-\d.]+)` — a run of digits, dots and minus signs, read as a number.</span></span>
-<span id="src-scan-loft-L76"><span class="cm">///</span></span>
-<span id="src-scan-loft-L77"><span class="cm">/// The character class is what `draw.py` writes, so this is deliberately loose:</span></span>
-<span id="src-scan-loft-L78"><span class="cm">/// the run is taken first and converted second, and a run that is not a number</span></span>
-<span id="src-scan-loft-L79"><span class="cm">/// fails the scan rather than being silently read as zero.</span></span>
-<span id="src-scan-loft-L80"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_number</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L81">  rn_j = i;</span>
-<span id="src-scan-loft-L82">  while <span class="kw">true</span> {</span>
-<span id="src-scan-loft-L83">    rn_b = <span class="fn-call">at</span>(s, rn_j);</span>
-<span id="src-scan-loft-L84">    <span class="kw">if</span> <span class="fn-call">is_digit</span>(rn_b) || rn_b == <span class="nm">45</span> || rn_b == <span class="nm">46</span> { rn_j += <span class="nm">1</span>; } <span class="kw">else</span> { <span class="kw">break</span> }</span>
-<span id="src-scan-loft-L85">  }</span>
-<span id="src-scan-loft-L86">  <span class="cm">// The class swallows a `-` that is really the next token's separator, and the</span></span>
-<span id="src-scan-loft-L87">  <span class="cm">// regex engine backtracks off it because the pattern after demands it.  Give</span></span>
-<span id="src-scan-loft-L88">  <span class="cm">// back trailing bytes until what is left is a number, which lands on the same</span></span>
-<span id="src-scan-loft-L89">  <span class="cm">// answer without a second pass over the grammar.</span></span>
-<span id="src-scan-loft-L90">  while rn_j &gt; i {</span>
-<span id="src-scan-loft-L91">    rn_v = s[i..rn_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>?;</span>
-<span id="src-scan-loft-L92">    <span class="kw">if</span> rn_v != <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: rn_j, value: rn_v ?? <span class="nm">0.0</span> } }</span>
-<span id="src-scan-loft-L93">    rn_j -= <span class="nm">1</span>;</span>
-<span id="src-scan-loft-L94">  }</span>
-<span id="src-scan-loft-L95">  <span class="fn-call">scan_fail</span>()</span>
-<span id="src-scan-loft-L96">}</span>
-<span id="src-scan-loft-L97"></span>
-<span id="src-scan-loft-L98"><span class="cm">/// A regex `([\d.]+)` — digits and dots, no sign.</span></span>
-<span id="src-scan-loft-L99"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_unsigned</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L100">  ru_j = i;</span>
-<span id="src-scan-loft-L101">  while <span class="kw">true</span> {</span>
-<span id="src-scan-loft-L102">    ru_b = <span class="fn-call">at</span>(s, ru_j);</span>
-<span id="src-scan-loft-L103">    <span class="kw">if</span> <span class="fn-call">is_digit</span>(ru_b) || ru_b == <span class="nm">46</span> { ru_j += <span class="nm">1</span>; } <span class="kw">else</span> { <span class="kw">break</span> }</span>
-<span id="src-scan-loft-L104">  }</span>
-<span id="src-scan-loft-L105">  while ru_j &gt; i {</span>
-<span id="src-scan-loft-L106">    ru_v = s[i..ru_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>?;</span>
-<span id="src-scan-loft-L107">    <span class="kw">if</span> ru_v != <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: ru_j, value: ru_v ?? <span class="nm">0.0</span> } }</span>
-<span id="src-scan-loft-L108">    ru_j -= <span class="nm">1</span>;</span>
-<span id="src-scan-loft-L109">  }</span>
-<span id="src-scan-loft-L110">  <span class="fn-call">scan_fail</span>()</span>
-<span id="src-scan-loft-L111">}</span>
-<span id="src-scan-loft-L112"></span>
-<span id="src-scan-loft-L113"><span class="cm">/// A regex `(\d+)` — digits only.</span></span>
-<span id="src-scan-loft-L114"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_uint</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L115">  rd_j = i;</span>
-<span id="src-scan-loft-L116">  while <span class="fn-call">is_digit</span>(<span class="fn-call">at</span>(s, rd_j)) { rd_j += <span class="nm">1</span>; }</span>
-<span id="src-scan-loft-L117">  <span class="kw">if</span> rd_j == i { <span class="kw">return</span> <span class="fn-call">scan_fail</span>() }</span>
-<span id="src-scan-loft-L118">  rd_v = s[i..rd_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?;</span>
-<span id="src-scan-loft-L119">  <span class="kw">if</span> rd_v == <span class="kw">null</span> { <span class="kw">return</span> <span class="fn-call">scan_fail</span>() }</span>
-<span id="src-scan-loft-L120">  <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: rd_j, value: (rd_v ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }</span>
-<span id="src-scan-loft-L121">}</span>
-<span id="src-scan-loft-L122"></span>
-<span id="src-scan-loft-L123"><span class="cm">/// The first `\b&lt;key&gt;\s*=\s*` on the line, answering where its VALUE starts.</span></span>
-<span id="src-scan-loft-L124"><span class="cm">///</span></span>
-<span id="src-scan-loft-L125"><span class="cm">/// This is the shape every option regex in `draw.py` opens with, and the</span></span>
-<span id="src-scan-loft-L126"><span class="cm">/// word-boundary is load-bearing rather than decorative: without it `w=` would</span></span>
-<span id="src-scan-loft-L127"><span class="cm">/// also be found inside `w2=`, which is a different option with a different</span></span>
-<span id="src-scan-loft-L128"><span class="cm">/// meaning.  `key` must be lowercase; the match is not.</span></span>
-<span id="src-scan-loft-L129"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">find_option</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L130">  fo_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s);</span>
-<span id="src-scan-loft-L131">  fo_i = <span class="nm">0</span>;</span>
-<span id="src-scan-loft-L132">  while fo_i &lt; fo_n {</span>
-<span id="src-scan-loft-L133">    <span class="kw">if</span> <span class="fn-call">word_boundary</span>(s, fo_i) &amp;&amp; <span class="fn-call">matches_at</span>(s, fo_i, key) {</span>
-<span id="src-scan-loft-L134">      fo_j = <span class="fn-call">skip_space</span>(s, fo_i + <span class="fn-call"><a href="stdlib-text.html">size</a></span>(key));</span>
-<span id="src-scan-loft-L135">      <span class="kw">if</span> <span class="fn-call">at</span>(s, fo_j) == <span class="nm">61</span> {</span>
-<span id="src-scan-loft-L136">        <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: <span class="fn-call">skip_space</span>(s, fo_j + <span class="nm">1</span>), value: <span class="nm">0.0</span> }</span>
-<span id="src-scan-loft-L137">      }</span>
-<span id="src-scan-loft-L138">    }</span>
-<span id="src-scan-loft-L139">    fo_i += <span class="nm">1</span>;</span>
-<span id="src-scan-loft-L140">  }</span>
-<span id="src-scan-loft-L141">  <span class="fn-call">scan_fail</span>()</span>
-<span id="src-scan-loft-L142">}</span>
-<span id="src-scan-loft-L143"></span>
-<span id="src-scan-loft-L144"><span class="cm">/// The first occurrence of a lowercase `word` at or after `start`, ignoring case</span></span>
-<span id="src-scan-loft-L145"><span class="cm">/// — a regex literal with no boundary condition, which is what `Circle` and</span></span>
-<span id="src-scan-loft-L146"><span class="cm">/// `Line` open with.</span></span>
-<span id="src-scan-loft-L147"><span class="cm">///</span></span>
-<span id="src-scan-loft-L148"><span class="cm">/// The `start` is what makes a failed parse behave like `re.search`: a command</span></span>
-<span id="src-scan-loft-L149"><span class="cm">/// whose first occurrence does not parse is retried from the NEXT one rather</span></span>
-<span id="src-scan-loft-L150"><span class="cm">/// than given up on.</span></span>
-<span id="src-scan-loft-L151"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">find_word_from</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, start: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L152">  fw_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s);</span>
-<span id="src-scan-loft-L153">  fw_i = <span class="kw">if</span> start &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> { start };</span>
-<span id="src-scan-loft-L154">  while fw_i &lt; fw_n {</span>
-<span id="src-scan-loft-L155">    <span class="kw">if</span> <span class="fn-call">matches_at</span>(s, fw_i, word) { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: fw_i + <span class="fn-call"><a href="stdlib-text.html">size</a></span>(word), value: <span class="nm">0.0</span> } }</span>
-<span id="src-scan-loft-L156">    fw_i += <span class="nm">1</span>;</span>
-<span id="src-scan-loft-L157">  }</span>
-<span id="src-scan-loft-L158">  <span class="fn-call">scan_fail</span>()</span>
-<span id="src-scan-loft-L159">}</span>
+<span id="src-scan-loft-L33"><span class="cm">/// A regex `[0-9]`, ASCII only — which costs nothing here, because a `.draw`</span></span>
+<span id="src-scan-loft-L34"><span class="cm">/// command line is ASCII by construction.</span></span>
+<span id="src-scan-loft-L35"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_digit</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { b &gt;= <span class="nm">48</span> &amp;&amp; b &lt;= <span class="nm">57</span> }</span>
+<span id="src-scan-loft-L36"></span>
+<span id="src-scan-loft-L37"><span class="cm">/// A regex `\w`: letters, digits and underscore.</span></span>
+<span id="src-scan-loft-L38"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_word_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-scan-loft-L39">  (b &gt;= <span class="nm">48</span> &amp;&amp; b &lt;= <span class="nm">57</span>) || (b &gt;= <span class="nm">65</span> &amp;&amp; b &lt;= <span class="nm">90</span>) || (b &gt;= <span class="nm">97</span> &amp;&amp; b &lt;= <span class="nm">122</span>) || b == <span class="nm">95</span></span>
+<span id="src-scan-loft-L40">}</span>
+<span id="src-scan-loft-L41"></span>
+<span id="src-scan-loft-L42"><span class="cm">/// A regex `\s`: space, tab, and the line endings a stray `\r` leaves behind.</span></span>
+<span id="src-scan-loft-L43"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">is_space_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-scan-loft-L44">  b == <span class="nm">32</span> || b == <span class="nm">9</span> || b == <span class="nm">10</span> || b == <span class="nm">13</span> || b == <span class="nm">12</span> || b == <span class="nm">11</span></span>
+<span id="src-scan-loft-L45">}</span>
+<span id="src-scan-loft-L46"></span>
+<span id="src-scan-loft-L47"><span class="cm">/// The byte at `i`, or -1 past either end — a value no byte can take, so a</span></span>
+<span id="src-scan-loft-L48"><span class="cm">/// caller never has to bound-check before asking.</span></span>
+<span id="src-scan-loft-L49"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">at</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-scan-loft-L50">  <span class="kw">if</span> i &lt; <span class="nm">0</span> || i &gt;= <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s) { -<span class="nm">1</span> } <span class="kw">else</span> { s.<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(i) }</span>
+<span id="src-scan-loft-L51">}</span>
+<span id="src-scan-loft-L52"></span>
+<span id="src-scan-loft-L53"><span class="cm">/// ASCII lowercase of one byte.</span></span>
+<span id="src-scan-loft-L54"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">lower_byte</span>(b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="kw">if</span> b &gt;= <span class="nm">65</span> &amp;&amp; b &lt;= <span class="nm">90</span> { b + <span class="nm">32</span> } <span class="kw">else</span> { b } }</span>
+<span id="src-scan-loft-L55"></span>
+<span id="src-scan-loft-L56"><span class="cm">/// Past any run of spaces starting at `i`.</span></span>
+<span id="src-scan-loft-L57"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">skip_space</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-scan-loft-L58">  sk_i = i;</span>
+<span id="src-scan-loft-L59">  while <span class="fn-call">is_space_byte</span>(<span class="fn-call">at</span>(s, sk_i)) { sk_i += <span class="nm">1</span>; }</span>
+<span id="src-scan-loft-L60">  sk_i</span>
+<span id="src-scan-loft-L61">}</span>
+<span id="src-scan-loft-L62"></span>
+<span id="src-scan-loft-L63"><span class="cm">/// Does `s` carry `word` at byte `i`, ignoring case?  (`word` must be lowercase.)</span></span>
+<span id="src-scan-loft-L64"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">matches_at</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-scan-loft-L65">  ma_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(word);</span>
+<span id="src-scan-loft-L66">  <span class="kw">if</span> i + ma_n &gt; <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s) { <span class="kw">return</span> <span class="kw">false</span> }</span>
+<span id="src-scan-loft-L67">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..</span>ma_n {</span>
+<span id="src-scan-loft-L68">    <span class="kw">if</span> <span class="fn-call">lower_byte</span>(<span class="fn-call">at</span>(s, i + k)) != word.<span class="fn-call"><a href="stdlib-text.html">byte_at</a></span>(k) { <span class="kw">return</span> <span class="kw">false</span> }</span>
+<span id="src-scan-loft-L69">  }</span>
+<span id="src-scan-loft-L70">  <span class="kw">true</span></span>
+<span id="src-scan-loft-L71">}</span>
+<span id="src-scan-loft-L72"></span>
+<span id="src-scan-loft-L73"><span class="cm">/// A regex `\b` before byte `i`: position 0, or a non-word byte to the left.</span></span>
+<span id="src-scan-loft-L74"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">word_boundary</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-scan-loft-L75">  <span class="kw">if</span> i &lt;= <span class="nm">0</span> { <span class="kw">return</span> <span class="kw">true</span> }</span>
+<span id="src-scan-loft-L76">  !<span class="fn-call">is_word_byte</span>(<span class="fn-call">at</span>(s, i - <span class="nm">1</span>))</span>
+<span id="src-scan-loft-L77">}</span>
+<span id="src-scan-loft-L78"></span>
+<span id="src-scan-loft-L79"><span class="cm">/// A regex `([-\d.]+)` — a run of digits, dots and minus signs, read as a number.</span></span>
+<span id="src-scan-loft-L80"><span class="cm">///</span></span>
+<span id="src-scan-loft-L81"><span class="cm">/// The character class is what `draw.py` writes, so this is deliberately loose:</span></span>
+<span id="src-scan-loft-L82"><span class="cm">/// the run is taken first and converted second, and a run that is not a number</span></span>
+<span id="src-scan-loft-L83"><span class="cm">/// fails the scan rather than being silently read as zero.</span></span>
+<span id="src-scan-loft-L84"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_number</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
+<span id="src-scan-loft-L85">  rn_j = i;</span>
+<span id="src-scan-loft-L86">  while <span class="kw">true</span> {</span>
+<span id="src-scan-loft-L87">    rn_b = <span class="fn-call">at</span>(s, rn_j);</span>
+<span id="src-scan-loft-L88">    <span class="kw">if</span> <span class="fn-call">is_digit</span>(rn_b) || rn_b == <span class="nm">45</span> || rn_b == <span class="nm">46</span> { rn_j += <span class="nm">1</span>; } <span class="kw">else</span> { <span class="kw">break</span> }</span>
+<span id="src-scan-loft-L89">  }</span>
+<span id="src-scan-loft-L90">  <span class="cm">// The class swallows a `-` that is really the next token's separator, and the</span></span>
+<span id="src-scan-loft-L91">  <span class="cm">// regex engine backtracks off it because the pattern after demands it.  Give</span></span>
+<span id="src-scan-loft-L92">  <span class="cm">// back trailing bytes until what is left is a number, which lands on the same</span></span>
+<span id="src-scan-loft-L93">  <span class="cm">// answer without a second pass over the grammar.</span></span>
+<span id="src-scan-loft-L94">  while rn_j &gt; i {</span>
+<span id="src-scan-loft-L95">    rn_v = s[i..rn_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>?;</span>
+<span id="src-scan-loft-L96">    <span class="kw">if</span> rn_v != <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: rn_j, value: rn_v ?? <span class="nm">0.0</span> } }</span>
+<span id="src-scan-loft-L97">    rn_j -= <span class="nm">1</span>;</span>
+<span id="src-scan-loft-L98">  }</span>
+<span id="src-scan-loft-L99">  <span class="fn-call">scan_fail</span>()</span>
+<span id="src-scan-loft-L100">}</span>
+<span id="src-scan-loft-L101"></span>
+<span id="src-scan-loft-L102"><span class="cm">/// A regex `([\d.]+)` — digits and dots, no sign.</span></span>
+<span id="src-scan-loft-L103"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_unsigned</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
+<span id="src-scan-loft-L104">  ru_j = i;</span>
+<span id="src-scan-loft-L105">  while <span class="kw">true</span> {</span>
+<span id="src-scan-loft-L106">    ru_b = <span class="fn-call">at</span>(s, ru_j);</span>
+<span id="src-scan-loft-L107">    <span class="kw">if</span> <span class="fn-call">is_digit</span>(ru_b) || ru_b == <span class="nm">46</span> { ru_j += <span class="nm">1</span>; } <span class="kw">else</span> { <span class="kw">break</span> }</span>
+<span id="src-scan-loft-L108">  }</span>
+<span id="src-scan-loft-L109">  while ru_j &gt; i {</span>
+<span id="src-scan-loft-L110">    ru_v = s[i..ru_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>?;</span>
+<span id="src-scan-loft-L111">    <span class="kw">if</span> ru_v != <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: ru_j, value: ru_v ?? <span class="nm">0.0</span> } }</span>
+<span id="src-scan-loft-L112">    ru_j -= <span class="nm">1</span>;</span>
+<span id="src-scan-loft-L113">  }</span>
+<span id="src-scan-loft-L114">  <span class="fn-call">scan_fail</span>()</span>
+<span id="src-scan-loft-L115">}</span>
+<span id="src-scan-loft-L116"></span>
+<span id="src-scan-loft-L117"><span class="cm">/// A regex `(\d+)` — digits only.</span></span>
+<span id="src-scan-loft-L118"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">read_uint</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
+<span id="src-scan-loft-L119">  rd_j = i;</span>
+<span id="src-scan-loft-L120">  while <span class="fn-call">is_digit</span>(<span class="fn-call">at</span>(s, rd_j)) { rd_j += <span class="nm">1</span>; }</span>
+<span id="src-scan-loft-L121">  <span class="kw">if</span> rd_j == i { <span class="kw">return</span> <span class="fn-call">scan_fail</span>() }</span>
+<span id="src-scan-loft-L122">  rd_v = s[i..rd_j] <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>?;</span>
+<span id="src-scan-loft-L123">  <span class="kw">if</span> rd_v == <span class="kw">null</span> { <span class="kw">return</span> <span class="fn-call">scan_fail</span>() }</span>
+<span id="src-scan-loft-L124">  <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: rd_j, value: (rd_v ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }</span>
+<span id="src-scan-loft-L125">}</span>
+<span id="src-scan-loft-L126"></span>
+<span id="src-scan-loft-L127"><span class="cm">/// The first `\b&lt;key&gt;\s*=\s*` on the line, answering where its VALUE starts.</span></span>
+<span id="src-scan-loft-L128"><span class="cm">///</span></span>
+<span id="src-scan-loft-L129"><span class="cm">/// This is the shape every option regex in `draw.py` opens with, and the</span></span>
+<span id="src-scan-loft-L130"><span class="cm">/// word-boundary is load-bearing rather than decorative: without it `w=` would</span></span>
+<span id="src-scan-loft-L131"><span class="cm">/// also be found inside `w2=`, which is a different option with a different</span></span>
+<span id="src-scan-loft-L132"><span class="cm">/// meaning.  `key` must be lowercase; the match is not.</span></span>
+<span id="src-scan-loft-L133"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">find_option</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Scan</span> {</span>
+<span id="src-scan-loft-L134">  fo_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s);</span>
+<span id="src-scan-loft-L135">  fo_i = <span class="nm">0</span>;</span>
+<span id="src-scan-loft-L136">  while fo_i &lt; fo_n {</span>
+<span id="src-scan-loft-L137">    <span class="kw">if</span> <span class="fn-call">word_boundary</span>(s, fo_i) &amp;&amp; <span class="fn-call">matches_at</span>(s, fo_i, key) {</span>
+<span id="src-scan-loft-L138">      fo_j = <span class="fn-call">skip_space</span>(s, fo_i + <span class="fn-call"><a href="stdlib-text.html">size</a></span>(key));</span>
+<span id="src-scan-loft-L139">      <span class="kw">if</span> <span class="fn-call">at</span>(s, fo_j) == <span class="nm">61</span> {</span>
+<span id="src-scan-loft-L140">        <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: <span class="fn-call">skip_space</span>(s, fo_j + <span class="nm">1</span>), value: <span class="nm">0.0</span> }</span>
+<span id="src-scan-loft-L141">      }</span>
+<span id="src-scan-loft-L142">    }</span>
+<span id="src-scan-loft-L143">    fo_i += <span class="nm">1</span>;</span>
+<span id="src-scan-loft-L144">  }</span>
+<span id="src-scan-loft-L145">  <span class="fn-call">scan_fail</span>()</span>
+<span id="src-scan-loft-L146">}</span>
+<span id="src-scan-loft-L147"></span>
+<span id="src-scan-loft-L148"><span class="cm">/// The first occurrence of a lowercase `word` at or after `start`, ignoring case</span></span>
+<span id="src-scan-loft-L149"><span class="cm">/// — a regex literal with no boundary condition, which is what `Circle` and</span></span>
+<span id="src-scan-loft-L150"><span class="cm">/// `Line` open with.</span></span>
+<span id="src-scan-loft-L151"><span class="cm">///</span></span>
+<span id="src-scan-loft-L152"><span class="cm">/// The `start` is what makes a failed parse behave like `re.search`: a command</span></span>
+<span id="src-scan-loft-L153"><span class="cm">/// whose first occurrence does not parse is retried from the NEXT one rather</span></span>
+<span id="src-scan-loft-L154"><span class="cm">/// than given up on.</span></span>
+<span id="src-scan-loft-L155"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">find_word_from</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, word: <span class="ty"><a href="stdlib-types.html">text</a></span>, start: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Scan</span> {</span>
+<span id="src-scan-loft-L156">  fw_n = <span class="fn-call"><a href="stdlib-text.html">size</a></span>(s);</span>
+<span id="src-scan-loft-L157">  fw_i = <span class="kw">if</span> start &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> { start };</span>
+<span id="src-scan-loft-L158">  while fw_i &lt; fw_n {</span>
+<span id="src-scan-loft-L159">    <span class="kw">if</span> <span class="fn-call">matches_at</span>(s, fw_i, word) { <span class="kw">return</span> <span class="en">Scan</span> { ok: <span class="kw">true</span>, at: fw_i + <span class="fn-call"><a href="stdlib-text.html">size</a></span>(word), value: <span class="nm">0.0</span> } }</span>
+<span id="src-scan-loft-L160">    fw_i += <span class="nm">1</span>;</span>
+<span id="src-scan-loft-L161">  }</span>
+<span id="src-scan-loft-L162">  <span class="fn-call">scan_fail</span>()</span>
+<span id="src-scan-loft-L163">}</span>
 </code></pre>
 <h2 id="tests-metric-loft">tests/metric.loft</h2>
 <pre class="src"><code><span id="tests-metric-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -2191,7 +2195,7 @@
 <span id="tests-metric-loft-L8"><span class="cm">// report is a wire format two tools have to agree on, so the strings are pinned</span></span>
 <span id="tests-metric-loft-L9"><span class="cm">// rather than described.  The scene is the one @PLN146's `w5.sh` runs, at a size</span></span>
 <span id="tests-metric-loft-L10"><span class="cm">// small enough that no test here draws anything.</span></span>
-<span id="tests-metric-loft-L11"><span class="kw">use</span> drawing;</span>
+<span id="tests-metric-loft-L11"><span class="kw">use</span> drawing::*;</span>
 <span id="tests-metric-loft-L12"></span>
 <span id="tests-metric-loft-L13"><span class="kw">fn</span> <span class="fn-call">source</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
 <span id="tests-metric-loft-L14">  `</span>
@@ -2333,8 +2337,8 @@
 <span id="tests-parse-loft-L8"><span class="cm">// on the line, `Circle` is tried before `Poly`, and a line that matches nothing</span></span>
 <span id="tests-parse-loft-L9"><span class="cm">// is reported rather than dropped.  These pin the parts of that a renderer can</span></span>
 <span id="tests-parse-loft-L10"><span class="cm">// get wrong without the picture obviously breaking.</span></span>
-<span id="tests-parse-loft-L11"><span class="kw">use</span> drawing;</span>
-<span id="tests-parse-loft-L12"><span class="kw">use</span> graphics;</span>
+<span id="tests-parse-loft-L11"><span class="kw">use</span> drawing::*;</span>
+<span id="tests-parse-loft-L12"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-parse-loft-L13"></span>
 <span id="tests-parse-loft-L14"><span class="kw">fn</span> <span class="fn-call">source</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
 <span id="tests-parse-loft-L15">  `</span>
@@ -2519,9 +2523,9 @@
 <span id="tests-raster-agreement-loft-L14"><span class="cm">// entry file has been loaded and pulled it in.  Reversed, the CI gate</span></span>
 <span id="tests-raster-agreement-loft-L15"><span class="cm">// (`loft --interpret --tests tests`) fails with "Library 'raster' not found" while</span></span>
 <span id="tests-raster-agreement-loft-L16"><span class="cm">// `loft test` — which sets up the package context first — passes.</span></span>
-<span id="tests-raster-agreement-loft-L17"><span class="kw">use</span> graphics;</span>
-<span id="tests-raster-agreement-loft-L18"><span class="kw">use</span> drawing;</span>
-<span id="tests-raster-agreement-loft-L19"><span class="kw">use</span> raster;</span>
+<span id="tests-raster-agreement-loft-L17"><span class="kw">use</span> graphics::*;</span>
+<span id="tests-raster-agreement-loft-L18"><span class="kw">use</span> drawing::*;</span>
+<span id="tests-raster-agreement-loft-L19"><span class="kw">use</span> raster::*;</span>
 <span id="tests-raster-agreement-loft-L20"></span>
 <span id="tests-raster-agreement-loft-L21">const <span class="en">N</span> = <span class="nm">16</span>;</span>
 <span id="tests-raster-agreement-loft-L22"></span>
@@ -2624,8 +2628,8 @@
 <span id="tests-render-loft-L8"><span class="cm">// expected bytes below are `draw.py`'s own output for this source, so this test</span></span>
 <span id="tests-render-loft-L9"><span class="cm">// is the corpus gate in miniature: it needs no Python to run, and it fails the</span></span>
 <span id="tests-render-loft-L10"><span class="cm">// moment any stage of the pipeline stops agreeing.</span></span>
-<span id="tests-render-loft-L11"><span class="kw">use</span> drawing;</span>
-<span id="tests-render-loft-L12"><span class="kw">use</span> graphics;</span>
+<span id="tests-render-loft-L11"><span class="kw">use</span> drawing::*;</span>
+<span id="tests-render-loft-L12"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-render-loft-L13"></span>
 <span id="tests-render-loft-L14">const <span class="en">HEX_DIGITS</span> = <span class="st">"0123456789abcdef"</span>;</span>
 <span id="tests-render-loft-L15"></span>

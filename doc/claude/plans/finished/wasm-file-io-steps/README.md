@@ -443,5 +443,5 @@ moving to the next.  The native test suite must never regress.
 - `tests/wasm/host.mjs` — `createHost()`: the JS side is already complete.
 - `tests/wasm/file-io.test.mjs` — host-level edge-case tests (already pass).
 - `tests/wasm/bridge.test.mjs` — integration tests that require the WASM binary.
-- `doc/claude/WASM.md` § "Step 7 — File I/O bridge stubs" — original high-level design.
+- `doc/claude/WASM_IMPLEMENTATION_PLAN.md` § "Step 7 — File I/O bridge stubs" — original high-level design.
 - `src/wasm.rs` — current stubs (all return empty/false/`Vec::new()`).

@@ -728,7 +728,7 @@ violates, because each instance files under whichever subsystem it landed in, an
 single bucket rises far enough to flag.
 
 One such class is measurable and rising: **declaration order changes what a program
-means.** LOFT.md § File structure states the contract — *"A loft file may contain (in any
+means.** LOFT_DECLARATIONS.md § File structure states the contract — *"A loft file may contain (in any
 order)"* its declarations — and the two-pass parser exists to make it true.
 
 | tracker band | order-dependent bugs | share |

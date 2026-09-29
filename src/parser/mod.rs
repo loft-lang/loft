@@ -168,6 +168,15 @@ struct DeferredPar {
     count: u16,
 }
 
+/// A `&<operand>` that may be one side of `&a == &b` (`@FR-E-Eq`): its source span, and whether
+/// the operand is a place (`&` names a record only through one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct AmpIdentity {
+    pub(crate) start: (u32, u32),
+    pub(crate) end: (u32, u32),
+    pub(crate) place: bool,
+}
+
 /// Which binding position a leading `&` may occupy at the point the operand parser
 /// reaches it, and therefore which token ENDS the operand the `&` annotates.
 ///
@@ -530,6 +539,18 @@ pub struct Parser {
     /// could only peek the NEXT token, which cannot tell the whole RHS from the LAST
     /// operand of one — the hole that let `b = 1 + &a;` compile.
     pub(crate) amp_head: AmpHead,
+    /// `@FR-E-Eq` / @C91 — a `&<place>` written as a WHOLE operand of `==` / `!=`, which asks
+    /// identity (`&a == &b`).  The prefix-`&` parse cannot tell a whole operand from the last
+    /// operand of a wider one (`x + &a == y`), so it records the operand's span here and the
+    /// comparison claims it only when the span is exactly its operand; anything unclaimed is
+    /// refused as the sub-expression `&` it is.
+    pub(crate) amp_identity: Option<AmpIdentity>,
+    /// Where the right operand of the `==` / `!=` being parsed begins, so a `&` that opens it
+    /// is recognised as an identity operand (see [`Parser::amp_identity`]).
+    pub(crate) eq_rhs_at: Option<(u32, u32)>,
+    /// The left operand of the `==` / `!=` about to be handled was a whole `&<place>` — set by
+    /// the operator loop, read once by `handle_operator`.
+    pub(crate) eq_amp_left: Option<AmpIdentity>,
     /// The local an assignment is writing, for the duration of that assignment's right-hand
     /// side; `u16::MAX` outside one.  Paired with [`Parser::assign_replaces`], which says
     /// whether the write REPLACES the target (`=`, which repoints it at a fresh store) or
@@ -674,6 +695,16 @@ pub struct Parser {
     /// always resolving the newest release.  `None` until first looked up.
     #[cfg(feature = "registry")]
     root_dep_pins: Option<std::collections::HashMap<String, String>>,
+    /// The declaration that governs the whole PROGRAM's registry versions, answered once
+    /// from the entry file at the first registry lookup — a program that
+    /// `use`s nothing never asks.  A `use` inside a dependency resolves through it too:
+    /// read from the file doing the `use`, a dependency in the registry cache found its own
+    /// cached `loft.toml` and a lock that never exists there, so the consumer's pin for a
+    /// transitive package was ignored.
+    program_scope: Option<crate::resolution_scope::ResolutionScope>,
+    /// The entry file, as the lexer already holds it (a shared handle, no copy), for
+    /// `program_scope`.  `None` before the entry file is loaded.
+    program_entry: Option<std::sync::Arc<str>>,
     /// loft#1687 — per package a declared scope could not satisfy from the cache: the
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
@@ -882,6 +913,12 @@ pub struct Parser {
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
     pub(crate) last_range_till: Option<Value>,
+    /// The default arms of the `??`s built last, each with the type it SYNTHESISED before it
+    /// was brought to the coalesce's type.  A store whose value is a `??` checks its default
+    /// against the slot (`range_guard_inside_discharge`), and a `u8` field read lowers to an
+    /// op typed `integer`, so an arm's own type cannot be read back off the value.  A chain
+    /// `a ?? b ?? c` nests, so the inner arm is asked too; a short list covers that.
+    pub(crate) coalesce_defaults: Vec<(Value, Type)>,
     /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
     /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
     /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
@@ -1062,7 +1099,7 @@ pub struct Parser {
     pub(crate) capture_owner: std::collections::HashMap<String, u32>,
     /// loft#1540 — the names in `capture_context` whose value is read-only: an enclosing binding
     /// marked value-const, or a capture the enclosing lambda itself received read-only.  A
-    /// capture shares a record or collection with the binding it names (LOFT.md § Closures), so
+    /// capture shares a record or collection with the binding it names (LOFT_LITERALS.md § Closures), so
     /// the closure may write it no more than that binding may.
     pub(crate) capture_const: std::collections::HashSet<String>,
     /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
@@ -1649,6 +1686,9 @@ impl Parser {
             arms_of_statement_construct: false,
             match_void_arm: false,
             amp_head: AmpHead::default(),
+            amp_identity: None,
+            eq_rhs_at: None,
+            eq_amp_left: None,
             assign_target: u16::MAX,
             assign_replaces: false,
             build_snapshot_len: 0,
@@ -1688,6 +1728,7 @@ impl Parser {
             iterable_context: false,
             last_range_from: None,
             last_range_till: None,
+            coalesce_defaults: Vec::new(),
             block_path: Vec::new(),
             pending_loop_binders: Vec::new(),
             block_ord: 0,
@@ -1721,6 +1762,8 @@ impl Parser {
             module_clash_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             root_dep_pins: None,
+            program_scope: None,
+            program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
@@ -2510,6 +2553,9 @@ impl Parser {
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
+        if !default && self.program_entry.is_none() {
+            self.program_entry = Some(self.lexer.pos().file.clone());
+        }
         self.first_pass = true;
         crate::diagnostics::set_first_pass(true);
         self.pending_imports.clear();
@@ -3718,6 +3764,9 @@ impl Parser {
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
+        if !default && self.program_entry.is_none() {
+            self.program_entry = Some(self.lexer.pos().file.clone());
+        }
         self.parse_file();
         self.resolve_deferred_unknowns();
         self.between_passes();
@@ -4279,7 +4328,7 @@ impl Parser {
     /// Does a binding of this type NAME the value it was given — a record, a struct-enum or a
     /// collection — rather than hold its own copy, as a scalar and `text` do?  The question
     /// C124 asks of a parameter (`calls.md` F-ParamHeap) and loft#1540 of a closure's capture
-    /// (LOFT.md § Closures: a record or collection capture shares the value).  A `&` link is
+    /// (LOFT_LITERALS.md § Closures: a record or collection capture shares the value).  A `&` link is
     /// peeled first; whether the binding IS a link is the caller's separate question.
     pub(crate) fn names_callers_value(tp: &Type) -> bool {
         matches!(
@@ -4675,21 +4724,52 @@ impl Parser {
     /// arithmetic OVERFLOW landing in such a slot (`(E-Uncomp-NN)`), never a substitute for
     /// this refusal — a default nothing reports is not the null `??` can recover from.
     fn implicit_checked_narrow(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
-        if self.first_pass {
+        if self.first_pass || !Self::takes_checked_narrow(is_type, should) {
             return false;
         }
         let Type::Optional(inner) = should else {
             return false;
         };
-        if !Self::is_narrowing_int(is_type.base(), inner.base()) {
-            return false;
-        }
         let dst_base = inner.base().clone();
         let src_base = is_type.base().clone();
         self.dn4_checked_cast(code, &dst_base, &src_base);
         true
     }
 
+    /// Does a value of `is_type` meet `should` through the implicit checked narrowing?  A
+    /// question of the two TYPES alone, so pass 1 — which converts nothing — can ask it too.
+    pub(crate) fn takes_checked_narrow(is_type: &Type, should: &Type) -> bool {
+        let Type::Optional(inner) = should else {
+            return false;
+        };
+        Self::is_narrowing_int(is_type.base(), inner.base())
+    }
+
+    /// Does converting a `from` value to `to` change its representation — a numeric widening
+    /// (`@FR-C-Num`), at the top or inside a tuple member (`@FR-C-Tuple`)?  An integer width
+    /// change is not one: every integer member is carried full-width until it is stored.
+    /// A tuple in its STORED spelling (`Reference(__tuple<…>)`, loft#822) is asked by its
+    /// members like the stack spelling.
+    pub(crate) fn changes_representation(&self, from: &Type, to: &Type) -> bool {
+        let members = |tp: &Type| match tp.base() {
+            Type::Tuple(m) => Some(m.clone()),
+            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+                Some(self.stored_tuple_elements(tp.base()))
+            }
+            _ => None,
+        };
+        if let (Some(a), Some(b)) = (members(from), members(to)) {
+            return a.len() == b.len()
+                && a.iter()
+                    .zip(&b)
+                    .any(|(x, y)| self.changes_representation(x, y));
+        }
+        Self::is_numeric_widening(from, to)
+    }
+
+    /// `@FR-I-Sub` / `@FR-C-Int` — `Integer[a,b] <: Integer[c,d]` iff `[a,b] ⊆ [c,d]`, and this
+    /// is its one home: every implicit integer flow asks it.  `false` is `@FR-I-Widen` (a
+    /// superset target is implicit); `true` hands the store to `@FR-I-Narrow`.
     fn is_narrowing_int(src: &Type, dst: &Type) -> bool {
         let (Type::Integer(s), Type::Integer(d)) = (src, dst) else {
             return false;
@@ -4765,7 +4845,17 @@ impl Parser {
             return t.source_name(&self.data);
         };
         if s.forced_size.is_none() {
-            return t.source_name(&self.data);
+            // A `limit(lo, hi)` range has no forced width and is still the author's alias —
+            // `integer(0, 10)` is true and no spelling the parser reads, so the cure built from
+            // it (`as integer(0, 10)?`) could not be typed back in.  The full integer keeps its
+            // own name: an alias of it (`type Count = integer`) must not rename every integer.
+            if s.is_wide_template() || s.is_signed32_template() {
+                return t.source_name(&self.data);
+            }
+            return self
+                .data
+                .integer_alias_any_source(s, false)
+                .map_or_else(|| t.source_name(&self.data), str::to_string);
         }
         // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
         // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
@@ -4802,20 +4892,35 @@ impl Parser {
     /// question (a full-width register value); the narrower nullable-narrow-FIELD
     /// sentinel reservation is a separate, store-only check
     /// ([`Self::nullable_sentinel_hint`]) applied at the field-store sites.
+    ///
+    /// `@FR-I-Lit` — a literal checks at the width EXPECTED of it, and a value `if` or `match`
+    /// passes that expectation to each arm (`@FR-T-Chk`), so one whose every arm is a fitting
+    /// constant fits: `x: u8 = if c { 200 } else { 3 }` was refused while each arm alone was
+    /// accepted.  A value block's answer is its last operator.
     fn int_value_fits(&self, code: &Value, dst: &Type) -> bool {
         let Type::Integer(spec) = dst else {
             return false;
         };
-        let n = match code.unspan() {
-            Value::Int(n) => i64::from(*n),
-            Value::Long(n) => *n,
-            other => match crate::const_eval::const_eval(other, &self.data) {
-                Some(Value::Int(n)) => i64::from(n),
-                Some(Value::Long(n)) => n,
-                _ => return false,
-            },
-        };
-        n >= i64::from(spec.min) && n <= spec.max
+        match code.unspan() {
+            Value::If(_, then, other) => {
+                self.int_value_fits(then, dst) && self.int_value_fits(other, dst)
+            }
+            Value::Block(bl) if bl.name != "ncc" => bl
+                .operators
+                .last()
+                .is_some_and(|last| self.int_value_fits(last, dst)),
+            // The integer null loses no data, so it is no narrowing — an exhaustive `match`
+            // ends in one for the arm no value reaches.  Whether the slot may hold null is
+            // `@FR-N-Store`'s question, asked apart.
+            Value::Call(d, a)
+                if a.is_empty() && self.data.def(*d).name() == "OpConvIntFromNull" =>
+            {
+                true
+            }
+            _ => self
+                .const_int(code)
+                .is_some_and(|n| n >= i64::from(spec.min) && n <= spec.max),
+        }
     }
 
     /// When a literal stored into a NULLABLE narrow field fits the type's full
@@ -5061,9 +5166,13 @@ impl Parser {
         // model EXACTLY: the scalars back to the uniform hard error below, and the heap half
         // back to silence.  Letting it fall through to that error instead would hand the opt-out
         // a refusal this branch never had — the one outcome the freeze forbids here.
+        // A PLAIN enum is the same question one kind over: a one-byte value whose `null` is a
+        // reserved discriminant, declarable `E?`, and neither a scalar nor a handle — so it
+        // was asked by neither half and a bare `null` into an `E` field, argument or return
+        // passed in silence while the slot held null.  It takes the heap half's wording.
         let heap_target = crate::keys::heap_nstore_enabled()
             && crate::keys::nstore_softens(false)
-            && crate::data::is_dbref(target_tp)
+            && (crate::data::is_dbref(target_tp) || matches!(target_tp, Type::Enum(_, false, _)))
             // Both spellings of `τ?`, asked HERE.  `is_nullable_wrapper` covers the synthetic
             // `__nullable<S>`; the `Type::Optional` marker was covered only by `is_dbref`
             // answering `false` for a wrapper — a nullability question answered by a shape
@@ -5211,13 +5320,13 @@ impl Parser {
     /// distinctly and WARNS instead (`keys::nstore_softens` is the flag half).  `never_error`
     /// is the caller's "this site never escalates" — a null literal into a heap target.  Two
     /// branches spelled this test by hand and could only agree by accident; this is the one.
-    fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
+    pub(crate) fn nstore_narrow(target_tp: &Type, never_error: bool) -> bool {
         !never_error && matches!(target_tp, Type::Integer(s) if s.byte_width(false) < 8)
     }
 
     /// @PLN25 DN1 — the scalar types whose default flips to NON-null (a bare `null` needs `τ?`).
     /// Heap-nullable types (reference / vector / enum / keyed) are NOT here — they stay nullable.
-    fn is_non_null_scalar(tp: &Type) -> bool {
+    pub(crate) fn is_non_null_scalar(tp: &Type) -> bool {
         matches!(
             tp,
             Type::Integer(_)
@@ -5634,6 +5743,14 @@ impl Parser {
         if !self.store_ctx.is_empty() && matches!(should, Type::Optional(_)) {
             self.read_through_enum_slot(code, is_type);
         }
+        // A tuple's members are narrow slots of their own (`narrow_tuple_members`).
+        if !self.first_pass
+            && !self.in_explicit_cast
+            && let (Type::Tuple(slots), Type::Tuple(values)) = (should.base(), is_type.base())
+        {
+            let (slots, values) = (slots.clone(), values.clone());
+            self.narrow_tuple_members(code, &slots, &values);
+        }
         if is_type.is_equal(should) {
             return true;
         }
@@ -5870,10 +5987,41 @@ impl Parser {
                     break;
                 }
             }
-            if !items.is_empty()
-                && let Value::Tuple(elements) = code.unspan_mut()
-            {
+            let literal = !items.is_empty();
+            if literal && let Value::Tuple(elements) = code.unspan_mut() {
                 *elements = items;
+            }
+            // `@FR-C-Tuple` over `@FR-C-Num` — a member whose conversion changes the
+            // REPRESENTATION (`integer` → `float`) needs that conversion applied, and a tuple
+            // that is not a literal has no member expression to apply it to: the loop above
+            // converted a placeholder, and the tuple was copied bit for bit — `(1, 2)` held in a
+            // variable read back `(1, 1e-323)` as `(integer, float)` on the interpreter and did
+            // not compile natively.  Such a tuple is rebuilt from its members, each converted.
+            if all_compatible
+                && !literal
+                && !self.first_pass
+                && !matches!(is_type, Type::Optional(_))
+                && !matches!(should, Type::Optional(_))
+                && src_elems
+                    .iter()
+                    .zip(dst_elems.iter())
+                    .any(|(s, d)| self.changes_representation(s, d))
+            {
+                let tmp = self.create_unique("_tconv", is_type);
+                let mut members = Vec::with_capacity(src_elems.len());
+                for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
+                    let mut member = Value::TupleGet(tmp, i as u16);
+                    self.convert(&mut member, s, d);
+                    // The member is READ out of the temporary, so its type names it — which is
+                    // what makes a heap member take the copy a hand-written `(t.0, …)` gets.
+                    self.tuple_member_owned_copy(&mut member, &d.with_deps(&Deps::frame1(tmp)));
+                    members.push(member);
+                }
+                *code = v_block(
+                    vec![v_set(tmp, code.clone()), Value::Tuple(members)],
+                    should.clone(),
+                    "tuple_convert",
+                );
             }
             if all_compatible {
                 return true;
@@ -5894,6 +6042,21 @@ impl Parser {
         // 12 bytes of DbRef where the reader expects the elements.  So the conversion is
         // a real one — `unbox_tuple_from_dbref` reads each element at its stored offset
         // and rebuilds the stack tuple, exactly as `v[i]` already does.
+        // …and a stored tuple whose member changes REPRESENTATION on the way (`@FR-C-Num`) is
+        // unboxed at its OWN members — the destination's would name another `__tuple` def
+        // with other offsets — and then converted member by member like a stack tuple.
+        if let (Type::Reference(d, _), Type::Tuple(_)) = (is_type, should)
+            && self.data.def(*d).name().starts_with("__tuple<")
+            && !self.unboxes_stored_tuple(is_type, should)
+            && self.changes_representation(is_type, should)
+        {
+            let src = Type::Tuple(self.stored_tuple_elements(is_type));
+            if !self.first_pass && !matches!(code.unspan(), Value::Null) {
+                let elems = self.stored_tuple_elements(is_type);
+                *code = self.unbox_tuple_from_dbref(code.clone(), &elems);
+            }
+            return self.convert(code, &src, should);
+        }
         if self.unboxes_stored_tuple(is_type, should) {
             // A `Value::Null` here is the shape-only probe the Tuple→Tuple arm above
             // runs for a non-literal source; there is no expression to unbox.
@@ -6594,14 +6757,19 @@ impl Parser {
             // compatible.  Used for stdlib helpers like `len(both: sorted)`.
             if let Type::Reference(r, _) = should {
                 let r = *r;
+                // Through the value's `?`: whether a keyed collection may be absent is
+                // `@FR-N-Store`'s question, which `convert`'s junction has already asked and
+                // warned about before this is reached, and it says nothing about which generic
+                // parameter the collection is.  Matching the bare shape only refused
+                // `len(h)` on a `hash<…>?` with a second verdict — after the warning — where a
+                // `vector<…>?` warns and compiles.
+                let (keyed, _) = test_type.peel_optional();
                 let bare = (r == self.data.def_nr("sorted")
-                    && matches!(test_type, Type::Sorted(_, _, _)))
-                    || (r == self.data.def_nr("hash") && matches!(test_type, Type::Hash(_, _, _)))
-                    || (r == self.data.def_nr("index")
-                        && matches!(test_type, Type::Index(_, _, _)))
-                    || (r == self.data.def_nr("spatial")
-                        && matches!(test_type, Type::Radix(_, _, _)))
-                    || (r == self.data.def_nr("trie") && matches!(test_type, Type::Trie(_, _, _)));
+                    && matches!(keyed, Type::Sorted(_, _, _)))
+                    || (r == self.data.def_nr("hash") && matches!(keyed, Type::Hash(_, _, _)))
+                    || (r == self.data.def_nr("index") && matches!(keyed, Type::Index(_, _, _)))
+                    || (r == self.data.def_nr("spatial") && matches!(keyed, Type::Radix(_, _, _)))
+                    || (r == self.data.def_nr("trie") && matches!(keyed, Type::Trie(_, _, _)));
                 if bare {
                     return true;
                 }
@@ -7104,7 +7272,7 @@ impl Parser {
         } else if name == "len"
             && types.len() == 1
             && named_args.is_empty()
-            && matches!(*recv, Type::Index(_, _, _))
+            && matches!(recv.peel_optional().0, Type::Index(_, _, _))
         {
             // P192: `len(ix)` for `ix: index<T[key]>`.  Dispatched
             // here (not via stdlib overload) because the runtime
@@ -7117,11 +7285,20 @@ impl Parser {
             // fall through standard dispatch to the existing
             // `Unknown function len` error message which lists the
             // method-style alternative.
-            let known = self.get_type(recv);
+            //
+            // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
+            // "Unknown function len".  This route bypasses `convert`, so it asks
+            // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+            let (base, absent) = recv.peel_optional();
+            let base = base.clone();
+            let known = self.get_type(&base);
             let op_d_nr = self.data.def_nr("OpLengthIndex");
             if known != u16::MAX && op_d_nr != u32::MAX {
                 let fields = self.database.fields(known);
                 let mut args = list.to_vec();
+                if absent && let Some(first) = args.first_mut() {
+                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
+                }
                 args.push(Value::Int(i32::from(fields)));
                 *code = Value::Call(op_d_nr, args);
                 return crate::data::I64.clone();
@@ -7475,7 +7652,7 @@ impl Parser {
                         self.lexer,
                         name_pos,
                         Level::Error,
-                        "Unknown function {name} — did you mean the method `x.{name}(…)` on {receivers}? ({declared_by}; see LOFT.md § Methods and function calls)"
+                        "Unknown function {name} — did you mean the method `x.{name}(…)` on {receivers}? ({declared_by}; see LOFT_DATA.md § Methods and function calls)"
                     );
                 }
             }
@@ -8418,6 +8595,13 @@ impl Parser {
         {
             return g_nr;
         }
+        // An INFERRED tuple bound to a variable (`same((1, 2), (1, 2))`) has no stored form
+        // until something registers it, and the monomorph's body is built on that form —
+        // the same registration an inferred tuple literal takes (`Data::ensure_tuple_defs`,
+        // loft#943).  Without it the instance looked up `def(u32::MAX)`: an ICE.
+        for (_, b) in &var_bindings {
+            self.data.ensure_tuple_defs(&mut self.lexer, b);
+        }
         if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
             if !self.first_pass {
                 let unbound: Vec<String> = var_bindings
@@ -8993,6 +9177,49 @@ impl Parser {
         });
     }
 
+    /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
+    const CONTENT_EQ_PENDING: i32 = i32::MIN;
+
+    /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
+    /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
+    /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
+    /// generic and a concrete `==` cannot answer differently.  Run inside the instance's frame
+    /// (`fill_monomorph_body`), where a lowering that needs a temporary (a tuple's) makes it.
+    fn resolve_content_eq(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(_, args) = code.unspan_mut()
+            && args.len() == 4
+            && matches!(args[2].unspan(), Value::Int(Self::CONTENT_EQ_PENDING))
+            && let Value::Int(holder) = *args[3].unspan()
+        {
+            let concrete = bindings
+                .iter()
+                .find(|(h, _)| *h as i32 == holder)
+                .map_or(Type::Unknown(0), |(_, t)| t.clone());
+            let operands = [args[0].clone(), args[1].clone()];
+            let mut lowered = Value::Null;
+            let tp = self.call_op(
+                &mut lowered,
+                "==",
+                &operands,
+                &[concrete.clone(), concrete.clone()],
+            );
+            if matches!(tp.peel_link(), Type::Boolean) && lowered != Value::Null {
+                *code = lowered;
+            } else if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Internal error: `==` on `{}` inside a generic has no comparison \
+                     (report this as a bug)",
+                    concrete.source_name(&self.data)
+                );
+                *code = Value::Boolean(false);
+            }
+            return;
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
+    }
+
     fn fill_monomorph_body(
         &mut self,
         d_nr: u32,
@@ -9068,6 +9295,9 @@ impl Parser {
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = code;
+        // Inside the instance's own frame (its variables, its context), so a comparison that
+        // needs a temporary — a tuple's element-wise one — makes it in the right function.
+        self.resolve_content_eq(&mut code, bindings);
         let returned = self.data.def(d_nr).returned().clone();
         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
         {
@@ -9543,6 +9773,26 @@ impl Parser {
             .count()
     }
 
+    /// Does content `==` cover the type `concrete_nr` names — a struct (a `value struct` and a
+    /// tuple's `__tuple<…>` included), a struct-enum or one of its variants, a vector, a keyed
+    /// collection?
+    /// `(G-Sat-Eq)` admits such a type for an `OpEq` bound it declares no operator for.
+    fn content_comparable(&self, concrete_nr: u32) -> bool {
+        let name = self.data.def(concrete_nr).name();
+        match self.data.def_type(concrete_nr) {
+            DefType::Struct => true,
+            DefType::EnumValue => true,
+            DefType::Enum => matches!(
+                self.data.def(concrete_nr).returned().peel_link(),
+                Type::Enum(_, true, _)
+            ),
+            _ => matches!(
+                name,
+                "vector" | "hash" | "sorted" | "index" | "spatial" | "trie"
+            ),
+        }
+    }
+
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
@@ -9605,6 +9855,15 @@ impl Parser {
                     .data
                     .possible_with_signature(&method_suffix, want, &concrete_type)
                     .unwrap_or(u32::MAX);
+            }
+            // `(G-Sat-Eq)`, @C91 — every type satisfies `==`: one with no `OpEq` of its own is
+            // compared by content, which the monomorph lowers (`content_eq_pending`).
+            if found == u32::MAX
+                && method_suffix == "OpEq"
+                && want == 2
+                && self.content_comparable(concrete_nr)
+            {
+                continue;
             }
             if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
@@ -9708,7 +9967,12 @@ impl Parser {
             if concrete_nr == u32::MAX {
                 continue; // can't check without a concrete type def_nr
             }
-            let concrete_name = self.shown_type_name(concrete_nr);
+            // A tuple is spelled as the author wrote it, not as its synthetic `__tuple<…>`.
+            let concrete_name = if matches!(bound.peel_link(), Type::Tuple(_)) {
+                bound.source_name(&self.data)
+            } else {
+                self.shown_type_name(concrete_nr)
+            };
             for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
                 let iface_name = self.data.def(iface_nr).name().to_string();
                 for why in self.satisfaction_failures(iface_nr, concrete_nr) {
@@ -10904,6 +11168,18 @@ impl Parser {
                     .collect();
                 // Re-resolve call target if it references the type variable.
                 let new_d = Self::re_resolve_call(d, tv_nr, concrete, data);
+                // `(G-Sat-Eq)`, @C91 — a bound `==` over a type with no `OpEq` of its own is its
+                // content `==`.  Its schema row is not reachable from here, so the call is
+                // marked and `resolve_content_eq` (parser side) fills the row in.
+                if new_args.len() == 2
+                    && Data::is_bound_stub_for(data.def(d).name(), "OpEq", 2)
+                    && (new_d == u32::MAX || new_d == d || data.def(new_d).name() == "OpEqRef")
+                {
+                    let mut marked = new_args;
+                    marked.push(Value::Int(Self::CONTENT_EQ_PENDING));
+                    marked.push(Value::Int(tv_nr as i32));
+                    return Value::Call(data.def_nr("OpEqContent"), marked);
+                }
                 // I9-vec: fix vector element access with baked-in elm_size=0.
                 // The template bakes elm_size=0 for type-variable elements and omits the
                 // value-extraction wrapper (OpGetInt/OpGetFloat/etc.).  Fix both here.
@@ -12878,7 +13154,8 @@ impl Parser {
                 || self.data.def_type(d_nr) == DefType::TypeTemplate)
         {
             let tp = self.data.attr_type(d_nr, f_nr);
-            self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
+            self.expr_not_null =
+                !self.data.attr_nullable(d_nr, f_nr) && !tp.non_null_slot_reads_null();
             self.expr_not_null_name.clear();
             return v_block(
                 vec![
@@ -12899,8 +13176,10 @@ impl Parser {
         }
         let tp = self.data.attr_type(d_nr, f_nr);
         let nullable = self.data.attr_nullable(d_nr, f_nr);
-        self.expr_not_null = !nullable;
-        if !nullable && f_nr != usize::MAX {
+        // Not declared `?` is not the same as never null: a field of an in-band kind holds the
+        // null `(N-Store)` lets into it, so the "never null" lints ask the slot's TYPE too.
+        self.expr_not_null = !nullable && !tp.non_null_slot_reads_null();
+        if self.expr_not_null && f_nr != usize::MAX {
             self.expr_not_null_name = self.data.attr_name(d_nr, f_nr);
         } else {
             self.expr_not_null_name.clear();
@@ -14964,11 +15243,74 @@ impl Parser {
         }
     }
 
-    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT: every field
-    /// compared with its own type's `==`, left to right, stopping at the first that differs —
-    /// a float field by float equality, a text by its characters, a nested value struct by
-    /// its own content, a reference field by identity (DESIGN_DECISIONS C91: bounded to the
-    /// value's own storage, never a reference-chase).
+    /// The schema row both operands of a CONTENT comparison are stored as (`@FR-E-Eq`, @C91) —
+    /// the `tp` `OpEqContent` walks them by — when they are two values of one kind that `==`
+    /// compares by content in the store: two vectors of one element type, two keyed
+    /// collections of one element and key, two records of one struct, or two struct-enum
+    /// values of one enum (a variant is compared as its enum, so two variants differ).
+    fn content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+        let [a, b] = types else {
+            return None;
+        };
+        match (a.peel_link(), b.peel_link()) {
+            (Type::Vector(ea, _), Type::Vector(eb, _)) => {
+                if !ea.is_equal(eb) || ea.is_unknown() {
+                    return None;
+                }
+                let elem = (**ea).clone();
+                Some(self.vector_of(&elem))
+            }
+            (
+                l @ (Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..)),
+                r,
+            ) if l.is_equal(r) => {
+                let l = l.clone();
+                self.keyed_field_kt(&l)
+            }
+            // A struct by its fields, through every `reference<T>` it holds.  A `value struct`
+            // keeps its inline field-by-field comparison (`value_struct_eq`).
+            (Type::Reference(da, _), Type::Reference(db, _))
+                if da == db
+                    && self.data.def_type(*da) == DefType::Struct
+                    && !self.data.is_value_struct(*da) =>
+            {
+                let known = self.data.def(*da).known_type();
+                (known != u16::MAX).then_some(known)
+            }
+            (l, r) => {
+                let (ea, eb) = (self.struct_enum_of(l)?, self.struct_enum_of(r)?);
+                let known = self.data.def(ea).known_type();
+                (ea == eb && known != u16::MAX).then_some(known)
+            }
+        }
+    }
+
+    /// The enum a struct-enum value belongs to: the enum itself, or a variant's parent.
+    /// The synthetic `__nullable<S>` is not one: it is the tagged spelling of a struct's
+    /// absence, and a struct's `==` is the struct's.
+    fn struct_enum_of(&self, tp: &Type) -> Option<u32> {
+        match tp.peel_link() {
+            Type::Enum(d, true, _) if !self.data.def(*d).name.starts_with("__nullable<") => {
+                Some(*d)
+            }
+            Type::Reference(v, _) if self.data.def_type(*v) == DefType::EnumValue => {
+                let parent = self.data.def(*v).parent;
+                (parent != u32::MAX && self.data.def_type(parent) == DefType::Enum)
+                    .then_some(parent)
+            }
+            _ => None,
+        }
+    }
+
+    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
+    /// @C91): every field compared with its own type's `==`, left to right, stopping at the
+    /// first that differs — a float field by float equality, a text by its characters, a
+    /// nested value struct by its own content.  A reference field still compares by identity:
+    /// that is deviation D-op-16, closed when `==` on a struct becomes content.
     ///
     /// An operand that runs code is evaluated ONCE into a temporary; any other is read in
     /// place per field.  `None` when a field has no `==`, which leaves the comparison to the
@@ -15014,7 +15356,56 @@ impl Parser {
     }
 
     fn call_op(&mut self, code: &mut Value, op: &str, list: &[Value], types: &[Type]) -> Type {
-        self.call_op_as(code, op, op, list, types)
+        let tp = self.call_op_as(code, op, op, list, types);
+        if matches!(op, "==" | "!=")
+            && !self.first_pass
+            && crate::env_once!(std::env::var_os("LOFT_TRACE_EQ_IDENTITY").is_some())
+        {
+            self.trace_eq_identity(code, op, types);
+        }
+        tp
+    }
+
+    /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
+    /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
+    /// operand types and the kind whose answer the content `==` changes.  Silent on a test
+    /// against the `null` literal, which asks presence and keeps its answer.
+    /// `scripts/eq_census.sh` collects it.
+    fn trace_eq_identity(&self, code: &Value, op: &str, types: &[Type]) {
+        let Value::Call(nr, _) = code else {
+            return;
+        };
+        if !matches!(self.data.def(*nr).name.as_str(), "OpEqRef" | "OpNeRef")
+            || types.iter().any(|t| matches!(t, Type::Null))
+        {
+            return;
+        }
+        let Some(first) = types.first() else {
+            return;
+        };
+        let kind = match first.peel_link() {
+            Type::Reference(d, _) => match self.data.def_type(*d) {
+                DefType::Enum | DefType::EnumValue => "struct-enum",
+                _ if self.data.is_value_struct(*d) => "value-struct",
+                _ => "struct",
+            },
+            Type::Vector(..) => "vector",
+            Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => "collection",
+            _ => "other",
+        };
+        let pos = self.lexer.pos();
+        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+        eprintln!(
+            "[eq-identity] {}:{}  {kind}  {} {op} {}",
+            pos.file,
+            pos.line,
+            name(types.first()),
+            name(types.get(1)),
+        );
     }
 
     /// [`Self::call_op`] where the operator the author WROTE differs from the one being
@@ -15230,6 +15621,23 @@ impl Parser {
                         return Type::Boolean;
                     }
                 }
+            }
+            // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
+            // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
+            // a keyed collection by its records, an enum value by its variant and then fields.
+            if matches!(op, "==" | "!=")
+                && list.len() == 2
+                && let Some(tp) = self.content_eq_type(types)
+            {
+                *code = self.cl(
+                    if op == "==" {
+                        "OpEqContent"
+                    } else {
+                        "OpNeContent"
+                    },
+                    &[list[0].clone(), list[1].clone(), Value::Int(i32::from(tp))],
+                );
+                return Type::Boolean;
             }
             // `@FR-E-Eq`, loft#1580 — a `value struct` is a VALUE, and values compare
             // by content over their own storage.  Without a user `OpEq` the loop below matched
@@ -16806,9 +17214,8 @@ impl Parser {
                     // the flat top-level comma list (`use lib::a, b`) is dropped (it
                     // read poorly — `b` didn't visually bind to `lib::`).
                     let spec = self.parse_import_spec(&id);
-                    if spec.is_none() && lib_alias.is_none() {
-                        self.data.record_bare_use(self.data.source, &id);
-                    }
+                    // Recorded where the `use` BINDS, with the source it bound (@C98).
+                    let bare_use = spec.is_none() && lib_alias.is_none();
                     if spec.is_none() {
                         self.refuse_bare_pub_use(&id);
                     }
@@ -16859,6 +17266,9 @@ impl Parser {
                     }
                     if self.data.use_exists(&id) {
                         let lib_source = self.data.get_source(&id);
+                        if bare_use {
+                            self.data.record_bare_use(self.data.source, &id, lib_source);
+                        }
                         // @PLN22 Phase 3 — register the library alias for `m::` access.
                         if let Some(alias) = &lib_alias {
                             self.data.use_alias(alias, lib_source);
@@ -17454,7 +17864,16 @@ impl Parser {
         // here, and handed to each probe that needs it.  Re-deriving it inside a probe
         // would put the old three-sites-must-agree brittleness back with one extra step
         // between it and the reader.
-        let scope = crate::resolution_scope::resolution_scope(&cur_script);
+        if self.program_scope.is_none() {
+            let entry = self.program_entry.clone();
+            self.program_scope = Some(crate::resolution_scope::resolution_scope(
+                entry.as_deref().unwrap_or(&cur_script),
+            ));
+        }
+        let scope = self
+            .program_scope
+            .clone()
+            .unwrap_or(crate::resolution_scope::ResolutionScope::Bare);
         // A sidecar pin belongs on the project's side of that line: `loft pin <script>`
         // wrote it FOR this script, so it is a declaration the author made — even though
         // what it resolves to is a package in the registry cache.
@@ -17745,6 +18164,7 @@ impl Parser {
         // — unchanged from before, and now the only thing they share: each package's own
         // module, and every bare name it exports, is its own.
         let bare_qualifier = spelling.is_empty();
+        let bare_use = spec.is_none() && alias.is_none();
         let key = format!("{pkg}::{module}");
         // loft#1080 — the module may already be loaded under a DIFFERENT name.  This key
         // is deliberately `<pkg>::<module>` so no other package can take the name from
@@ -17774,6 +18194,10 @@ impl Parser {
             self.source_loaded_from(f)
         };
         if let Some(lib_source) = existing {
+            if bare_use {
+                self.data
+                    .record_bare_use(self.data.source, module, lib_source);
+            }
             if !self.data.use_exists(&key) {
                 self.data.use_alias(&key, lib_source);
                 self.record_use_path(&key, f);
@@ -17805,8 +18229,12 @@ impl Parser {
             return;
         }
         let cur = self.lexer.pos().file.to_string();
-        self.todo_files.push((cur, self.data.source));
+        let into = self.data.source;
+        self.todo_files.push((cur, into));
         self.data.use_add(&key);
+        if bare_use {
+            self.data.record_bare_use(into, module, self.data.source);
+        }
         self.record_use_path(&key, f);
         if let Some(a) = alias {
             self.data.use_alias(a, self.data.source);
@@ -18324,6 +18752,10 @@ impl Parser {
     /// so a root pin overrides the default "resolve newest", including for a
     /// package pulled transitively by a lib that didn't pin it itself.  This is
     /// what makes `glb = "=0.1.0"` (exact) — or any range — an honoured option.
+    ///
+    /// The REQUIREMENT, never the raw value: an inline table (`{ version = "=0.1.0" }`) is
+    /// read through [`crate::manifest::extract_version_req`] here, once, so no caller
+    /// compares a version against the table's text.
     #[cfg(feature = "registry")]
     fn root_dep_constraint(&mut self, id: &str) -> Option<String> {
         if self.root_dep_pins.is_none() {
@@ -18333,8 +18765,10 @@ impl Parser {
                 if let Some(manifest) =
                     crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                 {
-                    for (name, req) in manifest.dependencies {
-                        map.insert(name, req);
+                    for (name, value) in manifest.dependencies {
+                        if let Some(req) = crate::manifest::extract_version_req(&value) {
+                            map.insert(name, req.to_string());
+                        }
                     }
                 }
             }
@@ -18774,7 +19208,7 @@ impl Parser {
         // used to be a leg here reading the CWD's `loft.lock` — a file an earlier RUN
         // wrote, in a directory that is not even the program's, deciding which version
         // this run gets.
-        let Some(version) = scope.pinned_version(id) else {
+        let Some(version) = self.lock_pin_in_force(id, scope, cur_script) else {
             return false;
         };
         self.resolve_registry_installed(id, &version, f);
@@ -18783,6 +19217,31 @@ impl Parser {
             return true;
         }
         false
+    }
+
+    /// The governing lock's version for `id`, when no declaration in force has since
+    /// excluded it: the root `loft.toml`'s, and that of the package whose file says
+    /// `use id` (`cur_script`).
+    ///
+    /// [`crate::install::constraint_for`] is the one home of that rule (a lock records how
+    /// the manifest was last RESOLVED, so a pin a declaration has moved away from is stale
+    /// and the declaration wins); this asks it whether the pin still stands.  The load used
+    /// to take the pin without asking, while the install beside it did ask: `=0.1.0`
+    /// declared over a `0.1.2` lock loaded 0.1.2, and nothing said so.
+    #[cfg(feature = "registry")]
+    fn lock_pin_in_force(
+        &mut self,
+        id: &str,
+        scope: &crate::resolution_scope::ResolutionScope,
+        cur_script: &str,
+    ) -> Option<String> {
+        let pinned = scope.pinned_version(id)?;
+        let stands = |declared: Option<String>| {
+            crate::install::constraint_for(Some(&pinned), declared.as_deref()).as_deref()
+                == Some(pinned.as_str())
+        };
+        (stands(self.root_dep_constraint(id)) && stands(Self::declaring_range(cur_script, id)))
+            .then_some(pinned.clone())
     }
 
     /// No-op when the registry feature is off — a lockfile pins a REGISTRY version, and
@@ -18898,8 +19357,9 @@ impl Parser {
         // decide only which file LOADED, so a pinned version that was not extracted yet
         // was installed as "newest", and a fresh box ran a different program than the
         // machine that pinned it.
+        let pinned = self.lock_pin_in_force(id, scope, cur_script);
         let pin = crate::install::constraint_for(
-            scope.pinned_version(id).as_deref(),
+            pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
         );
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts) {
@@ -19055,24 +19515,24 @@ impl Parser {
         if std::path::Path::new(f).exists() {
             return;
         }
-        let constraints: Vec<String> = if *scope == crate::resolution_scope::ResolutionScope::Bare {
-            Vec::new()
-        } else {
-            let root = self.root_dep_constraint(id);
-            let root = root
-                .as_deref()
-                .and_then(crate::manifest::extract_version_req);
-            let mut cs: Vec<String> =
-                crate::install::constraint_for(scope.pinned_version(id).as_deref(), root)
+        let mut constraints: Vec<String> =
+            if *scope == crate::resolution_scope::ResolutionScope::Bare {
+                Vec::new()
+            } else {
+                let pinned = self.lock_pin_in_force(id, scope, cur_script);
+                let root = self.root_dep_constraint(id);
+                crate::install::constraint_for(pinned.as_deref(), root.as_deref())
                     .into_iter()
-                    .collect();
-            if let Some(own) = Self::declaring_range(cur_script, id)
-                && !cs.contains(&own)
-            {
-                cs.push(own);
-            }
-            cs
-        };
+                    .collect()
+            };
+        // The package whose file says `use id` declared a range for it, and that holds in
+        // every scope: a cached library used from a bare script is bound by its own
+        // `[dependencies]` all the same (loft#1687).
+        if let Some(own) = Self::declaring_range(cur_script, id)
+            && !constraints.contains(&own)
+        {
+            constraints.push(own);
+        }
         if let Some((version, _)) =
             crate::registry_index::newest_cached_loadable_satisfying(id, &constraints)
         {

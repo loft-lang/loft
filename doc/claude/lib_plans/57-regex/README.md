@@ -330,7 +330,7 @@ delivers immediate value for CLI / server / log use cases.  See
 
 - [LAZY_STDLIB.md](../59-lazy-stdlib/README.md) — lazy-loading mechanism; regex is
   the first new consumer.
-- [LOFT.md](../../LOFT.md) § Match expressions — base match semantics.
+- [LOFT_CONTROL.md](../../LOFT.md) § Match expressions — base match semantics.
 - [MATCH_PEG.md](../../plans/35-match-peg/README.md) — PEG-style sequence patterns on
   vectors, enums, iterators, and (simple) text.  Regex is the tool
   for *complex* text; these two systems intentionally do not share a

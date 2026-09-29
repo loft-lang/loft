@@ -1,0 +1,27 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -3156,22 +3156,7 @@
+                 } else {
+                     diagnostic!(self.lexer, Level::Error, "Expect rust next string");
+                 }
+-            } else if !self.default
+-                && (id == Some("rust".to_string()) || id == Some("iterator".to_string()))
+-            {
+-                // @C87 — `#rust` / `#iterator` are the standard library's templates for its own
+-                // operators, compiled into loft itself; a library's Rust goes through
+-                // `#native` and a native crate, which reaches all four targets.  The template
+-                // strings are consumed so the refusal is the only diagnostic.
+-                let what = id.unwrap_or_default();
+-                while self.lexer.has_cstring().is_some() {}
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "#{what} is the standard library's own Rust template, not a library route; \
+-                     bind Rust with a bare `#native` and implement the function in the \
+-                     package's native crate (PACKAGES.md § Function binding model)"
+-                );
++
+             } else if id == Some("c".to_string()) {
+                 // @PLN24 arc A — `#c "<symbol>" "<c-signature>"` binds this
+                 // declaration straight to a C symbol.  Both strings are

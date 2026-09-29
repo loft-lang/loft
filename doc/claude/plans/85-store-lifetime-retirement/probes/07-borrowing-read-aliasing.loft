@@ -4,7 +4,7 @@
 // WRONG read.  Under loft's reference-default model (OWNERSHIP_MODEL § The law) a
 // binding to a heap value ALIASES the source: in-place mutation writes through, and
 // the view survives a source realloc.  So A and C are correct as VIEWS, not copies
-// (#338 / LOFT.md § Vectors; tests/scripts/294-vector-element-view-semantics.loft;
+// (#338 / LOFT_DATA.md § Vectors; tests/scripts/294-vector-element-view-semantics.loft;
 // #415 deliberately excluded index reads; p379 `set_cell` relies on the write-through).
 // B (fn-return-of-index) WAS a real store-reuse corruption — the view's store recycled
 // by a later allocation — fixed by #426B (`reclaim_safe` transitive-deper closure).

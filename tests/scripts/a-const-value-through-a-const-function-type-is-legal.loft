@@ -12,7 +12,7 @@
 // - A value `if` and a `match` whose arms are all `const`-parameter functions: the join keeps the
 //   `const` every arm declares (a plain arm is the warning cell).
 // - A NON-const value through a plain reference still writes (999), a non-const record captured by
-//   a closure still shares its storage (5, LOFT.md § Closures), and a short callback over a non-const
+//   a closure still shares its storage (5, LOFT_LITERALS.md § Closures), and a short callback over a non-const
 //   collection still writes its elements: the rule is about read-only values only.
 // - A short callback and a closure that only READ a const value, and `reduce` with a named
 //   function whose element parameter is `const`.

@@ -31,7 +31,7 @@
 </code></pre>
 <h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
 <p>Seed the shared generator, then roll a die:</p>
-<pre><code><span class="kw">use</span> random;</code></pre>
+<pre><code><span class="kw">use</span> random::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   <span class="fn-call">rand_seed</span>(<span class="nm">42</span>);
   roll = <span class="fn-call">rand</span>(<span class="nm">1</span>, <span class="nm">6</span>);

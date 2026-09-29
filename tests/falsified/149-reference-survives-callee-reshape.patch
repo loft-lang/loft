@@ -1,0 +1,11 @@
+diff --git a/src/scopes.rs b/src/scopes.rs
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -2450,6 +2450,7 @@
+                 container,
+             };
+             record_cause(&mut self.shaken, view, d);
++            record_cause(&mut self.out, view, d);
+         }
+     }
+ 

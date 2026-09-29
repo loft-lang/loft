@@ -158,7 +158,7 @@ Prefer the standard library and existing project code over adding new Cargo depe
 ### Decision rule
 
 Before adding a dependency:
-1. **Check if existing code covers it.** Loft already has JSON text parsing (`src/database/structures.rs`) and JSON serialisation (`src/database/format.rs`). New JSON functionality belongs in `src/database/json.rs`, not `serde_json`.
+1. **Check if existing code covers it.** Loft already has JSON text parsing (`src/database/structures.rs`) and JSON serialisation (`src/database/format.rs`). New JSON functionality belongs in `src/json.rs`, not `serde_json`.
 2. **Estimate the implementation size.** If the needed functionality is ≤ ~100 lines of straightforward Rust, write it. If it requires thousands of lines of platform APIs (TLS stacks, image codecs, memory-mapped I/O), a dependency is justified.
 3. **Feature-gate optional dependencies.** Any dependency that adds compile weight or is unused for core interpreter work must be behind a Cargo feature (following the `png`, `mmap`, `random`, and planned `http` pattern).
 4. **Prefer crates with minimal transitive dependencies.** `ureq` and `png` have no required transitive deps. Avoid crates that pull in async runtimes, proc-macro infrastructure, or heavy frameworks.
@@ -227,7 +227,19 @@ detected rather than misread.
 
 ## Shell scripts
 
-Three shapes that read as correct and are not, each measured in this repo's own scripts:
+Four shapes that read as correct and are not, each measured in this repo's own scripts:
+
+- **Commit-message text is not data once it reaches a shell string.**  A probe that read
+  `git log --format='%H%x09%s%x09%b'`, split it on newlines and handed each first field to
+  `sh -c "git show --format= --name-only {h}"` ran every BODY line as a command: a body
+  quoting `` `make ci` `` started `make ci` in the checkout, and body words beside a `>`
+  became zero-byte files named `BROKEN`, `DRIFT,`, `58.4` at the tree root.  The gate ran
+  again per matching line for twenty minutes, filled the session's disk allowance and
+  tripped every hygiene hook on the way.  A commit message, an issue body, a file name from
+  a listing: each may carry backticks, `$(…)`, `>` and newlines, so it goes to `subprocess`
+  as a LIST argument (`["git", "show", h]`), never interpolated into `shell=True`, and a
+  `%b` format is split on a record separator it cannot contain (`-z`, or `%x00`), never on
+  the newline it is made of.
 
 - **`"$A$'\n'$B"` does not insert a newline.** Inside double quotes `$'\n'` is the five
   characters `$ ' \ n '`, so the last row of `$A` fuses with the first row of `$B` into one

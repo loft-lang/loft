@@ -23,10 +23,9 @@ loft    = ">=0.8"
 #
 # graphics 0.9.3 is the first release that declares its read-only parameters `const`,
 # which C124 requires (0.3.0 passed a `const` to a plain parameter and is now refused).
-# glb and mesh3d stay at 0.1.0: their later releases name `scene`'s types through the
-# `mesh3d` facade, which C98 no longer passes on until mesh3d is republished with
-# `pub use` — bump them to that release.
+# graphics 0.9.4, glb 0.1.3 and mesh3d 0.1.2 are the C98 releases: mesh3d passes its
+# modules' names on with `pub use` (so it, and every consumer of it, needs loft 2026.10.0).
 [dependencies]
-graphics = "=0.9.3"
-glb = "=0.1.0"
-mesh3d = "=0.1.0"
+graphics = "=0.9.4"
+glb = "=0.1.3"
+mesh3d = "=0.1.2"

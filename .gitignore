@@ -88,6 +88,13 @@ dist/
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.
 !/index/target_surface.json
+# @PLN175: the design-decision guards in the library repos are committed for the same
+# reason — `idx decisions` and tests/index_hygiene.rs read them offline, and only
+# `make guards-fetch` (network) writes them.
+!/index/library_guards.json
+# @PLN175 / @C91: the identity census — every `==` whose answer the content `==` changes —
+# is the input to each flip and the fallout measure; `scripts/eq_census.sh` writes it.
+!/index/eq_census.txt
 
 # Python __pycache__ from tools/indexer/migrate.py.
 __pycache__/
@@ -160,6 +167,7 @@ target-*/
 .ci-failed
 .ci-recheck
 .ci-recheck.log
+.ci-lock-held
 
 # ⚠ A ROOT `loft.toml` MAKES THIS REPO A LOFT PACKAGE, and that changes two
 # repo-wide behaviours at once — neither of them anywhere near the file:

@@ -454,7 +454,7 @@ claim](#the-boundary-of-this-claim--it-holds-for-hand-written-native-not-auto-co
      library_repo=loft-lang/loft-libs-graphics -f package_subdir=graphics` builds the 4 cdylibs as
      artifacts (each job prints `{url, sha256, loft_ffi_fp}`); then download + `gh release upload
      graphics-v0.1.0 <cdylibs>`.
-   - *repeatable:* add the ~10-line caller (LIBRARY_AUTHORING.md § 4b) to each library repo so a
+   - *repeatable:* add the ~10-line caller (LIBRARY_PUBLISH.md § 4b) to each library repo so a
      version tag auto-builds + attaches.
 2. **Add the index `binaries` entry.**  Under the version in `index.json`: `"binaries": {
    "<triple>": { "url", "sha256", "loft_ffi_fp" }, … }` (already parsed by

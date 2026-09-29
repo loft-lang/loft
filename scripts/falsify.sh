@@ -190,7 +190,7 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
 # Every build here goes through this, and every build takes its target directory's LOCK.
 #
 # Two falsify runs are two cargo processes, and the target dirs are SHARED between runs by
-# design — `head-target` holds the HERE build for both the bulk and single paths, and a control
+# design — `head-target-<checkout>` holds the HERE build for both the bulk and single paths, and a control
 # is cached per ref so a second guard against the same ref costs nothing.  That sharing is worth
 # keeping; two concurrent writers into one of them is not.  Cargo does not serialise itself
 # across processes, and what comes out is a partial or stale binary whose verdicts read as
@@ -338,6 +338,13 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
 }
 
 mkdir -p "$CACHE"
+# The HERE build is keyed by CHECKOUT.  `$CACHE` is per user, and this box runs several
+# checkouts at once: with one `head-target` between them, a sibling's run rebuilt it from ITS
+# tree between this run's two legs, so the interpreter leg scored this tree and the native leg
+# scored theirs (measured 2026-09-29 — `native here` exited 1 on a message the tree no longer
+# had).  The lock serialises the builds, not the build-to-run window, so only separate target
+# dirs keep a verdict about the tree it names.
+HEAD_TGT="$CACHE/head-target-$(printf '%s' "$ROOT" | sha256sum | cut -c1-12)"
 
 # ── bulk ─────────────────────────────────────────────────────────────────────────────────
 # Retrofitting the corpus: one control build per REF rather than per guard, into a SHARED
@@ -345,7 +352,7 @@ mkdir -p "$CACHE"
 # Interpret only — the native run costs a rustc invocation per file and the question here is
 # "did this guard ever fail", which one backend answers.
 if [ -n "$BULK" ]; then
-  HERE=$(build "$ROOT" "$CACHE/head-target") || { echo "this tree does not build" >&2; exit 1; }
+  HERE=$(build "$ROOT" "$HEAD_TGT") || { echo "this tree does not build" >&2; exit 1; }
   SHARED="$CACHE/shared-target"
   # Read the ref list on FD 3, not stdin.  `git worktree add` and `cargo build` both read
   # stdin, and inside a `… | while read` loop they swallow the rest of the list — the first
@@ -452,7 +459,7 @@ done
 git -C "$ROOT" worktree prune >/dev/null 2>&1
 # A separate target dir on purpose: the main one may be mid-`make ci`, and cargo's build
 # lock is per target dir — building into it stalls a gate that is already running.
-HERE=$(build "$ROOT" "$CACHE/head-target") || { echo "this tree does not build" >&2; exit 1; }
+HERE=$(build "$ROOT" "$HEAD_TGT") || { echo "this tree does not build" >&2; exit 1; }
 
 # loft#1224 — the verdict is an OR across backends, not an AND, and it names the inert side.
 #

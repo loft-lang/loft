@@ -759,6 +759,9 @@ pub struct Output<'a> {
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
+    /// Every function's dead value-record buffers, computed once beside `value_records`
+    /// and handed to each function's [`hoist::HoistOwned`] for the callee walks.
+    pub dead_by_fn: std::rc::Rc<HashMap<u32, HashSet<u16>>>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -1299,7 +1302,7 @@ pub struct Output<'a> {
     /// for `#native` package functions (instead of `extern crate <pkg>`) and link
     /// each package's cdylib `.so` by C-ABI, sealing the package's Rust crate graph
     /// inside the `.so` — this eliminates the shared-dep `StableCrateId` collision
-    /// class (see NATIVE.md § Resolution: separate the API id from the Rust part).
+    /// class (see NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API id from the Rust part).
     /// False for wasm32-wasip2 (links the cross-compiled rlib) and `wasm_browser`
     /// (host imports).
     pub native_cabi: bool,
@@ -1842,6 +1845,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Enum(_, true, _)
         | Type::Index(_, _, _)
         // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (C125).
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
@@ -2197,6 +2201,7 @@ impl<'a> Output<'a> {
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
             placed_locals: HashSet::new(),
+            dead_by_fn: std::rc::Rc::default(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
@@ -2710,6 +2715,9 @@ impl Output<'_> {
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
                 .collect(),
             records: self.loop_records.keys().copied().collect(),
+            value_locals: self.value_record_locals.keys().copied().collect(),
+            dead_buffers: self.dead_buffers.clone(),
+            dead_by_fn: std::rc::Rc::clone(&self.dead_by_fn),
         };
         self.group_ends.clear();
         self.declared.clear();
@@ -3554,9 +3562,14 @@ impl Output<'_> {
         {
             return Ok(None);
         }
-        if let Err(why) =
-            hoist::push_window_ok(lp, &p, self.data, self.def_nr, &mut self.hoist_cache)
-        {
+        if let Err(why) = hoist::push_window_ok(
+            lp,
+            &p,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header pushes — {why}",
@@ -3632,9 +3645,14 @@ impl Output<'_> {
         if self.push_window_disabled {
             return Ok(None);
         }
-        if let Err(why) =
-            hoist::mint_window_ok(lp, &m, self.data, self.def_nr, &mut self.hoist_cache)
-        {
+        if let Err(why) = hoist::mint_window_ok(
+            lp,
+            &m,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
                     "push-fill: {} loop {} keeps its header mints — {why}",
@@ -4612,6 +4630,7 @@ impl Output<'_> {
                     owned: Some(&self.hoist_owned),
                 })
                 .as_ref(),
+            Some(&self.hoist_owned),
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -4627,6 +4646,7 @@ impl Output<'_> {
                     self.def_nr,
                     &mut self.hoist_cache,
                     !self.write_hoist_disabled,
+                    Some(&self.hoist_owned),
                 ) {
                     Ok((e, finish)) => {
                         window = Some(finish);
@@ -6205,7 +6225,7 @@ extern crate loft;"
             }
             writeln!(w, "}}")?;
         } else if native_cabi {
-            // Host-native backend (NATIVE.md § Resolution: separate the API
+            // Host-native backend (NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API
             // id from the Rust part).  Declare each reachable `#native`
             // package function as an `extern "C"` symbol; the cdylib `.so`
             // is linked by C-ABI (`add_native_extern_flags`), so the
@@ -6675,6 +6695,7 @@ extern crate loft;"
         )?;
         self.output_init(w, from, till)?;
         writeln!(w, "    db.finish();")?;
+        self.emit_reference_targets(w)?;
         // Mirror `compile::build_const_vectors` so module-scope `const`
         // vectors (`const NUMS = [10, 20, 30]`) populate `db.const_refs`
         // before `n_main` runs.  Without this, `OpConstRef(<d_nr>)`
@@ -6816,6 +6837,7 @@ extern crate loft;"
         // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
         self.output_init(w, 0, till)?;
         writeln!(w, "    db.finish();")?;
+        self.emit_reference_targets(w)?;
         // Initiative 03 Phase 3b: emit code to build CONST_STORE
         // vectors and populate `db.const_refs` — mirrors the
         // interpreter path in `compile::build_const_vectors`.
@@ -7238,6 +7260,27 @@ extern crate loft;"
             )?;
             writeln!(w, "}}")
         }
+    }
+
+    /// `@FR-E-Eq`, @C91 — replay [`crate::database::Field::target`] in the generated `init()`:
+    /// the known type each stored `reference<T>` field names, so content `==` follows it on
+    /// `--native` exactly as in the interpreter.  `init()` registers every type in the
+    /// compile-time order, so the numbers are the same ids.
+    fn emit_reference_targets(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        for (tp, row) in self.stores.types.iter().enumerate() {
+            if let crate::database::Parts::Struct(fields)
+            | crate::database::Parts::EnumValue(_, fields) = &row.parts
+            {
+                for f in fields.iter().filter(|f| f.target != u16::MAX) {
+                    writeln!(
+                        w,
+                        "    db.set_field_target({tp}, {:?}, {});",
+                        f.name, f.target
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Use this to emit only the `init` body that registers all types.
@@ -8289,6 +8332,25 @@ extern crate loft;"
             self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
             crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
+            // Every function's DEAD buffers, once: a loop judging a call reads the callee's
+            // body with its own dead buffers exempt (`HoistOwned::for_callee`).
+            self.dead_by_fn = std::rc::Rc::new(
+                (0..self.data.definitions.len() as u32)
+                    .filter(|d| !matches!(self.data.def(*d).code(), Value::Null))
+                    .map(|d| (d, hoist::dead_buffers(self.data, d, &self.value_records)))
+                    .filter(|(_, s)| !s.is_empty())
+                    .collect(),
+            );
+            if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                for (d, set) in self.dead_by_fn.iter() {
+                    let vars = self.data.def(*d).variables();
+                    eprintln!(
+                        "[valuerec] {} dead buffers: {:?}",
+                        self.data.def(*d).name(),
+                        set.iter().map(|v| vars.name(*v)).collect::<Vec<_>>()
+                    );
+                }
+            }
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -9720,7 +9782,7 @@ extern crate loft;"
                             // C-ABI: call the symbol via its `__cabi_`-prefixed alias
                             // (declared with `#[link_name]` in the `extern "C"` block),
                             // resolved by linking the package's cdylib `.so` — no
-                            // `extern crate` (NATIVE.md § Resolution).  The alias avoids
+                            // `extern crate` (NATIVE_ARTIFACT_IDENTITY.md § Resolution).  The alias avoids
                             // shadowing the same-named wrapper fn (E0428).
                             let aliased = format!("__cabi_{}", def.native());
                             self.output_native_direct_call(w, def_nr, &aliased)?;
@@ -9735,7 +9797,7 @@ extern crate loft;"
                         self.output_native_direct_call(w, def_nr, &qualified)?;
                     }
                 } else {
-                    // P269: refuse to emit a runtime panic for a reachable
+                    // P269, @C67: refuse to emit a runtime panic for a reachable
                     // unimplemented native — convert to a compile-time error
                     // per the "fail at startup, not runtime" principle.
                     // Unreachable defs keep the `todo!()` shim so unused

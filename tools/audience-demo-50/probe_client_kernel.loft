@@ -21,7 +21,7 @@
 // (kernel measurement instrument) — pose rate should scale by 3/4 with NO
 // stall and unchanged survivor latency (conflation = graceful degradation).
 
-use engine_host;
+use engine_host::*;
 
 const TICK_US: integer = 33333;   // 30 Hz, the server's grid
 

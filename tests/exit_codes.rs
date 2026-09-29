@@ -1631,3 +1631,204 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// @C102 — with no usable `rustc`, a RELEASE binary falls back to the interpreter and says
+/// nothing; the explanation prints when native was asked for (`--native`), and in a SOURCE
+/// CHECKOUT, where the toolchain is expected; `LOFT_REQUIRE_NATIVE=1` makes any fallback an
+/// error naming the reason.
+///
+/// Both shapes are measured: the test's own binary sits in a checkout, and a copy beside a
+/// copied `default/` in a temp directory is the release bundle's shape.  `PATH` is an empty
+/// directory, so `rustc` is not found, and the program cache is off so the run cannot hit a
+/// binary compiled earlier.  A checkout without rustc used to ATTEMPT a runtime rebuild —
+/// "native runtime out of date … rebuilding it with your rustc" and then "could not run
+/// cargo" — where nothing could be rebuilt.
+#[test]
+fn a_missing_rustc_falls_back_quietly_except_where_asked() {
+    let tmp = std::env::temp_dir().join(format!("loft_c102_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let empty = tmp.join("empty");
+    let bundle = tmp.join("bundle");
+    std::fs::create_dir_all(&empty).expect("empty PATH dir");
+    std::fs::create_dir_all(bundle.join("default")).expect("bundle dir");
+    let bundled = bundle.join("loft");
+    std::fs::copy(loft_bin(), &bundled).expect("copy the binary");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for entry in std::fs::read_dir(root.join("default")).expect("default/") {
+        let entry = entry.expect("entry");
+        if entry.path().is_file() {
+            std::fs::copy(entry.path(), bundle.join("default").join(entry.file_name()))
+                .expect("copy default/");
+        }
+    }
+    let prog = tmp.join("p.loft");
+    std::fs::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
+    let run = |bin: &std::path::Path, native: bool, require: bool| {
+        let mut c = Command::new(bin);
+        if native {
+            c.arg("--native");
+        }
+        c.arg(&prog)
+            .env("PATH", &empty)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .env_remove("LOFT_REQUIRE_NATIVE");
+        if require {
+            c.env("LOFT_REQUIRE_NATIVE", "1");
+        }
+        let out = c.output().expect("run loft");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let checkout = loft_bin();
+    let ran = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
+        assert_eq!(*code, Some(0), "{cell}: exit\n{err}");
+        assert_eq!(
+            out, "hello 42\n",
+            "{cell}: the program ran interpreted\n{err}"
+        );
+        assert!(
+            !err.contains("Rebuilding"),
+            "{cell}: nothing to rebuild with\n{err}"
+        );
+    };
+    let refused = |cell: &str, (code, out, err): &(Option<i32>, String, String)| {
+        assert_eq!(*code, Some(1), "{cell}: exit\n{err}");
+        assert!(out.is_empty(), "{cell}: nothing ran\n{out}");
+        assert!(
+            err.contains("LOFT_REQUIRE_NATIVE is set") && err.contains("(rustc not found)"),
+            "{cell}: the refusal names the reason\n{err}"
+        );
+        assert!(
+            !err.contains("running interpreted"),
+            "{cell}: it is not running\n{err}"
+        );
+    };
+
+    let r = run(&bundled, false, false);
+    ran("bundle", &r);
+    assert!(r.2.is_empty(), "a release binary says nothing: {:?}", r.2);
+    let r = run(&bundled, true, false);
+    ran("bundle --native", &r);
+    assert!(
+        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
+        "{}",
+        r.2
+    );
+    refused("bundle REQUIRE", &run(&bundled, false, true));
+
+    let r = run(&checkout, false, false);
+    ran("checkout", &r);
+    assert_eq!(
+        r.2,
+        "loft: rustc not found — native runs need a Rust toolchain on PATH; running \
+         interpreted instead.\n",
+        "a checkout explains itself, once"
+    );
+    let r = run(&checkout, true, false);
+    ran("checkout --native", &r);
+    assert!(
+        r.2.contains("rustc not found — `--native` needs a Rust toolchain"),
+        "{}",
+        r.2
+    );
+    refused("checkout REQUIRE", &run(&checkout, false, true));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// @C67 — a `#native` function the program CALLS and nothing implements stops the program at
+/// startup, not partway through.  `--native` has refused it at build time since P269; the
+/// interpreter printed a load warning and then panicked (exit 101) when the call was reached,
+/// after the program had already run up to it.  A merely IMPORTED unimplemented native keeps
+/// the warning and runs.  The warning names the library that declared the function — a
+/// package with no native part at all used to be reported as `'<unknown library>'`.
+#[test]
+fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
+    let tmp = std::env::temp_dir().join(format!("loft_c67_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let lib = tmp.join("noimpl");
+    std::fs::create_dir_all(lib.join("src")).expect("fixture dir");
+    std::fs::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"noimpl\"\nversion = \"0.1.0\"\n\n\
+         [library]\nentry = \"src/noimpl.loft\"\nnative = \"loft_noimpl\"\n",
+    )
+    .expect("manifest");
+    std::fs::write(
+        lib.join("src/noimpl.loft"),
+        "pub fn hash_b64(data: text) -> text;\n#native\n",
+    )
+    .expect("library source");
+    let run = |name: &str, body: &str| {
+        let src = tmp.join(format!("{name}.loft"));
+        std::fs::write(&src, format!("use noimpl::*;\nfn main() {{\n{body}\n}}\n"))
+            .expect("program");
+        let out = Command::new(loft_bin())
+            .arg("--interpret")
+            .arg(&src)
+            .arg("--lib")
+            .arg(&lib)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (code, out, err) = run(
+        "called",
+        "  println(\"started\");\n  println(hash_b64(\"ab\"));",
+    );
+    assert_eq!(code, Some(1), "refused, not a panic (101):\n{err}");
+    assert!(out.is_empty(), "the program must not start: {out:?}");
+    assert!(
+        err.contains("this program calls `hash_b64` with no implementation"),
+        "names the function:\n{err}"
+    );
+    assert!(
+        err.contains("native library 'noimpl'"),
+        "names the library:\n{err}"
+    );
+    let (code, out, err) = run("uncalled", "  println(\"fine\");");
+    assert_eq!(code, Some(0), "an imported, uncalled native runs:\n{err}");
+    assert_eq!(out, "fine\n");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// `--help` on a subcommand is a request, not a mistake: it prints that subcommand's
+/// usage on stdout and exits 0, while an unknown option still fails.
+#[test]
+fn a_subcommand_answers_help_with_its_usage() {
+    for sub in ["fmt", "fix"] {
+        let out = Command::new(loft_bin())
+            .args([sub, "--help"])
+            .current_dir(workspace_root())
+            .output()
+            .expect("run loft");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "loft {sub} --help exited {:?}",
+            out.status.code()
+        );
+        assert!(
+            stdout.starts_with(&format!("usage: loft {sub} ")),
+            "loft {sub} --help printed {stdout:?}"
+        );
+        let bogus = Command::new(loft_bin())
+            .args([sub, "--no-such-option"])
+            .current_dir(workspace_root())
+            .output()
+            .expect("run loft");
+        assert!(
+            !bogus.status.success(),
+            "loft {sub} accepted an unknown option"
+        );
+    }
+}

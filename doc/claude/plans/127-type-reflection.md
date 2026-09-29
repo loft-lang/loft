@@ -6,7 +6,7 @@
 **DONE — shipped 2026-08-05.**  Arcs A–E built, both backends.
 
 `type_of(x)` and `type_named(name)` hand a loft program the declared shape of a type as
-data.  The user-facing reference is [STDLIB.md § Reflection](../STDLIB.md); the catalogue
+data.  The user-facing reference is [STDLIB_RUNTIME.md § Reflection](../STDLIB_RUNTIME.md); the catalogue
 entry is [`@F107`](https://github.com/loft-lang/features/issues/107).  The API is declared
 in [`default/07_reflect.loft`](../../../default/07_reflect.loft), filled by
 `native::reflect_type_into` and `native::type_named_in`, and gated by
@@ -116,7 +116,7 @@ Constructing or mutating a value by field name is a separate and larger question
 
 ## See also
 
-- [STDLIB.md § Reflection](../STDLIB.md) — the API reference.
+- [STDLIB_RUNTIME.md § Reflection](../STDLIB_RUNTIME.md) — the API reference.
 - [`src/database/descriptor.rs`](../../../src/database/descriptor.rs) — `LayoutDesc`, the
   substrate, shipped with @PLN105; this plan is its loft-side sibling.
 - [BROWSER_INTEROP.md § The binary bridge](../BROWSER_INTEROP.md) — the JS reader that

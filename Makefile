@@ -165,7 +165,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -913,6 +913,12 @@ optional-ratchet:  ## @FR-N-Shape ratchet: fail if MORE shape tests go blind to 
 optional-ratchet-pin:  ## Re-pin the ratchet after a walk that lowered it
 	@python3 scripts/ir_walker_audit.py optional --write-ratchet
 
+guards-fetch:  ## @PLN175 — refresh index/library_guards.json: the @C<n> guards in each library's tests/ at origin/main (network; gh)
+	@python3 scripts/fetch-library-guards.py
+
+guards-check:  ## @PLN175 — fail when a library guard was added or removed since index/library_guards.json (network; gh; nightly in lib-main-health)
+	@python3 scripts/fetch-library-guards.py --check
+
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \
 	    --json number,title,labels,body \
@@ -964,7 +970,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: perf-portal perf-portal-render perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: perf-portal perf-portal-render perf-check perf-trend perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -2155,8 +2161,15 @@ CI_MAX_FAIL ?= 5
 # the leg's output — the one thing that would have said why it ran long.
 CI_BUDGET_SECS ?= 1200
 
+# ⚠ `make -n ci` is NOT a dry run: the recipe's long line holds `$(MAKE)`, and make runs
+# any line that does even under `-n` — so it takes the box's gate lock and runs the gate.
+# Read the recipe here instead.
 ci: ci-guard
 	@echo $$PPID > .ci-running
+	@# The budget counts from `.ci-lock-held`, written once this gate holds the box lock, so
+	@# time QUEUED behind another checkout's gate is not charged to this one.  A pending test
+	@# plan from a run that died before recording belongs to that run, not this one.
+	@rm -f .ci-lock-held target/gate-ledger/pending.json
 	@# The 20-minute budget — a hard cancel, in scripts/ci_budget.sh so the tree-kill and the
 	@# pid-reuse guard are readable and testable rather than a wall of Makefile continuations.
 	@# Backgrounded here and self-terminating: it polls `.ci-running`, so it exits within one
@@ -2307,6 +2320,7 @@ ci: ci-guard
 	    fi; \
 	    scripts/gate_lock.sh claim $$$$ "$$(pwd -P)"; \
 	  fi; } && \
+	date +%s > .ci-lock-held && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; \
 	  export CARGO_BUILD_JOBS=$$jobs NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ if [ "$${gates:-1}" -gt 1 ]; then echo "make ci: THROTTLED to $$jobs of $(CI_NPROC) threads — $$gates gates live on this box"; elif [ "$$jobs" -lt "$(CI_NPROC)" ]; then echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate; memory-capped — MemAvailable/0.7GiB)"; else echo "make ci: $$jobs of $(CI_NPROC) threads (sole gate)"; fi; } | tee -a result.txt && \
@@ -2323,6 +2337,7 @@ ci: ci-guard
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_failure_digest.py selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_timing.py selftest >> result.txt 2>&1 && \
+	python3 scripts/gate_ledger.py selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/unreleased-work.py --self-test >> result.txt 2>&1 && \
 	python3 scripts/registry_matrix_versions.py --self-test >> result.txt 2>&1 && \
@@ -2338,8 +2353,16 @@ ci: ci-guard
 	python3 scripts/rewrite_census.py >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
-	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
-	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1 && \
+	{ sel=$$(python3 scripts/gate_ledger.py plan 2>>result.txt); \
+	  case "$$sel" in \
+	    NONE) rc=0 ;; \
+	    FILTER) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first --no-tests=pass \
+	              -E "$$(cat target/gate-ledger/filter)" >> result.txt 2>&1; rc=$$? ;; \
+	    *) cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1; rc=$$? ;; \
+	  esac; \
+	  python3 scripts/gate_ledger.py record >> result.txt 2>&1; \
+	  [ $$rc -eq 0 ]; } && \
+	{ [ "$$sel" = NONE ] || python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1; } && \
 	bash scripts/native_ratio.sh --gate >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-
@@ -2533,6 +2556,10 @@ bench:
 perf-portal:
 	python3 bench/portal/portal.py measure $(ARGS)
 	python3 bench/portal/portal.py render
+perf-check:  ## Did THIS change move a routine? Measures the lanes the census says it touched, compares with this machine's last committed rows
+	python3 scripts/perf_check.py $(ARGS)
+perf-trend:  ## How every measured routine moved over the committed portal history; ARGS=--routine <name> for one series
+	python3 scripts/perf_trend.py $(ARGS)
 
 # The library checkouts the portal measures from: normal clones under $$LOFT_PERF_LIBS
 # (default ../loft-bench-libs), cloned when missing and fast-forwarded when clean.
@@ -2757,6 +2784,12 @@ linkcheck-external:
 .PHONY: rule-coverage
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage
+
+.PHONY: script-census
+script-census:  ## @PLN179 the work list: every Python/bash script by what a loft port needs (a report)
+	@cargo build --release --bin loft -q
+	@target/release/loft scripts/script_census.loft > doc/claude/plans/179-scripts-in-loft/WORKLIST.md
+	@target/release/loft scripts/script_census.loft --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
 
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly

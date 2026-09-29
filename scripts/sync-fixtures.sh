@@ -52,14 +52,14 @@ esac
 PINNED_REFS=$(cat <<'EOF'
 loft-libs-core      arguments-v0.1.1         arguments
 loft-libs-graphics  shapes-v0.3.0            shapes
-loft-libs-graphics  gridmesh-v0.1.1          gridmesh
+loft-libs-graphics  gridmesh-v0.2.3          gridmesh
 loft-libs-graphics  graphics-v0.1.1            graphics
 loft-libs-graphics  imaging-v0.1.0           imaging
 loft-libs-net       game_protocol-v0.1.2     game_protocol
 loft-libs-net       web-v0.1.1               web
 loft-libs-world     hex_world-v0.1.0         hex_world
-loft-libs-game      time-v0.2.1              time
-loft-libs-assets    assets-v0.2.1            assets
+loft-libs-game      time-v0.3.2              time
+loft-libs-assets    assets-v0.2.3            assets
 EOF
 )
 

@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>lavition_ui source</h1>
 <article>
-<p><a href="lib-lavition_ui.html">← lavition_ui</a> · <a href="lib-lavition_ui-api.html">API reference</a> · version 0.1.0</p>
+<p><a href="lib-lavition_ui.html">← lavition_ui</a> · <a href="lib-lavition_ui-api.html">API reference</a> · version 0.1.1</p>
 <p class="lib-legend">12 file(s), 2346 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -239,11 +239,11 @@
 <span id="src-lavition-ui-loft-L19"><span class="cm">// a stranger in graphs nobody here can see, where the other claim is somebody else's</span></span>
 <span id="src-lavition-ui-loft-L20"><span class="cm">// to make. `panel`, `font`, `widgets` and `render` are four of the most ordinary</span></span>
 <span id="src-lavition-ui-loft-L21"><span class="cm">// names a UI library could hold.</span></span>
-<span id="src-lavition-ui-loft-L22"><span class="kw">use</span> self::widgets;</span>
-<span id="src-lavition-ui-loft-L23"><span class="kw">use</span> self::font;</span>
-<span id="src-lavition-ui-loft-L24"><span class="kw">use</span> self::panel;</span>
-<span id="src-lavition-ui-loft-L25"><span class="kw">use</span> self::render;</span>
-<span id="src-lavition-ui-loft-L26"><span class="kw">use</span> self::verbbar;</span>
+<span id="src-lavition-ui-loft-L22"><span class="kw">pub</span> <span class="kw">use</span> self::widgets::*;</span>
+<span id="src-lavition-ui-loft-L23"><span class="kw">pub</span> <span class="kw">use</span> self::font::*;</span>
+<span id="src-lavition-ui-loft-L24"><span class="kw">pub</span> <span class="kw">use</span> self::panel::*;</span>
+<span id="src-lavition-ui-loft-L25"><span class="kw">pub</span> <span class="kw">use</span> self::render::*;</span>
+<span id="src-lavition-ui-loft-L26"><span class="kw">pub</span> <span class="kw">use</span> self::verbbar::*;</span>
 </code></pre>
 <h2 id="src-panel-loft">src/panel.loft</h2>
 <pre class="src"><code><span id="src-panel-loft-L1"><span class="cm">// The editor's side panel: layout, the spec that fills it, and hit-testing.</span></span>
@@ -258,8 +258,8 @@
 <span id="src-panel-loft-L10"><span class="cm">// labels, indices and a status string the consumer already has.</span></span>
 <span id="src-panel-loft-L11"><span class="cm">//</span></span>
 <span id="src-panel-loft-L12"><span class="cm">// See doc/claude/EDITOR_UI.md §U2.</span></span>
-<span id="src-panel-loft-L13"><span class="kw">use</span> self::widgets;</span>
-<span id="src-panel-loft-L14"><span class="kw">use</span> self::font;</span>
+<span id="src-panel-loft-L13"><span class="kw">use</span> self::widgets::*;</span>
+<span id="src-panel-loft-L14"><span class="kw">use</span> self::font::*;</span>
 <span id="src-panel-loft-L15"></span>
 <span id="src-panel-loft-L16"><span class="cm">// ── Layout constants ─────────────────────────────────────────────</span></span>
 <span id="src-panel-loft-L17"><span class="kw">pub</span> <span class="en">PANEL_WIDTH</span>        = <span class="nm">240</span>;</span>
@@ -533,8 +533,8 @@
 <span id="src-render-loft-L13"><span class="cm">//</span></span>
 <span id="src-render-loft-L14"><span class="cm">// What is left for the gate is the part that genuinely needs GL: that these</span></span>
 <span id="src-render-loft-L15"><span class="cm">// rectangles reach the canvas at all.</span></span>
-<span id="src-render-loft-L16"><span class="kw">use</span> self::widgets;</span>
-<span id="src-render-loft-L17"><span class="kw">use</span> self::panel;</span>
+<span id="src-render-loft-L16"><span class="kw">use</span> self::widgets::*;</span>
+<span id="src-render-loft-L17"><span class="kw">use</span> self::panel::*;</span>
 <span id="src-render-loft-L18"></span>
 <span id="src-render-loft-L19"><span class="cm">// A packed 0xRRGGBB colour, the same packing `graphics::rgb` produces. Kept as a</span></span>
 <span id="src-render-loft-L20"><span class="cm">// plain integer so this package needs no graphics dependency to name one.</span></span>
@@ -734,12 +734,12 @@
 <span id="src-verbbar-loft-L36"><span class="cm">// about what it is showing. It takes labels, key glyphs and an armed flag; the words</span></span>
 <span id="src-verbbar-loft-L37"><span class="cm">// `opening` and `cellar` never appear here. That is what lets a different editor with</span></span>
 <span id="src-verbbar-loft-L38"><span class="cm">// a different vocabulary use it unchanged.</span></span>
-<span id="src-verbbar-loft-L39"><span class="kw">use</span> self::widgets;</span>
-<span id="src-verbbar-loft-L40"><span class="kw">use</span> self::panel;</span>
-<span id="src-verbbar-loft-L41"><span class="kw">use</span> self::font;</span>
+<span id="src-verbbar-loft-L39"><span class="kw">use</span> self::widgets::*;</span>
+<span id="src-verbbar-loft-L40"><span class="kw">use</span> self::panel::*;</span>
+<span id="src-verbbar-loft-L41"><span class="kw">use</span> self::font::*;</span>
 <span id="src-verbbar-loft-L42"><span class="cm">// `DrawRect`, `DrawText` and `Theme` — the picture as lists, which is `render.loft`'s</span></span>
 <span id="src-verbbar-loft-L43"><span class="cm">// shape and this file's for its reason: no GL here, so the tests need no window.</span></span>
-<span id="src-verbbar-loft-L44"><span class="kw">use</span> self::render;</span>
+<span id="src-verbbar-loft-L44"><span class="kw">use</span> self::render::*;</span>
 <span id="src-verbbar-loft-L45"></span>
 <span id="src-verbbar-loft-L46"><span class="cm">// ── Layout constants ─────────────────────────────────────────────</span></span>
 <span id="src-verbbar-loft-L47"><span class="cm">//</span></span>
@@ -1058,7 +1058,7 @@
 <span id="tests-hit-test-loft-L8"><span class="cm">// mutation of the caller's tool state — and only the consumer knows what a click</span></span>
 <span id="tests-hit-test-loft-L9"><span class="cm">// on item 3 MEANS. With the mutation removed it was this function under a second</span></span>
 <span id="tests-hit-test-loft-L10"><span class="cm">// name, so the tests that exercised it now exercise this one.</span></span>
-<span id="tests-hit-test-loft-L11"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-hit-test-loft-L11"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-hit-test-loft-L12"></span>
 <span id="tests-hit-test-loft-L13"><span class="kw">fn</span> <span class="fn-call">ui_metrics</span>(advance: <span class="ty"><a href="stdlib-types.html">integer</a></span>, line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
 <span id="tests-hit-test-loft-L14">  run = (advance * <span class="nm">10</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
@@ -1248,7 +1248,7 @@
 <span id="tests-layout-loft-L4"><span class="cm">// `ToolState` to assert a rectangle, which linked a player-physics and collision</span></span>
 <span id="tests-layout-loft-L5"><span class="cm">// package into a layout test. A panel is rectangles and strings; if a layout</span></span>
 <span id="tests-layout-loft-L6"><span class="cm">// test needs a world to run, the layout knows about the world.</span></span>
-<span id="tests-layout-loft-L7"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-layout-loft-L7"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-layout-loft-L8"></span>
 <span id="tests-layout-loft-L9"><span class="cm">// A fixed-pitch Metrics — built through `metrics_measured`, the same door a</span></span>
 <span id="tests-layout-loft-L10"><span class="cm">// consumer uses, because there is deliberately no "just tell me the advance"</span></span>
@@ -1483,7 +1483,7 @@
 <span id="tests-metrics-loft-L9"><span class="cm">// So the library does arithmetic on numbers the CONSUMER measured, and these</span></span>
 <span id="tests-metrics-loft-L10"><span class="cm">// tests pin the arithmetic. They run with no window and no GL context, which is</span></span>
 <span id="tests-metrics-loft-L11"><span class="cm">// the constraint that forced the seam in the first place.</span></span>
-<span id="tests-metrics-loft-L12"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-metrics-loft-L12"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-metrics-loft-L13"></span>
 <span id="tests-metrics-loft-L14"><span class="kw">fn</span> <span class="fn-call">mono</span>(advance: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
 <span id="tests-metrics-loft-L15">  run = (advance * <span class="nm">10</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
@@ -1692,7 +1692,7 @@
 <span id="tests-render-loft-L4"><span class="cm">// argues badly about WHICH rectangle got which colour, and not at all about the</span></span>
 <span id="tests-render-loft-L5"><span class="cm">// order they were emitted in. Those are decisions, and a decision is countable.</span></span>
 <span id="tests-render-loft-L6"><span class="cm">// The gate's job is the part that needs GL — that these reach the canvas.</span></span>
-<span id="tests-render-loft-L7"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-render-loft-L7"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-render-loft-L8"></span>
 <span id="tests-render-loft-L9"><span class="kw">fn</span> <span class="fn-call">ui_metrics</span>(advance: <span class="ty"><a href="stdlib-types.html">integer</a></span>, line_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Metrics</span> {</span>
 <span id="tests-render-loft-L10">  run = (advance * <span class="nm">10</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>;</span>
@@ -2118,7 +2118,7 @@
 <span id="tests-verbbar-loft-L4"><span class="cm">// it cannot say is that no slot leaves the bar, that overflow was reported rather than</span></span>
 <span id="tests-verbbar-loft-L5"><span class="cm">// dropped, or that a click lands on the verb under the pointer. Those are facts about</span></span>
 <span id="tests-verbbar-loft-L6"><span class="cm">// the LAYOUT, countable here, and only arguable from a picture.</span></span>
-<span id="tests-verbbar-loft-L7"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-verbbar-loft-L7"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-verbbar-loft-L8"></span>
 <span id="tests-verbbar-loft-L9"><span class="cm">// The panel suite's own helper, restated here because a test file is its own scope.</span></span>
 <span id="tests-verbbar-loft-L10"><span class="kw">fn</span> <span class="fn-call">m</span>() -&gt; <span class="en">Metrics</span> {</span>
@@ -2422,7 +2422,7 @@
 <h2 id="tests-widgets-loft">tests/widgets.loft</h2>
 <pre class="src"><code><span id="tests-widgets-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
 <span id="tests-widgets-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
-<span id="tests-widgets-loft-L3"><span class="kw">use</span> lavition_ui;</span>
+<span id="tests-widgets-loft-L3"><span class="kw">use</span> lavition_ui::*;</span>
 <span id="tests-widgets-loft-L4"></span>
 <span id="tests-widgets-loft-L5"><span class="cm">// ── §C3 — one widget, two families (plan 18 `B5.1`) ─────────────────────────</span></span>
 <span id="tests-widgets-loft-L6"><span class="cm">//</span></span>

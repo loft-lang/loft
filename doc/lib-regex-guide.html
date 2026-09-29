@@ -27,7 +27,7 @@
 <p><code>regex</code> gives a <code>text</code> three methods: <code>search</code> for where a pattern first matches, <code>matches</code> for whether it matches at all, and <code>split_on</code> for the pieces between matches. Patterns are written inline and cached, so calling the same one in a loop is cheap.</p>
 <p>It is deliberately the SMALL-SCRIPT tool — log scanning, CLI fields, quick extraction — and not a parser. Grammars, ASTs and recursion are somebody else's job, and there is no <code>replace</code> or capture-group accessor yet.</p>
 <p>⚠ <strong>The verbs are named around the stdlib, not after the usual regex words</strong>, and that is the first thing to know. <code>text</code> already has <code>find</code> (a LITERAL substring search) and <code>split</code> (on a CHARACTER), and a method wins name resolution over an imported free function — so a bare <code>find(pattern, line)</code> compiles, type-checks and answers the stdlib's literal search instead of this one. Hence <code>search</code> and <code>split_on</code>. <code>matches</code> is collision-free and keeps its bare name.</p>
-<pre><code><span class="kw">use</span> regex;</code></pre>
+<pre><code><span class="kw">use</span> regex::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   line = <span class="st">"order 1234 shipped 2026-09-09"</span>;</code></pre>
 <pre><code>  at = line.<span class="fn-call">search</span>(<span class="st">"[0-9]+"</span>);

@@ -63,12 +63,13 @@ fn c1() -> text {
   b = V3 { x: 1 };
   "{a != b} {a == b}"
 }
-/// c2 — control: a struct with no `OpEq` compares identity, and `c = a` copies.
+/// c2 — control: a struct with no `OpEq` compares by content (@C91), and `c = a` copies, so
+/// the copy is equal and is another record (`&a != &c`).
 fn c2() -> text {
   a = Plain { x: 1 };
   b = Plain { x: 1 };
   c = a;
-  "{a != b} {a != c} {a == a}"
+  "{a != b} {a != c} {a == a} {&a != &b} {&a != &c}"
 }
 /// c3 — control: `!= null` stays the null test.
 fn c3() -> text {
@@ -88,7 +89,7 @@ fn main() {
   ok("g2 value struct with it ", g2(), "false true");
   ok("g3 operands run once    ", g3(), "false 2");
   ok("c1 own OpNe wins        ", c1(), "true true");
-  ok("c2 no OpEq: identity    ", c2(), "true true true");
+  ok("c2 no OpEq: content     ", c2(), "false false true true true");
   ok("c3 null test            ", c3(), "false true");
   ok("c4 generic              ", c4(), "false");
   println("a concrete != derives from a user OpEq: every cell holds");

@@ -34,8 +34,8 @@
 // upgrade (registered into the pool).  The pool is polled every
 // loop iteration with a 2 ms idle sleep when there's no work.
 
-use server;
-use web;       // sleep_ms
+use server::*;
+use web::*;       // sleep_ms
 
 PORT = 18083;
 

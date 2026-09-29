@@ -26,8 +26,8 @@
 //   ./target/release/loft --interpret --no-warnings --lib lib/ \
 //       tools/audience-demo-50/probe_server.loft
 
-use server;
-use web;
+use server::*;
+use web::*;
 
 const PORT: integer = 18084;
 const TICK_INTERVAL_US: integer = 33333;   // 30 Hz
@@ -98,13 +98,14 @@ fn parse_input(payload: text) -> InputParts {
   if parts.len() != 4 {
     return InputParts { cid: 0, x: 0.0, y: 0.0, z: 0.0, ok: false };
   }
-  InputParts {
-    cid: parts[0] as integer,
-    x:   parts[1] as float,
-    y:   parts[2] as float,
-    z:   parts[3] as float,
-    ok:  true,
+  cid = parts[0] as integer?;
+  x = parts[1] as float?;
+  y = parts[2] as float?;
+  z = parts[3] as float?;
+  if cid == null || x == null || y == null || z == null {
+    return InputParts { cid: 0, x: 0.0, y: 0.0, z: 0.0, ok: false };
   }
+  InputParts { cid: cid, x: x, y: y, z: z, ok: true }
 }
 
 // ── Sight ledger helpers ────────────────────────────────────────────────

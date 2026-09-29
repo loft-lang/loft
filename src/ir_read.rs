@@ -980,6 +980,7 @@ fn read_db_fields(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaField>
                 r.field_int(stores, ds::DBFIELD_POSITION) as u16,
                 default,
                 r.field_bool(stores, ds::DBFIELD_NULLABLE),
+                r.field_int(stores, ds::DBFIELD_TARGET) as u16,
                 read_dep_list(stores, r, ds::DBFIELD_OTHER_INDEXES),
             )
         })

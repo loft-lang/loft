@@ -1,0 +1,12 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -6232,7 +6232,7 @@
+         {
+             return Type::Void;
+         }
+-        let vec_bind = if amp_vector_bind {
++        let vec_bind = if true || amp_vector_bind {
+             VecBind::NotABind
+         } else {
+             self.classify_vec_bind(code, op, var_nr, f_type, &s_type)

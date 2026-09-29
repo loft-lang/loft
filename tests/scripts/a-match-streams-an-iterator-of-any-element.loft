@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match` over an `iterator<T>` materialises its subject and matches the buffer as a vector
+// (matching.md § Iterator inputs), whatever `T` is — and a `vector<(…)>` subject takes tuple
+// patterns in its slice elements.  Three defects stood between a program and that (loft#1737):
+//
+//   * the stream buffer carried its own copy of the comprehension's append and wrote a
+//     `vector<T>` element as a scalar, so every element type but a scalar, text or struct-enum
+//     was refused ("collect it first");
+//   * a slice element over a TUPLE read the element's DbRef instead of unboxing it, which bound
+//     garbage on `--interpret` and did not compile on `--native` (`DbRef as (i64, i64)`);
+//   * `[(a, b), ..]` was read as an alternation and refused, where `(G-Pat-Group)` makes a
+//     `( … )` with no pattern operator a TUPLE pattern (`@FR-P-Point`: one value).
+//
+// A generator yielding `(integer, text)` is not here: `--native` refuses the GENERATOR (no
+// transport channel — coroutines-history.md D-cor-2), before any `match` is compiled.
+//
+// Axes this file MOVES:  the iterator's element type (integer, float, text, plain enum,
+//                        struct-enum, struct, vector<integer>, vector<text>, tuple); a
+//                        straight-line vs loop-body generator; the tuple element pattern's
+//                        position (head, tail after `..`) and form (bindings, literal, `_`,
+//                        variant, guard); a bare binding of a whole tuple element.
+// Axes it HOLDS FIXED:   two-member tuples; one match per function.
+//
+// @falsified-at: f440fa9d9 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused the stream and the tuple patterns, so no assertion ran on it.  The tuple
+//   READ is a value defect, scored apart by a mutation that drops only its unbox from
+//   `read_slice_elem`: interpret 2 assertion failures -> 0 (`bare`, `rest`), native exit 1 -> 0
+//   (the `DbRef as (i64, i64)` compile failure).
+// @falsified-by: tests/falsified/a-match-streams-an-iterator-of-any-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak (LOFT_STRICT_STORES=1), panic and free-refusal are clean on both backends.
+
+enum Col { Red, Green, Blue }
+enum Tk { Num { n: integer }, Word { w: text } }
+struct P { x: integer, name: text }
+
+fn g_int() -> iterator<integer> { yield 4; yield 5; }
+fn g_float() -> iterator<float> { yield 1.5; yield 2.0; }
+fn g_text() -> iterator<text> { yield "ab"; yield "c"; }
+fn g_col() -> iterator<Col> { yield Col.Green; yield Col.Blue; }
+fn g_tk() -> iterator<Tk> { yield Num { n: 3 }; yield Word { w: "hi" }; }
+fn g_p() -> iterator<P> { yield P { x: 1, name: "a" }; yield P { x: 2, name: "bb" }; }
+fn g_vec() -> iterator<vector<integer>> { yield [1, 2]; yield [3]; }
+fn g_vtext() -> iterator<vector<text>> { yield ["a", "b"]; yield ["cc"]; }
+fn g_vloop() -> iterator<vector<integer>> { for i in 1..4 { yield [i, i * 10]; } }
+fn g_tup() -> iterator<(integer, integer)> { yield (1, 2); yield (3, 4); }
+
+fn bare(v: vector<(integer, integer)>) -> integer { match v { [x, y] => x.0 + y.1, _ => -1 } }
+fn rest(v: vector<(integer, integer)>) -> text { match v { [x, ..r] => "{len(r)} {r[0].1} {x.0}", _ => "none" } }
+fn head(v: vector<(integer, integer)>) -> integer { match v { [(a, b), ..] => a + b, _ => -1 } }
+fn lit(v: vector<(integer, integer)>) -> integer { match v { [(1, b), ..] => b, _ => -1 } }
+fn tail(v: vector<(integer, integer)>) -> integer { match v { [.., (a, _)] => a, _ => -1 } }
+fn txt(v: vector<(integer, text)>) -> text { match v { [(n, s), ..] => "{n}{s}", _ => "none" } }
+fn guarded(v: vector<(integer, integer)>) -> text {
+  match v { [(a, b), ..] if a > 1 => "big{b}", [(a, _), ..] => "small{a}", _ => "none" }
+}
+fn variant(v: vector<(Col, integer)>) -> integer {
+  match v { [(Blue, n), ..] => n, [(Red, n), ..] => -n, _ => 0 }
+}
+
+fn test_every_element_type_streams() {
+  a = match g_int() { [x, y] => x * 10 + y, _ => -1 };
+  assert(a == 45, "integer {a}");
+  b = match g_float() { [x, y] => x + y, _ => -1.0 };
+  assert(b == 3.5, "float {b}");
+  c = match g_text() { [x, y] => "{x}{y}", _ => "none" };
+  assert(c == "abc", "text {c}");
+  d = match g_col() { [Green, y] => "{y}", _ => "none" };
+  assert(d == "Blue", "plain enum {d}");
+  e = match g_tk() { [Num { n }, Word { w }] => "{n}{w}", _ => "none" };
+  assert(e == "3hi", "struct-enum {e}");
+  f = match g_p() { [p, q] => "{p.x}{q.name}", _ => "none" };
+  assert(f == "1bb", "struct {f}");
+}
+
+fn test_a_vector_element_streams() {
+  a = match g_vec() { [u, w] => "{len(u)}{w[0]}", _ => "none" };
+  assert(a == "23", "vector<integer> {a}");
+  b = match g_vtext() { [u, w] => "{u[1]}{w[0]}", _ => "none" };
+  assert(b == "bcc", "vector<text> {b}");
+  c = match g_vloop() { [x, .., z] => "{x[1]}{z[0]}", _ => "none" };
+  assert(c == "103", "loop body {c}");
+}
+
+fn test_a_tuple_element_streams() {
+  a = match g_tup() { [(p, q), (r, s)] => p + q * 10 + r * 100 + s * 1000, _ => -1 };
+  assert(a == 4321, "tuple {a}");
+}
+
+fn test_a_tuple_slice_element() {
+  v = [(1, 2), (3, 4)];
+  assert(bare(v) == 5, "bare binding {bare(v)}");
+  assert(rest(v) == "1 4 1", "rest {rest(v)}");
+  assert(head(v) == 3, "head pattern {head(v)}");
+  assert(lit(v) == 2, "literal hit {lit(v)}");
+  assert(lit([(2, 2)]) == -1, "literal miss");
+  assert(tail(v) == 3, "tail pattern {tail(v)}");
+  assert(txt([(7, "ab"), (9, "x")]) == "7ab", "text member");
+  assert(guarded(v) == "small1", "guard fails {guarded(v)}");
+  assert(guarded([(5, 6)]) == "big6", "guard holds");
+  assert(variant([(Col.Blue, 4)]) == 4, "variant hit");
+  assert(variant([(Col.Red, 4)]) == -4, "second variant");
+  assert(variant([(Col.Green, 4)]) == 0, "no variant");
+}

@@ -1,0 +1,12 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -4946,7 +4946,7 @@
+             else {
+                 continue;
+             };
+-            if other_elem != *elem || other_keys != *keys {
++            if other_elem != *elem {
+                 continue;
+             }
+             let earlier = self.data.attr_name(d_nr, a_nr);

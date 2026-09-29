@@ -286,7 +286,7 @@ unsafe impl Sync for ParallelCtx {}
 
 **Plan-28 Phase A note:** the previous `text_code: *const Vec<u8>`
 field was retired when long string constants moved into `CONST_STORE`.
-See [DATABASE.md § Constant store](DATABASE.md#constant-store-const_store).
+See [DATABASE_STORES.md § Constant store](DATABASE_STORES.md#constant-store-const_store).
 
 Stored as `Stores.parallel_ctx: Option<Box<ParallelCtx>>`. Populated by `State::execute()` immediately before the main execution loop using raw pointers into the same `State`. Cleared to `None` after the loop finishes. Enables native functions called during execution (e.g. `n_parallel_for_int` in `src/native.rs`) to access the interpreter's bytecode and `Data` metadata, which is not otherwise reachable from `&mut Stores`.
 

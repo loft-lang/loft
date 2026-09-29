@@ -5256,7 +5256,7 @@ impl Parser {
     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
     /// what a literal refused before its fields are typed leaves behind, so the parser stays
     /// aligned for the next statement.
-    fn skip_braced(&mut self) {
+    pub(crate) fn skip_braced(&mut self) {
         if self.lexer.has_token("{") {
             self.skip_to_close("{", "}");
         }

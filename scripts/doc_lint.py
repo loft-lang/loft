@@ -11,6 +11,9 @@ One implementation, three callers:
     python3 scripts/doc_lint.py --gate --since <base> --changed
                                                          the PR check: a change may not ADD a
                                                          gated finding
+    python3 scripts/doc_lint.py --since <base> --changed --fail-on timeline
+                                                         the ADVISORY PR job: red when a change
+                                                         adds a timeline finding, never a gate
     python3 scripts/doc_lint.py --all [--baseline F]     the report behind `make docs-lint`
     python3 scripts/doc_lint.py --all --write-baseline F re-pin that report's baseline
     python3 scripts/doc_lint.py --hook                   the PostToolUse hook: a tool call on
@@ -108,7 +111,8 @@ def is_maintainer_doc(path: str) -> bool:
 def is_contract_doc(path: str) -> bool:
     if not path.endswith(".md") or path.endswith("-history.md"):
         return False
-    if path in history_report.EXCLUDE_EXACT or path.startswith(history_report.EXCLUDE_DIRS):
+    if path in history_report.EXCLUDE_EXACT or \
+            path.startswith(history_report.EXCLUDE_DIRS + history_report.EXCLUDE_PREFIX):
         return False
     return path.startswith(("doc/claude/", "doc/")) or path in ("README.md", "CLAUDE.md")
 
@@ -289,6 +293,27 @@ def new_findings(path, rev):
     return out
 
 
+def moved_pool(rev):
+    """The findings of `rev`'s version of every file the change touched — deleted and renamed-away
+    files included — as a multiset.  A finding the change only MOVED (a section split out of one
+    doc into another, a history paragraph moved to its companion) is in this pool, so it is not
+    new: judged file by file, every stamp in a split's new file read as added, and the split that
+    brought every working doc under the ceiling failed the gate with 257 of them."""
+    r = subprocess.run(["git", "diff", "--name-status", "-M", rev], cwd=ROOT,
+                       capture_output=True, text=True, check=True)
+    pool = collections.Counter()
+    for line in r.stdout.splitlines():
+        parts = line.split("\t")
+        for old_path in parts[1:2]:          # the base-side path (the source of a rename)
+            if not lintable(old_path):
+                continue
+            before = old_text(old_path, rev)
+            if before is not None:
+                pool.update(key(rl, t) for _, rl, _, t in lint_text(old_path, before, False)
+                            if rl != "size")
+    return pool
+
+
 def lintable(path: str) -> bool:
     return path.endswith((".md", ".rs", ".loft")) and not path.startswith(("target/", "index/"))
 
@@ -348,6 +373,9 @@ def main(argv):
     ap.add_argument("--since", metavar="REV", help="report only findings REV's version lacks")
     ap.add_argument("--changed", action="store_true", help="lint the files changed since --since")
     ap.add_argument("--gate", action="store_true", help="exit 1 when a gated finding is new")
+    ap.add_argument("--fail-on", metavar="RULES", default="",
+                    help="comma-separated report rules: exit 1 when one is new (a red step that "
+                         "does not gate — the advisory CI job)")
     ap.add_argument("--all", action="store_true", help="every tracked file in scope")
     ap.add_argument("--baseline", metavar="FILE", help="with --all: print the delta against FILE")
     ap.add_argument("--write-baseline", metavar="FILE", help="with --all: write FILE")
@@ -363,8 +391,23 @@ def main(argv):
     paths = [p for p in dict.fromkeys(paths) if lintable(p) and os.path.exists(os.path.join(ROOT, p))]
 
     findings = []
+    pool = moved_pool(a.since) if a.changed else None
     for p in paths:
-        if a.since:
+        if pool is not None:
+            # Across the change, not file by file: what the change moved is not new.  The size
+            # rule stays per file (only CROSSING the ceiling is new), so it comes from
+            # `new_findings`; every other finding is matched against the pool.
+            fs = [f for f in new_findings(p, a.since) if f[1] == "size"]
+            text = open(os.path.join(ROOT, p), encoding="utf-8").read()
+            for f in lint_text(p, text):
+                if f[1] == "size":
+                    continue
+                k = key(f[1], f[3])
+                if pool[k] > 0:
+                    pool[k] -= 1
+                else:
+                    fs.append(f)
+        elif a.since:
             fs = new_findings(p, a.since)
         else:
             fs = lint_text(p, open(os.path.join(ROOT, p), encoding="utf-8", errors="replace").read())
@@ -374,11 +417,19 @@ def main(argv):
         return report(findings, a.baseline, a.write_baseline)
     for p, n, rule, msg, _ in findings:
         print(f"{p}:{n}: {rule}: {msg}")
+    fail_on = {r for r in a.fail_on.split(",") if r}
+    added = [(p, n, r) for p, n, r, _, _ in findings if r in fail_on]
+    if added:
+        print(f"\ndoc_lint: this change adds {len(added)} {'/'.join(sorted(fail_on))} "
+              "finding(s).  A contract doc states what holds now; a date, a measurement, a "
+              "finished item or how a thing came to be goes to the doc's `<doc>-history.md` "
+              "companion (DOC_QUALITY § Maintainer docs 4, the doc-quality skill).  A line "
+              "that is meant carries `<!-- doc-lint: ok -->`.", file=sys.stderr)
     if a.gate and any(r in GATED for _, _, r, _, _ in findings):
         print("\ndoc_lint: this change adds a gated finding (stamp, history, two-h1, or a file "
               "crossing the size ceiling).\nThe rule set is doc/claude/DOC_CONTRACT.md.", file=sys.stderr)
         return 1
-    return 0
+    return 1 if added else 0
 
 
 def counts(findings):

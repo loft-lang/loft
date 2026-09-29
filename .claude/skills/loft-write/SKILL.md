@@ -43,8 +43,7 @@ The parser **rejects** code that violates these rules.
 | `character` | Single Unicode char; literal: `'a'`, `'😊'`; `c as integer` → codepoint | `'\0'` |
 | `text` | UTF-8 string (primary string type) | internal null pointer |
 
-**There is no `long` type and no `l` literal suffix** — both were
-removed.  `integer` is already 64-bit (i64), so integer literals are
+**There is no `long` type and no `l` literal suffix.**  `integer` is already 64-bit (i64), so integer literals are
 plain (`86400000`, not `86400000l`), and `now()` / `File.size` return a
 full-range `integer`.  Writing `long` or `10l` is a parse error
 (*"Undefined type long"* / *"Expect token ;"*).
@@ -172,7 +171,7 @@ TYPE freezes the *value*.  They are opposites and compose:
 - **value-const** (`v: const T`, on the type): the value is read-only — append / element / nested
   writes (`t.v+=`, `t.v[i]=`, `t.r.x=` through it) are rejected; a whole-value rebind `t.v = other`
   is allowed.  Reach for it on a genuine value/record (shared config, a compound key, a `par()`-shared
-  value).  Enforced for DIRECT writes; laundering via a local/return/generic is Phase 3 (not yet).
+  value).  A write through a local bound to it (`w = t.v; w.x = 5`) is refused too.
 - **scalar collapse**: a by-value scalar (`integer/float/…`) freezes fully under EITHER axis —
   `const n: integer` and `n: const integer` both reject `t.n=` and `t.n+=`.
 
@@ -218,7 +217,7 @@ bare-name form.  Both produce the same file-scope immutable constant:
 <!-- from tests/reference/skill-constants.loft -->
 ```loft
 TAU      = 6.28318530717958;    // bare-name form
-const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
+const E  = 2.71828182845905;    // const-keyword form
 pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
 
@@ -254,7 +253,7 @@ Parameter modifiers:
 - Omit modifier — pass by value/copy (heap values still alias: field/element mutation propagates)
 
 A local reference is bound with `a = &b` (or `a: &T = b`); the operand must be addressable (a
-variable / struct field / vector element). Full model: [LOFT.md § References](../../../doc/claude/LOFT.md).
+variable / struct field / vector element). Full model: [LOFT_DECLARATIONS.md § References](../../../doc/claude/LOFT_DECLARATIONS.md).
 
 A function body ending in an expression (no `;`) returns that value. Functions without `->` return `void`.
 
@@ -299,42 +298,12 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 
 **`use` declarations must appear before any other declarations in the file.**
 
-### Finding a library's API (do this BEFORE writing `use` calls)
+### Finding a library's API
 
-Libraries live OUTSIDE the project (`~/.loft/registry/<name>-<version>/`,
-`~/.loft/lib/<name>/`), so the project tree alone does not show what they
-export.  Which surface is the truth depends on what you are doing:
-
-- **Writing a program that USES a library** — the version your project locks is the
-  one that runs, so its stubs are the truth.  Use the list below.
-- **Working ON a library, inside the loft repo** — read `origin/main` through the
-  catalogue: `make libcatalogue`, then `doc/claude/LIBRARIES.md` (CLAUDE.md, @PLN112).
-  An installed copy or a clone can lag `origin/main`, and `loft api <name>` reads the
-  installed copy.
-
-Discovery surface for a program, nearest first:
-
-1. **`.loft/api/<name>.api`** in the project — generated public-API stubs
-   (signatures + doc comments) for every locked dependency.  Written by
-   `loft install` / `loft update` / `loft pin`; read these first.
-2. **`.loft/api/_available.api`** — the registry CATALOG: every package you
-   could `loft install` (name, latest version, one-line description), written
-   alongside the per-dep stubs.  Read this to see what EXISTS, not just what's
-   installed.
-3. **`loft api`** — list every library reachable from the cwd (project deps,
-   installed registry packages, user libraries) with their source paths.
-4. **`loft api <name>`** — print one library's full public surface.
-5. **`loft api --registry`** — print the whole installable catalog on demand
-   (the live form of `_available.api`).  The catalog is cached ~1h; add
-   **`--refresh`** to force a re-fetch (e.g. after a package was just published
-   or its description changed).
-6. **`loft search <query>`** / **`loft info <name>`** — query the registry
-   for libraries not installed yet; `loft install <name>` fetches one and
-   refreshes the stubs.
-
-Never guess a library function's signature: check the stub or `loft api`
-output, and read the real source at the path they name when you need the
-implementation.
+**Read [library-api.md](library-api.md) before writing `use` of a library.**  Never guess a
+signature: for a program, read `.loft/api/<name>.api` (or `loft api <name>`); to see what exists,
+`.loft/api/_available.api` / `loft api --registry`; when working ON a library in this repo,
+`make libcatalogue` then `doc/claude/LIBRARIES.md`.
 
 ---
 
@@ -370,8 +339,8 @@ Field names may overlap across structs — lookups are type-scoped.
 ## Tuples
 
 Anonymous, fixed-arity, stack-allocated compound values.  Use them to
-return multiple values without naming a struct.  Shipped in 0.8.3
-(T1.1–T1.11); see [doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
+return multiple values without naming a struct.  See
+[doc/claude/TUPLES.md](../../../doc/claude/TUPLES.md).
 
 <!-- from tests/reference/skill-tuples.loft -->
 ```loft
@@ -423,10 +392,6 @@ flag         = nested.1;          // true
 - **Compound assignment on tuple LHS is rejected** — `(a, b) += (1, 2)`
   is a compile error; rewrite as `a += 1; b += 2;` or rebuild the tuple.
 
-Comparing a tuple-element `character` against a literal (`t.0 == 'a'`)
-works on both backends — the old P207 native E0308 was fixed 2026-05-04;
-no cast or destructure workaround is needed.
-
 ---
 
 ## Enums
@@ -467,7 +432,8 @@ s = Circle { radius: 2.0 };
 a = area(s);   // dispatches to correct variant
 ```
 
-Plain enums cannot have methods — use struct-enum variants for polymorphic dispatch.
+A plain enum takes methods too (`fn label(self: Color) -> text { match self { … } }`);
+struct-enum variants add per-variant dispatch.
 
 Trailing commas in variant field lists are accepted: `Circle { radius: float, }`.
 
@@ -490,7 +456,7 @@ v[i];                // index read
 
 **Empty vectors** need a type annotation so the compiler knows the element type.
 
-**Slices are iterators, materialised on assignment.** `sub = arr[lo..hi]` (annotated or not) builds a fresh vector, and negative bounds count from the end (`arr[2..-1]`, @P384).  A slice still cannot be passed directly where a `vector<T>` **argument** is expected — assign to a local first, or pass the array with index bounds.
+**Slices are iterators, materialised on assignment.** `sub = arr[lo..hi]` (annotated or not) builds a fresh vector, and negative bounds count from the end (`arr[2..-1]`, @P384).  A slice passes directly where a `vector<T>` argument is expected (`total(a[1..3])`).
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
@@ -538,7 +504,8 @@ fn find_min<T: Comparable>(v: vector<T>) -> T { ... }
 
 Structural satisfaction: if the methods exist, the type satisfies the interface.
 No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`,
-`Numeric`, `Scalable`, `Printable` automatically.
+`Numeric`, `Scalable`, `Printable` automatically, and EVERY type — a struct, vector,
+tuple, enum — is `Equatable` (C91).
 
 ---
 
@@ -597,6 +564,16 @@ flags & ~32                        // bitwise NOT — clears bit 5
 **`?` and `??` are at opposite ends of this table**, so they parenthesise
 oppositely on a binary result: `a / b ?? 0` discharges the division, `a / b?` is
 `a / (b?)` and yields **null** — write `(a / b)?`.
+
+### `==` compares content; `&a == &b` asks identity
+
+**`==` / `!=` compare CONTENT for every type** — structs, vectors, tuples, struct-enum
+values, keyed collections, recursively through fields and `reference<T>`, cycles
+included (DESIGN_DECISIONS_VALUES.md § C91).  Two separately built records with equal
+fields are `==`; `[P{x:1}] == [P{x:1}]` is `true`.  To ask whether two names are ONE
+record, write `&a == &b` — `&` on both sides; on one side only it is a compile error.
+There is no `===`.  Keyed collections hash and compare keys the way `==` does (`0.0`
+and `-0.0` are one key).
 
 ### `is` variant check
 
@@ -755,10 +732,7 @@ Match is an expression — all arms must produce the same type (or void).
 
 **The arm separator is `=>`, never `->`.**  `->` is the lambda /
 function return-type arrow; using it in a match arm produces a clear
-diagnostic ("match arm separator is `=>`, not `->`") — but only because
-the parser was hardened against it.  Older drafts of TUPLES.md showed
-`->` for arms; that was always wrong.  If a `match` arm in your code
-uses `->`, fix it before running anything.
+diagnostic ("match arm separator is `=>`, not `->`").  Fix any `->` arm before running.
 
 **Scalar-match arms need commas between them**; enum and tuple match
 also accept newline-separated arms.  When in doubt, comma-separate —
@@ -798,49 +772,38 @@ emit(1, 2);
 ```
 
 **Type annotations on `|x|` shorthand are rejected by design
-(see `doc/claude/DESIGN_DECISIONS.md § C62`).**  If you need
+(see `doc/claude/DESIGN_DECISIONS_SYNTAX.md § C62`).**  If you need
 types, switch to `fn(name: <type>) { ... }` — the shorthand
 exists specifically *because* the types are inferred; adding
 annotations collapses the distinction between the two forms.
 
 ---
 
-## Variable scoping — one type per name, per function
-
-Variable names are **per-function**, and loft has **no block scoping**: a
-`for`/`if` body does not open a fresh binding — every local (loop variables
-included) lives in the enclosing function's scope for the whole function.  So the
-rule that matters is narrow: *within one function, a name maps to a single
-slot + type.*  The same name in a **different** function is completely free.
-
-All of the violations below are **clean compile-time errors with fix hints** —
-never a codegen panic or silent corruption, on either backend:
-
-- **A name reused with a different type in one function** → error, even across
-  disjoint blocks: `if … { x = 1 }  if … { x = "hi" }` →
-  `Variable 'x' cannot change type from integer to text`.  Re-assigning the *same*
-  type is fine (`x = 1; x = 2`).
-- **A loop variable named like an existing local** →
-  `loop variable 'x' shadows a local named 'x' — rename the loop variable
-  (e.g. loop_x)`.  Rename it, or drop the dead outer local.
-- **Nested same-name loops** → `for i { for i { … } }` is rejected: the inner
-  binding would take over `i` for the rest of the outer body.
-- **Loop variables are inference-only (@P345)** — `for i: integer in …` does not
-  parse (`loop variable 'i' is type-inferred from the iterable — remove the
-  ': <type>' annotation`).  Drop the annotation.
-
-**`for` loops are the exception to the one-type-per-name rule** (loft#915): each
-`for` binds its own variable, so two loops in one function may reuse a name at
-different element types — `for i in ["a","b"] {…}` then `for i in 0..3 {…}`
-compiles.  You therefore do **not** need per-function loop-variable prefixes;
-short names (`i`, `e`, `n`) are fine and read better.
+## Variable scoping — a block's locals end at its `}`
 
 **A local ends at the `}` of the block that bound it — an `if` arm, a loop body, a
 `match` arm, a bare `{ }` — and so does a loop variable** (`formal/binding.md`
-`(B-Scope)`, rustc's rule).  Reading it after is `error[local-out-of-scope]`, also when
-every arm binds it.  Bind it before the block (`x: T? = null; if c { x = mk(); }`,
-`last = 0; for v in xs { last = v; }`) or make the block's value the binding
-(`x = if c { a } else { b }`, a tuple for several).
+`(B-Scope)`, rustc's rule; LOFT_DESIGN.md § Variable scoping).  Reading it after is
+`error[local-out-of-scope]`, also when every arm binds it.  Bind it before the block
+(`x: T? = null; if c { x = mk(); }`, `last = 0; for v in xs { last = v; }`) or make the
+block's value the binding (`x = if c { a } else { b }`, a tuple for several).
+
+Within one scope a name keeps ONE type; a name in a different function is free.  The
+violations are clean compile-time errors with fix hints, on both backends:
+
+- **Re-typing a live name** → `x = 1; … x = "hi";` is `Variable 'x' cannot change type
+  from integer to text` — and so is assigning another type to an OUTER local inside a
+  block.  Two sibling blocks may each bind `x` at their own type, because the first
+  `x` has ended.  Re-assigning the *same* type is fine (`x = 1; x = 2`).
+- **A loop variable named like an existing local** →
+  `loop variable 'x' shadows a local named 'x' — rename the loop variable
+  (e.g. loop_x)`.  Rename it, or drop the dead outer local.
+- **Nested same-name loops** → `for i { for i { … } }` is rejected.
+- **Loop variables are inference-only** — `for i: integer in …` does not parse
+  (`loop variable 'i' is type-inferred from the iterable`).  Drop the annotation.
+
+Sequential loops may reuse a name at different element types — `for i in ["a","b"] {…}`
+then `for i in 0..3 {…}` compiles — so short names (`i`, `e`, `n`) are fine.
 
 **Unused variable = warning, not an error** — the program still runs (exit 0).
 Use `_` for an unused loop variable to keep the build warning-clean.
@@ -906,125 +869,15 @@ the parameter is the callee's own binding.)
 
 ## File I/O patterns
 
-### Path resolution — relative means program-relative
-
-A **relative** path resolves against the **program's own directory**
-(`source_dir()` — source dir under `--interpret`, exe dir under `--native`), not
-the process cwd.  So `file("assets/x")` loads the asset bundled beside the
-program on every backend, regardless of launch directory.  **Absolute paths are
-untouched.**  The file builtins (`file`, `exists`, `read_file`/`write_file`,
-`delete`/`move`/`mkdir`, image loads) all resolve this way — so **don't hand-roll
-`"{source_dir()}/{path}"` joins** in normal loft; just pass the relative path.
-(Do the explicit join only when handing a path to a *non-loft* consumer, e.g. a
-native asset loader that reads the filesystem directly.)
-
-A program that must resolve a *user-supplied* relative path against the **working
-directory** (CLI tools — `loft tidy.loft data.csv`) declares `#cwd` as the
-file-top directive (before the first declaration).  `LOFT_PATHS=program|cwd`
-overrides per-invocation.
-
-### Text files (UTF-8)
-
-<!-- from tests/reference/skill-files.loft -->
-```loft
-out = file("{temp_dir()}/loft-reference-output.txt");
-out.write("one\ntwo\n");
-f = file("{temp_dir()}/loft-reference-output.txt");
-content = f.content();         // full text content (UTF-8)
-lines = f.lines();             // vector<text> of lines
-dir = file(temp_dir());
-names = "";
-for ef in dir.files() {
-  path = ef.path;
-  names += path;
-}
-size_bytes = f.size;            // integer (i64) — works for any file
-```
-
-**`f.content()` is UTF-8-only** (`-> text?`).  On a binary file it
-returns **null** with a warning.  For non-text data use
-`read_bytes(path) -> vector<u8>` / `write_bytes`, or the structured
-binary idiom below.
-
-### Binary files (structured reads and writes)
-
-Set `f#format` to `LittleEndian` or `BigEndian`, then use `f#read`
-for reads and `f += value` for writes.  `#next` seeks to an
-absolute byte offset.  All file-handle operations should live
-inside a `{ ... }` scope block so the handle flushes/closes at
-block exit:
-
-<!-- from tests/reference/skill-files.loft -->
-```loft
-// `file()` opens WITHOUT truncating — `f += …` appends to what is there, so a rerun would
-// double the file; start from nothing.
-delete("{temp_dir()}/loft-reference-model.glb");
-// --- Write a binary chunk-structured file ---
-{
-  f = file("{temp_dir()}/loft-reference-model.glb");
-  f#format = LittleEndian;
-  f += (0x46546C67 as i32);   // 4 bytes: i32 magic
-  f += (2 as i32);            // 4 bytes: i32 version
-  f += (32 as u8);            // 1 byte (ASCII space)
-  f += "chunk of text";       // raw UTF-8 bytes
-  f += my_float_vector;       // vector<single> → 4 bytes per element
-}
-```
-<!-- from tests/reference/skill-files.loft -->
-```loft
-// --- Read the 12-byte GLB header ---
-{
-  f = file("{temp_dir()}/loft-reference-model.glb");
-  f#format = LittleEndian;
-  magic   = f#read as i32;            // 0x46546C67 = 'glTF'
-  version = f#read as i32;
-  space   = f#read as u8;
-  // Seek past the header + JSON data to a later chunk:
-  f#next = (9 + json_len) as integer;
-  text_len = 13;
-  assert(magic == 0x46546C67 and version == 2 and space == 32, "the header fields read back");
-  assert(f.size == 4 + 4 + 1 + text_len + 8, "and the file is exactly the bytes written");
-}
-```
-
-Notes:
-- **Prefer `f#read as <type>` (no parens) for fixed-width reads.**
-  The byte count is inferred from the type — `as i32` reads 4
-  bytes, `as u8` reads 1, `as u16` reads 2, `as integer` reads 8.
-  The legacy `f#read(n) as T` form still works but the `(n)` must
-  match the type's storage width exactly or the runtime panics in
-  `src/database/io.rs:276`.  The inferred form makes that mismatch
-  impossible.  `as text` still needs `f#read(n) as text` because
-  text has no fixed width.
-- **`s.field = f#read` (no `as T`) infers width from the LHS field's
-  declared type** — symmetric with `f += s.field`.  For a struct
-  `S { a: i32, b: u8, c: u16 }`, both sides become:
-  `f += s.a; f += s.b; f += s.c` to write, `s.a = f#read; s.b = f#read;
-  s.c = f#read` to read.  Changing a field's declared type
-  (`i32` → `i64`) automatically updates both sites at the next compile —
-  no manual cast edits needed.
-- **Always cast scalar writes to the intended width.**  Bare
-  `f += int_var` writes 8 bytes (loft stores integers as i64).  To
-  write 4 bytes use `f += (int_var as i32)`; for 1 / 2 bytes use
-  `as u8` / `as u16`.  Strongly-typed struct fields (`u8`, `u16`, or a
-  range-limited `integer limit(0, 255)`) write at their declared width
-  automatically.
-- `f += expr` appends `expr` to the file, respecting the `#format`
-  endianness.  `text` → raw bytes, `vector<T>` → each element in
-  sequence at its declared width.
-- `f.size` returns an `integer` (i64); compare with `0`.
-- `f#next = offset as integer` seeks.  Reading position advances
-  automatically after each `f#read` — don't manually advance it
-  between sequential reads.
-- **Whole-buffer reads: `read_bytes(path) -> vector<u8>`** (and
-  `write_bytes(path, v)`), from the stdlib.  Reach for the `f#read`
-  loop only for structured, offset-driven access.
-
-Example binary reader/writer patterns live in
-`tests/fixtures/libs/graphics/src/glb.loft` (writer) and
-`tests/fixtures/libs/graphics/tests/glb.loft` (reader).
+**Read [file-io.md](file-io.md) before any program that opens a file.**  It covers path resolution
+(a relative path is PROGRAM-relative, `#cwd` for CLI tools), UTF-8 text files (`content`, `lines`,
+`write`), and binary files (`f#format`, `f#read as <type>`, `f += (x as i32)`, `f#next`,
+`read_bytes` / `write_bytes`).  Two rules to carry without opening it: `f.content()` is
+UTF-8-only (`text?`, null on a binary file), and a scalar write is 8 bytes unless cast to its
+width (`f += (n as i32)`).
 
 ---
+
 
 ## Nullable defaults, the copy-write hazard, and null-checking reads
 
@@ -1069,7 +922,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 
 | Error message | Fix |
 |--------------|-----|
-| `Too few parameters on n_<fn>` | Per-function name collision — give the loop/local a name distinct from the function's params; avoid `for` in `const vector<T>` recursive fns |
+| `Too few parameters on n_<fn> (got …, need …)` | A compiler panic (a hidden-buffer ABI mismatch), not a mistake in your code — reduce it to a minimal repro and file it (`gh issue create`) |
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
 | `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
@@ -1077,10 +930,9 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `Allocating a used store` | A store is being reused while still held — check parallel blocks / store lifetimes (a `key` field name is NOT the cause; that works) |
 | `Unknown function say` | Use `println()` |
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |
-| `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm.  (P206 — was a parser hang before the recovery helper landed.) |
+| `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm. |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
 | `compound assignment is not supported for tuple destructuring — use (a, b) = expr instead` | Rebuild the tuple: `(a, b) = (a + 1, b + 2)` — or update each element directly. |
-| Native E0308 on `t.0 == 'a'` where `t` is `(character, …)` | Fixed (P207, 2026-05-04) — if seen on an old build, update loft; current builds compile this on both backends. |
 
 ---
 
@@ -1117,15 +969,13 @@ loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
 
 - [ ] No loop variable shares a name with a plain local in the same function (loops may share names with each other)
 - [ ] No nested `fn` definitions — helpers live at file scope
-- [ ] No `arr[lo..hi]` passed as `vector<T>` argument
 - [ ] No local named `null`
 - [ ] All `use` imports appear before any other declarations
 - [ ] No `long` type / no `l` literal suffix — `integer` is i64; literals are plain (`86400000`), `f.size` compares with `0`
 - [ ] String type in struct fields is `text`, not `string`
 - [ ] No `character == text` comparisons — use `"{c}" == t`
-- [ ] Never reassign a text parameter — copy to local first
 - [ ] `v[i]` and `s.field` can be passed directly as `&` parameters
-- [ ] Match arm separator is `=>`, never `->` (the parser used to hang on this — P206)
+- [ ] Match arm separator is `=>`, never `->`
 - [ ] No single-element tuples; `(integer)` is just `integer`
 - [ ] Tuple element access uses an integer literal (`t.0`, not `t.i`)
 - [ ] No compound assignment on a tuple LHS (`(a, b) +=` is rejected)
