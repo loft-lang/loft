@@ -1,0 +1,13 @@
+diff --git a/src/scopes.rs b/src/scopes.rs
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -1728,7 +1728,8 @@
+     // side instead.  That was a restatement — and once a binding can view more than one
+     // container it is also a wrong answer, because the RHS names both and only one of them was
+     // disturbed.  One home for the fact, named where it was observed.
+-    out
++    let _ = out;
++    HashMap::default()
+ }
+ 
+ /// The state of [`collect_views_to_materialise`]'s in-order walk.

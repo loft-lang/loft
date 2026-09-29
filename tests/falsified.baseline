@@ -120,7 +120,6 @@
 126-keyed-field-clear.loft
 126-store-coalesce.loft
 126-store-release-keeps-everything.loft
-127-keyed-indexed-set.loft
 128-struct-keyed-field-init.loft
 129-lazy-bind.loft
 129-lazy-graph.loft
@@ -473,7 +472,6 @@
 76-struct-vector-return.loft
 771-nullable-field-text-return.loft
 772-amp-vector-reassign.loft
-774-view-outlives-reassigned-container.loft
 775-amp-field-writeback-view.loft
 776-generator-heap-locals.loft
 77-exponentiation.loft

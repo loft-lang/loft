@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @falsified-by: tests/falsified/774-view-outlives-reassigned-container.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @C86 — a view materialises when its container is reassigned.
 // @catches: LOFT_NO_CALLEE_DISTURB — the switch stops a callee's growth from disturbing the caller's view, which is what this program checks.
 //
