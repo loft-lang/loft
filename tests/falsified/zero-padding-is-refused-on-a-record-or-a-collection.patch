@@ -1,0 +1,145 @@
+diff --git b/src/main.rs a/src/main.rs
+index 720d82134..7d3003b84 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -191,10 +191,6 @@ fn print_help() {
+     println!(
+         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
+     );
+-    println!(
+-        "                                and preserve the generated .rs on disk; combine with"
+-    );
+-    println!("                                --native-release for optimised + debug-info");
+     println!("  --lean                        strip the live/debug tier — smallest binary, no");
+     println!("                                live-flip/breakpoints");
+     println!("  --dev-soft-halt               demote dev-mode runtime raises to log-and-continue");
+@@ -202,6 +198,10 @@ fn print_help() {
+     println!(
+         "                                site in a single run instead of halting on the first"
+     );
++    println!(
++        "                                and preserve the generated .rs on disk; combine with"
++    );
++    println!("                                --native-release for optimised + debug-info");
+     println!("  --native-emit [out.rs]        write generated Rust source and exit");
+     println!("                                (default: .loft/<script>.rs beside the script)");
+     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 906d65538..ad1a5e8a4 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2960,24 +2960,13 @@ use #count instead"
+                 && state.width != Value::Int(0)
+                 && matches!(
+                     tp.base(),
+-                    Type::Text(_)
+-                        | Type::Boolean
+-                        | Type::Character
+-                        | Type::Enum(_, _, _)
+-                        | Type::Reference(_, _)
+-                        | Type::Vector(_, _)
+-                        | Type::Hash(_, _, _)
+-                        | Type::Sorted(_, _, _)
+-                        | Type::Index(_, _, _)
+-                        | Type::Radix(_, _, _)
+-                        | Type::Trie(_, _, _)
++                    Type::Text(_) | Type::Boolean | Type::Character | Type::Enum(_, false, _)
+                 )
+             {
+                 // @FR-F-Spec — `0N` zero-pads a NUMBER, and `@FR-F-Spec-Exec` refuses a spec
+-                // part the type cannot execute: a word, a record or a collection has no digits
+-                // for the zeros to go in front of.  Rendered, they went on the wrong side of
+-                // the whole text (`true00`, `[1,2]00000`, `{x:3}0000000`).  An ITERATOR is not
+-                // judged here: it applies the spec to each element (`{for x in v {x}:03}`).
++                // part the type cannot execute.  Only `text` was refused: a `boolean` rendered
++                // `{b:06}` as `true00`, the zeros on the wrong side of a word.  A container is
++                // not judged here: an iterator applies the spec to each element.
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index c1c7b858d..81620a89c 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -7559,28 +7559,6 @@ impl Parser {
+         self.lexer.token("}");
+     }
+ 
+-    /// After `is V {`, is `field: name` (then `,` or `}`) an attempted RENAME of a field of `V`,
+-    /// rather than a body opening with a declaration?  Only when `field` is a field of the
+-    /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
+-    /// lookahead the caller reverts, after `field` has been read.
+-    fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
+-        let Some(field) = field else {
+-            return false;
+-        };
+-        let is_field = self.data.def(variant_def_nr).attributes[1..]
+-            .iter()
+-            .any(|a| a.name == field);
+-        if !is_field || !self.lexer.has_token(":") {
+-            return false;
+-        }
+-        let Some(alias) = self.lexer.has_identifier() else {
+-            return false;
+-        };
+-        Self::is_binding_name(&alias)
+-            && self.data.def_nr(&alias) == u32::MAX
+-            && (self.lexer.peek_token(",") || self.lexer.peek_token("}"))
+-    }
+-
+     /// A field sub-pattern that is a plain binding NAME (`Circle { radius: r }`) — a rename of
+     /// the capture, `@FR-P-Point` — consumed and answered; anything else (`r..5`, `_`, a
+     /// variant, a literal) is left unread for the sub-pattern parse.  Only a name followed by
+@@ -12205,11 +12183,8 @@ impl Parser {
+         let is_field_capture = is_struct && self.lexer.peek_token("{") && {
+             let link = self.lexer.link();
+             self.lexer.token("{");
+-            let first = self.lexer.has_identifier();
+-            let is_capture = first.is_some()
+-                && (self.lexer.peek_token(",")
+-                    || self.lexer.peek_token("}")
+-                    || self.is_capture_rename_attempt(variant_def_nr, first.as_deref()));
++            let is_capture = self.lexer.has_identifier().is_some()
++                && (self.lexer.peek_token(",") || self.lexer.peek_token("}"));
+             self.lexer.revert(link);
+             is_capture
+         };
+@@ -12249,25 +12224,6 @@ impl Parser {
+                         field_name
+                     );
+                 }
+-                // `is Circle { radius: r }` — a `match` field pattern renames, an `is` capture
+-                // does not (its list is `{ ident, … }`, told from a body by lookahead, and a
+-                // body may open with the declaration `x: T`).  Consumed so the refusal is the
+-                // only message, rather than the body parse's `Undefined type r`.
+-                let mut rename: Option<String> = None;
+-                if self.lexer.has_token(":") {
+-                    let alias = self.lexer.has_identifier().unwrap_or_default();
+-                    rename = Some(alias.clone());
+-                    if !self.first_pass {
+-                        let vn = self.data.def(variant_def_nr).name().to_string();
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "an `is` capture binds a field under its own name — write `is {vn} \
+-                             {{ {field_name} }}`; to bind it as `{alias}`, use `match`: \
+-                             `{vn} {{ {field_name}: {alias} }} => …`"
+-                        );
+-                    }
+-                }
+                 seen_fields.insert(field_name.clone());
+                 let attr_idx_and_type = {
+                     let variant_def = self.data.def(variant_def_nr);
+@@ -12348,12 +12304,6 @@ impl Parser {
+                             self.is_capture_bindings.push(v_set(v_nr, bound));
+                             let old = self.vars.set_name(&field_name, v_nr);
+                             self.is_capture_aliases.push((field_name.clone(), old));
+-                            // The refused rename's name reads the same capture, so the body's
+-                            // use of it adds no second error.
+-                            if let Some(alias) = rename.as_ref().filter(|a| !a.is_empty()) {
+-                                let old = self.vars.set_name(alias, v_nr);
+-                                self.is_capture_aliases.push((alias.clone(), old));
+-                            }
+                         }
+                     }
+                     None => {

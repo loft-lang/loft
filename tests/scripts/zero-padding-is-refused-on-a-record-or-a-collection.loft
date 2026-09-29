@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// ZERO-PADDING IS REFUSED ON A RECORD OR A COLLECTION (`@FR-F-Spec`, `@FR-F-Spec-Exec`).  `0N`
+// zero-pads a NUMBER, and a spec part the hole's type cannot execute refuses the program.  A
+// vector, a struct and a struct-enum rendered their whole text and took the zeros after it —
+// `{v:010}` was `[1,2]00000`, `{p:012}` was `{x:3}0000000` — with no diagnostic.  An ITERATOR
+// still applies the spec to each element (`{for x in v {x}:03}` is `[001,002]`), and a width
+// or a fill still pads any rendering (`zero-padding-is-refused-on-every-scalar-that-is-not-a-number`
+// holds the scalar half).
+//
+// @falsified-at: d5c257b77 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/zero-padding-is-refused-on-a-record-or-a-collection.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control renders all three holes (`[1,2]00000`) in silence.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+struct P { x: integer }
+enum Sh { Circle { r: integer }, Rect { w: integer } }
+
+fn main() {
+  v = [1, 2];
+  // @EXPECT_ERROR: Zero-padding has no effect on vector<integer>
+  a = "{v:010}";
+  p = P { x: 3 };
+  // @EXPECT_ERROR: Zero-padding has no effect on P
+  b = "{p:012}";
+  s: Sh = Circle { r: 1 };
+  // @EXPECT_ERROR: Zero-padding has no effect on Sh
+  c = "{s:012}";
+}

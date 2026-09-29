@@ -2960,13 +2960,24 @@ use #count instead"
                 && state.width != Value::Int(0)
                 && matches!(
                     tp.base(),
-                    Type::Text(_) | Type::Boolean | Type::Character | Type::Enum(_, false, _)
+                    Type::Text(_)
+                        | Type::Boolean
+                        | Type::Character
+                        | Type::Enum(_, _, _)
+                        | Type::Reference(_, _)
+                        | Type::Vector(_, _)
+                        | Type::Hash(_, _, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
                 )
             {
                 // @FR-F-Spec — `0N` zero-pads a NUMBER, and `@FR-F-Spec-Exec` refuses a spec
-                // part the type cannot execute.  Only `text` was refused: a `boolean` rendered
-                // `{b:06}` as `true00`, the zeros on the wrong side of a word.  A container is
-                // not judged here: an iterator applies the spec to each element.
+                // part the type cannot execute: a word, a record or a collection has no digits
+                // for the zeros to go in front of.  Rendered, they went on the wrong side of
+                // the whole text (`true00`, `[1,2]00000`, `{x:3}0000000`).  An ITERATOR is not
+                // judged here: it applies the spec to each element (`{for x in v {x}:03}`).
                 diagnostic!(
                     self.lexer,
                     Level::Error,
