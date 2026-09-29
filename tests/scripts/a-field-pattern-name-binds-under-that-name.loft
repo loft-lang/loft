@@ -12,6 +12,8 @@
 // @falsified-at: 47ba568c6 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-field-pattern-name-binds-under-that-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the refusal — the control tree does not compile this program ("Unknown variable 'q'").
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
 
 enum Color { Red, Green }
 struct Pt { x: integer, y: integer }

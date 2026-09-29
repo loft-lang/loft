@@ -5,11 +5,13 @@
 // `0N` zero-pads a number, and a spec part the hole's type cannot execute refuses the program.
 // Only `text` was refused: a `boolean` rendered `{b:06}` as `true00` — the zeros on the wrong
 // side of a word — and a `character` and a plain enum took the same text-side fill.  A number
-// still pads, and an iterator applies the spec to each element, so neither is refused.
+// still pads, and an iterator applies the spec to each element (`14-formatting.loft`).
 //
 // @falsified-at: 47ba568c6 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/zero-padding-is-refused-on-every-scalar-that-is-not-a-number.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
 // CHANNEL: the expected refusals — the control tree refuses only the text hole.
+// HOLDS: nothing runs on either tree (a refusal file); the control tree refuses only the text
+//   hole, so three of the four expectations are unmet there.
 
 enum Dir { North, South }
 
@@ -26,7 +28,4 @@ fn main() {
   s = "ab";
   // @EXPECT_ERROR: Zero-padding has no effect on text
   x4 = "{s:05}";
-  n = 42;
-  assert("{n:05}" == "00042", "a number still pads");
-  assert("{for i in 1..4 {i}:02}" == "[01,02,03]", "an iterator pads each element");
 }
