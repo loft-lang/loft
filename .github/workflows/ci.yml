@@ -1265,6 +1265,41 @@ jobs:
         # the count may fall and may not rise.  Advisory like the rest of this job.
         run: make optional-ratchet
 
+  # The ownership oracle's leak scan over `tests/scripts` (`LOFT_OWN_ORACLE=check-leak`): a
+  # STATIC check that every store a function owns is freed or handed on, on every path — the
+  # paths the runtime leak check only sees when a test executes them.  Held at 0 findings by
+  # `oracle_leak_scan_ratchet`.  ADVISORY (not in required-status-checks): red on a PR that adds
+  # a finding, never blocking the merge.
+  leak-scan:
+    name: ownership leak scan (ubuntu, advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold
+        run: sudo apt-get update && sudo apt-get install -y mold
+      # Read-only, from the `test` job's cache, as `index-hygiene` does: the path list must stay
+      # IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (the test job's, read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
+            target
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
+      - name: Build the release loft binary the scan runs
+        run: cargo build --release --bin loft
+      - name: Leak scan over tests/scripts (0 findings)
+        run: cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored
+
   # WASM node bridge — build the wasm-pack nodejs bundle and RUN the binary-I/O
   # bridge tests (tests/wasm/bridge.test.mjs).  The per-platform `Test` job's
   # `wasm_compile_and_run_smoke` self-SKIPS whenever tests/wasm/pkg/ is absent —

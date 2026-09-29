@@ -355,6 +355,10 @@ pub fn author_spelling(name: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    /// The closure-build facts the scope pass's free emitter decided on, kept for the static
+    /// leak mirrors that read the function after it (`scopes::FrameReleases`).  Absent on a
+    /// function restored from the IR cache.
+    capture_builds: Option<crate::scopes::CaptureBuilds>,
     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
     ///
     /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
@@ -699,8 +703,17 @@ impl Display for Function {
 }
 
 impl Function {
+    pub(crate) fn set_capture_builds(&mut self, builds: crate::scopes::CaptureBuilds) {
+        self.capture_builds = Some(builds);
+    }
+
+    pub(crate) fn capture_builds(&self) -> Option<&crate::scopes::CaptureBuilds> {
+        self.capture_builds.as_ref()
+    }
+
     pub fn new(name: &str, file: &str) -> Self {
         Function {
+            capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
@@ -984,6 +997,8 @@ impl Function {
 
     pub fn copy(other: &Function) -> Self {
         Function {
+            // The build facts belong to one finished scope pass, and a copy starts another.
+            capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),

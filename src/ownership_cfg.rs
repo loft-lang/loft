@@ -1193,6 +1193,12 @@ fn run_licence_census(
 /// (0 FP, no ratchet needed). REMAINING GAP (documented, not an FP): conditional/`Join` leaks
 /// (`LOFT_NO_JOIN_OWN`) are the runtime leak-check's class BY DESIGN (coexistence); closure bodies
 /// (`n___lambda_*`) are skipped — their frees are codegen'd on a different clock.
+///
+/// Whether something other than a frame free releases a store — a closure record's cascade, a
+/// return or a `&fn` link, a placed buffer's adopting local — is asked through
+/// `scopes::FrameReleases`, the one home the debug-build mirror `check_ref_leaks` asks too, on
+/// the build facts the free emitter itself decided on.  `oracle_leak_scan_ratchet` holds the
+/// count over `tests/scripts` at 0 on every PR (ci.yml's advisory `leak-scan` job).
 fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
     if name.starts_with("n___lambda_") {
         return 0; // closure frees are codegen'd on a different clock — not visible here
@@ -1272,7 +1278,8 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
     }
     closed.extend(consumes); // consumes/captures transfer only the element itself
     let mut reds = 0;
-    let built_with = crate::scopes::capture_build_backings(data, func, body);
+    let releases =
+        crate::scopes::FrameReleases::of(body, func, data, name, &data.def(d_nr).returned);
     for (_, v) in func.snapshot_names() {
         // @FR-O-Proxy asks oracle — the leak scan, which reports UNDER-free and emits nothing.
         if minted.contains(&v)
@@ -1282,19 +1289,14 @@ fn run_leak_scan(name: &str, body: &Value, data: &Data, d_nr: u32) -> usize {
             && !func.is_skip_free(v)
             && !freed.contains(&v)
             && !closed.contains(&v)
-            // A local the closure record ADOPTS is transferred to it and reclaimed by
-            // `free_named`'s cascade when the record dies, so no frame-exit free is emitted
-            // and "unfreed" is not "leaked".  Both spellings are needed: the capture itself,
-            // and — since a collection capture names a VIEW — the backing local that actually
-            // holds the store.
-            //
-            // `scopes::capture_adoption_owns_free` rather than a restatement of the rule.
-            // This same fact has three consumers (the free emitter, `check_ref_leaks`, and
-            // this oracle), they must agree, and every time one of them has been written out
-            // longhand they have drifted — which is the whole of loft#1308.  The shape test
-            // the shared predicate adds is already implied here: `heap_dep().is_some()` above
-            // admits exactly the kinds `is_dbref` does.
-            && !crate::scopes::capture_adoption_owns_free(data, func, &built_with, v)
+            // Released by something other than a frame free — a closure record's cascade, a
+            // caller through a return or a `&fn` link, the destination a block-tail temp
+            // moved into — on the free emitter's own legs, asked through the one home the
+            // debug-build mirror `check_ref_leaks` asks too.  Holding only the first of those
+            // legs, this scan reported the others' stores as leaks (48 of them, none real).
+            && !releases.freed.contains(&v)
+            && !releases.ret_deps.contains(&v)
+            && !releases.explains(data, func, v)
         {
             eprintln!(
                 "RED {name}: leak {} (v{v}) Owned heap, unfreed/untransferred",

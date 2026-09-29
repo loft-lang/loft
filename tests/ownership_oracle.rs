@@ -292,59 +292,6 @@ fn oracle_clean_on_generated_fuzz_corpus() {
     );
 }
 
-/// The DEV-tier false-positive RATCHET (C.0). Check B (over-free) was PROMOTED onto `check` (see
-/// `oracle_over_free_check_flags_an_injected_free`); `check-dev` now runs only the still-experimental
-/// exit-state Check C (under-free), superseded on `check` by the promoted leak scan but kept as a
-/// second opinion. This test counts its findings over `tests/scripts` and asserts the total does not
-/// EXCEED the recorded baseline — a one-way ratchet: every fact/transfer-set improvement LOWERS
-/// `DEV_FP_BASELINE`, and a regression fails. Ignored by default (sweeps the suite).
-///
-/// The work this measures is making the ownership fact materialisation-aware (see
-/// `CHECK_C_UNDERFREE_DESIGN.md` § C.0 and the `n_choose` residual).
-const DEV_FP_BASELINE: usize = 0;
-
-#[test]
-#[ignore = "dev-tier ratchet — sweeps tests/scripts under check-dev; run on demand"]
-// The ratchet baseline reached 0; `total <= 0` is the intended endpoint (the checks are now clean),
-// not an absurd comparison — it stays `<=` so the ratchet re-arms if the baseline is ever raised.
-#[allow(clippy::absurd_extreme_comparisons)]
-fn oracle_dev_free_check_ratchet() {
-    let dir = root().join("tests/scripts");
-    let mut total = 0usize;
-    for entry in std::fs::read_dir(&dir).expect("read tests/scripts") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
-            continue;
-        }
-        let out = Command::new(loft_bin())
-            .arg("--interpret")
-            .arg(&path)
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_OWN_ORACLE", "check-dev")
-            .output()
-            .expect("run loft check-dev");
-        let reds: BTreeSet<String> = String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .filter(|l| {
-                l.starts_with("RED ")
-                    && (l.contains("under-free") || l.contains("free-of-borrowed"))
-            })
-            .map(str::to_string)
-            .collect();
-        total += reds.len();
-    }
-    assert!(
-        total <= DEV_FP_BASELINE,
-        "dev free-check false positives REGRESSED: {total} > baseline {DEV_FP_BASELINE}. \
-         If you intended to change this, update DEV_FP_BASELINE (lower = progress)."
-    );
-    if total < DEV_FP_BASELINE {
-        eprintln!(
-            "dev-tier ratchet PROGRESS: {total} < baseline {DEV_FP_BASELINE} — lower DEV_FP_BASELINE to {total}."
-        );
-    }
-}
-
 /// The all-vars leak scan (`LOFT_OWN_ORACLE=check-leak`) ratchet baseline — the "raise it → flag it,
 /// don't revert" workflow that drove it 927 → 0 (recognising each codegen-transfer artifact:
 /// retbuf/param aliasing, the phantom `__retbuf`, `par` queue frees, work-refs). The scan is now
@@ -354,7 +301,7 @@ fn oracle_dev_free_check_ratchet() {
 const LEAK_SCAN_BASELINE: usize = 0;
 
 #[test]
-#[ignore = "experimental leak-scan ratchet — sweeps tests/scripts under check-leak; run on demand"]
+#[ignore = "sweeps tests/scripts under check-leak — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle oracle_leak_scan_ratchet -- --ignored`"]
 #[allow(clippy::absurd_extreme_comparisons)] // baseline reached 0 — the ratchet endpoint
 fn oracle_leak_scan_ratchet() {
     let dir = root().join("tests/scripts");
