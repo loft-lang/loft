@@ -9557,6 +9557,80 @@ impl Parser {
         v_nr
     }
 
+    /// Does a listed pattern's field of type `field_type` fit the shared slot `shared_ty`
+    /// another pattern made for `field_name`?  Reports the mismatch when not (`@FR-P-Alt-Same`).
+    fn shared_slot_accepts(
+        &mut self,
+        field_name: &str,
+        field_type: &Type,
+        shared_ty: &Type,
+    ) -> bool {
+        // `@FR-L-Null-Which` — a local holds a `S?` field as the pointer, so
+        // compare the bound spellings: a declared `S?` can reach here as
+        // its tagged slot type (`__nullable<S>`) and was refused against
+        // the first pattern's `S?`, naming the synthetic.
+        let bound_ty = |tp: &Type| {
+            self.tagged_pointer_type(tp)
+                .map_or_else(|| tp.clone(), |(_, p)| p)
+        };
+        // A slot a partial name made `τ?` (`@FR-P-Alt-Diff`, the caller) is
+        // still `τ` to the patterns that bind it — pass 2 sees pass 1's
+        // widening — so either spelling of the slot may match the field.
+        let widened_from = match shared_ty {
+            Type::Optional(inner) => Some(inner.as_ref()),
+            _ => None,
+        };
+        let fits = |slot: &Type| match_arm_types_unify(&bound_ty(slot), &bound_ty(field_type));
+        let slot_ty = widened_from
+            .filter(|inner| !fits(shared_ty) && fits(inner))
+            .unwrap_or(shared_ty);
+        let ok = fits(slot_ty);
+        if !ok && !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
+                field_name,
+                field_type.source_name(&self.data),
+                slot_ty.source_name(&self.data)
+            );
+        }
+        ok
+    }
+
+    /// A later listed pattern's field sub-pattern captures join the arm's names like a field
+    /// capture: a name no earlier pattern bound is a new shared slot (`τ?` by the caller); a
+    /// name one did is copied into that slot, which keeps the name.
+    fn join_later_sub_pattern_captures(
+        &mut self,
+        aliases: &mut Vec<(String, Option<u16>)>,
+        sub_binds: &mut Vec<Value>,
+        shared: &mut std::collections::HashMap<String, (u16, Type)>,
+        stmts: &mut Vec<Value>,
+        bound: &mut HashSet<String>,
+    ) {
+        stmts.append(sub_binds);
+        let mut copied: HashSet<String> = HashSet::new();
+        for (name, _) in aliases.iter() {
+            let v_nr = self.vars.var(name);
+            if v_nr == u16::MAX {
+                continue;
+            }
+            let tp = self.vars.tp(v_nr).clone();
+            if let Some((slot, slot_ty)) = shared.get(name).cloned() {
+                self.shared_slot_accepts(name, &tp, &slot_ty);
+                stmts.push(v_set(slot, Value::Var(v_nr)));
+                self.vars.set_name(name, slot);
+                copied.insert(name.clone());
+            } else {
+                shared.insert(name.clone(), (v_nr, tp));
+            }
+            bound.insert(name.clone());
+        }
+        // A copied name names its slot again, so its re-point needs no undoing.
+        aliases.retain(|(name, _)| !copied.contains(name));
+    }
+
     /// @PLN35 Phase 3 (P-Multi) — parse the `{ field, … }` bindings of a NON-FIRST
     /// pattern in a comma-separated multi-pattern arm, REUSING the first pattern's
     /// capture slots (`shared`: name → (var, type)).  Whichever listed pattern
@@ -9611,114 +9685,48 @@ impl Parser {
                         ) {
                             conds.push(c);
                         }
-                        // Its captures join the arm's names like a field capture: a name no
-                        // earlier pattern bound is a new shared slot (`τ?` by the caller); a name
-                        // one did is copied into that slot, which keeps the name.
-                        stmts.append(&mut sub_binds);
-                        let mut copied: HashSet<String> = HashSet::new();
-                        for (name, _) in &aliases {
-                            let v_nr = self.vars.var(name);
-                            if v_nr == u16::MAX {
-                                continue;
-                            }
-                            let tp = self.vars.tp(v_nr).clone();
-                            if let Some((slot, slot_ty)) = shared.get(name).cloned() {
-                                let fits = match &slot_ty {
-                                    Type::Optional(inner) => {
-                                        match_arm_types_unify(&slot_ty, &tp)
-                                            || match_arm_types_unify(inner, &tp)
-                                    }
-                                    other => match_arm_types_unify(other, &tp),
-                                };
-                                if !self.first_pass && !fits {
-                                    diagnostic!(
-                                        self.lexer,
-                                        Level::Error,
-                                        "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
-                                        name,
-                                        tp.source_name(&self.data),
-                                        slot_ty.source_name(&self.data)
-                                    );
-                                }
-                                stmts.push(v_set(slot, Value::Var(v_nr)));
-                                self.vars.set_name(name, slot);
-                                copied.insert(name.clone());
-                            } else {
-                                shared.insert(name.clone(), (v_nr, tp));
-                            }
-                            bound.insert(name.clone());
-                        }
-                        // A copied name names its slot again, so its re-point needs no undoing.
-                        aliases.retain(|(name, _)| !copied.contains(name));
+                        self.join_later_sub_pattern_captures(
+                            &mut aliases,
+                            &mut sub_binds,
+                            shared,
+                            stmts,
+                            &mut bound,
+                        );
                         self.pattern_binds_pending.append(&mut aliases);
                         if !self.lexer.has_token(",") {
                             break;
                         }
                         continue;
                     }
-                    match shared.get(&field_name) {
-                        Some((var_nr, shared_ty)) => {
-                            // `@FR-L-Null-Which` — a local holds a `S?` field as the pointer, so
-                            // compare the bound spellings: a declared `S?` can reach here as
-                            // its tagged slot type (`__nullable<S>`) and was refused against
-                            // the first pattern's `S?`, naming the synthetic.
-                            let bound_ty = |tp: &Type| {
-                                self.tagged_pointer_type(tp)
-                                    .map_or_else(|| tp.clone(), |(_, p)| p)
-                            };
-                            // A slot a partial name made `τ?` (`@FR-P-Alt-Diff`, the caller) is
-                            // still `τ` to the patterns that bind it — pass 2 sees pass 1's
-                            // widening — so either spelling of the slot may match the field.
-                            let widened_from = match shared_ty {
-                                Type::Optional(inner) => Some(inner.as_ref()),
-                                _ => None,
-                            };
-                            let fits = |slot: &Type| {
-                                match_arm_types_unify(&bound_ty(slot), &bound_ty(&field_type))
-                            };
-                            let slot_ty = widened_from
-                                .filter(|inner| !fits(shared_ty) && fits(inner))
-                                .unwrap_or(shared_ty);
-                            let ok = fits(slot_ty);
-                            if !ok && !self.first_pass {
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
-                                    field_name,
-                                    field_type.source_name(&self.data),
-                                    slot_ty.source_name(&self.data)
-                                );
-                            }
-                            // Skip the assignment into the shared slot on a confirmed
-                            // type mismatch — a `text`→`integer` store is incoherent and
-                            // the arm never runs (compile fails).  First pass still binds
-                            // so the two-pass shapes agree.
-                            if ok || self.first_pass {
-                                let field_read = self.pattern_field_value(
-                                    variant_def_nr,
-                                    attr_idx,
-                                    subject_val.clone(),
-                                );
-                                stmts.push(v_set(*var_nr, field_read));
-                            }
-                            bound.insert(field_name.clone());
-                        }
-                        None => {
-                            let v_nr = self.bind_match_field_capture(
+                    if let Some((var_nr, shared_ty)) = shared.get(&field_name).cloned() {
+                        let ok = self.shared_slot_accepts(&field_name, &field_type, &shared_ty);
+                        // Skip the assignment into the shared slot on a confirmed
+                        // type mismatch — a `text`→`integer` store is incoherent and
+                        // the arm never runs (compile fails).  First pass still binds
+                        // so the two-pass shapes agree.
+                        if ok || self.first_pass {
+                            let field_read = self.pattern_field_value(
                                 variant_def_nr,
                                 attr_idx,
-                                &field_name,
-                                &field_type,
-                                subject_val,
-                                stmts,
-                                name_aliases,
+                                subject_val.clone(),
                             );
-                            if v_nr != u16::MAX {
-                                let tp = self.vars.tp(v_nr).clone();
-                                shared.insert(field_name.clone(), (v_nr, tp));
-                                bound.insert(field_name.clone());
-                            }
+                            stmts.push(v_set(var_nr, field_read));
+                        }
+                        bound.insert(field_name.clone());
+                    } else {
+                        let v_nr = self.bind_match_field_capture(
+                            variant_def_nr,
+                            attr_idx,
+                            &field_name,
+                            &field_type,
+                            subject_val,
+                            stmts,
+                            name_aliases,
+                        );
+                        if v_nr != u16::MAX {
+                            let tp = self.vars.tp(v_nr).clone();
+                            shared.insert(field_name.clone(), (v_nr, tp));
+                            bound.insert(field_name.clone());
                         }
                     }
                 }
