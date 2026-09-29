@@ -538,7 +538,9 @@ def check_reference_pdf_content():
     fns = set()
     default = os.path.join(ROOT, "default")
     for entry in sorted(os.listdir(default)):
-        if entry.endswith(".loft"):
+        # A FILE: a run from inside `default/` leaves a `.loft/` cache directory there, whose
+        # name also ends in `.loft`.
+        if entry.endswith(".loft") and os.path.isfile(os.path.join(default, entry)):
             with open(os.path.join(default, entry), encoding="utf-8", errors="replace") as f:
                 fns.update(re.findall(r"^pub fn (\w+)", f.read(), re.M))
     # Word boundaries, not `in`: a bare substring test counts `map` as present because
