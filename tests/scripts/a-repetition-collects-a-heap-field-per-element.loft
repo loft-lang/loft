@@ -9,8 +9,8 @@
 // Widening the refusal alone answered every value right and freed the SUBJECT: the
 // per-element read of a heap field is a view into the subject's store, and typed as an owned
 // value its scope-end free released the subject's record on every iteration — a
-// use-after-free only `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` see, on both backends.  So the
-// cells below also read the subject AFTER the match, and mutate an escaped projection.
+// use-after-free, on both backends, that a value check on the projection alone does not see.
+// So the cells below also read the subject AFTER the match, and mutate an escaped projection.
 //
 // Axes this file MOVES:  the field's type (vector<integer>, text beside it, struct), `*` vs
 //                        `+`, a fixed tail after the run, a separated run `(V)*(Sep)`, the
@@ -19,9 +19,9 @@
 //
 // @falsified-at: ffa1a80a2 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
 //   control refused the heap field, so no assertion ran on it.  The use-after-free is scored
-//   apart by a mutation that drops only the read's borrow dep (`element_view_of`), run with
-//   `LOFT_STRICT_STORES=1`: interpret 1 assertion failure -> 0, native 2 -> 0.  Unarmed, that
-//   mutation passes — the CI leg that sees it is the strict-store / poison sweep.
+//   apart by a mutation that drops only the read's borrow dep (`element_view_of`): unarmed,
+//   interpret 3 assertion failures -> 0, native 6 -> 0 (the subject read after the match is
+//   what fails); with `LOFT_STRICT_STORES=1`, interpret 1 -> 0, native 2 -> 0.
 // @falsified-by: tests/falsified/a-repetition-collects-a-heap-field-per-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // HOLDS: leak (the `wrap.rs` gate, and `LOFT_NATIVE_LEAK_CHECK=1` on a `main` run), panic and
 //   free-refusal are clean on both backends.
