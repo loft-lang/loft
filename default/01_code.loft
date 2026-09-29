@@ -68,10 +68,8 @@ pub interface Ordered {
   op < (self: Self, other: Self) -> boolean
 }
 
-// Types that support the `==` equality operator.
-// Satisfied by every type (@C91, `(G-Sat-Eq)`): the scalars and text by their operators, a type
-// defining OpEq by that, and any other record, vector, keyed collection or struct-enum by its
-// content `==`.  A tuple bound here is still refused (loft#1738).
+// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
+// A tuple bound here is still refused (loft#1738).
 //
 // `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 pub interface Equatable {

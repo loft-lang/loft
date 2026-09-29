@@ -8618,7 +8618,14 @@ impl Data {
     /// any holder?
     #[must_use]
     pub fn is_bound_stub_for(name: &str, method: &str, arity: usize) -> bool {
-        name.starts_with("t_") && name.ends_with(&format!("{}{arity}_{method}", Self::HOLDER_MARK))
+        // Compared piece by piece: this is asked of every two-operand call a monomorph's
+        // body makes, and a `format!` per call is what the front end's allocation pin counts.
+        name.starts_with("t_")
+            && name
+                .strip_suffix(method)
+                .and_then(|r| r.strip_suffix('_'))
+                .and_then(|r| r.strip_suffix(char::from_digit(arity as u32, 10)?))
+                .is_some_and(|r| r.ends_with(Self::HOLDER_MARK))
     }
 
     /// Is `name` taken by a definition in ANY source?
