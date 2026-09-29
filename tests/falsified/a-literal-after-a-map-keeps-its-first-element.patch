@@ -1,0 +1,27 @@
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 486687f1d..10006d798 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -3380,22 +3380,7 @@ impl Function {
+             }
+         }
+         self.trace_type_change(var_nr, type_def, "change_var_type");
+-        // Refining the generic `Reference(0, …)` placeholder ("some record, shape not known
+-        // yet") keeps the borrows already recorded on it: they say which store the variable
+-        // lives in, and learning its SHAPE changes nothing about that.  Replaced wholesale, an
+-        // element slot `unique_elm_var` had tied to its container lost the tie when the literal
+-        // built into it named its type, and the empty dep list then read as "owns no store"
+-        // (`@FR-O-Proxy`), so a fresh backing was minted and the element's contents went there:
+-        // after a `.map` over one inline `vector<vector<integer>>` literal, the next such
+-        // literal's first element read EMPTY, silently, on both backends.
+-        let placeholder_deps = match self.variables[var_nr as usize].type_def.base() {
+-            Type::Reference(0, deps) if !deps.is_empty() => Some(Type::Reference(0, deps.clone())),
+-            _ => None,
+-        };
+         self.variables[var_nr as usize].type_def = type_def.clone();
+-        if let Some(old) = placeholder_deps {
+-            self.depend_all(var_nr, &old);
+-        }
+         true
+     }
+ 

@@ -20,6 +20,12 @@
 //                        or none, the element in an `if` arm, the route into the slot
 //                        (comprehension, append, field, local, index), independence of the copy.
 // Axes it HOLDS FIXED:   a local source vector.
+//
+// @falsified-at: 6fc54bcbd — interpret exit 139 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-yields-a-tuple-element-whole.patch — interpret exit 139 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control segfaulted on the interpreter and did not compile natively; the
+//   silent half is scored apart.
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 struct H { t: (integer, text), n: integer }
 

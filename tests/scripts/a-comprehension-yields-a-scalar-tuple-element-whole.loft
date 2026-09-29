@@ -9,6 +9,11 @@
 //
 // Axes this file MOVES:  filter or none, which element is read.
 // Axes it HOLDS FIXED:   `(integer, integer)` elements of a local vector.
+//
+// @falsified-at: 6fc54bcbd — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-yields-a-scalar-tuple-element-whole.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter — the control answered garbage members; exit natively.
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 fn test_a_scalar_tuple_element_is_copied_as_its_values() {
   vi: vector<(integer, integer)> = [(3, 31), (4, 41), (7, 71)];

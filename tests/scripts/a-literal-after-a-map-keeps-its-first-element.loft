@@ -16,6 +16,12 @@
 // Axes this file MOVES:  what follows the `.map` (another `.map`, a `for`, a `.reduce`, a
 //                        literal bound to a local), the inner element kind (vector, text).
 // Axes it HOLDS FIXED:   inline literal receivers inside one function.
+//
+// @falsified-at: 699e3a484 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-literal-after-a-map-keeps-its-first-element.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: asserts on both backends — the control answered `32 01 2 3 71`.  The native "2" is
+//   the one failing test counted by both lines that report it; the controls pass on the control.
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 fn test_a_second_nested_literal_after_a_map_keeps_its_first_element() {
   m1 = [[1, 1, 1], [1, 1]].map(|x| { len(x) });
