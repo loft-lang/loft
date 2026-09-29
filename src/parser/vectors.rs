@@ -3916,6 +3916,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     - On a field inside a structure, this fills any data structure with more elements.
     */
     // <vector> ::= '[' <expr> [ ';' <size-expr>]{ ',' <expr> [ ';' <size-expr> } ']'
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the literal's every shape (empty, keyed, comprehension, repeat, the walk offer) meets here"
+    )]
     pub(crate) fn parse_vector(
         &mut self,
         var_tp: &Type,
