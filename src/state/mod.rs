@@ -63,6 +63,18 @@ pub struct CallFrame {
     pub line: u32,
 }
 
+/// May the interpreter stack take its direct path (`State::fast_stack`)?  Not while any
+/// instrument that watches stack accesses is armed, and not in a debug-assertions build,
+/// whose checked path carries the `DbRef` bounds sentinels that build exists for.
+fn fast_stack_allowed() -> bool {
+    !(cfg!(debug_assertions)
+        || cfg!(feature = "stack_align_guard")
+        || crate::stack_verify::enabled()
+        || crate::stack_census::enabled()
+        || crate::keys::uaf_gen_enabled()
+        || crate::keys::strict_stores())
+}
+
 /// Reserved store number for coroutine `DbRef` encoding (CO1.1).
 /// Cannot clash with real Stores allocations (limited by `Stores::max`).
 pub const COROUTINE_STORE: u16 = u16::MAX;
@@ -243,6 +255,16 @@ pub struct State {
     /// reading the `OnceLock` there cost 2.4 % of the interpreter's instructions on a
     /// field-write loop.  Set once, at construction.
     pub(crate) verify_on: bool,
+    /// The interpreter stack is read and written directly (its buffer plus an offset) rather
+    /// than through the general store path.  The store path re-checks, on every push and pop,
+    /// what the stack guarantees by construction: that its store is live, is not foreign and
+    /// not locked, and that the offset is inside the record (`ensure_stack` grows the buffer
+    /// and the record together).  Measured 2026-09-29, that path was 43 % of the interpreter's
+    /// time on a vector-writing loop.  False whenever an instrument that watches stack
+    /// accesses is armed (`verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
+    /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
+    /// build, so each keeps its own path.
+    pub(crate) fast_stack: bool,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -665,6 +687,7 @@ impl State {
             stack_high: 4,
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
+            fast_stack: fast_stack_allowed(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -2559,14 +2582,20 @@ impl State {
     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
     /// release library), corrupting the heap.  Cheap in the common case:
     /// one comparison against the cached `stack_cap_bytes`.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn ensure_stack(&mut self, extra: u32) {
         // Highest byte offset a write at the current top may touch:
         // addr_mut computes `rec * 8 + (pos + stack_pos)`.
         let top = self.stack_cur.rec * 8 + self.stack_cur.pos + self.stack_pos + extra;
-        if top < self.stack_cap_bytes {
-            return;
+        if top >= self.stack_cap_bytes {
+            self.grow_stack(top);
         }
+    }
+
+    /// The rare half of [`Self::ensure_stack`], out of line so the check inlines into every push.
+    #[cold]
+    #[inline(never)]
+    fn grow_stack(&mut self, top: u32) {
         // Grow with a word of slack so the exact-fit boundary still passes
         // `addr_mut`'s `offset + size <= size * 8` check.
         let needed_words = top.div_ceil(8) + 1;
@@ -2578,6 +2607,22 @@ impl State {
         // and a release build simply writes.
         store.extend_primary_to_store_end();
         self.stack_cap_bytes = store.byte_capacity() as u32;
+    }
+
+    /// The address of stack byte `off` (relative to the stack record's field base), for the
+    /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
+    /// `ensure_stack`, a read lies below `stack_pos`.
+    #[inline(always)]
+    fn stack_slot(&self, off: u32) -> *mut u8 {
+        let store = &self.database.allocations[self.stack_cur.store_nr as usize];
+        let at = (self.stack_cur.rec * 8 + self.stack_cur.pos + off) as usize;
+        debug_assert!(
+            (at as u64) < store.byte_capacity(),
+            "fast stack access at byte {at} beyond the stack store's {} bytes",
+            store.byte_capacity()
+        );
+        // SAFETY: `at` is inside the stack store's buffer (above).
+        unsafe { store.ptr.add(at) }
     }
 
     /// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance, always
@@ -2804,7 +2849,7 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[inline(always)]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
         assert!(
             (size_of::<T>() as u32) < self.stack_pos,
@@ -2813,6 +2858,19 @@ impl State {
             size_of::<T>() as u32
         );
         self.stack_pos -= self.stack_step(size_of::<T>() as u32);
+        if self.fast_stack {
+            // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
+            return unsafe { self.stack_slot(self.stack_pos).cast::<T>().read_unaligned() };
+        }
+        self.get_stack_checked()
+    }
+
+    /// [`Self::get_stack`] with every instrument's hook, for a run that arms one; the pop
+    /// itself (`stack_pos`) is already done.
+    #[cold]
+    #[inline(never)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn get_stack_checked<T: 'static + Copy>(&mut self) -> T {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos);
         // @PLN154 — check high.  The pop is also a LIFO consume, so the slot's tags go
@@ -3016,6 +3074,7 @@ impl State {
         )
     }
 
+    #[inline(always)]
     pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
         // get_var reads T at (stack_pos - pos); pos > stack_pos would underflow.
         // pos < size_of::<T>() is also invalid (read extends before the frame base).
@@ -3026,6 +3085,21 @@ impl State {
             "get_var: pos={pos} exceeds stack_pos={} (frame underflow)",
             self.stack_pos
         );
+        if self.fast_stack {
+            // SAFETY: inside the frame, which lies inside the stack record.
+            return unsafe {
+                self.stack_slot(self.stack_pos - u32::from(pos))
+                    .cast::<T>()
+                    .read_unaligned()
+            };
+        }
+        self.get_var_checked(pos)
+    }
+
+    /// [`Self::get_var`] with every instrument's hook, for a run that arms one.
+    #[cold]
+    #[inline(never)]
+    fn get_var_checked<T: 'static + Copy>(&mut self, pos: u16) -> T {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos - u32::from(pos));
         // @PLN154 — a frame read.  No kill: the slot stays live, and a local read twice is
@@ -3170,11 +3244,27 @@ impl State {
         )
     }
 
+    #[inline(always)]
     pub fn put_var<T: 'static>(&mut self, pos: u16, value: T) {
         // @PLAN53 cluster 2 / S4: the value's footprint on the stack is its
         // stepped span (matches the get_stack/put_stack steps it pairs with);
         // identity when LOFT_ALIGN off.
         let step = self.stack_step(size_of::<T>() as u32);
+        if self.fast_stack {
+            let slot = self.stack_slot(self.stack_pos + step - u32::from(pos));
+            debug_assert!(slot.align_offset(std::mem::align_of::<T>()) == 0);
+            // SAFETY: a frame slot, inside the stack record and aligned (the stack is 8-aligned
+            // and every slot a multiple of 8); assigned like `addr_mut`'s reference is.
+            unsafe { *slot.cast::<T>() = value };
+            return;
+        }
+        self.put_var_checked(pos, step, value);
+    }
+
+    /// [`Self::put_var`] through the store, for a run that arms an instrument.
+    #[cold]
+    #[inline(never)]
+    fn put_var_checked<T: 'static>(&mut self, pos: u16, step: u32, value: T) {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos + step - u32::from(pos));
         *self.database.store_mut(&self.stack_cur).addr_mut::<T>(
@@ -3287,7 +3377,27 @@ impl State {
         ) = db;
     }
 
+    #[inline(always)]
     pub fn put_stack<T: 'static>(&mut self, val: T) {
+        if self.fast_stack {
+            self.ensure_stack(self.stack_step(size_of::<T>() as u32));
+            let slot = self.stack_slot(self.stack_pos);
+            debug_assert!(slot.align_offset(std::mem::align_of::<T>()) == 0);
+            // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
+            unsafe { *slot.cast::<T>() = val };
+            self.stack_pos += self.stack_step(size_of::<T>() as u32);
+            if self.stack_pos > self.stack_high {
+                self.stack_high = self.stack_pos;
+            }
+            return;
+        }
+        self.put_stack_checked(val);
+    }
+
+    /// [`Self::put_stack`] with every instrument's hook, for a run that arms one.
+    #[cold]
+    #[inline(never)]
+    fn put_stack_checked<T: 'static>(&mut self, val: T) {
         #[cfg(debug_assertions)]
         {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
@@ -5906,10 +6016,17 @@ impl State {
     /// the library are in this process.  Neither side can see the whole chain, so the
     /// two halves are joined here — the library's innermost-first, then the caller's —
     /// which is what makes a placed fault read exactly like an in-process one.
+    #[inline(always)]
     fn note_runtime_error_halt(&mut self) {
-        if self.database.runtime_error.is_none() {
-            return;
+        if self.database.runtime_error.is_some() {
+            self.attach_halt_frames();
         }
+    }
+
+    /// The rare half of [`Self::note_runtime_error_halt`].
+    #[cold]
+    #[inline(never)]
+    fn attach_halt_frames(&mut self) {
         let wants_frames = self
             .database
             .runtime_error
@@ -6391,6 +6508,49 @@ impl State {
         let census_on = crate::stack_census::enabled();
         // @PLN154 phase 1 — the same hoist for the shadow's one KILL chokepoint.
         let verify_on = self.verify_on;
+        // The lean loop: when nothing watches individual ops, each op pays only for what an
+        // ordinary run needs from the loop — the allocation site, the crash context, the
+        // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
+        // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
+        // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
+        let lean = !(reload_on
+            || census_on
+            || verify_on
+            || alloc_paths_on
+            || uaf_on
+            || uaf_src_on
+            || uaf_gen_on
+            || cfg!(debug_assertions)
+            || cfg!(feature = "stack_align_guard"));
+        crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
+        if lean {
+            while self.code_pos < bytecode_len && self.debug.is_none() {
+                let op_pos_rt = self.code_pos;
+                self.database.alloc_pc = op_pos_rt;
+                let op = self.code::<u8>();
+                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+                crate::crash_report::set_dispatch(op_pos_rt, op, fn_d_nr);
+                if op == 255 {
+                    let ext = self.code::<u8>();
+                    OPERATORS[255 + usize::from(ext)](self);
+                } else {
+                    OPERATORS[op as usize](self);
+                }
+                if self.database.frame_yield {
+                    return;
+                }
+                if crate::parallel::worker_fatal_pending()
+                    && let Some(err) = crate::parallel::take_worker_fatal()
+                {
+                    self.database.runtime_error = Some(err);
+                    self.database.had_fatal = true;
+                }
+                self.note_runtime_error_halt();
+                if self.code_pos == u32::MAX {
+                    break;
+                }
+            }
+        }
         while self.code_pos < bytecode_len {
             if reload_on {
                 reload_tick -= 1;
@@ -6428,7 +6588,7 @@ impl State {
             // Cheap: one thread-local store per op.
             {
                 let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_context(op_pos_rt, op, "(opcode dispatch)", fn_d_nr, "");
+                crate::crash_report::set_dispatch(op_pos_rt, op, fn_d_nr);
             }
             #[cfg(debug_assertions)]
             {
@@ -7463,6 +7623,7 @@ impl State {
             stack_high: 4,
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
+            fast_stack: fast_stack_allowed(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
