@@ -12128,6 +12128,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // often exactly what is being asked. Both are silent unless armed.
     state.report_alloc_sites(&p.data);
     state.report_profile(&p.data);
+    // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
+    loft::op_census::write(&p.data);
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {

@@ -9292,6 +9292,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
         }
+        let _census_body = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
         let free_ref_nr = data.def_nr("OpFreeRef");
         let mut orig_code = data.definitions[d_nr as usize].code.clone();
         let mut orig_vars = Function::copy(&data.def(d_nr).variables);

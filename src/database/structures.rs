@@ -2979,6 +2979,8 @@ impl Stores {
         if !self.store(to).write_allowed(to.rec, to.pos) {
             return;
         }
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
         unsafe {
             std::ptr::copy(
                 self.store(from)

@@ -133,6 +133,12 @@ python3 bench/stats.py                   # native vs the Rust reference per benc
                                          #   ok / OVER / unclear verdict against --bar (2.0);
                                          #   hashes must agree across lanes.  `--tsv` keeps a
                                          #   run to diff against the next — bench/README.md
+make interp-gap [ARGS="--only 14"]       # INTERPRETER vs NATIVE per bench routine: the
+                                         #   ratio, what the interpreter executes (ops by
+                                         #   family, bytes copied) and the native-only
+                                         #   rewrites in those functions — the candidates to
+                                         #   move into the IR phase.  A report, by hand
+                                         #   (bench/README.md § Interpreter against native)
 make ops-census                          # which bytecode operators anything still EMITS:
                                          #   live / unexercised (a site emits it, no program
                                          #   does — a test gap) / orphan (nothing emits it and
