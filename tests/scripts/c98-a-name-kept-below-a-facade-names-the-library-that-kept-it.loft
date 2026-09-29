@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @ARGS: --lib tests/lib
+// @falsified-by: tests/falsified/c98-a-name-kept-below-a-facade-names-the-library-that-kept-it.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: the compile error's TEXT — the file is refused on both trees, and the
+//   expectation matches only where the error names `c98_private` and `c98_math`.
+//   WITNESS: the control says `Unknown function c98_unit` and nothing more.
+//   HOLDS: the program is refused on both trees with exactly one error; no assert runs
+//   and nothing leaks or panics on either.
 //
 // @C98 — the name stops one library further down than the program looks: `c98_outer`
 // passes `c98_private` on, and `c98_private` imports `c98_math` with a plain `use`, which
