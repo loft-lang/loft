@@ -5372,3 +5372,18 @@ fn an_arm_that_does_not_fit_is_refused() {
     code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
         .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_arm_that_does_not_fit_is_refused:3:35");
 }
+
+// `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign
+// change is no containment.  The widening cells are in
+// `tests/scripts/a-narrow-integer-widens-into-any-superset.loft`.
+#[test]
+fn a_signed_value_does_not_widen_into_an_unsigned_one() {
+    code!("fn test() {\n  a: i8 = -5;\n  x: u8 = a;\n  println(\"{x}\");\n}")
+        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
+}
+
+#[test]
+fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
+    code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
+        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
+}

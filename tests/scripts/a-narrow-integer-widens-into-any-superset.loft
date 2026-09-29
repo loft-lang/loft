@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Sub` / `@FR-I-Widen` / `@FR-C-Int` — an integer flows implicitly into any target whose
+// range CONTAINS its own, at every site a value reaches a slot.  The same-width sign changes
+// (`i8` → `u8`, `u16` → `i16`, `i32` → `u32`) are not containments and are refused; those pins
+// are in tests/parse_errors.rs.  Measured 2026-09-29 as a site × pair matrix (8 sites, 8 pairs):
+// all 16 widening cells passed and all 48 non-superset cells were refused by the narrowing rule.
+//
+// Axes this file MOVES:  the site (local, argument, return, field, vector element, tuple member,
+//                        `??` default, `if` join) and the pair (u8 → integer, u8 → u16,
+//                        i8 → i16, u16 → i32), with values at each source's extremes.
+// Axes it HOLDS FIXED:   non-null slots.
+
+struct S { f: u16, g: i16 }
+
+fn arg(p: u16) -> integer { p }
+fn ret(a: u8) -> u16 { a }
+fn reti(a: i8) -> i16 { a }
+fn maybe(a: u8) -> u8? { if a > 250 { null } else { a } }
+
+fn test_widening_is_implicit_at_every_site() {
+  a: u8 = 255;
+  b: i8 = -128;
+  c: u16 = 65535;
+  x: integer = a;
+  y: u16 = a;
+  z: i16 = b;
+  w: i32 = c;
+  s = S { f: a, g: b };
+  v: vector<u16> = [a];
+  t: (integer, i16) = (1, b);
+  d: u16 = maybe(a) ?? a;
+  k = len("x") > 0;
+  j: i32 = if k { c } else { 0 };
+  got = "{x} {y} {z} {w} {arg(a)} {ret(a)} {reti(b)} {s.f} {s.g} {v[0]} {t.1} {d} {j}";
+  assert(got == "255 255 -128 65535 255 255 -128 255 -128 255 -128 255 65535", "widening: {got}");
+}

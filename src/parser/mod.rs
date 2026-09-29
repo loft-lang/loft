@@ -4703,6 +4703,9 @@ impl Parser {
         Self::is_narrowing_int(is_type.base(), inner.base())
     }
 
+    /// `@FR-I-Sub` / `@FR-C-Int` — `Integer[a,b] <: Integer[c,d]` iff `[a,b] ⊆ [c,d]`, and this
+    /// is its one home: every implicit integer flow asks it.  `false` is `@FR-I-Widen` (a
+    /// superset target is implicit); `true` hands the store to `@FR-I-Narrow`.
     fn is_narrowing_int(src: &Type, dst: &Type) -> bool {
         let (Type::Integer(s), Type::Integer(d)) = (src, dst) else {
             return false;
