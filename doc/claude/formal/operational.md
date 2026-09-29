@@ -460,14 +460,12 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 9.**
+**OPEN: 8.**
 - **D-op-14** (opened 2026-09-29, @PLN175 step 7) — `struct == struct` compares identity:
   `c = a; a == c` is `false`.
 - **D-op-15** (opened 2026-09-29, @PLN175 step 7) — a struct holding a struct compares identity.
 - **D-op-16** (opened 2026-09-29, @PLN175 step 7) — a `value struct`'s `reference<T>` field
   compares identity.
-- **D-op-17** (opened 2026-09-29, @PLN175 step 5) — `vector == vector` is refused (*No matching
-  operator*).
 - **D-op-18** (opened 2026-09-29, @PLN175 step 7) — a tuple of structs compares its elements by
   identity.
 - **D-op-19** (opened 2026-09-29, @PLN175 step 6) — `hash` / `sorted` / `index` `==` compares

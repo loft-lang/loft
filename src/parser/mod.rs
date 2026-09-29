@@ -15006,6 +15006,25 @@ impl Parser {
         }
     }
 
+    /// The schema row both operands of a vector comparison are stored as, when they are two
+    /// vectors of one element type — the `tp` `OpEqContent` walks them by.
+    fn vector_content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+        let [a, b] = types else {
+            return None;
+        };
+        let peel = |t: &Type| match t {
+            Type::RefVar(inner) => inner.base().clone(),
+            _ => t.base().clone(),
+        };
+        let (Type::Vector(ea, _), Type::Vector(eb, _)) = (peel(a), peel(b)) else {
+            return None;
+        };
+        if !ea.is_equal(&eb) || ea.is_unknown() {
+            return None;
+        }
+        Some(self.vector_of(&ea))
+    }
+
     /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
     /// @C91): every field compared with its own type's `==`, left to right, stopping at the
     /// first that differs — a float field by float equality, a text by its characters, a
@@ -15319,6 +15338,22 @@ impl Parser {
                         return Type::Boolean;
                     }
                 }
+            }
+            // `@FR-E-Eq`, @C91 — two vectors of one element type compare by CONTENT: length,
+            // then element by element with the element's own `==` (`Stores::eq_content`).
+            if matches!(op, "==" | "!=")
+                && list.len() == 2
+                && let Some(tp) = self.vector_content_eq_type(types)
+            {
+                *code = self.cl(
+                    if op == "==" {
+                        "OpEqContent"
+                    } else {
+                        "OpNeContent"
+                    },
+                    &[list[0].clone(), list[1].clone(), Value::Int(i32::from(tp))],
+                );
+                return Type::Boolean;
             }
             // `@FR-E-Eq`, loft#1580 — a `value struct` is a VALUE, and values compare
             // by content over their own storage.  Without a user `OpEq` the loop below matched

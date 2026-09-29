@@ -4782,7 +4782,13 @@ impl Parser {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
             let tp = parent_tp.clone();
-            *parent_tp = ctp.clone();
+            // The right operand is a VALUE of its own, never a destination inside the left
+            // one: a vector literal given the left operand's deps as its parent built its
+            // elements into a store it never created (`a == [1, 2]`, an ICE).
+            *parent_tp = match ctp.base() {
+                Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
+                _ => ctp.clone(),
+            };
             let second_pos = self.lexer.peek_pos().clone();
             let is_eq = operator == "==" || operator == "!=";
             let left_amp = self.eq_amp_left.take();
