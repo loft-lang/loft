@@ -60,6 +60,8 @@ where the section was, and every inbound `DOC.md#anchor` link rewritten.  Never 
 Check before you commit:
 
 ```bash
+git add -N <every new doc>           # the lint, the link check and the baseline pin read
+                                     #   TRACKED files only: an untracked split doc is unchecked
 wc -l <doc>                          # ≤ 1000 for a working doc
 python3 scripts/doc_lint.py <doc>    # no size / history / timeline finding you added
 ```
