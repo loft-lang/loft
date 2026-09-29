@@ -128,6 +128,10 @@
 <p>Returns true if `path` exists and is a regular file. Use to confirm a directory entry is a readable file before opening it.</p>
 </div>
 <div class="item">
+<pre><code>pub fn is_symlink(path: text) -&gt; boolean fs#read</code></pre>
+<p>Returns true if `path` itself is a symbolic link, whatever it points at — is_dir and is_file answer for the TARGET, so a walk that must not follow a link asks this first (@PLN179).  False on a browser host, which has no links.</p>
+</div>
+<div class="item">
 <pre><code>pub fn list_dir(path: text) -&gt; vector&lt;text&gt; ?fs#read</code></pre>
 <p>Lists the entry NAMES of directory `path` (base names, not full paths), sorted.  A MISSING / non-directory path lists as NULL (distinct from an EMPTY directory, `[]`); discharge with `?? []` to keep the old shape. Use to enumerate a directory; join with `path` to build full child paths.</p>
 </div>

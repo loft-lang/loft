@@ -183,6 +183,7 @@ const SEARCH_INDEX=[
 {name:"rmdir",kind:"fn",url:"stdlib-file-system.html"},
 {name:"is_dir",kind:"fn",url:"stdlib-file-system.html"},
 {name:"is_file",kind:"fn",url:"stdlib-file-system.html"},
+{name:"is_symlink",kind:"fn",url:"stdlib-file-system.html"},
 {name:"list_dir",kind:"fn",url:"stdlib-file-system.html"},
 {name:"read_bytes",kind:"fn",url:"stdlib-file-system.html"},
 {name:"file_map",kind:"fn",url:"stdlib-file-system.html"},

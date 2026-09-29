@@ -10,7 +10,7 @@
 <header class="print-header">
 <h1>Loft Language Reference</h1>
 <p class="tagline">Complete language and standard library documentation</p>
-<p class="version">v2026.9.0</p>
+<p class="version">v2026.10.0</p>
 <p><a href="index.html">&#8592; Back to online documentation</a> &nbsp;|&nbsp; <a href="00-vs-rust.html">vs Rust comparison</a></p>
 </header>
 <nav class="print-toc">
@@ -4726,6 +4726,10 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn is_file(path: text) -&gt; boolean fs#read</code></pre>
 <p>Returns true if `path` exists and is a regular file. Use to confirm a directory entry is a readable file before opening it.</p>
+</div>
+<div class="item">
+<pre><code>pub fn is_symlink(path: text) -&gt; boolean fs#read</code></pre>
+<p>Returns true if `path` itself is a symbolic link, whatever it points at — is_dir and is_file answer for the TARGET, so a walk that must not follow a link asks this first (@PLN179).  False on a browser host, which has no links.</p>
 </div>
 <div class="item">
 <pre><code>pub fn list_dir(path: text) -&gt; vector&lt;text&gt; ?fs#read</code></pre>
