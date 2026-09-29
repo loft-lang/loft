@@ -5227,3 +5227,39 @@ fn a_refused_limit_does_not_silence_the_next_declaration() {
          a_refused_limit_does_not_silence_the_next_declaration:2:31",
     );
 }
+
+/// loft#1733 — `Sh.Dot { r: 1 }` names a struct variant through its enum and then gives it
+/// fields.  `Sh.Dot` alone is the variant with every field at its default, so the braces are
+/// what a reader writes next, and the parser read them as the end of a statement: *"Expect
+/// token ;"*.  One error now, naming the constructor spellings, and no cascade after it.
+#[test]
+fn a_qualified_struct_variant_given_fields_names_the_constructor() {
+    code!(
+        "enum Sh1733 { Dot { r: integer }, Sq { w: integer } }\n\
+         fn test() { x = Sh1733.Dot { r: 1 }; assert(x is Dot, \"dot\"); }"
+    )
+    .error(
+        "`Sh1733.Dot` is the variant with every field at its default, and does not take \
+         fields — build it with `Sh1733::Dot { … }` or `Dot { … }` at \
+         a_qualified_struct_variant_given_fields_names_the_constructor:2:29",
+    );
+}
+
+/// The control for the case above: a `{` after a qualified variant is also an `if` body, and
+/// one that starts with a typed local declaration begins with the same `name :` tokens.  It
+/// must stay a body — and so must one that starts with an assignment.
+#[test]
+fn a_block_after_a_qualified_struct_variant_is_still_a_block() {
+    code!(
+        "enum Sh1733b { Dot { r: integer }, Sq { w: integer } }\n\
+         fn probe() -> integer {\n\
+         \x20 x = Sh1733b.Dot;\n\
+         \x20 t = 0;\n\
+         \x20 if x == Sh1733b.Dot { r: integer = 5; t += r; }\n\
+         \x20 if x == Sh1733b.Dot { t += 10; }\n\
+         \x20 t\n\
+         }"
+    )
+    .expr("probe()")
+    .result(Value::Int(15));
+}

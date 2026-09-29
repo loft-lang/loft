@@ -9,6 +9,65 @@ use super::{
 // Field access, indexing, and iterator operations.
 
 impl Parser {
+    /// loft#1733 — `Sh.Dot { r: 1 }`, a struct variant named through its enum and then given
+    /// fields.  `Sh.Dot` alone is the variant with every field at its default, so the braces
+    /// are what a reader reaches for next, and the parser met them as the end of a statement:
+    /// *"Expect token ;"*, which names nothing about variants.  The constructor is `Sh::Dot {…}`
+    /// or `Dot {…}`; this reports that and parses the literal as the constructor, so nothing
+    /// cascades from it.
+    ///
+    /// `{` after a qualified variant is not always a literal — an `if e == Sh.Dot { … }` body
+    /// follows it too — so it is taken as one only when a FIELD of the variant and a `:` come
+    /// next, and not a typed local declaration (`{ r: integer = 5; … }`): a type name followed
+    /// by `=`, `;`, `<` or `?`.  Both passes parse it alike; only pass 2 reports.
+    fn qualified_variant_literal(
+        &mut self,
+        dnr: u32,
+        fnr: usize,
+        code: &mut Value,
+    ) -> Option<Type> {
+        if !self.lexer.peek_token("{")
+            || !matches!(self.data.def(dnr).returned(), Type::Enum(_, true, _))
+        {
+            return None;
+        }
+        let name = self.data.attr_name(dnr, fnr);
+        let variant = self.data.def_nr(&name);
+        if variant == u32::MAX
+            || self.data.def_type(variant) != DefType::EnumValue
+            || self.data.def(variant).attributes().is_empty()
+        {
+            return None;
+        }
+        let link = self.lexer.link();
+        self.lexer.cont();
+        let literal = match self.lexer.has_identifier() {
+            Some(f) if self.data.attr(variant, &f) != usize::MAX && self.lexer.has_token(":") => {
+                match self.lexer.has_identifier() {
+                    Some(t) if self.names_a_type(&t) => !["=", ";", "<", "?"]
+                        .iter()
+                        .any(|tok| self.lexer.peek_token(tok)),
+                    _ => true,
+                }
+            }
+            _ => false,
+        };
+        self.lexer.revert(link);
+        if !literal {
+            return None;
+        }
+        if !self.first_pass {
+            let parent = self.data.def(dnr).name().to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{parent}.{name}` is the variant with every field at its default, and does not \
+                 take fields — build it with `{parent}::{name} {{ … }}` or `{name} {{ … }}`"
+            );
+        }
+        Some(self.parse_object(variant, code))
+    }
+
     /// Is the member about to be read off a slice receiver a METHOD call that a vector
     /// declares and no iterator does (loft#1728)?  Looked at, not consumed.
     fn slice_receiver_method(&mut self) -> bool {
@@ -676,6 +735,9 @@ impl Parser {
                 );
             }
         } else if self.data.def(dnr).attributes()[fnr].constant {
+            if let Some(tp) = self.qualified_variant_literal(dnr, fnr, code) {
+                return tp;
+            }
             let expr = self.data.attr_value(dnr, fnr);
             // B2-runtime (2026-04-13): `Sig.Idle` on a mixed struct-enum
             // parent resolves `expr` to a bare `Value::Enum(disc, _)` —
