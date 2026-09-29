@@ -282,7 +282,10 @@ def run_metadata(a):
         "arch": f"{platform.machine()}-{platform.system().lower()}",
         "date": datetime.date.today().isoformat(),
         "commit": git("rev-parse", "--short", "HEAD"),
-        "dirty": "yes" if git("status", "--porcelain", "--untracked-files=no") else "no",
+        # The portal's own outputs are not the tree under measurement: a partial run is
+        # always taken over the results file the previous run left modified.
+        "dirty": "yes" if git("status", "--porcelain", "--untracked-files=no", "--", ".",
+                              ":!bench/portal/results", ":!doc/claude/PERF_PORTAL.md") else "no",
         "rustc": subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip(),
         "samples": a.samples,
         "target_ms": a.target_ms,
