@@ -88,6 +88,10 @@ dist/
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.
 !/index/target_surface.json
+# @PLN175: the design-decision guards in the library repos are committed for the same
+# reason — `idx decisions` and tests/index_hygiene.rs read them offline, and only
+# `make guards-fetch` (network) writes them.
+!/index/library_guards.json
 
 # Python __pycache__ from tools/indexer/migrate.py.
 __pycache__/

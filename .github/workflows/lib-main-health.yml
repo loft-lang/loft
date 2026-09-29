@@ -71,6 +71,19 @@ jobs:
           echo "$repos"
           echo "repos=$(printf '%s\n' $repos | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
 
+  # @PLN175 — the design-decision guards that live in the libraries.  index/library_guards.json
+  # is what `idx decisions` and tests/index_hygiene.rs read offline; a guard deleted from a
+  # library's main (or a new one nobody recorded) must turn this red, not leave the index
+  # claiming a decision is held by a file that is gone.  A commit that moves no guard passes.
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Library guards match the libraries' main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fetch-library-guards.py --check
+
   check:
     needs: discover
     runs-on: ubuntu-latest

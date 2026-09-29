@@ -1,0 +1,47 @@
+{
+ "repos": {
+  "loft-libs-assets": {
+   "commit": "015057a142a57e6312d2fbbb92f2e693cda828a6",
+   "files": []
+  },
+  "loft-libs-core": {
+   "commit": "183421c5d7d5217c6859977171a955d20e060c9d",
+   "files": []
+  },
+  "loft-libs-docs": {
+   "commit": "e84f03c1041084a5e9c75d0c376f305daee07737",
+   "files": []
+  },
+  "loft-libs-game": {
+   "commit": "f8556d55c62a0d18beaf2913777545f206412c59",
+   "files": []
+  },
+  "loft-libs-graphics": {
+   "commit": "bf55745018ba7536463fe065d76ca8726ec8071b",
+   "files": []
+  },
+  "loft-libs-net": {
+   "commit": "9c9eca617d6df125a7f7ddd2a4d5377400488e2f",
+   "files": [
+    {
+     "cites": [
+      {
+       "line": 4,
+       "tag": "@C84"
+      }
+     ],
+     "path": "server/tests/c84_surface.loft"
+    }
+   ]
+  },
+  "loft-libs-plugins": {
+   "commit": "f750c5a3475eb1d9c6b114de841dadede9577eaf",
+   "files": []
+  },
+  "loft-libs-world": {
+   "commit": "5d8bf283c1ea0d707b827e8bdcb205bd86e99d4b",
+   "files": []
+  }
+ },
+ "schema": 1
+}

@@ -31,6 +31,11 @@ decide.
   site can keep is not a decision: reopen it.  Where code and entry disagree, the code moves,
   unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and an entry
   numbered C130 or later lands with its guard (`tests/index_hygiene.rs`).
+- **A decision about a library is guarded in that library** — a test under its `tests/` citing
+  `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
+  `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which
+  `idx decisions` counts (`library`) and the gate above accepts; the `lib-main-health`
+  nightly fails when a library guard appears or disappears without that file following.
 - **`Catalogue:`** names the `@F`/`@I` catalogue entries a decision limits or shapes, so
   `./scripts/idx tag:@F<n>` shows a feature's design bounds beside its code (@PLN92).
 

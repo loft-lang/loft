@@ -20,11 +20,15 @@
 #                                   See doc/claude/formal/README.md § Rule tags.
 #   idx tag:@C<n>                 — a DESIGN-DECISION citation (@PLN175): every code,
 #                                   doc and test site that keeps decision C<n> of
-#                                   DESIGN_DECISIONS.md, headed by the entry itself.
+#                                   DESIGN_DECISIONS.md, headed by the entry itself,
+#                                   then the guards in the library repos.
 #                                   Boundary-exact, like @FR-.
 #   idx decisions                 — every decision in DESIGN_DECISIONS.md with its
-#                                   code / doc / guard (tests/) citation counts;
-#                                   `guards: 0` is a decision nothing verifies.
+#                                   code / doc / guard citation counts; `guards` is
+#                                   tests/ here PLUS `library` (a library repo's
+#                                   tests/ at its origin/main, index/library_guards.json
+#                                   — `make guards-fetch`).  `guards: 0` is a decision
+#                                   nothing verifies.
 #   idx tag:legacy:P259           — bare-name (legacy) lookup
 #   idx prefix:@PLAN22            — all tags starting with prefix
 #   idx file:doc/.../PROBLEMS.md  — all tags referenced in a file
@@ -64,6 +68,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IDX="$ROOT/index/tags.json"
+# The @C<n> citations in the library repos' tests/, read at each repo's origin/main by
+# `make guards-fetch` (@PLN175).  Committed, so reading it needs no network.
+LIBGUARDS="$ROOT/index/library_guards.json"
 
 if [ ! -f "$IDX" ]; then
   echo "scripts/idx: $IDX missing — run: make index" >&2
@@ -224,6 +231,11 @@ case "$QUERY" in
       fi
     fi
     jq --arg t "$t" '.[$t] // []' "$IDX" | filter_kind | add_excerpts
+    if [[ "$t" =~ ^@C[0-9] && -f "$LIBGUARDS" ]]; then
+      jq -r --arg t "$t" '.repos | to_entries[] | .key as $r | .value.commit[0:9] as $c
+        | .value.files[] | .path as $p | .cites[] | select(.tag == $t)
+        | "→ library guard  \($r):\($p):\(.line)  (origin/main \($c))"' "$LIBGUARDS"
+    fi
     ;;
   decisions)
     # One row per register entry, in register order: where it is cited, split
@@ -231,14 +243,16 @@ case "$QUERY" in
     # everything else.  Read from the index, so `make index` first.
     grep -E '^## C[0-9]+(\.[A-Z])? ' "$ROOT/doc/claude/DESIGN_DECISIONS.md" \
       | sed -E 's/^## (C[0-9]+(\.[A-Z])?) — (.*)$/\1\t\3/' \
-      | jq -R -s --slurpfile idx "$IDX" '
+      | jq -R -s --slurpfile idx "$IDX" --slurpfile lib "${LIBGUARDS}" '
           split("\n") | map(select(length > 0) | split("\t")) | map(
             . as [$id, $title]
             | ($idx[0]["@" + $id] // []) as $refs
+            | ([$lib[0].repos[].files[].cites[] | select(.tag == "@" + $id)] | length) as $library
             | { id: $id, title: $title,
                 code:   ([$refs[] | select((.file | startswith("tests/") | not) and (.file | endswith(".md") | not))] | length),
                 docs:   ([$refs[] | select(.file | endswith(".md"))] | length),
-                guards: ([$refs[] | select(.file | startswith("tests/"))] | length) })'
+                guards: (([$refs[] | select(.file | startswith("tests/"))] | length) + $library),
+                library: $library })'
     ;;
   gh:*)
     # idx gh:247 → the issue/PR URL + every @GH247 reference (offline).

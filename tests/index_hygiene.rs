@@ -135,6 +135,25 @@ fn check_index_matches_git() {
 /// The first design-decision id that must arrive with a guard (@PLN175).
 const FIRST_GUARDED_DECISION: u32 = 130;
 
+/// @PLN175 — the `@C<n>` citations in the LIBRARY repos' `tests/`, as `make guards-fetch`
+/// read them at each repo's `origin/main` (index/library_guards.json, committed so this
+/// needs no network).  A decision about a library is kept by a test in that library.
+fn library_guard_tags() -> Vec<String> {
+    let src = std::fs::read_to_string("index/library_guards.json")
+        .expect("read index/library_guards.json — `make guards-fetch` writes it");
+    let repos = src.matches("\"commit\": \"").count();
+    assert!(
+        repos >= 5,
+        "index/library_guards.json records {repos} library repos — a fetch that read nothing \
+         would make every library guard vanish; re-run `make guards-fetch`"
+    );
+    src.split("\"tag\": \"")
+        .skip(1)
+        .filter_map(|chunk| chunk.split('"').next())
+        .map(str::to_string)
+        .collect()
+}
+
 fn check_new_decisions_are_guarded(index: &str) {
     let register = std::fs::read_to_string("doc/claude/DESIGN_DECISIONS.md")
         .expect("read DESIGN_DECISIONS.md");
@@ -149,6 +168,18 @@ fn check_new_decisions_are_guarded(index: &str) {
         "read {} decision ids from the register — this check is measuring nothing",
         ids.len()
     );
+    // A citation in a library repo names an entry here, exactly as one in this tree must
+    // (`idx broken` checks those).
+    let library = library_guard_tags();
+    let dangling: Vec<&String> = library
+        .iter()
+        .filter(|tag| !ids.iter().any(|id| format!("@C{id}") == **tag))
+        .collect();
+    assert!(
+        dangling.is_empty(),
+        "library guard(s) cite {dangling:?}, which name no entry in \
+         doc/claude/DESIGN_DECISIONS.md (index/library_guards.json; `./scripts/idx tag:<tag>`)"
+    );
     let unguarded: Vec<&&str> = ids
         .iter()
         .filter(|id| {
@@ -159,17 +190,20 @@ fn check_new_decisions_are_guarded(index: &str) {
         })
         .filter(|id| {
             let key = format!("\"@C{id}\": [");
-            !index
+            let here = index
                 .lines()
                 .find(|l| l.trim_start().starts_with(&key))
-                .is_some_and(|bucket| bucket.contains("\"file\":\"tests/"))
+                .is_some_and(|bucket| bucket.contains("\"file\":\"tests/"));
+            let in_a_library = library.iter().any(|tag| *tag == format!("@C{id}"));
+            !here && !in_a_library
         })
         .collect();
     assert!(
         unguarded.is_empty(),
         "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: a decision \
-         added from C{FIRST_GUARDED_DECISION} on lands with a test under tests/ that cites \
-         `@C<n>` and fails on a build that breaks it (DESIGN_DECISIONS.md § Using the register)."
+         added from C{FIRST_GUARDED_DECISION} on lands with a test that cites `@C<n>` and fails \
+         on a build that breaks it — under tests/ here, or in the library it is about \
+         (`make guards-fetch`) — DESIGN_DECISIONS.md § Using the register."
     );
 }
 
