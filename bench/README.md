@@ -65,6 +65,12 @@ What it does, and why each part is there:
   than `--build-mem-reserve-gb` (3) available — and only then measured, one program at a
   time on the quiet machine.  A program that does not build is listed at the end (exit 1)
   and the others are still measured.
+- **Measures `--measure-jobs` programs at once (1).**  Above 1, each program is pinned to its
+  own cores of the machine's FASTEST tier (a hybrid CPU's efficiency cores never measure: a
+  ratio taken there does not compare), a program waits for free cores, and its rows print
+  together in the batch's order.  They still share cache, memory bandwidth and turbo budget,
+  so a value above 1 is a trade of accuracy for time — the value is recorded in the run's
+  metadata (`measure_jobs`) so a parallel run is never mistaken for a serial one.
 - **Records what each build step cost**: wall-clock and CPU seconds and peak memory, per
   program and step (`native-emit`, `native-rustc`, `rust-rustc`, a package's
   `native-release`), printed as it lands and written by `--build-tsv`; the portal keeps them
