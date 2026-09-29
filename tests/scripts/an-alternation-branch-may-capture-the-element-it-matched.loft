@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-G-Pat-Prec` — `a:V | b:W` is `(a:V) | (b:W)`: a branch of an alternation may capture the
+// element it matched.  That spelling is the rule's own defining example, and the parser read `a`
+// as a variant name and failed on the `:` ("Expect token )").
+//
+// The capture's type is the capture-typing rules', unchanged: a name every branch binds is the
+// element's type (`@FR-P-Alt-Same`), a name only some branches bind is `τ?`, null when another
+// branch matched (`@FR-P-Alt-Diff`).  The `show` helper takes `Tok?` and names a `null` arm, so
+// an absent capture that arrived as a non-null value would print a variant instead of `none`.
+//
+// Axes this file MOVES:  which branch captures (one / both / the same name in both), a capture
+//                        beside field bindings, the capture's use (test, `??`, argument), a rest.
+// Axes it HOLDS FIXED:   a single-element alternation of two branches.
+
+enum Tok { Num { n: integer }, Word { w: text }, Sep { s: integer } }
+
+fn show(t: Tok?) -> text {
+  match t { null => "none", Num { n } => "N{n}", Word { w } => "W{w}", Sep { s } => "S{s}" }
+}
+fn two(v: vector<Tok>) -> text {
+  match v { [(a: Num | b: Word)] => "{a == null}:{b == null}:{show(a)}:{show(b)}", _ => "x" }
+}
+fn same(v: vector<Tok>) -> text { match v { [(a: Num | a: Word)] => "{a == null}:{show(a)}", _ => "x" } }
+fn mixed(v: vector<Tok>) -> text {
+  match v { [(a: Num { n } | Word { w })] => "{show(a)}:{n ?? -1}:{w ?? \"-\"}", _ => "x" }
+}
+fn coal(v: vector<Tok>) -> text { match v { [(a: Num | Word)] => show(a ?? Sep { s: 7 }), _ => "x" } }
+fn rest(v: vector<Tok>) -> text { match v { [(a: Num | Word), ..r] => "{show(a)}:{len(r)}", _ => "x" } }
+
+fn test_the_branch_that_matched_captures_and_the_other_reads_null() {
+  got = "{two([Num { n: 1 }])} {two([Word { w: \"q\" }])} {two([Sep { s: 1 }])}";
+  assert(got == "false:true:N1:none true:false:none:Wq x", "two captures: {got}");
+  got2 = "{same([Num { n: 2 }])} {same([Word { w: \"r\" }])}";
+  assert(got2 == "false:N2 false:Wr", "one name in both branches: {got2}");
+}
+
+fn test_a_capture_beside_fields_and_through_a_default_and_a_rest() {
+  got = "{mixed([Num { n: 3 }])} {mixed([Word { w: \"s\" }])}";
+  assert(got == "N3:3:- none:-1:s", "capture beside fields: {got}");
+  got2 = "{coal([Num { n: 4 }])} {coal([Word { w: \"t\" }])}";
+  assert(got2 == "N4 S7", "through a default: {got2}");
+  got3 = "{rest([Num { n: 5 }, Sep { s: 1 }, Sep { s: 2 }])} {rest([Word { w: \"u\" }])}";
+  assert(got3 == "N5:2 none:0", "with a rest: {got3}");
+}

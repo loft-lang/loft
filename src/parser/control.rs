@@ -9321,10 +9321,11 @@ impl Parser {
     /// conditional-offset read `f = if tag==V1 { f@V1 } else if tag==V2 { f@V2 } …`).
     /// Enum tags are disjoint, so ordered choice reduces to a disjunction here.
     ///
-    /// Phase 4.1 scope: every branch binds the SAME captures at compatible types
-    /// (partial overlap → `option<T>` is Phase 4.2; a varying-width MULTI-element
-    /// alternative needs the slice cursor, Phase 4.3).  `elem` is the element value
-    /// at this position; it is cloned for each tag test and field read.
+    /// A capture bound by every branch takes the join of its types (`@FR-P-Alt-Same`); one
+    /// bound by only some is `τ?`, null when another branch matched (`@FR-P-Alt-Diff`).  A
+    /// branch may capture the whole element it matched, `a:V | b:W` (`@FR-G-Pat-Prec`).  A
+    /// varying-width MULTI-element alternative is `parse_multi_element_alternation`.  `elem`
+    /// is the element value at this position; it is cloned for each tag test and field read.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_alternation_element(
         &mut self,
@@ -9335,9 +9336,18 @@ impl Parser {
         elem_conds: &mut Vec<Value>,
     ) {
         self.lexer.token("(");
-        // (disc, variant_def_nr, fields: [(name, attr_idx, type)])
+        // (disc, variant_def_nr, fields: [(name, attr_idx, type)]) — an `attr_idx` of
+        // `usize::MAX` is a `name:` capture of the WHOLE element (`@FR-P-Cap`).
         let mut alts: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
+        let elem_tp = Type::Enum(e_nr, true, crate::data::Deps::none());
         loop {
+            // `(G-Pat-Prec)` — `a:V | b:W` is `(a:V) | (b:W)`: a branch may capture the element
+            // it matched.  Read as a variant name, `a` then `:` was a parse error.
+            let branch_capture = self.lexer.peek_named_arg();
+            if branch_capture.is_some() {
+                self.lexer.has_identifier();
+                self.lexer.token(":");
+            }
             let Some(vname) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -9373,6 +9383,9 @@ impl Parser {
                 0
             };
             let mut fields: Vec<(String, usize, Type)> = Vec::new();
+            if let Some(cap) = branch_capture {
+                fields.push((cap, usize::MAX, elem_tp.clone()));
+            }
             if self.lexer.has_token("{") {
                 while let Some(fname) = self.lexer.has_identifier() {
                     let attr = if valid {
@@ -9473,7 +9486,11 @@ impl Parser {
             let mut acc = self.null(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
-                    let read = self.pattern_field_value(*vdef, *attr_idx, elem.clone());
+                    let read = if *attr_idx == usize::MAX {
+                        elem.clone()
+                    } else {
+                        self.pattern_field_value(*vdef, *attr_idx, elem.clone())
+                    };
                     let tag = self.elem_tag_int(elem.clone());
                     let test = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
                     acc = v_if(test, read, acc);
