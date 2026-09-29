@@ -21,6 +21,12 @@
 //                        that fits), nesting (a tuple member of a tuple), a text member beside,
 //                        a KEYED member filled from a vector (loft#1675) beside a converted one.
 // Axes it HOLDS FIXED:   non-null fields.
+//
+// @falsified-at: 68ace3882 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-field-store-converts-its-value.patch — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the assertion channel on the interpreter — every cell but the keyed one read a
+//     reinterpreted or unconverted member; natively the control does not compile (E0308).
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 fn seven() -> integer { 7 }
 fn pair() -> (integer, integer) { (8, 9) }

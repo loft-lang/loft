@@ -6,6 +6,11 @@
 // line on the interpreter, and failed to compile natively (E0308) with rustc's message, not
 // loft's.
 //
+// @falsified-at: 68ace3882 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-field-store-refuses-a-text-member-into-a-float.patch — the same channels.
+//   CHANNEL: expect — the control printed an empty line on the interpreter and failed in rustc natively, so the expected refusal was missing.
+// HOLDS: leak and panic are clean on both trees and both backends.
+//
 // @EXPECT_ERROR: expected (float, integer), got (text, integer) on assignment
 
 struct W { n: integer, p: (float, integer) }

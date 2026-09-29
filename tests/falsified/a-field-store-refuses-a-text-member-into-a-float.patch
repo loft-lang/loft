@@ -1,0 +1,78 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index edf9caa4c..10aff45e9 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6439,22 +6439,19 @@ impl Parser {
+         if a_type.is_unknown() {
+             *a_type = tp.clone();
+         }
+-        // A field default is a store into the field, so it meets the field's conversion
+-        // the way a parameter default and a struct literal's field do — through `convert`
+-        // (`@FR-C-Num`, `@FR-C-Tuple`).  It met nothing: `f: u8 = 256` read 0 with no
+-        // diagnostic, and `p: float = 7` stored the integer's BITS, so the field read
+-        // 3.5e-323 on the interpreter and did not compile natively.  A collection is not
+-        // asked here: a keyed collection's default is a `vector` literal until the function
+-        // it is hoisted into delivers it at the field's type (loft#703), and that function
+-        // converts its own result.
++        // A field default is a store into the field, so an INTEGER one meets the field's
++        // narrowing the way a parameter default and a struct literal's field do — through
++        // `convert`.  It met nothing: `f: u8 = 256` read 0 with no diagnostic, and a
++        // `limit(0, 10)?` field defaulting to 12 held 12.  Only the integer question is asked
++        // here: a keyed collection's default is a `vector` literal until the function it is
++        // hoisted into delivers it at the field's type (loft#703).
+         let dtype_concrete = match &tp {
+             Type::Rewritten(inner) => inner.as_ref(),
+             other => other,
+         };
+         if !self.first_pass
+-            && !a_type.is_unknown()
+-            && !dtype_concrete.is_unknown()
+-            && !crate::parser::vectors::is_collection(a_type)
++            && matches!(a_type.base(), Type::Integer(_))
++            && matches!(dtype_concrete.base(), Type::Integer(_))
+             && !matches!(value, Value::Null)
+             && !self.convert(value, &tp, a_type)
+         {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index cc4333794..592ef7a63 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -7554,37 +7554,8 @@ use a separate collection or add after the loop"
+                         .collect()
+                 });
+                 let host_field_pos = (first_pos as u16).saturating_sub(offsets[0]);
+-                let rhs_pos = self.lexer.pos().clone();
+                 let mut rhs = Value::Null;
+-                let rhs_type = self.expression(&mut rhs);
+-                // The store meets the field's type like every other store does (`@FR-C-Tuple`
+-                // over `@FR-C-Num`, and the width rules): the value was written member by
+-                // member with no conversion and no check, so `w.p = (3, 4)` into a
+-                // `(float, integer)` field stored the integer's BITS, `(300, 4)` into a
+-                // `(u8, integer)` one kept 44, and a `text` member was written as a float.
+-                // A KEYED member given a vector is not a conversion: `emit_tuple_set_ops` fills
+-                // it by key (loft#1675), so that member is checked at its own type here.
+-                let want = match &rhs_type {
+-                    Type::Tuple(src) if src.len() == elems_vec.len() => Type::Tuple(
+-                        elems_vec
+-                            .iter()
+-                            .zip(src.iter())
+-                            .map(|(d, s)| {
+-                                if crate::parser::vectors::is_keyed(d)
+-                                    && matches!(s.base(), Type::Vector(_, _))
+-                                {
+-                                    s.clone()
+-                                } else {
+-                                    d.clone()
+-                                }
+-                            })
+-                            .collect(),
+-                    ),
+-                    _ => f_type.clone(),
+-                };
+-                if !rhs_type.is_unknown() && !self.convert(&mut rhs, &rhs_type, &want) {
+-                    self.validate_convert("assignment", &rhs_type, &want, &rhs_pos);
+-                }
++                let _rhs_type = self.expression(&mut rhs);
+                 let ops = self.emit_tuple_set_ops(&host_ref, host_field_pos, &elems_vec, rhs);
+                 *code = crate::data::v_block(ops, Type::Void, "tuple_field_set_via_assign");
+                 return Type::Void;
