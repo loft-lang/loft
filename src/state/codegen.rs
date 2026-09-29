@@ -5635,22 +5635,45 @@ impl State {
                 Type::RefVar(inner) => crate::data::NarrowSlot::of_type(inner),
                 _ => None,
             };
-            match *tp {
+            // Every write op here takes a `fld` operand after the reference except
+            // `OpSetStackRef(r, v1)`: writing the `0u16` behind it too left two bytes
+            // the op does not declare, which ran as `OpGoto(+0)` only because `OpGoto`
+            // is opcode 0.
+            let takes_fld = match *tp {
                 Type::Integer(_) if narrow_link.is_some() => {
                     stack.add_op(narrow_link.expect("checked").set_op(), self);
+                    true
                 }
-                Type::Integer(_) => stack.add_op("OpSetInt", self),
-                Type::Character => stack.add_op("OpSetCharacter", self),
-                Type::Single => stack.add_op("OpSetSingle", self),
-                Type::Float => stack.add_op("OpSetFloat", self),
+                Type::Integer(_) => {
+                    stack.add_op("OpSetInt", self);
+                    true
+                }
+                Type::Character => {
+                    stack.add_op("OpSetCharacter", self);
+                    true
+                }
+                Type::Single => {
+                    stack.add_op("OpSetSingle", self);
+                    true
+                }
+                Type::Float => {
+                    stack.add_op("OpSetFloat", self);
+                    true
+                }
                 // The write half of `&boolean` (loft#655).  Paired with
                 // `OpGetBoolean` on the read path: both carry the tri-state
                 // storage ↔ two-state expression conversion, which `OpSetByte`
                 // would skip.
-                Type::Boolean => stack.add_op("OpSetBoolean", self),
+                Type::Boolean => {
+                    stack.add_op("OpSetBoolean", self);
+                    true
+                }
                 // `OpSetEnum` for the same reason as the read: `OpSetByte` takes a `min` operand
                 // this site does not write.
-                Type::Enum(_, false, _) => stack.add_op("OpSetEnum", self),
+                Type::Enum(_, false, _) => {
+                    stack.add_op("OpSetEnum", self);
+                    true
+                }
                 // A KEYED collection joins the store-backed kinds: its slot holds a DbRef
                 // exactly as a vector's does, so the write-back repoints it the same way.
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the
@@ -5658,13 +5681,17 @@ impl State {
                 // optimisation, which is the trade the other way round (loft#1292).
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpSetStackRef", self);
+                    false
                 }
                 ref other if crate::parser::vectors::is_keyed(other) => {
                     stack.add_op("OpSetStackRef", self);
+                    false
                 }
                 _ => panic!("Unknown reference variable type"),
+            };
+            if takes_fld {
+                self.code_add(0u16);
             }
-            self.code_add(0u16);
             if let Some(slot) = narrow_link
                 && slot.kind.takes_min()
             {

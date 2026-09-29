@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A reassigned `&struct` and `&struct-enum` parameter write back through `OpSetStackRef`.
+struct Pt { x: integer }
+enum Sh { C { r: integer }, R { w: integer } }
+fn setp(p: &Pt) { p = Pt { x: 9 }; }
+fn sets(s: &Sh) { s = R { w: 4 }; }
+fn main() {
+  a = Pt { x: 1 };
+  setp(a);
+  b: Sh = C { r: 2 };
+  sets(b);
+  assert(a.x == 9, "pt {a.x}");
+  assert("{b}" == "R {{w:4}}", "sh {b}");
+}
