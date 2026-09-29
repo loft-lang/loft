@@ -2272,7 +2272,8 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
             let floor = held_back.api_compatible_with.as_deref().unwrap_or("?");
             diff.push(format!(
                 "  {pkg} {at} — {new} held back: declares a break past {at} \
-                 (api_compatible_with = {floor}). Upgrade deliberately, or stay.",
+                 (api_compatible_with = {floor}). To take it, raise its floor in loft.toml \
+                 to `>={new}`; or stay.",
                 pkg = target.name,
                 new = held_back.semver
             ));

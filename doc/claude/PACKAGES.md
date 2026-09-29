@@ -403,6 +403,12 @@ that version and no other.  Reach for an exact pin for reproducibility, or to
 dodge a bad release without waiting for a fix.  Pinning is an *option*, not the
 rule — omit it and you get the newest compatible release.
 
+**A declared break holds an upgrade back.**  Once `loft.lock` holds a release,
+`loft update` does not move it past a newer one whose `api_compatible_with` is above
+it, and it names each release it held back.  To take one, say so in `loft.toml`: an
+exact pin, or a floor the held release no longer satisfies (`>=0.1.3` over a held
+0.1.0), is the deliberate step across the break.
+
 The **root project's** declared constraints pin the **whole tree**, including
 packages pulled in *transitively* by a `use` inside a dependency: a source-level
 auto-install honours the root's pin, so `glb = "=0.1.0"` holds even when it's

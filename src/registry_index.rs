@@ -549,6 +549,10 @@ pub struct Resolution<'a> {
 ///   already chosen. Filtering it would report "no version satisfies the
 ///   constraint" for a version that plainly exists, which reads as a broken
 ///   registry rather than the deliberate step across a break that it is.
+/// - **`constraint` excludes `held`** — a floor raised past what the lock holds
+///   (`>=0.1.3` over a held 0.1.0) says the same thing as a pin: the consumer
+///   has already moved. Withholding would leave the lock on a release the
+///   manifest itself refuses, with no way through but editing the lock by hand.
 #[must_use]
 pub fn find_compatible_version<'a>(
     pkg: &'a Package,
@@ -557,7 +561,7 @@ pub fn find_compatible_version<'a>(
     held: Option<&str>,
 ) -> Resolution<'a> {
     let exact_pin = constraint.trim().starts_with(|c: char| c.is_ascii_digit());
-    let Some(held) = held.filter(|_| !exact_pin) else {
+    let Some(held) = held.filter(|h| !exact_pin && satisfies(h, constraint)) else {
         return Resolution {
             best: find_best_version(pkg, constraint, allow_prerelease),
             withheld: Vec::new(),
@@ -2075,6 +2079,22 @@ mod tests {
         let r = find_compatible_version(lib, "0.4.0", false, Some("0.1.0"));
         assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
         assert!(r.withheld.is_empty());
+    }
+
+    /// A floor raised past the held release is the same deliberate step as a pin:
+    /// the manifest already refuses what the lock holds.
+    #[test]
+    fn a_floor_past_the_held_release_crosses_a_declared_break() {
+        let idx = parse_index(FLOORS).expect("parse");
+        let lib = idx.packages.get("lib").expect("lib");
+        let r = find_compatible_version(lib, ">=0.3.0", false, Some("0.1.0"));
+        assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.4.0"));
+        assert!(r.withheld.is_empty());
+        // A floor the held release still satisfies asks for nothing new, so the
+        // break is still honoured there.
+        let r = find_compatible_version(lib, ">=0.1.0", false, Some("0.1.0"));
+        assert_eq!(r.best.map(|v| v.semver.as_str()), Some("0.2.0"));
+        assert_eq!(r.withheld.len(), 2);
     }
 
     /// The floors travel in the index, so a resolver reads a release's promise
