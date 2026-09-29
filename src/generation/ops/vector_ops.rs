@@ -418,7 +418,11 @@ impl OpEmitter for FusedElementWriteEmitter {
             let verify = ctx.output.hoist_verify;
             write!(ctx.w, "{{ let __wv = (")?;
             ctx.emit(val)?;
-            write!(ctx.w, "); unsafe {{ vector::rec_set::<{ty}>({ptr}, &(")?;
+            let lock = crate::generation::rec_ptr_lock(&ptr);
+            write!(
+                ctx.w,
+                "); unsafe {{ vector::rec_set::<{ty}>({ptr}, {lock}, &("
+            )?;
             ctx.emit(&Value::Var(v))?;
             return write!(
                 ctx.w,

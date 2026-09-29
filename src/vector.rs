@@ -758,11 +758,17 @@ pub struct FillSpan {
 /// still matches — so a gate that lets a mutation through fails loudly under one suite run
 /// instead of reading a stale record. The switch is at generation time rather than run time
 /// because the check costs exactly the loads the hoist removed.
+///
+/// `locked` is the store's lock state, read with the rest: no loop the hoist admits can
+/// lock or unlock a store (every op that does is a writer the hoist refuses), so it holds
+/// for the loop too, and a hoisted writer tests this local instead of the store —
+/// `@FR-H-WriteLocked` once per loop, not once per element.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VecHeader {
     pub store_nr: u16,
     pub rec: u32,
     pub len: u32,
+    pub locked: bool,
 }
 
 /// The scalar types a fused element WRITE stores (@PLN157 P4b), with the typed
@@ -892,9 +898,18 @@ pub struct PushWindow {
     pub len: u32,
     /// Elements the record holds before it must grow.
     pub cap: u32,
+    /// The store's lock state, the header's ([`VecHeader::locked`]): what a record-field
+    /// write into a windowed mint tests instead of the store.
+    pub locked: bool,
 }
 
 /// Open a [`PushWindow`] over the vector `p` describes, for elements `size` bytes wide.
+///
+/// `@FR-H-WriteLocked` — a window over a LOCKED store has no room: every push and mint
+/// through it takes the growth arm, the runtime's own append, which refuses the write
+/// (a development run halts, a production one discards it).  So the fast path of
+/// [`crate::database::Stores::push_windowed`] and `push_record_windowed` needs no lock
+/// test, and nothing is ever written into a locked store's spare capacity.
 #[must_use]
 #[inline]
 pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
@@ -902,11 +917,12 @@ pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
         base: vec_base(&p.h, stores).cast_mut(),
         len: p.h.len,
         // `p.cap` is in BYTES (see [`push_header`]); an absent vector has none.
-        cap: if p.h.rec == 0 || size == 0 {
+        cap: if p.h.rec == 0 || size == 0 || p.h.locked {
             0
         } else {
             p.cap / size
         },
+        locked: p.h.locked,
     }
 }
 
@@ -923,6 +939,7 @@ pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
             store_nr: db.store_nr,
             rec: 0,
             len: 0,
+            locked: false,
         };
     }
     let store = keys::store(db, stores);
@@ -936,6 +953,7 @@ pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
         store_nr: db.store_nr,
         rec: v_rec,
         len,
+        locked: store.is_locked(),
     }
 }
 
@@ -1024,6 +1042,15 @@ pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-RecPtr` — the lock state of the store record view `db` lives in, taken where its
+/// address is ([`rec_ptr`]) and held beside it for the view's extent: no block the hoist
+/// admits can lock or unlock a store, so [`rec_set`] tests this local, not the store.
+#[must_use]
+#[inline]
+pub fn rec_locked(db: &DbRef, stores: &[Store]) -> bool {
+    db.rec != 0 && stores[db.store_nr as usize].is_locked()
+}
+
 /// `@FR-R-RecPtr` — one scalar field read through a record address: `absent` for the null
 /// record (the getter's own sentinel), else one unaligned load.
 ///
@@ -1081,13 +1108,18 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
 #[inline]
 pub unsafe fn rec_set<T: Copy>(
     ptr: *const u8,
+    locked: bool,
     db: &DbRef,
     fld: u32,
     val: T,
     stores: &[Store],
     verify: bool,
 ) {
-    if ptr.is_null() || !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld) {
+    // `@FR-H-WriteLocked` — `locked` is [`rec_locked`] (or the header's, or the window's)
+    // held beside the address; only a locked store is asked, and it refuses the write.
+    if ptr.is_null()
+        || (locked && !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld))
+    {
         return;
     }
     if verify {

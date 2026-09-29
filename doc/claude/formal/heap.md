@@ -196,7 +196,11 @@ report, a production run logs it and discards it, so the program continues on th
 Discarding is a property of every write route, not of the op that started it: the value
 writes, the span writes, the allocator (a production claim hands out a fresh record nothing
 can reach, and never grows, moves or frees one the store holds) and the `--native` hoisted
-writers all consult the same lock (`tests/locked_writes.rs`). Crucially, a write's target ROOT decides whose state it touches: a
+writers all consult the same lock (`tests/locked_writes.rs`). The hoisted writers consult it
+ONCE per loop, not once per element: no loop the hoist admits can lock or unlock a store (every
+op that does is a writer it refuses), so the lock state is read with the vector header, the push
+window or the record address the loop holds, and a window over a locked store has no capacity —
+every push through it takes the runtime's refusing append. Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
 `Cap-Own`/raw-write admission rests on.
