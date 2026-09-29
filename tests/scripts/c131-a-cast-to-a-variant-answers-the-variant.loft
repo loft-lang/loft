@@ -7,7 +7,7 @@
 // unchecked cast warns (`variant-cast-default`).  Checked directly — inside `if s is Circle` —
 // it needs no default and draws no warning; `as Circle?` is the checked form and answers null.
 // The cast answered null while typed non-null, so `!c` was reported "always false" and printed
-// true.  The refusals (a provable miss, a variant with no default) are the sibling file.
+// true.  On native a hit also leaked the record it was deep-copied into.  The refusals (a provable miss, a variant with no default) are the sibling file.
 // Values are hand-computed.
 //
 // @falsified-at: PENDING
@@ -30,6 +30,10 @@ fn main() {
   assert(hit == 5, "checked directly: {hit}");
   f = s as Circle?;
   assert(f == null, "the checked form answers null on a miss");
+  // A hit through the checked form and `??` views `t` — native deep-copied it into the
+  // hoisted `__ncc` temp and leaked the copy (both spellings, before C131 too).
+  k = (t as Circle?) ?? Circle { radius: 1, tag: "", at: Pt { x: 0, y: 0 } };
+  assert(k.radius == 5 && k.tag == "x", "checked form with a fallback: {k.radius}");
   v: vector<Shape> = [Circle { radius: 9, tag: "v", at: Pt { x: 1, y: 1 } }, Rect { w: 1, h: 1 }];
   g = v[0] as Circle;
   h = v[1] as Circle;

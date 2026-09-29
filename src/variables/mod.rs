@@ -3628,20 +3628,31 @@ impl Function {
     /// nothing, so `__ncc_N = s` copied on `--native` into a store nobody freed while the
     /// interpreter bound the view (loft#1752).  A destination that must be independent of such
     /// a hoist gets its copy where it binds the hoist (`Scopes::arm_bind`).
+    ///
+    /// A destination declared as a DIFFERENT record than its source copies nothing either
+    /// (`Data::copies_as`): the bind a variant cast's hoisted `__ncc` temp receives
+    /// (`__ncc: Circle = t`, `t: Shape`) is the compiler's view of the operand.  The interpreter
+    /// asked that half at its arm and native did not, so native deep-copied into the view and
+    /// nothing freed the copy — one record per hit of `(t as Circle?) ?? d`.
     #[must_use]
-    pub fn record_copy_source(&self, v: u16, src: u16) -> Option<u32> {
+    pub fn record_copy_source(&self, data: &Data, v: u16, src: u16) -> Option<u32> {
         if self.is_overwritten_view(v) {
             return None;
         }
         let src_tp = self.tp(src);
-        if matches!(src_tp.base(), Type::RefVar(_)) {
+        let src_d = if matches!(src_tp.base(), Type::RefVar(_)) {
             // @FR-O-Proxy asks copy — a destination with deps views the link; only an owner copies.
             if !self.tp(v).depend().is_empty() {
                 return None;
             }
-            return src_tp.peel_link().heap_def_nr();
+            src_tp.peel_link().heap_def_nr()?
+        } else {
+            src_tp.heap_def_nr()?
+        };
+        match self.tp(v).base().heap_def_nr() {
+            Some(dst_d) if !data.copies_as(dst_d, src_d) => None,
+            _ => Some(src_d),
         }
-        src_tp.heap_def_nr()
     }
 
     #[must_use]

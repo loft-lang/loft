@@ -3032,7 +3032,7 @@ impl State {
                 if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && let Value::Var(src) = value.unspan()
                     && *src != v
-                    && let Some(src_d) = stack.function.record_copy_source(v, *src)
+                    && let Some(src_d) = stack.function.record_copy_source(stack.data, v, *src)
                     && stack.data.copies_as(d_nr, src_d)
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
@@ -3284,7 +3284,7 @@ impl State {
             && let Value::Var(src) = value
             // `record_copy_source` also reads a `&S` source as its `S` (@FR-C-Ref), so `y = e`
             // with `e = &z` copies the record the link names (`binding.md` D-bind-52).
-            && let Some(src_d_nr) = stack.function.record_copy_source(v, *src)
+            && let Some(src_d_nr) = stack.function.record_copy_source(stack.data, v, *src)
             && stack.data.copies_as(d_nr, src_d_nr)
         {
             // First assignment `d = c` where both hold the same heap RECORD type — a struct
