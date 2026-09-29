@@ -15,7 +15,8 @@ libraries stay readable loft (the teaching corpus), and a native rewrite is a re
 per-routine edge case, not a habit; `(Perf-Gap)` an advantage the twin holds by a
 construction loft cannot express is a MISSING ABSTRACTION in loft — routed to the language,
 never a twin rewritten down or a row excused, because loft's standard implementation
-optimises one way of working without excluding the others.  The model harness is the
+optimises one way of working without excluding the others.  `(Perf-Teach)` a loft rewrite for speed is the last resort after the
+code generation, and only behind an `advice` that names the faster API to a user.  The model harness is the
 drawing library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard
 read by the release checklist's `M-perf-pass`.
 
