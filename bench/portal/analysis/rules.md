@@ -71,6 +71,7 @@ each is a case the rule's text names as its next clause or its known limit.
 | "rebound in the body", "handed to a call outside a text-value position" — `slice_shrink`, `format_specs`, `make_names` | 20 | `(R-TextBorrow)` | a `&p` link, a rebind, or a text-building op with `p` as destination needs a `String` slot |
 | "Grown through parameter (whole)" | 50 | `(R-Base)` | growth through a parameter blocks the base for the whole loop |
 | a nullable view tested against null (`if v != null`) — `mesh_to_floats`, `mesh_to_floats_uv` | 4 loops | `(R-Header)`'s store-free list | **BUILT 2026-09-29**: `OpEqRef` / `OpNeRef` compare two `DbRef`s and touch no store, now listed beside `OpRefIsNull`; `mesh_to_floats` 36.9× → 15.8× here |
+| a scalar vector literal walked by `for` (`for i in [t.a, t.b, t.c]`) — `mesh_to_floats`, `mesh_to_floats_uv`, hex_fit's bench | 7 loops | `(R-LiteralWalk)` (new) | **BUILT 2026-09-29**: the items are scalar temps and the walk a counted select, no vector on either backend; `mesh_to_floats` 15.8× → 10.5× here |
 
 And the clauses the rule texts name, in the order the rows pay for them:
 

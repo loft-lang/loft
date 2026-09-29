@@ -9,6 +9,37 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A walk of a scalar literal builds no vector (2026-09-29)
+
+`@FR-R-LiteralWalk` (formal/rewrites.md): `for x in [e₀, …, eₙ₋₁]` over 1..=16 items of one
+scalar type is lowered at parse time to n scalar temps set once, in order, before the loop and
+an `Iter` whose `next` steps `x#index` and selects the temp by a compare chain — the range
+iterator's shape with a select in place of the counter — so no vector is built on either
+backend.  `parse_vector` offers the finished literal (block, items, element type) in
+`Parser::literal_walk`; `parse_for` takes it when the block is its iterable and neither
+`rev(…)` nor `par` follows.  `LOFT_NO_LITERAL_WALK=1` keeps the vector walk (BOTH backends);
+the census counts `R-LiteralWalk`.  mesh3d's `mesh_to_floats` 2.85 → 1.84 ms per op (15.8× →
+10.5× of Rust) on this box.  Guard `tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft`
+(21 hand-computed cells, sabotage-falsified through the order-sensitive ones), pin
+`tests/literal_walk.rs`.
+
+### A widening vector literal converted the wrong item (2026-09-29)
+
+`parse_item`'s inferred-type branch asked "does the element type widen to this item's?" by
+converting the ITEM (`self.convert(&mut p, in_t, &t)`), which wrapped `2.5` in a
+float-from-integer conversion, while the earlier `1` stayed an integer appended under a float
+vector — `for f in [1, 2.5, 4]` yielded 4.9e-324, 4.6e18, 4 on both backends (native's
+`append_f64(…, 1_i64)` failed to compile the same shape).  An assignment's variable type
+repaired it on the second pass, which is why `v = [1, 2.5, 4]` was right.  The question is now
+asked on a scratch and the widening converts the EARLIER items.  Silent-wrong; cells c2, c19
+and c21 of the literal-walk guard.
+
+The front-end allocation pin (`bench/frontend/allocations.tsv`, linux-release) was re-recorded
+on this box: it already read +774 (tiny) / +6 491 (medium) over the pin at the commit BEFORE the
+walk, measured in a clean worktree of that commit, and the walk adds 9 to each — the offer is
+gated to a `for` head, so an ordinary literal pays nothing.  Where the +774 came from is not
+established (the pin was recorded at the join of 2026-09-29 07:35, on another box).
+
 ### `v != null` on a record view no longer declines a loop's hoist (2026-09-29)
 
 `OpEqRef` and `OpNeRef` compare two `DbRef`s and touch no store, but the header hoist's

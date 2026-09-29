@@ -517,3 +517,12 @@ parameter on purpose.  The lever is a scalar vector literal of constant length c
 an ARRAY — a local (`for i in [a, b, c]`, walked without a store) or a record field
 (`Mat4 { m: [16 floats] }`, mat4_mul 38×): one representation clause beside the value
 record, § Order item 7 of the evaluation, and the next unit for both rows.
+
+**BUILT 2026-09-29, the local half** (`(R-LiteralWalk)`, `LOFT_NO_LITERAL_WALK`): the literal
+walk is n scalar temps and a counted select on both backends, no vector.  `mesh_to_floats`
+**2.85 → 1.84 ms per op (15.8× → 10.5×)**, same hash.  What the row pays now is the six field
+reads through `stores.store(&db).get_float` (a store lookup and a null test each) and the six
+pushes through the header per vertex, against a Rust twin that reads a struct and extends a
+`Vec<f32>` — the `(R-RecPtr)` remainder for a nullable view whose store is the parameter's.
+The record-field half (`Mat4 { m: [16 floats] }`, `mat4_mul` 38.6×) is still the
+representation clause and stays open.

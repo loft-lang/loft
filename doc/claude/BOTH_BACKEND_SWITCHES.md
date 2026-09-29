@@ -206,6 +206,14 @@ such a loop.  `LOFT_TRACE_REBIND=1` names each site.
 25.4 → 5.95 ms per op) — and is the first bisect step for a wrong, missing or extra element
 out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each kept.
 
+**`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON since 2026-09-29, parse time,
+BOTH backends) makes `for x in [a, b, c]` build and walk the vector again — with it off, the
+items are evaluated once into scalar temps and the loop is a counted select over them, no
+vector on either backend (mesh3d's `mesh_to_floats`, whose per-triangle `[t.a, t.b, t.c]`
+was a buffer reset, three appends and three element reads through the store) — and is the
+first bisect step for a wrong value, order or count out of a loop over a literal of scalars.
+`LOFT_REWRITE_CENSUS` counts its admissions as `R-LiteralWalk`.
+
 ## Lowering: adopting and minting call buffers
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**

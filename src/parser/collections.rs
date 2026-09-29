@@ -3361,6 +3361,91 @@ use #count instead"
         (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
     }
 
+    /// `@FR-R-LiteralWalk` — a `for` over a scalar vector literal of constant length walks its
+    /// items without building the vector: each item is evaluated once, in order, into its
+    /// own scalar temp before the loop, and the iterator is a counted select over the temps
+    /// (`if i == 0 { t0 } else if i == 1 { t1 } else { t2 }`).  Every value the body sees is
+    /// the one the vector would have held, `x#index` counts the same, and the literal's
+    /// per-iteration allocation, three appends and three element reads are gone on BOTH
+    /// backends.  `Some(iterator type)` and `expr` rewritten to the `Iter`, or `None` and
+    /// `expr` untouched — a `rev(…)`, a `par` walk and `LOFT_NO_LITERAL_WALK=1` keep the
+    /// vector walk.
+    pub(crate) fn literal_walk(
+        &mut self,
+        expr: &mut Value,
+        in_type: &Type,
+        id: &str,
+    ) -> Option<Type> {
+        let (block, items, elem) = self.literal_walk.take()?;
+        let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
+        if !literal_walk_enabled()
+            || self.reverse_iterator
+            || is_par
+            || *expr != block
+            || !matches!(in_type.base(), Type::Vector(_, _))
+            || !is_walkable_scalar(&elem)
+        {
+            return None;
+        }
+        let mut prelude = Vec::new();
+        let mut temps = Vec::new();
+        for item in items {
+            let t = self.create_unique("lit", &elem);
+            self.vars.defined(t);
+            prelude.push(v_set(t, item));
+            temps.push(t);
+        }
+        // The counter is the loop's `x#index`, as a range's is; `-1` seeds the step-first
+        // form so the yielded index counts 0, 1, 2 (…) like the vector walk's.
+        let ivar = if id == "_" {
+            self.create_unique("index", &I32)
+        } else {
+            self.create_var(&format!("{id}#index"), &I32)
+        };
+        self.vars.defined(ivar);
+        prelude.push(v_set(ivar, Value::Int(-1)));
+        let n = i32::try_from(temps.len()).ok()?;
+        let step = self.conv_op(
+            "+",
+            Value::Var(ivar),
+            Value::Int(1),
+            I32.clone(),
+            I32.clone(),
+        );
+        let mut ls = vec![v_set(ivar, step)];
+        let done = self.conv_op(
+            "<=",
+            Value::Int(n),
+            Value::Var(ivar),
+            I32.clone(),
+            I32.clone(),
+        );
+        ls.push(v_if(done, Value::Break(0), Value::Null));
+        let mut select = Value::Var(temps[temps.len() - 1]);
+        for (k, t) in temps.iter().enumerate().rev().skip(1) {
+            let k = i32::try_from(k).ok()?;
+            let at = self.conv_op(
+                "==",
+                Value::Var(ivar),
+                Value::Int(k),
+                I32.clone(),
+                I32.clone(),
+            );
+            select = v_if(at, Value::Var(*t), select);
+        }
+        ls.push(select);
+        *expr = Value::Iter(
+            u16::MAX,
+            Box::new(Value::Insert(prelude)),
+            Box::new(v_block(ls, elem.clone(), "Iter literal")),
+            Box::new(Value::Null),
+        );
+        if !self.first_pass {
+            crate::rewrite_census::fired("R-LiteralWalk", 1);
+        }
+        Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))
+    }
+
     /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
     /// walked through an ordered scratch of its records, built here as `fill` into a fresh
     /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
@@ -3573,6 +3658,9 @@ use #count instead"
                 self.vars.finish_loop(loop_nr);
                 self.parse_field_iteration(&id, &src_id, struct_def_nr, &expr, code);
                 return;
+            }
+            if let Some(walk) = self.literal_walk(&mut expr, &in_type, &id) {
+                in_type = walk;
             }
             let mut fill = Value::Null;
             // For vector loops, the iterator runs on a unique temp copy so that the loop
@@ -7810,4 +7898,20 @@ struct GroupElemSite {
     struct_tp: u16,
     byte_off: u16,
     members: Vec<(u16, u16, bool)>,
+}
+
+/// `@FR-R-LiteralWalk` — the element types a literal walk carries as scalar temps.
+pub(crate) fn is_walkable_scalar(tp: &Type) -> bool {
+    match tp {
+        Type::Integer(_) | Type::Boolean | Type::Float | Type::Single | Type::Character => true,
+        // A nullable scalar (`[a, null]`) keeps the vector: its temps would need the
+        // sentinel discipline the element slot already has.
+        Type::Optional(_) => false,
+        _ => false,
+    }
+}
+
+/// `LOFT_NO_LITERAL_WALK=1` keeps every `for x in [a, b, c]` a vector walk (BOTH backends).
+fn literal_walk_enabled() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LITERAL_WALK").is_none())
 }

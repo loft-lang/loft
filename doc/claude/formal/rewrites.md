@@ -1926,6 +1926,46 @@ insert-only bench, `--native-release`: 25.4 → 5.95 ms per op, hash unchanged �
 heap fact that `character` owns none (55.2 → 25.4 ms), which had hidden most of this
 rewrite's gain behind a per-element claims walk (bench/portal/analysis/libraries-wide.md).
 
+### A walk of a scalar literal builds no vector
+
+```
+  (R-LiteralWalk) `for x in [e₀, …, eₙ₋₁] { … }` — a `for` whose iterable is a vector
+                 LITERAL of 1..=16 items of one scalar element type (`integer` of any
+                 width, `float`, `single`, `boolean`, `character`; an item a later item
+                 widened counts at the widened type) evaluates each item once, in source
+                 order, into its own scalar temp before the first iteration, and walks
+                 the temps by a counted select: the loop variable at step i is temp i,
+                 `x#index` is i, and the walk ends after step n−1.  No vector is built,
+                 on either backend.  A `rev(…)` around the literal, a `par` walk, a
+                 `[v; n]` repeat, a text, record or tuple item, and seventeen or more
+                 items keep the vector walk.
+```
+
+**In words.**  "For each of these three" is written as a walk over a literal —
+`for i in [tri.a, tri.b, tri.c]` — because that is the spelling the language offers, and
+the literal cost what a vector costs: a buffer reset (or a mint), a reservation, one append
+per item, and a length and an element read per step through the store, per execution of the
+loop.  The values are fixed before the loop starts on the vector form too (the literal is
+built, then walked), so holding them in scalar temps changes no value, no order and no count;
+the select is what the vector's element read was, on a bound the compiler knows.  A body
+that writes the loop variable writes its own copy either way, and a body that writes an
+item's SOURCE after the loop began never reached the built vector either.  Both backends
+take the lowering at parse time, which makes their agreement no evidence — the guard's cells
+are hand-computed and the switch is the A/B.
+
+**BUILT** (2026-09-29, `Parser::literal_walk` at parse time, `LOFT_NO_LITERAL_WALK`; guard
+`tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft` — 21 cells, falsified by a
+one-off in the select, which the order-sensitive cells catch and the plain sums do not — pin
+`tests/literal_walk.rs`).  mesh3d's `mesh_to_floats` (`for i in [t.a, t.b, t.c]` per
+triangle): **2.85 → 1.84 ms per op, 15.8× → 10.5× of Rust** on this box, same hash; the
+census loses the literal's own loop buffer, header and complete write in every program that
+carries the two mesh3d walks, and gains the walk.  Building it surfaced a defect in the
+literal itself: `[1, 2.5, 4]` in an iterable position converted the WIDENING item through
+an integer conversion and left the earlier `1` an integer under a float vector (an
+assignment's variable type repaired it on the second pass, so `v = [1, 2.5, 4]` was right
+and `for f in [1, 2.5, 4]` read 2.5's bits as an integer) — fixed at the coercion site, cell
+c21 keeps the vector form of it.
+
 ### A lookup by one integer key takes the typed entry
 
 ```
