@@ -23,8 +23,15 @@
 // Axes this file MOVES:  where the value goes (`??`, `?`, local, argument, return, match,
 //                        element), the slot's declaration (`Sh` · `Sh?` element), presence.
 // Axes it HOLDS FIXED:   the enum (two payload variants), the backend (both run it).
-//   A `for e in v` loop variable over `vector<Sh>` is typed as a reference to the enum's
-//   def rather than as the enum, and is not covered here.
+//
+// The loop functions are the third spelling.  A `for e in v` variable over a `vector<Sh>` was
+// typed as a RECORD reference to the enum rather than as the enum, which none of the null
+// tests recognised — and neither did an `Sh?` parameter nor the variant join of a `??`
+// default, so `show(e)` and `e ?? Sq {…}` were refused outright.  The write-through cell is
+// the control for that spelling change: a loop variable is a view, and must stay one.
+//
+// @falsified-at: 8bd1fec16 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Sh { Dot { r: integer }, Sq { w: integer } }
 struct S { e: Sh }
@@ -84,4 +91,27 @@ fn test_a_local_bound_from_a_call_that_returns_an_element() {
   m = head_bare(k);
   got = "{a == null} {b == null} {c == null} {show(c)} {d == null} {m == null}";
   assert(got == "true true false Sq3 true true", "call-bound: {got}");
+}
+
+fn test_a_loop_variable_over_a_vector_of_the_bare_enum() {
+  vs: vector<Sh> = [Dot { r: 1 }, Sq { w: 2 }];
+  vs[0] = null;
+  acc = "";
+  for e in vs {
+    d = e ?? Sq { w: 9 };
+    acc += "{e == null}:{show(e)}:{show(d)} ";
+  }
+  assert(acc == "true:none:Sq9 false:Sq2:Sq2 ", "bare loop: {acc}");
+  ws: vector<Sh?> = [null, Dot { r: 4 }];
+  acc2 = "";
+  for f in ws { acc2 += "{f == null}:{show(f)} "; }
+  assert(acc2 == "true:none false:Dot4 ", "optional loop: {acc2}");
+}
+
+fn test_a_write_through_the_loop_variable_still_lands() {
+  vs: vector<Sh> = [Dot { r: 1 }, Sq { w: 2 }, Dot { r: 3 }];
+  for e in vs { if e is Dot { r } { e.r = r * 10; } }
+  acc = "";
+  for e in vs { acc += "{show(e)} "; }
+  assert(acc == "Dot10 Sq2 Dot30 ", "write-through: {acc}");
 }

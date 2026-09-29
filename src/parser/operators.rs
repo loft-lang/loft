@@ -975,10 +975,24 @@ impl Parser {
                 // for an absent field even once the write was right.
                 let word = self.cl("OpGetInt4", &[base, fld]);
                 self.cl("OpEqInt", &[word, Value::Int(0)])
-            } else {
+            } else if Self::is_repeatable_place(&self.data, &operand) {
                 // A struct-enum reference in a HANDLE (a local, a parameter, a return):
-                // null IS the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
-                // enum is inline on native).
+                // null is the store_nr sentinel, NOT `OpEqRef`'s `rec == 0` (a present
+                // enum is inline on native).  But a handle is not the only thing a local
+                // holds.  `(L-Null)` gives `E` and `E?` one layout and `(N-Store)` lets a
+                // `null` into an `E` field or element, so `x = s.e` can bind a
+                // sub-reference to a slot whose discriminant is 0 — present to the
+                // sentinel, absent to its own bytes.  A present value, handle or slot,
+                // always has a variant (they are numbered from 1) in its first word, so
+                // "the handle is null, else its first word is 0" is exact for both, and it
+                // costs only where a test is written.
+                let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&operand));
+                let word = self.cl("OpGetInt4", &[operand, Value::Int(0)]);
+                let empty = self.cl("OpEqInt", &[word, Value::Int(0)]);
+                v_if(null_handle, Value::Boolean(true), empty)
+            } else {
+                // A CALL result is a handle the callee built, and reading it twice would
+                // build it twice.
                 self.cl("OpRefIsNull", &[operand])
             }
         } else if matches!(tp, Type::Optional(_)) && matches!(tp.base(), Type::Reference(_, _)) {
@@ -3190,9 +3204,12 @@ impl Parser {
             // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
             // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
             // present.  Its tag says, through the one null test that already reads it.
+            //
+            // Every struct-enum asks `null_test` now, not only a slot view: an `E` slot holds
+            // the null `(N-Store)` lets into it, and a local bound from one is a sub-reference
+            // the `rec` test calls present — `x = s.e; x ?? d` never took its default.
             let as_optional = Type::Optional(Box::new(tp.clone()));
             if matches!(tp.base(), Type::Enum(_, true, _))
-                && self.enum_slot_view(src, &as_optional)
                 && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
             {
                 not_null

@@ -14086,22 +14086,18 @@ impl Parser {
         )
     }
 
-    /// Is `code` a STRUCT-ENUM read that is still its SLOT — a field or a `vector<E?>`
-    /// element, or a variable that views one?  Layout.md `(L-Null)` spells the absence of
-    /// such a slot as discriminant 0 in its own bytes, so the value is a sub-reference into
-    /// the holder and never itself null.  The two shapes are exactly the two slot branches of
-    /// [`Parser::null_test`], which is where the question was first answered: an
-    /// `OpGetField` read (a field, and an element, which is read as a field at offset 0) and
-    /// a variable [`Parser::views_a_nullable_element_slot`] says is one.
+    /// Is `code` a nullable STRUCT-ENUM read that is still its SLOT — a field or a
+    /// `vector<E?>` element, or a variable that views one?  Layout.md `(L-Null)` spells the
+    /// absence of such a slot as discriminant 0 in its own bytes, so the value is a
+    /// sub-reference into the holder and never itself null.  The two shapes are exactly the
+    /// two slot branches of [`Parser::null_test`], which is where the question was first
+    /// answered: an `OpGetField` read (a field, and an element, which is read as a field at
+    /// offset 0) and a variable [`Parser::views_a_nullable_element_slot`] says is one.
     /// The tagged `__nullable<S>` has its own reader ([`Self::read_through_tag`]).
-    ///
-    /// Whether the slot was declared `E?` does not enter: `(L-Null)` gives `E` and `E?` one
-    /// layout, and `(N-Store)` lets a `null` into an `E` slot with a warning, after which the
-    /// slot holds it.  Asked only of `E?`, an absent `e: E` field read as present everywhere
-    /// its value went — a `??` never took its default, `x = s.e; x == null` was false, an
-    /// `E?` argument arrived present and a `match` fell through every arm — while
-    /// `s.e == null` beside them said true.
     pub(crate) fn enum_slot_view(&self, code: &Value, tp: &Type) -> bool {
+        if !matches!(tp, Type::Optional(_)) {
+            return false;
+        }
         let Type::Enum(e_nr, true, _) = tp.base() else {
             return false;
         };

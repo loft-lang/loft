@@ -5904,7 +5904,15 @@ impl Parser {
                 // sentinel, and covers no variant — an absent subject is not a variant of
                 // anything, which is why exhaustiveness is untouched for it.
                 let (discs, cond) = if heap_null_subject {
-                    let is_null = self.cl("OpRefIsNull", std::slice::from_ref(&subject_val));
+                    // `null_test` is the one home for "is this absent?": a struct-enum
+                    // subject bound from an `E` slot is a sub-reference whose absence is its
+                    // discriminant, which the bare sentinel test called present, so the
+                    // match fell through every arm.
+                    let is_null = self
+                        .null_test(subject_val.clone(), &subject_type, false)
+                        .unwrap_or_else(|| {
+                            self.cl("OpRefIsNull", std::slice::from_ref(&subject_val))
+                        });
                     (Vec::new(), Some(is_null))
                 } else {
                     (vec![0], None)
@@ -12045,19 +12053,15 @@ impl Parser {
             return self.for_type(inner);
         }
         if let Type::Vector(t_nr, dep) = &in_type {
+            // A struct-enum element stays the ENUM for the loop variable, as an index read
+            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  It used to become
+            // `Reference(E)` for a hand-written enum — a record spelling of the same value
+            // that the null tests, the `E?` parameter and the variant join of a `??` default
+            // do not recognise, so `for e in v` refused `f(e)` into an `E?` parameter and
+            // `e ?? Variant {…}`, and read an absent element as present.  Variant field
+            // access, narrowing, captures, `match` and writes through the variable answer
+            // the same in either spelling.
             let mut t = *t_nr.clone();
-            if let Type::Enum(nr, true, _) = t
-                && !self.data.def(nr).name.starts_with("__nullable<")
-            {
-                // @PLN25 E2 — keep a synthetic `__nullable<S>` element in `Enum`
-                // form for the loop variable: field access on `Type::Enum(.., true)`
-                // unwraps to the `Some` variant via `find_poly_enum_field`
-                // (fields.rs), whereas `Reference(enum_def)` does not (the enum
-                // itself has no payload field) → "Unknown field __nullable<S>.f".
-                // Hand-written struct-enums keep the Reference conversion (variant
-                // field-access resolves against the variant def, not the parent).
-                t = Type::Reference(nr, Deps::none());
-            }
             // P189b: vector elements that are tuples live as inline bytes
             // in the vector record.  Iteration yields a 12-byte DbRef
             // pointing at those bytes; treat the loop var as a reference
