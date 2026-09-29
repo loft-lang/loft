@@ -112,7 +112,10 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
                                          #   adds a library's own bench.  A REPORT, never a gate
-make perf-check [ARGS="--only 16,17"]     # BEFORE COMMITTING a compiler change: measures the
+make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
+                                         #   wait — a commit needs the matrix, the pins, clippy
+                                         #   and one targeted A/B on its own row; CI_BUDGET.md
+                                         #   § What a compiler change needs.  It measures the
                                          #   lanes the census says the change touched (or
                                          #   ARGS' lanes) and compares each routine's ratio to
                                          #   Rust with this machine's last committed row

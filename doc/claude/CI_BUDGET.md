@@ -400,7 +400,34 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
 
-## After a red gate: recheck, do not restart
+## What a compiler change needs before its commit — and what runs beside the work
+
+**The rule.** A change in this loop (a rewrite clause, an op, a runtime path) is verified by
+the checks that FIND defects, in the foreground, in minutes: the guard's matrix on BOTH
+backends under the falsifiers, the emission pins, the two clippy variants, and ONE targeted
+A/B on the row the change is for (the consumer's driver binary, seconds).  Then commit, push,
+and start the broad gate on GitHub against that sha (`gh workflow run ci.yml --ref <branch>
+-f os=ubuntu-latest`).  Everything wider is a BACKSTOP and runs in the background while the
+next unit is built: the curated local suite (`find_problems.sh --bg`), and `make perf-check`
+over the lanes the census flagged — once per arc, not per commit.
+
+**What it must never be:** a foreground wait.  Nothing here needs a quiet box: the perf
+threshold is 15 %, the noisy rows are flagged, and a move is one that repeats.  Holding the
+box idle for a measurement, and then for the suite, is how a verified unit sat for two hours
+(the history companion has the measurement).
+
+**The three traps that turned one perf-check into three:**
+
+* a lane crashes — that is a DEFECT in the change, found by the run doing its job; fix it,
+  and rerun only that lane (`ARGS="--package DIR=NAME"`), never the set;
+* `no method named …` in a native lane's `rustc` after a new op — the bare
+  `target/release/libloft.rlib` the lanes link is STALE (`cargo build --bin loft` never
+  refreshes it); `cargo build --release --lib` first, and `make check-rlib` says when;
+* `no baseline to compare with` — this host has no committed results row; the A/B is then
+  `perf_check.py --baseline <saved on-run.tsv>` with the switches OFF, on the flagged lanes
+  named explicitly (`--package …`, `--only …`), because with the switches off the census
+  names a different, smaller set and measures the wrong thing.
+
 
 **The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
 it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A recheck builds on the

@@ -579,7 +579,9 @@ times).  Two scripts read it:
   <name>"`, one routine's whole series.  Ratios are compared within one machine only.  Read
   when a row looks wrong: `ease` +41 % between the 24 and 27 September measurements was
   found this way, after the fact.
-- **`make perf-check`** (`scripts/perf_check.py`) is the same comparison BEFORE a commit:
+- **`make perf-check`** (`scripts/perf_check.py`) is the same comparison once per arc, in the
+  background (CI_BUDGET.md § What a compiler change needs before its commit — a commit itself
+  needs only the matrix, the pins, clippy and one targeted A/B on its own row):
   it measures the lanes the change touched — by default the programs whose rewrite
   admissions the census says moved, or `ARGS="--only 16,17"` / `--package DIR=NAME` — and
   compares each routine's ratio to Rust with this machine's last committed row, listing
