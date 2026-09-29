@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-G-Sat-Eq` — deviation D-gen-6 (loft#1738): a TUPLE bound to `T: Equatable` is
+// still refused.  This pins how: by name, with the tuple spelled as the author wrote it.  The
+// instantiation over an inferred tuple nothing had registered was an internal compiler error
+// (`def(u32::MAX)` in the monomorph's stride and write rewrites) before it registered the
+// tuple's stored form.  When loft#1738 is fixed this becomes a running cell.
+//
+// @falsified-at: d18e860a9 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1,
+//   native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of
+//   matches): the control stops with an internal compiler error instead of the refusal.
+// @falsified-by: tests/falsified/c91-a-tuple-bound-to-equatable-is-refused-by-name.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1, native exit 1 -> 0, native expectations FAIL/1 -> 1/1
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.
+
+fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
+
+// @EXPECT_ERROR: '(integer, integer)' does not satisfy interface 'Equatable': missing OpEq
+fn test_a_tuple_bound_to_equatable() {
+  assert(same((1, 2), (1, 2)), "unreached");
+}

@@ -8460,6 +8460,13 @@ impl Parser {
         {
             return g_nr;
         }
+        // An INFERRED tuple bound to a variable (`same((1, 2), (1, 2))`) has no stored form
+        // until something registers it, and the monomorph's body is built on that form —
+        // the same registration an inferred tuple literal takes (`Data::ensure_tuple_defs`,
+        // loft#943).  Without it the instance looked up `def(u32::MAX)`: an ICE.
+        for (_, b) in &var_bindings {
+            self.data.ensure_tuple_defs(&mut self.lexer, b);
+        }
         if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
             if !self.first_pass {
                 let unbound: Vec<String> = var_bindings
@@ -9035,13 +9042,56 @@ impl Parser {
         });
     }
 
+    /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
+    const CONTENT_EQ_PENDING: i32 = i32::MIN;
+
+    /// Give each marked content `==` of a fresh monomorph its schema row: the call
+    /// `OpEqContent(a, b, PENDING, holder)` becomes `OpEqContent(a, b, tp)` for the type the
+    /// monomorph binds `holder` to.
+    fn resolve_content_eq(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(d, args) = code.unspan_mut()
+            && args.len() == 4
+            && matches!(args[2].unspan(), Value::Int(Self::CONTENT_EQ_PENDING))
+            && let Value::Int(holder) = *args[3].unspan()
+        {
+            let d = *d;
+            let concrete = bindings
+                .iter()
+                .find(|(h, _)| *h as i32 == holder)
+                .map(|(_, t)| t.clone())
+                .unwrap_or(Type::Unknown(0));
+            let tp = match concrete.peel_link() {
+                Type::Reference(v, _) if self.data.is_value_struct(*v) => {
+                    Some(self.data.def(*v).known_type())
+                }
+                _ => self.content_eq_type(&[concrete.clone(), concrete.clone()]),
+            }
+            .filter(|tp| *tp != u16::MAX);
+            args.truncate(2);
+            if let Some(tp) = tp {
+                args.push(Value::Int(i32::from(tp)));
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Internal error: `==` on `{}` inside a generic has no content comparison \
+                     (report this as a bug)",
+                    concrete.source_name(&self.data)
+                );
+                *code = Value::Call(d, std::mem::take(args));
+            }
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
+    }
+
     fn fill_monomorph_body(
         &mut self,
         d_nr: u32,
-        code: Value,
+        mut code: Value,
         tmpl_vars: &Function,
         bindings: &[(u32, Type)],
     ) {
+        self.resolve_content_eq(&mut code, bindings);
         // Copy the variable table with substituted types.
         let mut vars = Function::copy(tmpl_vars);
         // `done` says *this function's code already carries the scope pass's output*, and an
@@ -9585,6 +9635,26 @@ impl Parser {
             .count()
     }
 
+    /// Does content `==` cover the type `concrete_nr` names — a struct (a `value struct`
+    /// included), a struct-enum or one of its variants, a vector, a keyed collection?  `(G-Sat-Eq)` admits such a
+    /// type for an `OpEq` bound it declares no operator for.
+    fn content_comparable(&self, concrete_nr: u32) -> bool {
+        let name = self.data.def(concrete_nr).name();
+        match self.data.def_type(concrete_nr) {
+            // A tuple's synthetic `__tuple<…>` struct is no record a type variable can bind.
+            DefType::Struct => !name.starts_with("__tuple<"),
+            DefType::EnumValue => true,
+            DefType::Enum => matches!(
+                self.data.def(concrete_nr).returned().peel_link(),
+                Type::Enum(_, true, _)
+            ),
+            _ => matches!(
+                name,
+                "vector" | "hash" | "sorted" | "index" | "spatial" | "trie"
+            ),
+        }
+    }
+
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
@@ -9647,6 +9717,15 @@ impl Parser {
                     .data
                     .possible_with_signature(&method_suffix, want, &concrete_type)
                     .unwrap_or(u32::MAX);
+            }
+            // `(G-Sat-Eq)`, @C91 — every type satisfies `==`: one with no `OpEq` of its own is
+            // compared by content, which the monomorph lowers (`content_eq_pending`).
+            if found == u32::MAX
+                && method_suffix == "OpEq"
+                && want == 2
+                && self.content_comparable(concrete_nr)
+            {
+                continue;
             }
             if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
@@ -9750,7 +9829,12 @@ impl Parser {
             if concrete_nr == u32::MAX {
                 continue; // can't check without a concrete type def_nr
             }
-            let concrete_name = self.shown_type_name(concrete_nr);
+            // A tuple is spelled as the author wrote it, not as its synthetic `__tuple<…>`.
+            let concrete_name = if matches!(bound.peel_link(), Type::Tuple(_)) {
+                bound.source_name(&self.data)
+            } else {
+                self.shown_type_name(concrete_nr)
+            };
             for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
                 let iface_name = self.data.def(iface_nr).name().to_string();
                 for why in self.satisfaction_failures(iface_nr, concrete_nr) {
@@ -10946,6 +11030,19 @@ impl Parser {
                     .collect();
                 // Re-resolve call target if it references the type variable.
                 let new_d = Self::re_resolve_call(d, tv_nr, concrete, data);
+                // `(G-Sat-Eq)`, @C91 — a bound `==` over a type with no `OpEq` of its own is its
+                // content `==`.  Its schema row is not reachable from here, so the call is
+                // marked and `resolve_content_eq` (parser side) fills the row in.
+                if new_args.len() == 2
+                    && !matches!(concrete.peel_link(), Type::Tuple(_))
+                    && Data::is_bound_stub_for(data.def(d).name(), "OpEq", 2)
+                    && (new_d == u32::MAX || new_d == d || data.def(new_d).name() == "OpEqRef")
+                {
+                    let mut marked = new_args;
+                    marked.push(Value::Int(Self::CONTENT_EQ_PENDING));
+                    marked.push(Value::Int(tv_nr as i32));
+                    return Value::Call(data.def_nr("OpEqContent"), marked);
+                }
                 // I9-vec: fix vector element access with baked-in elm_size=0.
                 // The template bakes elm_size=0 for type-variable elements and omits the
                 // value-extraction wrapper (OpGetInt/OpGetFloat/etc.).  Fix both here.

@@ -8614,6 +8614,13 @@ impl Data {
         Self::mangle_method(&h, method)
     }
 
+    /// Is `name` a bound-method stub ([`Self::bound_stub_name`]) for `method` at `arity`, of
+    /// any holder?
+    #[must_use]
+    pub fn is_bound_stub_for(name: &str, method: &str, arity: usize) -> bool {
+        name.starts_with("t_") && name.ends_with(&format!("{}{arity}_{method}", Self::HOLDER_MARK))
+    }
+
     /// Is `name` taken by a definition in ANY source?
     ///
     /// [`Self::def_nr`] answers for the CURRENT source plus the stdlib, which is the right
