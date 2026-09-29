@@ -40,9 +40,16 @@ fail() { echo "registry-validate: $PKG: FAIL — $*" >&2; exit 1; }
 note() { echo "registry-validate: $PKG: $*"; }
 
 # The loft commit under test — stamped into every failure so a red night names
-# the exact loft that broke a package (captured before the cd into the scratch
-# dir, while we are still in the loft checkout).
-LOFT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# the exact loft that broke a package.  Read from the checkout the BINARY was built
+# in when `$LOFT` is a path (a `target/release/loft` of another worktree), and from
+# the working directory only for a `loft` found on PATH: asked of the working
+# directory alone, a run against another build named this checkout's commit.
+loft_path="$(command -v "$LOFT" 2>/dev/null || true)"
+LOFT_SHA=""
+case "$LOFT" in
+  */*) [ -n "$loft_path" ] && LOFT_SHA="$(git -C "$(dirname "$(readlink -f "$loft_path")")" rev-parse --short HEAD 2>/dev/null || true)" ;;
+esac
+[ -n "$LOFT_SHA" ] || LOFT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 PKG_VER="?"   # filled once the installed version dir is known (step 2)
 
 # On a test failure the raw CI log buries the assertion under cargo/rustc noise.
