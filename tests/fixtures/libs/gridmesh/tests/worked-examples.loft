@@ -1,0 +1,161 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Worked examples for the `gridmesh` library (@PLN141).  Each `test_*` below is a
+// REAL, run-every-CI demonstration of a function whose correct use is not obvious
+// from its signature alone; the function documents itself by CITING the tag with
+// `// Example: @GRM-00N`, and `check_doc_drift.sh examples` fails if a citation goes
+// dangling (no test carries the tag).  These are teaching examples, distinct from the
+// per-function assertion suites in chunkfield / chunkinput / rendergroup / segmesh.
+//
+// gridmesh is a TOOLKIT, so what needs demonstrating is not any single call but the
+// SHAPE of a correct one: which work-list to ask for, which cells to emit geometry
+// for, and which of its answers stay valid across an edit.
+
+use gridmesh::*;
+
+// Is `target` one of the cell indices in `v`?
+fn wex_has(v: vector<integer>, target: integer) -> boolean {
+  for e in v { if e == target { return true; } }
+  false
+}
+
+// How many of the chunk inputs claim cell `ix` as OWNED (must be exactly one).
+fn wex_owner_count(inputs: vector<ChunkInput>, ix: integer) -> integer {
+  n = 0;
+  for ci in inputs { if wex_has(ci.cell_ixs, ix) { n = n + 1; } }
+  n
+}
+
+// @GRM-001 — the edit → collect → rebuild → CLEAR cycle.  A ChunkField carries its
+// own dirty index, so an edit (`field_add_cell` / `field_mark_dirty` /
+// `field_remove_cell`) does not rebuild anything: it marks the chunks whose meshes
+// are now stale.  `collect_dirty_inputs` hands back exactly those chunks as a
+// work-list, and `clear_dirty` must be called AFTER the consumer has rebuilt them —
+// forget it and every later edit re-collects the same chunks forever, which is the
+// one way to turn this O(dirty) API back into O(N).  This SEQUENCE is the API.
+fn test_dirty_rebuild_cycle() {
+  xs: vector<integer> = [1, 2];
+  ys: vector<integer> = [3, 3];
+  f = field_new(0, xs, ys, 3, 1);        // chunk = 8 cells/axis, halo 1
+  assert(dirty_count(f) == 0, "a fresh field has nothing to rebuild");
+
+  // Paint a cell: the field records it AND marks its chunk stale.
+  field_add_cell(f, 3, 3);
+  assert(dirty_count(f) == 1, "the edit marked exactly its own chunk");
+  assert(chunk_is_dirty(f, 3, 3), "and the chunk holding the edit is the dirty one");
+
+  // Ask for the work-list, then rebuild each chunk's mesh from it.
+  work = collect_dirty_inputs(f, 1);
+  assert(len(work) == 1, "one chunk to rebuild");
+  for ci in work {
+    assert(len(ci.cell_ixs) == 3, "the rebuild sees every cell that chunk owns");
+    assert(len(ci.halo_ixs) == 0, "no neighbouring chunk to read here");
+  }
+
+  // Only now, having rebuilt, clear — the next edit starts from a clean slate.
+  clear_dirty(f);
+  assert(dirty_count(f) == 0, "cleared after the rebuild");
+  assert(len(collect_dirty_inputs(f, 1)) == 0, "nothing stale → an empty work-list");
+}
+
+// @GRM-002 — a ChunkInput's two cell lists mean OPPOSITE things.  `cell_ixs` are the
+// cells this chunk OWNS: emit geometry for these.  `halo_ixs` are cells in OTHER
+// chunks within halo_k of the border: READ them as context (a rule that looks at its
+// neighbours needs them) but never emit for them — the chunk that owns them will,
+// and emitting twice is how a border grows doubled geometry.  The partition below is
+// the invariant that makes that safe: across all inputs, every cell is owned once.
+fn test_owned_versus_halo() {
+  xs: vector<integer> = [0, 7, 8, 15];   // x=7 and x=8 are adjacent ACROSS the border
+  ys: vector<integer> = [0, 0, 0, 0];
+  f = field_new(0, xs, ys, 3, 2);
+  inputs = all_inputs(f, 2);
+  assert(len(inputs) == 2, "two chunks hold cells");
+
+  // Emit-once: every cell is owned by exactly one chunk.
+  for ix in 0..4 {
+    assert(wex_owner_count(inputs, ix) == 1, "each cell is emitted by exactly one chunk");
+  }
+
+  // Read-only: a halo cell belongs to a DIFFERENT chunk's owned list.
+  for ci in inputs {
+    assert(len(ci.halo_ixs) == 1, "each chunk sees one cell across the border");
+    for h in ci.halo_ixs {
+      assert(!wex_has(ci.cell_ixs, h), "a halo cell is never one of your own");
+      assert(wex_owner_count(inputs, h) == 1, "it is owned — and emitted — elsewhere");
+    }
+  }
+}
+
+// @GRM-003 — cell indices are STABLE identities, and a removal does not renumber
+// them.  Consumers keep their own per-cell arrays (colour, height, birth time) keyed
+// by the index the field handed out, so `field_remove_cell` deliberately leaves the
+// coord slot in place rather than compacting `xs`/`ys`: every index still in use
+// keeps meaning the same cell.  The removed coord is simply gone from the spatial
+// index (`idx_at` → -1), and re-painting it allocates a FRESH index — never the old
+// one — so a stale reference can't be resurrected as a different cell.
+fn test_indices_survive_a_removal() {
+  xs: vector<integer> = [1, 2, 3];
+  ys: vector<integer> = [3, 3, 3];
+  f = field_new(0, xs, ys, 3, 1);
+  assert(idx_at(f.cidx, 2, 3) == 1, "the middle cell is index 1");
+  assert(idx_at(f.cidx, 3, 3) == 2, "the last cell is index 2");
+
+  field_remove_cell(f, 2, 3);
+  assert(idx_at(f.cidx, 2, 3) == 0 - 1, "the erased coord is gone from the index");
+  assert(idx_at(f.cidx, 3, 3) == 2, "every OTHER cell keeps the index it had");
+  assert(len(f.xs) == 3, "the coord array is not compacted — that is what keeps them stable");
+
+  // Re-paint the same coord: a new cell, with a new identity.
+  field_add_cell(f, 2, 3);
+  assert(idx_at(f.cidx, 2, 3) == 3, "a repaint is a NEW index, not the recycled 1");
+}
+
+// @GRM-004 — a dirty GROUP lists all its populated chunks, not just the dirty ones.
+// The group is the upload/draw unit (one VBO), the chunk is the rebuild unit, and
+// they are deliberately decoupled: to re-upload a group you must reassemble the whole
+// VBO, which means concatenating the meshes of EVERY chunk in it.  So `chunk_cks`
+// hands back the clean neighbours too — the consumer copies their CACHED meshes
+// (`seg_mesh_append`) and only re-runs the rule for the chunks that are actually
+// dirty.  Reading this list as "the chunks to rebuild" rebuilds the whole group.
+fn test_dirty_group_lists_clean_members() {
+  xs: vector<integer> = [3, 11];         // chunk(0,0) and chunk(1,0), one group at G=2
+  ys: vector<integer> = [3, 3];
+  f = field_new(0, xs, ys, 3, 1);
+  field_mark_dirty(f, 3, 3);             // only chunk(0,0) goes stale
+  assert(dirty_count(f) == 1, "one dirty chunk");
+  assert(!chunk_is_dirty(f, 11, 3), "its group-mate is clean");
+
+  groups = collect_dirty_groups(f, 2);
+  assert(len(groups) == 1, "one group to re-upload");
+  for g in groups {
+    assert(len(g.chunk_cks) == 2, "BOTH populated chunks are listed, not just the dirty one");
+    assert(wex_has(g.chunk_cks, enc_coord(0, 0)), "the dirty chunk — re-run the rule");
+    assert(wex_has(g.chunk_cks, enc_coord(1, 0)), "the clean chunk — copy its cached mesh");
+  }
+}
+
+// @GRM-005 — walking the grid takes step_x and step_y TOGETHER, and a miss is -1.
+// These are offset coordinates over a hex grid, so a step along axis `d` depends on
+// the row's parity: `step_x` needs BOTH coords to compute the new x (its y argument
+// is not decoration), while `step_y` ignores x entirely.  Call them as a pair on the
+// SAME (x, y) — mixing a stepped x with an unstepped y walks off the axis.  The
+// lookup then answers a cell INDEX or -1; it is not nullable, so guard it with
+// `>= 0` and never with a null test.
+fn test_axis_walk_and_miss() {
+  xs: vector<integer> = [1, 2, 3];
+  ys: vector<integer> = [3, 3, 3];
+  f = field_new(0, xs, ys, 3, 1);
+
+  // One step east (axis 0) from the first cell lands on the second.
+  nx = step_x(1, 3, 0, 1);
+  ny = step_y(1, 3, 0, 1);
+  assert(idx_at(f.cidx, nx, ny) == 1, "the axis-0 neighbour of (1,3) is cell 1");
+
+  // A coord with no cell answers the -1 sentinel, not null.
+  assert(idx_at(f.cidx, 9, 9) == 0 - 1, "a miss is -1 — test it with >= 0");
+
+  // The index-backed neighbour count walks all six axes for you.
+  assert(nbr_count_idx(f.cidx, 2, 3) == 2, "the middle of a three-cell row has two neighbours");
+  assert(nbr_count_idx(f.cidx, 1, 3) == 1, "the end of the row has one");
+}

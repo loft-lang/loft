@@ -1,7 +1,11 @@
 [package]
 name    = "time"
-version = "0.2.1"
-loft    = ">=0.8"
+version = "0.3.2"
+loft    = ">=2026.7.2"
+repository = "loft-libs-game"
+description = "Date/time arithmetic on millisecond-since-epoch integers — proleptic Gregorian, same model as JavaScript Date.  Pure-loft; identical results on interp, --native, WASM."
 
+api_compatible_with  = "0.3.0"   # oldest own release this is a drop-in for
+data_compatible_with = "0.3.0"   # oldest own release whose stored data this reads
 [library]
 entry = "src/time.loft"

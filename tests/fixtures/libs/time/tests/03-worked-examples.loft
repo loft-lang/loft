@@ -1,0 +1,242 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// One test per non-obvious contract, and each one is that contract's
+// worked EXAMPLE.
+//
+// ⚠⚠ **The pair is the deliverable.**  A snippet in a doc comment rots
+// silently — nothing compiles it, so it goes stale at the first
+// signature change and the reader finds out.  A test nobody links to is
+// correct and invisible.  So every function below carries an
+// `// Example: @TIM-0NN` line pointing here, and every tag here is
+// reachable from the functions it demonstrates.
+//
+// ⚠ These are examples FIRST and assertions second: each is written the
+// way a caller would actually write it, not the way that would be
+// shortest to assert on.  `01-basics` and `02-datetime` already pin the
+// arithmetic; what these pin is the shape of a CORRECT CALL.
+//
+// Why this library owes them: **a time is a bare `integer`**, so every
+// instant, every duration, every bucket key and every day count has the
+// same type as every other number in the program.  The compiler cannot
+// tell milliseconds from days, an instant from an offset-shifted one, or
+// a calendar-year number from an ISO-year one — and each of those
+// confusions is a well-typed expression that answers something wrong.
+use time::*;
+
+// A deadline three days out, and the reminder that goes with it.
+//
+// ⚠⚠ **The unit is MILLISECONDS and nothing at the call site says so.**
+// `deadline - 3` is a well-typed integer expression that every reader of
+// the line reads as "three days"; it moves the reminder three
+// thousandths of a second.
+// @TIM-001 — a time is an integer of milliseconds, and a day has a door
+fn test_a_reminder_three_days_before_a_deadline() {
+    rd_deadline = time::parse("2026-05-25 09:00:00") ?? 0;
+
+    // The day-count reflex, spelled the way it types:
+    rd_naive = rd_deadline - 3;
+    assert(rd_deadline - rd_naive == 3, "the reminder moved three MILLISECONDS");
+    // ⚠ And it does not even look like a no-op — a minute-precision
+    // format shows 08:59, so the display moves while the instant does not.
+    assert(time::format_datetime(rd_naive) == "2026-05-25 08:59",
+           "three days early landed on {time::format_datetime(rd_naive)}");
+
+    // The door that knows what a day is:
+    rd_remind = time::add_days(rd_deadline, -3);
+    assert(time::format_datetime(rd_remind) == "2026-05-22 09:00",
+           "add_days(-3) landed on {time::format_datetime(rd_remind)}");
+
+    // ⚠ The typed door puts the unit in the TYPE.  `rd_dt - 3` does not
+    // compile at all — only a Duration steps a DateTime — so the mistake
+    // above is unspellable here.  Same instants, bridged by `as`.
+    rd_dt = time::datetime(2026, 5, 25, 9, 0, 0);
+    assert((rd_dt as integer) == rd_deadline, "the two doors are the same instant");
+    assert(rd_dt.minus(time::days(3)) == time::datetime(2026, 5, 22, 9, 0, 0),
+           "minus(days(3)) is the typed spelling of add_days(-3)");
+
+    // ⚠ And a DIFFERENCE is milliseconds too, not days: the typed door
+    // answers a Duration, which has to be asked for its unit.
+    rd_span = rd_dt - (rd_remind as DateTime);
+    assert(rd_span.total_days() == 3, "span reads {rd_span.total_days()} days");
+    assert(rd_span.total_millis() == 259200000, "span in ms {rd_span.total_millis()}");
+}
+
+// Is this string the user typed a real date?
+//
+// ⚠⚠ **`parse` answers null when the text is not SHAPED like a date.  It
+// never answers null because the date is not real.**  The documented
+// `!result` check is a syntax check; out-of-range fields roll over into a
+// neighbouring month or year and come back non-null.
+// @TIM-002 — the null means "not shaped like a date", never "not a date"
+fn test_a_date_the_user_typed() {
+    // The shape check works, and this is what it catches:
+    assert(!time::parse("next tuesday"), "prose parses to null");
+    assert(!time::parse("2026-05"), "a truncated date parses to null");
+
+    // ⚠ Month 13, day 45.  The null check PASSES and the answer is a real
+    // instant nine months away.
+    dt_typo = time::parse("2026-13-45");
+    assert(dt_typo, "an impossible date is not null");
+    assert(time::format_date(dt_typo ?? 0) == "2027-02-14",
+           "2026-13-45 became {time::format_date(dt_typo ?? 0)}");
+
+    // The everyday shape of it — a February 30th from a date picker:
+    assert(time::format_date(time::parse("2026-02-30") ?? 0) == "2026-03-02",
+           "2026-02-30 became {time::format_date(time::parse(\"2026-02-30\") ?? 0)}");
+
+    // ⚠ The `as DateTime` cast has no failure channel at ALL: prose
+    // becomes the epoch, which is a perfectly ordinary DateTime that
+    // compares, formats and stores like any other.
+    assert(("next tuesday" as DateTime) == time::datetime(1970, 1, 1, 0, 0, 0),
+           "the total cast turns prose into the epoch");
+
+    // `combine` reads a clock the same way — shape only:
+    dt_day = time::from_ymd(2026, 5, 25);
+    assert(!time::combine(dt_day, "xx"), "a mis-shaped clock is null");
+    assert(time::format_datetime(time::combine(dt_day, "99:99") ?? 0) == "2026-05-29 04:39",
+           "99:99 landed on {time::format_datetime(time::combine(dt_day, \"99:99\") ?? 0)}");
+
+    // So the check that holds is: parse it, then ask the ANSWER what date
+    // it is.  A date that rolled over does not spell itself back.
+    assert(is_real_date("2026-05-25"), "a real date");
+    assert(!is_real_date("2026-13-45"), "month 13 rejected");
+    assert(!is_real_date("2026-02-30"), "February 30th rejected");
+    assert(!is_real_date("next tuesday"), "prose rejected");
+}
+
+// The round-trip check the example above recommends: a "YYYY-MM-DD" that survives
+// `parse` -> `format_date` unchanged is a date the calendar really has.
+fn is_real_date(rd_s: text) -> boolean {
+    rd_ms = time::parse(rd_s);
+    if !rd_ms { return false; }
+    time::format_date(rd_ms ?? 0) == rd_s
+}
+
+// How long ago was this — for a streak counter, and for a timeout.
+//
+// ⚠⚠ **`days_between` counts MIDNIGHTS CROSSED, not elapsed time**, so a
+// longer span can answer a smaller number of days.  That is what a
+// streak, a "day 3 of", or a billing day wants — and it is never a
+// division of elapsed milliseconds.
+// @TIM-003 — one difference counts calendar days, the other counts time
+fn test_how_long_ago_was_this() {
+    // 26 hours, across two midnights:
+    db_a = time::parse("2026-05-25 23:00:00") ?? 0;
+    db_b = time::parse("2026-05-27 01:00:00") ?? 0;
+    assert(time::days_between(db_a, db_b) == 2,
+           "26 hours read {time::days_between(db_a, db_b)} days");
+
+    // 46 hours — nearly twice as long — across one:
+    db_c = time::parse("2026-05-25 01:00:00") ?? 0;
+    db_d = time::parse("2026-05-26 23:00:00") ?? 0;
+    assert(time::days_between(db_c, db_d) == 1,
+           "46 hours read {time::days_between(db_c, db_d)} days");
+
+    // ⚠ For elapsed time, `seconds_between` — which TRUNCATES TOWARD
+    // ZERO, so a sub-second remainder is dropped in whichever direction
+    // it points.  A backwards span of 1.5 s is -1, not -2.
+    db_t = time::parse("2026-01-01 00:00:00") ?? 0;
+    assert(time::seconds_between(db_t, db_t + 1500) == 1,
+           "forwards {time::seconds_between(db_t, db_t + 1500)}");
+    assert(time::seconds_between(db_t + 1500, db_t) == -1,
+           "backwards {time::seconds_between(db_t + 1500, db_t)}");
+
+    // A 24-hour timeout is elapsed time, so it is the seconds door:
+    assert(time::seconds_between(db_c, db_d) / 86400 == 1,
+           "46 elapsed hours is one whole 24-hour span");
+}
+
+// Group a user's events into THEIR days, at a fixed UTC+2.
+//
+// ⚠⚠ **`to_local` moves the INSTANT and `local_day` answers a bucket
+// KEY.**  Both are plain integers that format like times, so either can
+// be compared against a real timestamp — and that comparison is wrong by
+// the offset every time.
+// @TIM-004 — a fixed offset shifts the clock, it does not carry a zone
+fn test_bucketing_a_users_local_day() {
+    ld_evening = time::parse("2026-05-25 23:30:00") ?? 0;   // UTC
+    ld_night   = time::parse("2026-05-26 00:30:00") ?? 0;   // UTC, one hour later
+
+    // ⚠ The shifted value is two hours in the FUTURE as an instant.  It
+    // reads as the user's wall clock and must never be compared with, or
+    // subtracted from, an unshifted time.
+    assert(time::to_local(ld_evening, 120) - ld_evening == 2 * 3600 * 1000,
+           "to_local is a shift of the instant");
+    assert(time::format_datetime(time::to_local(ld_evening, 120)) == "2026-05-26 01:30",
+           "the user's wall clock reads {time::format_datetime(time::to_local(ld_evening, 120))}");
+
+    // Both events belong to the same LOCAL day, and the key says so:
+    ld_key_e = time::local_day(ld_evening, 120);
+    ld_key_n = time::local_day(ld_night, 120);
+    assert(ld_key_e == ld_key_n, "one local evening, one bucket");
+    assert(time::format_date(ld_key_e) == "2026-05-26",
+           "local day {time::format_date(ld_key_e)}");
+
+    // ...whereas bucketing on UTC midnight splits the user's evening in two:
+    assert(time::start_of_day(ld_evening) != time::start_of_day(ld_night),
+           "start_of_day is a UTC bucket, not the user's");
+
+    // ⚠ The key is NOT the instant that local midnight happened — that is
+    // two hours earlier in UTC.  Group with it; never subtract from it.
+    assert(time::format_iso(ld_key_e) == "2026-05-26T00:00:00Z",
+           "the key wears a Z it does not mean");
+    assert(ld_key_e - 120 * 60000 == (time::parse("2026-05-25 22:00:00") ?? 0),
+           "local midnight really happened at 22:00 UTC");
+
+    // There is no zone database and no daylight saving here: the offset
+    // is whatever the caller passes, for every date it is passed with.
+    assert(time::local_day(ld_evening, 0) == time::from_ymd(2026, 5, 25),
+           "offset 0 is the UTC day");
+}
+
+// The key for a weekly report.
+//
+// ⚠⚠ **An ISO week number is only meaningful beside `iso_year`.**  A week
+// straddling New Year belongs to one ISO year and contains dates whose
+// calendar `year()` is the other, so pairing `year()` with `iso_week()`
+// invents a week and splits a real one down the middle.
+// @TIM-005 — an ISO week number needs its ISO year, never the calendar one
+fn test_a_weekly_report_key() {
+    iw_fri = time::parse("2021-01-01") ?? 0;   // a Friday
+    iw_mon = time::parse("2020-12-28") ?? 0;   // the Monday of that same week
+
+    assert(time::weekday(iw_mon) == 0, "weeks start on Monday (0)");
+    assert(time::start_of_week(iw_fri) == iw_mon, "same week");
+
+    // ⚠ Same week, different calendar years:
+    assert(time::year(iw_mon) == 2020 && time::year(iw_fri) == 2021, "calendar years differ");
+    assert(time::iso_year(iw_mon) == 2020 && time::iso_year(iw_fri) == 2020, "ISO year is 2020 for both");
+    assert(time::iso_week(iw_mon) == 53 && time::iso_week(iw_fri) == 53, "ISO week is 53 for both");
+
+    // The correct key groups them; the calendar-year key splits them and
+    // invents a 2021-W53 that the ISO year 2021 does not have (it has 52).
+    assert(iso_key(iw_mon) == iso_key(iw_fri), "iso_key groups the week");
+    assert(naive_key(iw_mon) != naive_key(iw_fri), "year()+iso_week() splits it");
+    assert(naive_key(iw_fri) == "2021-W53", "the invented key is {naive_key(iw_fri)}");
+    assert(time::iso_week(time::parse("2021-12-31") ?? 0) == 52,
+           "ISO 2021 ends at week {time::iso_week(time::parse(\"2021-12-31\") ?? 0)}");
+}
+
+// The report key the example above recommends.
+fn iso_key(ik_t: integer) -> text {
+    ik_y = time::iso_year(ik_t);
+    ik_w = time::iso_week(ik_t);
+    "{ik_y}-W{ik_w:02}"
+}
+
+// The one it warns about.
+fn naive_key(nk_t: integer) -> text {
+    nk_y = time::year(nk_t);
+    nk_w = time::iso_week(nk_t);
+    "{nk_y}-W{nk_w:02}"
+}
+
+fn main() {
+    test_a_reminder_three_days_before_a_deadline();
+    test_a_date_the_user_typed();
+    test_how_long_ago_was_this();
+    test_bucketing_a_users_local_day();
+    test_a_weekly_report_key();
+    println("time worked examples passed");
+}

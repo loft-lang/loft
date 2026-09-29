@@ -1,0 +1,224 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @NAME: Getting Started
+// @TITLE: Dates and times as epoch milliseconds, and the value types over them.
+//
+// `time` does calendar arithmetic on a point in time held as a plain `integer`:
+// milliseconds since the Unix epoch, the same unit `now()` answers. All of it is
+// UTC and proleptic Gregorian, computed in pure loft, so the interpreter,
+// `--native` and WebAssembly give identical results — the same model as
+// JavaScript's `Date`.
+//
+// It is not a timezone library. There is no tz database and no daylight-saving
+// handling; local time is a FIXED offset in minutes that you supply. It is not a
+// clock either — `now()` is in the language, and this package is what you do with
+// what it gives you. And it is not a stopwatch: a `Duration` here is a span
+// between two calendar instants, not a frame timer.
+//
+// Install it once, then import it:
+//
+//   loft install time
+//
+// ## The smallest thing that does something
+//
+// Parse an ISO date, read a field off it, print it back:
+use time::*;
+
+fn main() {
+  d = time::parse("2026-05-25") ?? 0;
+  println("{time::format_date(d)} is a {time::weekday_name(d)}");
+  assert(time::year(d) == 2026, "year");
+  assert(time::weekday_name(d) == "Mon", "weekday name");
+
+  // Every section below is a function and `main` calls each one. A section `main`
+  // does not call still COMPILES — so a renamed API would still be caught while
+  // its assertions, the half that checks the example is RIGHT rather than merely
+  // spelled correctly, silently never run.
+  fields_and_formats();
+  arithmetic();
+  weeks_and_local_days();
+  value_types();
+  the_surprise();
+}
+
+// That prints:
+//
+//     2026-05-25 is a Mon
+//
+// ## Two layers, and which one to reach for
+//
+// The `integer` layer came first and is still current: every function takes and
+// answers epoch milliseconds. It is the right one when the value is already an
+// integer — straight out of `now()`, out of a save file, out of a database column.
+//
+// The `DateTime` / `Duration` layer is a pair of `value struct`s over that same
+// integer. They cost nothing (a `vector<DateTime>` is the size of a
+// `vector<integer>`) and they are a DISTINCT type, which is the point: `dt + 5` is
+// a compile error, and only `dt + hours(2)` steps a time. Reach for it when the
+// value travels — through your own structs and function signatures — because that
+// is where an unlabelled `integer` gets added to the wrong thing.
+//
+// ## Reading fields, and printing them
+//
+// `parse` reads "YYYY-MM-DD", optionally with a time. It answers `integer?` —
+// nullable, because the text may not be readable — while every accessor takes a
+// non-null `integer`, so discharge it once at the binding with `?? 0` rather than
+// at each call. Accessors are UTC.
+// `weekday` is **0 = Monday** through 6 = Sunday — the ISO origin, not the
+// Sunday-first one JavaScript uses, which is the one place this package's
+// "same model as `Date`" stops being true.
+
+fn fields_and_formats() {
+  d = time::parse("2026-05-25") ?? 0;
+  assert(time::month(d) == 5 && time::day(d) == 25, "month and day");
+  assert(time::weekday(d) == 0, "2026-05-25 is a Monday, and Monday is 0");
+  assert(time::month_name(d) == "May", "month name");
+
+  t = time::parse("2026-05-25 14:30:07") ?? 0;
+  assert(time::hour(t) == 14 && time::minute(t) == 30 && time::second(t) == 7, "time fields");
+  assert(time::parse("2026-05-25T14:30:07Z") == t, "the ISO T/Z form is the same instant");
+
+  // Malformed input parses to null, so it is testable with `!`.
+  assert(!time::parse("not-a-date"), "garbage is null");
+
+  // Five formatters, each answering a fixed shape.
+  assert(time::format_date(t) == "2026-05-25", "format_date");
+  assert(time::format_time(t) == "14:30", "format_time");
+  assert(time::format_seconds(t) == "14:30:07", "format_seconds");
+  assert(time::format_datetime(t) == "2026-05-25 14:30", "format_datetime");
+  assert(time::format_iso(t) == "2026-05-25T14:30:07Z", "format_iso");
+}
+
+// ## Stepping and measuring
+//
+// Stepping never desynchronises across a leap year or a month boundary, because
+// the calendar conversion is exact rather than an approximation in days.
+
+fn arithmetic() {
+  jan1 = time::parse("2026-01-01") ?? 0;
+  assert(time::format_date(time::add_weeks(jan1, 1)) == "2026-01-08", "add_weeks");
+  assert(time::format_date(time::add_days(jan1, 365)) == "2027-01-01", "add_days");
+
+  feb28 = time::parse("2024-02-28") ?? 0;
+  assert(time::format_date(time::add_days(feb28, 1)) == "2024-02-29", "into a leap day");
+
+  dec31 = time::parse("2026-12-31") ?? 0;
+  assert(time::days_between(jan1, dec31) == 364, "days_between");
+
+  hourly = time::seconds_between(time::parse("2026-01-01 00:00:00") ?? 0,
+                                 time::parse("2026-01-01 01:00:00") ?? 0);
+  assert(hourly == 3600, "seconds_between");
+}
+
+// ## Week boundaries, ISO weeks, and a local day
+//
+// `start_of_week` snaps back to Monday 00:00. ISO week numbering has its own year:
+// the first days of January can belong to the last week of the PREVIOUS ISO year,
+// so `iso_year` is not `year` and reading one for the other is a once-a-year bug.
+//
+// A local day is a fixed offset in minutes — enough to bucket events by the day a
+// player saw them, and deliberately not enough to pretend it knows about DST.
+
+fn weeks_and_local_days() {
+  wed = time::parse("2026-05-27") ?? 0;
+  assert(time::format_date(time::start_of_week(wed)) == "2026-05-25", "Monday of that week");
+
+  // 2026-01-01 is a Thursday, so it is week 1 of ISO year 2026.
+  assert(time::iso_year(time::parse("2026-01-01") ?? 0) == 2026, "iso_year");
+  assert(time::iso_week(time::parse("2026-01-01") ?? 0) == 1, "iso_week");
+
+  // 2021-01-01 is a Friday, so it is still week 53 of ISO year 2020.
+  jan1_2021 = time::parse("2021-01-01") ?? 0;
+  assert(time::year(jan1_2021) == 2021, "the calendar year is 2021");
+  assert(time::iso_year(jan1_2021) == 2020, "but the ISO year is 2020");
+  assert(time::iso_week(jan1_2021) == 53, "week 53");
+
+  // 23:30 UTC at +120 minutes is 01:30 on the next local day.  `parse` answers
+  // `integer?`, and `to_local` takes a non-null `integer`, so discharge it once
+  // with `?? 0` rather than at each call.
+  t = time::parse("2026-05-25 23:30:00") ?? 0;
+  assert(time::format_datetime(time::to_local(t, 120)) == "2026-05-26 01:30", "to_local");
+  assert(time::format_date(time::local_day(t, 120)) == "2026-05-26", "local_day");
+}
+
+// ## The value types
+//
+// `date` and `datetime` build a `DateTime`; the `Duration` constructors are named
+// for their unit. Subtraction of two times answers a `Duration`, adding one steps
+// a time, and all six comparisons work. Formatting goes through a spec after the
+// colon: `{dt}` · `{dt:date}` · `{dt:time}` · `{dt:seconds}` · `{dt:iso}` ·
+// `{dt:wday}` · `{dt:month}`, and a `Duration` renders as `[-]H:MM:SS`.
+
+fn value_types() {
+  start = time::datetime(2026, 7, 8, 12, 0, 0);
+  finish = time::datetime(2026, 7, 8, 13, 30, 0);
+
+  span = finish - start;
+  assert(span.total_minutes() == 90, "a difference is a Duration");
+  assert("{span}" == "1:30:00", "and renders as H:MM:SS");
+
+  later = start + time::hours(2);
+  assert(later.hour() == 14, "typed stepping");
+  assert(start < finish && finish > start && start != finish, "the comparisons");
+
+  assert("{start:date}" == "2026-07-08", "the date spec");
+  assert("{start:iso}" == "2026-07-08T12:00:00Z", "the iso spec");
+  assert("{start:wday}" == "Wed", "the weekday spec");
+  assert("{start}" == "2026-07-08 12:00", "and the default");
+
+  // They are zero-cost, so a DateTime is an ordinary vector element.
+  schedule = [start, later, finish];
+  assert(len(schedule) == 3, "a vector<DateTime> costs what a vector<integer> costs");
+}
+
+// ## The one that surprises people
+//
+// **`parse` does not validate a date. It normalises one.** Month 13 is January of
+// the next year, day 45 of January is the 14th of February, and the answer comes
+// back NON-NULL — so a null check tells you the text was readable, not that the
+// date was real. `2026-13-45` is a perfectly good way to spell 2027-02-14 here,
+// which is exactly what you do not want from a user-typed field.
+//
+// The second half compounds it. A `value struct` has no null, so
+// `"..." as DateTime` cannot both answer a `DateTime` and report failure — on text
+// it cannot read at all it answers the EPOCH. Silently 1970-01-01, and every
+// comparison downstream computed against it.
+//
+// So the two failure modes are different and neither one raises: unreadable text
+// becomes 1970 through the cast, and readable nonsense becomes a real date that is
+// not the one anybody meant. Range-check the fields yourself when they came from
+// outside, and keep the null check at the integer layer for the rest.
+
+fn the_surprise() {
+  // Readable nonsense: not null, and not the date anyone typed.
+  rolled = time::parse("2026-13-45");
+  assert(rolled, "out-of-range fields do NOT parse to null");
+  assert(time::format_date(rolled ?? 0) == "2027-02-14",
+         "month 13 rolls into 2027, then day 45 of January rolls into February");
+
+  // Unreadable text: null at the integer layer...
+  assert(!time::parse("not-a-date"), "unreadable text is null here");
+  // ...and the epoch through the cast, because a value struct has nowhere to put
+  // the failure.
+  lost = "not-a-date" as DateTime;
+  assert(lost.year() == 1970, "the cast answers the epoch instead of failing");
+
+  // The shape that catches both: check for null, then check the fields you were
+  // given actually came back.
+  text_in = "2026-13-45";
+  ms = time::parse(text_in);
+  ok = if !ms { false } else { time::month(ms ?? 0) == 13 };
+  assert(!ok, "13 never survives as a month, so the round-trip check rejects it");
+
+  // On input that is genuinely a date, the ergonomic path is the ergonomic path.
+  good = "2026-07-08T12:00:00Z" as DateTime;
+  assert(good.year() == 2026 && good.month() == 7 && good.day() == 8, "a good date converts directly");
+}
+
+// ## Where to go next
+//
+// The API reference lists every signature with its contract. The package's own
+// tests are the best-explained calls in it — `tests/01-basics.loft` walks the
+// integer-epoch layer across a whole year, its leap-year boundaries and several
+// local offsets, and `tests/02-datetime.loft` does the same for the value types,
+// with every golden hand-computed and checked identical on both backends.

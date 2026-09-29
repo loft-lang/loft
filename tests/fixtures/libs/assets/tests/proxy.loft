@@ -8,8 +8,8 @@
 // hit but never miss one), and its OVERSHOOT must be bounded (or a screen-sized
 // box would satisfy containment perfectly and be useless).  Every test below is
 // one of those two.
-use assets;
-use shapes;
+use assets::*;
+use shapes::*;
 
 // A blank RGBA page, `w * h` texels, every one fully transparent.
 fn blank_page(bw: integer, bh: integer) -> vector<u8> {
@@ -21,14 +21,16 @@ fn blank_page(bw: integer, bh: integer) -> vector<u8> {
   bp
 }
 
-// Paint one texel opaque (or to a given alpha).
+// Paint one texel opaque (or to a given alpha).  The alpha is a `u8`, so its range is
+// the parameter's type and not a cast at the store: `pu_a as u8?` put a nullable into a
+// `vector<u8>`, where an alpha that did not fit became 0 in silence (loft#1660).
 fn put(pu_px: &vector<u8>, pu_stride: integer, pu_x: integer, pu_y: integer,
-       pu_a: integer) {
+       pu_a: u8) {
   pu_i = (pu_y * pu_stride + pu_x) * 4;
-  pu_px[pu_i] = 200 as u8?;
-  pu_px[pu_i + 1] = 100 as u8?;
-  pu_px[pu_i + 2] = 50 as u8?;
-  pu_px[pu_i + 3] = pu_a as u8?;
+  pu_px[pu_i] = 200 as u8;
+  pu_px[pu_i + 1] = 100 as u8;
+  pu_px[pu_i + 2] = 50 as u8;
+  pu_px[pu_i + 3] = pu_a;
 }
 
 fn a_cell(ac_w: integer, ac_h: integer) -> assets::Cell {

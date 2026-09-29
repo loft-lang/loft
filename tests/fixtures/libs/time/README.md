@@ -48,9 +48,12 @@ s = "{d1:date}";   // 2026-07-08   ·  "{d1:iso}" · "{d1:time}" · "{d1}" · "{
   `{dt:wday}` `{dt:month}` · `{dur}` → `[-]H:MM:SS`.
 - **Nullability**: a `value struct` has no null, so a fallible parse cannot
   return `DateTime` *and* signal failure.  Keep failure at the integer level —
-  `parse(s)` returns null on bad input — then wrap: `ms = parse(s); if !ms
-  { … } else { dt = ms as DateTime }`.  `"…" as DateTime` is a total best-effort
-  parse for the path where a bad date need not be caught.
+  `parse(s)` is null when the text is not *shaped* like a date — then wrap:
+  `ms = parse(s); if !ms { … } else { dt = ms as DateTime }`.  `"…" as DateTime`
+  is a total best-effort parse for the path where a bad date need not be caught.
+  ⚠ Neither door rejects an *impossible* date: out-of-range fields roll over
+  (`"2026-02-30"` → 2026-03-02), so a form that must reject one round-trips it
+  through `format_date` — see `@TIM-002` below.
 
 ## The integer-epoch API (0.1.0, still current)
 
@@ -62,6 +65,21 @@ s = "{d1:date}";   // 2026-07-08   ·  "{d1:iso}" · "{d1:time}" · "{d1}" · "{
 - **Boundaries**: `start_of_day`, `start_of_week` (Monday).
 - **Local time**: fixed-offset (minutes) — `to_local`, `local_day`,
   `today(offset_minutes)`.  No DST, no tz database.
+
+## The five traps a signature does not carry
+
+A time here is a bare `integer`, so the compiler cannot tell milliseconds from
+days, an instant from an offset-shifted one, or a calendar year from an ISO
+one.  Each row below links to a test that demonstrates the correct call and is
+run by CI — the code is the documentation, so it cannot go stale.
+
+| the question | the trap | worked example |
+|---|---|---|
+| stepping a time | the unit is **milliseconds**: `t - 3` moves three thousandths of a second, not three days.  `add_days` / `add_weeks` / `add_seconds` are the unit doors; `DateTime` + `Duration` puts the unit in the type | [`@TIM-001`](tests/03-worked-examples.loft) |
+| reading a date a user typed | `parse`'s null means *not shaped like a date*, never *not a real date* — `"2026-13-45"` answers 2027-02-14, non-null, and `as DateTime` turns prose into the epoch | [`@TIM-002`](tests/03-worked-examples.loft) |
+| how long ago was this | `days_between` counts **midnights crossed**, so a 26-hour span reads 2 where a 46-hour span reads 1; `seconds_between` is elapsed time and truncates toward zero | [`@TIM-003`](tests/03-worked-examples.loft) |
+| a user's local day | `to_local` shifts the **instant** and `local_day` answers a bucket **key** — neither may be compared with a real timestamp | [`@TIM-004`](tests/03-worked-examples.loft) |
+| a weekly report key | an ISO week number is only meaningful beside `iso_year`; pairing it with `year()` invents `2021-W53` and splits a real week in half | [`@TIM-005`](tests/03-worked-examples.loft) |
 
 ## Why this package exists
 
@@ -86,5 +104,7 @@ extraction across the year, leap-year boundaries, week math, ISO week
 numbering, local-day bucketing under several offsets).
 `tests/02-datetime.loft` covers the `DateTime` / `Duration` value types
 (construction, fields, operators, typed arithmetic, formatting, conversions,
-and zero-cost use as vector elements).  All goldens are hand-computed and
+and zero-cost use as vector elements).  `tests/03-worked-examples.loft` is the
+five worked examples in the table above — one test per contract, each written
+the way a caller would write the call.  All goldens are hand-computed and
 verified identical on `--interpret` and `--native`.

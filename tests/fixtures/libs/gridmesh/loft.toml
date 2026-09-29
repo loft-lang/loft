@@ -1,7 +1,9 @@
 [package]
 name    = "gridmesh"
-version = "0.1.1"
-loft    = ">=0.8"
+version = "0.2.3"
+loft    = ">=2026.7.2"
 
+api_compatible_with  = "0.2.0"   # oldest own release this is a drop-in for
+data_compatible_with = "0.2.0"   # oldest own release whose stored data this reads
 [library]
 entry = "src/gridmesh.loft"

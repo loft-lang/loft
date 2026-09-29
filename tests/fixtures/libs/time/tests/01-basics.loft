@@ -4,10 +4,10 @@
 // Basic date/time operation tests — run on interpreter, --native, and
 // wasm.  All goldens are hand-computed against the proleptic Gregorian
 // calendar so they pin cross-backend parity.
-use time;
+use time::*;
 
 fn test_parse_and_fields() {
-    t = time::parse("2026-05-25");
+    t = (time::parse("2026-05-25") ?? 0);
     assert(time::year(t) == 2026, "year {time::year(t)}");
     assert(time::month(t) == 5, "month {time::month(t)}");
     assert(time::day(t) == 25, "day {time::day(t)}");
@@ -18,11 +18,11 @@ fn test_parse_and_fields() {
 }
 
 fn test_parse_datetime() {
-    t = time::parse("2026-05-25 14:30:07");
+    t = (time::parse("2026-05-25 14:30:07") ?? 0);
     assert(time::hour(t) == 14, "hour {time::hour(t)}");
     assert(time::minute(t) == 30, "minute {time::minute(t)}");
     assert(time::second(t) == 7, "second {time::second(t)}");
-    iso = time::parse("2026-05-25T14:30:07Z");
+    iso = (time::parse("2026-05-25T14:30:07Z") ?? 0);
     assert(iso == t, "T/Z form equals space form");
 }
 
@@ -36,58 +36,58 @@ fn test_parse_failure() {
 fn test_roundtrip_format() {
     t = time::from_ymd(1999, 12, 31);
     assert(time::format_date(t) == "1999-12-31", "fmt {time::format_date(t)}");
-    dt = time::parse("2000-01-01 00:00:00");
+    dt = (time::parse("2000-01-01 00:00:00") ?? 0);
     assert(time::format_iso(dt) == "2000-01-01T00:00:00Z", "iso {time::format_iso(dt)}");
     assert(time::format_datetime(dt) == "2000-01-01 00:00", "dtfmt {time::format_datetime(dt)}");
 }
 
 fn test_arithmetic() {
-    t = time::parse("2026-01-01");
+    t = (time::parse("2026-01-01") ?? 0);
     wk = time::add_weeks(t, 1);
     assert(time::format_date(wk) == "2026-01-08", "add_weeks {time::format_date(wk)}");
     dd = time::add_days(t, 365);
     assert(time::format_date(dd) == "2027-01-01", "add 365 {time::format_date(dd)}");
     // leap-year boundary: 2024-02-28 + 1 day = 2024-02-29
-    leap = time::add_days(time::parse("2024-02-28"), 1);
+    leap = time::add_days((time::parse("2024-02-28") ?? 0), 1);
     assert(time::format_date(leap) == "2024-02-29", "leap {time::format_date(leap)}");
 }
 
 fn test_differences() {
-    a = time::parse("2026-01-01");
-    b = time::parse("2026-12-31");
+    a = (time::parse("2026-01-01") ?? 0);
+    b = (time::parse("2026-12-31") ?? 0);
     assert(time::days_between(a, b) == 364, "days_between {time::days_between(a, b)}");
-    s = time::seconds_between(time::parse("2026-01-01 00:00:00"),
-                              time::parse("2026-01-01 01:00:00"));
+    s = time::seconds_between((time::parse("2026-01-01 00:00:00") ?? 0),
+                              (time::parse("2026-01-01 01:00:00") ?? 0));
     assert(s == 3600, "seconds_between {s}");
 }
 
 fn test_boundaries() {
-    t = time::parse("2026-05-25 14:30:07");
+    t = (time::parse("2026-05-25 14:30:07") ?? 0);
     sod = time::start_of_day(t);
     assert(time::format_iso(sod) == "2026-05-25T00:00:00Z", "start_of_day {time::format_iso(sod)}");
     // 2026-05-25 is a Monday, so start_of_week == start_of_day.
     sow = time::start_of_week(t);
     assert(time::format_date(sow) == "2026-05-25", "start_of_week {time::format_date(sow)}");
     // Wednesday 2026-05-27 -> week start Monday 2026-05-25.
-    wed = time::parse("2026-05-27");
+    wed = (time::parse("2026-05-27") ?? 0);
     assert(time::format_date(time::start_of_week(wed)) == "2026-05-25",
            "wed week start {time::format_date(time::start_of_week(wed))}");
 }
 
 fn test_iso_week() {
     // 2026-01-01 is a Thursday -> ISO week 1 of 2026.
-    a = time::parse("2026-01-01");
+    a = (time::parse("2026-01-01") ?? 0);
     assert(time::iso_year(a) == 2026, "iso_year {time::iso_year(a)}");
     assert(time::iso_week(a) == 1, "iso_week {time::iso_week(a)}");
     // 2021-01-01 is a Friday -> belongs to ISO week 53 of 2020.
-    b = time::parse("2021-01-01");
+    b = (time::parse("2021-01-01") ?? 0);
     assert(time::iso_year(b) == 2020, "iso_year2 {time::iso_year(b)}");
     assert(time::iso_week(b) == 53, "iso_week2 {time::iso_week(b)}");
 }
 
 fn test_local_offset() {
     // 23:30 UTC at +120 min becomes 01:30 the next local day.
-    t = time::parse("2026-05-25 23:30:00");
+    t = (time::parse("2026-05-25 23:30:00") ?? 0);
     loc = time::to_local(t, 120);
     assert(time::format_datetime(loc) == "2026-05-26 01:30", "local {time::format_datetime(loc)}");
     assert(time::format_date(time::local_day(t, 120)) == "2026-05-26",
@@ -101,15 +101,15 @@ fn test_epoch_seconds() {
     assert(t == 1748000000000, "from_unix_seconds {t}");
     assert(time::to_unix_seconds(t) == secs, "to_unix_seconds {time::to_unix_seconds(t)}");
     // round-trip through a parsed datetime.
-    dt = time::parse("2026-05-25 14:30:07");
+    dt = (time::parse("2026-05-25 14:30:07") ?? 0);
     assert(time::from_unix_seconds(time::to_unix_seconds(dt)) == dt, "secs round-trip");
 }
 
 fn test_combine() {
-    d = time::parse("2026-05-25");
-    e = time::combine(d, "14:30");
+    d = (time::parse("2026-05-25") ?? 0);
+    e = (time::combine(d, "14:30") ?? 0);
     assert(time::format_datetime(e) == "2026-05-25 14:30", "combine HH:MM {time::format_datetime(e)}");
-    e2 = time::combine(d, "09:05:42");
+    e2 = (time::combine(d, "09:05:42") ?? 0);
     assert(time::format_seconds(e2) == "09:05:42", "combine HH:MM:SS {time::format_seconds(e2)}");
     assert(time::format_date(e2) == "2026-05-25", "combine keeps date");
     at = time::at_time(d, 23, 59, 0);
