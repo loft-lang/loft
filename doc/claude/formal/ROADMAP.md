@@ -35,7 +35,7 @@ Closing a row means the implementation obeys the rule (then the deviation entry 
 | [layout.md](layout.md) | 0 | ✓ **D-layout-1** CLOSED 2026-09-21 (loft#1562) — the bind of an existing file and the whole-image URL loaders now ask the `.dschema` gate that `store_load` and the paged loaders already asked. Before: no version guard on persisted bytes (#477: same types, different bytes, silently misread; `L-Sound`). **Mechanism shipped (@PLN97):** the golden byte-layout test catches a change at commit; the `.dschema` sidecar (`CorruptReason::SchemaMismatch`) detects a stale store at load → the `on_corruption` rebuild. **Residual:** the durable store ([plans/43](../plans/43-loft-store-durable/)) isn't loft-driven yet, so nothing auto-invokes the load-time gate — closes when a persistence consumer wires `check_beside` into its open path |
 
 **Six open, in five chapters** — `D-op-1`/`D-op-2` (operational), `D-layout-1`, `D-heap-1`,
-`D-tup-10` and `D-perf-1`.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
+`D-tup-10` and `D-perf-2`.  (`D-heap-LIFO` closed 2026-09-12 by rewriting heap.md's free rules
 to how the mechanism functions, and `D-Domain-Guard` the same day by widening the lattice.)  Counted 2026-09-12 by `rule_tags.py registers`, which
 reads each chapter's stated `OPEN: n` against the entries it lists rather than restating it here;
 the line below was hand-maintained and read **four** for nine days.  This paragraph is prose beside

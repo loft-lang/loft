@@ -121,7 +121,7 @@ warm native run 23× fewer) and is gated by the allocation ratchet.
   the local `make ci` (`make native-ratio-gate` runs it alone), kept out of ci.yml because a
   shared runner's timing is noise.  The oracle's bars still sit at 5–8 against the stated
   ceiling of 3: **the ratchet is what is left**, one row at a time as its ratio falls.
-- *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-1)
+- *The release workflow.*  Six open deviations (D-bind-38/39/44, D-heap-8/9, D-perf-2)
   block the 2026.10.0 tag, and `release.yml`'s docs job has failed on every release
   since 2026.7.2.  **Get `release-gate.yml` green once**; a language that cannot pass its
   own release gate is not operationally stable whatever the bug meters say.
