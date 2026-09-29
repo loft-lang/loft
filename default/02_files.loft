@@ -1200,6 +1200,13 @@ fn OpIntVVPut(kind: const u8, dst: const u16, a: const u16, b: const u16);
 #rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b)); s.put_var(@dst, r); }}"
 fn OpIntVCPut(kind: const u8, dst: const u16, a: const u16, c: const integer);
 #rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), @c); s.put_var(@dst, r); }}"
+// A fused comparison that jumps when it is FALSE — an `if` or loop test in one op instead of
+// the comparison plus `OpGotoFalseWord`.  `step` comes LAST, so it is measured from the end of
+// the instruction exactly as `OpGotoFalseWord`'s is, and `gen_if`'s back-patch serves both.
+fn OpCmpIntVVJump(kind: const u8, a: const u16, b: const u16, step: const i32);
+#rust"if !ops::fused_cmp(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b)) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
+fn OpCmpIntVCJump(kind: const u8, a: const u16, c: const integer, step: const i32);
+#rust"if !ops::fused_cmp(@kind, s.get_var::<i64>(@a), @c) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 
 // ── Path helpers (moved from 03_text.loft so they're available
 //    before file-I/O code that wants to compose them) ─────────

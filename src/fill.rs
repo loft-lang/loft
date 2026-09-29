@@ -359,6 +359,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     cmp_int_v_c,
     int_v_v_put,
     int_v_c_put,
+    cmp_int_v_v_jump,
+    cmp_int_v_c_jump,
 ];
 
 /// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
@@ -696,6 +698,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCmpIntVC",
     "OpIntVVPut",
     "OpIntVCPut",
+    "OpCmpIntVVJump",
+    "OpCmpIntVCJump",
 ];
 
 fn goto(s: &mut State) {
@@ -3348,5 +3352,25 @@ fn int_v_c_put(s: &mut State) {
     {
         let r = ops::fused_int(v_kind, s.get_var::<i64>(v_a), v_c);
         s.put_var(v_dst, r);
+    }
+}
+
+fn cmp_int_v_v_jump(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let v_step = s.code::<i32>();
+    if !ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b)) {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
+    }
+}
+
+fn cmp_int_v_c_jump(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let v_step = s.code::<i32>();
+    if !ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), v_c) {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
     }
 }

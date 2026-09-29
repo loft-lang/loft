@@ -1002,6 +1002,12 @@ impl State {
             // 1 opcode byte + a 32-bit displacement (loft#654).
             let to = i64::from(p) + 5 + i64::from(self.code::<i32>()) - i64::from(start_pos);
             write!(f, "jump=:POS{to}")?;
+        } else if def.name().ends_with("Jump") && a.name == "step" {
+            // A fused compare-and-jump: the displacement is its last operand, measured from
+            // the end of the instruction, which is where the read below leaves `code_pos`.
+            let disp = self.code::<i32>();
+            let to = i64::from(self.code_pos) + i64::from(disp) - i64::from(start_pos);
+            write!(f, "jump=:POS{to}")?;
         } else if (def.name() == "OpGoto" || def.name() == "OpGotoFalse") && a_nr == 0 {
             let to = i64::from(p) + 2 + i64::from(self.code::<i8>()) - i64::from(start_pos);
             write!(f, "jump=:POS{to}")?;

@@ -957,6 +957,17 @@ pub(crate) fn collect_jump_targets(
                 ]);
                 let target = (pc as i64 + 5 + i64::from(off)) as usize;
                 targets.insert(target);
+            } else if name.ends_with("Jump") && pc + ilen <= end {
+                // A fused compare-and-jump: its last four bytes are the displacement,
+                // measured from the end of the instruction.
+                let e = pc + ilen;
+                let off = i32::from_le_bytes([
+                    bytecode[e - 4],
+                    bytecode[e - 3],
+                    bytecode[e - 2],
+                    bytecode[e - 1],
+                ]);
+                targets.insert((e as i64 + i64::from(off)) as usize);
             }
         }
         pc += ilen;
@@ -1357,13 +1368,15 @@ pub fn reassemble_function(
             if !a.constant {
                 continue; // mutable arg = stack operand, no bytes
             }
-            if op_name.starts_with("Goto") {
+            if (op_name.starts_with("Goto") && a_nr == 0)
+                || (op_name.ends_with("Jump") && a.name == "step")
+            {
                 let v = arg_value(args, "jump")
                     .ok_or_else(|| format!("goto without `jump=`: {line}"))?;
-                let width = match &a.typedef {
-                    Type::Integer(s) if s.range() - 1 <= 256 => 1,
-                    _ => 2,
-                };
+                // The declared width: `i8` for the short gotos, `i32` for the word gotos
+                // (loft#654 widened them) and the fused compare-and-jumps.
+                let width =
+                    crate::variables::size(&a.typedef, &crate::data::Context::Constant) as usize;
                 fixups.push((out.len(), v.trim_start_matches(':').to_string(), width));
                 out.extend(std::iter::repeat_n(0u8, width));
             } else if op_name == "Call" && a_nr == 2 {
@@ -1408,15 +1421,22 @@ pub fn reassemble_function(
             .get(&name)
             .ok_or_else(|| format!("jump to undefined label :{name}"))?;
         let delta = target as i64 - (pos + width) as i64;
-        let bytes: [u8; 2] = if width == 1 {
-            [
+        let bytes: [u8; 4] = match width {
+            1 => [
                 i8::try_from(delta).map_err(|_| format!("jump :{name} out of i8 range"))? as u8,
                 0,
-            ]
-        } else {
-            i16::try_from(delta)
-                .map_err(|_| format!("jump :{name} out of i16 range"))?
-                .to_le_bytes()
+                0,
+                0,
+            ],
+            2 => {
+                let [lo, hi] = i16::try_from(delta)
+                    .map_err(|_| format!("jump :{name} out of i16 range"))?
+                    .to_le_bytes();
+                [lo, hi, 0, 0]
+            }
+            _ => i32::try_from(delta)
+                .map_err(|_| format!("jump :{name} out of i32 range"))?
+                .to_le_bytes(),
         };
         for (k, b) in bytes.iter().take(width).enumerate() {
             if let Some(slot) = out.get_mut(pos + k) {

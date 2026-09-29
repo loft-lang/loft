@@ -1181,10 +1181,7 @@ impl State {
         f_val: IrNode,
         stack: &mut Stack,
     ) -> Type {
-        self.generate_node(test, stack, false);
-        stack.add_op("OpGotoFalseWord", self);
-        let code_step = self.code_pos;
-        self.code_add(0i32); // temp step
+        let code_step = self.gen_if_test(test, stack);
         let true_pos = self.code_pos;
         let stack_pos = stack.position;
         let tp = self.generate_node(t_val, stack, false);
@@ -4842,6 +4839,51 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// Emit an `if` test and the jump taken when it is false, and answer where the jump's
+    /// 32-bit displacement sits for the back-patch.  A comparison of integer locals and a
+    /// literal (see [`fusable_int`]) is one `OpCmpIntVVJump` / `OpCmpIntVCJump`; anything else
+    /// is the test followed by `OpGotoFalseWord`.  Both end in the displacement, so the patch
+    /// is the same.
+    fn gen_if_test(&mut self, test: IrNode, stack: &mut Stack) -> u32 {
+        let fused = if test.kind() == ValueType::Call {
+            let args: Vec<Value> = test
+                .call_args()
+                .iter()
+                .map(|a| a.to_owned_value())
+                .collect();
+            fusable_int(stack, test.call_to(), &args).filter(|f| f.compare)
+        } else {
+            None
+        };
+        if let Some(f) = fused {
+            let at = self.code_pos;
+            let a = stack.var_pos(f.a);
+            stack.add_op(
+                match f.b {
+                    FusedOperand::Var(_) => "OpCmpIntVVJump",
+                    FusedOperand::Const(_) => "OpCmpIntVCJump",
+                },
+                self,
+            );
+            self.code_add(f.kind);
+            self.code_add(a);
+            match f.b {
+                FusedOperand::Var(v) => self.code_add(stack.var_pos(v)),
+                FusedOperand::Const(c) => self.code_add(c),
+            }
+            self.vars.insert(at + 1, f.a);
+            if let FusedOperand::Var(v) = f.b {
+                self.vars.insert(at + 2, v);
+            }
+        } else {
+            self.generate_node(test, stack, false);
+            stack.add_op("OpGotoFalseWord", self);
+        }
+        let code_step = self.code_pos;
+        self.code_add(0i32); // temp step
+        code_step
+    }
+
     /// Emit a fused integer operator (see [`fusable_int`]): the result pushed, or with
     /// `dst` stored straight into that local.  Every operand position is taken at the stack
     /// height the op starts at — no operand is pushed first — and `dst` is the position an

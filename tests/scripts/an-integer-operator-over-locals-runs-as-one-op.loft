@@ -5,7 +5,8 @@
 //
 // The bytecode generator fuses `a op b` and `a op 7` — and `x = a op 7`, the store included —
 // into a single op that reads its operands in place instead of pushing them first
-// (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`).  Each fused
+// (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`), and an `if`
+// or loop test into one compare-and-jump (`OpCmpIntVVJump`, `OpCmpIntVCJump`).  Each fused
 // op calls the unfused operator's own function, so what can go wrong is WHERE its operands
 // come from: every position is taken at the stack height the op starts at, where the unfused
 // second read was taken eight bytes higher, and a fused store addresses its target as the
@@ -41,6 +42,24 @@ fn arith(a: integer, b: integer) -> text {
 
 fn compare(a: integer, b: integer) -> text {
   "{a == b} {a != b} {a < b} {a <= b} {a == 3} {a != 3} {a < 3} {a <= 3}"
+}
+
+fn branch(a: integer, b: integer) -> text {
+  r = "";
+  if a == b { r += "eq "; } else { r += "EQ "; }
+  if a != b { r += "ne "; } else { r += "NE "; }
+  if a < b { r += "lt "; } else { r += "LT "; }
+  if a <= b { r += "le "; } else { r += "LE "; }
+  if a == 3 { r += "e3 "; } else { r += "E3 "; }
+  if a < 3 { r += "l3"; } else { r += "L3"; }
+  r
+}
+
+fn test_branch() {
+  // Lower case = the test held and the jump was not taken.
+  assert(branch(3, 3) == "eq NE LT le e3 L3", "equal operands take each branch right");
+  assert(branch(2, 3) == "EQ ne lt le E3 l3", "a smaller first operand");
+  assert(branch(4, 3) == "EQ ne LT LE E3 L3", "a larger first operand");
 }
 
 fn test_arith_positive() {
