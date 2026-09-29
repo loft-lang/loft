@@ -19,7 +19,7 @@ decide.
   PLANNING.md's priorities and QUALITY.md's open work; a pointer in "Out of scope" is enough.
 - **Reopening needs new evidence** — a use case, an incident or a measurement not available at
   the decision.  Add it to the entry's record and change the entry here; never flip one silently.
-- **Adding an entry:** take the next free id (the highest is C129).  Append the deliberation —
+- **Adding an entry:** take the next free id (the highest is C130).  Append the deliberation —
   question, evaluation, dated decision, revisit trigger — to the record, and write the compact
   entry here under the same heading, in the shape the entries below use: **Decision** and
   **Why**, then **Revisit when**, the date and the record link.  In the source doc, strike the
@@ -29,8 +29,8 @@ decide.
   `tests/` that fails on a build breaking it — cites `@C<n>`.  `./scripts/idx tag:@C<n>` lists
   them and `./scripts/idx decisions` counts them per entry (`make index` first).  A decision no
   site can keep is not a decision: reopen it.  Where code and entry disagree, the code moves,
-  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and an entry
-  numbered C130 or later lands with its guard (`tests/index_hygiene.rs`).
+  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and every entry
+  has its guard (`tests/index_hygiene.rs`) — a new one lands with it.
 - **A decision about a library is guarded in that library** — a test under its `tests/` citing
   `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
   `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which

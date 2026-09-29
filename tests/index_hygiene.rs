@@ -132,9 +132,6 @@ fn check_index_matches_git() {
     }
 }
 
-/// The first design-decision id that must arrive with a guard (@PLN175).
-const FIRST_GUARDED_DECISION: u32 = 130;
-
 /// @PLN175 — the `@C<n>` citations in the LIBRARY repos' `tests/`, as `make guards-fetch`
 /// read them at each repo's `origin/main` (index/library_guards.json, committed so this
 /// needs no network).  A decision about a library is kept by a test in that library.
@@ -183,12 +180,6 @@ fn check_new_decisions_are_guarded(index: &str) {
     let unguarded: Vec<&&str> = ids
         .iter()
         .filter(|id| {
-            let digits: String = id.chars().take_while(char::is_ascii_digit).collect();
-            digits
-                .parse::<u32>()
-                .is_ok_and(|n| n >= FIRST_GUARDED_DECISION)
-        })
-        .filter(|id| {
             let key = format!("\"@C{id}\": [");
             let here = index
                 .lines()
@@ -200,10 +191,11 @@ fn check_new_decisions_are_guarded(index: &str) {
         .collect();
     assert!(
         unguarded.is_empty(),
-        "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: a decision \
-         added from C{FIRST_GUARDED_DECISION} on lands with a test that cites `@C<n>` and fails \
-         on a build that breaks it — under tests/ here, or in the library it is about \
-         (`make guards-fetch`) — DESIGN_DECISIONS.md § Using the register."
+        "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: every \
+         decision is kept by a test that cites `@C<n>` and fails on a build that breaks it — \
+         under tests/ here, or in the library it is about (`make guards-fetch`).  A decision \
+         no guard can keep is reopened, not documented — DESIGN_DECISIONS.md § Using the \
+         register."
     );
 }
 
@@ -288,10 +280,8 @@ fn index_hygiene_clean() {
     );
 
     // 2b. @PLN175 — a design decision is held to what it says: every entry of
-    //     DESIGN_DECISIONS.md numbered above C129 lands with at least one GUARD, a
-    //     `tests/` site citing `@C<n>`.  The entries up to C129 predate the rule and
-    //     are guarded one at a time by the plan's walk; `./scripts/idx decisions`
-    //     reports where each one stands.
+    //     DESIGN_DECISIONS.md has at least one GUARD, a `tests/` site (here or in a
+    //     library) citing `@C<n>`; `./scripts/idx decisions` counts each entry's sites.
     check_new_decisions_are_guarded(&index);
 
     // 2.5 (retired in sub-commit H, 2026-05-18) — `make index`
