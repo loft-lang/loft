@@ -15,6 +15,11 @@
 // Axes this file MOVES:  the sub-pattern kind (literal, range, unit variant), which listed
 //                        pattern carries it (first / later / both), a guard beside it.
 // Axes it HOLDS FIXED:   two listed patterns; one level of sub-pattern.
+//
+// @falsified-at: e19fafeaf — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused the sub-patterns, so no assertion ran on it.
+// @falsified-by: tests/falsified/a-listed-pattern-may-test-a-field.patch — the same channel.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Sub { Sp, Sq }
 enum T { A { v: integer, i: Sub }, B { v: integer, i: Sub }, C { w: integer } }

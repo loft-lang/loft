@@ -13,6 +13,12 @@
 // Axes this file MOVES:  which branch captures (one / both / the same name in both), a capture
 //                        beside field bindings, the capture's use (test, `??`, argument), a rest.
 // Axes it HOLDS FIXED:   a single-element alternation of two branches.
+//
+// @falsified-at: 78e99defd — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control could not parse `a: Num | b: Word`, so no assertion ran on it.
+// @falsified-by: tests/falsified/an-alternation-branch-may-capture-the-element-it-matched.patch
+//   — the same channel.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Tok { Num { n: integer }, Word { w: text }, Sep { s: integer } }
 

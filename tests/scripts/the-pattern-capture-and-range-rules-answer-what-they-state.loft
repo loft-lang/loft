@@ -21,6 +21,12 @@
 //
 // Axes this file MOVES:  one rule per function, each at its boundary.
 // Axes it HOLDS FIXED:   single-element groups; the compositions are in the files of D-match-7…9.
+//
+// @falsified-by: tests/falsified/the-pattern-capture-and-range-rules-answer-what-they-state.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2
+//   assertion failures -> 0.  A MUTATION, not a reverted fix: every rule here already held, so
+//   there is no commit that broke it; the patch makes `a..=b` exclusive (`@FR-P-Range`).
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum Tok { Num { n: integer }, Byte { n: u8 }, Word { w: text }, Kw { k: integer }, Sep { s: integer } }
 

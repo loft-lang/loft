@@ -15,6 +15,12 @@
 //
 // Axes this file MOVES:  which listed pattern matched, guard true/false, payload kind.
 // Axes it HOLDS FIXED:   two listed patterns (a third takes the same branch loop).
+//
+// @falsified-at: cba8e9d75 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused the guard, so no assertion ran on it.
+// @falsified-by: tests/falsified/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.patch
+//   — the same channel.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 enum T { A { v: integer }, B { v: integer }, C { w: text } }
 enum U { P { s: text }, Q { s: text } }
