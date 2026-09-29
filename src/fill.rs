@@ -361,6 +361,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     int_v_c_put,
     cmp_int_v_v_jump,
     cmp_int_v_c_jump,
+    text_walk_step,
 ];
 
 /// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
@@ -700,6 +701,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpIntVCPut",
     "OpCmpIntVVJump",
     "OpCmpIntVCJump",
+    "OpTextWalkStep",
 ];
 
 fn goto(s: &mut State) {
@@ -3373,4 +3375,8 @@ fn cmp_int_v_c_jump(s: &mut State) {
     if !ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), v_c) {
         s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
     }
+}
+
+fn text_walk_step(s: &mut State) {
+    s.text_walk_step();
 }

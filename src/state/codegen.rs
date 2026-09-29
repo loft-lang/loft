@@ -229,6 +229,13 @@ impl State {
         let logging = !crate::portable_path::is_stdlib_source(&data.def(def_nr).position().file);
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
+        self.walk_steps = if fusion_enabled() {
+            crate::generation::hoist::char_walks(data, def_nr)
+                .into_values()
+                .collect()
+        } else {
+            Vec::new()
+        };
         // @PLN11 G2/M6 — read the body's SHAPE (null / empty-block) from the
         // persistent store when present, so these last native body reads are
         // also store-backed; else from the native graph.
@@ -2198,6 +2205,9 @@ impl State {
         let value_owned = value.to_owned_value();
         let value = &value_owned;
         self.vars.insert(self.code_pos, v);
+        if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
+            return;
+        }
         // Zero-sized variables (null-typed) have no stack storage.
         if size(stack.function.tp(v), &Context::Variable) == 0 {
             stack.function.set_stack_allocated(v);
@@ -4839,6 +4849,41 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
+    /// `OpTextWalkStep`.  Only when every variable the step names already has its slot, so
+    /// no allocation decision moves; otherwise `false`, and the block is emitted as before.
+    fn emit_walk_step(&mut self, stack: &mut Stack, c: u16) -> bool {
+        let Some(w) = self.walk_steps.iter().find(|w| w.loop_var == c).cloned() else {
+            return false;
+        };
+        let f = &stack.function;
+        if ![c, w.index, w.next, w.src]
+            .iter()
+            .all(|&v| f.is_stack_allocated(v) && f.stack(v) <= stack.position)
+            || !matches!(f.tp(c).base(), Type::Character)
+            || !matches!(f.tp(w.src).base(), Type::Text(_))
+        {
+            return false;
+        }
+        let arg = u8::from(f.is_argument(w.src));
+        let at = self.code_pos;
+        let positions = [
+            stack.var_pos(c),
+            stack.var_pos(w.index),
+            stack.var_pos(w.next),
+            stack.var_pos(w.src),
+        ];
+        stack.add_op("OpTextWalkStep", self);
+        for p in positions {
+            self.code_add(p);
+        }
+        self.code_add(arg);
+        for (k, v) in [w.index, w.next, w.src].into_iter().enumerate() {
+            self.vars.insert(at + 1 + k as u32, v);
+        }
+        true
+    }
+
     /// Emit an `if` test and the jump taken when it is false, and answer where the jump's
     /// 32-bit displacement sits for the back-patch.  A comparison of integer locals and a
     /// literal (see [`fusable_int`]) is one `OpCmpIntVVJump` / `OpCmpIntVCJump`; anything else

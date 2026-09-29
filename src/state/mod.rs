@@ -265,6 +265,9 @@ pub struct State {
     /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
     /// build, so each keeps its own path.
     pub(crate) fast_stack: bool,
+    /// Codegen only: the character walks of the function being generated
+    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
+    pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -688,6 +691,7 @@ impl State {
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
+            walk_steps: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -7614,6 +7618,7 @@ impl State {
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
+            walk_steps: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
