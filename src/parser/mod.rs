@@ -13861,8 +13861,9 @@ impl Parser {
                 Value::Block(bl) => Some(bl.result.clone()),
                 _ => None,
             };
-            match src_tp {
-                Some(Type::Reference(d, _)) if d == tuple_d_nr => Some(tuple_d_nr),
+            // `.base()` — a nullable stored tuple is the same record (`@FR-N-Shape`).
+            match src_tp.as_ref().map(Type::base) {
+                Some(Type::Reference(d, _)) if *d == tuple_d_nr => Some(tuple_d_nr),
                 _ => None,
             }
         };

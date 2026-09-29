@@ -2886,7 +2886,7 @@ use #count instead"
         // Lowered here, through `to_text` and a TEXT append, the template fixed text's
         // alignment and text's zero-fill for every instance.  The hole is marked with its
         // whole spec; `Parser::resolve_pending_formats` lowers it inside the instance.
-        if let Type::Reference(tv, _) = tp
+        if let &Type::Reference(tv, _) = tp.base()
             && self.data.is_type_var_placeholder(tv)
             && self.has_bound_for_method("to_text", tv, None)
         {

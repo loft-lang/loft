@@ -14500,8 +14500,10 @@ impl Parser {
         let Type::Enum(e, _, _) = enum_tp else {
             return false;
         };
-        // Through `Rewritten`, as `variant_parent_enum` reads it.
-        match (&true_type.unrewritten(), &false_type.unrewritten()) {
+        // Through `Rewritten`, as `variant_parent_enum` reads it, and through `?`
+        // (`@FR-N-Shape`).
+        let (t, f) = (true_type.unrewritten(), false_type.unrewritten());
+        match (t.base(), f.base()) {
             // A sibling variant, and only a sibling: the arm's def must belong to THIS
             // enum.  The acceptance sites read this predicate too (`arm_joins_to_enum`),
             // so an unrelated struct reaching it would be waved past the conversion it
@@ -14550,7 +14552,9 @@ impl Parser {
         while let Type::Rewritten(inner) = tp {
             tp = inner;
         }
-        let Type::Reference(d, deps) = tp else {
+        // `.base()` — `Sq?` is a variant of `Shape` as `Sq` is (`@FR-N-Shape`); whether the
+        // joined value may be absent is the join's own question, answered from its arms.
+        let Type::Reference(d, deps) = tp.base() else {
             return None;
         };
         let def = self.data.def(*d);
