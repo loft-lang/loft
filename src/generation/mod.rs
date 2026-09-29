@@ -4531,7 +4531,7 @@ impl Output<'_> {
     }
 
     /// `@FR-R-RecPtr` — the `__pa_N` local holding the address of record view `v`, when an
-    /// enclosing block bound one.
+    /// enclosing block bound one.  Its store's lock state is `__pl_N` ([`rec_ptr_lock`]).
     #[must_use]
     pub fn active_rec_ptr(&self, v: u16) -> Option<&str> {
         self.rec_ptrs
@@ -4674,6 +4674,7 @@ impl Output<'_> {
         };
         self.hoist_counter += 1;
         let name = format!("__pa_{}", self.hoist_counter);
+        let lock = rec_ptr_lock(&name);
         let mut operand: Vec<u8> = Vec::new();
         self.output_code_inner(&mut operand, &Value::Var(r))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
@@ -4692,6 +4693,8 @@ impl Output<'_> {
                 w,
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
             )?;
+            self.indent(w)?;
+            writeln!(w, "let {lock}: bool = {header}.locked;")?;
         } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
             // `@FR-R-PushFill`'s record clause — an element minted through an open window
             // sits at the window's next slot: its address is the base plus the length
@@ -4700,10 +4703,17 @@ impl Output<'_> {
                 w,
                 "let {name}: *const u8 = unsafe {{ {win}.base.add({win}.len as usize * {size}) }}; //@FR-R-PushFill windowed mint address for {operand}"
             )?;
+            self.indent(w)?;
+            writeln!(w, "let {lock}: bool = {win}.locked;")?;
         } else {
             writeln!(
                 w,
                 "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+            )?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {lock}: bool = vector::rec_locked(&({operand}), &stores.allocations);"
             )?;
         }
         if self.recptr_trace {
@@ -11171,4 +11181,11 @@ fn write_const_columns(
     }
     writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
     writeln!(w, "        }}")
+}
+
+/// `@FR-R-RecPtr` — the local holding the lock state of the store a `__pa_N` record address
+/// points into, bound beside it: `__pl_N`.
+#[must_use]
+pub fn rec_ptr_lock(ptr: &str) -> String {
+    ptr.replacen("__pa_", "__pl_", 1)
 }

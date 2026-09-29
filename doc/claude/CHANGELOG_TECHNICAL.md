@@ -10,6 +10,24 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A hoisted loop asks a store's lock once, not once per element (2026-09-29)
+
+d2f0e9733 made every write route consult `@FR-H-WriteLocked`, the `--native` hoisted writers
+included — per element: `vec_set_at`, `push_windowed` and `rec_set` each loaded the store's
+`read_only` through `stores.allocations[nr]` after every raw store, which LLVM cannot keep in
+a register.  Lane 14 paid for it on every writing row (`index_write` 1.02 → 4.13 of Rust,
+`push` 0.34 → 0.73, `comprehension` 1.53 → 2.48, `grid` 3.57 → 4.41, `record_update`
+1.61 → 2.36), the read rows unmoved.  The lock state is now read where the loop takes its
+handle and held for the loop — no loop the hoist admits can lock or unlock a store, every op
+that does being a writer it refuses: `VecHeader.locked`, `PushWindow.locked`, and a `__pl_N`
+local bound beside each `__pa_N` record address (`vector::rec_locked`).  A window over a
+locked store has NO capacity, so a push or mint through it takes the runtime's append, which
+refuses — the fast path carries no lock test at all, and a locked store's spare capacity is
+never written.  Lane 14 now reads `index_write` 1.03, `push` 0.30, `comprehension` 1.28,
+`grid` 3.32, `record_update` 1.61 — at or under the build with the checks deleted.
+`tests/locked_writes.rs` gains the hoisted cells (production discards, development halts in
+a windowed loop, and a pin that the loops still reach the writers under test).
+
 ### A record appended to a struct's vector field takes the plain path (2026-09-29)
 
 `Stores::record_new` / `record_finish` had a short path for `field == u16::MAX` only (a bare

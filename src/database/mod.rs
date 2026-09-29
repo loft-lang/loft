@@ -1950,7 +1950,7 @@ impl Stores {
     ) {
         if index >= 0
             && index < i64::from(h.len)
-            && self.allocations[h.store_nr as usize].write_allowed(h.rec, 8)
+            && (!h.locked || self.allocations[h.store_nr as usize].write_allowed(h.rec, 8))
         {
             if VERIFY {
                 assert_eq!(
@@ -2263,9 +2263,6 @@ impl Stores {
         size: u32,
         val: T,
     ) {
-        if !self.allocations[p.h.store_nr as usize].write_allowed(p.h.rec, 8) {
-            return;
-        }
         if w.len < w.cap {
             if VERIFY {
                 self.push_window_verify(p, *w, db, size);
