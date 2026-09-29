@@ -11,6 +11,12 @@
 //                        `??` default, `if` join) and the pair (u8 → integer, u8 → u16,
 //                        i8 → i16, u16 → i32), with values at each source's extremes.
 // Axes it HOLDS FIXED:   non-null slots.
+//
+// @falsified-at: none — the rules held when this was written; the receipt below is a mutation.
+// @falsified-by: tests/falsified/a-narrow-integer-widens-into-any-superset.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   — a MUTATION on HEAD that makes a wider target count as narrowing.  CHANNEL: exit — the
+//   widenings are then refused, so the file does not compile.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 struct S { f: u16, g: i16 }
 
