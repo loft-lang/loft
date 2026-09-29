@@ -460,7 +460,7 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 8.**
+**OPEN: 6.**
 - **D-op-14** (opened 2026-09-29, @PLN175 step 7) — `struct == struct` compares identity:
   `c = a; a == c` is `false`.
 - **D-op-15** (opened 2026-09-29, @PLN175 step 7) — a struct holding a struct compares identity.
@@ -468,11 +468,8 @@ drift apart; verified both backends —
   compares identity.
 - **D-op-18** (opened 2026-09-29, @PLN175 step 7) — a tuple of structs compares its elements by
   identity.
-- **D-op-19** (opened 2026-09-29, @PLN175 step 6) — `hash` / `sorted` / `index` `==` compares
-  identity.
-- **D-op-20** (opened 2026-09-29, @PLN175 step 6) — a struct-enum `==` compares identity.
 
-D-op-14 … D-op-20 are C91's content `==` not yet built, one entry per answer the code still
+D-op-14 … D-op-18 are C91's content `==` not yet built, one entry per answer the code still
 gives; [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175) closes each at
 its step.  The generic half is
 D-gen-5 in [interfaces.md](interfaces.md) (step 8).

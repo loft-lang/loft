@@ -1,0 +1,88 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index f72fb0ca4..9020cedc7 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -15006,57 +15006,20 @@ impl Parser {
+         }
+     }
+ 
+-    /// The schema row both operands of a CONTENT comparison are stored as (`@FR-E-Eq`, @C91) —
+-    /// the `tp` `OpEqContent` walks them by — when they are two values of one kind that `==`
+-    /// compares by content in the store: two vectors of one element type, two keyed
+-    /// collections of one element and key, or two struct-enum values of one enum (a variant
+-    /// is compared as its enum, so two different variants differ rather than refuse).
+-    fn content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
++    /// The schema row both operands of a vector comparison are stored as, when they are two
++    /// vectors of one element type — the `tp` `OpEqContent` walks them by.
++    fn vector_content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+         let [a, b] = types else {
+             return None;
+         };
+-        match (a.peel_link(), b.peel_link()) {
+-            (Type::Vector(ea, _), Type::Vector(eb, _)) => {
+-                if !ea.is_equal(eb) || ea.is_unknown() {
+-                    return None;
+-                }
+-                let elem = (**ea).clone();
+-                Some(self.vector_of(&elem))
+-            }
+-            (
+-                l @ (Type::Hash(..)
+-                | Type::Sorted(..)
+-                | Type::Index(..)
+-                | Type::Radix(..)
+-                | Type::Trie(..)),
+-                r,
+-            ) if l.is_equal(r) => {
+-                let l = l.clone();
+-                self.keyed_field_kt(&l)
+-            }
+-            (l, r) => {
+-                let (ea, eb) = (self.struct_enum_of(l)?, self.struct_enum_of(r)?);
+-                let known = self.data.def(ea).known_type();
+-                (ea == eb && known != u16::MAX).then_some(known)
+-            }
+-        }
+-    }
+-
+-    /// The enum a struct-enum value belongs to: the enum itself, or a variant's parent.
+-    /// The synthetic `__nullable<S>` is not one: it is the tagged spelling of a struct's
+-    /// absence, and a struct's `==` is the struct's.
+-    fn struct_enum_of(&self, tp: &Type) -> Option<u32> {
+-        match tp.peel_link() {
+-            Type::Enum(d, true, _) if !self.data.def(*d).name.starts_with("__nullable<") => {
+-                Some(*d)
+-            }
+-            Type::Reference(v, _) if self.data.def_type(*v) == DefType::EnumValue => {
+-                let parent = self.data.def(*v).parent;
+-                (parent != u32::MAX && self.data.def_type(parent) == DefType::Enum)
+-                    .then_some(parent)
+-            }
+-            _ => None,
++        let (Type::Vector(ea, _), Type::Vector(eb, _)) = (a.peel_link(), b.peel_link()) else {
++            return None;
++        };
++        if !ea.is_equal(eb) || ea.is_unknown() {
++            return None;
+         }
++        let elem = (**ea).clone();
++        Some(self.vector_of(&elem))
+     }
+ 
+     /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
+@@ -15374,12 +15337,11 @@ impl Parser {
+                     }
+                 }
+             }
+-            // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
+-            // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
+-            // a keyed collection by its records, an enum value by its variant and then fields.
++            // `@FR-E-Eq`, @C91 — two vectors of one element type compare by CONTENT: length,
++            // then element by element with the element's own `==` (`Stores::eq_content`).
+             if matches!(op, "==" | "!=")
+                 && list.len() == 2
+-                && let Some(tp) = self.content_eq_type(types)
++                && let Some(tp) = self.vector_content_eq_type(types)
+             {
+                 *code = self.cl(
+                     if op == "==" {
