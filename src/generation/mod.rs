@@ -1150,6 +1150,11 @@ pub struct Output<'a> {
     /// notion of "where am I" — position reaches it as `Value::Line` nodes in the
     /// statement list, and this is where that stream is remembered.
     pub ckpt_cur_line: u32,
+    /// Does the function being emitted push a NAMED frame (`cr_call_push`, not a leaf and not
+    /// the lean tier)?  Only such a frame records where it is calling from
+    /// (`cr_call_site`), which is what `stack_trace()` reports as the callee's `line`
+    /// (loft#1753): a frameless function writing a site would write its caller's slot.
+    pub named_frame: bool,
     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
@@ -2311,6 +2316,7 @@ impl<'a> Output<'a> {
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
+            named_frame: false,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
@@ -5492,20 +5498,7 @@ impl Output<'_> {
         if let Some(&v) = self.leaf_cache.get(&def_nr) {
             return v;
         }
-        let data = self.data;
-        let leaf = !data.def(def_nr).code().any_node(&mut |v| match v {
-            Value::Call(d, _) => {
-                let callee = data.def(*d);
-                let name = callee.name();
-                // A free overload member (`f_…`) is a free function in all but its key.
-                name.starts_with("n_")
-                    || callee.is_free_overload()
-                    || ((name.starts_with("t_") || callee.is_instance())
-                        && matches!(callee.code(), Value::Block(_)))
-            }
-            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
-            _ => false,
-        });
+        let leaf = !calls_a_frame(self.data, self.data.def(def_nr).code());
         self.leaf_cache.insert(def_nr, leaf);
         leaf
     }
@@ -9657,6 +9650,7 @@ extern crate loft;"
                 } else {
                     fnref_guard
                 };
+                self.named_frame = !leaf && !self.lean;
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
@@ -9678,6 +9672,7 @@ extern crate loft;"
                 self.output_block(w, body, returns_text, true)?;
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
+                self.named_frame = false;
             } else {
                 // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
                 // derivation from the UnsafeCell parameter for templates / inner calls.
@@ -11189,4 +11184,26 @@ fn write_const_columns(
 #[must_use]
 pub fn rec_ptr_lock(ptr: &str) -> String {
     ptr.replacen("__pa_", "__pl_", 1)
+}
+
+/// Does `code` make a call that can enter a frame — a user function, a method or free
+/// overload with a loft body, a fn-ref, `parallel` or a `yield`?
+///
+/// The one answer to two questions: a function whose body makes none is a LEAF and carries
+/// no frame (N4), and a statement that makes one first records the line it calls from
+/// (`cr_call_site`, loft#1753).
+pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
+    code.any_node(&mut |v| match v {
+        Value::Call(d, _) => {
+            let callee = data.def(*d);
+            let name = callee.name();
+            // A free overload member (`f_…`) is a free function in all but its key.
+            name.starts_with("n_")
+                || callee.is_free_overload()
+                || ((name.starts_with("t_") || callee.is_instance())
+                    && matches!(callee.code(), Value::Block(_)))
+        }
+        Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+        _ => false,
+    })
 }

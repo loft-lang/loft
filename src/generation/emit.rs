@@ -3097,6 +3097,13 @@ impl Output<'_> {
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;
             }
+            // loft#1753 — a statement that calls into a frame first records the line it calls
+            // from in THIS frame, which is what `stack_trace()` reports as the callee frame's
+            // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
+            if self.named_frame && self.ckpt_cur_line != 0 && super::calls_a_frame(self.data, v) {
+                self.indent(w)?;
+                writeln!(w, "cr_call_site({});", self.ckpt_cur_line)?;
+            }
             // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
             // ONCE: the declaration statement (its pre-evals included — an OpDatabase
             // hoisted out of the guard would re-clear the store per iteration) runs only

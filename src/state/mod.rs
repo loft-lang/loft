@@ -761,13 +761,13 @@ impl State {
     /// When call depth exceeds `MAX_CALL_DEPTH` (possible infinite recursion).
     pub fn fn_call(&mut self, d_nr: u32, args_size: u16, to: i64) {
         let args_base = self.stack_pos - u32::from(args_size);
-        // Find the nearest source line at or before the current code position.
-        // line_numbers entries are emitted before the first instruction on each line,
-        // so after consuming a Call instruction code_pos is past the entry — use
-        // range(..=code_pos).next_back() to recover the most recent line.
+        // The line of the CALL: the nearest line entry STRICTLY before `code_pos`.  Entries
+        // sit before the first instruction of each line, and `code_pos` is already past the
+        // whole Call instruction, so an entry AT `code_pos` belongs to the next statement —
+        // the one a call that ends its statement is followed by (loft#1753).
         let line = self
             .line_numbers
-            .range(..=self.code_pos)
+            .range(..self.code_pos)
             .next_back()
             .map_or(0, |(_, &v)| v);
         // Plan-07 phase 4f.12 — stack overflow becomes a typed
@@ -1141,8 +1141,7 @@ impl State {
             self.database.call_stack_snapshot = self
                 .call_stack
                 .iter()
-                .enumerate()
-                .map(|(idx, f)| {
+                .map(|f| {
                     if let Some(data) = data_opt
                         && f.d_nr != u32::MAX
                         && (f.d_nr as usize) < data.definitions.len()
@@ -1150,23 +1149,14 @@ impl State {
                         let def = &data.definitions[f.d_nr as usize];
                         let name = def.trace_name();
                         let file = def.position().file.to_string();
-                        // Fix #92: line resolution for parallel-worker frames.
-                        // The CallFrame.line is only updated by `fn_call`, which
-                        // never runs for the worker's entry frame.  Fall back to
-                        // looking up the current bytecode position in
-                        // `line_numbers` so workers report the actual source
-                        // line they're executing rather than 0.
-                        let line = if f.line != 0 {
-                            f.line
-                        } else {
-                            let cp = if idx + 1 == self.call_stack.len() {
-                                self.code_pos
-                            } else {
-                                self.call_stack[idx + 1].call_pos
-                            };
-                            self.line_numbers.get(&cp).copied().unwrap_or(0)
-                        };
-                        (name, file, line)
+                        // A frame's `line` is the call site that ENTERED it, 0 where no loft
+                        // call did — the entry frame, a parallel worker's entry frame (its
+                        // caller is on another thread) and a compiler-synthesised call
+                        // (STACKTRACE.md ST-4).  Where such a frame is running now is the
+                        // next frame's `line`.  (loft#1753: a lookup of the next frame's
+                        // call position here named the statement AFTER a call that ended
+                        // its statement, and only then.)
+                        (name, file, f.line)
                     } else {
                         // Worker frame without Data context — use placeholder.
                         ("<worker>".to_string(), String::new(), f.line)
