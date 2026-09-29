@@ -6,9 +6,9 @@
 // level progression, and special brick pickups.
 //
 // Controls: arrows/A/D to move, Escape to quit.
-use graphics;
-use shapes;
-use assets;
+use graphics::*;
+use shapes::*;
+use assets::*;
 
 // ── Constants ────────────────────────────────────────────────────────
 

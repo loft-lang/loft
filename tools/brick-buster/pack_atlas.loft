@@ -10,8 +10,8 @@
 // against the PROGRAM's own directory, so `PACK_BASE` here and `PACK_BASE`
 // in 25-brick-buster.loft name the same two files only while the two files
 // sit in the same directory (@PLN146 F4).
-use graphics;
-use assets;
+use graphics::*;
+use assets::*;
 
 // Where the pack lives, relative to this directory.  The game spells it the
 // same way, and `[[embed]]` in loft.toml carries those exact names into the
