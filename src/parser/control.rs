@@ -7567,21 +7567,7 @@ impl Parser {
                         // `r` (a silent wrong arm) or refused an unknown one.  Only the plain
                         // name followed by `,` / `}` — `r..5`, `_`, a variant and a literal keep
                         // their sub-pattern meaning.
-                        let named = matches!(
-                            &self.lexer.peek().has,
-                            LexItem::Identifier(id) if Self::is_binding_name(id)
-                        );
-                        let mut rename = None;
-                        if named {
-                            let link = self.lexer.link();
-                            let name = self.lexer.has_identifier().unwrap_or_default();
-                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
-                                rename = Some(name);
-                            } else {
-                                self.lexer.revert(link);
-                            }
-                        }
-                        if let Some(bind_name) = rename {
+                        if let Some(bind_name) = self.field_pattern_rename() {
                             self.bind_match_field_capture(
                                 variant_def_nr,
                                 attr_idx,
@@ -7630,6 +7616,28 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+    }
+
+    /// A field sub-pattern that is a plain binding NAME (`Circle { radius: r }`) — a rename of
+    /// the capture, `@FR-P-Point` — consumed and answered; anything else (`r..5`, `_`, a
+    /// variant, a literal) is left unread for the sub-pattern parse.  Only a name followed by
+    /// `,` or `}` qualifies, and the lexer is linked only when a name is next, so a numeric
+    /// range is never re-lexed.  One home for the single-pattern and the listed-pattern arm.
+    fn field_pattern_rename(&mut self) -> Option<String> {
+        if !matches!(
+            &self.lexer.peek().has,
+            LexItem::Identifier(id) if Self::is_binding_name(id)
+        ) {
+            return None;
+        }
+        let link = self.lexer.link();
+        let name = self.lexer.has_identifier().unwrap_or_default();
+        if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+            Some(name)
+        } else {
+            self.lexer.revert(link);
+            None
+        }
     }
 
     /// A lowercase identifier other than `_` — the spelling that BINDS in a pattern.
@@ -9777,21 +9785,11 @@ impl Parser {
                     // shorthand capture of the first pattern's name.
                     let mut capture = field_name.clone();
                     if self.lexer.has_token(":") {
-                        let mut renamed = false;
-                        if matches!(
-                            &self.lexer.peek().has,
-                            LexItem::Identifier(id) if Self::is_binding_name(id)
-                        ) {
-                            let link = self.lexer.link();
-                            let name = self.lexer.has_identifier().unwrap_or_default();
-                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
-                                capture = name;
-                                renamed = true;
-                            } else {
-                                self.lexer.revert(link);
-                            }
+                        let renamed = self.field_pattern_rename();
+                        if let Some(name) = &renamed {
+                            capture.clone_from(name);
                         }
-                        if !renamed {
+                        if renamed.is_none() {
                             let field_read =
                                 self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                             let mut sub_binds: Vec<Value> = Vec::new();
