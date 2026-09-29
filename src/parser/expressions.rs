@@ -9642,7 +9642,7 @@ use a separate collection or add after the loop"
                 // (it is pass-2-only, and answers an empty list for a case that must
                 // keep the caller's backing — an argument, a keyed local — where the
                 // view is already not the buffer's).
-                let mut ops = self.vector_db(elem, v_nr);
+                let mut ops = self.vector_db(&elm_tp, v_nr);
                 if ops.is_empty() {
                     return Value::Set(v_nr, Box::new(view));
                 }

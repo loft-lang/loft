@@ -250,3 +250,83 @@ fn harness_can_fail() {
 // the wrap harness's leak gate pins the stores alongside the values (both halves are
 // needed: silencing the leak by freeing the DELIVERED store passes one and fails the
 // other).  Kept there rather than duplicated here.
+
+// ── Static: a vector local's backing is built for ITS element type ──────────────────
+
+/// `LOFT_VAR_TABLE` for function `func`, the table lines only.
+fn var_table_of(tag: &str, src: &str, func: &str) -> String {
+    let path = write_temp(tag, src);
+    let out = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg(&path)
+        .env("LOFT_VAR_TABLE", func)
+        .env("LOFT_TIMEOUT", "300")
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("failed to invoke loft binary");
+    let _ = std::fs::remove_file(&path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    text.lines()
+        .filter(|l| l.contains("[vartable]"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The type every `__vdb_N` backing in a var table is declared with (`ref(<def>)`).
+fn backing_types(table: &str) -> Vec<String> {
+    table
+        .lines()
+        .filter(|l| {
+            l.split_whitespace()
+                .nth(2)
+                .is_some_and(|n| n.starts_with("__vdb_"))
+        })
+        .filter_map(|l| l.split_whitespace().nth(3).map(str::to_string))
+        .collect()
+}
+
+/// loft#1757, `@FR-H-ClearRelease` — a `vector<T>` local's backing store is the one-field
+/// `main_vector<T>` record, and a clear that releases element heap reads `T` off it.  A
+/// tuple-destructured local and the owned copy a borrowed vector arm is given (`_mvcopy_N`)
+/// were backed by `main_vector<vector<T>>`: their builders handed `vector_db` the vector's
+/// whole type where it takes the element type.  Every local here is a `vector<integer>`, so
+/// every backing must be the SAME definition as the plain local's.
+#[test]
+fn a_vector_local_is_backed_by_its_own_element_type() {
+    let destructure = var_table_of(
+        "vdb_destructure",
+        "fn pair(n: integer) -> (vector<integer>, vector<integer>) { ([n, n + 1], [n * 2]) }\n\
+         fn main() {\n\
+         \x20 (xa, xb) = pair(3);\n\
+         \x20 ys: vector<integer> = [];\n\
+         \x20 ys += [1];\n\
+         \x20 println(\"{len(xa)} {len(xb)} {len(ys)}\");\n\
+         }\n",
+        "n_main",
+    );
+    // The owned copy of a borrowed arm keeps a backing of its own in this corpus file's `g1`
+    // (a smaller spelling promotes it into the return buffer, which has none to check).
+    let arm_copy = var_table_of(
+        "vdb_arm_copy",
+        &std::fs::read_to_string("tests/scripts/508-empty-arm-real-empty-vector.loft")
+            .expect("read the 508 corpus file"),
+        "n_g1",
+    );
+    for (what, table, want) in [("destructure", &destructure, 3), ("arm copy", &arm_copy, 2)] {
+        let types = backing_types(table);
+        assert_eq!(
+            types.len(),
+            want,
+            "{what}: expected {want} backings:\n{table}"
+        );
+        assert!(
+            types.iter().all(|t| *t == types[0]),
+            "{what}: every vector<integer> local must be backed by one main_vector<integer> \
+             def, got {types:?}:\n{table}"
+        );
+    }
+}

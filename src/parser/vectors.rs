@@ -7397,6 +7397,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         source_in(&self.data, &b.operators)
     }
 
+    ///
+    /// `assign_tp` is the ELEMENT type: the backing is `main_vector<assign_tp>` (`@FR-H-ClearRelease`
+    /// reads the element type off it), so a caller holding the vector's whole type passes its
+    /// content — `vector<integer>` here minted `main_vector<vector<integer>>` (loft#1757).
     pub(crate) fn vector_db(&mut self, assign_tp: &Type, vec: u16) -> Vec<Value> {
         self.vector_db_init(assign_tp, vec, 0, false)
     }

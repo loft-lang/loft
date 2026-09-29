@@ -5811,7 +5811,7 @@ impl Parser {
         self.vars.defined(o);
         // `o = []` (pass-gated: empty on pass 1, the OpDatabase alloc on pass 2 — exactly
         // as a user-written `o: vector = []` lowers), then `o += <binding>`, then yield o.
-        let mut ops = self.vector_db(&v_type, o);
+        let mut ops = self.vector_db(&elm, o);
         // `o = []` is a REPLACE, and `o` becomes the caller's return buffer once
         // `ref_return` promotes it — at which point `vector_db` above no-ops (an argument
         // keeps the caller's store) and the append below piles this call's elements onto
