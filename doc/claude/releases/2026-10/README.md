@@ -15,6 +15,33 @@ bound to the tag candidate is re-measured on the candidate and only ticked there
 shipped on 2026-09-05; this cycle ships at the start of October, gated on stability rather than on
 a feature set.
 
+## The pre-work view — `--version 2026.10.0 --phase pre`, re-measured 2026-09-29 evening
+
+**Done this pass** (each with its commit on `tuxedo-166-compile-speed`):
+
+| row | state | evidence |
+|---|---|---|
+| `A-reference-review` | ✅ | 40/40 at their source; 13 chapters read, 25 untrue sentences fixed (`0acd3dcc5`, watermarks `c532b0c26`) |
+| `A-skills-review` | ✅ | 12/12; untrue claims fixed in all twelve (`fb3fa30aa`, `527cc1cec`, watermarks `0b85bbbe6`) |
+| `A-audit` | ✅ | `cargo audit`: no vulnerable crate; two unmaintained warnings — `memmap` 0.7 (direct + via `mmap-storage`; `memmap2` is the maintained fork) and `ttf-parser` |
+| `A-docs-lint` | ✅ | every working doc ≤ 1000 lines; baseline re-pinned counting the split docs (4622) |
+| `M-ops-census` | read | 324 declared / 306 emitted / 11 unexercised / 7 orphan.  Of the 13 unexercised, two were test gaps (now covered); the rest are census blind spots — lambda bodies, IR-only ops the codegen rewrites (`OpConvRefFromNull`, `OpCreateStack`), `LOFT_STORE_TAG`-gated ops no test arms, name-only mentions.  `OpGoto` was live only through two stray operand bytes behind `OpSetStackRef` — fixed (`47ba568c6`).  Orphans are retirement candidates, not verdicts |
+| `M-docs-review` | read | code links 416 OK; stale paths fixed; FORMATTER.md rewritten for `loft fmt` (it described the deleted Rust formatter); SLOTS / PLANNING closed items to history; `clippy-review`: 39 dead + 8 partly dead suppressions (below) |
+| open issues | ✅ | loft#1739 fixed (`429041e7b`, labelled fixed-pending-merge by its trailer); `make work` lists nothing else |
+| found and fixed | ✅ | from the reviews and the census: a field pattern `f: name` compared with a variable in scope instead of binding (`702f188ef`); zero-padding a boolean / character / plain enum rendered `true00` (`26071fcd9`); two undeclared bytes behind `OpSetStackRef` (`47ba568c6`); a pass-2-only element temp refused a correct program (`429041e7b`); a vector copy followed the absent marker into wild memory (`429041e7b`) |
+
+**Still open**:
+
+| row | state | what it needs |
+|---|---|---|
+| `A-ci` | ❌ | the GitHub gate on `b4eddae08`: P310 and the browser pack fail on `mesh3d` under C98 (the library republish), the feature catalogue (fixed, `4f6270f70`), the optional ratchet (re-pinned), fixture drift for gridmesh/time/assets (advisory, the same republish) |
+| `A-deviations` | ❌ | D-perf-1 (loft#1570): `smooth` at 2.67× on 157-native-4x, not re-measured on the union |
+| `A-pdf-version` | ❌ | needs the version bump (release window) |
+| `A-release-gate` | ❓ | after the tree settles — every commit resets it |
+| `M-file-split` | open | a pure-move PR — the owner opens PRs |
+| `M-changelog-read` | owner | the owner's read of `## 2026-10` |
+| owner decisions | open | `e as Variant` and `"text" as Enum` answer null on a miss yet are typed non-null — `(N-Cast)` says refuse the asserting form or spell it `as V?`; a literal `[null, [6]]` passed to a `vector<vector<T>?>` parameter is refused though the same literal binds a declared local (`(N-Join)`, an argument is a slot); a generic `{x:05}` on a `Printable` T pads zeros on the right (`42000`) |
+
 ## The pre-work view — `--version 2026.10.0 --phase pre`, measured on `3ff073ddd` (2026-09-29)
 
 The month's last days: every `[pre]` row can be finished now; the rows bound to the release
