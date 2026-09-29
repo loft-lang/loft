@@ -22,10 +22,10 @@
 // from an eager load, which is why @PLN129 asserts them and why they are the
 // oracle here.
 
-use registry;
-use schema;
-use sql;
-use sqlite;
+use registry::*;
+use schema::*;
+use sql::*;
+use sqlite::*;
 
 struct S9Rust { id: integer, nm: text, score: float }
 struct S9Loft { id: integer, nm: text, score: float }

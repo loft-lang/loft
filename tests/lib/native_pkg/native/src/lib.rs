@@ -158,6 +158,39 @@ pub unsafe extern "C" fn n_ext_make_bytes(store: LoftStore, n: i64) -> LoftRef {
     unsafe { store.alloc_vector_from_bytes(1, len, data.as_ptr(), data.len()) }
 }
 
+// ── Pattern 8b/8c: Vector<u8> RETURN as a FOREIGN store (@PLN174 F5) ────
+// The same bytes as `n_ext_make_bytes`, handed over with no copy: the host
+// serves the cdylib's own `Vec<u8>` read-only and releases it (in this
+// crate's allocator) with the last loft handle.  8b has no argument, so the
+// handle's store is the one the dispatcher minted for the return; 8c takes a
+// vector argument, whose store the handle pins, so the answer gets its own.
+#[loft_native]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn n_ext_make_bytes_foreign(store: LoftStore, n: i64) -> LoftRef {
+    let mut store = store;
+    let len = n.max(0) as u32;
+    let data: Vec<u8> = (0..len).map(|i| (i & 0xff) as u8).collect();
+    unsafe { store.foreign_vector_from_owned(data) }
+}
+
+#[loft_native]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn n_ext_reverse_foreign(store: LoftStore, vec: LoftRef) -> LoftRef {
+    let mut store = store;
+    let mut data: Vec<u8> = unsafe { vec_slice::<u8>(&store, &vec) }.to_vec();
+    data.reverse();
+    unsafe { store.foreign_vector_from_owned(data) }
+}
+
+#[loft_native]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn n_ext_reverse_owned(store: LoftStore, vec: LoftRef) -> LoftRef {
+    let mut store = store;
+    let mut data: Vec<u8> = unsafe { vec_slice::<u8>(&store, &vec) }.to_vec();
+    data.reverse();
+    unsafe { store.alloc_vector_from_bytes(1, data.len() as u32, data.as_ptr(), data.len()) }
+}
+
 // Pattern 9: STRUCT (non-vector heap) RETURN via alloc_record (@PLN85).
 // `ExtBox { v: integer }` — one i64 field.  alloc_record(2) = 1 word header
 // (pos=8) + 1 word for the field; write the field at (rec, pos, offset 0).
@@ -207,6 +240,9 @@ loft_ffi::loft_register! {
     loft_ext_struct_vec_len => n_ext_struct_vec_len,
     loft_ext_loop_vec_sum => n_ext_loop_vec_sum,
     loft_ext_make_bytes => n_ext_make_bytes,
+    loft_ext_make_bytes_foreign => n_ext_make_bytes_foreign,
+    loft_ext_reverse_foreign => n_ext_reverse_foreign,
+    loft_ext_reverse_owned => n_ext_reverse_owned,
     loft_ext_make_box => n_ext_make_box,
     loft_ext_maybe => n_ext_maybe,
     loft_ext_echo => n_ext_echo,
@@ -221,6 +257,9 @@ loft_ffi::loft_register_bridges! {
     "loft_ext_struct_vec_len" => n_ext_struct_vec_len__loft_bridge,
     "loft_ext_loop_vec_sum" => n_ext_loop_vec_sum__loft_bridge,
     "loft_ext_make_bytes" => n_ext_make_bytes__loft_bridge,
+    "loft_ext_make_bytes_foreign" => n_ext_make_bytes_foreign__loft_bridge,
+    "loft_ext_reverse_foreign" => n_ext_reverse_foreign__loft_bridge,
+    "loft_ext_reverse_owned" => n_ext_reverse_owned__loft_bridge,
     "loft_ext_make_box" => n_ext_make_box__loft_bridge,
     "loft_ext_maybe" => n_ext_maybe__loft_bridge,
     "loft_ext_echo" => n_ext_echo__loft_bridge,

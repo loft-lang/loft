@@ -48,7 +48,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
+      - name: Restore cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -115,3 +117,12 @@ jobs:
           slow-timeout = { period = "45s", terminate-after = 1 }
           TOML
           cargo nextest run --release --profile winprobe --test lsp_transport --no-fail-fast
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Variable scoping — a name bound inside a block has ended by the line
+// after it.
+// @EXPECT_ERROR: local-out-of-scope
+
+fn f(c: boolean) -> integer {
+  if c { w = 5; } else { w = 6; }
+  w                        // error[local-out-of-scope]: `w` was bound inside a block that has ended
+}

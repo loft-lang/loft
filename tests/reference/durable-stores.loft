@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § Durable stores and § Path-backed hash storage — a keyed collection is
+// bound to a path and persists there; a durable path is checked on start and sealed on exit.
+
+struct Entry { key: integer, value: integer }
+struct Hex { q: integer, r: integer, kind: text }
+
+fn flush_database() { }
+
+fn rebuild_from_source(path: text) {
+  h: hash<Entry[key]> = [];
+  store_persist_bind(h, path);
+  h += Entry { key: 1, value: 1 };
+}
+
+fn test_a_durable_path_is_checked_then_sealed() {
+  path = "{temp_dir()}/loft-reference-data.bin";
+  if !store_durable_check(path) {
+    rebuild_from_source(path);  // consumer-defined
+  }
+  // ... use the database that lives in `path` ...
+
+  // graceful shutdown
+  flush_database();
+  store_durable_seal(path);
+  assert(store_durable_check(path), "sealed, so the next start finds it whole");
+}
+
+fn test_a_hash_bound_to_a_path_persists_its_writes() {
+  h: hash<Entry[key]> = [];
+
+  // Bind first — on a fresh path the empty hash is serialised; on an
+  // existing path the on-disk contents are loaded into this slot.
+  store_persist_bind(h, "{temp_dir()}/loft-reference-world.store");
+
+  // Subsequent mutations hit the mmap'd buffer.  No explicit save.
+  h += Entry { key: 7, value: 700 };
+  // ... OS msyncs on idle / clean exit ...
+  assert((h[7].value ?? -1) == 700, "the write is readable through the bound hash");
+}
+
+fn build_world() -> hash<Hex[q, r]> {
+  w: hash<Hex[q, r]> = [];
+  // fill w; any transient collections here are freed on return
+  w += Hex { q: 0, r: 0, kind: "plain" };
+  return w;
+}
+
+fn test_a_built_collection_is_bound_after_the_build() {
+  world = build_world();                 // carries only the live result
+  store_persist_bind(world, "{temp_dir()}/loft-reference-hexes.store");
+  assert((world[0, 0].kind ?? "") == "plain", "the built record survived the bind");
+}

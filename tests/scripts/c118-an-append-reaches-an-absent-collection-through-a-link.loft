@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C118 — an append to an ABSENT collection instantiates it empty and fills it, wherever the
+// absent collection is reached from.  `(Col-Insert-Absent)` names a local, an element and a
+// parameter; two more places reach a null collection LOCAL and both lost the append:
+//
+//   * a LINK to it — a `&τ?` parameter or a `c = &a` binding.  A null collection local is the
+//     value-level null with no slot of its own, so the link aimed at nothing: a vector's append
+//     was lost (exit 0, `len` 0 in the caller AND through the link) and a keyed kind faulted on
+//     a NULL DbRef.  The cure is the one a closure capture already had (loft#1218,
+//     `null_local_slot`): the local is given its slot, marked ABSENT, before the link is taken.
+//   * a local set back to `null` — `r = [x]; r = null; r += [y]` answered 0, directly, through
+//     a capture and through a link, on both backends and on 2026.9.0.  `convert` gives a null
+//     the value-level sentinel, which is right for a null in flight and wrong for a slot:
+//     `r = null` now takes the whole-value route `r = []` takes, marked ABSENT.
+//
+// Both cures move the REPRESENTATION and not the value: the `still null` cells score
+// `== null` straight after a call that did not append and straight after `= null`.  Elements
+// are read back, not only counted — a link that gave the callee a store of its own agrees
+// with a correct one on the callee's side and loses everything on the caller's.  The LOOP
+// cells are also the leak cells: the whole-value route left a guard-minted backing released
+// by nobody (`e = null` inside a loop leaked one store per function), and this file runs
+// under the suite's leak check.
+//
+// @falsified-at: 011933e76 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/c118-an-append-reaches-an-absent-collection-through-a-link.patch
+//   CHANNEL: the value channel — the first failing assertion.
+//   WITNESS: on the control `two appends through the link: 0` (the first cell; the file stops
+//   there, so the later cells are not scored by this receipt).
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
+//   requires HERE to be clean, so all four are clean on both.  The loop cells' leak is scored
+//   by a-rebacked-vector-local-releases-its-first-backing.loft, which isolates it.
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+
+struct It118 { k: integer, v: integer }
+struct Ih118 { k: integer, v: integer }
+struct Is118 { k: integer, v: integer }
+struct Ix118 { k: integer, v: integer }
+
+fn add_vec118(c: &vector<It118>?, k: integer) { c += [It118 { k: k, v: k * 10 }]; }
+fn add_int118(c: &vector<integer>?, x: integer) { c += [x]; }
+fn add_hash118(c: &hash<Ih118[k]>?, k: integer) { c += [Ih118 { k: k, v: k * 10 }]; }
+fn add_sorted118(c: &sorted<Is118[-k]>?, k: integer) { c += [Is118 { k: k, v: k * 10 }]; }
+fn add_index118(c: &index<Ix118[k]>?, k: integer) { c += [Ix118 { k: k, v: k * 10 }]; }
+fn forward118(c: &vector<It118>?, k: integer) { add_vec118(c, k); }
+fn maybe118(c: &vector<It118>?, k: integer) { if k > 0 { c += [It118 { k: k, v: k * 10 }]; } }
+fn add_gen118<T>(c: &vector<T>?, x: T) { c += [x]; }
+
+fn main() {
+  // A `&τ?` parameter handed a null vector local.
+  a: vector<It118>? = null;
+  add_vec118(a, 1);
+  add_vec118(a, 2);
+  assert(len(a?) == 2, "two appends through the link: {len(a?)}");
+  assert(a?[0].v == 10 && a?[1].v == 20, "in order: {a?[0].v} {a?[1].v}");
+
+  // A scalar element.
+  n: vector<integer>? = null;
+  add_int118(n, 7);
+  assert(len(n?) == 1 && n?[0] == 7, "integer vector: {len(n?)}");
+
+  // Every keyed kind — the spelling that faulted rather than lost.
+  h: hash<Ih118[k]>? = null;
+  add_hash118(h, 3);
+  add_hash118(h, 4);
+  assert(len(h?) == 2 && h?[3].v == 30 && h?[4].v == 40, "hash: {len(h?)}");
+  s: sorted<Is118[-k]>? = null;
+  add_sorted118(s, 1);
+  add_sorted118(s, 5);
+  order = "";
+  for e in s? { order += "{e.v},"; }
+  assert(order == "50,10,", "sorted by -k: {order}");
+  x: index<Ix118[k]>? = null;
+  add_index118(x, 6);
+  assert(x?[6].v == 60, "index");
+
+  // A callee that forwards its own link: one slot, not two.
+  f: vector<It118>? = null;
+  forward118(f, 8);
+  assert(len(f?) == 1 && f?[0].v == 80, "forwarded: {len(f?)}");
+
+  // A call that does not append leaves the value null.
+  q: vector<It118>? = null;
+  maybe118(q, 0);
+  assert(q == null, "still null after a call that did not append");
+  maybe118(q, 9);
+  assert(q != null && len(q?) == 1, "and fills on the next");
+
+  // The call in a loop: the slot is built once and every pass lands in it.
+  l: vector<It118>? = null;
+  for i in 1..4 { add_vec118(l, i); }
+  assert(len(l?) == 3 && l?[2].v == 30, "loop: {len(l?)}");
+
+  // Interleaved with appends in the caller: one collection, in order.
+  m: vector<integer>? = null;
+  m += [1];
+  add_int118(m, 2);
+  m += [3];
+  assert(len(m?) == 3 && m?[0] == 1 && m?[1] == 2 && m?[2] == 3, "interleaved: {len(m?)}");
+
+  // A generic parameter.
+  g: vector<integer>? = null;
+  add_gen118(g, 11);
+  assert(len(g?) == 1 && g?[0] == 11, "generic: {len(g?)}");
+
+  // A `&` BINDING to a null local: the link and the local are one collection.
+  b: vector<It118>? = null;
+  c = &b;
+  c += [It118 { k: 1, v: 12 }];
+  assert(len(b?) == 1 && b?[0].v == 12, "through a bound link, the local: {len(b?)}");
+  assert(len(c?) == 1, "and the link: {len(c?)}");
+  bh: hash<Ih118[k]>? = null;
+  ch = &bh;
+  ch += [Ih118 { k: 2, v: 22 }];
+  assert(bh?[2].v == 22, "a bound link to a null hash");
+
+  // ------------------------------------------------ a local set back to null, then filled
+  r: vector<It118>? = [It118 { k: 1, v: 10 }];
+  r = null;
+  assert(r == null && len(r?) == 0, "null again after `= null`");
+  r += [It118 { k: 2, v: 20 }];
+  assert(len(r?) == 1 && r?[0].v == 20, "a direct append refills it: {len(r?)}");
+  rc: vector<It118>? = [It118 { k: 1, v: 10 }];
+  rc = null;
+  addrc = fn(k: integer) { rc += [It118 { k: k, v: k * 10 }]; };
+  addrc(3);
+  assert(len(rc?) == 1 && rc?[0].v == 30, "through a capture: {len(rc?)}");
+  rp: vector<It118>? = [It118 { k: 1, v: 10 }];
+  rp = null;
+  add_vec118(rp, 4);
+  assert(len(rp?) == 1 && rp?[0].v == 40, "through a link: {len(rp?)}");
+  rl: vector<It118>? = null;
+  add_vec118(rl, 1);
+  rl = null;
+  add_vec118(rl, 5);
+  assert(len(rl?) == 1 && rl?[0].v == 50, "a linked local nulled and linked again: {len(rl?)}");
+  // A view taken before the null keeps its value: the old contents are not cleared under it.
+  rv: vector<It118>? = [It118 { k: 7, v: 70 }];
+  first = rv?[0];
+  rv = null;
+  assert(first.v == 70, "a view outlives the null: {first.v}");
+  // Filled and nulled on every pass: ends null, and leaks nothing.
+  rz: vector<It118>? = null;
+  for i in 0..20 { rz += [It118 { k: i, v: i }]; rz = null; }
+  assert(rz == null, "a loop that ends on `= null` ends null");
+  // The re-backed local of the same loop, spelled with the whole-value write it mirrors.
+  re: vector<It118>? = null;
+  for i in 0..3 { re += [It118 { k: i, v: i }]; re = [It118 { k: 9, v: 90 }]; }
+  assert(len(re?) == 1 && re?[0].v == 90, "rebuilt on every pass: {len(re?)}");
+}

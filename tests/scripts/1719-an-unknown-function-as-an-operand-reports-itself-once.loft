@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1719 — a call to an unknown function reports ONE error wherever it stands, as an
+// operand included (@P376: a reported expression is poisoned to `never`).
+//
+// The unknown-function site answered `unknown` rather than the poison, so the operator
+// around it read its operand as "nothing supplied" and reported a second error naming an
+// internal opcode and a parameter the program never wrote: `nosuch(v) == 3` added
+// *"missing argument for parameter 'v1' of `OpEqInt`"*.  And a failed call wrote no code,
+// so the buffer kept what the caller had put there — an assignment's own target: `x =
+// nosuch(v) + 1` lowered to `x + 1`, typed as an integer, and the next read of `x`
+// reported *"Unknown variable 'x'"*.  Now the site answers `never` and clears its code
+// (`Parser::reported_call`).
+//
+// Each fn below is one operand position, with its own unknown name so each annotation
+// matches exactly one report.  `@EXPECT_ERROR` is fatal when unmatched and an unexpected
+// error fails the file, so the count is the assertion: ONE report per fn, no cascade.
+//
+// @falsified-at: c4d968765 — interpret exit 1 -> 0, interpret expectations FAIL/13 -> 12/13, native exit 1 -> 0, native expectations FAIL/13 -> 12/13 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1719-an-unknown-function-as-an-operand-reports-itself-once.patch — the same channels.
+//   CHANNEL: the EXPECTATIONS — on the control ten of the fns report a second error
+//   behind their own, and the file fails as an unexpected error.
+//   WITNESS: `u_eq` reports "missing argument for parameter 'v1' of `OpEqInt`" after its
+//   "Unknown function u_eq"; `u_add_left` reports "Unknown variable 'x'".
+//   HOLDS: no leak and no panic on either tree; every fn reports its own unknown name.
+
+// ── Comparison operands ──────────────────────────────────────────────────────
+
+// @EXPECT_ERROR: Unknown function u_eq
+fn p_eq() { v = 3; assert(u_eq(v) == 3, "u"); }
+
+// @EXPECT_ERROR: Unknown function r_eq
+fn p_eq_right() { v = 3; assert(3 == r_eq(v), "u"); }
+
+// @EXPECT_ERROR: Unknown function u_lt
+fn p_lt() { v = 3; assert(u_lt(v) < 3, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_text
+fn p_text() { v = "a"; assert(u_text(v) == "b", "u"); }
+
+// @EXPECT_ERROR: Unknown function u_and
+fn p_and() { v = 3; assert(v == u_and(v) && true, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_cond
+fn p_cond() { v = 3; y = if u_cond(v) > 2 { 1 } else { 2 }; assert(y == 1, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_neg
+fn p_neg() { v = 3; assert(-u_neg(v) == 3, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_len
+fn p_len() { v = 3; assert(len(u_len(v)) == 3, "u"); }
+
+// @EXPECT_ERROR: Unknown function u_method
+fn p_method() { v = 3; assert(u_method(v).len() == 3, "u"); }
+
+// The assignment's target was left in the failed call's code.
+// @EXPECT_ERROR: Unknown function u_add_left
+fn p_add_left() { v = 3; x = u_add_left(v) + 1; assert(x == 3, "u"); }
+
+// @EXPECT_ERROR: Unknown function b_neg
+fn p_neg_bind() { v = 3; x = -b_neg(v); assert(x == 3, "u"); }
+
+// The right operand was already clean; kept so the pair is measured together.
+// @EXPECT_ERROR: Unknown function u_add_right
+fn p_add_right() { v = 3; x = 1 + u_add_right(v); assert(x == 3, "u"); }
+
+// Inside a format string it was already clean.
+// @EXPECT_ERROR: Unknown function u_fmt
+fn p_fmt() { v = 3; assert("{u_fmt(v)}" == "3", "u"); }

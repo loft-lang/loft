@@ -1,4 +1,4 @@
-use p145_entry2;
+use p145_entry2::*;
 fn main() {
   m = new_map();
   j = to_json(m);

@@ -47,7 +47,7 @@ const QUALITY_HISTORY: &str = "doc/claude/QUALITY-history.md";
 /// nothing outside the repository has to survive for the guard to be re-run.  It is the
 /// form for a control that no longer exists anywhere: a squash-merge keeps no branch
 /// pointing at the commit a guard was falsified against, and 124 of the 359 receipts on
-/// `main` name a build no clone can rebuild (TESTING.md).  `scripts/falsify.sh <guard>
+/// `main` name a build no clone can rebuild (GUARDS.md).  `scripts/falsify.sh <guard>
 /// --patch <file>` scores one, and refuses when the patch has drifted out of applying —
 /// which is the receipt reporting its own staleness, something a dangling sha cannot do.
 ///
@@ -67,7 +67,7 @@ const QUALITY_HISTORY: &str = "doc/claude/QUALITY-history.md";
 /// reader needs, so this gate holds the line on the DOCUMENTATION while the human keeps the
 /// judgement.
 ///
-/// The fields, each earned from a failure that cost real time (TESTING.md): CHANNEL, which
+/// The fields, each earned from a failure that cost real time (GUARDS.md): CHANNEL, which
 /// channel carries the defect; ARMED, the instrument the measurement needs, asked only of a
 /// leak-class guard because an unarmed leak run reports a DIFFERENT channel rather than a
 /// weaker one; WITNESS, the concrete observation on the control, which is what makes the
@@ -127,7 +127,7 @@ fn every_guard_says_how_to_score_it_again() {
             String::new()
         } else {
             format!(
-                "these receipts do not say how to score them again (see TESTING.md \u{a7} The \
+                "these receipts do not say how to score them again (see GUARDS.md \u{a7} The \
                  patch receipt; `make falsify-review` explains each field):\n{}\n",
                 added.join("\n")
             )
@@ -3223,7 +3223,7 @@ fn every_test_binary_matches_a_subject() {
     assert!(
         unmatched.is_empty(),
         "{} test binar{} matched by no subject in scripts/test_subjects.sh — add a pattern to \
-         `subject_patterns` (or join an existing binary; TESTING.md § Subjects): {}",
+         `subject_patterns` (or join an existing binary; RUNNING_TESTS.md § Subjects): {}",
         unmatched.len(),
         if unmatched.len() == 1 {
             "y is"

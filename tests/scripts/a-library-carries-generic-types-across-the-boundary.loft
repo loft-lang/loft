@@ -17,7 +17,7 @@
 //   HOLDS: nothing else.
 // @ARGS: --lib tests/lib
 
-use gridlib;
+use gridlib::*;
 
 struct Mine { n: integer }
 struct Wrap<T> { g: Grid<T>, tag: text }

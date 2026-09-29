@@ -8,7 +8,7 @@
 // set.  ChunkInput carries NO spatial index (cache-locality: the rule gets
 // `cidx` as a read-only param, not a per-chunk copy).
 
-use gridmesh;
+use gridmesh::*;
 
 // Two chunks (shift 3 → 8 cells/axis): x=0,7 in chunk(0,0); x=8,15 in
 // chunk(1,0).  x=7 and x=8 are adjacent ACROSS the chunk border.

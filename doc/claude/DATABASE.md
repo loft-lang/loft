@@ -735,18 +735,65 @@ store is read-only, its bytes are described by the header contract every vector 
   with `Store::FOREIGN_ORIGIN` as its lock origin; `begin_write_inner` refuses the lock
   BEFORE computing the address (asked after, the bounds test would call the reference
   corrupt), and `refuse_locked_write` routes a foreign store beside the author's `#lock`
-  to the runtime error `write_to_locked_store`, whose advice for this origin is to copy
-  first.  Nothing can grow or move the block, which is exactly what every hoist needs.
+  to `write_to_locked_store`: a development run halts with the advice for this origin (copy
+  first), a production run logs it and discards the write.  Nothing can grow or move the
+  block, which is exactly what every hoist needs — a production claim or resize answers a
+  fresh record in the store's own buffer and never touches the mapped bytes.
 * **Lifetime is the handle's.**  `Stores::foreign_vector` mints it; `Stores::free_named`
   drops the owner (`Store::release_foreign`) before the slot is recycled, so the mapping
   is released with the handle and the slot reinitialises as any other.  The bytes are the
   owner's, not the store-heap ceiling's (`store_budget` counts the tiny owned block only).
-* **Not (yet):** a slice of it is still a COPY (plan F4 makes it a view on a read-only
-  store), a worker's `clone_locked` snapshot carries no foreign bytes, and a record VIEW
-  (`rec_ptr`) is not served — a foreign store holds scalar vectors until F5.
+* **A slice of it is a VIEW (F4b).**  `s = m[lo..hi]` bound to a local that owns its
+  backing store (a `__vdb_N`) makes THAT store foreign over the span: `OpSliceView` →
+  `Stores::vector_slice_view`, where `Store::foreign_span` clamps the bounds and answers a
+  `ForeignSpan` whose owner is SHARED (`Arc<ForeignOwner>`) and `Store::make_foreign`
+  serves it.  The local reads the mapping's bytes in place under the same contract, and
+  the bytes live until the last store serving them is released — the handle or a view,
+  in any order, with no count kept.  A view is read-only (its write meets the same
+  refusal); the clear before a rebind or a literal (`clear_vector_release`,
+  `clear_vector`) drops the view first, so the store is ordinary, writable and empty
+  again; `make_foreign` returns a record the slot held to the free tree; a view of a view
+  adds its offset.  An append, an argument, a field or a return copies (`vector_slice`):
+  their store holds more than the one vector, and locking it would lock the rest.
+  `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
+* **A library's bytes (F5).**  A cdylib bridge answers a `vector<u8>` with no copy through
+  `loft_ffi::LoftStore::foreign_vector_from_owned(Vec<u8>)`: the host adopts the block as a
+  foreign store (`ForeignOwner::Extern` — the `Vec`'s parts and the cdylib's own release,
+  called once with the last store serving the bytes, in the cdylib's allocator since the
+  host's may differ; a loaded library is never unloaded) and answers the bare `FOREIGN_REC`,
+  which the two consumers of a bridge's ref return (`extensions::bridge_push_ref`,
+  `codegen_runtime::from_loft_ref`) turn into the store's own handle
+  (`Store::foreign_handle`) instead of claiming a header in a store that is now locked.
+  The callback is `LoftStore::foreign_fn`, the LAST field of the handle (an older cdylib
+  reads a prefix; every host-to-cdylib crossing is the one fixed `LoftBridgeFn` shape, so a
+  longer struct shifts no other argument), and the helper copies where the host has none or
+  declined.  When the dispatcher minted an empty store for the answer, the context word says
+  so (`extensions::CTX_RETURN_STORE`, bit 16 above the store number) and the bytes are
+  adopted INTO it (`Stores::foreign_vector_in`), never beside an orphan.  At the BIND, the
+  local's own store views the answer whole — `OpAdoptVector` → `Stores::vector_adopt`, the
+  op the #410 direct bind and the #409 wrapper delivery now emit where they copied every
+  element; an owned answer is still copied, so its in-place `+=` holds — and the loop-buffer
+  reset (`vector_buffer_reset`) and a store re-init (`Stores::clear`) drop a view rather
+  than write its length.  A foreign vector handed to a bridge as an ARGUMENT is copied into
+  a record of the store the bridge is given (`Stores::bridge_args`, one set-up shared by the
+  interpreter's dispatcher and the generated `--native` call): a cdylib reads a vector by
+  pointer arithmetic on that one store, which cannot see foreign bytes (a mapped file handed
+  to any library bridge read sixteen gigabytes past the store before F5).  A foreign vector
+  never pins the store — the next argument does, or one is minted for the call — and after
+  the call the copies are deleted, or the minted store freed; a bridge that WROTE through a
+  copy meets the same refusal a direct write does.
+* **A copy OUT reads where the bytes are.**  `copy_block_between`, `Stores::copy_block` and
+  the `par` workers' row readers take the source address from `Store::block_src`, which
+  answers the foreign bytes for `FOREIGN_REC` (a bind `w = m` and a `par` over `m` both read
+  sixteen gigabytes past the store before F4b), and `write_bytes` reads the payload through
+  `bytes_of`.  A worker's borrow (`borrow_locked_for_light_worker`), a locked clone and a
+  checkpoint copy carry the span, since the owner is shared.
+* **Not (yet):** a record VIEW (`rec_ptr`) is not served — a foreign store holds scalar
+  vectors until F5.
 
 The unit test `store::tests::a_foreign_store_answers_a_vector_read_through_the_same_accessors`
-reads a foreign store and a copied one through the same accessors byte for byte;
+reads a foreign store and a copied one through the same accessors byte for byte, and
+`a_view_of_a_foreign_store_reads_beside_the_copied_slice` does the same for a view;
 `tests/foreign_store.rs` does the same at the program level on both backends and asserts the
 write refusal; the cells are `tests/scripts/174-foreign-file.loft`.
 

@@ -537,36 +537,87 @@ impl PartialEq for Store {
 /// must be inside a store of at most [`MAX_STORE_WORDS`]), so it collides with nothing.
 pub const FOREIGN_REC: u32 = 0x7FFF_FFF0;
 
-/// @PLN174 — what keeps a foreign store's bytes alive: dropped with the store, at the
-/// free of the handle that names it.  A host's token (a browser typed array, F7) joins
-/// here when it is served; every variant must stay `RefUnwindSafe`, because a `Store` is
-/// carried across `catch_unwind` (a `Box<dyn Any + Send>` is not, and broke a test build).
+/// @PLN174 — what keeps a foreign store's bytes alive: dropped with the LAST store that
+/// serves them — the handle, or a view cut from it that is still bound.  A host's token (a
+/// browser typed array, F7) joins here when it is served; every variant must stay
+/// `RefUnwindSafe`, because a `Store` is carried across `catch_unwind` (a `Box<dyn Any +
+/// Send>` is not, and broke a test build).
 pub enum ForeignOwner {
     /// A buffer the runtime or a library built and handed over whole.
     Bytes(Vec<u8>),
     /// A read-only mapping of a file (`file_map`).
     #[cfg(feature = "mmap")]
     Map(memmap::Mmap),
+    /// @PLN174 F5 — a block a cdylib handed over across the C ABI
+    /// (`loft_ffi::LoftStore::foreign_vector_from_owned`): the parts of its `Vec<u8>`
+    /// and the cdylib's own release, which frees the block in the allocator that made
+    /// it — the host's may differ, so the runtime never rebuilds the `Vec` itself.  A
+    /// loaded library is never unloaded (`extensions::LOADED_LIBS` only grows, and a
+    /// `--native` program links it), so the release stays callable for the process.
+    Extern {
+        ptr: *mut u8,
+        len: usize,
+        cap: usize,
+        release: unsafe extern "C" fn(*mut u8, usize, usize),
+    },
+}
+
+impl Drop for ForeignOwner {
+    fn drop(&mut self) {
+        if let ForeignOwner::Extern {
+            ptr,
+            len,
+            cap,
+            release,
+        } = *self
+        {
+            // SAFETY: the parts are the ones the cdylib handed over, released once —
+            // here, with the last `Arc` over them.
+            unsafe { release(ptr, len, cap) };
+        }
+    }
+}
+
+// SAFETY: the bytes an `Extern` owner names are read-only for its whole life (every
+// store over them is locked), and its release runs once, from whichever thread drops
+// the last `Arc` — a Rust allocator is thread-safe.  The other variants are `Send +
+// Sync` on their own; the raw pointer is what needs saying.
+unsafe impl Send for ForeignOwner {}
+unsafe impl Sync for ForeignOwner {}
+
+/// @PLN174 F4b — a SPAN of foreign bytes and what keeps them alive: `len` elements of
+/// `elem_size` bytes at `base`.  What a producer hands [`Store::make_foreign`]
+/// (`Stores::foreign_vector` wraps its buffer or mapping), and what one foreign store
+/// hands another to serve a VIEW of its bytes ([`Store::foreign_span`]).  The owner is
+/// SHARED, so a view outlives the handle it was cut from for exactly as long as the view is
+/// bound — no count of live views, no orphaned owner, no order the program must free in.
+#[derive(Clone)]
+pub struct ForeignSpan {
+    pub base: *const u8,
+    pub len: u32,
+    pub elem_size: u32,
+    pub owner: std::sync::Arc<ForeignOwner>,
 }
 
 /// @PLN174 — the bytes a foreign store serves and the header contract it presents for
 /// them: `header` is the size word and the length every vector read expects at `+0` and
-/// `+4` of a vector record, in the store's own (native) byte order, and `base` is where
-/// `+8` begins.  The invariant every accessor rests on: the bytes are READ-ONLY, they are
-/// described by this header, and they outlive every `DbRef` into the store — the owner
-/// below is what makes the third hold.
+/// `+4` of a vector record, in the store's own (native) byte order, and the span's `base`
+/// is where `+8` begins.  The invariant every accessor rests on: the bytes are READ-ONLY,
+/// they are described by this header, and they outlive every `DbRef` into the store — the
+/// span's owner is what makes the third hold.
+#[derive(Clone)]
 struct Foreign {
-    base: *const u8,
-    len: u32,
-    elem_size: u32,
+    span: ForeignSpan,
     header: [u8; 8],
-    _owner: ForeignOwner,
+    /// The collection slot [`Store::make_foreign`] wrote [`FOREIGN_REC`] into, restored to
+    /// the empty vector by [`Store::release_foreign`] so the store is an ordinary one again.
+    slot: (u32, u32),
 }
 
 impl Foreign {
     /// The payload's size in bytes.
     fn bytes(&self) -> u64 {
-        u64::from(self.len) * u64::from(self.elem_size)
+        u64::from(self.span.len) * u64::from(self.span.elem_size)
     }
 }
 
@@ -644,6 +695,24 @@ fn host_image_bytes(path: &str) -> Option<Vec<u8>> {
         let _ = path;
         None
     }
+}
+
+/// Where a production run's DISCARDED write lands (`@FR-H-WriteLocked`): per-thread scratch
+/// of at least `len` bytes, 8-aligned, that nothing ever reads.  Valid until the next call
+/// on the same thread; every caller writes through it at once.
+fn discard_sink(len: usize) -> *mut u8 {
+    thread_local! {
+        static SINK: std::cell::UnsafeCell<Vec<u64>> = const { std::cell::UnsafeCell::new(Vec::new()) };
+    }
+    SINK.with(|sink| {
+        // SAFETY: the buffer is this thread's alone and no reference to it outlives the call.
+        let sink = unsafe { &mut *sink.get() };
+        let words = len.div_ceil(8).max(8);
+        if sink.len() < words {
+            sink.resize(words, 0);
+        }
+        sink.as_mut_ptr().cast::<u8>()
+    })
 }
 
 impl Store {
@@ -1388,20 +1457,31 @@ impl Store {
         *FLAG.get_or_init(|| std::env::var("LOFT_POISON_CLAIM").is_ok_and(|v| v != "0"))
     }
 
+    /// [`Self::claim`] / [`Self::resize`] on a LOCKED store (`@FR-H-WriteLocked`).
+    /// Development halts in the refusal.  A production run gets a fresh, zeroed record: the
+    /// write that would link it into the store's data is itself discarded, so nothing can
+    /// reach it, and nothing already in the store is grown, moved or freed.  The allocator's
+    /// own bookkeeping is let through for the one claim, since a claim changes no value.
+    #[cold]
+    #[inline(never)]
+    fn claim_discarded(&mut self, size: u32) -> u32 {
+        self.refuse_locked("Claim on read-only store", 0, 0);
+        self.read_only = false;
+        let rec = self.claim(size.max(1));
+        let bytes = (self.read::<i32>(rec, 0).max(1) as usize - 1) * 8;
+        // SAFETY: `rec` was just claimed with `bytes` of payload after its size word.
+        unsafe { std::ptr::write_bytes(self.ptr.offset(rec as isize * 8 + 8), 0, bytes) };
+        self.read_only = true;
+        rec
+    }
+
     /// Claim the space of a record
     /// # Arguments
     /// * `size` - The requested record size in 8 byte words
     pub fn claim(&mut self, size: u32) -> u32 {
-        debug_assert!(
-            !self.read_only,
-            "Claim on read-only store (size={size}) (locked by: {})",
-            self.lock_origin
-        );
-        assert!(
-            !self.read_only,
-            "Claim on read-only store (size={size}) (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            return self.claim_discarded(size);
+        }
         assert!(size >= 1, "Incomplete record");
         // CO1.9/S28: increment generation so coroutine_next can detect store mutations
         // that may invalidate DbRef locals held by suspended generators.
@@ -1610,6 +1690,9 @@ impl Store {
 
     /// Mutate the claimed size of a record
     pub fn resize(&mut self, rec: u32, size: u32) -> u32 {
+        if self.read_only {
+            return self.claim_discarded(size);
+        }
         // CO1.9/S28: increment generation so coroutine_next can detect resize operations
         // that may invalidate DbRef locals (record relocation) held by suspended generators.
         self.generation = self.generation.wrapping_add(1);
@@ -1722,17 +1805,10 @@ impl Store {
         // Native never had this check and was always correct on the same source,
         // which is what made the `&`-redundancy advice right on one backend and
         // wrong on the other.
-        let frozen = self.read_only;
-        debug_assert!(
-            !frozen,
-            "Delete on locked store (rec={rec}) (locked by: {})",
-            self.lock_origin
-        );
-        assert!(
-            !frozen,
-            "Delete on locked store (rec={rec}) (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked("Delete on locked store", rec, 0);
+            return;
+        }
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
@@ -2405,7 +2481,9 @@ impl Store {
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
-            foreign: None,
+            // @PLN174 — the foreign bytes are read-only and shared through their owner, so
+            // a worker's snapshot serves the same span the parent does, uncopied.
+            foreign: self.foreign.clone(),
             free_protect_depth: 0,
             free_root: 0, // workers never claim/delete; no free tree needed
             wild: 0,
@@ -2454,7 +2532,8 @@ impl Store {
             free: self.free,
             read_only: false,
             user_locked: false,
-            foreign: None,
+            // @PLN174 — a checkpoint of a foreign store keeps serving its span (shared).
+            foreign: self.foreign.clone(),
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
             store_nr: self.store_nr,
@@ -2500,7 +2579,10 @@ impl Store {
             // A worker borrow, not the author's `#lock`: an internal lock keeps its
             // assert, because a write through one is a compiler defect (loft#1405).
             user_locked: false,
-            foreign: None,
+            // @PLN174 — the foreign bytes are read-only and shared through their owner, so
+            // the worker's view serves the same span the parent does (a `par` over a
+            // mapped file read every element as absent without it).
+            foreign: self.foreign.clone(),
             free_protect_depth: 0,
             free_root: self.free_root,
             wild: self.wild,
@@ -3337,8 +3419,8 @@ impl Store {
     /// used where the field is provably aligned — see its own note (loft#1481).
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
-        if rec == FOREIGN_REC {
-            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+        if Self::is_foreign_rec(rec) {
+            let at = self.foreign_addr(rec, fld, std::mem::size_of::<T>());
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
@@ -3349,22 +3431,48 @@ impl Store {
     /// header for `fld < 8`, the foreign base past it, each bounded exactly as
     /// [`Store::offset_in_bounds`] bounds an owned record.  A store with no foreign bytes
     /// answers the same out-of-bounds refusal a corrupt reference gets.
-    fn foreign_addr(&self, fld: u32, width: usize) -> *const u8 {
+    fn foreign_addr(&self, rec: u32, fld: u32, width: usize) -> *const u8 {
         let Some(f) = &self.foreign else {
-            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+            self.raise_out_of_bounds(rec, fld, width);
         };
         if fld < 8 {
             if fld as usize + width > 8 {
-                self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+                self.raise_out_of_bounds(rec, fld, width);
             }
             return unsafe { f.header.as_ptr().add(fld as usize) };
         }
         let off = u64::from(fld - 8);
         if off + width as u64 > f.bytes() {
-            self.raise_out_of_bounds(FOREIGN_REC, fld, width);
+            self.raise_out_of_bounds(rec, fld, width);
         }
         // SAFETY: the bound just proved `off + width` is inside the owner's live bytes.
-        unsafe { f.base.add(off as usize) }
+        unsafe { f.span.base.add(off as usize) }
+    }
+
+    /// Is `rec` the id a foreign store serves its bytes under?  ONE test for the four
+    /// accessors and the block copy, so the id never means two things.
+    #[inline]
+    pub(crate) fn is_foreign_rec(rec: u32) -> bool {
+        rec == FOREIGN_REC
+    }
+
+    /// @PLN174 F4b — elements `lo..hi` of this store's foreign bytes as a span another
+    /// store can serve (a VIEW, `(Slice-Value)`'s read-only form): the bounds clamp to the
+    /// whole, a reversed range is the empty span, and the owner is shared.  `None` when
+    /// this store serves no foreign bytes.  A view of a view adds its offset here, since
+    /// a view's own `base` already sits inside the owner's bytes.
+    #[must_use]
+    pub fn foreign_span(&self, lo: u32, hi: u32) -> Option<ForeignSpan> {
+        let f = self.foreign.as_ref()?;
+        let lo = lo.min(f.span.len);
+        let hi = hi.clamp(lo, f.span.len);
+        Some(ForeignSpan {
+            // SAFETY: `lo <= len`, so the offset is inside the owner's bytes or one past.
+            base: unsafe { f.span.base.add(lo as usize * f.span.elem_size as usize) },
+            len: hi - lo,
+            elem_size: f.span.elem_size,
+            owner: std::sync::Arc::clone(&f.span.owner),
+        })
     }
 
     /// @PLN174 — does this store serve foreign bytes?
@@ -3373,46 +3481,60 @@ impl Store {
         self.foreign.is_some()
     }
 
-    /// @PLN174 — turn this minted store into a FOREIGN one: the collection slot at
-    /// `(rec, pos)` names [`FOREIGN_REC`], the header presents `len` elements of
-    /// `elem_size` bytes starting at `base`, `owner` keeps those bytes alive, and the store
-    /// is locked — a write through any route meets the read-only refusal, which is what
-    /// makes every hoist over it sound (nothing can grow or move the block).
-    pub fn make_foreign(
-        &mut self,
-        rec: u32,
-        pos: u32,
-        base: *const u8,
-        len: u32,
-        elem_size: u32,
-        owner: ForeignOwner,
-    ) {
+    /// @PLN174 F5 — the `(rec, pos)` slot that names this store's foreign bytes: the
+    /// HANDLE a `DbRef` into the store points at.  A bridge answers a foreign vector as
+    /// the bare [`FOREIGN_REC`], and the two consumers of a bridge's ref return
+    /// (`extensions::bridge_push_ref`, `codegen_runtime::from_loft_ref`) push this handle
+    /// instead of claiming a header record in a store that is now locked.  `None` for an
+    /// ordinary store.
+    #[must_use]
+    pub fn foreign_handle(&self) -> Option<(u32, u32)> {
+        self.foreign.as_ref().map(|f| f.slot)
+    }
+
+    /// @PLN174 — turn this store into a FOREIGN one: the collection slot at `(rec, pos)`
+    /// names [`FOREIGN_REC`], the header presents the span's `len` elements of `elem_size`
+    /// bytes starting at its `base`, the span's owner keeps those bytes alive, and the
+    /// store is locked — a write through any route meets the read-only refusal, which is
+    /// what makes every hoist over it sound (nothing can grow or move the block).  A
+    /// record the slot named before (a local rebound after a copy) goes back to the free
+    /// tree: the foreign bytes need no record of their own.
+    pub fn make_foreign(&mut self, rec: u32, pos: u32, span: ForeignSpan) {
         assert!(
             self.foreign.is_none() && !self.read_only,
             "make_foreign on a store that is already foreign or locked"
         );
+        let old = self.get_u32_raw(rec, pos);
+        if old != 0 {
+            self.delete(old);
+        }
         self.set_u32_raw(rec, pos, FOREIGN_REC);
-        let bytes = u64::from(len) * u64::from(elem_size);
+        let bytes = u64::from(span.len) * u64::from(span.elem_size);
         // The size word counts itself, as a claimed record's does (`Store::buffer`).
         let words = u32::try_from(bytes.div_ceil(8) + 1).unwrap_or(u32::MAX);
         let mut header = [0u8; 8];
         header[..4].copy_from_slice(&words.to_ne_bytes());
-        header[4..].copy_from_slice(&len.to_ne_bytes());
+        header[4..].copy_from_slice(&span.len.to_ne_bytes());
         self.foreign = Some(Foreign {
-            base,
-            len,
-            elem_size,
+            span,
             header,
-            _owner: owner,
+            slot: (rec, pos),
         });
         self.read_only = true;
         self.lock_origin = std::borrow::Cow::Borrowed(Self::FOREIGN_ORIGIN);
     }
 
-    /// @PLN174 — drop the foreign bytes with their owner: the handle that named them is
-    /// being freed.  The store's own block stays what it was and is recycled as any other.
+    /// @PLN174 — stop serving the foreign bytes: the handle that named them is being freed,
+    /// or the local that VIEWED them is cleared for a rebind.  The store is an ordinary,
+    /// writable one again whose slot names the empty vector; the owner drops with the last
+    /// span that shared it.
     pub fn release_foreign(&mut self) {
-        self.foreign = None;
+        let Some(f) = self.foreign.take() else {
+            return;
+        };
+        self.unlock();
+        let (rec, pos) = f.slot;
+        self.set_u32_raw(rec, pos, 0);
     }
 
     /// The payload bytes of vector record `rec`, READ-ONLY — the record's claim past its
@@ -3421,11 +3543,11 @@ impl Store {
     /// foreign store has no `&mut [u8]` to give.
     #[must_use]
     pub fn bytes_of(&self, rec: u32) -> &[u8] {
-        if rec == FOREIGN_REC {
-            return self.foreign.as_ref().map_or(&[], |f| {
-                // SAFETY: the owner keeps `bytes()` bytes live at `base` for as long as
-                // the store holds it, and the borrow is tied to `self`.
-                unsafe { std::slice::from_raw_parts(f.base, f.bytes() as usize) }
+        if Self::is_foreign_rec(rec) {
+            // SAFETY: the owner keeps `bytes()` bytes live at `base` for as long as the
+            // store holds the span, and the borrow is tied to `self`.
+            return self.foreign.as_ref().map_or(&[], |f| unsafe {
+                std::slice::from_raw_parts(f.span.base, f.bytes() as usize)
             });
         }
         let size = (self.read::<u32>(rec, 0) as usize).saturating_sub(1) * 8;
@@ -3447,8 +3569,8 @@ impl Store {
     /// forbids was invisible for the life of this file, because `<*mut T>::as_mut()` derefs
     /// inside `core`, which is precompiled without `-C debug-assertions=on`.
     pub fn addr<T>(&self, rec: u32, fld: u32) -> &T {
-        if rec == FOREIGN_REC {
-            let at = self.foreign_addr(fld, std::mem::size_of::<T>());
+        if Self::is_foreign_rec(rec) {
+            let at = self.foreign_addr(rec, fld, std::mem::size_of::<T>());
             assert!(
                 (at as usize).is_multiple_of(std::mem::align_of::<T>()),
                 "Store::addr: foreign field {fld} is not aligned for {}",
@@ -3504,6 +3626,15 @@ impl Store {
     #[cold]
     #[inline(never)]
     fn refuse_user_locked_write(rec: u32, fld: u32, origin: &str) -> ! {
+        // `LOFT_LOCK_BT=1` names the Rust site that wrote: the refusal carries the loft
+        // call chain, which cannot tell a runtime path that wrote (a marshal, an adoption)
+        // from the program's own statement.
+        if std::env::var_os("LOFT_LOCK_BT").is_some() {
+            crate::loft_eprintln!(
+                "[locks] REFUSED write rec={rec} fld={fld} origin={origin:?}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         crate::runtime_error::RuntimeError::locked_store_write(rec, fld, origin).report_and_exit()
     }
 
@@ -3516,7 +3647,7 @@ impl Store {
     /// same event and the shadow hook must see both — @PLN154 counted 32 of 33 stack writers
     /// arriving at that hook, and a second write path that skipped it would put the count
     /// back where it started.
-    fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+    fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> Option<isize> {
         self.begin_write_inner::<T>(rec, fld, true)
     }
 
@@ -3529,7 +3660,7 @@ impl Store {
     /// store any test builds.  Everything else a write owes is still owed and still happens
     /// here: the lock refusal, the bounds check and @PLN154's shadow hook.
     #[inline]
-    fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+    fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> Option<isize> {
         self.begin_write_inner::<T>(rec, fld, false)
     }
 
@@ -3539,7 +3670,12 @@ impl Store {
     /// build sees the parameter unused.
     #[cfg_attr(not(debug_assertions), allow(unused_variables))]
     #[inline]
-    fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> isize {
+    fn begin_write_inner<T: 'static>(
+        &mut self,
+        rec: u32,
+        fld: u32,
+        in_record: bool,
+    ) -> Option<isize> {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
         //
@@ -3561,6 +3697,7 @@ impl Store {
         // reference corrupt where the write is merely refused.
         if self.read_only {
             self.refuse_locked_write(rec, fld);
+            return None;
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         #[cfg(debug_assertions)]
@@ -3589,23 +3726,53 @@ impl Store {
                 crate::stack_verify::kind_of::<T>(),
             );
         }
-        at
+        Some(at)
     }
 
-    /// The refusal of [`Self::begin_write_inner`]: a write reached a locked store.
+    /// `@FR-H-WriteLocked` for a write that does not go through [`Self::write`]: `true`
+    /// when it may proceed.  On a locked store a development run halts in the refusal and a
+    /// production run answers `false` — the caller drops the write.  One flag test when the
+    /// store is unlocked, so a hoisted writer can afford it per element.
+    #[inline]
+    #[must_use]
+    pub fn write_allowed(&self, rec: u32, fld: u32) -> bool {
+        if self.read_only {
+            self.refuse_locked_write(rec, fld);
+            return false;
+        }
+        true
+    }
+
+    /// A write reached a locked store (`@FR-H-WriteLocked`).  RETURNS only in a production
+    /// run, which has logged the write and whose caller now DISCARDS it: the store keeps its
+    /// bytes and the program continues on them (C80 — nothing stops a production program).
+    /// A development run halts here with the report.
     /// Enforces `@FR-R-Cold`: the refusal is outlined so the write check inlines.
     #[cold]
     #[inline(never)]
-    fn refuse_locked_write(&self, rec: u32, fld: u32) -> ! {
+    fn refuse_locked_write(&self, rec: u32, fld: u32) {
+        self.refuse_locked("Write to read-only store", rec, fld);
+    }
+
+    /// [`Self::refuse_locked_write`] naming the operation, for the internal-lock panic.
+    #[cold]
+    #[inline(never)]
+    fn refuse_locked(&self, what: &str, rec: u32, fld: u32) {
         // The author's own `#lock` is a loft fault with the author's frames; an
         // internal lock reaching here is a compiler defect and stays an assert.
         // The author's lock and a FOREIGN store (@PLN174) are the program's own doing and
         // get the runtime error whose advice names the cure; every other lock is internal.
         if self.user_locked || self.is_foreign() {
+            if std::env::var_os("LOFT_LOCK_BT").is_some() {
+                crate::loft_eprintln!("[locks] REFUSED in store #{}", self.store_nr);
+            }
+            if crate::runtime_error::discard_locked_write_in_production(rec, fld) {
+                return;
+            }
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
         }
         panic!(
-            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
+            "{what} at rec={rec} fld={fld} (locked by: {})",
             self.lock_origin
         );
     }
@@ -3618,8 +3785,11 @@ impl Store {
     #[inline]
     #[must_use]
     pub fn elem_base(&self, rec: u32) -> *const u8 {
-        if rec == FOREIGN_REC {
-            return self.foreign.as_ref().map_or(std::ptr::null(), |f| f.base);
+        if Self::is_foreign_rec(rec) {
+            return self
+                .foreign
+                .as_ref()
+                .map_or(std::ptr::null(), |f| f.span.base);
         }
         // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
         // past) the allocation `ptr` was made for.
@@ -3636,14 +3806,18 @@ impl Store {
     /// guarantees (loft#1481).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
-        let at = self.begin_write::<T>(rec, fld);
+        let Some(at) = self.begin_write::<T>(rec, fld) else {
+            return;
+        };
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
     /// [`Store::write`] for free-block bookkeeping — see [`Store::begin_write_block_meta`].
     #[inline]
     fn write_block_meta<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
-        let at = self.begin_write_block_meta::<T>(rec, fld);
+        let Some(at) = self.begin_write_block_meta::<T>(rec, fld) else {
+            return;
+        };
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -3656,8 +3830,12 @@ impl Store {
             return;
         }
         let width = std::mem::size_of::<T>() as u32;
-        let first = self.begin_write::<T>(rec, fld);
-        let _last = self.begin_write::<T>(rec, fld + (count - 1) * width);
+        let (Some(first), Some(_last)) = (
+            self.begin_write::<T>(rec, fld),
+            self.begin_write::<T>(rec, fld + (count - 1) * width),
+        ) else {
+            return;
+        };
         let base = unsafe { self.ptr.offset(first) };
         for k in 0..count as usize {
             unsafe {
@@ -3682,7 +3860,15 @@ impl Store {
             std::any::type_name::<T>(),
             std::mem::align_of::<T>(),
         );
-        let at = self.begin_write::<T>(rec, fld);
+        let Some(at) = self.begin_write::<T>(rec, fld) else {
+            assert!(
+                std::mem::size_of::<T>() <= 64 && std::mem::align_of::<T>() <= 8,
+                "a discarded write is wider than its sink"
+            );
+            // SAFETY: the sink is 8-aligned (a `u64` buffer), at least `size_of::<T>()`
+            // bytes long by the assert, and nothing reads it.
+            return unsafe { &mut *discard_sink(std::mem::size_of::<T>()).cast::<T>() };
+        };
         // Both preconditions of a reference are PROVED here rather than assumed:
         // `offset_in_bounds` for liveness, the assert above for alignment.
         unsafe { &mut *self.ptr.offset(at).cast::<T>() }
@@ -3702,11 +3888,10 @@ impl Store {
     /// The caller writes at most `len` bytes from the returned pointer.  The span is
     /// bounds-checked here.
     pub fn addr_span_mut(&mut self, rec: u32, fld: u32, len: usize) -> *mut u8 {
-        assert!(
-            !self.read_only,
-            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked_write(rec, fld);
+            return discard_sink(len);
+        }
         let at = self.offset_in_bounds(rec, fld, len);
         if !self.init_shadow.is_empty() {
             self.shadow_write(at as usize, len, crate::stack_verify::OPAQUE);
@@ -3715,8 +3900,14 @@ impl Store {
     }
 
     pub fn buffer(&mut self, rec: u32) -> &mut [u8] {
+        if self.read_only {
+            self.refuse_locked_write(rec, 8);
+            let len = self.bytes_of(rec).len();
+            // SAFETY: the sink holds at least `len` bytes and nothing reads it.
+            return unsafe { std::slice::from_raw_parts_mut(discard_sink(len), len) };
+        }
         assert!(
-            rec != FOREIGN_REC,
+            !Self::is_foreign_rec(rec),
             "Write to read-only store: a foreign store's bytes have no mutable buffer \
              (read them with `Store::bytes_of`)"
         );
@@ -3766,11 +3957,10 @@ impl Store {
     /// restore: no allocator interaction, so it never moves or resizes a record.
     /// Honors the hard `read_only` lock.
     pub fn write_span(&mut self, rec: u32, off: u32, bytes: &[u8]) {
-        assert!(
-            !self.read_only,
-            "write_span on read-only store at rec={rec} (locked by: {})",
-            self.lock_origin
-        );
+        if self.read_only {
+            self.refuse_locked_write(rec, off);
+            return;
+        }
         debug_assert!(
             Self::checked_offset(rec, off) + bytes.len() as isize <= self.size as isize * 8,
             "write_span out of bounds: rec={rec} off={off} len={} store_size={}",
@@ -3784,6 +3974,16 @@ impl Store {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.offset(at), bytes.len());
             }
         }
+    }
+
+    /// Whether `rec` is the START of a record this store claimed — the membership `valid()`
+    /// asserts, asked as a question.  `is_claimed_record` reads only the header word, so a
+    /// handle into the middle of a block that a later claim reused passes it; this does not.
+    /// Answers `true` where `claims` is not kept (a locked or file-backed store), as `valid()`
+    /// tolerates.
+    #[must_use]
+    pub fn claims_record(&self, rec: u32) -> bool {
+        self.read_only || self.is_file_backed() || self.claims.contains(rec)
     }
 
     /// Fast check whether a value looks like a valid live record.
@@ -3802,7 +4002,7 @@ impl Store {
     #[inline]
     pub fn valid(&self, rec: u32, fld: u32) -> bool {
         // @PLN174 — the foreign record: its header, then exactly the owner's bytes.
-        if rec == FOREIGN_REC {
+        if Self::is_foreign_rec(rec) {
             return self
                 .foreign
                 .as_ref()
@@ -3934,6 +4134,10 @@ impl Store {
         if len == 0 {
             return;
         }
+        if self.read_only {
+            self.refuse_locked_write(rec, pos);
+            return;
+        }
         let ptr: *mut u8 = self.addr_mut::<u8>(rec, pos);
         // SAFETY: callers pass a record/element's own `pos..pos+len`, which lies
         // within its claimed allocation.
@@ -3969,6 +4173,10 @@ impl Store {
         to_pos: isize,
         size: isize,
     ) {
+        if self.read_only {
+            self.refuse_locked_write(to_rec, to_pos as u32);
+            return;
+        }
         #[cfg(debug_assertions)]
         {
             let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
@@ -4000,6 +4208,24 @@ impl Store {
         }
     }
 
+    /// The address of `len` bytes at `pos` of record `rec` for a block READ: the store's
+    /// own block, or, for the foreign record (@PLN174), the foreign bytes themselves — so a
+    /// copy OUT of a mapped file (`w = m`: a bind copies) reads where the bytes are and not
+    /// sixteen gigabytes past the store.  Bounded as every foreign read is.
+    #[inline]
+    pub(crate) fn block_src(&self, rec: u32, pos: isize, len: isize) -> *const u8 {
+        if Self::is_foreign_rec(rec) {
+            return self.foreign_addr(
+                rec,
+                u32::try_from(pos).unwrap_or(u32::MAX),
+                usize::try_from(len).unwrap_or(0),
+            );
+        }
+        // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
+        // past) the allocation `ptr` was made for; the debug bound above says so.
+        unsafe { self.ptr.offset(rec as isize * 8 + pos) }
+    }
+
     #[inline]
     pub fn copy_block_between(
         &self,
@@ -4010,6 +4236,10 @@ impl Store {
         to_pos: isize,
         len: isize,
     ) {
+        if to_store.read_only {
+            to_store.refuse_locked_write(to_rec, to_pos as u32);
+            return;
+        }
         #[cfg(debug_assertions)]
         {
             let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
@@ -4025,7 +4255,7 @@ impl Store {
         }
         unsafe {
             std::ptr::copy(
-                self.ptr.offset(from_rec as isize * 8 + from_pos),
+                self.block_src(from_rec, from_pos, len),
                 to_store.ptr.offset(to_rec as isize * 8 + to_pos),
                 len as usize,
             );
@@ -5149,7 +5379,51 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{Claims, FOREIGN_REC, ForeignOwner, MAX_STORE_WORDS, Store, slack_target};
+    use super::{
+        Claims, FOREIGN_REC, ForeignOwner, ForeignSpan, MAX_STORE_WORDS, Store, slack_target,
+    };
+
+    /// A span over a byte slice the TEST owns (it outlives every store here).
+    fn foreign_span_of(bytes: &[u8]) -> ForeignSpan {
+        ForeignSpan {
+            base: bytes.as_ptr(),
+            len: bytes.len() as u32,
+            elem_size: 1,
+            owner: std::sync::Arc::new(ForeignOwner::Bytes(Vec::new())),
+        }
+    }
+
+    /// The two stores every foreign-store test reads beside each other: `data` copied into
+    /// an ordinary vector store (its record), and the same bytes served by a foreign store
+    /// (its root, whose slot at `+8` names `FOREIGN_REC`).
+    fn copied_and_foreign(data: &[u8]) -> (Store, u32, Store, u32) {
+        let len = data.len() as u32;
+        let mut plain = Store::new(64);
+        let root = plain.claim(4);
+        let rec = crate::vector::alloc_vector_from_bytes(&mut plain, 1, len, data);
+        plain.set_u32_raw(root, 8, rec);
+        let owned = data.to_vec();
+        let base = owned.as_ptr();
+        let mut foreign = Store::new(8);
+        let froot = foreign.claim(4);
+        foreign.make_foreign(
+            froot,
+            8,
+            ForeignSpan {
+                base,
+                len,
+                elem_size: 1,
+                owner: std::sync::Arc::new(ForeignOwner::Bytes(owned)),
+            },
+        );
+        (plain, rec, foreign, froot)
+    }
+
+    fn sample_bytes() -> Vec<u8> {
+        (0..37u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(3))
+            .collect()
+    }
 
     /// @PLN174 F1 — a foreign store answers a vector read through the SAME accessors an
     /// ordinary vector store answers, byte for byte; a write meets the read-only refusal;
@@ -5160,21 +5434,9 @@ mod tests {
     /// process dies on the address 16 GiB past the store.
     #[test]
     fn a_foreign_store_answers_a_vector_read_through_the_same_accessors() {
-        let data: Vec<u8> = (0..37u8)
-            .map(|i| i.wrapping_mul(7).wrapping_add(3))
-            .collect();
+        let data = sample_bytes();
         let len = data.len() as u32;
-        // The ordinary form: the bytes copied into a store.
-        let mut plain = Store::new(64);
-        let root = plain.claim(4);
-        let rec = crate::vector::alloc_vector_from_bytes(&mut plain, 1, len, &data);
-        plain.set_u32_raw(root, 8, rec);
-        // The foreign form: the same bytes, owned by a buffer the store keeps.
-        let owned = data.clone();
-        let base = owned.as_ptr();
-        let mut foreign = Store::new(8);
-        let froot = foreign.claim(4);
-        foreign.make_foreign(froot, 8, base, len, 1, ForeignOwner::Bytes(owned));
+        let (plain, rec, foreign, froot) = copied_and_foreign(&data);
         assert!(foreign.is_foreign() && foreign.read_only);
         assert_eq!(foreign.collection_rec(froot, 8), FOREIGN_REC);
         assert_eq!(
@@ -5213,22 +5475,166 @@ mod tests {
             foreign.read::<u8>(FOREIGN_REC, 8 + len)
         }));
         assert!(past.is_err(), "a read past the foreign bytes must refuse");
-        // A write is the read-only refusal — nothing can grow or move the block.
-        let grow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| foreign.claim(1)));
-        assert!(grow.is_err(), "a claim on a foreign store must refuse");
-        let mutate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            foreign.buffer(FOREIGN_REC).len()
-        }));
-        assert!(
-            mutate.is_err(),
-            "a mutable buffer of the foreign bytes must refuse"
+        // A write is the program's lock refusal (`@FR-H-WriteLocked`): nothing can grow or
+        // move the block.  Development halts the process and production discards, so neither
+        // is catchable here — both are pinned per mode and backend in tests/locked_writes.rs;
+        // this asserts the fact they rest on.
+        assert!(foreign.read_only && foreign.is_foreign());
+        assert!(foreign.validate_structure().is_ok());
+    }
+
+    /// @PLN174 F4b — a VIEW of a foreign store's bytes is a SECOND store (the local's own)
+    /// made foreign over a span of the first: it reads beside the copied slice byte for
+    /// byte through the same accessors, a view of a view adds its offset, the bytes outlive
+    /// the handle while the view is bound (the owner is shared), and the release makes the
+    /// view's store an ordinary, writable, empty one again.
+    /// @PLN174 F5 — a block a cdylib handed over (`ForeignOwner::Extern`): read through
+    /// the same accessors as a copied store, and RELEASED exactly once — with the last
+    /// store serving it, whichever that is — through the release it came with.
+    #[test]
+    fn a_cdylib_block_is_read_in_place_and_released_once_with_the_last_store() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static RELEASED: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn release(ptr: *mut u8, len: usize, cap: usize) {
+            RELEASED.fetch_add(1, Ordering::SeqCst);
+            drop(unsafe { Vec::from_raw_parts(ptr, len, cap) });
+        }
+        let data: Vec<u8> = (0..40u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(3))
+            .collect();
+        let mut plain = Store::new(64);
+        let root = plain.claim(4);
+        let rec = crate::vector::alloc_vector_from_bytes(&mut plain, 1, 40, &data);
+        plain.set_u32_raw(root, 8, rec);
+        let mut block = std::mem::ManuallyDrop::new(data);
+        let (ptr, len, cap) = (block.as_mut_ptr(), block.len(), block.capacity());
+        let owner = std::sync::Arc::new(ForeignOwner::Extern {
+            ptr,
+            len,
+            cap,
+            release,
+        });
+        let span = ForeignSpan {
+            base: ptr,
+            len: 40,
+            elem_size: 1,
+            owner: std::sync::Arc::clone(&owner),
+        };
+        drop(owner);
+        let mut handle = Store::new(8);
+        let hroot = handle.claim(4);
+        handle.make_foreign(hroot, 8, span);
+        for i in 0..40 {
+            assert_eq!(
+                handle.get_byte(FOREIGN_REC, 8 + i, 0),
+                plain.get_byte(rec, 8 + i, 0),
+                "byte {i}"
+            );
+        }
+        assert_eq!(handle.get_u32_raw(FOREIGN_REC, 4), 40);
+        // A view cut from the handle shares the block; the handle goes first.
+        let mut view = Store::new(8);
+        let vroot = view.claim(4);
+        view.make_foreign(vroot, 8, handle.foreign_span(10, 20).expect("span"));
+        assert_eq!(view.bytes_of(FOREIGN_REC), &plain.bytes_of(rec)[10..20]);
+        assert_eq!(handle.foreign_handle(), Some((hroot, 8)));
+        handle.release_foreign();
+        assert_eq!(
+            RELEASED.load(Ordering::SeqCst),
+            0,
+            "the view still serves the block"
         );
-        // The release drops the bytes: the record is gone, the store itself is not.
+        assert_eq!(handle.foreign_handle(), None);
+        assert!(!handle.read_only);
+        assert_eq!(
+            view.get_byte(FOREIGN_REC, 8 + 3, 0),
+            plain.get_byte(rec, 8 + 13, 0)
+        );
+        view.release_foreign();
+        assert_eq!(
+            RELEASED.load(Ordering::SeqCst),
+            1,
+            "released with the last store, once"
+        );
+    }
+
+    #[test]
+    fn a_view_of_a_foreign_store_reads_beside_the_copied_slice() {
+        let data = sample_bytes();
+        let (plain, rec, mut foreign, _froot) = copied_and_foreign(&data);
+        // A VIEW (F4b): elements 5..12 served by a SECOND store — the local's own — from a
+        // span of the first, read through the same accessors against the copied form.
+        let mut view = Store::new(8);
+        let vroot = view.claim(4);
+        let span = foreign.foreign_span(5, 12).expect("a span");
+        assert_eq!((span.len, span.elem_size), (7, 1));
+        view.make_foreign(vroot, 8, span);
+        assert!(view.is_foreign() && view.read_only);
+        assert_eq!(view.collection_rec(vroot, 8), FOREIGN_REC);
+        assert_eq!(view.get_u32_raw(FOREIGN_REC, 4), 7);
+        for i in 0..7u32 {
+            assert_eq!(
+                view.get_byte(FOREIGN_REC, 8 + i, 0),
+                plain.get_byte(rec, 8 + 5 + i, 0),
+                "view byte {i}"
+            );
+        }
+        assert_eq!(
+            view.read::<u32>(FOREIGN_REC, 8),
+            plain.read::<u32>(rec, 8 + 5)
+        );
+        let seen = unsafe { std::slice::from_raw_parts(view.elem_base(FOREIGN_REC), 7) };
+        assert_eq!(seen, &data[5..12]);
+        assert_eq!(view.bytes_of(FOREIGN_REC), &data[5..12]);
+        assert!(view.valid(FOREIGN_REC, 8 + 6) && !view.valid(FOREIGN_REC, 8 + 7));
+        let past = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            view.read::<u8>(FOREIGN_REC, 8 + 7)
+        }));
+        assert!(past.is_err(), "a read past the view must refuse");
+        // A view of the view adds its offset; clamped and reversed ranges are spans too.
+        let inner = view.foreign_span(2, 99).expect("a view of a view");
+        assert_eq!(inner.len, 5);
+        assert_eq!(
+            unsafe { std::slice::from_raw_parts(inner.base, 5) },
+            &data[7..12]
+        );
+        assert_eq!(foreign.foreign_span(9, 3).expect("reversed").len, 0);
+        assert_eq!(foreign.foreign_span(30, 99).expect("clamped").len, 7);
+        // The bytes outlive the HANDLE while the view is bound: the owner is shared.
+        assert_eq!(std::sync::Arc::strong_count(&inner.owner), 3);
+        drop(inner);
         foreign.release_foreign();
         assert!(!foreign.is_foreign());
         assert!(foreign.elem_base(FOREIGN_REC).is_null());
         assert!(!foreign.valid(FOREIGN_REC, 8));
         assert!(foreign.validate_structure().is_ok());
+        assert_eq!(view.bytes_of(FOREIGN_REC), &data[5..12]);
+        assert_eq!(view.get_byte(FOREIGN_REC, 8 + 3, 0), i32::from(data[8]));
+        // The release makes the view's store an ordinary, writable, EMPTY one again — the
+        // shape a rebind after `s = m[a..b]` needs — and drops the last owner.
+        view.release_foreign();
+        assert!(!view.is_foreign() && !view.read_only);
+        assert_eq!(view.collection_rec(vroot, 8), 0);
+        let fresh = crate::vector::alloc_vector_from_bytes(&mut view, 1, 3, &[9, 8, 7]);
+        view.set_u32_raw(vroot, 8, fresh);
+        assert_eq!(view.bytes_of(fresh)[..3], [9, 8, 7]);
+        assert!(view.validate_structure().is_ok());
+        assert!(
+            foreign.foreign_span(0, 4).is_none(),
+            "a released handle serves no span"
+        );
+        // Made foreign OVER that record, the store returns the record to the free tree
+        // and serves the span; released, the slot names the empty vector again.
+        assert!(view.claims.contains(fresh));
+        view.make_foreign(vroot, 8, foreign_span_of(&data[1..4]));
+        assert!(
+            !view.claims.contains(fresh),
+            "the displaced record is free again"
+        );
+        assert_eq!(view.bytes_of(FOREIGN_REC), &data[1..4]);
+        view.release_foreign();
+        assert_eq!(view.collection_rec(vroot, 8), 0);
+        assert!(view.validate_structure().is_ok());
     }
 
     /// loft#1507 — a recycled slot must not inherit the widest claims set it ever held.

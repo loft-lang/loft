@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SCRIPT — constants are top-level declarations, so this file is script-shaped.
+// @PAGE: loft-write skill § Constants and § Backtick strings.
+
+TAU      = 6.28318530717958;    // bare-name form
+const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
+pub const MAX_SIZE = 256;       // pub + const combine for exported constants
+
+SHADER = `
+  #version 330 core
+  void main() {{
+      gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+  }}
+`;   // a backtick string is a format string too: a literal brace is doubled
+
+assert(TAU > 6.28 and E > 2.71 and MAX_SIZE == 256, "three constants")
+assert(SHADER.contains("gl_Position"), "a backtick block keeps its lines")

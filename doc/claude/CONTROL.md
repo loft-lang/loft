@@ -55,7 +55,9 @@ program) or from the **environment / data** (not reproducible by reading it)?
 10. **Closure capture mode is not selectable** — scalar by value, heap shared, decided by
     type (`formal/closures.md` `(L-CapScalar)` / `(L-CapHeap)`). Consistent with the
     parameter rule, so learnable; there is no way to say "snapshot this struct".
-11. **`MAX_CALL_DEPTH = 10 000`, fixed** (`src/state/mod.rs`). Not settable from source or CLI.
+11. **`MAX_CALL_DEPTH = 10 000`, fixed** (`src/state/mod.rs`). Not settable from source or CLI,
+    and it halts in every build today; [@PLN177](plans/177-growable-stack.md) makes it a
+    development-only limit over a stack that grows in blocks.
 12. **The live/debug tier ships in every `--native` artifact** unless `--lean`; a
     `--native-release` program and a library cdylib are lean by default (no live channel,
     depth-only frames) — the shipped tier, NATIVE.md § Optimisation tiers.

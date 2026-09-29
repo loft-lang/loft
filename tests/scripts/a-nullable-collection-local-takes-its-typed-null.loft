@@ -45,7 +45,7 @@
 //   assertion channels on both backends, where this guard was falsified on the FREE channel
 //   with every value already correct.  It therefore reintroduces some other fault of that
 //   commit, not this one, and a receipt that moves the wrong channel is worse than none.
-//   TESTING.md § The patch receipt.
+//   GUARDS.md § The patch receipt.
 //   ARMED: none needed. This file has a `main`, so falsify runs it under --interpret, which
 //   prints `stores not freed at program exit`; the leak channel is read straight off that
 //   stderr and an unarmed run sees it.

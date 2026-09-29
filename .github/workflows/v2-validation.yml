@@ -48,7 +48,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -80,6 +81,15 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Test (V2)
         run: cargo nextest run --no-fail-fast --profile ci
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # STEP 3 — the homegrown stack_align_guard sweep under V2.  The guard asserts
   # every typed stack slot lands on its alignment boundary; it is arch-
@@ -96,7 +106,8 @@ jobs:
       - name: Install mold + ALSA + headless GL
         run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -123,6 +134,15 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Test (V2 + stack_align_guard, zero fires expected)
         run: cargo nextest run --no-fail-fast --profile ci --features stack_align_guard
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # STEP 4 — Miri hard-UB on a curated subset under V2.  Interpreter-on-Miri is
   # ~15 min/test, so this is a small representative set, not the full suite.
@@ -146,7 +166,8 @@ jobs:
         with:
           components: miri
       - name: Cache cargo + miri target
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -158,3 +179,12 @@ jobs:
         run: cargo +nightly miri setup
       - name: Miri hard-UB curated subset (V2)
         run: cargo +nightly miri test --test issues -- --exact p213_struct_field_basic_int
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/miri
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

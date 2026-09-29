@@ -36,6 +36,18 @@ use crate::keys::DbRef;
 use crate::store::{RECORD_PAYLOAD, Store};
 use crate::vector;
 use crate::{hash, keys, tree};
+
+/// @PLN174 F5 — one cdylib bridge call's heap-typed arguments as the bridge is handed
+/// them ([`Stores::bridge_args`]): the store the bridge allocates in, whether that store
+/// was minted for this call, and per argument the handle to pass (the argument itself, or
+/// the copy a foreign vector's bytes took in `store_nr`).
+#[derive(Debug)]
+pub struct BridgeArgs {
+    pub store_nr: u16,
+    pub minted: bool,
+    pub handed: Vec<DbRef>,
+    copies: Vec<(DbRef, DbRef)>,
+}
 use std::collections::HashSet;
 
 /// Why a field is being given its absent value — which decides what that value may COST.
@@ -1408,6 +1420,262 @@ impl Stores {
         }
     }
 
+    /// @PLN174 F4a — append elements `lo..hi` of `o_db` to `db` in ONE block: the slice
+    /// materialisation for a scalar element kind, where the per-element loop minted a record
+    /// per element.  The bounds arrive clamped (the slice prelude's `slice_lo` / `slice_hi`),
+    /// and are clamped again here so a stale prelude cannot read past the source.  The
+    /// source span is taken through [`Store::bytes_of`], so a FOREIGN store's bytes (a
+    /// mapped file) copy exactly as an owned record's; the one intermediate buffer keeps
+    /// the source and destination borrows apart (the same store, or the same vector).  A
+    /// linked or heap-owning element kind is refused: its elements are records to deep-copy,
+    /// which the loop form does.
+    ///
+    /// # Panics
+    /// When `known` is a linked or heap-owning element type — the parser never emits the op
+    /// for one, so this is a generator defect, not a program's.
+    pub fn vector_slice(&mut self, db: &DbRef, o_db: &DbRef, lo: i64, hi: i64, known: u16) {
+        if db.is_null() || db.rec == 0 || o_db.is_null() || o_db.rec == 0 || o_db.pos == 0 {
+            return;
+        }
+        assert!(
+            !self.is_linked(known) && !self.type_owns_heap(known),
+            "vector_slice: element type {known} owns records; the slice loop is its form"
+        );
+        let o_length = i64::from(vector::length_vector(o_db, &self.allocations));
+        let lo = lo.clamp(0, o_length);
+        let hi = hi.clamp(lo, o_length);
+        let n = u32::try_from(hi - lo).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let size = u32::from(self.size(known));
+        let span: Vec<u8> = {
+            let store = keys::store(o_db, &self.allocations);
+            let o_rec = store.collection_rec(o_db.rec, o_db.pos);
+            if o_rec == 0 {
+                return;
+            }
+            let from = lo as usize * size as usize;
+            store.bytes_of(o_rec)[from..from + n as usize * size as usize].to_vec()
+        };
+        let new_db = vector::vector_append(db, size, &mut self.allocations);
+        let append_pos = new_db.pos;
+        self.vector_set_size(db, n, size);
+        let store = keys::mut_store(db, &mut self.allocations);
+        let dest_rec = store.get_u32_raw(db.rec, db.pos);
+        // `vector_append` answers the byte position of the new slot from the record's
+        // start; `buffer` starts at the payload (+8).
+        let at = (append_pos - 8) as usize;
+        store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(&span);
+    }
+
+    /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a
+    /// `__vdb_N`): when `src` is a FOREIGN store (a mapped file, a library's buffer) the
+    /// local's store becomes a VIEW of the span — the same bytes under the same header
+    /// contract, no copy, read-only like its source, alive for as long as the local is bound
+    /// because the span shares the owner — and otherwise the span is copied exactly as
+    /// [`Stores::vector_slice`] copies it.  `(Slice-Value)`'s view clause.  The parser emits
+    /// this only for a bind whose backing is the local's OWN store, because the view LOCKS
+    /// that store; an append, an argument or a field keeps the copy.  A store already
+    /// serving a view is released first (a rebind), and one locked for any other reason
+    /// takes the copy, whose write then meets the lock's own refusal.
+    /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
+    pub fn vector_slice_view(&mut self, db: &DbRef, o_db: &DbRef, lo: i64, hi: i64, known: u16) {
+        let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
+        if view
+            && !db.is_null()
+            && db.rec != 0
+            && db.pos != 0
+            && !o_db.is_null()
+            && o_db.rec != 0
+            && o_db.pos != 0
+            && db.store_nr != o_db.store_nr
+        {
+            let o_length = i64::from(vector::length_vector(o_db, &self.allocations));
+            let lo = lo.clamp(0, o_length);
+            let hi = hi.clamp(lo, o_length);
+            if hi > lo
+                && let Some(span) =
+                    keys::store(o_db, &self.allocations).foreign_span(lo as u32, hi as u32)
+            {
+                let store = keys::mut_store(db, &mut self.allocations);
+                if store.is_foreign() {
+                    store.release_foreign();
+                }
+                if !store.read_only {
+                    store.make_foreign(db.rec, db.pos, span);
+                    return;
+                }
+            }
+        }
+        self.vector_slice(db, o_db, lo, hi, known);
+    }
+
+    /// @PLN174 F5 — a local bound to a `#native` call's vector answer takes it as its own
+    /// (`OpAdoptVector`, emitted where the #409 wrapper delivery and the #410 direct bind
+    /// used to copy every element into the local's `__vdb_N` store): when the answer is a
+    /// FOREIGN store (a library's buffer handed over with no copy) the local's store becomes
+    /// a VIEW of the whole — [`Stores::vector_slice_view`] for the full span, the same
+    /// contract — and otherwise the elements are copied exactly as before, so an owned
+    /// answer keeps the in-place `+=` those two fixes guaranteed.  A foreign answer's `+=`
+    /// meets the read-only refusal instead of the silent drop #410 closed.
+    /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
+    pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+        let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
+        if view
+            && !db.is_null()
+            && db.rec != 0
+            && db.pos != 0
+            && !o_db.is_null()
+            && o_db.rec != 0
+            && o_db.pos != 0
+            && db.store_nr != o_db.store_nr
+        {
+            let o_length = vector::length_vector(o_db, &self.allocations);
+            if o_length > 0
+                && let Some(span) = keys::store(o_db, &self.allocations).foreign_span(0, o_length)
+            {
+                let store = keys::mut_store(db, &mut self.allocations);
+                if store.is_foreign() {
+                    store.release_foreign();
+                }
+                if !store.read_only {
+                    store.make_foreign(db.rec, db.pos, span);
+                    return;
+                }
+            }
+        }
+        self.vector_add(db, o_db, known);
+    }
+
+    /// @PLN174 F5 — set up the heap-typed arguments of ONE cdylib bridge call.  A cdylib
+    /// reads every vector or record argument through the ONE store handle it is given —
+    /// raw pointer arithmetic on that store's buffer (`loft_ffi::LoftStore::vector_len`,
+    /// `ptr + rec * 8`) — so two things follow.  The store is the first argument's, as it
+    /// always was (a record argument is read and written through it, so a record always
+    /// pins); and a FOREIGN vector, whose bytes that arithmetic cannot see (the read went
+    /// sixteen gigabytes past the store), is COPIED into a record of THAT store for the
+    /// call, in one block.  A foreign vector never pins: the next argument does, or a store
+    /// is minted for the call — announced as the return store when the answer is a vector or
+    /// record, freed after the call when it is not.  `args` are the heap-typed arguments in
+    /// declaration order with whether each is a vector; `handed` is what the bridge is
+    /// given for each, and [`bridge_args_done`](Self::bridge_args_done) ends the call.  A
+    /// `#rust` builtin and a `par` worker need none of this: they read through [`Store`]'s
+    /// accessors, which serve the foreign record.
+    #[must_use]
+    pub fn bridge_args(&mut self, args: &[(DbRef, bool)], returns_ref: bool) -> BridgeArgs {
+        let foreign = |stores: &Self, db: &DbRef, is_vec: bool| {
+            is_vec
+                && !db.is_null()
+                && (db.store_nr as usize) < stores.allocations.len()
+                && stores.allocations[db.store_nr as usize].is_foreign()
+        };
+        let pin = args
+            .iter()
+            .find(|(db, is_vec)| !foreign(self, db, *is_vec))
+            .map(|(db, _)| db.store_nr);
+        let any_foreign = args.iter().any(|(db, is_vec)| foreign(self, db, *is_vec));
+        let (store_nr, minted) = match pin {
+            Some(nr) => (nr, false),
+            None if returns_ref || any_foreign => (self.null().store_nr, true),
+            None => (0, false),
+        };
+        let mut handed = Vec::with_capacity(args.len());
+        let mut copies = Vec::new();
+        for (db, is_vec) in args {
+            let span = if foreign(self, db, *is_vec) {
+                keys::store(db, &self.allocations).foreign_span(0, u32::MAX)
+            } else {
+                None
+            };
+            let Some(span) = span else {
+                handed.push(*db);
+                continue;
+            };
+            // SAFETY: the span's owner keeps `len * elem_size` bytes live at `base`, and
+            // the source store is locked for as long as it serves them.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(span.base, span.len as usize * span.elem_size as usize)
+            };
+            let base = DbRef {
+                store_nr,
+                rec: 0,
+                pos: 0,
+            };
+            // The one-word root with its slot at `+4`: the shape a bridge's own vector
+            // answer takes (`extensions::bridge_push_ref`), so the deref is the same.
+            let root = self.claim(&base, 1);
+            let rec = vector::alloc_vector_from_bytes(
+                self.store_mut(&base),
+                span.elem_size,
+                span.len,
+                bytes,
+            );
+            self.store_mut(&base).set_u32_raw(root.rec, 4, rec);
+            let copy = DbRef {
+                store_nr,
+                rec: root.rec,
+                pos: 4,
+            };
+            handed.push(copy);
+            copies.push((*db, copy));
+        }
+        BridgeArgs {
+            store_nr,
+            minted,
+            handed,
+            copies,
+        }
+    }
+
+    /// The call is over.  A bridge that WROTE through a foreign vector's copy — grew it,
+    /// or changed an element — wrote to bytes the program does not own, and the copy has
+    /// nowhere to carry that: it is the same refusal a direct write meets, raised after
+    /// the call instead of silently dropped.  Then the copies go: a store minted for a
+    /// scalar answer is freed whole; otherwise each copy's records are deleted from the
+    /// store they were claimed in — unless a foreign ANSWER locked that store, which the
+    /// answer's own free releases, copies and all.
+    pub fn bridge_args_done(&mut self, args: &BridgeArgs, returns_ref: bool) {
+        let mut changed = false;
+        for (orig, copy) in &args.copies {
+            let o_len = vector::length_vector(orig, &self.allocations);
+            let c_len = vector::length_vector(copy, &self.allocations);
+            let o = keys::store(orig, &self.allocations);
+            let c = keys::store(copy, &self.allocations);
+            let c_rec = c.collection_rec(copy.rec, copy.pos);
+            let n = o
+                .foreign_span(0, u32::MAX)
+                .map_or(0, |sp| sp.len as usize * sp.elem_size as usize);
+            changed |= o_len != c_len
+                || o.bytes_of(crate::store::FOREIGN_REC)[..n] != c.bytes_of(c_rec)[..n];
+        }
+        let base = DbRef {
+            store_nr: args.store_nr,
+            rec: 0,
+            pos: 0,
+        };
+        if args.minted && !returns_ref {
+            self.free(&base);
+        } else if !args.copies.is_empty() && !self.store(&base).read_only {
+            let store = self.store_mut(&base);
+            for (_, copy) in &args.copies {
+                let rec = store.collection_rec(copy.rec, copy.pos);
+                if rec != 0 {
+                    store.delete(rec);
+                }
+                store.delete(copy.rec);
+            }
+        }
+        if changed {
+            crate::runtime_error::RuntimeError::locked_store_write(
+                crate::store::FOREIGN_REC,
+                8,
+                Store::FOREIGN_ORIGIN,
+            )
+            .report_and_exit();
+        }
+    }
+
     /// Append every element of the vector at `o_db` to the vector at `db`, deep-copying
     /// the heap each element owns.
     ///
@@ -2671,11 +2939,13 @@ impl Stores {
     }
 
     pub fn copy_block(&mut self, from: &DbRef, to: &DbRef, len: u32) {
+        if !self.store(to).write_allowed(to.rec, to.pos) {
+            return;
+        }
         unsafe {
             std::ptr::copy(
                 self.store(from)
-                    .ptr
-                    .offset(from.rec as isize * 8 + from.pos as isize),
+                    .block_src(from.rec, from.pos as isize, len as isize),
                 self.store_mut(to)
                     .ptr
                     .offset(to.rec as isize * 8 + to.pos as isize),

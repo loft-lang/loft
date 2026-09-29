@@ -1,4 +1,4 @@
-use p145_types;
+use p145_types::*;
 pub struct Map {
   chunks: vector<Chunk>,
   mats: vector<MatDef>,

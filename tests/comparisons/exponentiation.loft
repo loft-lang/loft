@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: exponentiation
+// @CLAIM: `**` is exponentiation, `^` is XOR — as in Python for the first and unlike it for the second.
+// @SEEN-FROM: 00-vs-python.html#exponentiation
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-python.html#exponentiation (a verbatim window: `rule_tags.py fences`) ---
+r = 2.0;
+a = 6;
+b = 3;
+x = 2;
+area  = PI * r ** 2.0;      // ** exponentiation (like Python)
+bits  = a | b;              // bitwise OR
+xor   = a ^ b;              // bitwise XOR — not exponentiation
+cube  = x ** 3;             // integer cube — exact: 2 ** 10 == 1024
+assert(bits == 7 and xor == 5 and cube == 8, "the operators mean what the comments say");
+assert(area > 12.56 and area < 12.57, "PI * r ** 2.0");

@@ -109,7 +109,7 @@ now — what's open below is the increments.
 
 | Theme | Open increment (the part NOT yet shipped) | Scope | Home |
 |---|---|---|---|
-| **Performance / startup** (serves live-prototyping) | precompiled-stdlib fast-start (`@PLN52` — **DELIVERED** via @PLN11 arc D/D2b, opt-in `LOFT_STDLIB_CACHE`); const-store Phase B/C (`@PLN82`); the wasm-vs-native gap | in-scope | [PERFORMANCE.md § Open work](PERFORMANCE.md); `@PLN82` |
+| **Performance / startup** (serves live-prototyping) | precompiled-stdlib fast-start (`@PLN52` — **DELIVERED** via @PLN11 arc D/D2b, opt-in `LOFT_STDLIB_CACHE`); const-store Phase B/C (`@PLN82`); the wasm-vs-native gap | in-scope | [PERFORMANCE.md § Open performance work](PERFORMANCE.md#open-performance-work); `@PLN82` |
 | **Native robustness** | ~~shared-store dispatch → a C-ABI `LoftStore` handle~~ — **gh #389 CLOSED**.  Live item: the **differential-oracle divergence** on `main` (native/wasm reject a match-arm tail call the interpreter accepts) | in-scope (stabilisation) | [NATIVE.md § Open work](NATIVE.md) |
 | **Library system** (the dogfood track) | LSP, a game-client lib, viewer generalisation, regex Phase 1 (pure-loft NFA) — *graphics / imaging / server / markdown / world / game_protocol / **regex** (v0.2.0: matches/find/split **+ match_groups/replace**) already ship*.  Also: migrate `hex_terrain` off the plain-bind write-through idiom (see gate 5) | in-scope | [lib_plans/README](lib_plans/README.md); the `[libs]` `@PLN` issues |
 | **Friend-readiness / UX** | first-time tutorial + more day-to-day ergonomics — *REPL / `introspect` / the IDE editor slices already ship* | mixed | ROADMAP § U + § "Near-term focus" below |
@@ -346,9 +346,9 @@ Performance, refactor, internal cleanup with clear payoff.
 | ID | Title | E | Design | Source |
 |---|---|---|---|---|
 | (cross) | Native codegen follow-ups (yield-from + generic text-return + fill.rs auto-gen) | XS-M per item | ✓ | NATIVE.md § Open work |
-| (cross) | Performance follow-ups (P1-P3 interpreter / N1-N3 native / W1 wasm) | S-MH per item | ✓ | PERFORMANCE.md § Open work |
-| O4 | Native: direct-emit local collections | M | ✓ | PERFORMANCE.md § Open work (N1) |
-| O5 | Native: omit `stores` from pure functions | M | ✓ | PERFORMANCE.md § Open work (N2) |
+| (cross) | Performance follow-ups (P1-P3 interpreter / N1-N3 native / W1 wasm) | S-MH per item | ✓ | PERFORMANCE.md § Open performance work |
+| O4 | Native: direct-emit local collections | M | ✓ | PERFORMANCE.md § Open performance work (N1) |
+| O5 | Native: omit `stores` from pure functions | M | ✓ | PERFORMANCE.md § Open performance work (N2) |
 | A12 | Lazy work-variable initialization | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
 | O2 | Stack raw pointer cache | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
 | @P393 | Vector store-lifetime watermark — function-local vectors free at scope-end not last-use; literal-init double-allocates.  Stage A: verified **no leak** (exit gate passes); benign watermark + noisy `LOFT_STORES=warn` floor.  Quickest win = raise heuristic threshold (XS) | S-M (XS heuristic / S cluster II / M cluster I) | Stage A ✓; Stage B/C pending (design call) | plans/2-vector-store-watermark/README.md |
@@ -405,7 +405,7 @@ Every item below must be checked off before the project claims its stability bar
 
 | ID | Title | Notes |
 |---|---|---|
-| O1 | Superinstruction peephole rewriting | **Re-triage** — deferred as "opcode table full (254/256)", a premise that no longer holds: the escape prefix makes the space 511 (PERFORMANCE.md § P1) |
+| O1 | Superinstruction peephole rewriting | **Re-triage** — deferred as "opcode table full (254/256)", a premise that no longer holds: the escape prefix makes the space 511 (PERFORMANCE-history.md § P1) |
 
 ---
 
@@ -496,11 +496,11 @@ For per-phase status (what's shipped, what's in flight, what's blocked) **read t
 | Plan | E | Depends on | Notes |
 |---|---|---|---|
 | [NATIVE.md § Open work](NATIVE.md#open-work) | XS-M per item | — | N8b.3 yield-from + N8c.1/2 generic text-return audit + N20a/b fill.rs auto-gen |
-| [PERFORMANCE.md § Open work](PERFORMANCE.md#open-work) | S-MH per item | P1 blocked on opcode-table capacity | 7 optimization designs (P1-P3 interpreter / N1-N3 native / W1 wasm) |
+| [PERFORMANCE.md § Open performance work](PERFORMANCE.md#open-performance-work) | S-MH per item | P1 unblocked — the opcode escape has room | 7 optimization designs (P1-P3 interpreter / N1-N3 native / W1 wasm) |
 | Release performance pass (`@PLN158`) | M-MH | api-surface baselines; profile corpus | Per-routine benches over stdlib + published libraries, pure-Rust/C# reference twins, drift vs previous release; report read by `M-perf-pass` per release.  **Prototype shipped**: the drawing library's `bench/` (bench.loft + bench.rs twin + compare.py, hash-validated lanes — loft#1426); @PLN158 generalizes it |
 | [`plans/166-loft-compile-speed.md`](plans/166-loft-compile-speed.md) (`@PLN166`) | M | — | **✅ FINISHED 2026-09-26.** loft's own compile measured by phase, attributed by module, gated by an exact allocation count; −48 % instructions, −59 % allocations on the 12 826-line corpus; a warm `--native` run skips the parse.  Reference: PERFORMANCE.md § Front-end speed, § F1 |
 | [`plans/173-code-shape.md`](plans/173-code-shape.md) (`@PLN173`) | M | — | **✅ FINISHED 2026-09-26.** `too_many_lines` fires on every function, each long one carrying its own `#[expect]` with a reason (`inherited` for the debt); over-bar files split one per release by the `split-file` skill (`M-file-split`, `make file-sizes ARGS=--pick`).  Reference: CODE.md § Functions, RELEASE.md § File split per release |
-| [`plans/174-foreign-stores/`](plans/174-foreign-stores/README.md) (`@PLN174`) | S–M per phase | @PLN158 (the portal rows it answers) | **ACTIVE 2026-09-28.** Read-only memory owned by a library, a file or the host served through the store contract, a slice of it a view — no new syntax, no new op.  F0 priced: the text span off the frame, −13.6 % on `check_request` |
+| [`plans/174-foreign-stores/`](plans/174-foreign-stores/README.md) (`@PLN174`) | S–M per phase | @PLN158 (the portal rows it answers) | **CLOSED 2026-09-28.** Read-only memory owned by a library or a file served through the store contract (`file_map`, loft-ffi 0.1.2's `foreign_vector_from_owned`), a slice of it a view; `req_state_b64` −59 %, `check_request` −11 % on a foreign frame.  The host half (which host hands a frame over) is PACKAGES.md's PKG.FOREIGN-HOST row |
 | [`plans/45-doc-hygiene-autofix/`](plans/45-doc-hygiene-autofix) | M | — | `make plan-move` + `make doc-fix` — atomic directory-move with link-rewriting; closes the PR-212-style cascade of 3-5 fix-up commits per move |
 | [`plans/52-stdlib-fast-start/`](plans/52-stdlib-fast-start) | M-MH | **CLOSED — delivered by @PLN11 arc D/D2b/E** | Precompiled-stdlib cache — hash-validated on-disk parsed stdlib, deserialize-on-startup instead of re-parsing `default/*.loft` per invocation.  Built under @PLN11 (store-backed IR) as the opt-in `LOFT_STDLIB_CACHE` (`startup_cache.rs` + `cache.rs`); tests `d2b_stdlib_cache.rs` / `arc_e_program_cache.rs`.  Miri-safe serde variant was mooted (mmap route chosen; Miri solved by `cached_default()`) |
 | [`plans/2-vector-store-watermark/`](plans/2-vector-store-watermark) | S-M | kindred to finished PLAN51/52 store-lifetime class; soundness-floor A ([GOALS.md](GOALS.md)) | @P393 investigation — function-local vectors free at scope-end not last-use (cluster I) + literal-init double-alloc (cluster II).  Stage A ✓ both backends: **verified no leak**, benign watermark.  Stage B (source root-cause) + Stage C (design call: do-nothing-heuristic vs last-use-free) pending |
@@ -552,5 +552,5 @@ ROADMAP rows that still cite a flat reference doc as Source rather than a plan. 
 - **C52** Stdlib name clash: warning + `std::` prefix (C)
 - **C53** Match arms: library enums + bare variant names (C)
 - **I12** Interfaces: factory methods (C)
-- **A12, O2** Performance items (Q) — would fold into PERFORMANCE.md § Open work if their designs grow
+- **A12, O2** Performance items (Q) — would fold into PERFORMANCE.md § Open performance work if their designs grow
 - **A4** Spatial index operations (N)

@@ -215,6 +215,8 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
 /// Paths for one native compilation job.
 struct NativeJob {
     stem: String,
+    /// The `.loft` program, whose run lock `run_native_job` holds (loft#1724).
+    source: PathBuf,
     tmp_rs: PathBuf,
     binary: PathBuf,
     /// Sidecar file that stores the cache key written at compile time.
@@ -484,6 +486,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     let key_file = scratch.join(format!("loft_native_{stem}_bin.key"));
     Ok(NativeJob {
         stem,
+        source: entry.to_path_buf(),
         tmp_rs,
         binary,
         key_file,
@@ -677,6 +680,7 @@ fn compile_native_job(
 /// cache on the next invocation (see `binary_cache_valid`).
 fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     let cwd = std::env::current_dir().unwrap_or_default();
+    let _run_lock = common::source_run_lock(&job.source);
     let run_status = std::process::Command::new(&job.binary)
         .current_dir(&cwd)
         .status()?;
@@ -883,6 +887,101 @@ fn native_dir() -> std::io::Result<()> {
         let name = entry.file_name().unwrap_or_default().to_string_lossy();
         if NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
             println!("skip {entry:?} (native skip list — see NATIVE_SKIP)");
+            continue;
+        }
+        jobs.push(prepare_native_test(&entry)?);
+    }
+    run_native_jobs(jobs, rlib_info)
+}
+
+/// Compile and run every `.loft` file in `tests/reference/` natively — the reference pages'
+/// samples (@PLN176 phase 2), the `--native` half of `wrap::reference`.  An `@EXPECT_ERROR`
+/// file is skipped as everywhere on this backend (the refusal is the interpreter's to
+/// prove); a `// @SCRIPT` file (top-level statements, no `fn main`) is a shape the test
+/// harness's parser does not model, so it is compiled and run as the binary does it —
+/// `loft --native <file>` — and its exit status is the verdict.
+#[test]
+fn native_reference() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/reference") {
+        Ok(rd) => rd
+            .filter_map(|f| f.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+            })
+            .collect(),
+        Err(_) => return Ok(()),
+    };
+    files.sort();
+    let rlib_info = find_loft_rlib();
+    let mut jobs = Vec::new();
+    for entry in files {
+        let src = std::fs::read_to_string(&entry)?;
+        if src.contains("@EXPECT_ERROR") {
+            println!("skip {entry:?} (expected error — the interpreter proves the refusal)");
+            continue;
+        }
+        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--native")
+                .arg(&entry)
+                .env("LOFT_TIMEOUT", "300")
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped reference sample {} failed on --native:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            println!("script {entry:?} ran natively");
+            continue;
+        }
+        jobs.push(prepare_native_test(&entry)?);
+    }
+    run_native_jobs(jobs, rlib_info)
+}
+
+/// Compile and run every `.loft` file in `tests/comparisons/` natively — the comparison pages'
+/// claims, the `--native` half of `wrap::comparisons`.  Every file there is script-shaped
+/// (`// @SCRIPT`), so each runs as the binary runs it.
+#[test]
+fn native_comparisons() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/comparisons") {
+        Ok(rd) => rd
+            .filter_map(|f| f.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+            })
+            .collect(),
+        Err(_) => return Ok(()),
+    };
+    files.sort();
+    let rlib_info = find_loft_rlib();
+    let mut jobs = Vec::new();
+    for entry in files {
+        let src = std::fs::read_to_string(&entry)?;
+        if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--native")
+                .arg(&entry)
+                .env("LOFT_TIMEOUT", "300")
+                .output()?;
+            assert!(
+                out.status.success(),
+                "script-shaped comparison program {} failed on --native:\n{}{}",
+                entry.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            println!("script {entry:?} ran natively");
             continue;
         }
         jobs.push(prepare_native_test(&entry)?);
@@ -1333,7 +1432,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln24_matrix.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 println(\"i64 {lc_i64(lc_i64(1234567890123))}\");\n\
          \x20 println(\"neg {lc_neg_i32(1)}\");\n\
@@ -1465,6 +1564,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
 /// agree on the value, and one past it both must REFUSE. The expected sums are
 /// position-weighted (argument `i` counts `i`), so a trampoline that dropped or
 /// reordered an argument gives a different number rather than a plausible one.
+/// @C106 — one `#c` arity ceiling for both backends.
 #[test]
 fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -1587,7 +1687,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         let prog = dir.join(format!("call{n}.loft"));
         std::fs::write(
             &prog,
-            format!("use arity;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
+            format!("use arity::*;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
         )?;
         let mut refused = Vec::new();
         for backend in ["--interpret", "--native"] {
@@ -1654,7 +1754,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let prog = dir.join("dep_ok.loft");
     std::fs::write(
         &prog,
-        format!("use arity;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
+        format!("use arity::*;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
     )?;
     for backend in ["--interpret", "--native"] {
         let (stdout, stderr) = run(backend, &prog)?;
@@ -1682,6 +1782,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
 ///
 /// Skips when `cc` is absent, like its sibling above; a failed BUILD is a real
 /// failure, not a skip.
+/// @C107 @C109 — the C signature decides the count; a float return crosses `#c`.
 #[test]
 fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -1708,7 +1809,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
     let prog = std::env::temp_dir().join("loft_pln128_numeric.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 a: vector<float> = [1.5, 2.25, 4.0];\n\
          \x20 println(\"dsum {lc_dsum_scaled(a)}\");\n\
@@ -1982,7 +2083,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     let script = dir.join("probe.loft");
     std::fs::write(
         &script,
-        "use skewlib;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
+        "pub use skewlib::*;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
     )?;
 
     for backend in ["--interpret", "--native"] {
@@ -3126,7 +3227,7 @@ fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()>
 ///
 /// CI reaches sqlite only. `LOFT_SQLDB_MODE` selects the other three, and the
 /// local four-backend run is written into the plan where it was measured
-/// (doc/claude/TESTING.md § Database backends).
+/// (doc/claude/TEST_ENVIRONMENTS.md § Database backends).
 #[test]
 fn a_structure_written_is_immediately_readable_through_one_connection_string() -> std::io::Result<()>
 {
@@ -3367,7 +3468,7 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
     let prog = dir.join("s2.loft");
     std::fs::write(
         &prog,
-        "use mariadb;\n\
+        "use mariadb::*;\n\
          fn main() {\n\
          \x20 h = db_init(0);\n\
          \x20 println(\"handle {h != 0}\");\n\
@@ -3458,7 +3559,7 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
     let prog = dir.join("s1.loft");
     std::fs::write(
         &prog,
-        "use mariadb;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
+        "use mariadb::*;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
     )?;
 
     let run = |backend: &str| -> std::io::Result<String> {
@@ -3627,7 +3728,7 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln24_shim.loft");
     std::fs::write(
         &prog,
-        "use lcshim;\n\
+        "use lcshim::*;\n\
          fn main() {\n\
          \x20 println(\"scale {shim_scale(4612811918334230528, 4616189618054758400)}\");\n\
          \x20 println(\"mod {shim_mod(17, 5)}\");\n\
@@ -3761,6 +3862,7 @@ fn a_text_return_must_say_it_is_a_c_string() -> std::io::Result<()> {
 /// wrong, so the refusal lands before anything is called. The counterpart —
 /// every element width that DOES cross, checked against values C computes — is
 /// in `numeric_array_shapes_cross_identically_on_both_backends`.
+/// @C108 — a `vector<T>` and the C pointee are one layout.
 #[test]
 fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     // (declaration, the words the refusal has to carry)
@@ -3884,7 +3986,7 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln128_retain.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 n = 3;\n\
          \x20 bytes = n * 8;\n\
@@ -4242,7 +4344,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     )?;
     std::fs::write(
         pkg.join("tests/probe.loft"),
-        "use shadowlib;\n\
+        "use shadowlib::*;\n\
          fn defaulted(h: integer) -> W {\n\
          \x20 w = make(h);\n\
          \x20 assert(bump(w, 0) == h, \"the fixture was built wrong: {w.w_n}\");\n\

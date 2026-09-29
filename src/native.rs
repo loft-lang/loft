@@ -2602,8 +2602,7 @@ fn n_parallel_buf_drop_fn(stores: &mut Stores, _stack: &mut DbRef) {
 
 /// Parse a `LOFT_FAKE_*` env var into an `i64`.  Empty / unset / unparseable
 /// values return `None`, letting the caller fall through to the real clock.
-/// Used to freeze `ticks()` and `now()` for deterministic snapshot tests —
-/// see `doc/claude/TESTING.md` § "Deterministic snapshots".
+/// Used to freeze `ticks()` and `now()` so a snapshot test is deterministic.
 ///
 /// Only compiled on targets with `std::env` — every one except the browser
 /// (`wasm32-unknown-unknown`); `wasm32-wasip2` has it (#620).

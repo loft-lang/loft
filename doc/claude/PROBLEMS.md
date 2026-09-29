@@ -1910,6 +1910,6 @@ the design surface we have to validate per release.
 ## See also
 - [PLANNING.md](PLANNING.md) — Priority-ordered enhancement backlog
 - [INCONSISTENCIES.md](INCONSISTENCIES.md) — Language design inconsistencies and asymmetries
-- [TESTING.md](TESTING.md) — Test framework, reproducing and debugging issues
+- [TESTING.md](TESTING.md) — Test framework; [RUNNING_TESTS.md](RUNNING_TESTS.md) — reproducing and debugging issues
 - [CAVEATS.md](CAVEATS.md) — Verifiable edge cases with reproducers
 - [../DEVELOPERS.md](../DEVELOPERS.md) — Debugging strategy and quality requirements

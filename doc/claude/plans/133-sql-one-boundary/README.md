@@ -1387,7 +1387,7 @@ must agree on is the last thing that should have a gate that evaporates.
 
 **Every step's cross-backend claim is a LOCAL measurement.** CI gates sqlite only;
 PostgreSQL, MariaDB and duckdb are run locally and their results written down
-where they were measured — see [TESTING.md § Database backends](../../TESTING.md).
+where they were measured — see [TEST_ENVIRONMENTS.md § Database backends](../../TEST_ENVIRONMENTS.md).
 A step that says "all four agree" without a local run beside it has not been
 checked, and that is exactly the gap P3 found in the float rendering.
 

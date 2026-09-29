@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: methods
+// @CLAIM: a function whose first parameter is `self` is callable as a method and as a free function — one definition, two spellings.
+// @SEEN-FROM: 00-vs-rust.html#methods
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#methods (a verbatim window: `rule_tags.py fences`) ---
+struct Person { name: text }
+p = Person { name: "Ann" };
+fn greet(self: Person) -> text {
+    "Hello, {self.name}!"
+}
+fn name_len(self: const Person) -> integer {
+    len(self.name)  // const: read-only access guaranteed
+}
+p.greet();     // dot syntax
+greet(p);      // free-function call — identical
+assert(p.greet() == "Hello, Ann!" and greet(p) == p.greet() and p.name_len() == 3, "one definition, two spellings");

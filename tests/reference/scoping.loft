@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Variable scoping — a name bound inside a block ends with it, a loop
+// variable is its loop's, and a name bound before a loop is shared with it.  The two
+// refusals are in scoping-refused.loft.
+
+struct A { v: integer }
+struct B { w: integer }
+struct C { c: integer }
+
+fn g(c: boolean) -> integer {
+  w = if c { 5 } else { 6 };   // the block's value is the binding
+  w
+}
+fn h(c: boolean) -> integer {
+  w = 0;                   // bound before the block, assigned inside
+  if c { w = 5; }
+  w
+}
+
+fn test_a_block_value_or_an_outer_binding_carries_a_value_out() {
+  assert(g(true) == 5 and g(false) == 6, "the if-expression's value");
+  assert(h(true) == 5 and h(false) == 0, "the outer binding");
+}
+
+fn last_of(v: vector<integer>) -> integer {
+  last = 0;
+  for x in v { last = x; }
+  last                     // the last element, or 0 when `v` is empty
+}
+
+fn test_a_loop_writes_a_binding_made_before_it() {
+  assert(last_of([4, 5, 6]) == 6 and last_of([]) == 0, "the loop wrote the outer `last`");
+}
+
+fn g2() -> text {
+  out = "";
+  for i in ["a", "b"] { out += i; }
+  for i in 0..3 { out += "{i}"; }   // fine — a different variable
+  out
+}
+
+fn h2(as1: vector<A>, bs: vector<B>) -> text {
+  out = "";
+  for x in as1 { e = x; out += "a={e.v} "; }
+  for y in bs  { e = y; out += "b={e.w} "; }   // fine — a different variable
+  out
+}
+
+fn sum_both(as1: vector<A>, cs: vector<C>) -> integer {
+  total = 0;
+  for x in as1 { total = total + x.v; }
+  for z in cs  { total = total + z.c; }   // the same `total`, bound before both loops
+  total
+}
+
+fn test_a_loop_variable_and_a_loop_local_are_that_loops_own() {
+  assert(g2() == "ab012", "two loops may reuse a loop-variable name");
+  assert(h2([A { v: 1 }], [B { w: 2 }]) == "a=1 b=2 ", "and a local bound in each");
+  assert(sum_both([A { v: 1 }, A { v: 2 }], [C { c: 10 }]) == 13, "an outer `total` is shared");
+}

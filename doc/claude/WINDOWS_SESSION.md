@@ -157,6 +157,6 @@ If gaps were verified-but-not-fixed (real error captured, fix needs more time), 
 
 - [WINDOWS.md](WINDOWS.md) — full reference for compatibility state, gap details, runbooks.
 - [PROBLEMS.md](PROBLEMS.md) — @P229 (parallel + multiplayer), @P332 (install), @P333 (lib fixtures).
-- [TESTING.md § Open work](TESTING.md#open-work) — @P229b tracking.
+- [TESTING-history.md](TESTING-history.md) — the closed @P229b row.
 - `src/native_utils.rs` — `build_script_native_lib_dirs`, `add_native_extern_flags`.
 - `tests/native.rs` lines 481-550 — argfile pattern from PR #228 (potential template for G3 fix).

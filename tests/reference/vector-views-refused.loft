@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Vectors — a `&` to a keyed element cannot rewrite its key.
+// @EXPECT_ERROR: key
+
+struct Keyed { key: integer, n: integer }
+
+fn refused() {
+  s: sorted<Keyed[key]> = [Keyed { key: 30, n: 7 }];
+  c = &s[30];  c.key = 5;      // refused
+}

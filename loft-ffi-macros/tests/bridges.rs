@@ -19,6 +19,7 @@ fn dummy_store() -> LoftStore {
         claim_fn: None,
         reload_fn: None,
         resize_fn: None,
+        foreign_fn: None,
     }
 }
 

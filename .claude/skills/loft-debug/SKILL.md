@@ -50,7 +50,7 @@ irreversible moves not to make.
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in
   seconds, whereas `--native` pays a rustc compile per probe (that cost belongs at the
   final verify, not the loop).
-- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § `LOFT_LOG` quick reference / `doc/claude/TESTING.md`
+- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § `LOFT_LOG` quick reference / `doc/claude/RUNNING_TESTS.md`
   § LogConfig): `minimal` (exec trace — cleanest for runtime bugs), `static` (IR +
   bytecode, fastest for codegen), `crash_tail:N` (last N lines, flushed on panic),
   `ref_debug` (stack snapshots after Ref/CreateStack), `variables` (the per-fn var
@@ -61,7 +61,8 @@ irreversible moves not to make.
   `doc/claude/DEBUG.md`.) NEVER `git bisect` / `git checkout HEAD -- <file>` to
   investigate (CLAUDE.md § Debugging policy) — read the dump and reason.
 - **Tight loop**: `./scripts/find_problems.sh --subject <name>` (seconds) while
-  iterating — full suite only before a commit (CLAUDE.md § Key commands).
+  iterating — one full gate per change of unknown reach, and `scripts/ci-run.sh recheck`
+  after it rather than a restart (CLAUDE.md § Key commands).
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
 

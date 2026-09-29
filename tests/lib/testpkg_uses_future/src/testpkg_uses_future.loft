@@ -1,0 +1,2 @@
+use testpkg_future;
+pub fn via_sibling() -> integer { 1 }

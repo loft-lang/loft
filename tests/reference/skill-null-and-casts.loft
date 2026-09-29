@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Primitive types — the `?` default and the checked cast.  The
+// refused cast is in skill-casts-refused.loft.
+
+struct Row { label: text? }
+struct Point { x: integer, y: integer }
+
+fn test_the_default_operator_takes_the_types_default() {
+  row = Row { };
+  points: vector<Point> = [];
+  i = 3;
+  a = 7;
+  b = 0;
+  name  = row.label?;         // text?   → ""      (was: ?? "")
+  first = points[i]?;         // Point?  → Point{} (every field defaulted)
+  count = (a / b)?;           // integer? → 0      (parens — see below)
+  assert(name == "" and first.x == 0 and count == 0, "each took its type's default");
+}
+
+fn test_the_three_cast_spellings() {
+  s = "12x";
+  n = (s as integer?)?;    // integer — checked cast, then default ⇒ 0 on a bad parse
+  m = s as integer ?? 0;   // integer — the assert-or-default form
+  o = s as integer?;       // integer? — the nullable CAST (that `?` belongs to the type)
+  assert(n == 0 and m == 0 and o == null, "a bad parse: 0, 0 and null");
+  good = "42";
+  assert((good as integer?)? == 42 and (good as integer ?? 0) == 42 and (good as integer?) == 42, "a good parse: 42 three ways");
+}

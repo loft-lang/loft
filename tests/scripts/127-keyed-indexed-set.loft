@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C68 — a keyed collection dedups on insert, `+=` and `coll[key] = value` alike.
 //
 // @P305 — `coll[key] = value` insert-or-replace into a keyed collection
 // (hash/sorted/index), on BOTH backends.  Before the fix, indexed

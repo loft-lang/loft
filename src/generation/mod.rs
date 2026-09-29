@@ -751,6 +751,14 @@ pub struct Output<'a> {
     pub chain_guard_disabled: bool,
     /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
     pub chain_trace: bool,
+    /// `LOFT_NO_DISTINCT_GROWTH=1` — a loop that grows ANY store binds no element base and a
+    /// remainder that grows one binds no record address, as before `@FR-R-Base`'s growth
+    /// clause; the bisect step for a wrong element or field read in a loop that appends
+    /// elsewhere.  `LOFT_HOIST_VERIFY=1` is the falsifier (each base and address re-derived).
+    pub distinct_growth_disabled: bool,
+    /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
+    /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
+    pub placed_locals: HashSet<u16>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -2186,6 +2194,9 @@ impl<'a> Output<'a> {
             chains_suspended: 0,
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
+            distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
+                .is_ok_and(|v| v != "0"),
+            placed_locals: HashSet::new(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
@@ -2537,6 +2548,7 @@ impl Output<'_> {
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.indent = 0;
+        self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
         self.invariant_lits = if self.literal_hoist_disabled {
             hoist::LitHoist::default()
@@ -3296,6 +3308,8 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
+        crate::rewrite_census::fired("R-GuardedChain", 1);
+        crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {
             eprintln!(
                 "chain: {fn_name} loop {} admitted — {} operator(s) in {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
@@ -3382,6 +3396,7 @@ impl Output<'_> {
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
+        crate::rewrite_census::fired("R-Fill", 1);
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
         let lo = match f.next_var {
@@ -3858,6 +3873,14 @@ impl Output<'_> {
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
                 Some(&self.hoist_owned),
+                (!self.distinct_growth_disabled)
+                    .then_some(hoist::StoreFacts {
+                        vars: self.data.def(self.def_nr).variables(),
+                        placed: &self.placed_locals,
+                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&self.hoist_owned),
+                    })
+                    .as_ref(),
             )
         };
         let hoist::LoopHoist {
@@ -3866,8 +3889,40 @@ impl Output<'_> {
             pushes,
             mint_pushes,
             growth_free,
+            movers,
         } = hoisted;
-        let bind_bases = growth_free && crate::keys::vector_base_enabled();
+        // `@FR-R-Base` — every candidate's base in a growth-free loop; under growth, the
+        // base of each candidate whose store is proven apart from every store the loop grows.
+        let base_paths: HashSet<hoist::PathKey> = if !crate::keys::vector_base_enabled() {
+            HashSet::new()
+        } else if growth_free {
+            candidates.iter().map(|(p, _)| p.clone()).collect()
+        } else if !self.distinct_growth_disabled && !movers.is_empty() {
+            let facts = hoist::StoreFacts {
+                vars: self.data.def(self.def_nr).variables(),
+                placed: &self.placed_locals,
+                adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                owned: Some(&self.hoist_owned),
+            };
+            let apart: HashSet<hoist::PathKey> = candidates
+                .iter()
+                .filter(|(p, _)| movers.iter().all(|m| facts.distinct(p.0, *m)))
+                .map(|(p, _)| p.clone())
+                .collect();
+            if !apart.is_empty() && std::env::var("LOFT_TRACE_BASE").is_ok() {
+                let vars = self.data.def(self.def_nr).variables();
+                eprintln!(
+                    "base: {} loop {} keeps {} base(s) under a growth of {:?}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope,
+                    apart.len(),
+                    movers.iter().map(|m| vars.name(*m)).collect::<Vec<_>>()
+                );
+            }
+            apart
+        } else {
+            HashSet::new()
+        };
         let mut base_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut mint_frame: HashMap<hoist::PathKey, String> = HashMap::new();
@@ -3921,7 +3976,7 @@ impl Output<'_> {
                 // grows nothing, so for ITS extent the vector cannot move and a base may be
                 // derived from the held header — the enclosing loop's push, if any, happens
                 // outside this extent.
-                if bind_bases
+                if base_paths.contains(&path)
                     && self.active_vec_base(&path).is_none()
                     && !self.coroutine_persistent_fields.contains_key(&path.0)
                     && let Some(held) = self.active_vec_header(&path).map(str::to_owned)
@@ -3971,7 +4026,7 @@ impl Output<'_> {
             ));
             // @PLN157 § V-ak (`@FR-R-Base`) — in a growth-free loop the header's vector
             // cannot move, so its element base is derived once beside it.
-            if bind_bases {
+            if base_paths.contains(&path) {
                 let base = format!("__vb_{}", self.hoist_counter);
                 lines.push(format!(
                     "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base"
@@ -4212,6 +4267,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
         self.vec_bases.push(bases);
+        crate::rewrite_census::fired("R-View", 1);
         Ok(true)
     }
 
@@ -4262,6 +4318,7 @@ impl Output<'_> {
                 hoist::WrapperOperand::Const(c) => args.push(c.clone()),
             }
         }
+        crate::rewrite_census::fired("R-Wrapper", 1);
         Some((*op, args))
     }
 
@@ -4547,6 +4604,14 @@ impl Output<'_> {
             &mut self.hoist_cache,
             !self.write_hoist_disabled,
             &twin_params,
+            (!self.distinct_growth_disabled)
+                .then_some(hoist::StoreFacts {
+                    vars: self.data.def(self.def_nr).variables(),
+                    placed: &self.placed_locals,
+                    adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                    owned: Some(&self.hoist_owned),
+                })
+                .as_ref(),
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -4747,6 +4812,7 @@ impl Output<'_> {
         frame.insert(path, name);
         self.mint_push_headers.push(frame);
         self.group_ends.push((block, end));
+        crate::rewrite_census::fired("R-GroupPush", 1);
         Ok(())
     }
 
@@ -7101,7 +7167,7 @@ extern crate loft;"
             // ~8 MiB OS main-thread stack), then the optional native leak check.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(loft::live_dispatch::boot_stores(LOFT_LIVE_FNS, LOFT_SRC));\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    if !loft::live_dispatch::live_enabled() {{ init(&cell); }}\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             writeln!(w, "    if !loft::live_dispatch::live_enabled() {{")?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
@@ -7142,7 +7208,7 @@ extern crate loft;"
             // references no `live_dispatch` symbol at all.
             write!(
                 w,
-                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.logger = Some(std::sync::Arc::new(std::sync::Mutex::new(loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE)))); }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
+                "\nfn main() {{\n    loft::timeout::arm(loft::timeout::env_timeout_secs(), loft::timeout::env_grace_secs());\n    loft::database::NATIVE_FAIL_FAST.store(true, std::sync::atomic::Ordering::Relaxed);\n    let __run = || {{\n    let cell = std::cell::UnsafeCell::new(Stores::new());\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; stores.user_args = std::env::args().skip(1).collect(); stores.source_dir = Stores::source_dir_native(); stores.program_relative = LOFT_PROGRAM_RELATIVE; if let Ok(m) = std::env::var(\"LOFT_PATHS\") {{ stores.program_relative = m.eq_ignore_ascii_case(\"program\"); }} }}\n    {{ let stores: &mut Stores = unsafe {{ &mut *cell.get() }}; {{ let mut lg = loft::logger::Logger::from_config_file(&loft::logger::Logger::resolve_config_path(std::env::var(\"LOFT_LOG_CONF\").ok().as_deref(), LOFT_MAIN_FILE), LOFT_MAIN_FILE); if std::env::var_os(\"LOFT_PRODUCTION\").is_some_and(|v| v != \"0\") {{ lg.config.production = true; }} stores.set_logger(lg); }} }}\n    init(&cell);\n{prelude}    n_main(&cell{args});{ckpt}\n    {{ let stores: &Stores = unsafe {{ &*cell.get() }}; if stores.run_failed() {{ std::process::exit(1); }} }}\n"
             )?;
             w.write_all(NATIVE_LEAK_CHECK_TAIL.as_bytes())?;
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
@@ -7900,6 +7966,14 @@ extern crate loft;"
             }
             let attrs = def.attributes().to_vec();
             for a in &attrs {
+                // A `virtual(…)` field is computed on every read and has NO store slot —
+                // `fill_database` (src/typedef.rs) skips it, and `init()` must register the
+                // same table or every field NUMBER after the interpreter's differs from the
+                // emitted offsets (an append to a vector field then targets the wrong slot
+                // or panics on a non-structure — the second reference walk of @PLN176).
+                if a.constant {
+                    continue;
+                }
                 // Resolve field's content dep and recurse inline
                 // before the field is emitted — parse-time
                 // `fill_database` does the same via recursive content
@@ -8804,6 +8878,10 @@ extern crate loft;"
             writeln!(w, "    db.field({s_var}, \"enum\", byte_enum);")?;
         }
         for a in def.attributes() {
+            // Computed (`virtual`) fields have no slot — see `emit_def_create_recurse_fields`.
+            if a.constant {
+                continue;
+            }
             let is_coll = is_collection_field(&a.typedef);
             let emit = match phase {
                 FieldPhase::AllFields => true,
@@ -9478,11 +9556,15 @@ extern crate loft;"
                 // `@FR-R-LeafChain` widens that in the lean tier to a function whose whole
                 // call tree is frameless: there the frame carries no name, so the depth
                 // count is all it holds, and such a function cannot be re-entered.
-                let leaf = !self.leaf_elide_disabled
-                    && (self.is_elidable_leaf(def_nr)
-                        || (self.lean
-                            && !self.leaf_chain_disabled
-                            && self.is_frameless_chain(def_nr)));
+                let plain_leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let chain_leaf = !plain_leaf
+                    && !self.leaf_elide_disabled
+                    && self.lean
+                    && !self.leaf_chain_disabled
+                    && self.is_frameless_chain(def_nr);
+                let leaf = plain_leaf || chain_leaf;
+                crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
+                crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit
                 // between the frame that pushed one and the frame that releases it —
@@ -9496,6 +9578,7 @@ extern crate loft;"
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
                 let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()
                 } else {
@@ -10181,6 +10264,55 @@ extern crate loft;"
             "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
         )?;
 
+        // The heap-typed arguments in declaration order — what pins the store the bridge
+        // is handed (the interpreter's `ref_arg_store` picks the first `LoftTag::Ref` arg,
+        // and a marshalled vector carries that tag too).  `heap_dep()` is the canonical
+        // heap set; the outer DbRef's `.store_nr` is the store for both Reference and
+        // Vector args.  D-html-vec: for the browser, a `vector` arg does NOT pin a
+        // LoftStore — it is passed as a raw `(ptr, count)` pair — so it is left out of the
+        // store-pin decision in the wasm path only; the native cdylib path keeps #423's
+        // LoftRef convention.
+        let heap_args: Vec<&crate::data::Attribute> = def
+            .attributes
+            .iter()
+            .filter(|a| {
+                !a.name.starts_with("__")
+                    && a.typedef.base().heap_dep().is_some()
+                    && !(self.wasm_browser && matches!(a.typedef.base(), Type::Vector(_, _)))
+            })
+            .collect();
+        let first_ref_arg = heap_args.first().copied();
+        // `returns_loft_ref` drives the RETURN conversion (`from_loft_ref`);
+        // `needs_loft_store` drives the store-handle + guard + `_ls` first arg.
+        // They diverge for a Reference-arg fn with a scalar return (imaging's
+        // `load_png` returns `boolean`): store handle yes, return conversion no.
+        let returns_loft_ref = matches!(
+            def.returned().base(),
+            Type::Vector(_, _) | Type::Reference(_, _)
+        );
+        let needs_loft_store = returns_loft_ref || first_ref_arg.is_some();
+        // @PLN174 F5 — ONE set-up for the call's heap-typed arguments, shared with the
+        // interpreter's dispatcher (`Stores::bridge_args`): the store the bridge is handed,
+        // and per argument what to hand it — a FOREIGN vector's bytes copied into that
+        // store, since a cdylib reads a vector by pointer arithmetic on the one store it
+        // is given.  The guard's drop, after the answer, frees the copies.  The browser
+        // path reads through `Store` and needs none of it.
+        if needs_loft_store && !self.wasm_browser {
+            let list = heap_args
+                .iter()
+                .map(|a| {
+                    let var = sanitize(&a.name);
+                    let is_vec = matches!(a.typedef.base(), Type::Vector(_, _));
+                    format!("(var_{var}, {is_vec})")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                w,
+                "  let _bc = loft::native_call::BridgeGuard::begin(cell, stores, &[{list}], {returns_loft_ref});"
+            )?;
+        }
+
         // Pre-declare each `vector` arg's inner-record number before the call
         // expression.  A loft `vector` var is an OUTER record whose word at
         // `(rec, pos)` holds the inner vector record; `_vr_{var}` is that inner
@@ -10192,9 +10324,20 @@ extern crate loft;"
             }
             if let Type::Vector(elem_tp, _) = attr.typedef.base() {
                 let var = sanitize(&attr.name);
+                // `_va_{var}` is what the cdylib is handed: the argument, or the copy its
+                // foreign bytes took (@PLN174 F5).
+                if self.wasm_browser {
+                    writeln!(w, "  let _va_{var} = var_{var};")?;
+                } else {
+                    let i = heap_args
+                        .iter()
+                        .position(|a| a.name == attr.name)
+                        .unwrap_or(0);
+                    writeln!(w, "  let _va_{var} = _bc.handed({i});")?;
+                }
                 writeln!(
                     w,
-                    "  let _vr_{var} = loft::keys::store(&var_{var}, &stores.allocations).get_u32_raw(var_{var}.rec, var_{var}.pos);"
+                    "  let _vr_{var} = loft::keys::store(&_va_{var}, &stores.allocations).get_u32_raw(_va_{var}.rec, _va_{var}.pos);"
                 )?;
                 // D-html-vec: the browser host import takes the raw `(ptr, count)` of the
                 // vector's element data — the JS glue reads it as `new Float32Array(mem,
@@ -10218,13 +10361,10 @@ extern crate loft;"
         // @PLAN12 phase 3.5a (2026-05-24) — LoftStore forwarding for
         // store-allocating cdylib returns (Type::Vector / Type::Reference).
         // The cdylib needs a LoftStore handle to alloc the returned vector
-        // / struct.  Construct one via the new `loft::native_call::build_store`
-        // API and set up CURRENT_STORES for the cdylib's callbacks via the
-        // RAII `enter` guard.  When no Reference/Vector arg is present
-        // (random's n_rand_indices case), allocate against the null store
-        // (stores.null()).  Type::Reference args + their DbRef→LoftRef
-        // conversion (`to_loft_ref`) is a future extension for
-        // imaging/graphics drains — not required for random.
+        // / struct.  Construct one via `loft::native_call` and set up
+        // CURRENT_STORES for the cdylib's callbacks via the RAII `enter` guard.
+        // When no Reference/Vector arg is present (random's n_rand_indices
+        // case), allocate against a store minted for the answer.
         //
         // Bind the LoftStore via `transmute_copy` so rustc accepts it
         // at the cdylib call site even when there are TWO copies of
@@ -10240,50 +10380,10 @@ extern crate loft;"
         // name/width/height + an allocated pixel vector into `image`).  The
         // store handle must point at the store the struct lives in — NOT the
         // null store — so the vector the cdylib allocates lands in the same
-        // store as its owner (mirrors the interpreter's
-        // `make_loft_store(stores, first_ref_store(args))` at
-        // `src/extensions.rs:981`).
-        // Any heap-typed arg (Reference / Vector / data-enum / sorted / hash /
-        // index / spatial) pins the store and rides as a `LoftRef`, exactly as
-        // the interpreter's `ref_arg_store` picks the first `LoftTag::Ref` arg
-        // (a marshalled vector carries that tag too).  `heap_dep()` is the
-        // canonical heap set; the outer DbRef's `.store_nr` is the store for
-        // both Reference and Vector args.
-        // D-html-vec: for the browser, a `vector` arg does NOT pin a LoftStore — it is
-        // passed as a raw `(ptr, count)` pair (below), so it must not force the cdylib
-        // `_ls` store-handle machinery.  Exclude it from the store-pin decision in the
-        // wasm path only; the native cdylib path keeps #423's LoftRef convention.
-        let first_ref_arg = def.attributes.iter().find(|a| {
-            !a.name.starts_with("__")
-                && a.typedef.base().heap_dep().is_some()
-                && !(self.wasm_browser && matches!(a.typedef.base(), Type::Vector(_, _)))
-        });
-        // `returns_loft_ref` drives the RETURN conversion (`from_loft_ref`);
-        // `needs_loft_store` drives the store-handle + guard + `_ls` first arg.
-        // They diverge for a Reference-arg fn with a scalar return (imaging's
-        // `load_png` returns `boolean`): store handle yes, return conversion no.
-        let returns_loft_ref = matches!(
-            def.returned().base(),
-            Type::Vector(_, _) | Type::Reference(_, _)
-        );
-        let needs_loft_store = returns_loft_ref || first_ref_arg.is_some();
+        // store as its owner (mirrors the interpreter's `make_loft_store`).
         if needs_loft_store {
-            // Order matters: extract `store_nr` as a SEPARATE statement so it
-            // doesn't dual-borrow `stores` alongside the build_store call
-            // (rustc E0502).  A heap-typed arg pins the store to that arg's
-            // store_nr; otherwise (vector-return only, e.g. random) the null
-            // store hosts the freshly allocated return vector.
-            if let Some(a) = first_ref_arg {
-                let var = sanitize(&a.name);
-                writeln!(w, "  let _store_nr = var_{var}.store_nr;")?;
-            } else {
-                writeln!(w, "  let _store_nr = stores.null().store_nr;")?;
-            }
             writeln!(w, "  let _guard = loft::native_call::enter(stores);")?;
-            writeln!(
-                w,
-                "  let _ls_src = loft::native_call::build_store(stores, _store_nr);"
-            )?;
+            writeln!(w, "  let _ls_src = _bc.store(stores);")?;
             // Reinterpret as the cdylib's LoftStore (same layout,
             // different crate identity).  Type of `_ls` inferred
             // from the call site below.
@@ -10371,7 +10471,7 @@ extern crate loft;"
                     first = false;
                     write!(
                         w,
-                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(loft::keys::DbRef {{ store_nr: var_{var}.store_nr, rec: _vr_{var}, pos: 0 }})) }}"
+                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(loft::keys::DbRef {{ store_nr: _va_{var}.store_nr, rec: _vr_{var}, pos: 0 }})) }}"
                     )?;
                 }
                 // Reference / data-enum / sorted / hash / index / spatial: a

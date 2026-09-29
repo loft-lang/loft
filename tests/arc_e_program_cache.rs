@@ -244,7 +244,7 @@ fn program_cache_warm_keeps_native_libs() {
     let script = tmp.join(format!("loft_arce_nlib_{pid}.loft"));
     std::fs::write(
         &script,
-        "use native_pkg;\n\nfn main() {\n    r = ext_add_one(41);\n    print(\"r={r}\\n\");\n}\n",
+        "use native_pkg::*;\n\nfn main() {\n    r = ext_add_one(41);\n    print(\"r={r}\\n\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_arce_nlib_cache_{pid}"));
@@ -313,7 +313,7 @@ fn lib_dependency_edit_invalidates_program_cache() {
     let script = tmp.join(format!("loft_p322_main_{pid}.loft"));
     std::fs::write(
         &script,
-        "use rstream;\nfn main() { print(\"v={stream_value()}\\n\"); }\n",
+        "use rstream::*;\nfn main() { print(\"v={stream_value()}\\n\"); }\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_p322_cache_{pid}"));

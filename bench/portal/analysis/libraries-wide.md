@@ -204,7 +204,7 @@ checkouts and the consumers: the shape is rare in the LIBRARIES (182 tables are 
 the crawler (five name tables in `items.loft` / `bundles.loft`, four terrain tables in
 `ortlerdata.loft`); ~30 zero-parameter functions return a RECORD literal (`no_mark()`,
 `scan_fail()`, a default `Rig {}`), which this rule leaves alone — their callers write the
-result.  Found on the way, to be filed (this box could not authenticate to GitHub for writes; the text waits in `doc/claude/plans/157-native-4x-drawing/to-file-const-bind-panic.md`): a plain local bound from a TOP-LEVEL constant
+result.  Found on the way, filed as loft#1729: a plain local bound from a TOP-LEVEL constant
 and then written panics on both backends ("Write to read-only store") — the bind has no copy
 road; the same for a constant handed to a callee that writes its parameter.
 

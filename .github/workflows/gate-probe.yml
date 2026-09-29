@@ -61,7 +61,8 @@ jobs:
       # Private `probe-*` namespace so this never disturbs the nightly gate's
       # cache, and a cold/warm A/B here stays reproducible in isolation.
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -88,6 +89,15 @@ jobs:
           cargo test --release --no-fail-fast
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip library_suite
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   browser-ui-gate:
     name: probe — browser UI responsiveness
@@ -133,7 +143,8 @@ jobs:
           "$(command -v google-chrome || command -v chromium || command -v chromium-browser)" --version
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -210,3 +221,12 @@ jobs:
           fi
           echo "gate correctly failed with one worker:"
           grep -E '^(FAIL|  threaded|  sequential)' /tmp/one_worker.log
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

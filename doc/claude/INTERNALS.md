@@ -249,7 +249,7 @@ The `scratch` `Vec<String>` is owned by `Stores` and lives for the entire execut
 
 **Symptom of getting this wrong:** `SIGABRT` or `signal: 6 (SIGABRT)` in the test output, with the crash occurring inside one of the string-returning native functions.  The 24-byte `String` overwrites 8 bytes of the next stack slot, corrupting a later value (typically the call-return address or a subsequent variable).
 
-See [TESTING.md](TESTING.md) for how to reproduce and debug such failures.
+See [RUNNING_TESTS.md](RUNNING_TESTS.md) for how to reproduce and debug such failures.
 
 ---
 

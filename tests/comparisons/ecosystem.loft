@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: ecosystem
+// @CLAIM: `use` loads a library beside the script or one the manifest declares; the standard library ships in the binary.  The page shows this as comments, and this file keeps them verbatim.
+// @SEEN-FROM: 00-vs-python.html#ecosystem
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-python.html#ecosystem (a verbatim window: `rule_tags.py fences`) ---
+// `use mylib;` loads a library — a .loft file beside the script,
+// or a package the manifest declares under [dependencies].
+// The standard library ships inside the interpreter binary, and
+// `loft install` fetches the rest from a signed registry.
+
+// Built-in: text, math, file I/O, collections,
+//           logging, threading, image, lexer/parser

@@ -1,0 +1,40 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 380651f3e..10b81afb1 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6489,13 +6489,7 @@ use #count instead"
+     ) {
+         let field_def_nr = self.data.def_nr("StructField");
+         let field_type = Type::Reference(field_def_nr, crate::data::Deps::none());
+-        // loft#1717 — keyed per LOOP, as every other loop binding is (`create_loop_var`,
+-        // loft#915).  `create_var` reuses by name, and pass 1 leaves `f` naming the LAST
+-        // `for f in x#fields`, so pass 2's first walk took the second walk's slot: the body's
+-        // pass-1 deps then named a binding pass 2 never set, and `--native` declared it in
+-        // one field's block and freed it outside (`cannot find value var_f`).
+-        let loop_var = self.create_loop_var(loop_var_name, &field_type);
+-        self.vars.served_as_loop_var(loop_var);
++        let loop_var = self.create_var(loop_var_name, &field_type);
+         if loop_var_name != src_var_name {
+             self.vars.set_name(src_var_name, loop_var);
+         }
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index c2ad6bd31..48b5458ee 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -1100,16 +1100,6 @@ impl Function {
+         }
+     }
+ 
+-    /// Record that `variable` serves as a loop's variable WITHOUT making a loop current — the
+-    /// compile-time `for f in x#fields` walk, which unrolls into one block per field and has no
+-    /// run-time loop for a `break` to leave.  Unrecorded, a later `for f` over anything was
+-    /// refused as shadowing "a local named 'f'" (loft#1717).
+-    pub fn served_as_loop_var(&mut self, variable: u16) {
+-        if (variable as usize) < self.variables.len() {
+-            self.variables[variable as usize].was_loop_var = true;
+-        }
+-    }
+-
+     /// Has this variable served as a `for` loop's variable anywhere in this function?
+     ///
+     /// Read by `scopes.rs`'s dep-init prefix (loft#1135): a loop variable is assigned

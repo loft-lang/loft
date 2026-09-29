@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: filtered-loops
+// @CLAIM: `for x in xs if cond { … }` filters in the loop header, so the body sees only the elements that pass.
+// @SEEN-FROM: 00-vs-rust.html#filtered-loops
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-rust.html#filtered-loops (a verbatim window: `rule_tags.py fences`) ---
+items = [3, -1, 4];
+total = 0;
+for x in items if x > 0 {
+    total += x;
+}
+assert(total == 7, "only the positive elements were summed");

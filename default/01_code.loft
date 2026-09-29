@@ -1283,6 +1283,20 @@ fn OpFinishRecord(data: reference, rec: reference, parent_tp: const u16, fld: co
 // Add all elements of another vector with the same type
 fn OpAppendVector(r: vector, other: vector, tp: const u16);
 #rust"s.database.vector_add(&@r, &@other, @tp);"
+// @PLN174 F4a — `r += src[lo..hi]` for a SCALAR element kind: the span copied in ONE
+// block.  The bounds arrive clamped by the slice prelude; a linked or heap-owning element
+// kind keeps the per-element loop (the parser never emits this for one).
+fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_slice(&@r, &@src, @lo, @hi, @tp);"
+// @PLN174 F4b — `r = src[lo..hi]` into a local that owns its backing store: a VIEW of the
+// span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
+fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
+// @PLN174 F5 — a local takes a `#native` call's vector answer as its own: a VIEW of the
+// whole when the answer is a foreign store (a library's buffer, no copy), the element copy
+// otherwise (the #409/#410 delivery, unchanged).
+fn OpAdoptVector(r: vector, src: vector, tp: const u16);
+#rust"s.database.vector_adopt(&@r, &@src, @tp);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
 // per element each resolving the store and re-reading the headers the previous one
@@ -1596,11 +1610,11 @@ fn OpLinkRecord(data: reference, rec: reference, parent_tp: const u16, fld: cons
 // `tp`'s `0x8000` bit frees the source store after the copy, as it does for OpReplaceKeyed.
 fn OpFillKeyed(parent: reference, src: reference, tp: const u16, parent_tp: const u16, field: const u16);
 #rust"s.database.fill_keyed_from_vector(&@parent, &@src, @tp, @parent_tp, @field);"
-// @P305 — `coll[key] = value` insert-or-replace into a keyed collection
-// (hash/sorted/index), deduped by value's key.  Updates an existing key
-// in place OR inserts a new one (the plain `OpCopyRecord` lowering could
-// only update — it no-op'd into the null lookup when the key was absent).
-fn OpSetKeyed(coll: reference, value: reference, tp: const u16);
+// `coll[key] = value` insert-or-replace into a keyed collection.  loft#1716
+// (`Col-Assign`): the subscript's `no_keys` values trail the parameters as `OpGetRecord`'s
+// do, and the copy is placed under them with its key fields set to them, so `c[k] = v`
+// reads back as `c[k]` whatever key `value` carried.
+fn OpSetKeyed(coll: reference, value: reference, tp: const u16, no_keys: const u8);
 type iterator;
 // Forward-declared builtin collection type-keywords: reserved names whose full
 // implementation lands with the crawler/moros/dryopea library work.  Declaring

@@ -345,6 +345,7 @@ fn element_type(
         return None;
     }
     let tp = data.vector_element_type(tc, database)?;
+    crate::rewrite_census::fired("R-VecCopy", 1);
     if crate::keys::trace_vec_copy() {
         eprintln!(
             "[vec-copy] fn={} ADMITTED: `{}` takes the elements of `{}` as one append",

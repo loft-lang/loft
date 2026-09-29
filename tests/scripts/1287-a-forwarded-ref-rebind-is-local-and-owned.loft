@@ -48,7 +48,7 @@
 //   native exit 1 -> 0, native 1 assertion failures -> 0.  The cell that moves is the
 //   RECYCLE one: on that build `a.items` answers the recycled record's bytes.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: on --interpret, leak, panic, free-refusal, expectations are equal on both trees,
 //   measured by `scripts/falsify.sh --bulk` against 0b0cce48; falsify prints only the
 //   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The

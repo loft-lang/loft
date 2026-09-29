@@ -131,6 +131,7 @@ fn match_copy(v: &Value, cx: &Cx) -> Option<Copy> {
 
 /// `if 0 <= lo && lo <= hi && hi <= size(t) { append } else { the loop as written }`.
 fn guarded(c: Copy, original: Value, cx: &Cx) -> Value {
+    crate::rewrite_census::fired("R-ByteCopy", 1);
     if crate::keys::trace_byte_copy() {
         eprintln!(
             "[byte-copy] fn={} ADMITTED: `{}` takes the bytes of `{}` as one append",

@@ -53,7 +53,6 @@ use crate::test_runner::run_tests;
 use loft::diagnostics::Level;
 use loft::state::State;
 use std::env;
-use std::sync::{Arc, Mutex};
 
 /// loft#680 — print the per-target builtin surface: which stdlib builtins are NOT
 /// available on a target, and why that answer can be trusted.
@@ -7291,6 +7290,8 @@ fn main() {
     // `tests/` directory; these two say which case a leftover positional is.
     let mut test_subcommand = false;
     let mut test_target_given = false;
+    // The `--tests` FLAG spelling of the same runner, for the leftover-positional rule below.
+    let mut tests_flag = false;
     // Plan-08 phase 01: --introspect mode collects per-section
     // selectors, output paths, and filters into one Options bundle.
     // The flag itself only toggles the mode; sub-flags accumulate
@@ -7404,6 +7405,15 @@ fn main() {
             i += 1;
         } else if a == "--production" {
             production = true;
+            // A `--native` run spawns the compiled program, which builds its own logger:
+            // the environment is what carries production mode across to it, so a panic, an
+            // assert or a locked write logs there instead of halting, as it does here (C80).
+            //
+            // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
+            // before any thread or State exists, as the `--dev-soft-halt` arm below does.
+            unsafe {
+                std::env::set_var("LOFT_PRODUCTION", "1");
+            }
         } else if a == "--generate-log-config" {
             // Optional path: consume next arg only if it doesn't look like a flag or source file
             let path = if argv.get(i).is_some_and(|s| is_output_path(s)) {
@@ -7632,7 +7642,9 @@ fn main() {
             if argv.get(i).is_some_and(|s| !s.starts_with('-')) {
                 path.clone_from(&argv[i]);
                 i += 1;
+                test_target_given = true;
             }
+            tests_flag = true;
             tests_dir = Some(path);
             // The test runner defaults to the interpreter; an explicit --native
             // (anywhere on the line) opts into native compilation per file.
@@ -8824,7 +8836,12 @@ fn main() {
     // A leftover positional is therefore adopted as the target when none was given,
     // and refused when one was — the same either/or the leading-positional check
     // makes, so the two orderings cannot disagree about what two targets mean.
-    if test_subcommand && !file_name.is_empty() {
+    //
+    // The `--tests` FLAG had the same hole one flag earlier: it skips only the three flags
+    // it knows before its path, so `loft --tests --interpret t.loft` left the path to
+    // `file_name` and swept every `.loft` under the working directory — from the repo root,
+    // `target/` included, until the watchdog's SIGABRT read as the guard crashing.
+    if (test_subcommand || tests_flag) && !file_name.is_empty() {
         if test_target_given {
             eprintln!(
                 "loft test: one target per run, but two were given (`{}`, `{file_name}`).\n\
@@ -8833,7 +8850,13 @@ fn main() {
             );
             std::process::exit(1);
         }
-        tests_dir = Some(resolve_test_target(&file_name));
+        // The subcommand joins a bare test NAME onto `tests/`; the flag takes its path as
+        // written, which is what it does with a path it consumed itself.
+        tests_dir = Some(if test_subcommand {
+            resolve_test_target(&file_name)
+        } else {
+            file_name.clone()
+        });
         file_name.clear();
     }
 
@@ -9220,6 +9243,14 @@ fn main() {
         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
         if !stdlib_warm {
             if let Err(e) = p.parse_dir(&default_str, true, false) {
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    // The library was found and read, and refused: a parse error in it,
+                    // or a `default/` that does not match this binary (`stdlib_ops`).
+                    // The message carries its own cure; the path hint below would
+                    // send the reader looking for a directory that is right there.
+                    eprintln!("loft: {e}");
+                    std::process::exit(1);
+                }
                 eprintln!(
                     "loft: cannot load standard library from `{}`: {e}",
                     default_dir.display()
@@ -10182,7 +10213,7 @@ fn main() {
         // is needed.  Computed once and reused for both the main link and each wasm
         // bridge crate (they must link the SAME loft copy).
         //
-        // @PLN117 — a program that uses `par` gets the THREADED shape, whose
+        // @PLN117 (@C3) — a program that uses `par` gets the THREADED shape, whose
         // rlib is compiled together with an atomics std so `par` can run on Web
         // Workers.  `--threads` / `--no-threads` override the choice.  Threading
         // needs a nightly toolchain (only `-Z build-std` produces that std); when
@@ -11916,7 +11947,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     if production {
         lg.config.production = true;
     }
-    state.database.logger = Some(Arc::new(Mutex::new(lg)));
+    state.database.set_logger(lg);
 
     let main_nr = p.data.def_nr("n_main");
     // Plan-08 phase 01: --introspect short-circuits everything.

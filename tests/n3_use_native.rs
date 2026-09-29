@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C71 — native libraries compile, scripts interpret.
 
 //! @PLN11 Arc N / N3 Phase A — `use <lib>` auto-compiles a normal loft library
 //! to a native cdylib and dispatches to it, on the **real binary**.
@@ -100,7 +101,7 @@ fn use_compile_native_library_dispatches_on_real_binary() {
     // execution-mode declaration.  double/add/factorial are normal loft functions.
     std::fs::write(
         &prog,
-        "use mathnative;\n\
+        "use mathnative::*;\n\
          fn main() {\n\
          \x20   println(\"{double(21)}\");\n\
          \x20   println(\"{add(3, 4)}\");\n\
@@ -177,7 +178,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let prog = tmp.join("main.loft");
     std::fs::write(
         &prog,
-        "use mathmixed;\n\
+        "use mathmixed::*;\n\
          fn main() {\n\
          \x20   println(\"{triple(7)}\");\n\
          \x20   println(\"{apply_inc(10)}\");\n\
@@ -256,7 +257,7 @@ fn native_build_failure_hard_fails_default_and_under_require() {
     let prog = tmp.join("main.loft");
     std::fs::write(
         &prog,
-        "use mathnative;\n\
+        "use mathnative::*;\n\
          fn main() {\n\
          \x20   println(\"{double(21)}\");\n\
          }\n",
@@ -463,13 +464,13 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
     // Bare context: only binwriter loaded — its cdylib bakes binwriter's `i32` index.
     std::fs::write(
         tmp.join("bare.loft"),
-        "use binwriter;\nfn main() { write_magic(arguments()[0], 2); }\n",
+        "use binwriter::*;\nfn main() { write_magic(arguments()[0], 2); }\n",
     )
     .unwrap();
     // Shifted context: typeshift's struct types move `i32` to a different index.
     std::fs::write(
         tmp.join("shifted.loft"),
-        "use typeshift;\nuse binwriter;\n\
+        "use typeshift::*;\nuse binwriter::*;\n\
          fn main() { _ = ts_touch(); write_magic(arguments()[0], 2); }\n",
     )
     .unwrap();
@@ -550,7 +551,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     .unwrap();
     std::fs::write(
         tmp.join("clash.loft"),
-        "use mine;\nuse sharedname;\nfn main() {\n  m = mine_new();\n  \
+        "use mine::*;\nuse sharedname::*;\nfn main() {\n  m = mine_new();\n  \
          h = holder_new(3, holder_pair(4));\n  \
          println(\"{m.flag} {h.tag} {h.pair.p} {h.pair.v} {h.items}\");\n}\n",
     )
@@ -633,13 +634,13 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     let bare = tmp.join("bare.loft");
     std::fs::write(
         &bare,
-        "use mathnative;\nfn main() { println(\"{double(21)}\"); }\n",
+        "use mathnative::*;\nfn main() { println(\"{double(21)}\"); }\n",
     )
     .unwrap();
     let shifted = tmp.join("shifted.loft");
     std::fs::write(
         &shifted,
-        "use typeshift;\nuse mathnative;\n\
+        "use typeshift::*;\nuse mathnative::*;\n\
          fn main() { _ = ts_touch(); println(\"{double(21)}\"); }\n",
     )
     .unwrap();
@@ -1007,7 +1008,7 @@ fn a_packages_artifact_directory_stays_bounded() {
         let prog = tmp.join(format!("ctx{n}.loft"));
         std::fs::write(
             &prog,
-            format!("use mathnative;\n{pad}fn main() {{ println(\"{{double(21)}}\"); }}\n"),
+            format!("use mathnative::*;\n{pad}fn main() {{ println(\"{{double(21)}}\"); }}\n"),
         )
         .unwrap();
         let out = Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -1168,7 +1169,7 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
     let prog = tmp.join("main.loft");
     std::fs::write(
         &prog,
-        "use mathnative;\n\
+        "use mathnative::*;\n\
          fn main() {\n\
          \x20   println(\"{double(21)}\");\n\
          \x20   println(\"{add(3, 4)}\");\n\
@@ -1273,7 +1274,7 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
     let prog = tmp.join("main.loft");
     std::fs::write(
         &prog,
-        "use mathnative;\n\
+        "use mathnative::*;\n\
          fn main() {\n\
          \x20   println(\"{double(21)}\");\n\
          \x20   println(\"{add(3, 4)}\");\n\
@@ -1371,7 +1372,7 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
     let prog = tmp.join("main.loft");
     std::fs::write(
         &prog,
-        "use fwd1663;\n\
+        "use fwd1663::*;\n\
          fn call_it(f: fn(integer) -> fwd1663::St) -> float { b = f(0); b.size }\n\
          fn main() {\n\
          \x20 a = unit(0);\n\

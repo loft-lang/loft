@@ -13,7 +13,7 @@
 //   CHANNEL: the WARNING COUNT — six silent tuple members on the control — and nothing else.
 //   Falsify has no warning column: a `@EXPECT_WARNING` file gets a direct run where warnings
 //   are not matched at all, so both trees read `expect -` and the sweep reports INERT however
-//   loudly the diagnostic fires (TESTING.md § A guard that never failed is not a guard,
+//   loudly the diagnostic fires (GUARDS.md § A guard that never failed is not a guard,
 //   second blind channel).
 //   WITNESS: warnings 0 -> 6 on the control against the declared count here; that difference
 //   is the whole measurement.

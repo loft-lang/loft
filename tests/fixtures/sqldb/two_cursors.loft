@@ -17,8 +17,8 @@
 // database still runs this, which is what stops the guarantee evaporating into a
 // skip.
 
-use sql;
-use sqlite;
+use sql::*;
+use sqlite::*;
 
 // Answers 1 for a failure, so `main` can COUNT them. A `check` that only
 // printed would leave the summary line printing anyway, and a harness grepping

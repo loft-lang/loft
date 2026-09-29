@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § `is` variant check and § Match — the `is` forms and the match
+// forms the cheat sheet lists, each on a value.
+
+enum Dir { North, South }
+enum Shape { Circle { radius: float }, Rect { width: float, height: float } }
+enum Color { Red, Green, Blue }
+struct Status { hp: integer }
+enum Spell { Fireball, IceWall { status: Status }, Arrow { id: integer }, Crate }
+struct World { removed: vector<integer> }
+
+fn test_is_checks_and_binds() {
+  d: Dir = North;
+  shape: Shape = Circle { radius: 1.0 };
+  hit = false;
+  area = 0.0;
+  if d is North { hit = true; }      // boolean check
+  assert(!(shape is Rect));          // negation
+
+  // field capture — binds variant fields as locals scoped to the if-body
+  if shape is Circle { radius } {
+    area = PI * radius * radius;
+  }
+
+  // multiple fields + else
+  if shape is Rect { width, height } {
+    area = width * height;
+  } else {
+    area = 0.0;
+  }
+  assert(hit and area == 0.0, "the Circle bound its radius; the Rect branch took the else");
+}
+
+fn test_match_on_a_variant_a_payload_a_tuple_and_a_pair_of_variants() {
+  color = Color.Green;
+  shape: Shape = Rect { width: 2.0, height: 2.0 };
+  said = "";
+  world = World { };
+  a: Spell = Fireball;
+  b: Spell = IceWall { status: Status { hp: 10 } };
+  match color {
+      Red   => { said = "red"; },
+      Green | Blue => { said = "cool"; },
+      _     => {},
+  }
+  assert(said == "cool", "an alternation arm");
+
+  match shape {
+      Circle { radius } => { said = "r={radius}"; },
+      Rect { width, height } if width == height => { said = "square"; },
+      _ => {},
+  }
+  assert(said == "square", "a payload bind with a guard");
+
+  // Tuple match — destructure into element patterns.
+  said = match (3, 7) {
+      (0, _)   => "zero",
+      (n, m)   => "{n},{m}",
+  };
+  assert(said == "3,7", "a tuple destructured");
+
+  // A record payload bound by a SINGLE scrutinee is a view of it: the write reaches `b`.
+  match b {
+      IceWall { status } => { status.hp -= 3; },
+      _ => {},
+  }
+  assert((b.status.hp ?? -1) == 7, "a single scrutinee: the payload view writes through");
+  // A tuple of LOCALS copies them in (T-Cons): the write stays in the tuple's copy.
+  match (a, b) {
+      (Fireball, IceWall { status }) => { status.hp -= 3; },
+      _ => {},
+  }
+  assert((b.status.hp ?? -1) == 7, "a tuple of locals: the write stayed in the copy");
+  // A tuple of PARAMETERS keeps aliasing the caller's values (B-Ref-Alias): it writes through.
+  route(a, b, world);
+  assert((b.status.hp ?? -1) == 4, "a tuple of parameters: the write reached the caller");
+  a = Arrow { id: 4 };
+  b = Crate;
+  route(a, b, world);
+  assert("{world.removed}" == "[4]", "a scalar payload bound by name");
+}
+
+fn route(a: Spell, b: Spell, world: World) {
+  // An enum element names a VARIANT — by tag, or with its payload bound.  A record payload
+  // bound this way is a view of the MATCHED VALUE; a scalar payload is a copy.  `a` and `b`
+  // are PARAMETERS here, which keep aliasing the caller's values inside the tuple
+  // (B-Ref-Alias), so `status.hp -= 3` reaches the caller's `b`.  A tuple of LOCALS copies
+  // them in (T-Cons) and the write would stay in that copy — match a local alone to write
+  // through to it.
+  match (a, b) {
+      (Fireball, IceWall { status }) => { status.hp -= 3; },
+      (Arrow { id }, Crate)          => { world.removed += [id]; },
+      _ => {},
+  }
+}

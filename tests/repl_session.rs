@@ -1404,7 +1404,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
     let path = tmp_session("filedebug_lib").with_extension("loft");
     std::fs::write(
         &path,
-        "use typeshift;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
+        "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
     )
     .expect("write temp program");
     let file = path.to_str().unwrap();
@@ -1433,7 +1433,7 @@ fn file_debugger_without_lib_dirs_cannot_resolve_the_library() {
     let path = tmp_session("filedebug_nolib").with_extension("loft");
     std::fs::write(
         &path,
-        "use typeshift;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
+        "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
     )
     .expect("write temp program");
     let file = path.to_str().unwrap();
@@ -1467,7 +1467,7 @@ fn file_debugger_can_call_into_a_native_library() {
     let path = tmp_session("filedebug_native").with_extension("loft");
     std::fs::write(
         &path,
-        "use native_pkg;\nfn main() {\n  v = ext_add_one(41);\n  \
+        "use native_pkg::*;\nfn main() {\n  v = ext_add_one(41);\n  \
          assert(v == 42, \"native call under the debugger\")\n}\n",
     )
     .expect("write temp program");
@@ -1856,7 +1856,7 @@ fn debug_eval_can_call_a_library_function_at_a_frame() {
     let path = tmp_session("eval_libcall").with_extension("loft");
     std::fs::write(
         &path,
-        "use typeshift;\n\
+        "use typeshift::*;\n\
          fn local_double(n: integer) -> integer { return n * 2; }\n\
          fn main() {\n  \
          base = 5;\n  \
@@ -1925,7 +1925,7 @@ fn repl_keeps_its_resolution_context_across_a_reset() {
     // a failed `assert` reports to the chrome stream it does.  So a wrong value fails
     // loudly here, and a resolution failure shows as "Unknown function".
     let input = std::io::Cursor::new(
-        b"use typeshift;\nassert(ts_touch() == 7, \"before reset\")\n:reset\n          use typeshift;\nassert(ts_touch() == 7, \"after reset\")\n:quit\n"
+        b"pub use typeshift::*;\nassert(ts_touch() == 7, \"before reset\")\n:reset\n          pub use typeshift::*;\nassert(ts_touch() == 7, \"after reset\")\n:quit\n"
             .to_vec(),
     );
     let mut out: Vec<u8> = Vec::new();

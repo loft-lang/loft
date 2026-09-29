@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C93 — a par worker may only read captured parent state.
 //
 // @PLN102 C93 (read residual) — a par worker runs on an ISOLATED store clone, so a
 // captured REFERENCE argument (vector/struct/…) is invalid in the worker's store.

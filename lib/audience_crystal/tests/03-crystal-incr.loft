@@ -13,7 +13,7 @@
 // The projector uses the full build meanwhile.
 
 use audience_crystal::*;
-use gridmesh;
+use gridmesh::*;
 
 fn qcoord(v: float) -> integer { ((v as single) as float * 1000.0) as integer }
 

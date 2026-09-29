@@ -23,9 +23,9 @@
 //     statement of the defect, so both are asserted on every receiver below.
 //
 // The swapped-`use` twin is `850b-…`: import order must not change an answer.
-use dupmethod_a;
-use dupmethod_b;
-use dupmethod_c;
+use dupmethod_a::*;
+use dupmethod_b::*;
+use dupmethod_c::*;
 
 fn main() {
   a = make_a(1);

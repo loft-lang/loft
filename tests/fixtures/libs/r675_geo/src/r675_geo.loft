@@ -1,3 +1,3 @@
 // loft#675 — a package that aggregates its sub-module, exactly as `mesh3d` does for
 // the `Vec3` that `glb` returns.
-use r675_math;
+pub use r675_math::*;

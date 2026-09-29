@@ -51,7 +51,7 @@
 //   deliberately broken assertion in one fails the file — checked, so they are not being
 //   skipped the way the trailing refusal cells are.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: the WHOLE-FILE verdict is unusable, not merely inert — falsify reports `expect
 //   8/8` and INERT on the very build the defect was measured on, because every
 //   `@EXPECT_ERROR` after a firing one is credited without matching (loft#1261). Nothing

@@ -8,7 +8,7 @@
 //!
 //! Reading `v[i]` resolves the store, loads the container slot and loads the length, and
 //! every one of those loads is guarded — so LLVM will not lift them out of the loop even
-//! with the whole chain inlined (PERFORMANCE.md § Native vs Rust root cause 3c). The
+//! with the whole chain inlined (PERFORMANCE-history.md § Native vs Rust root cause 3c). The
 //! emitter can lift them itself, because it is the one that knows where the loop is; what
 //! it needs from here is the promise that makes lifting sound: **nothing the loop body
 //! runs can write a store.**
@@ -22,7 +22,7 @@
 //!
 //! [`writes_store`] answers that from an ALLOW-list of ops that provably do not write, so
 //! an op missing from it costs the optimisation and never correctness — the inverse of the
-//! deny-lists in PERFORMANCE.md § Design: P8, where an omission is a silent wrong read.
+//! deny-lists in PERFORMANCE-history.md § Design: P8, where an omission is a silent wrong read.
 //! `LOFT_HOIST_VERIFY=1` is the second half: it emits the checking form of every hoisted
 //! read, which re-derives the header and panics on a mismatch, so a hole in the allow-list
 //! shows up as a failure under one suite run.
@@ -840,6 +840,144 @@ pub struct LoopHoist {
     /// leaves every store's buffer where it is, so a hoisted header may carry the
     /// address of its vector's element 0 for the loop's whole extent.
     pub growth_free: bool,
+    /// `@FR-R-Base`'s growth clause — the ROOT variable of every push, pre-allocation and
+    /// mint in the body, the rebound ones included: the stores the loop grows.  A header
+    /// whose store is proven apart from every one of them ([`StoreFacts::distinct`]) keeps
+    /// its base under that growth.  Empty exactly when `growth_free`.
+    pub movers: Vec<u16>,
+}
+
+/// `@FR-R-Base`'s growth clause and `@FR-R-RecPtr`'s remainder clause — can two variables'
+/// records be proven to live in DIFFERENT stores, so a growth of the one cannot move the
+/// other?  A store's buffer is reallocated only by a growth of a vector living in it, so a
+/// base or a record address goes stale only when ITS store grew.
+///
+/// A variable's store is the END of its dep chain: a view (`e = v[i]?`, `for e in v`,
+/// `d = &w`) borrows from its source, a local vector from its hidden `__vdb_N` store witness,
+/// an argument from nothing.  Two ends name two stores when they differ and at least one is
+/// FRESH — minted by this activation and shared with nothing but its borrowers: a `__vdb_N`
+/// witness, or a user-named local record that owns its store.  Never fresh: the witness a
+/// return-buffer adoption left unallocated (`RetAdopt`: the local IS the caller's buffer), a
+/// buffer `(R-Place)` claimed in a parameter's store, and an emitter-owned buffer or witness
+/// ([`HoistOwned`]: a § V-z witness binds an element's slot).  Two arguments, or an argument
+/// beside the return buffer, are never proven apart — a caller can hand two fields of one
+/// record — and a chain that forks (a tuple's union) or leaves the table answers nothing.
+pub struct StoreFacts<'a> {
+    pub vars: &'a crate::variables::Function,
+    /// The locals whose buffer `(R-Place)` claimed in another record's store.
+    pub placed: &'a HashSet<u16>,
+    /// `RetAdopt`'s result local and its witness, when the function adopts its buffer.
+    pub adopted: Option<(u16, u16)>,
+    pub owned: Option<&'a HoistOwned>,
+}
+
+impl StoreFacts<'_> {
+    /// The end of `x`'s dep chain; `None` when the chain forks, loops or leaves the table.
+    fn terminal(&self, x: u16) -> Option<u16> {
+        let mut cur = x;
+        let mut seen: HashSet<u16> = HashSet::new();
+        loop {
+            if cur as usize >= self.vars.var_count() || !seen.insert(cur) {
+                return None;
+            }
+            let deps: Vec<u16> = self
+                .vars
+                .tp(cur)
+                .depend()
+                .into_iter()
+                .filter(|d| *d != cur)
+                .collect();
+            match deps.as_slice() {
+                [] => return Some(cur),
+                [d] => cur = *d,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Is the chain end `t` a store this activation minted and shares with nothing but its
+    /// borrowers?
+    fn fresh(&self, t: u16) -> bool {
+        let vars = self.vars;
+        if self.adopted.is_some_and(|(v, vdb)| t == v || t == vdb)
+            || self.placed.contains(&t)
+            || self
+                .owned
+                .is_some_and(|o| o.buffers.contains(&t) || o.records.contains(&t))
+        {
+            return false;
+        }
+        if vars.name(t).starts_with("__vdb") {
+            return true;
+        }
+        !vars.is_argument(t)
+            && !vars.is_captured(t)
+            && !vars.is_inline_ref(t)
+            && !vars.is_skip_free(t)
+            && !vars.is_compiler_generated(t)
+            && !matches!(vars.tp(t).base(), Type::RefVar(_))
+            && crate::data::is_dbref(vars.tp(t).base())
+    }
+
+    /// Do `a`'s and `b`'s records provably live in different stores?
+    #[must_use]
+    pub fn distinct(&self, a: u16, b: u16) -> bool {
+        let (Some(ta), Some(tb)) = (self.terminal(a), self.terminal(b)) else {
+            return false;
+        };
+        ta != tb && (self.fresh(ta) || self.fresh(tb))
+    }
+}
+
+/// The locals whose null init `(R-Place)` replaced by `OpPlaceRecord`: their record lives
+/// in the host's store, never in one of their own.
+#[must_use]
+pub fn placed_locals(code: &Value, data: &Data) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    code.any_node(&mut |n| {
+        if let Value::Set(v, rhs) = n
+            && let Value::Call(d, _) = rhs.unspan()
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpPlaceRecord"
+        {
+            out.insert(*v);
+        }
+        false
+    });
+    out
+}
+
+/// The root variable of every push, pre-allocation and record mint in `stmts` — the stores
+/// they grow — in first-appearance order.  Exactly the ops [`blocks_header_hoist`] lets
+/// through under the push and mint tiers, so a caller that proves every root apart from a
+/// store may open those tiers.
+fn mover_roots(
+    stmts: &[Value],
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    for op in stmts {
+        op.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+            {
+                let name = data.def(*d).name();
+                let root = fused_push(data, name, args)
+                    .map(|fp| fp.path.0)
+                    .or_else(|| pre_alloc_path(data, name, args).map(|p| p.0))
+                    .or_else(|| mint_path(data, stores, name, args, vars).map(|p| p.0));
+                if let Some(r) = root
+                    && !out.contains(&r)
+                {
+                    out.push(r);
+                }
+            }
+            false
+        });
+    }
+    out
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -871,6 +1009,7 @@ pub fn hoistable(
     tiers: HoistTiers,
     inputs: Option<&mut InputCache>,
     owned: Option<&HoistOwned>,
+    facts: Option<&StoreFacts>,
 ) -> LoopHoist {
     if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
         return LoopHoist::default();
@@ -881,6 +1020,7 @@ pub fn hoistable(
         pushes: Vec::new(),
         mint_pushes: Vec::new(),
         growth_free: false,
+        movers: Vec::new(),
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body, data, vars);
@@ -1007,6 +1147,31 @@ pub fn hoistable(
     // Its pushes and mints keep their templates — or take a GROUP header (`R-GroupPush`)
     // — and they still GROW a store, so the loop is not growth-free.
     let mut dropped_mover = false;
+    {
+        let mut movers: Vec<u16> = Vec::new();
+        for r in pushes
+            .iter()
+            .map(|(p, _)| p.0)
+            .chain(mints.iter().map(|p| p.0))
+        {
+            if !movers.contains(&r) {
+                movers.push(r);
+            }
+        }
+        for op in &body.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < data.definitions.len()
+                    && let Some(p) = pre_alloc_path(data, data.def(*d).name(), args)
+                    && !movers.contains(&p.0)
+                {
+                    movers.push(p.0);
+                }
+                false
+            });
+        }
+        out.movers = movers;
+    }
     if !pushes.is_empty() || !mints.is_empty() {
         let rebound_movers: Vec<u16> = pushes
             .iter()
@@ -1045,11 +1210,19 @@ pub fn hoistable(
                 .map(|(p, _)| p)
                 .chain(mints.iter())
                 .any(|p| Some(p.0) == retbuf);
+            // `@FR-R-Alias` — and a candidate whose store is proven apart from every
+            // store the loop grows ([`StoreFacts::distinct`]: a `for` walk's hidden vector
+            // over an owned local, a `&` view of one) cannot name a pushed vector either.
+            let movers = &out.movers;
             out.vectors.retain(|(q, _)| {
-                mover(q) || owned_local(vars, q.0) || (vars.is_argument(q.0) && !any_retbuf)
+                mover(q)
+                    || owned_local(vars, q.0)
+                    || (vars.is_argument(q.0) && !any_retbuf)
+                    || facts.is_some_and(|f| movers.iter().all(|m| f.distinct(q.0, *m)))
             });
         }
         out.vectors.retain(|(q, _)| !mover(q));
+        crate::rewrite_census::fired("R-Mint", mints.len());
         out.pushes = pushes;
         out.mint_pushes = mint_fused
             .into_iter()
@@ -1649,6 +1822,7 @@ fn callee_writes(
         inner.map(Rc::new)
     };
     // A `None` reached on a recursive edge is memoised too: it only ever withholds a hoist.
+    crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
     writes.insert(d_nr, answer.clone());
     answer
 }
@@ -2026,6 +2200,7 @@ pub fn record_view_ptr(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
+    facts: Option<&StoreFacts>,
 ) -> Result<u16, &'static str> {
     let Some(Value::Set(r, rhs)) = stmts.get(at).map(Value::unspan) else {
         return Err("not a binding");
@@ -2059,6 +2234,7 @@ pub fn record_view_ptr(
         cache,
         allow_in_place,
         twin_params,
+        facts,
     )?;
     Ok(*r)
 }
@@ -2130,6 +2306,7 @@ pub fn mint_window(
         cache,
         allow_in_place,
         &HashSet::new(),
+        None,
     )?;
     Ok((*e, finish))
 }
@@ -2345,9 +2522,17 @@ fn view_extent_verdict(
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
     twin_params: &HashSet<(u32, u16)>,
+    facts: Option<&StoreFacts>,
 ) -> Result<(), &'static str> {
     let vars = data.def(def_nr).variables();
     let r = &r;
+    // `@FR-R-RecPtr`'s remainder clause — a push or mint into a store proven apart from the
+    // view's cannot move it, so the remainder may grow THOSE stores: the push and mint tiers
+    // open exactly when every mover's root is distinct from `r`'s store.
+    let movers_apart = facts.is_some_and(|f| {
+        let roots = mover_roots(rest, data, stores, vars);
+        !roots.is_empty() && roots.iter().all(|m| f.distinct(*r, *m))
+    });
     if rest.iter().any(|op| {
         blocks_header_hoist(
             op,
@@ -2358,6 +2543,8 @@ fn view_extent_verdict(
             Some(vars),
             HoistTiers {
                 in_place: allow_in_place,
+                push: movers_apart,
+                mint: movers_apart,
                 ..HoistTiers::default()
             },
             &mut HashSet::new(),
@@ -2365,6 +2552,13 @@ fn view_extent_verdict(
         )
     }) {
         return Err("the remainder may grow a store");
+    }
+    if movers_apart && std::env::var("LOFT_TRACE_RECPTR").is_ok() {
+        eprintln!(
+            "recptr: {} keeps `{}` beside a growth of another store",
+            data.def(def_nr).name(),
+            vars.name(*r)
+        );
     }
     // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
     // use of `r` declines — through the store a freed record answers the sentinel, through
@@ -3946,7 +4140,7 @@ fn foreign_store_writer(
             let mut named = false;
             for (i, a) in args.iter().enumerate() {
                 let Some(at) = def.attributes().get(i) else {
-                    if name == "OpGetRecord" {
+                    if name == "OpGetRecord" || name == "OpSetKeyed" {
                         continue; // a trailing key value
                     }
                     why = Some("a writer with an untyped operand in its scope");
@@ -4039,7 +4233,7 @@ fn text_escapes_with(
                     // `OpGetRecord`'s keys trail its declared parameters, and each is read
                     // into a `Content` at the call: a text VALUE.
                     let value_position = name == "OpFreeText"
-                        || (name == "OpGetRecord" && i >= attrs.len())
+                        || (matches!(name, "OpGetRecord" | "OpSetKeyed") && i >= attrs.len())
                         || attrs.get(i).is_some_and(|at| {
                             !at.constant && matches!(at.typedef.base(), Type::Text(_))
                         });

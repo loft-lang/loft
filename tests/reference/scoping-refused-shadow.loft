@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Variable scoping — a loop variable may not shadow a local of the same
+// name, because loft does not block-scope loop variables.
+// @EXPECT_ERROR: shadows a local named 'x'
+
+fn f() {
+  x = 0;
+  for x in 0..3 { }   // error: loop variable 'x' shadows a local named 'x'
+}                      //        — rename the loop variable (e.g. loop_x)

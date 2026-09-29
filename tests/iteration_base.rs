@@ -31,8 +31,10 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     ("n_w5", 2, 2, 3, 0),
     // A callee grows the walked vector: no address, the index still bounded.
     ("n_w6", 0, 0, 1, 0),
-    // The walk that appends elsewhere holds none; the read walk after it does.
-    ("n_w7", 1, 1, 2, 0),
+    // The walk that appends ELSEWHERE holds its address too (`@FR-R-Base`'s growth clause:
+    // `out` is another store), as the read walk after it does; the append's own mint keeps
+    // its `rec_ptr`.
+    ("n_w7", 2, 1, 2, 0),
     ("n_w8", 1, 0, 1, 0),
     ("n_w9", 1, 0, 1, 0),
     // Heap-owning elements: the text and vector field reads are not fused, but the walk

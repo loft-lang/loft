@@ -51,7 +51,7 @@
 //   usually hands the buffer its own freed number straight back and the premature free lands on
 //   the store it just released.  `LOFT_STRICT_STORES=1` is the channel that separates them.
 //   ⚠ A bulk row taken without `LOFT_STRICT_STORES=1` is the absence of the instrument, not of
-//   the defect — see TESTING.md § The patch receipt.
+//   the defect — see GUARDS.md § The patch receipt.
 
 struct S1522 { n: integer }
 struct O1522 { opt: S1522? }

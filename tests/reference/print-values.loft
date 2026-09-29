@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § Output and Diagnostics — `print` takes one format string; a user type
+// renders through its `to_text`.
+
+struct Point { x: integer, y: integer }
+fn to_text(self: Point) -> text { "({self.x}, {self.y})" }
+
+fn test_print_takes_one_format_string() {
+  a = 1; b = 2; c = 3;
+  count = 41;
+  print("{count + 1}\n");        // 42 — a single value
+  print("{a} {b} {c}\n");        // several values, separators written in place
+  p = Point { x: 3, y: 4 };
+  print("{p}\n");                // a user type via its to_text
+  assert("{count + 1}" == "42" and "{a} {b} {c}" == "1 2 3" and "{p}" == "(3, 4)", "the same strings print renders");
+}

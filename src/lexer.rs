@@ -2054,6 +2054,35 @@ impl Lexer {
             };
             self.ret_number(res, pos, false)
         } else if let Ok(r) = val.parse::<u64>() {
+            // An integer literal takes no suffix (@C54.D): its width comes from the binding
+            // or parameter type, or from `as`.  A letter glued to one (`34u8`) is named here,
+            // while the two are still adjacent, and consumed — left to the parser it was a
+            // separate identifier and the reader was told a `;` was missing.
+            // Not inside a format hole: a spec such as `{n:08x}` reads a width then a letter.
+            if !self.in_format_expr
+                && let Some(&c) = self.iter.peek()
+                && c.is_ascii_alphabetic()
+            {
+                let mut bad = String::new();
+                while let Some(&n) = self.iter.peek() {
+                    if n.is_ascii_alphanumeric() || n == '_' {
+                        bad.push(n);
+                        self.next_char();
+                    } else {
+                        break;
+                    }
+                }
+                let msg = if bad == "f" {
+                    format!("`{val}f`: a `single` literal needs a decimal point — write `{val}.0f`")
+                } else {
+                    format!(
+                        "`{val}{bad}`: an integer literal takes no suffix — its width comes from \
+                         where it goes: write `{val} as {bad}`, or give the binding the type \
+                         (`x: {bad} = {val}`)"
+                    )
+                };
+                self.err(Level::Error, &msg);
+            }
             self.ret_number(r, pos, val.starts_with('0'))
         } else {
             self.err(Level::Error, "Problem parsing number");

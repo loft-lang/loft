@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C71 — native libraries compile, scripts interpret.
 
 //! @PLN166 B3 — the source-keyed native fast path: a native run of an unchanged program
 //! execs its cached binary without parsing, and NOTHING that would change the binary is
@@ -530,7 +531,7 @@ fn an_edited_library_is_never_served_from_the_source_key() {
     let script = root.join("prog.loft");
     std::fs::write(
         &script,
-        "use b3dep;\nfn main() { println(\"d={dep_value()}\"); }\n",
+        "use b3dep::*;\nfn main() { println(\"d={dep_value()}\"); }\n",
     )
     .expect("script");
     let libs = lib.to_string_lossy().into_owned();

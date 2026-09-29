@@ -102,6 +102,7 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 _ => None,
             };
             if admitted && let Some(b) = buffer {
+                crate::rewrite_census::fired("R-Const", 1);
                 if crate::keys::trace_const() {
                     eprintln!(
                         "[const] fn={} callee={} ADMITTED: the result is only read — a view of the constant",

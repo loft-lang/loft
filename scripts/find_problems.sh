@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# One-pass-find-all-problems workflow (see doc/claude/TESTING.md).
+# One-pass-find-all-problems workflow (see doc/claude/RUNNING_TESTS.md).
 #
 # Default mode: runs the CURATED set — everything except a short, named list of
 # slow-and-few binaries (scripts/test_subjects.sh).  3733 of 3833 tests in ~70s
@@ -210,9 +210,19 @@ test_runner_cmd() {
 # Sweep the disk-backed fixture scratch before a full run: tests write
 # fixtures (and their .loft/cache native binaries) under target/test-tmp —
 # per-run artifacts that otherwise accumulate run over run.  Owned by THIS
-# repo's tests only, so the sweep can be unconditional.
+# repo's tests only, so the sweep can be unconditional.  Then make sure the
+# disk has room for the run (scripts/disk_headroom.sh): a run that starts on
+# a full disk reports truncated objects and missing rlibs as test failures —
+# 71 of them in one run, 2026-09-28 — and the reclaim escalates only as far as
+# the shortfall needs, this checkout's own scratch included when no gate is
+# alive.  Below its floor it refuses, and so does the run: `set -e` is off in
+# the callers' subshells, so the refusal is made explicit here.
 sweep_test_tmp() {
   rm -rf "$(dirname "$0")/../target/test-tmp" 2>/dev/null || true
+  "$(dirname "$0")/disk_headroom.sh" --scratch "$LOFT_TEST_SCRATCH" >&2 || {
+    echo "refusing to run on a full disk" >&2
+    exit 1
+  }
 }
 
 # Run all rebuilds in parallel.  Each cargo invocation has fixed
@@ -570,6 +580,37 @@ set -- "${_args[@]+"${_args[@]}"}"
 # `--stop` inspect an existing run, and telling them which selection they would
 # have used is noise about a decision they are not making.
 announce_selection() { echo "selection: $SELECT_LABEL"; }
+
+# A run of the curated or full set links every test binary — 382 of them, 16 GB under
+# `target/debug` (2026-09-28) — and a disk that cannot hold that ends the run in the
+# LINKER (`ld terminated with signal 7 [Bus error]`, `No space left on device`) with a
+# log that carries no verdict, which is worse than no run because it looks like one.  So
+# the headroom is read before anything is built, against a floor the set's own footprint
+# sets, and a run that would not fit says what fits instead.  A subject run links tens of
+# binaries, not hundreds, and passes under the floor.  `LOFT_GATE_MIN_FREE_GB` moves the
+# floor; `0` switches the guard off.  CI_BUDGET.md § A cloud session.
+disk_guard() {
+  local floor="${LOFT_GATE_MIN_FREE_GB:-20}"
+  [[ "$floor" == "0" ]] && return 0
+  case "$SELECT_LABEL" in subject:*|changed:*) return 0 ;; esac
+  local where="${CARGO_TARGET_DIR:-target}"
+  [[ -d "$where" ]] || where="."
+  local free_gb
+  free_gb="$(df -Pk "$where" 2>/dev/null | awk 'NR==2 {printf "%d", $4 / 1048576}')"
+  [[ -n "$free_gb" && "$free_gb" -lt "$floor" ]] || return 0
+  cat >&2 <<MSG
+find_problems.sh: ${free_gb} GB free where the ${SELECT_LABEL} set needs about ${floor} GB
+  (every test binary is linked; short of that the run dies in the linker with no verdict).
+  Run one area instead:  ./scripts/find_problems.sh --subject <name>   (--list-subjects)
+  Reclaim space:         make sweep-target · make sweep-scratch · rm -rf target/debug/incremental
+  Or run the same gate on GitHub against the pushed commit
+  (CI_BUDGET.md § When the local gate is unreliable):
+                         gh workflow run ci.yml --ref <branch> -f os=ubuntu-latest
+  LOFT_GATE_MIN_FREE_GB=<n> moves this floor; 0 switches it off.
+MSG
+  exit 2
+}
+case "${1:-}" in --peek|--wait|--stop) ;; *) disk_guard ;; esac
 
 if [[ "${1:-}" == "--peek" ]]; then
   LOG="${2:-$LOG_DEFAULT}"

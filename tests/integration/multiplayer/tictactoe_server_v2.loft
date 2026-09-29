@@ -17,7 +17,7 @@
 //   /home/ubuntu/loft/target/release/loft --interpret \
 //       lib/game_protocol/examples/tictactoe_server_v2.loft
 
-use server;
+use server::*;
 
 // ── Namespace handler registry ──────────────────────────────
 

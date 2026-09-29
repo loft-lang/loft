@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Graphics library — 2D pixel canvas with drawing primitives.
 
-use math;
-use mesh;
-use scene;
-use glb;
+pub use math::*;
+pub use mesh::*;
+pub use scene::*;
+pub use glb::*;
 
 // RGBA color packed as a single integer: 0xAARRGGBB.
 // Alpha: 255 = fully opaque, 0 = fully transparent.

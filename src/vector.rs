@@ -423,6 +423,13 @@ pub fn vector_buffer_reset(db: &DbRef, stores: &mut [Store]) {
         return;
     }
     let store = keys::mut_store(db, stores);
+    // @PLN174 F5 — a buffer that VIEWS foreign bytes (bound from a bridge's answer or a
+    // slice of a mapping on the previous pass) has no length to reset: the reset drops
+    // the view, and the buffer is the ordinary empty one the next pass fills.
+    if store.is_foreign() {
+        store.release_foreign();
+        return;
+    }
     let vec_rec = store.collection_rec(db.rec, db.pos);
     if vec_rec != 0 {
         store.set_u32_raw(vec_rec, 4, 0);
@@ -656,6 +663,11 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
         return;
     }
     let store = keys::mut_store(db, stores);
+    // @PLN174 F4b — a view of foreign bytes is dropped by its clear, never written.
+    if store.is_foreign() {
+        store.release_foreign();
+        return;
+    }
     let v_rec = store.collection_rec(db.rec, db.pos);
     if v_rec != 0 {
         // Only set size of the vector to 0
@@ -676,7 +688,7 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
 /// caller then resolves the store a second time for the element read, because nothing
 /// tells it this function already did. The whole indexed-read chain is marked inlinable
 /// for that reason — this, [`length_vector`], `keys::store` and `Stores::store` — and it
-/// is worth ~1.7x on an indexed-read kernel (loft#885, and PERFORMANCE.md § Native vs
+/// is worth ~1.7x on an indexed-read kernel (loft#885, and PERFORMANCE-history.md § Native vs
 /// Rust root cause 3b for the measurement).
 ///
 /// The `length_vector` call below is not the cost it appears to be: rustc inlines it
@@ -1075,7 +1087,7 @@ pub unsafe fn rec_set<T: Copy>(
     stores: &[Store],
     verify: bool,
 ) {
-    if ptr.is_null() {
+    if ptr.is_null() || !stores[db.store_nr as usize].write_allowed(db.rec, db.pos + fld) {
         return;
     }
     if verify {

@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A closure capture whose value is one of SEVERAL stores the frame owns — `c = f() ?? []`, a
+// value branch `c = if … { [..] } else { [..] }` — keeps the store it holds when the closure
+// leaves the frame, and the frame releases every OTHER arm's store (loft#1721).
+//
+// The capture named several owners, so the adoption analysis — which follows ONE backing
+// store — saw none: the record declined to adopt, and the frame freed every arm's store.  The
+// escaped closure then read the released one (`[3,3]` for `[1,2,3]`, an `if` join `[2,2]` for
+// `[7,1,2]`), and the `??` result, which named only its present arm, leaked the arm the call
+// minted.  Now the `??` records its default arm's owners as the result's JOIN OWNERS (a table on
+// the function, not the view's deps — those drive store confinement, which would free the
+// arm at block exit), the frame owns a join capture's store when it owns every arm's, and each
+// arm's owner is released by store identity against the capture (`join_capture_witness`): the
+// store the capture holds is the record's to release, the others the frame's.
+//
+// Axes: join kind (`??` with the fallback taken / not taken, a call on both sides, a value
+// branch) × closure (escaping, used in the frame, two closures sharing the capture) × a loop
+// of builds (the leak channel), with the single-owner shapes that were always right as
+// controls.  NOT covered: a capture REASSIGNED after the build (loft#1725) — identity against
+// the local then names the wrong store, so it is excluded from this route.  `d = f(); c = d ??
+// []`, the call bound first, is a per-arm bind: `a-sunk-branch-bind-captured-by-…` (loft#1726).
+//
+// @falsified-at: deaf30ba7 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/an-escaping-capture-of-a-join-keeps-the-store-it-holds.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; only the
+// assertions moved (the released arm read back, the doubled `if` arm).
+
+fn nulv(n: integer) -> vector<integer>? { if n == 0 { null } else { [n] } }
+fn full(n: integer) -> vector<integer> { [n, n] }
+
+fn mk_default(n: integer) -> fn(integer) -> text { c = nulv(n) ?? []; c += [1]; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_calls(n: integer) -> fn(integer) -> text { c = nulv(n) ?? full(4); fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_if(n: integer) -> fn(integer) -> text { c = if n == 0 { [7] } else { [8, 8] }; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn mk_literal() -> fn(integer) -> text { c: vector<integer> = []; c += [1]; fn(x: integer) -> text { c += [x]; "{c}" } }
+fn in_frame(n: integer) -> text { c = nulv(n) ?? []; c += [1]; add = fn(x: integer) { c += [x]; }; add(2); add(3); "{c}" }
+fn shared(n: integer) -> text { c = nulv(n) ?? []; f = fn(x: integer) { c += [x]; }; g = fn() -> text { "{c}" }; f(5); f(6); g() }
+fn run(f: fn(integer) -> text) -> text { f(2); f(3) }
+
+fn test_the_default_arm_of_a_question_question() {
+  assert(run(mk_default(0)) == "[1,2,3]", "fallback taken: {run(mk_default(0))}");
+  assert(run(mk_default(5)) == "[5,1,2,3]", "fallback not taken: {run(mk_default(5))}");
+  assert(run(mk_calls(0)) == "[4,4,2,3]", "a call on both sides, right arm: {run(mk_calls(0))}");
+  assert(run(mk_calls(3)) == "[3,2,3]", "a call on both sides, left arm: {run(mk_calls(3))}");
+}
+
+fn test_a_value_branch() {
+  assert(run(mk_if(0)) == "[7,2,3]", "then arm: {run(mk_if(0))}");
+  assert(run(mk_if(1)) == "[8,8,2,3]", "else arm: {run(mk_if(1))}");
+}
+
+fn test_closures_that_stay_in_the_frame() {
+  assert(in_frame(0) == "[1,2,3]" && in_frame(4) == "[4,1,2,3]", "{in_frame(0)} {in_frame(4)}");
+  assert(shared(0) == "[5,6]" && shared(2) == "[2,5,6]", "two closures: {shared(0)} {shared(2)}");
+}
+
+fn test_the_single_owner_shapes_that_were_right() {
+  assert(run(mk_literal()) == "[1,2,3]", "literal: {run(mk_literal())}");
+}
+
+fn test_many_builds() {
+  // Alternating arms, each closure escaping and called twice: 100 × "[4,4,2,3]" (9 chars) +
+  // 100 × "[1,2,3]" (7 chars).
+  t = 0;
+  for i in 0..200 { t += len(run(mk_calls(i % 2))); }
+  assert(t == 1600, "got {t}");
+}

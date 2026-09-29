@@ -1419,7 +1419,22 @@ impl ShowDb<'_> {
                 | Parts::Hash(tp, _)
                 | Parts::Index(tp, _, _)
                 | Parts::Radix(tp, _) => {
-                    self.write_list(s, *tp, indent);
+                    // `(F-Render)`: a null of any type renders `null`.  A collection field or
+                    // local is addressed AT its slot, so its absence is the slot's
+                    // (`is_absent_collection`, the one home `== null` asks) — rendered as the
+                    // slot's empty list it answered `[]` while `== null` answered true.
+                    let here = DbRef {
+                        store_nr: self.store,
+                        rec: self.rec,
+                        pos: self.pos,
+                    };
+                    if !self.dump
+                        && crate::vector::is_absent_collection(&here, &self.stores.allocations)
+                    {
+                        s.push_str("null");
+                    } else {
+                        self.write_list(s, *tp, indent);
+                    }
                 }
                 // The four narrow widths ask the ONE null home (`Stores::is_null`, the
                 // same one a struct field's omission asks) rather than re-deriving the

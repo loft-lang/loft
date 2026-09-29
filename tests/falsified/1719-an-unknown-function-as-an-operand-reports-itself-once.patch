@@ -1,0 +1,56 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 2712d66b7..ab61bd134 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7027,7 +7027,7 @@ impl Parser {
+                     "Unknown function {name}"
+                 );
+             }
+-            self.reported_call(code)
++            Type::Unknown(0)
+         } else if name == "size"
+             && types.len() == 1
+             && named_args.is_empty()
+@@ -7088,7 +7088,7 @@ impl Parser {
+                 Level::Error,
+                 "Unknown function {name}"
+             );
+-            self.reported_call(code)
++            Type::Unknown(0)
+         } else if name == "size"
+             && types.len() == 1
+             && named_args.is_empty()
+@@ -7211,7 +7211,7 @@ impl Parser {
+             // A local whose binding already failed holds no value (its type is poisoned
+             // `never`, the way an errored assignment's is): the binding's diagnostic names
+             // the cause, and "Unknown function" for calling it would name a second one.
+-            self.reported_call(code)
++            Type::Unknown(0)
+         } else {
+             // A name with an overload set, called at a generic's type VARIABLE, where no member
+             // takes it (@PLN165 B3b: only a template member can take a variable, through its
+@@ -7340,24 +7340,7 @@ impl Parser {
+                     );
+                 }
+             }
+-            self.reported_call(code)
+-        }
+-    }
+-
+-    /// The type of a call whose failure was reported (or whose callee's binding failed):
+-    /// poisoned to `never` (@P376), so the operator or call it is an operand of reads a
+-    /// value that is not there and does not report it again as a missing argument naming an
+-    /// internal opcode (loft#1719).  Its code is cleared too: a failed call writes none, and
+-    /// the buffer still holds what the caller put there — an assignment's own target, so
+-    /// `x = nofn(v) + 1` lowered to `x + 1`, typed as an integer, and escaped the poison.
+-    /// The first pass reports nothing and keeps `unknown`, so a function declared further
+-    /// down still types there.
+-    fn reported_call(&self, code: &mut Value) -> Type {
+-        if self.first_pass {
+             Type::Unknown(0)
+-        } else {
+-            *code = Value::Null;
+-            Type::Never
+         }
+     }
+ 

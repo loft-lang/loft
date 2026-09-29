@@ -289,6 +289,28 @@ spends 0.17 s.  The pool is disjoint from the frame's OWN promoted locals, the o
 that hold data across a call.  The bisect step between the rewrite and the pool: a wrong
 value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame
 sharing a store they must not.
+## Lowering: slices
+
+**`LOFT_NO_SLICE_COPY=1`** (@PLN174 F4a, `(Slice-Value)`'s block-copy form, default-ON since
+2026-09-28, parse time, BOTH backends) keeps the per-element loop for a SCALAR-element slice
+bound to a local (`s = v[a..b]`, `s += v[a..b]`, and every vector-typed position the
+coercion serves) — with it off the span is copied in ONE block (`OpSliceVector`,
+`Stores::vector_slice`; forty 200 000-element slices 0.13 → 0.03 s) — and is the first bisect
+step for a wrong slice of a scalar vector.  A heap, struct, type-variable or linked element
+keeps the loop either way.  **`LOFT_TRACE_ITERVEC=1`** names an iterator that meets a
+vector-typed position and is NOT materialised, with the value's shape — the instrument for
+"expected vector, got iterator" surviving at a site the coercion should serve.
+
+**`LOFT_NO_FOREIGN_VIEW=1`** (@PLN174 F4b, `(Slice-Value)`'s view clause, default-ON since
+2026-09-28, RUNTIME, both backends) copies a slice of a FOREIGN store (a mapped file, a
+library's buffer) where a bind into the local's own store takes a VIEW of the bytes
+(`OpSliceView` → `Stores::vector_slice_view`; under the switch the same op copies) — the
+first bisect step for a wrong byte, a leak or a refused write out of a slice of `file_map`'s
+result, and the A/B `tests/foreign_store.rs` runs both cell files under.  The one observable
+difference between the forms is that the copy takes a write and the view refuses it.  Since
+F5 the same switch covers a `#native` bridge's whole vector answer bound to a local
+(`OpAdoptVector` → `Stores::vector_adopt`, which views a foreign answer and copies under the
+switch; `tests/foreign_bridge.rs` is its A/B).
 
 ## Lowering: `??` chains and nested literals
 

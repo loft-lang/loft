@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Shared field names and § Value structs — a field name is per type, an
+// enum's variants may share one, and a `value struct` element is copied on bind.
+
+struct Point { x: float, y: float }
+struct Rect { x: float, y: float, w: float, h: float }
+
+fn test_a_field_name_is_per_type() {
+  p = Point { x: 1.0, y: 2.0 };
+  r = Rect { x: 10.0, y: 20.0, w: 30.0, h: 40.0 };
+  assert(p.x == 1.0, "Point's x");
+  assert(r.x == 10.0, "Rect's x (different offset, same name)");
+}
+
+enum Shape {
+  Circle { radius: float, label: text },
+  Square { side: float, label: text }
+}
+
+fn test_variants_may_share_a_field_name() {
+  c = Circle { radius: 5.0, label: "big" };
+  s = Square { side: 3.0, label: "small" };
+  assert(c.label == "big", "the Circle's label");
+  assert(s.label == "small", "the Square's label");
+}

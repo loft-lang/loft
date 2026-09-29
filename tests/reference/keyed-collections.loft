@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Key-based collections and § Hash collections: name the key — a keyed
+// collection names its key in its TYPE, and the lookup, the removal and the walk follow it.
+
+struct Item { key: integer, n: text }
+struct Row { nr: integer, name: text, v: integer }
+struct Entry { name: text, value: integer }
+struct Table { data: hash<Entry[name]> }
+
+fn test_assigning_null_at_a_key_removes_the_element() {
+  h: hash<Item[key]> = [Item { key: 1, n: "a" }, Item { key: 2, n: "b" }];
+  idx: index<Row[nr, name]> = [Row { nr: 1, name: "x", v: 5 }];
+  s: sorted<Item[key]> = [Item { key: 1, n: "z" }];
+  key = 1;
+  nr = 1;
+  name = "x";
+  h[key] = null;          // hash: remove element whose key field equals key
+  idx[nr, name] = null;   // index: remove element by compound key
+  s[key] = null;          // sorted: remove element by key field
+  assert(len(h) == 1 and len(idx) == 0 and len(s) == 0, "each removal went by its key");
+}
+
+fn test_a_sorted_walk_goes_in_key_order_and_rev_reverses_it() {
+  sorted_col: sorted<Item[key]> = [Item { key: 3, n: "c" }, Item { key: 1, n: "a" }, Item { key: 2, n: "b" }];
+  fwd = "";
+  bwd = "";
+  for v in sorted_col { fwd += v.n; }         // forward — visits elements in key order
+  for v in rev(sorted_col) { bwd += v.n; }    // reverse — visits elements in reverse key order
+  assert(fwd == "abc" and bwd == "cba", "key order both ways");
+}
+
+fn test_a_lookup_is_a_test_and_a_miss_is_null() {
+  h: hash<Item[key]> = [Item { key: 4, n: "d" }];
+  idx: index<Row[nr, name]> = [Row { nr: 42, name: "foo", v: 5 }];
+  key = 4;
+  found = false;
+  if h[key] { found = true; }
+  elem = idx[42, "foo"];    // null if not present
+  assert(found, "a present key is truthy");
+  assert((elem.v ?? -1) == 5, "the compound key found the row");
+  assert(idx[42, "bar"] == null, "a miss is null");
+}
+
+fn test_the_key_comes_from_the_declared_type() {
+  // As a local variable — the type annotation supplies the key:
+  h: hash<Entry[name]> = [];
+  h += [Entry { name: "x", value: 1 }];
+  e = h["x"];                 // lookup — works
+  h["x"] = null;              // remove — works
+  for kv in h { }             // iteration — works
+
+  // Equivalently, as a struct field (the field declaration supplies the key):
+  t = Table { data: [] };
+  t.data += [Entry { name: "y", value: 2 }];
+  assert((e.value ?? -1) == 1, "the lookup found the record before the removal");
+  assert(len(h) == 0, "the removal emptied the hash");
+  assert((t.data["y"].value ?? -1) == 2, "the field's declared key serves the lookup");
+}
+
+fn test_assignment_replaces_a_collection_field_and_plus_equals_appends() {
+  t = Table { data: [Entry { name: "x", value: 1 }] };
+  t.data = [Entry { name: "y", value: 2 }];  // REPLACES — the old contents are freed
+  replaced = len(t.data) == 1 and t.data["x"] == null and (t.data["y"].value ?? -1) == 2;
+  t.data = [];                               // empties it
+  emptied = len(t.data) == 0;
+  t.data = null;                             // empties it too (see below)
+  nulled = len(t.data) == 0;
+  t.data += [Entry { name: "z", value: 3 }]; // `+=` is the one that APPENDS
+  assert(replaced, "x is gone, y is there");
+  assert(emptied and nulled, "both spellings empty it");
+  assert(len(t.data) == 1 and (t.data["z"].value ?? -1) == 3, "the append lands");
+}

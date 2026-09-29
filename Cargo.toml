@@ -202,7 +202,7 @@ debug = 1
 # being behind the cfg is.  ⚠ This DOES disable all 93 `#[cfg(debug_assertions)]`
 # items in `src/`, including `check_arg_ref_allocs`, `check_ref_leaks` and the
 # `LOFT_MAX_OPS` hang guard, in `cargo build` AND `cargo test` — see
-# `doc/claude/TESTING.md` § Hang guard for how to turn them back on.
+# `doc/claude/RUN_BOUNDS.md` § Hang guard for how to turn them back on.
 # (The line reference this note used to carry, `src/state/debug.rs:1045`,
 # had drifted onto unrelated dump code.)  Test code itself (`tests/*.rs`) still
 # has debug_assertions on via [profile.test].

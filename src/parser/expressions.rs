@@ -1489,12 +1489,13 @@ impl Parser {
         // loft#986 — see `in_control_head`: the `{` after the condition opens the body.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
+        let cond_at = self.lexer.peek().position.clone();
         let cond_tp = self.expression(&mut cond);
         self.in_control_head = outer_head;
         // The same coercion `if` performs — a `while` over a collection handle is the
         // identical position, and reading a pointer's first byte as the flag is how the
         // loop ran the wrong number of times.
-        self.convert_condition(&mut cond, &cond_tp);
+        self.convert_condition_at(&mut cond, &cond_tp, Some(&cond_at));
         if !self.first_pass && matches!(cond, Value::Null) {
             diagnostic!(self.lexer, Level::Error, "Expected condition after 'while'");
             return;
@@ -2149,6 +2150,20 @@ use a separate collection or add after the loop"
         }
         let mut hoists = Vec::new();
         self.sink_vec_arms(code, to, var_nr, f_type, s_type, lhs_parent_tp, &mut hoists);
+        // loft#1726 — each arm binds the local to a store of its own (a copy arm its `__vdb`,
+        // a literal arm its buffer), and the local's type names the last one written.  The
+        // local holds whichever arm ran, so every arm's store is a JOIN OWNER — the same fact
+        // a `??` records (loft#1721), which the scope pass settles by store identity.  Not a
+        // dep: a union of deps moves the native declaration into the arms.
+        if !self.first_pass {
+            let mut owners = Vec::new();
+            self.arm_bind_stores(code, var_nr, &mut owners);
+            owners.sort_unstable();
+            owners.dedup();
+            if owners.len() > 1 {
+                self.vars.add_join_owners(var_nr, &owners);
+            }
+        }
         self.branch_sunk_vectors
             .insert((self.context, self.vars.name(var_nr).to_string()));
         // A wrapper BLOCK opens a scope — a `??` hoist's, a `match` subject's — and a local
@@ -2163,6 +2178,47 @@ use a separate collection or add after the loop"
             *code = Value::Insert(vec![Value::Set(var_nr, Box::new(Value::Null)), sunk]);
         }
         true
+    }
+
+    /// The store each arm of a sunk bind binds `var_nr` to: a copy arm's `__vdb` (its
+    /// `var_nr = OpGetField(__vdb, …)`), a whole arm's own buffer (a block or temp yielding
+    /// `_vec_N`).  Read off the IR `sink_vec_arms` wrote, so it names exactly the arms that
+    /// bind.
+    fn arm_bind_stores(&self, node: &Value, var_nr: u16, out: &mut Vec<u16>) {
+        match node.unspan() {
+            Value::If(_, t, f) => {
+                self.arm_bind_stores(t, var_nr, out);
+                self.arm_bind_stores(f, var_nr, out);
+            }
+            Value::Block(bl) => {
+                for op in &bl.operators {
+                    self.arm_bind_stores(op, var_nr, out);
+                }
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    self.arm_bind_stores(op, var_nr, out);
+                }
+            }
+            Value::Set(v, rhs) if *v == var_nr => {
+                let get_field_nr = self.data.def_nr("OpGetField");
+                match rhs.unspan() {
+                    Value::Call(d, args) if *d == get_field_nr => {
+                        if let Some(Value::Var(db)) = args.first().map(Value::unspan) {
+                            out.push(*db);
+                        }
+                    }
+                    Value::Block(bl) => {
+                        if let Some(Value::Var(x)) = bl.operators.last().map(Value::unspan) {
+                            out.push(*x);
+                        }
+                    }
+                    Value::Var(x) if self.vars.is_compiler_generated(*x) => out.push(*x),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The compiler temps the operators AHEAD of a branch bind, with what each was bound
@@ -3300,7 +3356,99 @@ use a separate collection or add after the loop"
         self.rebind_local_heap_param(code, op, to, var_nr);
         self.rebind_lowered = already;
         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
+        // @C118 — `r = null` on a vector LOCAL is a whole-value write of the ABSENT
+        // collection, so it takes the whole-value route `r = []` takes — a fresh backing —
+        // marked ABSENT, instead of the value-level null `convert` gives a null in flight.
+        // `vector::is_absent_collection` states why: a collection local is addressed AT its
+        // slot, so the value-level null "can never appear there", and one that did left the
+        // next append nowhere to land — `r = [x]; r = null; r += [y]` answered 0, directly,
+        // through a capture and through a `&` parameter.  A first bind keeps the sentinel: a
+        // local that starts null is given its slot where one is first needed.
+        //
+        // A `&`-LINKED vector local shares its slot with its partner (`amp_vector_locals`), so
+        // there the null is written INTO the shared slot, as `s.items = null` writes a field's:
+        // emptied and marked ABSENT in place.  A fresh backing would re-point one name and
+        // leave the other holding the old list (@FR-B-Ref-Alias).
+        //
+        // A KEYED local's store IS its collection, and a `&` link shares that store, so every
+        // keyed local takes the in-place route: a sentinel re-pointed only one name, and the
+        // store it let go of was released by nobody.
+        if op == "="
+            && let Value::Var(r) = *to.unspan()
+            && let Some(linked) = self.nulls_a_backed_collection_local(code, r)
+        {
+            #[allow(clippy::cast_possible_wrap)]
+            let absent = crate::keys::DbRef::ABSENT_REC as i32;
+            let keyed = crate::parser::vectors::is_keyed(self.vars.tp(r));
+            if keyed {
+                let kt = self.vars.tp(r).clone();
+                if let Some(kt) = self.keyed_known_type(&kt) {
+                    let clear =
+                        self.cl("OpClearKeyed", &[Value::Var(r), Value::Int(i32::from(kt))]);
+                    let mark = self.cl(
+                        "OpSetInt4",
+                        &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                    );
+                    let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                    *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+                }
+            } else if linked {
+                let clear = self.cl("OpClearVector", &[Value::Var(r)]);
+                let mark = self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(r), Value::Int(0), Value::Int(absent)],
+                );
+                let test = self.cl("OpRefIsNull", &[Value::Var(r)]);
+                *code = crate::data::v_if(test, Value::Null, Value::Insert(vec![clear, mark]));
+            } else {
+                let elm = match self.vars.tp(r).base() {
+                    Type::Vector(elm, _) => (**elm).clone(),
+                    _ => unreachable!("checked by nulls_a_backed_collection_local"),
+                };
+                let ls = self.vector_db_init(&elm, r, absent, false);
+                if !ls.is_empty() {
+                    *code = Value::Insert(ls);
+                }
+            }
+        }
+        // @C118 — the slot `parse_assign_op_inner` built for a `&` bind's source goes before
+        // the bind's statement: the bind reads its source as a plain variable.
+        let bind_slot = std::mem::take(&mut self.pending_link_slot);
+        if !bind_slot.is_empty() {
+            let mut ls = bind_slot;
+            ls.push(std::mem::replace(code, Value::Null));
+            *code = Value::Insert(ls);
+        }
         tp
+    }
+
+    /// Is `code` the bind `r = null` of a nullable COLLECTION local that is not an argument
+    /// nor this variable's first bind — the shape the @C118 rewrite above replaces?
+    /// `Some(true)` when `r` is a `&`-linked vector, `Some(false)` otherwise, `None` when the
+    /// shape does not apply.
+    fn nulls_a_backed_collection_local(&self, code: &Value, r: u16) -> Option<bool> {
+        if self.first_pass
+            || r == u16::MAX
+            || self.vars.is_argument(r)
+            || !matches!(self.vars.tp(r), Type::Optional(_))
+            || !crate::parser::vectors::is_collection(self.vars.tp(r))
+        {
+            return None;
+        }
+        if !matches!(code.unspan(), Value::Set(s, rhs) if *s == r
+            && matches!(rhs.unspan(), Value::Call(d, a)
+                if a.is_empty() && self.data.def(*d).name() == "OpNullRefSentinel"))
+        {
+            return None;
+        }
+        let name = self.vars.name(r);
+        if self.first_bind_targets.last().map(String::as_str) == Some(name) {
+            return None;
+        }
+        Some(
+            self.amp_vector_locals
+                .contains(&(self.context, name.to_string())),
+        )
     }
 
     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
@@ -3402,6 +3550,18 @@ use a separate collection or add after the loop"
         if !noted.contains(&name) {
             noted.push(name);
         }
+    }
+
+    /// Does a slot of type `slot` take a value whose non-null base is `base` — the same
+    /// type, or (`@FR-C-Var`) a VARIANT of the slot's enum?  The question `@FR-N-Store` asks
+    /// before it reports a nullable write: a `Circle?` stored into a `Shape` slot is the same
+    /// breach as a `Shape?` is, and reading only equality left it unreported (loft#1720).
+    fn slot_takes_base(&self, slot: &Type, base: &Type) -> bool {
+        slot.is_equal(base)
+            || matches!(
+                (self.variant_parent_enum(base), slot.base()),
+                (Some(Type::Enum(v, _, _)), Type::Enum(e, _, _)) if v == *e
+            )
     }
 
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
@@ -3975,6 +4135,12 @@ use a separate collection or add after the loop"
         // programs the whole-record write route and the two refusals decline.  Whether a
         // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
         // silent downgrade the rules say to refuse — is that separate question, left open.
+        // @C118 — the share copies the source's handle, so a NULL collection local is given its
+        // slot first (`null_local_slot`, as a closure capture is): a slot-less null handed the
+        // link nothing to append into, and the append was lost on both sides.
+        if amp_collection_bind && let Value::Var(src) = *code.unspan() {
+            self.pending_link_slot = self.null_local_slot(src);
+        }
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
             // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
@@ -4209,7 +4375,15 @@ use a separate collection or add after the loop"
                 // frees its store and the link frees nothing.  A scalar inner carries no
                 // `Deps` slot and owns no store, so there is no free decision to derive.
                 let is_ref = matches!(inner, Type::Reference(..) | Type::Text(_));
-                *code = self.cl("OpCreateStack", &[Value::Var(src)]);
+                // @C118 — the slot a null collection local needs before a link can share it.
+                let mut ls = self.null_local_slot(src);
+                let create = self.cl("OpCreateStack", &[Value::Var(src)]);
+                *code = if ls.is_empty() {
+                    create
+                } else {
+                    ls.push(create);
+                    Value::Insert(ls)
+                };
                 // @PLN85 D-own-5 — the borrow fact rides `deps` (O-Borrow), not a
                 // side-flag: a heap whole-value alias (`p = &o`, L5) is NON-OWNING
                 // because its type deps name the source, and the free suppression
@@ -4474,9 +4648,13 @@ use a separate collection or add after the loop"
             // (1) materialise the slice iterator into the fresh temp (reads the
             //     source — still intact — and appends to tmp; tmp != source).
             self.materialize_iterator(code, &iter_tp, &Value::Var(tmp), &lhs_parent_tp, tmp, "=");
-            // (2) clear the destination and append the temp's contents.
-            let dn = self.data.type_def_nr(&elm_tp);
-            let rec_tp = Value::Int(i32::from(self.data.def(dn).known_type()));
+            // (2) clear the destination and append the temp's contents.  The append's
+            // element row is the one every append takes (`append_elem_tp`): a scalar
+            // element's own definition answers 0 here, which `vector_add` sizes at eight
+            // bytes — a `vector<u8>` parameter rebound from its own slice copied an 8-byte
+            // stride per element, over-reading the temp (silent on a copy, refused on a
+            // foreign view; @PLN174 F4b found it).
+            let rec_tp = Value::Int(self.append_elem_tp(&elm_tp));
             let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
             let append = self.cl(
                 "OpAppendVector",
@@ -4556,8 +4734,9 @@ use a separate collection or add after the loop"
             // (destructive) `vector_db`.
             let mut ls = vec![set_fwd];
             ls.extend(self.vector_db(&elm_tp, var_nr));
+            // @PLN174 F5 — a foreign answer is VIEWED, an owned one copied as before.
             ls.push(self.cl(
-                "OpAppendVector",
+                "OpAdoptVector",
                 &[Value::Var(var_nr), Value::Var(fwd), Value::Int(rec_tp)],
             ));
             *code = Value::Insert(ls);
@@ -5318,7 +5497,7 @@ use a separate collection or add after the loop"
             && matches!(s_type, Type::Optional(_))
             && !matches!(slot_tp, Type::Optional(_) | Type::RefVar(_))
             && !slot_tp.is_unknown()
-            && slot_tp.is_equal(s_type.base());
+            && self.slot_takes_base(slot_tp, s_type.base());
         let mut s_type = if declared_nullable_write {
             let what = format!(
                 "{} `{}`",
@@ -5337,6 +5516,45 @@ use a separate collection or add after the loop"
         } else {
             s_type
         };
+        // @FR-N-Store at a PLACE — a field or an element written a nullable value.  A scalar
+        // slot is asked at the typed store further down; a `text`, an enum and a record slot
+        // never reach it (a text leaves for `assign_text`, the others for `towards_set`'s
+        // copy), so they were written in silence (loft#1720).  A text or plain-enum slot then
+        // holds null; a dense record, which has no null to hold, keeps the value it had —
+        // the consequence loft#1404 wrote for a bare `null` there.
+        if op == "="
+            && !self.first_pass
+            && !matches!(to.unspan(), Value::Var(_))
+            && let Type::Optional(inner) = &s_type
+            && matches!(
+                slot_tp.base(),
+                Type::Text(_) | Type::Enum(..) | Type::Reference(..)
+            )
+            && !self.data.is_nullable_wrapper(slot_tp)
+            && self.slot_takes_base(slot_tp, inner)
+        {
+            // A `reference<T>` POINTER field repoints, so it does hold null; it is told apart by
+            // the lvalue's shape, as `towards_set`'s repoint arm tells it — the share marker is
+            // gone from the type by now.
+            let pointer = matches!(to.unspan(),
+                Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef");
+            let kept = match slot_tp.base() {
+                Type::Reference(..) => !pointer,
+                Type::Enum(_, payload, _) => *payload,
+                _ => false,
+            };
+            let inner = (**inner).clone();
+            self.nstore_unwrap_report_as(
+                &inner,
+                slot_tp,
+                "the assignment target",
+                None,
+                false,
+                kept.then_some(
+                    "when it is null the store does not happen, so the slot keeps the value it had",
+                ),
+            );
+        }
         // @FR-O-Latest, loft#1466 — a CALL RESULT's borrow list is the CALLEE's answer, and on
         // pass 1 the callee has not been read yet.  What pass 1 publishes for it is a guess
         // about the shape the body will take; where the body MATERIALISES its answer
@@ -5942,16 +6160,27 @@ use a separate collection or add after the loop"
                 *code = Value::Insert(ops);
                 return Type::Void;
             }
-            match code {
-                // A literal: run the clear FIRST, so the element-construction ops that
-                // follow build into an empty collection instead of appending to the old one.
-                Value::Insert(ls) => {
-                    for (i, op) in clear.into_iter().enumerate() {
-                        ls.insert(i, op);
-                    }
+            // A literal: run the clear FIRST, so the element-construction ops that follow
+            // build into an empty collection instead of appending to the old one.
+            if let Value::Insert(ls) = code {
+                for (i, op) in clear.into_iter().enumerate() {
+                    ls.insert(i, op);
                 }
-                // `= null`: the clear is the whole statement.
-                _ => *code = Value::Insert(clear),
+            } else {
+                // `= null`: the clear, and then — for a nullable field — the ABSENT mark in its
+                // slot, as `s.items = null` writes a vector field's.  The clear alone left
+                // `s.h == null` answering false after `s.h = null` (@C118, `(F-Render)` and
+                // `==` read absence from the slot).
+                let mut ops = clear;
+                if matches!(f_type, Type::Optional(_)) {
+                    #[allow(clippy::cast_possible_wrap)]
+                    let absent = crate::keys::DbRef::ABSENT_REC as i32;
+                    ops.push(self.cl(
+                        "OpSetInt4",
+                        &[to.clone(), Value::Int(0), Value::Int(absent)],
+                    ));
+                }
+                *code = Value::Insert(ops);
             }
             return Type::Void;
         }
@@ -8366,6 +8595,7 @@ use a separate collection or add after the loop"
                 // sentinel of a nullable narrow FIELD — explain that, not "too big".
                 diagnostic!(self.lexer, Level::Error, "{hint}");
             } else if !self.int_value_fits(code, store_tp) {
+                // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
                 let cures = Self::narrowing_cures(code, &dst);
                 diagnostic!(
@@ -9642,6 +9872,94 @@ use a separate collection or add after the loop"
     /// Materialise an iterator (e.g. `v[a..b]` slice) into a vector variable.
     /// Promotes the LHS variable to `Vector<elm_tp>` and builds a loop that appends
     /// each element in-place.
+    /// @PLN174 F4a — the subject and the clamped-bound variables of a SLICE iterator, read
+    /// off its prelude: the `slice_len` variable is bound from `OpLengthVector(subject)`,
+    /// and `slice_lo` / `slice_hi` are the clamps.  `None` for any other iterator.
+    fn slice_plan(&self, init: &Value) -> Option<(Value, u16, u16)> {
+        let Value::Insert(stmts) = init.unspan() else {
+            return None;
+        };
+        let len_nr = self.data.def_nr("OpLengthVector");
+        let mut subject = None;
+        let mut lo = None;
+        let mut hi = None;
+        for st in stmts {
+            let Value::Set(v, rhs) = st.unspan() else {
+                continue;
+            };
+            let name = self.vars.name(*v).trim_start_matches('_');
+            if name.starts_with("slice_len")
+                && let Value::Call(d, args) = rhs.unspan()
+                && *d == len_nr
+                && let Some(data) = args.first()
+            {
+                subject = Some(data.clone());
+            } else if name.starts_with("slice_lo") {
+                lo = Some(*v);
+            } else if name.starts_with("slice_hi") {
+                hi = Some(*v);
+            }
+        }
+        Some((subject?, lo?, hi?))
+    }
+
+    /// The block-copy form of a scalar-element slice bound to `var_nr` (@PLN174 F4a): the
+    /// slice prelude `init` (the clamped bounds), then ONE `OpSliceVector` from `subject`
+    /// over `lo_var..hi_var` into the local — the statements `materialize_iterator` puts
+    /// in place of its per-element loop.
+    fn slice_copy_form(
+        &mut self,
+        init: Value,
+        elm_tp: &Type,
+        var_nr: u16,
+        elm_var: u16,
+        op: &str,
+        (subject, lo_var, hi_var): (Value, u16, u16),
+    ) -> Value {
+        let row = Value::Int(self.append_elem_tp(elm_tp));
+        let needs_db = self.vector_needs_db(var_nr, elm_tp, true);
+        let mut stmts = Vec::new();
+        if op == "=" && !needs_db {
+            stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
+        }
+        stmts.push(init);
+        // @PLN174 F4b — a bind whose backing is the local's OWN store may take a VIEW of a
+        // foreign source (`OpSliceView`, which locks that store); an append, an argument
+        // or a field keeps the copy, since their store holds more than this vector.
+        let owns_backing = needs_db || self.owns_vdb_backing(var_nr);
+        let slice_op = if op == "=" && owns_backing {
+            "OpSliceView"
+        } else {
+            "OpSliceVector"
+        };
+        stmts.push(self.cl(
+            slice_op,
+            &[
+                Value::Var(var_nr),
+                subject,
+                Value::Var(lo_var),
+                Value::Var(hi_var),
+                row,
+            ],
+        ));
+        if needs_db {
+            let db = self.insert_new(var_nr, elm_var, elm_tp, &mut stmts);
+            self.vars.depend(var_nr, db);
+        }
+        Value::Insert(stmts)
+    }
+
+    /// Is `var`'s backing store its own `__vdb_N` — a store that holds nothing but this
+    /// vector, so a view may lock it (@PLN174 F4b)?  An argument's backing is the caller's
+    /// and may be a field's store; a keyed or linked local's holds more than one vector.
+    fn owns_vdb_backing(&self, var: u16) -> bool {
+        if self.vars.is_argument(var) {
+            return false;
+        }
+        let deps = self.vars.tp(var).depend();
+        deps.len() == 1 && self.vars.name(deps[0]).starts_with("__vdb_")
+    }
+
     pub(crate) fn materialize_iterator(
         &mut self,
         code: &mut Value,
@@ -9678,6 +9996,20 @@ use a separate collection or add after the loop"
             // miscompile of `v[lo..hi]` on struct-enum vectors; native kept its owned copy so it
             // did not corrupt but paid a redundant copy+free.  Copying `for_var` directly keeps
             // the borrow-dep and removes both faults.)
+            // @PLN174 F4a — a SCALAR element kind copies its span in one block
+            // (`OpSliceVector`): the prelude names the subject (the `slice_len` read) and the
+            // clamped bounds (`slice_lo`, `slice_hi`), and the loop below is the form kept
+            // for a heap, struct, type-variable or linked element.  `LOFT_NO_SLICE_COPY=1`
+            // keeps the loop everywhere — the A/B.
+            let bulk = crate::env_once!(std::env::var_os("LOFT_NO_SLICE_COPY").is_none());
+            if bulk
+                && crate::data::is_scalar(&elm_tp)
+                && !self.is_type_var_element(&elm_tp)
+                && let Some(plan) = self.slice_plan(&init)
+            {
+                *code = self.slice_copy_form(*init, &elm_tp, var_nr, elm_var, op, plan);
+                return;
+            }
             let for_next = v_set(for_var, *next);
             let mut lp = vec![for_next];
             // Two DIFFERENT types, one per role — sharing one id here is what let

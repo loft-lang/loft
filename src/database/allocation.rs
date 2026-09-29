@@ -1591,6 +1591,9 @@ impl Stores {
         // parameter in a prior function call within the same loop iteration.
         // never unlock a PINNED (const/global) store.
         if !self.allocations[slot as usize].pinned {
+            // @PLN174 — a store re-initialised while it serves a VIEW stops serving it: an
+            // unlocked store still answering foreign bytes is a shape nothing should see.
+            self.allocations[slot as usize].release_foreign();
             self.allocations[slot as usize].unlock();
         }
         // OpDatabase may adopt a store its variable freed at the end of the
@@ -1652,9 +1655,71 @@ impl Stores {
         elem_size: u32,
         owner: crate::store::ForeignOwner,
     ) -> DbRef {
-        let db = self.database(4);
-        self.store_mut(&db)
-            .make_foreign(db.rec, db.pos, base, len, elem_size, owner);
+        let db = self.vector_buffer(4);
+        self.adopt_foreign(db, base, len, elem_size, owner);
+        db
+    }
+
+    /// @PLN174 F5 — [`foreign_vector`](Self::foreign_vector) INTO an existing EMPTY store:
+    /// the one a bridge dispatcher minted for a vector return before the bridge ran
+    /// (`extensions::dispatch_via_bridge`, the generated `--native` call).  The bridge
+    /// then answered foreign bytes instead of claiming in it, and adopting them here
+    /// keeps that store as the handle's home — no second store minted, none orphaned.
+    /// The root is claimed exactly as [`vector_buffer`](Self::vector_buffer) claims it.
+    #[must_use]
+    pub fn foreign_vector_in(
+        &mut self,
+        store_nr: u16,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) -> DbRef {
+        let at = DbRef {
+            store_nr,
+            rec: 0,
+            pos: 0,
+        };
+        let db = self.claim(&at, 4);
+        self.store_mut(&db).set_u32_raw(db.rec, db.pos, 0);
+        self.adopt_foreign(db, base, len, elem_size, owner);
+        db
+    }
+
+    /// The one place a vector root's slot is turned foreign: the span over the bytes,
+    /// its owner shared from here on.
+    fn adopt_foreign(
+        &mut self,
+        db: DbRef,
+        base: *const u8,
+        len: u32,
+        elem_size: u32,
+        owner: crate::store::ForeignOwner,
+    ) {
+        self.store_mut(&db).make_foreign(
+            db.rec,
+            db.pos,
+            crate::store::ForeignSpan {
+                base,
+                len,
+                elem_size,
+                owner: std::sync::Arc::new(owner),
+            },
+        );
+    }
+
+    /// A fresh store whose root's collection slot names the EMPTY vector — the shape a
+    /// vector local's hidden store has after the parser's `OpSetInt4(__vdb, 0, 0)`, for the
+    /// Rust-side mints that hand a vector buffer to loft code (a worker's hidden
+    /// destination, a foreign handle).  The slot is a claimed word nobody wrote otherwise,
+    /// and the first thing loft does with a buffer is READ it (a callee's entry clear,
+    /// `make_foreign`'s displaced record): under `LOFT_POISON_CLAIM=1` that read answered
+    /// `0xDEADBEEF` as a record id, which the census `the_zero_on_claim_census_only_shrinks`
+    /// exists to catch — the memset is never the fix, the producer is.
+    #[must_use]
+    pub fn vector_buffer(&mut self, size: u32) -> DbRef {
+        let db = self.database(size);
+        self.store_mut(&db).set_u32_raw(db.rec, db.pos, 0);
         db
     }
 
@@ -2050,26 +2115,36 @@ impl Stores {
     /// the whole release — no cascade, and the elements the loop yielded are
     /// records in the SOURCE store, untouched by this.
     ///
-    /// **Idempotent, and it has to be.** Two sites free the same scratch — the
-    /// loop epilogue and the scope exit that catches a `return` out of the loop
-    /// — and only the interpreter nulls the variable between them; the native
-    /// emitter drops that store, so both calls arrive carrying the same live
-    /// `DbRef`. The dedicated case is idempotent through [`Self::free`]'s
-    /// already-freed no-op; the co-located case is idempotent through
-    /// `is_claimed_record`, which reads the block header a `delete` has just
-    /// made negative. A second call is a no-op, not a double free.
+    /// **Called once per scratch.** Two sites can release the same scratch — the loop
+    /// epilogue and the scope exit that catches a `return` out of the loop — and the epilogue
+    /// nulls the handle after releasing (`Parser::release_scratch`), so the scope exit sees
+    /// the sentinel and returns at the first test.  That null store used to be spelled
+    /// `Set(s, Null)`, which the scope pass elides, so on BOTH backends every scratch arrived
+    /// here twice; the tolerance below made the second call a no-op until a later walk reused
+    /// the block (loft#1713).  It stays as the defence, and a second release is now named by
+    /// the store instruments instead of passing silently.
     ///
     /// Declines, leaving the scratch where it is, when the store cannot take a
     /// delete: freed, or pinned read-only / free-protected inside the loop body
     /// (`expose(…)` mid-iteration), where `delete` asserts.  That is the old
     /// behaviour for those cases, never worse.
+    ///
+    /// # Panics
+    /// Under debug assertions, `LOFT_STRICT_STORES` or `LOFT_POISON`, when a live store's handle
+    /// names no claimed record — a scratch released twice.
     pub fn free_iteration_scratch(&mut self, scratch: &DbRef) {
         self.live_scratches.retain(|(_, live)| live != scratch);
-        if scratch.rec == 0 || scratch.store_nr as usize >= self.allocations.len() {
+        // A store's PRIMARY record is never a scratch — `build_rec_scratch` claims a fresh one —
+        // while a keyed field walked IN PLACE of a store's root hands exactly that record here,
+        // `pos` at the field.  Declined before a single word of it is read: the tag test below
+        // would read a field of the walked record that nothing wrote (measured under Valgrind).
+        if scratch.rec <= crate::store::PRIMARY
+            || scratch.store_nr as usize >= self.allocations.len()
+        {
             return;
         }
         let store = &self.allocations[scratch.store_nr as usize];
-        if store.free || !store.is_claimed_record(scratch.rec) {
+        if store.free {
             return;
         }
         // The record must still BE this scratch's header before a single one of its
@@ -2088,6 +2163,28 @@ impl Stores {
         // So the header is self-identifying, and a record that does not carry the tag
         // is left alone. Refusing costs at most the scratch's own two blocks, once;
         // acting on a foreign record costs the store.
+        //
+        // A LIVE store whose handle names no claimed record is a handle released before:
+        // every walk releases its scratch once and nulls the handle
+        // (`Parser::release_scratch`), so reaching here with one is a defect upstream.  It is
+        // declined in a plain run, for the reason above — but the store
+        // instruments and the debug build say so, because declining is exactly what kept a
+        // second release of EVERY keyed walk's scratch silent (the handle's null store was
+        // elided).
+        let stale = !store.claims_record(scratch.rec);
+        if stale {
+            assert!(
+                !(cfg!(debug_assertions)
+                    || crate::keys::strict_stores()
+                    || crate::keys::poison_enabled()),
+                "a walk's snapshot scratch {scratch:?} was released twice — its handle names \
+                 a record that is no longer the scratch"
+            );
+            return;
+        }
+        // A claimed record without the tag is not a scratch at all: a keyed FIELD walked in
+        // place hands its own record here (`pos` is the field's offset), and this release is a
+        // no-op for it by design.
         if !crate::vector::is_scratch_header(store, scratch) {
             return;
         }
@@ -6996,7 +7093,7 @@ mod p318_hash_deepcopy {
             let e = stores.database(cell_words);
             stores.store_mut(&e).set_int(e.rec, e.pos, k);
             stores.store_mut(&e).set_int(e.rec, e.pos + 8, k + 100);
-            stores.set_keyed(&h, &e, hash_tp, false);
+            stores.set_keyed(&h, &e, hash_tp, &[], false);
         }
 
         // Sound to start — no false positive.
@@ -7043,7 +7140,7 @@ mod p318_hash_deepcopy {
             let v = stores.database(cell_words);
             stores.store_mut(&v).set_int(v.rec, v.pos, k); // ck = k
             stores.store_mut(&v).set_int(v.rec, v.pos + 8, k + 1000); // payload
-            stores.set_keyed(&src_h, &v, hash_tp, false);
+            stores.set_keyed(&src_h, &v, hash_tp, &[], false);
         }
         let cur = stores.store(&src_h).get_u32_raw(src_h.rec, src_h.pos);
         let room = stores.store(&src_h).record_words(cur);

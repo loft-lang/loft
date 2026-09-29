@@ -1,0 +1,300 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 638d8af80..cd7602170 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3300,66 +3300,9 @@ use a separate collection or add after the loop"
+         self.rebind_local_heap_param(code, op, to, var_nr);
+         self.rebind_lowered = already;
+         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
+-        // @C118 — `r = null` on a vector LOCAL is a whole-value write of the ABSENT
+-        // collection, so it takes the whole-value route `r = []` takes — a fresh backing —
+-        // marked ABSENT, instead of the value-level null `convert` gives a null in flight.
+-        // `vector::is_absent_collection` states why: a collection local is addressed AT its
+-        // slot, so the value-level null "can never appear there", and one that did left the
+-        // next append nowhere to land — `r = [x]; r = null; r += [y]` answered 0, directly,
+-        // through a capture and through a `&` parameter.  A first bind keeps the sentinel: a
+-        // local that starts null is given its slot where one is first needed.
+-        if op == "="
+-            && let Value::Var(r) = *to.unspan()
+-            && self.nulls_a_backed_vector_local(code, r)
+-        {
+-            let elm = match self.vars.tp(r).base() {
+-                Type::Vector(elm, _) => (**elm).clone(),
+-                _ => unreachable!("checked by nulls_a_backed_vector_local"),
+-            };
+-            #[allow(clippy::cast_possible_wrap)]
+-            let absent = crate::keys::DbRef::ABSENT_REC as i32;
+-            let ls = self.vector_db_init(&elm, r, absent, false);
+-            if !ls.is_empty() {
+-                *code = Value::Insert(ls);
+-            }
+-        }
+-        // @C118 — the slot `parse_assign_op_inner` built for a `&` bind's source goes before
+-        // the bind's statement: the bind reads its source as a plain variable.
+-        let bind_slot = std::mem::take(&mut self.pending_link_slot);
+-        if !bind_slot.is_empty() {
+-            let mut ls = bind_slot;
+-            ls.push(std::mem::replace(code, Value::Null));
+-            *code = Value::Insert(ls);
+-        }
+         tp
+     }
+ 
+-    /// Is `code` the bind `r = null` of a nullable VECTOR local that is not an argument, a
+-    /// `&` link, or this variable's first bind — the shape the @C118 rewrite above replaces?
+-    fn nulls_a_backed_vector_local(&self, code: &Value, r: u16) -> bool {
+-        if self.first_pass
+-            || r == u16::MAX
+-            || self.vars.is_argument(r)
+-            || !matches!(self.vars.tp(r), Type::Optional(_))
+-            || !matches!(self.vars.tp(r).base(), Type::Vector(_, _))
+-        {
+-            return false;
+-        }
+-        if !matches!(code.unspan(), Value::Set(s, rhs) if *s == r
+-            && matches!(rhs.unspan(), Value::Call(d, a)
+-                if a.is_empty() && self.data.def(*d).name() == "OpNullRefSentinel"))
+-        {
+-            return false;
+-        }
+-        let name = self.vars.name(r);
+-        if self.first_bind_targets.last().map(String::as_str) == Some(name) {
+-            return false;
+-        }
+-        !self
+-            .amp_vector_locals
+-            .contains(&(self.context, name.to_string()))
+-    }
+-
+     /// `(F-ParamRebind)` — a WHOLE-VALUE reassignment of a user-visible heap PARAMETER
+     /// rebinds LOCALLY, and the rule is about the BINDING, not about the right-hand side's
+     /// spelling: `p = other` is named in the rule's own text beside `p = [..]`.
+@@ -4032,12 +3975,6 @@ use a separate collection or add after the loop"
+         // programs the whole-record write route and the two refusals decline.  Whether a
+         // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
+         // silent downgrade the rules say to refuse — is that separate question, left open.
+-        // @C118 — the share copies the source's handle, so a NULL collection local is given its
+-        // slot first (`null_local_slot`, as a closure capture is): a slot-less null handed the
+-        // link nothing to append into, and the append was lost on both sides.
+-        if amp_collection_bind && let Value::Var(src) = *code.unspan() {
+-            self.pending_link_slot = self.null_local_slot(src);
+-        }
+         if amp_collection_bind && var_nr != u16::MAX {
+             self.vars.set_amp_container_link(var_nr);
+             // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
+@@ -4272,15 +4209,7 @@ use a separate collection or add after the loop"
+                 // frees its store and the link frees nothing.  A scalar inner carries no
+                 // `Deps` slot and owns no store, so there is no free decision to derive.
+                 let is_ref = matches!(inner, Type::Reference(..) | Type::Text(_));
+-                // @C118 — the slot a null collection local needs before a link can share it.
+-                let mut ls = self.null_local_slot(src);
+-                let create = self.cl("OpCreateStack", &[Value::Var(src)]);
+-                *code = if ls.is_empty() {
+-                    create
+-                } else {
+-                    ls.push(create);
+-                    Value::Insert(ls)
+-                };
++                *code = self.cl("OpCreateStack", &[Value::Var(src)]);
+                 // @PLN85 D-own-5 — the borrow fact rides `deps` (O-Borrow), not a
+                 // side-flag: a heap whole-value alias (`p = &o`, L5) is NON-OWNING
+                 // because its type deps name the source, and the free suppression
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 4d4dadd6c..2988e9069 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1235,10 +1235,6 @@ pub struct Parser {
+     /// context — parsing it standalone leaks).  `build_null_coalesce_default` swaps the
+     /// lexer to this source at its own parse site, so `x?` matches `x ?? []` exactly.
+     pub(crate) pending_default_src: Option<String>,
+-    /// @C118 — the slot a NULL collection local is given before a `c = &a` bind shares its
+-    /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
+-    /// placed before its statement by `parse_assign_op`; empty between binds.
+-    pub(crate) pending_link_slot: Vec<Value>,
+     /// loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion
+     /// span.  Set as the default is parsed and consumed by `handle_null_coalesce`, because
+     /// the notice fires before the default exists and the caller's cursor has moved past
+@@ -1771,7 +1767,6 @@ impl Parser {
+             admit_unwrap: 0,
+             pending_default_rhs: None,
+             pending_default_src: None,
+-            pending_link_slot: Vec::new(),
+             ncc_default_end: None,
+             last_place_discharge: false,
+             pass2_bodies: std::collections::HashSet::new(),
+@@ -5935,16 +5930,7 @@ impl Parser {
+                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
+                     // field encoding from here on (`Variable::linked_narrow`).
+                     self.vars.set_linked_narrow(v);
+-                    // @C118 — a null collection local is given its slot before the callee
+-                    // links to it, or an append in the callee has no place to land.
+-                    let mut ls = self.null_local_slot(v);
+-                    let create = self.cl("OpCreateStack", &[orig]);
+-                    *code = if ls.is_empty() {
+-                        create
+-                    } else {
+-                        ls.push(create);
+-                        Value::Insert(ls)
+-                    };
++                    *code = self.cl("OpCreateStack", &[orig]);
+                 } else if crate::data::is_scalar(ref_tp)
+                     && Self::is_amp_place(&orig, &self.data)
+                     && let Some(place) = self.scalar_place_ref(&orig)
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index e49c7cc4d..86c074b46 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3990,10 +3990,7 @@ impl Parser {
+             *ctp = base;
+             return;
+         }
+-        // @FR-B-Ref-Uniform — a `&τ?` parameter discharges like its `τ?` twin, so the default
+-        // is the REFERENT's: through `peel_link`, as `??` peels the link.  Asked through
+-        // `base()`, `c?` on a `&vector<T>?` was refused with "`&vector<T>?` has no default".
+-        let base = ctp.peel_link().clone();
++        let base = ctp.base().clone();
+         // The single well-definedness check (the home `S{}` shares): a bare reference,
+         // or a record with an un-defaulted non-null field or a bare enum field with no
+         // explicit choice, has no default.  `x?` needing one there is a COMPILE error —
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 097f801ef..79afb1905 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -2101,7 +2101,7 @@ or build a local and use that."
+                     if v_nr != u16::MAX {
+                         // loft#1218 — give a NULL collection capture its slot BEFORE the fill
+                         // below copies the handle, or there is nothing for the lambda to share.
+-                        let backing = self.null_local_slot(v_nr);
++                        let backing = self.null_capture_backing(v_nr);
+                         alloc_steps.extend(backing);
+                     }
+                     // loft#1483, `@FR-L-CapOwn` — release the store this capture slot DISPLACES.
+@@ -2239,8 +2239,8 @@ or build a local and use that."
+         )
+     }
+ 
+-    /// The slot a NULL collection local needs before anything can SHARE it — a closure
+-    /// capture, a `&` argument, a `c = &a` binding — empty for every other local.
++    /// The backing a NULL collection capture needs before the closure record can share it —
++    /// empty for every other capture.
+     ///
+     /// A captured collection is shared as a DbRef, and `vector::is_absent_collection`'s header
+     /// states what that DbRef is: *"a collection field or local is addressed by a DbRef aimed
+@@ -2263,27 +2263,20 @@ or build a local and use that."
+     /// capture and neither is in its mutating-op set, so it reported the element TEMP as the
+     /// mutated name and the capture as untouched.  A read-only capture pays one store for a
+     /// representation it shares with every other collection capture.
+-    ///
+-    /// @C118 — a LINK is the same sharing: `(Col-Insert-Absent)` says a parameter
+-    /// instantiates like a local, and a `&τ?` parameter or `c = &a` handed a slot-less null
+-    /// lost the append for a vector and faulted for a keyed kind, exactly as the capture did.
+-    pub(crate) fn null_local_slot(&mut self, v_nr: u16) -> Vec<Value> {
++    fn null_capture_backing(&mut self, v_nr: u16) -> Vec<Value> {
+         if self.first_pass || v_nr == u16::MAX || self.vars.is_argument(v_nr) {
+             return Vec::new();
+         }
+-        // Asked on the borrowed type first: this runs at every `&` argument and link, and
+-        // almost none of them is a null collection local.
+-        let (base, nullable) = self.vars.tp(v_nr).peel_optional();
++        let tp = self.vars.tp(v_nr).clone();
++        let (base, nullable) = tp.peel_optional();
++        if !nullable || !Self::is_collection_type(base) {
++            return Vec::new();
++        }
+         // A dep means the local already owns a backing — a `= []` capture, or one an earlier
+         // statement built.  Its slot is already there to share.
+-        if !nullable
+-            || !Self::is_collection_type(base)
+-            || !self.vars.tp(v_nr).depend().is_empty()
+-        {
++        if !tp.depend().is_empty() {
+             return Vec::new();
+         }
+-        let tp = self.vars.tp(v_nr).clone();
+-        let (base, _) = tp.peel_optional();
+         #[allow(clippy::cast_possible_wrap)]
+         let absent = crate::keys::DbRef::ABSENT_REC as i32;
+         if let Type::Vector(elm, _) = base {
+@@ -4394,8 +4387,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+     /// collection on every pass and throw away what the previous ones put in it.  Guarded,
+     /// the mint is idempotent and a keyed local filled inside a loop keeps its records.
+     ///
+-    /// An ARGUMENT is excluded: its store is the caller's, and the caller gives a null one
+-    /// its slot before the call (`null_local_slot`, @C118).
++    /// An ARGUMENT is excluded: its store is the caller's, and a null one is the caller's
++    /// answer to give.
+     pub(crate) fn keyed_local_materialise(&mut self, vec: u16) -> Option<Value> {
+         if self.first_pass
+             || !self.keyed_local(vec)
+@@ -7256,33 +7249,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                     ls.push(self.cl("OpFreeRefIfDistinct", &[Value::Var(vec), Value::Var(orig)]));
+                 }
+             }
+-            // A GUARDED backing the local is leaving goes back to owning its store.  It was
+-            // `skip_free`'d because the local releases what it names (loft#1486), and from here
+-            // the local names this new backing: left marked, nobody released the old store —
+-            // `e: vector<T>? = null; e += [x]; e = [y]` leaked one store per function (`r = null`
+-            // takes this route too, @C118).  A backing minted unconditionally already owns its
+-            // store and is freed at scope exit, so a view of the old contents stays valid.
+-            if !rebind {
+-                let guarded = |vars: &crate::variables::Function, d: u16| {
+-                    vars.is_skip_free(d)
+-                        && vars.is_inline_ref(d)
+-                        && vars.name(d).starts_with("__vdb")
+-                };
+-                // Borrowed first: `vector_db_init` runs at every vector write.
+-                let any = self
+-                    .vars
+-                    .tp(vec)
+-                    .base()
+-                    .deps_ref()
+-                    .is_some_and(|ds| ds.iter().any(|&d| guarded(&self.vars, d)));
+-                if any {
+-                    for d in self.vars.tp(vec).depend() {
+-                        if guarded(&self.vars, d) {
+-                            self.vars.clear_skip_free(d);
+-                        }
+-                    }
+-                }
+-            }
+             self.vars.depend(vec, db);
+             let tp = self.vector_wrapper_known_type(vec_def);
+             debug_assert_ne!(
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 3a7a1546b..b7016cb24 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -18460,16 +18460,7 @@ impl Scopes<'_> {
+                         .all(|v| Self::is_ref_materialisation(v, function, data))
+                     && matches!(&ops[n - 1], Value::Call(d_nr, _)
+                         if data.def(*d_nr).name == "OpCreateStack");
+-                // @C118 — the slot a null collection local is given before a `&` links to
+-                // it (`Parser::null_local_slot`): guarded mints of the variable the final
+-                // `OpCreateStack` names.  They hoist like the materialisations above, so the
+-                // argument stays the bare `OpCreateStack(Var)` native passes as `&mut`.
+-                let is_slot_hoisted = n >= 2
+-                    && matches!(&ops[n - 1], Value::Call(d_nr, a)
+-                        if data.def(*d_nr).name == "OpCreateStack"
+-                            && matches!(a.as_slice(), [Value::Var(v)]
+-                                if ops[..n - 1].iter().all(|op| Self::is_null_slot_mint(op, *v, data))));
+-                if is_a56_hoisted || is_p135_hoisted || is_p179_hoisted || is_slot_hoisted {
++                if is_a56_hoisted || is_p135_hoisted || is_p179_hoisted {
+                     // @PLN90 / loft#506 — a computed-lvalue `&`-WRITE-BACK arg.  Capture
+                     // `items[i]` into a FRESH OWNED temp (so the callee's write-back frees the
+                     // COPY, never the caller's element), pass the temp, then copy the result
+@@ -18909,15 +18900,6 @@ impl Scopes<'_> {
+     /// either bare or wrapped with the overwrite-`OpFreeRef` a re-assigned work-ref
+     /// carries (loft#745).  `scan_args` hoists these out of the argument so the
+     /// work-ref lives at function scope and its slot survives the call.
+-    /// The guarded mint `Parser::null_local_slot` emits for `var`:
+-    /// `if OpRefIsNull(var) { … } else null`.
+-    fn is_null_slot_mint(op: &Value, var: u16, data: &Data) -> bool {
+-        matches!(op.unspan(), Value::If(test, _, _)
+-            if matches!(test.unspan(), Value::Call(d_nr, a)
+-                if data.def(*d_nr).name == "OpRefIsNull"
+-                    && matches!(a.as_slice(), [Value::Var(t)] if *t == var)))
+-    }
+-
+     fn is_ref_materialisation(v: &Value, function: &Function, data: &Data) -> bool {
+         let writes_work_ref = |op: &Value| matches!(op, Value::Set(v_nr, _) if function.name(*v_nr).starts_with("__ref_"));
+         match v {

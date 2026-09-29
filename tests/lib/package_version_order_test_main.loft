@@ -1,0 +1,6 @@
+// The future-floored package is adopted FIRST as a sibling of the package that uses it,
+// and only then used directly: the floor must refuse it on either path.
+use testpkg_uses_future;
+use testpkg_future;
+fn main() {
+}

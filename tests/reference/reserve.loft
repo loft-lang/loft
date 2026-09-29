@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § Collections — `reserve` sizes a vector or a keyed collection once, ahead
+// of a fill; the fill then lands without regrowth.
+
+struct Point { x: integer, y: integer }
+struct Tile { id: integer, points: vector<Point> }
+struct Feature { tile: integer, point: Point }
+struct Entry { key: integer, value: integer }
+struct Row { id: integer, value: integer }
+
+fn expected_count(t: Tile) -> integer { t.id * 2 }
+
+fn test_reserve_then_fill_a_vector_per_tile() {
+  tiles: hash<Tile[id]> = [Tile { id: 1 }, Tile { id: 2 }];
+  stream = [Feature { tile: 1, point: Point { x: 1, y: 1 } }, Feature { tile: 2, point: Point { x: 2, y: 2 } },
+            Feature { tile: 2, point: Point { x: 3, y: 3 } }];
+  for tile in tiles { reserve(tile.points, expected_count(tile)); }
+  for feature in stream { tiles[feature.tile].points += [feature.point]; }
+  assert(len(tiles[1].points) == 1 and len(tiles[2].points) == 2, "every feature landed on its tile");
+}
+
+fn test_reserve_then_fill_a_keyed_collection() {
+  rows = [Row { id: 1, value: 10 }, Row { id: 2, value: 20 }];
+  expected_rows = len(rows);
+  cache: hash<Entry[key]> = [];
+  reserve(cache, expected_rows);
+  for row in rows { cache += Entry { key: row.id, value: row.value }; }
+  assert(len(cache) == 2 and (cache[2].value ?? -1) == 20, "the fill landed after the reserve");
+}

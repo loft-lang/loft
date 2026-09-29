@@ -2506,7 +2506,9 @@ fn fill_rs_up_to_date() {
 #[ignore = "maintenance: regenerates src/fill.rs — run manually when default/*.loft changes"]
 fn regen_fill_rs() {
     let mut p = Parser::new();
-    p.parse_dir("default", true, false).unwrap();
+    // Unchecked: the stdlib check compares `default/` against the table this run REGENERATES,
+    // so after an operator is added or removed it would refuse the repair it asks for.
+    p.parse_dir_unchecked("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
     loft::create::generate_code_to(&p.data, "src/fill.rs").expect("generate_code_to failed");
     println!("src/fill.rs regenerated");
@@ -2582,7 +2584,7 @@ fn s9_text_index_plus_text_index() {
 // Short-form lambdas infer types from the call-site hint.  Explicit type
 // annotations belong in the long form: fn(x: integer) -> integer { body }.
 
-// S10: `|x: integer|` must produce a compile-time error.
+// S10 (@C62): `|x: integer|` must produce a compile-time error.
 #[test]
 fn s10_short_lambda_type_annotation_rejected() {
     code!(
@@ -9639,14 +9641,10 @@ fn pln102_all_unknown_deferral_still_reports_undefined_callee() {
 }"
     )
     .error("Unknown function nope_a at pln102_all_unknown_deferral_still_reports_undefined_callee:2:5")
-    .error("Unknown function nope_b at pln102_all_unknown_deferral_still_reports_undefined_callee:2:16")
-    // The two trailing errors are a CASCADE ARTIFACT of the deferral, not signal:
-    // with no operand type on either pass the operator is never resolved, so the
-    // half-applied `OpMinInt` also trips its arity check.  Pinned because the
-    // harness compares the whole set — if a future change makes the deferral tidy
-    // up after itself, drop these two rather than treating them as a contract.
-    .error("missing argument for parameter 'v1' of `OpMinInt` — the call supplies too few arguments (add it, or give the parameter a default `= …`) at pln102_all_unknown_deferral_still_reports_undefined_callee:2:24")
-    .error("missing argument for parameter 'v2' of `OpMinInt` — the call supplies too few arguments (add it, or give the parameter a default `= …`) at pln102_all_unknown_deferral_still_reports_undefined_callee:2:24");
+    .error("Unknown function nope_b at pln102_all_unknown_deferral_still_reports_undefined_callee:2:16");
+    // The half-applied `OpMinInt` no longer adds its own two arity errors behind these: a
+    // reported call is poisoned to `never`, and the operator skips a slot filled by one
+    // (loft#1719), the tidy-up this test anticipated.
 }
 
 /// @PLN102 — the deferral at the TOP of `call_op` is deliberately limited to the case
@@ -16002,6 +16000,7 @@ fn run() -> integer {
 // DESIGN_DECISIONS.md).  Shared mutable state belongs in a struct, which both
 // closures may capture.
 
+/// @C74 — a mutated scalar may be captured by only one closure.
 #[test]
 fn issue_314_scalar_shared_by_two_closures_rejected() {
     code!(
@@ -16046,6 +16045,7 @@ fn run_it() -> integer {
 // closure returns (the case-C factory) stay supported.  Probes:
 // /tmp/p_followups/e*.loft; predicate: `Parser::type_carries_closure`.
 
+/// @C75 — closure-carrying struct values are frame-bound.
 #[test]
 fn issue_318_returning_closure_carrying_struct_rejected() {
     code!(
@@ -17714,7 +17714,11 @@ fn issue_675_cross_library_heap_return_reserves_its_buffer() {
         "#675 fixture must parse clean: {errors:?}"
     );
 
-    let d_nr = p.data.def_nr("n_pick675");
+    // `pick675` lives in `r675_use`; the program imports `r675_app`, which uses it for
+    // itself and does not pass it on (@C98), so look it up wherever it is declared.
+    let d_nr = (0..p.data.definitions())
+        .find(|&d| p.data.def(d).name() == "n_pick675")
+        .unwrap_or(u32::MAX);
     assert_ne!(d_nr, u32::MAX, "#675: pick675 must be defined");
     // A heap-returning function carries exactly one hidden heap buffer, and it was there
     // before pass 2 started — otherwise `ref_return` had to GROW the signature, and any

@@ -24,10 +24,10 @@
 //
 // sqlite, because it needs no server.
 
-use registry;
-use schema;
-use sql;
-use sqlite;
+use registry::*;
+use schema::*;
+use sql::*;
+use sqlite::*;
 
 struct Person {
   id: integer,

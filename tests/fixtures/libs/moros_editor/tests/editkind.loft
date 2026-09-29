@@ -1,5 +1,5 @@
 // Tests for EditKind struct-enum and match dispatch.
-use moros_editor;
+use moros_editor::*;
 
 fn test_hex_edit_label() {
   e = HexEdit { ek_q: 5, ek_r: 7, ek_cy: 0, ek_prev: Hex {} };

@@ -14,6 +14,67 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A loop that builds one vector while reading another runs its reads at full speed on
+`--native`.**  `out += [w[i]? * 2]`, `for e in ents { out += [e.q] }`, `out += [v[i]?.id]`:
+the reads of `w`, `ents` and `v` used to resolve their store per element because the loop
+grows a store, any store.  Now a growth counts only against the store it grows — two locals
+own two stores — so the reads keep their one-time address, as in a loop that grows nothing.
+Nothing changes in what a program computes; `LOFT_NO_DISTINCT_GROWTH=1` restores the old
+emission if you ever need to compare.
+
+**A library can hand you its bytes without copying them.**  A native library that
+decodes a payload used to copy it into a loft vector; with loft-ffi 0.1.2 its bridge can
+answer the buffer it already built (`foreign_vector_from_owned`), and your `v =
+lib::decode(x)` reads those bytes in place — length, index, iteration, a slice, `text_from_bytes`
+— exactly as before.  Such a result is read-only, like a mapped file: writing into it stops the
+program with the advice to copy first (`w = v`).  A mapped file or such a result handed to a
+native library function now works too (it used to crash).
+
+**A package's required loft version holds no matter how the package is reached.**  A
+library that needs a newer loft was refused when you `use`d it directly, but accepted when
+another library you used first had already pulled it in.  Now it is refused either way,
+with the same message.
+
+**A slice is a vector wherever a vector is expected.**  `v[lo..hi]` used to be accepted
+only in a `for` loop or on the right of a bind; handing it to a function
+(`f(v[2..5])`), returning it, putting it in a struct field or in a vector literal was
+refused with "expected vector, got iterator" and sent you through a local or a
+comprehension.  Every such place now takes the slice as the fresh vector the bind would
+have made, on both backends; a keyed range slice (`sorted`, `index`, `trie`) stays a
+`for`-only iterator.  And a slice of a scalar vector is copied in one block instead of
+one element at a time (forty 200 000-element slices: 0.13 → 0.03 s).
+
+**A mistyped `=` in a condition is refused.**  `if v[9] = 2 { … }` — a store where a comparison
+was meant — used to compile and then behave differently on each backend.  It is now refused
+with the cure: write `==` to compare, or move the store to its own line.
+
+**loft refuses a standard library that does not match it.**  When the `default/` it loads was
+built for a different loft (two checkouts, an old install beside a new build), the run used to
+end in a corrupt-reference crash far from the cause.  It now stops before anything runs and
+says which operator sits where the binary expects another, and how to rebuild.
+
+**A slice of a mapped file copies nothing.**  `sub = m[lo..hi]` on the bytes `file_map`
+answers is a view: `sub` reads the file's bytes in place, for as long as it is bound and
+whatever happens to `m` meanwhile, and `text_from_bytes(m[lo..hi])` decodes straight off
+the mapping.  Like the mapping, a view is read-only — writing it is refused with the same
+message, and the cure is the same: bind it (`w = sub`), which copies, and write `w`.  Fixed
+on the way: a bind of a mapped vector (`w = m`) and a `par` loop over one crashed, and a
+`vector<u8>` parameter rebound from its own slice (`p = p[1..3]`) copied eight bytes per
+element.
+
+**An append to an empty-by-`null` list lands however the list is reached.**  A
+`vector<T>?` or `hash<…>?` local holding `null` is filled by `c += [x]` — and now also when
+it is handed to a `&` parameter (`fn add(c: &vector<T>?)`), linked with `c = &a`, or set back
+to `null` after it held something (`r = null; r += [x]`).  Before, those appends were lost
+without a word (a `hash` stopped with an internal error), and a list rebuilt inside a loop
+could leave one store unreleased.  `c?` inside such a `&` parameter now gives the list's
+default like it does anywhere else, instead of being refused.
+
+**Setting a list to `null` reaches every name for it, and an absent list prints `null`.**
+With `c = &a`, `a = null` now makes `c` null too (and the other way round), for vectors and
+keyed collections alike; `s.h = null` on a `hash` field now leaves `s.h == null` true.  And
+`"{s.items}"` of an absent list prints `null`, not `[]`: an empty list still prints `[]`.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

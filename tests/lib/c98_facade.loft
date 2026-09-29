@@ -1,0 +1,6 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A package entry that offers another module's names: `pub use` passes them on (@C98).
+pub use c98_math::*;
+pub fn c98_facade_sum(v: C98Vec) -> integer { c98_len(v) * 10 }

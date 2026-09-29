@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C115 — a closure cannot write through a captured `&` scalar parameter.
 //
 // The two refusals the `&`-capture fix KEEPS (loft#1276).  Its passing twin is
 // `1276-a-closure-captures-a-ref-parameter.loft`; these shapes cannot live there because a
@@ -26,7 +27,7 @@
 //   with a string nothing emits turns the file red, which is what says the cell is load-
 //   bearing rather than merely present.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: assertions, leak, panic, free-refusal are equal on both trees. Falsify prints only
 //   the channels that MOVE and requires HERE to be clean, so each of those is clean on both.
 //   The native side was not scored in this sweep.

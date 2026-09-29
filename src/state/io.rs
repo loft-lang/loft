@@ -2040,15 +2040,19 @@ impl State {
     }
 
     /// @P305 — `coll[key] = value` insert-or-replace into a keyed
-    /// collection.  `OpSetKeyed(coll, value, tp)`: `tp`'s `0x8000` bit frees
-    /// `value`'s store after the deep copy (caller temp).
+    /// collection.  `OpSetKeyed(coll, value, tp, no_keys)` + the subscript's keys on the
+    /// stack (loft#1716, `Col-Assign`): `tp`'s `0x8000` bit frees `value`'s store after the
+    /// deep copy (caller temp).
     pub fn set_keyed(&mut self) {
         let raw_tp = self.code::<u16>();
         let free_source = raw_tp & 0x8000 != 0;
         let db_tp = raw_tp & 0x7FFF;
+        let no_keys = self.code::<u8>();
+        let key = self.stack_keys(db_tp, no_keys);
         let value = self.get_stack::<DbRef>();
         let coll = self.get_stack::<DbRef>();
-        self.database.set_keyed(&coll, &value, db_tp, free_source);
+        self.database
+            .set_keyed(&coll, &value, db_tp, &key, free_source);
     }
 
     pub fn hash_add(&mut self) {
@@ -2104,12 +2108,18 @@ impl State {
 
     pub(super) fn read_key(&mut self, full: bool) -> (u16, Vec<Content>) {
         let db_tp = self.code::<u16>();
-        let keys = self.database.get_keys(db_tp);
         let no_keys = if full {
-            keys.len() as u8
+            self.database.get_keys(db_tp).len() as u8
         } else {
             self.code::<u8>()
         };
+        (db_tp, self.stack_keys(db_tp, no_keys))
+    }
+
+    /// The first `no_keys` keys of `db_tp`, popped off the stack — the one reader both a
+    /// keyed lookup (`OpGetRecord`) and a keyed assignment (`OpSetKeyed`) use.
+    pub(super) fn stack_keys(&mut self, db_tp: u16, no_keys: u8) -> Vec<Content> {
+        let keys = self.database.get_keys(db_tp);
         let mut key = Vec::new();
         for (k_nr, k) in keys.iter().enumerate() {
             if k_nr >= no_keys as usize {
@@ -2143,7 +2153,7 @@ impl State {
             }
             // We assume that all none-base types are enumerate types.
         }
-        (db_tp, key)
+        key
     }
 
     pub fn finish_record(&mut self) {

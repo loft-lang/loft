@@ -290,6 +290,42 @@ GitHub-surfaced [`SUPPORT.md`](../../SUPPORT.md) all carry them.  Design + the f
 failure-path enumeration this bridge closes:
 [plans/102-stability-contract/public-bug-intake.md](plans/102-stability-contract/public-bug-intake.md).
 
+## Advisory CI failures — filed by the run, fixed like any bug
+
+A required check blocks the merge, so its failure is fixed before anything lands.  An
+**advisory** check does not: it goes red on a PR, the PR merges, and the finding survives
+only if someone opened the log.  Every one is meant to be fixed, so the run files it:
+[`advisory-failures.yml`](../../.github/workflows/advisory-failures.yml) runs after each
+`CI` and `Nightly checks` run and
+[`scripts/ci_failure_digest.py`](../../scripts/ci_failure_digest.py) turns each red
+advisory job into one issue.
+
+- **Which jobs.** On a PR, every job its check list does not mark required (asked live,
+  never a copied list).  On `main`, every job.  A run on any other branch files nothing.
+- **What the issue says.** The job and run, the PR or `main` commit, whether the same job
+  was green on `main` just before (`regression` when it was), the headline (a panic's
+  place and message, the corpus runner's `.loft` file and function, a rustc error, the
+  valgrind sweep's summary), the files and source lines to look at with the commit that
+  added or last changed each, and a log excerpt.
+- **Once per failure.** A signature (workflow, job, headline with numbers blanked) keys
+  the issue: a repeat comments, and a failure back after its issue closed reopens it.
+- **It is `make work`.** `ci-advisory` + `needs-triage` + `hit-by:loft`, no
+  `status:planned`.  Triage it as any bug (`sev:`/`area:`/`wa:`); the author the issue
+  names is the first person to ask.
+- **Closing.** Automatic, when the job is green on `main` after the change that caused it
+  landed there (its own origin, or its PR merged first) — never on a feature branch's
+  green run.  Closing by hand with a fix commit's `Fixes #N` works as usual.
+- **The PR sees it.** One comment on the PR, one section per workflow, updated in place:
+  each advisory failure with `new here` / `pre-existing` and its issue.
+- **Runner failures are not loft bugs.** A download timeout, a lost runner, a full disk:
+  noted on one rolling `ci-infra` issue, and a run whose failures were all of that kind
+  is retried once.
+
+`ci_failure_digest.py dry-run <run-id>` prints what it would file for any past run;
+`selftest` (in `make ci`) holds the extractor to real logs in `tests/fixtures/ci_logs/`.
+The nightly's `notify` job keeps its one aggregate `nightly-failure` issue as the status
+of the unsound gates; the per-failure issues are where the detail is.
+
 ## Issue lifecycle — what each state means (read this before picking work)
 
 **`open` means there is work to be done.**  The tracker's open set is the agent's

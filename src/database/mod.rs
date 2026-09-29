@@ -22,6 +22,7 @@ mod spans;
 pub mod sql_query;
 pub mod sql_source;
 mod structures;
+pub use structures::BridgeArgs;
 mod types;
 pub(crate) use types::DBREF_BORROW;
 
@@ -931,6 +932,15 @@ impl std::fmt::Debug for HeapSnapshot {
 }
 
 impl Stores {
+    /// Attach the run's logger — the ONE place a run does, so a production logger is also
+    /// recorded where a refusal inside a single `Store` can reach it
+    /// ([`crate::runtime_error::register_run_logger`]).
+    pub fn set_logger(&mut self, logger: crate::logger::Logger) {
+        let logger = Arc::new(Mutex::new(logger));
+        crate::runtime_error::register_run_logger(&logger);
+        self.logger = Some(logger);
+    }
+
     /// H8 — grow `allocations` to `high_water` slots (the `par` dispenser's
     /// one-past-last index) so every worker-allocated slot has a parent slot to
     /// swap into.  Paired with [`Self::swap_in_worker_slots`]; the two are the
@@ -1929,7 +1939,10 @@ impl Stores {
         fld: u32,
         val: T,
     ) {
-        if index >= 0 && index < i64::from(h.len) {
+        if index >= 0
+            && index < i64::from(h.len)
+            && self.allocations[h.store_nr as usize].write_allowed(h.rec, 8)
+        {
             if VERIFY {
                 assert_eq!(
                     *h,
@@ -2241,6 +2254,9 @@ impl Stores {
         size: u32,
         val: T,
     ) {
+        if !self.allocations[p.h.store_nr as usize].write_allowed(p.h.rec, 8) {
+            return;
+        }
         if w.len < w.cap {
             if VERIFY {
                 self.push_window_verify(p, *w, db, size);
@@ -2560,6 +2576,17 @@ impl Stores {
     /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
+        // @PLN174 F4b — a local bound to a VIEW of foreign bytes: the clear drops the view
+        // and the store is an ordinary, writable, empty one again, so the rebind or the
+        // literal that follows `s = m[a..b]` never meets the foreign refusal.  Nothing else
+        // to release: a view holds no record.
+        if !db.is_null()
+            && (db.store_nr as usize) < self.allocations.len()
+            && self.allocations[db.store_nr as usize].is_foreign()
+        {
+            self.allocations[db.store_nr as usize].release_foreign();
+            return;
+        }
         // `LOFT_NO_CLEAR_RELEASE=1` restores the pre-fix pure length reset — the bisect
         // step for a double free or a wrong value at a cleared vector on either backend.
         fn release_enabled() -> bool {

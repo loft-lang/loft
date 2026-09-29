@@ -9,6 +9,168 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A growth is judged per store: a loop that appends elsewhere keeps its bases (2026-09-28)
+
+`(R-Base)`'s growth clause, `(R-RecPtr)`'s remainder clause and `(R-Alias)`: a loop that
+grows a store keeps the element base of every held vector, the address of every record view
+and the header of every `for` walk whose store is proven APART from each store it grows — a
+store's buffer is reallocated only by a growth of a vector living in it.  `hoist::StoreFacts`
+is the oracle: a variable's store is the end of its dep chain (a view borrows from its source,
+a local vector from its `__vdb_N` witness, a parameter from nothing), and two ends are apart
+when they differ and one is fresh (a witness, or a user-named local record owning its store;
+never an adopted witness, a placed buffer or an emitter-owned one).  Two parameters, or a
+parameter beside the return buffer, are never proven apart.  `LOFT_NO_DISTINCT_GROWTH=1` is
+the switch, `LOFT_HOIST_VERIFY=1` the falsifier (under a sabotaged oracle it panics on the
+sibling-field cell the plain run answers right by luck).  Cells
+`tests/scripts/158-a-base-survives-a-growth-of-another-store.loft`; the pins that read "any
+growth, no base" (`vector_base`, `iteration_base`, `join_read`, `record_ptr`, `twin_base`)
+now pin the per-store truth with a same-store cell beside each.  Measured on the consumer
+lanes, old compiler against new, hashes identical: `bfs_flow` −27 % (1.65× → 1.20× of Rust),
+`mesh_emit` −17 % (3.30× → 2.73×), `sort_floats` −14 % (1.76× → 1.52×), `binary_map` −5 %,
+26 routines within noise.
+
+### A package's loft floor holds on every path that adopts its manifest (2026-09-28)
+
+`use a; use b` refused `b`'s `loft = ">=…"` floor while `use b; use a` accepted it: `b` was
+adopted first as `a`'s sibling (`probe_sibling_package` → `register_native_manifest`, which
+never asked) and the direct `use` then deduplicated.  `Parser::loft_floor_holds` is the one
+home now, asked by `lib_path_manifest_resolve` and `register_native_manifest` alike — which
+also means a package's OWN floor is checked when its tests run (a floor-raised library's
+testbed needs a loft that satisfies it).  Guard
+`package_floor_holds_when_the_package_is_adopted_as_a_sibling_first` over the
+`testpkg_uses_future` fixture.
+
+### A library's bytes as a foreign store — the bridge (@PLN174 F5, 2026-09-28)
+
+`loft_ffi::LoftStore` gains `foreign_fn`, its LAST field, and
+`foreign_vector_from_owned(Vec<u8>)`: a cdylib hands its own buffer to the host, which adopts
+it as a read-only foreign store (`ForeignOwner::Extern`: the `Vec`'s parts plus the cdylib's
+`release_vec`, run once with the last store serving the bytes) and answers the bare
+`FOREIGN_REC`; `bridge_push_ref` / `from_loft_ref` turn that into the store's handle
+(`Store::foreign_handle`).  The helper copies where the host has no `foreign_fn` or declined
+(a length past `u32`, a misaligned element).  A trailing field is ABI-safe for every existing
+cdylib: the only host-to-cdylib crossing is the fixed `LoftBridgeFn` shape (the macro's
+`__loft_bridge`), so a longer struct shifts no other argument, and prebuilt cdylibs rekey on
+the loft-ffi fingerprint.  loft-ffi is 0.1.2.
+The dispatcher's return-store mint is announced in the context word
+(`extensions::CTX_RETURN_STORE`, bit 16; the cdylib reads only the low 16) so
+`Stores::foreign_vector_in` adopts the bytes into that store instead of minting a second one.
+`OpAdoptVector` (`Stores::vector_adopt`) replaces `OpAppendVector` at the #410 direct bind
+and the #409 wrapper delivery: a foreign answer is VIEWED whole by the local's own store, an
+owned one copied exactly as before.  `vector_buffer_reset` (the § V-al loop buffer) and
+`Stores::clear` release a view instead of writing its length.
+`Stores::bridge_args` / `bridge_args_done` set a bridge call's heap-typed arguments up ONCE
+for both backends (`dispatch_via_bridge`; `native_call::BridgeGuard` in generated code): a
+foreign vector argument is copied into a record of the store the bridge is handed — a cdylib
+reads a vector by pointer arithmetic on that one store, and `file_map`'s result handed to any
+library bridge crashed sixteen gigabytes past the store since F2 — a foreign vector never
+pins the store, the copies are deleted (or the minted store freed) after the call, and a
+bridge that wrote through a copy meets the foreign refusal.
+The fixture `tests/lib/native_pkg` gains `ext_make_bytes_foreign`, `ext_reverse_foreign`,
+`ext_reverse_owned` and a `[native] crate` line (so `--native` links it); cells
+`tests/lib/native_pkg/tests/174-foreign-bridge.loft` b1–b8 run on both backends under the
+switch matrix, the copy A/B and the two write refusals (`tests/foreign_bridge.rs`); the unit
+test `store::tests::a_cdylib_block_is_read_in_place_and_released_once_with_the_last_store`
+counts the release.  `LOFT_LOCK_BT=1` names the Rust writer at a refused write.
+
+### A slice of a foreign store is a view (@PLN174 F4b, 2026-09-28)
+
+`OpSliceView` (`Stores::vector_slice_view`) is emitted for `s = v[lo..hi]` when `s` owns its
+`__vdb_N` backing (`Parser::owns_vdb_backing`; an append, an argument, a field and a return
+keep `OpSliceVector`).  When the source store is foreign, `Store::foreign_span` answers the
+clamped span with its owner SHARED (`ForeignSpan`, `Arc<ForeignOwner>`) and
+`Store::make_foreign` turns the local's store into a foreign one over it — no view table, no
+live-view count: the last store serving the bytes drops the owner.  `release_foreign` (the
+handle's free, or the clear before a rebind — `clear_vector_release` / `clear_vector` drop a
+view first) unlocks the store and restores the empty slot; `make_foreign` returns a record
+the slot held to the free tree; `clone_locked`, `borrow_locked_for_light_worker` and
+`snapshot_copy` carry the span.  The F4b view-id table (two synthetic ids per view inside the
+handle's store) is gone: a local whose `DbRef` left its own store could not be cleared or
+rebound without the parser restoring it, and the table never shrank.  Found and fixed on the
+way: `copy_block_between` / `Stores::copy_block` and the `par` workers' row readers took a
+foreign source's address inside the store's block (`w = m` and `par` over `m` crashed;
+`Store::block_src` is the one source address now), `fs_write_bytes` borrowed the payload
+mutably (`bytes_of` now), and the `@P390` self-slice rebind appended with element row 0
+(`append_elem_tp` now; a `vector<u8>` parameter copied an 8-byte stride).
+A Rust-side vector buffer now mints through `Stores::vector_buffer`, which writes the empty
+vector into the root's slot as the parser's `OpSetInt4(__vdb, 0, 0)` does — the foreign handle
+and a `par` worker's hidden destinations read that slot first (`make_foreign`'s displaced
+record, a callee's entry clear), and under `LOFT_POISON_CLAIM=1` read `0xDEADBEEF`; the
+census `the_zero_on_claim_census_only_shrinks` caught the handle and lost `40-par-ref-return`
+and `987-par-empty-body-discard` as dependents.
+`LOFT_NO_FOREIGN_VIEW=1` copies everywhere.  Cells `tests/scripts/174-foreign-view.loft` and
+`174-foreign-file.loft` (c10/c11); `tests/foreign_store.rs` runs both under the switch
+matrix, the A/B, the view write refusal and the emission pin; the unit test
+`store::tests::a_view_of_a_foreign_store_reads_beside_the_copied_slice` reads a view beside
+the copied slice.
+
+### `(Slice-Value)` at every vector-typed position, and a block copy for a scalar slice (@PLN174 F4a, 2026-09-28)
+
+`Parser::iterator_as_vector` is the ONE home: an iterator meeting a vector-typed position — the
+`convert` arm (arguments, returns, block tails), the struct field's parse (both the discovery
+and the in-place path), the vector literal's element parse — is materialised through the same
+`materialize_iterator` a bind uses, bound to a hidden local and read as a block whose tail is
+that local; `if` arms and block tails are descended (`slice_shaped` / `materialise_slice_leaves`).
+`can_convert` admits the pair for the report path.  Beside it, F4a: a SCALAR-element slice bound
+to a local emits `OpSliceVector` (`Stores::vector_slice`, the span through `Store::bytes_of`, so a
+foreign store's bytes copy too) in place of the per-element `OpNewRecord` loop; a heap, struct,
+type-variable or linked element keeps the loop, and so — a pinned gap — does a generic's
+instance (its monomorph re-lowers the template's triplets).  `LOFT_NO_SLICE_COPY=1` restores the
+loop, `LOFT_TRACE_ITERVEC=1` names an iterator left unmaterialised.  Cells
+`tests/scripts/174-slice-copy.loft`, `174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft`;
+pins `tests/slice_copy.rs`.  LOFT.md § slices and `formal/collections.md` `(Slice-Value)` say it.
+
+### A `default/` that does not match the binary is refused at load (2026-09-28)
+
+The dispatch table is positional — `Data::op_code` numbers every operator declaration in parse
+order and `fill::OPERATORS[i]` is the body for the i-th, with no name beside it — so a binary
+from one tree run against another tree's stdlib did not fail: one declaration more or fewer
+moved every later body under the wrong opcode, and the run ended in *Store access out of
+bounds … the reference is corrupt* inside `reserve_vector` for a program that never appended
+(measured when two checkouts shared one `target/`).  The generator now writes
+`fill::OPERATOR_NAMES` beside the table, and the top-level `Parser::parse_dir` of the stdlib
+compares the parsed declarations against it slot for slot (`src/stdlib_ops.rs`): a differing
+slot, a declaration past the table (an operator added without `make fill`) and a table entry
+the library no longer declares are each refused with the cure, before anything runs.  A
+pure-loft edit to `default/` passes, so the edit-and-rerun loop still needs no rebuild.
+Guard: `tests/stdlib_skew.rs` drives the real binary through `--path` at a copy of the stdlib.
+
+### A store in condition position is refused (C130 point 3, 2026-09-28)
+
+`if v[9] = 2 { … }`, `while x = 5 { … }`, `assert(p.x = 3, …)` and a store in a `for` or
+comprehension filter compiled: the interpreter read a stack byte as the flag (`if x = 5` then
+left `x` holding garbage; the `for … if` filter panicked on a corrupt stack reference), while
+`--native` failed in rustc.  The one condition coercion, `Parser::convert_condition_at`, now
+refuses a `Void` condition with the cure (`==`, or the store on its own line), anchored at the
+condition's start; both filter forms route through it, where they took the expression raw.
+Guard: `tests/scripts/a-store-in-condition-position-is-refused.loft` (ten cells), falsified
+on ef4fd49.
+
+### `--native`: a `virtual(…)` field registered as a stored one (loft#1718, 2026-09-28)
+
+Both field-emission loops of the generated `init()` (`emit_def_create_recurse_fields`,
+`output_struct_fields_filtered` in `src/generation/mod.rs`) walked every attribute, where the
+interpreter's `fill_database` skips the computed marker (`attributes[a].constant`).  The native
+type table so carried one field more than the emitted offsets were compiled against: an append
+to a vector field beside a `virtual` field landed in the wrong slot (`len` read 0, silently) and
+one declared after it panicked on a non-structure.  Both loops now skip the computed field
+(`@FR-L-Struct`, one packing for both backends).  Guard:
+`tests/scripts/1718-a-virtual-field-has-no-slot-on-native.loft`, falsified on 9a76922.
+
+### Reference docs kept honest by programs — the skill, CAVEATS and every section (@PLN176 phases 2–3, 2026-09-28)
+
+The loft-write skill's 32 samples and CAVEATS C60 are verbatim windows of `tests/reference/`
+programs (ten new: `skill-*.loft`, `hash-order.loft`, `naming.loft`, `shebang.loft`); the walk
+corrected the skill's tuple-match claim (a tuple of LOCALS copies, `(T-Cons)`; a tuple of
+PARAMETERS aliases the caller, `(B-Ref-Alias)`), its binary-file sample (`file()` appends to an
+existing file; `f.size` is the size at open) and found loft#1718.  `rule_tags.py sections`
+(DOC_CONTRACT rule 28) reads every `##`/`###` of LOFT.md and STDLIB.md for what KEEPS it — a
+sourced sample, an `@FR-`/`(Rule)` or `@F` citation, a signature the stdlib source declares, a
+guard path or a `loft#N` — and names a signature row no `default/*.loft` declares; its first
+run found four Binary Files rows for routines that never existed (STDLIB-history.md).  Both
+`fences --gate` and `sections --gate` run in `make ci`; the 23 sections that were prose alone
+now cite their rule, feature or guard.
+
 ### Foreign stores: a file mapped read-only is a `vector<u8>` with no copy (@PLN174 F1–F3, 2026-09-28)
 
 `Store` serves bytes the runtime does not own under ONE synthetic record id (`FOREIGN_REC`):
@@ -1851,7 +2013,7 @@ name that says which question it is asking.
 Peeling the routing predicates without peeling `dest` hands `append_source` a `RefVar`, which
 matches no arm, and the `&vector<Row>` twin that had always worked began answering *"cannot
 append `vector<Row>` to `&vector<Row>`"*.  The regression lands in the CONTROL rather than in
-the cell under test; TESTING.md § How a guard reads green gains that.
+the cell under test; GUARDS.md § How a guard reads green gains that.
 
 **How the sites were found.**  Inspection could not bound "which of the 76 read the widened
 answer".  A temporary env-gated form of `is_keyed` that computes BOTH answers, returns the
@@ -3153,7 +3315,7 @@ Now: `platform::native_compile_space_ok` sweeps dead-process artefacts on EVERY 
 runner's per-file cache survives; `scripts/sweep_scratch.sh` carries one rule per family and
 `make ci` runs it on its own scratch (was a seven-day `find`); `make sweep-scratch` /
 `make sweep-target` are the by-hand sweeps; `scripts/falsify.sh` keeps `LOFT_FALSIFY_KEEP`
-(4) controls.  TESTING.md § Scratch hygiene is the table.  Guard:
+(4) controls.  RUN_BOUNDS.md § Scratch hygiene is the table.  Guard:
 `tests/native_scratch_hygiene.rs`.
 
 ### A vector local bound from a value branch copies at the parser's selector, and a vector parameter rebinds locally (2026-09-05, loft#1370, D-own-35 / D-call-14)

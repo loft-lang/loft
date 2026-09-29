@@ -19,10 +19,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// that does not initialise what it hands out; the fix is at that site, never a wider
 /// memset.  Shrink this list; do not grow it.
 const KNOWN_DEPENDENT: &[&str] = &[
-    "40-par-ref-return",
     "75-native-stub",
     "945-stdlib-worked-examples",
-    "987-par-empty-body-discard",
     "a-keyed-view-joins-a-nullable-element-vector",
     "json-walker-absent-field",
 ];

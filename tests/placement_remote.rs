@@ -169,7 +169,7 @@ fn a_remote_library_answers_exactly_what_a_local_one_does() {
                    \x20   len(v)\n\
                    }\n\
                    pub fn maybe(p: P?) -> integer { if p == null { -1 } else { p.x } }\n";
-    let consumer = "use svc;\n\
+    let consumer = "use svc::*;\n\
                     fn main() {\n\
                     \x20   println(\"scalars {add(2, 3)} {e_i8(-128)} {e_u16(65535)} \
                      {e_single(0.5 as single)} {flag(true)}\");\n\
@@ -255,7 +255,7 @@ fn a_value_larger_than_the_arena_crosses_a_socket() {
                    \x20   t\n\
                    }\n\
                    pub fn small(n: integer) -> integer { n + 1 }\n";
-    let consumer = "use svc;\n\
+    let consumer = "use svc::*;\n\
                     fn main() {\n\
                     \x20   big = range_v(50000);\n\
                     \x20   println(\"big {len(big)} {big[49999]} {sum_v(big)}\");\n\
@@ -303,7 +303,7 @@ fn a_remote_library_with_no_address_refuses_and_says_which_variable() {
     let consumer_path = root.join("consumer.loft");
     std::fs::write(
         &consumer_path,
-        "use svc;\nfn main() { println(\"v = {add(2, 3)}\"); }\n",
+        "use svc::*;\nfn main() { println(\"v = {add(2, 3)}\"); }\n",
     )
     .expect("write consumer");
     write_library(
@@ -342,7 +342,7 @@ fn a_server_that_stops_answering_is_an_error_not_a_hang() {
     let consumer_path = root.join("consumer.loft");
     std::fs::write(
         &consumer_path,
-        "use svc;\n\
+        "use svc::*;\n\
          fn main() {\n\
          \x20   println(\"before {ping(1)}\");\n\
          \x20   println(\"after {slow(4000000000)}\");\n\

@@ -10,7 +10,7 @@
 // Reading every field back is the point.  A guard that only checked the forward
 // field would pass on the broken build for the neighbours, which is where the
 // damage landed (`record + 65535`).
-use fwd797;
+use fwd797::*;
 
 fn main() {
     o = f797_make();

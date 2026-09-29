@@ -36,9 +36,9 @@
 // exact for those. `uniform.loft`'s `floats` cell is where the full-precision
 // question lives.
 
-use registry;
-use schema;
-use sql;
+use registry::*;
+use schema::*;
+use sql::*;
 
 struct RtPerson { id: integer, nm: text, score: float, flag: boolean }
 struct RtWorld { by_id: hash<RtPerson[id]> = [] }

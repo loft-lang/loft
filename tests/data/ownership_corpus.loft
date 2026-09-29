@@ -16,8 +16,8 @@ fn k2_copy_vs_view(src: vector<Tok>) -> integer {
   first.n
 }
 
-// K4 — empty-arm slice match (return context): materialize_null_slice_arms (#562) makes the
-// `[]` arm a fresh vector so native does not emit `()` (E0308).
+// K4 — empty-arm slice match (return context): the `[]` arm takes its siblings' type, so it
+// builds a fresh vector and native does not emit `()` (E0308) — #562, loft#1711.
 fn k4_emptyarm(v: vector<Tok>) -> vector<Tok> { match v { [ _, ..rest ] => rest, _ => [] } }
 
 // K1 — owned on one path, a borrowed VIEW on the other: a genuine runtime JOIN (#316/#495).

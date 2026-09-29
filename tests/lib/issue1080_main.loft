@@ -7,8 +7,8 @@
 // routes reach the ONE `grid_value`, so a fix that deduplicated by dropping a load would
 // be caught by a missing answer rather than passing quietly.
 
-use grid1080;
-use user1080;
+use grid1080::*;
+use user1080::*;
 
 fn main() {
   println("flat={grid_value()} inside={grid_value_plus_one()}");

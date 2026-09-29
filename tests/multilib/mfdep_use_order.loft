@@ -2,7 +2,7 @@
 // manifest `[dependencies]` edge of mfdep_app must load without tripping
 // "use statements must appear before all definitions".  See the use-region
 // fixpoint in src/parser/mod.rs parse_file.
-use mfdep_app;
+use mfdep_app::*;
 fn main() {
     assert(app_val() == 1, "app_val");
 }

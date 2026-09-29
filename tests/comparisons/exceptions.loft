@@ -23,7 +23,36 @@
 // The trade: Python's control flow can leave any expression; loft's cannot, so the failure
 // has to be IN THE VALUE.  That is the same mechanism as the `null` subject, seen from the
 // failure side rather than the absence side.
+// @SCRIPT — the page's blocks are top-level windows; the cells below are called at the end.
 
+// --- as shown on 00-vs-python.html#exceptions (a verbatim window: `rule_tags.py fences`) ---
+// Logic errors: assert aborts the program
+fn divide(a: float, b: float) -> float {
+    assert(b != 0.0, "division by zero");
+    a / b ?? 0.0
+}
+
+// Reading: check f#exists before using content
+f = file("data.txt");
+if f#exists {
+    data = f.content();
+} else {
+    print("file not found\n");
+}
+
+// Mutating ops return a FileResult enum; match on the bare variant
+result = delete("old.txt");
+match result {
+    Ok               => print("deleted\n"),
+    NotFound         => print("not found\n"),
+    PermissionDenied => print("permission denied\n"),
+    IsDirectory      => print("is a directory\n"),
+    _                => print("other error\n"),
+}
+
+// Or just check success:
+if !move("a.txt", "b.txt").ok() { print("rename failed\n"); }
+assert(divide(6.0, 3.0) == 2.0, "a fallible operation is a value");
 fn test_an_out_of_range_read_is_a_value_not_a_throw() {
   xs: vector<integer> = [1, 2, 3];
   v = xs[10] ?? -1;
@@ -46,3 +75,8 @@ fn test_the_failure_composes_instead_of_unwinding() {
   total = (xs[0] ?? 0) + (xs[1] ?? 0) + (xs[2] ?? 0);
   assert(total == 0, "three absent reads, one expression, no handler");
 }
+
+// The cells, run in order (a script runs nothing by itself).
+test_an_out_of_range_read_is_a_value_not_a_throw();
+test_division_by_zero_does_not_stop_the_program();
+test_the_failure_composes_instead_of_unwinding();

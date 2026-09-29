@@ -24,7 +24,7 @@
 //   /home/ubuntu/loft/target/release/loft --interpret \
 //       lib/game_protocol/examples/tictactoe_client_v2.loft B
 
-use web;
+use web::*;
 
 struct RegEntry {
   name: text,

@@ -50,7 +50,7 @@ the original alignment work can resume freely.  What changed:
   longer busts the native binary cache — faster `make ci`/`make test`
   locally too.
 
-Commits `2dd0a142`..`ce489c01`.  Full design: PERFORMANCE.md
+Commits `2dd0a142`..`ce489c01`.  Full design: PERFORMANCE-history.md
 § Design: BUILD1 / BUILD2.  None of this touched the alignment code
 paths — S4 state below is exactly as handed off.
 

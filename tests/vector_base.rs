@@ -27,6 +27,7 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")
         .env_remove("LOFT_NO_VECTOR_BASE")
+        .env_remove("LOFT_NO_DISTINCT_GROWTH")
         .env_remove("LOFT_NO_NN_FAST");
     for (k, v) in env {
         cmd.env(k, v);
@@ -82,19 +83,38 @@ fn a_growth_free_loop_reads_and_writes_through_the_base() {
 #[test]
 fn a_growing_loop_binds_no_base_and_an_inner_growth_free_loop_binds_one_of_the_held_header() {
     let rust = emit("growing", &[]);
+    // `@FR-R-Base`'s growth clause: b2 pushes to ANOTHER store and keeps `a`'s base; b2b
+    // pushes into the vector it reads and binds none.
     let b2 = body(&rust, "n_b2");
     assert!(
-        !b2.contains("__vb_"),
-        "b2 pushes, so it binds no base: {b2}"
+        b2.contains("__vb_") && b2.contains("get_elem_at::<"),
+        "b2 pushes to another store, so it keeps a's base: {b2}"
     );
+    let b2b = body(&rust, "n_b2b");
+    assert!(
+        !b2b.contains("__vb_"),
+        "b2b pushes into the vector it reads, so it binds no base: {b2b}"
+    );
+    let off = emit("growing_off", &[("LOFT_NO_DISTINCT_GROWTH", "1")]);
+    assert!(
+        !body(&off, "n_b2").contains("__vb_"),
+        "LOFT_NO_DISTINCT_GROWTH=1 binds no base under any growth"
+    );
+    // b3's pushing OUTER loop keeps `a`'s base itself now (`sums` is another store), so its
+    // inner loop derives none of its own and reads through the outer's; with the growth
+    // clause off the outer holds the header alone and the inner binds a base of it.
     let b3 = body(&rust, "n_b3");
     assert!(
-        b3.contains("element base of the held header"),
-        "b3's inner loop binds a base of the header its pushing outer loop holds"
+        b3.contains("__vb_") && !b3.contains("element base of the held header"),
+        "b3's outer loop keeps a's base under its push: {b3}"
     );
     assert!(
         b3.contains("get_elem_at::<"),
         "b3's inner reads go through that base"
+    );
+    assert!(
+        body(&off, "n_b3").contains("element base of the held header"),
+        "with the growth clause off, b3's inner loop binds a base of the header its pushing outer loop holds"
     );
     // b4 mints a null-discharge buffer (§ V-ad): a FRESH store, or a clear of the buffer's
     // own — neither moves an element a base addresses, so since 2026-09-18 the loop binds

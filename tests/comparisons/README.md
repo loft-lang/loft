@@ -44,14 +44,22 @@ Rules, all of them the corpus's:
 2. **One subject per file.** The failure has to name the claim.
 3. **No `use` of a library.** This harness builds no packages — the same reason
    `tests/docs/` holds none.
-4. **Both backends where the claim is about behaviour.** `wrap::comparisons` runs the
-   interpreter; `make test-native` covers `tests/docs/` and this directory is added to it for
-   the same reason.
+4. **Both backends.** `wrap::comparisons` runs the interpreter, `native::native_comparisons`
+   and `make test-native` run `--native`.
+5. **The page's block is a top-level window, so the file is a script.** A block on the page
+   shows a struct beside the statements that use it, as a reader would write them; only a
+   script-shaped file (`// @SCRIPT`, top-level statements, definitions hoisted) can hold that
+   verbatim.  The block sits at the top, its context (a value it reads, a helper it calls)
+   above it and the assertion that proves the claim below it; the older cells are called at
+   the end, since a script runs nothing by itself.
 
-## What this does NOT do yet
+## The page's code is the file's code
 
-It does not check that the code on the HTML page is the code in the file. That gate is worth
-having — it is the drift `check_doc_drift.sh` exists for elsewhere — and it is not built. Until
-it is, a file here proves the CLAIM is true; it does not prove the PAGE says it accurately.
+`scripts/rule_tags.py fences` reads each loft block on the two pages (the `<pre><code>` with
+no class, under its `<h2 id>`) as a verbatim window of `tests/comparisons/<id>.loft`,
+indentation normalised, and reports a block that has drifted or has no program (@PLN176
+phase 2).  So a file here proves the CLAIM is true, and the checker proves the PAGE shows
+the code that proved it.  The same convention keeps LOFT.md and STDLIB.md, from
+`tests/reference/` (its README has the contract).
 
 Subject index and the links to every rationale: [`doc/claude/SUBJECTS.md`](../../doc/claude/SUBJECTS.md).

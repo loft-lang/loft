@@ -12,7 +12,7 @@
 //   cursor  needs the server. It walks a real result set and pins the one
 //           distinction a SQL binding exists to keep: NULL is not "".
 
-use mariadb;
+use mariadb::*;
 
 // `env_variable` answers "" for an unset variable, not null, so `??` never
 // fires on it. Treating "" as absent is the caller's job — and getting this

@@ -1,8 +1,8 @@
 // loft#788 — A first. Every bare mention below is ambiguous, and the twin file
 // `dupname_ba_main.loft` is this file with the two `use` lines swapped: the pair
 // is the test, because the defect was that they compiled to different programs.
-use dupname_a;
-use dupname_b;
+use dupname_a::*;
+use dupname_b::*;
 
 fn main() {
   c = Chunk { ck_cx: 1, ck_cz: 2, ck_cells: 9 };

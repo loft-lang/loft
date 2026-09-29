@@ -168,6 +168,7 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                 .any(|a| matches!(a.unspan(), Value::Var(v) if *v == x));
             match admit(data, d_nr, here, x, f, args, facts) {
                 Ok(b) => {
+                    crate::rewrite_census::fired("R-Rebind", 1);
                     if crate::keys::trace_rebind() {
                         eprintln!(
                             "[rebind] fn={} x={} callee={} ADMITTED: the local's record is the buffer",

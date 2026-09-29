@@ -4,8 +4,8 @@
 // against the working directory (the `p171` test runs it in a temp cwd and
 // reads the GLB back from there).
 #cwd
-use moros_map;
-use moros_render;
+use moros_map::*;
+use moros_render::*;
 
 fn main() {
   m = map_empty();

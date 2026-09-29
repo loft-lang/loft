@@ -54,7 +54,8 @@ jobs:
         run: choco install zip unzip -y
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -175,6 +176,15 @@ jobs:
           path: |
             dist/*.zip
             dist/*.zip.sha256
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Assemble the release as a DRAFT with all four platform bundles attached, then
   # STOP.  The owner reviews the draft and clicks Publish — and only that click
@@ -274,7 +284,8 @@ jobs:
         run: sudo apt-get install -y mold
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -325,6 +336,15 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./doc
           exclude_assets: 'claude/**'
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # The programs built WITH loft, at this commit.  The bundle smoke above proves the
   # artefact runs its own examples; this proves the language the artefact carries against

@@ -1,0 +1,31 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 5c942fcd2..162c0e5c7 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -4308,7 +4308,7 @@ impl Parser {
+                 let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
+                 diagnostic!(
+                     self.lexer,
+-                    Level::Error,
++                    Level::Warning,
+                     code = "const-to-plain-parameter",
+                     "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
+                      `const`: its value is read-only, and a plain parameter names the caller's \
+@@ -4340,7 +4340,7 @@ impl Parser {
+                 }
+                 diagnostic!(
+                     self.lexer,
+-                    Level::Error,
++                    Level::Warning,
+                     code = "const-to-plain-parameter",
+                     "Cannot pass {what} to parameter {} of {label}, whose function type does not \
+                      declare it `const`: its value is read-only, and a plain parameter names the \
+@@ -4367,7 +4367,7 @@ impl Parser {
+                 }
+                 diagnostic!(
+                     self.lexer,
+-                    Level::Error,
++                    Level::Warning,
+                     code = "const-to-plain-parameter",
+                     "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
+                      `const`: their value is read-only, and a plain parameter names the caller's \

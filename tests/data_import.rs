@@ -51,7 +51,7 @@ fn overwrite_replaces_unknown_stub() {
     let stub = add_stub(&mut d, 2, "Player");
     assert_ne!(real_player, stub);
 
-    d.import_all_overwrite(1, 2);
+    d.import_all_overwrite(1, 2, false);
 
     // After overwrite, source-2 lookup for Player should point to the real def.
     let looked_up = d.source_nr(2, "Player");
@@ -68,7 +68,7 @@ fn overwrite_preserves_real_local_def() {
     let real_in_1 = add_pub(&mut d, 1, "Player", DefType::Struct);
     let real_in_2 = add_pub(&mut d, 2, "Player", DefType::Struct);
 
-    d.import_all_overwrite(1, 2);
+    d.import_all_overwrite(1, 2, false);
 
     // source-2 lookup still returns source-2's own Player, not source-1's.
     let looked_up = d.source_nr(2, "Player");
@@ -82,7 +82,7 @@ fn overwrite_inserts_when_missing() {
     let mut d = Data::new();
     let real = add_pub(&mut d, 1, "Player", DefType::Struct);
 
-    d.import_all_overwrite(1, 2);
+    d.import_all_overwrite(1, 2, false);
 
     let looked_up = d.source_nr(2, "Player");
     assert_eq!(looked_up, real);
@@ -97,7 +97,7 @@ fn name_overwrite_targets_single_name() {
     let player_stub = add_stub(&mut d, 2, "Player");
     let monster_stub = add_stub(&mut d, 2, "Monster");
 
-    let ok = d.import_name_overwrite(1, 2, "Player", "Player");
+    let ok = d.import_name_overwrite(1, 2, "Player", "Player", false);
     assert!(ok);
 
     assert_eq!(d.source_nr(2, "Player"), real_player);

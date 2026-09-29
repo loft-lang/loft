@@ -1,0 +1,13 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 73f060fa7..d44a55474 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3448,7 +3448,7 @@ use #count instead"
+     pub(crate) fn release_scratch(&mut self, scratch: u16) -> [Value; 2] {
+         [
+             self.cl("OpFreeScratch", &[Value::Var(scratch)]),
+-            v_set(scratch, self.cl("OpNullRefSentinel", &[])),
++            v_set(scratch, Value::Null),
+         ]
+     }
+ 

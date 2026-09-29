@@ -55,7 +55,7 @@ fn parser_native_pkg_parses_without_error() {
     p.data = data;
     p.database = db;
     p.lib_dirs.push("tests/lib".to_string());
-    p.parse_str("use native_pkg;", "test", false);
+    p.parse_str("pub use native_pkg::*;", "test", false);
     // No parse errors — the #native stub is registered even without the .so.
     let has_errors = p.diagnostics.lines().iter().any(|l| l.starts_with("Error"));
     assert!(
@@ -249,7 +249,7 @@ fn ffi_returned_vector_survives_in_place_append_409() {
     let prog = std::env::temp_dir().join("loft_409_ffi_vec_append.loft");
     std::fs::write(
         &prog,
-        "use native_pkg;\n\
+        "use native_pkg::*;\n\
          fn make(n: integer) -> vector<u8> { ext_make_bytes(n) }\n\
          fn main() { v = make(4); v += [99 as u8]; println(\"R={len(v)} {v[0]} {v[4]}\"); }\n",
     )
@@ -300,7 +300,7 @@ fn ffi_returned_vector_direct_decl_survives_in_place_append_410() {
     let prog = std::env::temp_dir().join("loft_410_ffi_vec_direct.loft");
     std::fs::write(
         &prog,
-        "use native_pkg;\n\
+        "use native_pkg::*;\n\
          fn main() { v = ext_make_bytes(4); v += [99 as u8]; println(\"R={len(v)} {v[0]} {v[4]}\"); }\n",
     )
     .expect("write program");

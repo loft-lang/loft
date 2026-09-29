@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: collections
+// @CLAIM: a vector, a hash and a sorted collection are typed by their element, and the keyed ones name their key in the type; a wrong element type is a compile error.
+// @SEEN-FROM: 00-vs-python.html#collections
+// @SCRIPT — the page's block is a top-level window.
+
+// --- as shown on 00-vs-python.html#collections (a verbatim window: `rule_tags.py fences`) ---
+struct Entry { key: text, value: text }
+struct Score { user: text, points: integer }
+nums:   vector<integer> = [1, 2, 3];
+lookup: hash<Entry[key]> = [];
+lookup += [Entry { key: "key", value: "value" }];
+scores: sorted<Score[user]> = [];
+scores += [Score { user: "ann", points: 95 }];  // O(log n) keyed insert
+
+// Element type is enforced at compile time:
+// nums += ["x"];  // compile error: expected integer
+assert(len(nums) == 3 and (lookup["key"].value ?? "") == "value" and (scores["ann"].points ?? 0) == 95, "a vector, a hash, a sorted — each by its declared key");

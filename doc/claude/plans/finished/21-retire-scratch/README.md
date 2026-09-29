@@ -74,6 +74,6 @@ build was the completeness proof.
   Protocol 1 artifact: the matrix that corrected scope + the chokepoint design
   (historical record)
 - [LIFETIME.md](../../../LIFETIME.md) — text dep / always-free model
-- [PERFORMANCE.md § Open work](../../../PERFORMANCE.md#open-work) — N1 (direct-emit
+- [PERFORMANCE.md § Open performance work](../../../PERFORMANCE.md#open-performance-work) — N1 (direct-emit
   local collections) cooperated with this plan; now independent
 - [QUALITY.md](../../../QUALITY.md) — Dep-inference item cooperated with this plan

@@ -1,3 +1,4 @@
+// @C120 @C129 — arithmetic stays sentinel-aware; no machine-dependent arithmetic.
 // `@FR-R-Range` — an integer operator whose RESULT provably fits the type emits the
 // processor's plain operator on `--native`: no operation can fault, so the plain answer is
 // the checked template's.  C120's admissible successor for straight-line arithmetic (the

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @C111 — an element's removal or overwrite does not run its drop.
 // `OpDrop` runs when the value's OWNER dies, and a reassignment is that death for the
 // record it displaces: the droppable itself, a struct or a struct-enum holding one, a
 // nullable local, a rebind to null, a call result, a right-hand side that reads the old
@@ -29,7 +30,7 @@
 //   behind it were each measured red on that build in the probe matrix the guard was cut
 //   from, and the two hand-off cells read a double release there.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.

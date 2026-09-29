@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A cursor sub-rule answers null for "no match", so `-> N?` is its honest declaration — and
+// since `(N-Join)` widens a struct result with a `null` arm (loft#1714), the familiar
+// `-> N { match c { … => N { … }, _ => null } }` now WARNS, naming `-> N?` as the cure.  The
+// sub-rule recogniser asked for a bare `Reference` return and refused the cure
+// (`'parse_id' is not a variant of Tok`); it now reads through the `?` (`@FR-N-Shape`).  The
+// capture is bound only on the arm where the rule matched, so it is the non-null `N`.
+//
+// @falsified-at: f37957702 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-sub-rule-may-answer-an-optional.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: none — on the control the `-> N?` sub-rule is refused at compile time, which is the defect this file exists for.
+
+enum Tok { Id { x: integer }, LP { x: integer } }
+struct Cur { src: vector<Tok>, pos: integer }
+struct N { v: integer }
+
+fn ident(c: Cur) -> N? { match c { [ Id { x } ] => N { v: x }, _ => null } }
+
+fn test_an_optional_sub_rule_is_invoked_and_advances() {
+  c = Cur { src: [Id { x: 9 }, LP { x: 0 }, Id { x: 4 }], pos: 0 };
+  first = match c { [n: ident] => n.v, _ => -1 };
+  assert(first == 9 && c.pos == 1, "matched and advanced: {first} at {c.pos}");
+  second = match c { [n: ident] => n.v, _ => -1 };
+  assert(second == -1 && c.pos == 1, "a miss leaves the cursor: {second} at {c.pos}");
+}

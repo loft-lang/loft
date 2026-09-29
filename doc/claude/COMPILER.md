@@ -1346,5 +1346,5 @@ intentional exception is documented at its site in `fill.rs`).
 ## See also
 - [INTERMEDIATE.md](INTERMEDIATE.md) — Value/Type enums in detail; 233 bytecode operators; State layout
 - [INTERNALS.md](INTERNALS.md) — calc.rs, stack.rs, create.rs, native.rs, ops.rs, parallel.rs
-- [TESTING.md](TESTING.md) — Test framework, LogConfig debug-logging presets
+- [TESTING.md](TESTING.md) — Test framework; [RUNNING_TESTS.md](RUNNING_TESTS.md) — LogConfig debug-logging presets
 - [../DEVELOPERS.md](../DEVELOPERS.md) — How to add features: pipeline walkthrough, caveats per subsystem, debugging strategy

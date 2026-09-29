@@ -265,6 +265,7 @@ struct AppliedImport {
   into_source: integer,
   name: text, // "" = wildcard `use lib;` / `use lib::*`
   bind: text, // the local name a selective import binds (`use lib::name as bind`)
+  public: boolean, // `pub use`: the names pass on to whoever imports `into_source` (@C98)
 }
 
 // One `use` short name or alias -> source number (src/data.rs::Data.use_names).

@@ -156,7 +156,8 @@ jobs:
 
       - name: Cache cargo + loft build
         if: steps.tok.outputs.run == 'true'
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -283,3 +284,12 @@ jobs:
             printf "$summary"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $fail
+      - name: Save cargo cache (main only)
+        if: steps.tok.outputs.run == 'true' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

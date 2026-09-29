@@ -41,17 +41,22 @@ jobs:
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
 
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
+      # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).
+      # The path list must stay IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (ci.yml's test job's, read-only)
+        uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
             target
-          key: ubuntu-branchgate-cargo-${{ hashFiles('**/Cargo.lock') }}
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            ubuntu-branchgate-cargo-
-            ubuntu-guard-cargo-
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest

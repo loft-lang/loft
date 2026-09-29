@@ -1,0 +1,9 @@
+2026-09-28T09:12:01.0000000Z ##[group]Run cargo nextest run --no-fail-fast --status-level fail
+2026-09-28T09:14:40.1000000Z         FAIL [   0.656s] (57/63) loft::frontend_counts front_end_allocations_do_not_grow
+2026-09-28T09:14:40.1000001Z     test front_end_allocations_do_not_grow ... FAILED
+2026-09-28T09:14:40.1000002Z     thread 'front_end_allocations_do_not_grow' (1416762) panicked at tests/frontend_counts.rs:201:5:
+2026-09-28T09:14:40.1000003Z     the front end allocates more than its pin (linux-debug): tiny: 303608 → 303760 (+152).
+2026-09-28T09:14:40.1000004Z     note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-09-28T09:14:41.0000000Z      Summary [   4.305s] 63 tests run: 62 passed, 1 failed, 833 skipped
+2026-09-28T09:14:41.0000001Z         FAIL [   0.656s] (57/63) loft::frontend_counts front_end_allocations_do_not_grow
+2026-09-28T09:14:41.2000000Z ##[error]Process completed with exit code 100.

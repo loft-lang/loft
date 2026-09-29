@@ -16,10 +16,10 @@
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>x = <span class="nm">42</span>           <span class="cm">// integer — fixed at first assignment</span>
-x += <span class="nm">1</span>
-name = <span class="st">"Bob"</span>     <span class="cm">// text — a different variable, not a rebind</span>
-x = <span class="st">"oops"</span>      <span class="cm">// compile error: cannot assign text to integer</span></code></pre>
+  <pre><code>x = <span class="nm">42</span>;          <span class="cm">// integer — fixed at first assignment</span>
+x += <span class="nm">1</span>;
+name = <span class="st">"Bob"</span>;    <span class="cm">// text — a different variable, not a rebind</span>
+<span class="cm">// x = "oops";   // compile error: cannot assign text to integer</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -40,10 +40,10 @@ x = <span class="st">"oops"</span>       <span class="cm"># fine — x is now a 
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="kw">struct</span> <span class="en">User</span> {
     email: <span class="ty"><a href="stdlib-types.html">text</a></span>?,            <span class="cm">// `?`: may be absent</span>
-    age:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,            <span class="cm">// never null — the default</span>
+    age:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,          <span class="cm">// never null — the default</span>
 }
 u = <span class="en">User</span> { age: <span class="nm">30</span> };
-<span class="kw">if</span> u.email == <span class="kw">null</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"no email"</span>); }
+<span class="kw">if</span> u.email == <span class="kw">null</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"no email\n"</span>); }
 u.age = <span class="kw">null</span>;  <span class="cm">// warns: the slot holds null anyway</span></code></pre>
 </div>
 <div>
@@ -74,11 +74,11 @@ u.age = <span class="kw">None</span>  <span class="cm"># allowed at runtime; myp
   <pre><code><span class="kw">struct</span> <span class="en">Point</span> { x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span> }
 p = <span class="en">Point</span> { x: <span class="nm">1.0</span>, y: <span class="nm">2.0</span> };
 p.x += <span class="nm">0.5</span>;
-p.z;          <span class="cm">// compile error: no field z on Point</span>
-p.x = <span class="st">"hi"</span>; <span class="cm">// compile error: cannot assign text to float</span>
+<span class="cm">// p.z;          // compile error: no field z on Point</span>
+<span class="cm">// p.x = "hi";   // compile error: cannot assign text to float</span>
 
-<span class="kw">fn</span> <span class="fn-call">distance</span>(self: <span class="kw">const</span> <span class="en">Point</span>) -> <span class="ty"><a href="stdlib-types.html">float</a></span> {
-    <span class="fn-call">sqrt</span>(self.x * self.x + self.y * self.y) ?? <span class="nm">0.0</span>
+<span class="kw">fn</span> <span class="fn-call">distance</span>(self: <span class="kw">const</span> <span class="en">Point</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {
+    <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(self.x * self.x + self.y * self.y) ?? <span class="nm">0.0</span>
 }</code></pre>
 </div>
 <div>
@@ -110,7 +110,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="kw">while</span> !<span class="fn-call">ready</span>() { <span class="fn-call">step</span>(); }  <span class="cm">// works</span>
 
-<span class="kw">while</span> <span class="fn-call">len</span>(queue) &gt; <span class="nm">0</span> {
+<span class="kw">while</span> <span class="bi"><a href="stdlib-collections.html">len</a></span>(queue) &gt; <span class="nm">0</span> {
     <span class="fn-call">process</span>(queue[<span class="nm">0</span>]);
     queue.<span class="fn-call">remove</span>(<span class="nm">0</span>);   <span class="cm">// `#remove` is for a loop variable</span>
 }
@@ -147,10 +147,10 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
     <span class="en">Circle</span> { r: <span class="ty"><a href="stdlib-types.html">float</a></span> },
     <span class="en">Rect</span>   { w: <span class="ty"><a href="stdlib-types.html">float</a></span>, h: <span class="ty"><a href="stdlib-types.html">float</a></span> }
 }
-<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Circle</span>) -> <span class="ty"><a href="stdlib-types.html">float</a></span> { <span class="en"><a href="stdlib-math.html">PI</a></span> * <span class="fn-call">pow</span>(self.r, <span class="nm">2.0</span>) }
-<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Rect</span>)   -> <span class="ty"><a href="stdlib-types.html">float</a></span> { self.w * self.h }
+<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Circle</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { <span class="en"><a href="stdlib-math.html">PI</a></span> * <span class="bi"><a href="stdlib-math.html">pow</a></span>(self.r, <span class="nm">2.0</span>) }
+<span class="kw">fn</span> <span class="fn-call">area</span>(self: <span class="en">Rect</span>)   -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { self.w * self.h }
 
-s.<span class="fn-call">area</span>()   <span class="cm">// dispatches on the runtime variant</span></code></pre>
+s.<span class="fn-call">area</span>();   <span class="cm">// dispatches on the runtime variant</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -181,11 +181,11 @@ s.<span class="fn-call">area</span>()   <span class="cm">// dispatches on the ru
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>msg  = <span class="st">"Hi {name}, score: {score:8.2}"</span>
-sign = <span class="st">"seed {n:+}"</span>              <span class="cm">// sign shows on integers: "seed +42"</span>
-hex  = <span class="st">"{n:#x}"</span>
-list = <span class="st">"{for x in 1..4 {x*2}}"</span>   <span class="cm">// [2,4,6]</span>
-pad  = <span class="st">"{count:08}"</span>               <span class="cm">// zero-padded (integers)</span></code></pre>
+  <pre><code>msg  = <span class="st">"Hi {name}, score: {score:8.2}"</span>;
+sign = <span class="st">"seed {n:+}"</span>;              <span class="cm">// sign shows on integers: "seed +42"</span>
+hex  = <span class="st">"{n:#x}"</span>;
+list = <span class="st">"{for x in 1..4 {x*2}}"</span>;   <span class="cm">// [2,4,6]</span>
+pad  = <span class="st">"{count:08}"</span>;              <span class="cm">// zero-padded (integers)</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -206,14 +206,14 @@ pad  = <span class="st">f"{count:08}"</span></code></pre>
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>nums:   <span class="ty"><a href="07-vector.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>];
-lookup: <span class="ty"><a href="12-hash.html">hash</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;    = {};
-lookup[<span class="st">"key"</span>] = <span class="st">"value"</span>;
-scores: <span class="ty"><a href="10-sorted.html">sorted</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = {};
-scores[user] = <span class="nm">95</span>;  <span class="cm">// O(log n) keyed insert</span>
+  <pre><code>nums:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>];
+lookup: <span class="ty"><a href="12-hash.html">hash</a></span>&lt;<span class="en">Entry</span>[key]&gt; = [];
+lookup += [<span class="en">Entry</span> { key: <span class="st">"key"</span>, <span class="kw">value</span>: <span class="st">"value"</span> }];
+scores: <span class="ty"><a href="10-sorted.html">sorted</a></span>&lt;<span class="en">Score</span>[user]&gt; = [];
+scores += [<span class="en">Score</span> { user: <span class="st">"ann"</span>, points: <span class="nm">95</span> }];  <span class="cm">// O(log n) keyed insert</span>
 
 <span class="cm">// Element type is enforced at compile time:</span>
-nums += [<span class="st">"x"</span>];  <span class="cm">// compile error: expected integer</span></code></pre>
+<span class="cm">// nums += ["x"];  // compile error: expected integer</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -240,16 +240,16 @@ nums.<span class="fn-call">append</span>(<span class="st">"x"</span>)           
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// Capture works when called in the same scope:</span>
 offset = <span class="nm">10</span>;
-shift = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset };
-<span class="fn-call">assert</span>(<span class="fn-call">shift</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"shift"</span>);
+shift = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset };
+<span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">shift</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"shift"</span>);
 
 <span class="cm">// Lambdas work with map/filter/reduce, capturing or not:</span>
-doubled = <span class="fn-call">map</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { x * <span class="nm">2</span> });
-evens   = <span class="fn-call">filter</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+doubled = <span class="bi"><a href="stdlib-collections.html">map</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x * <span class="nm">2</span> });
+evens   = <span class="bi"><a href="stdlib-collections.html">filter</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
 
 <span class="cm">// Capturing lambda with map:</span>
 offset = <span class="nm">10</span>;
-shifted = <span class="fn-call">map</span>(nums, <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset });</code></pre>
+shifted = <span class="bi"><a href="stdlib-collections.html">map</a></span>(nums, <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + offset });</code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -275,31 +275,31 @@ shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> n
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// Logic errors: assert aborts the program</span>
-<span class="kw">fn</span> <span class="fn-call">divide</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -> <span class="ty"><a href="stdlib-types.html">float</a></span> {
+<span class="kw">fn</span> <span class="fn-call">divide</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {
     <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b != <span class="nm">0.0</span>, <span class="st">"division by zero"</span>);
     a / b ?? <span class="nm">0.0</span>
 }
 
 <span class="cm">// Reading: check f#exists before using content</span>
-f = <span class="fn-call">file</span>(<span class="st">"data.txt"</span>);
-<span class="kw">if</span> f#<span class="fn-call">exists</span> {
+f = <span class="bi"><a href="13-file.html">file</a></span>(<span class="st">"data.txt"</span>);
+<span class="kw">if</span> f#exists {
     data = f.<span class="fn-call">content</span>();
 } <span class="kw">else</span> {
-    <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"file not found"</span>);
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"file not found\n"</span>);
 }
 
 <span class="cm">// Mutating ops return a FileResult enum; match on the bare variant</span>
-result = <span class="fn-call">delete</span>(<span class="st">"old.txt"</span>);
+result = <span class="bi"><a href="13-file.html">delete</a></span>(<span class="st">"old.txt"</span>);
 <span class="kw">match</span> result {
-    <span class="en">Ok</span>               => <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"deleted"</span>),
-    <span class="en">NotFound</span>         => <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"not found"</span>),
-    <span class="en">PermissionDenied</span> => <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"permission denied"</span>),
-    <span class="en">IsDirectory</span>      => <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"is a directory"</span>),
-    _                => <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"other error"</span>),
+    <span class="en">Ok</span>               =&gt; <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"deleted\n"</span>),
+    <span class="en">NotFound</span>         =&gt; <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"not found\n"</span>),
+    <span class="en">PermissionDenied</span> =&gt; <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"permission denied\n"</span>),
+    <span class="en">IsDirectory</span>      =&gt; <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"is a directory\n"</span>),
+    _                =&gt; <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"other error\n"</span>),
 }
 
 <span class="cm">// Or just check success:</span>
-<span class="kw">if</span> !<span class="fn-call">move</span>(<span class="st">"a.txt"</span>, <span class="st">"b.txt"</span>).<span class="fn-call">ok</span>() { <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"rename failed"</span>); }</code></pre>
+<span class="kw">if</span> !<span class="bi"><a href="13-file.html">move</a></span>(<span class="st">"a.txt"</span>, <span class="st">"b.txt"</span>).<span class="fn-call">ok</span>() { <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"rename failed\n"</span>); }</code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -340,7 +340,7 @@ result = <span class="fn-call">delete</span>(<span class="st">"old.txt"</span>);
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">fn</span> <span class="fn-call">score</span>(item: <span class="kw">const</span> <span class="en">Record</span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> { item.value * <span class="nm">2</span> }
+  <pre><code><span class="kw">fn</span> <span class="fn-call">score</span>(item: <span class="kw">const</span> <span class="en">Record</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { item.<span class="kw">value</span> * <span class="nm">2</span> }
 
 total = <span class="nm">0</span>;
 <span class="kw">for</span> item <span class="kw">in</span> records <span class="kw">par</span>(s=<span class="fn-call">score</span>(item), <span class="nm">4</span>) {
@@ -371,16 +371,18 @@ total = <span class="bi">sum</span>(results)
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="cm">// Pass-through generics work:</span>
-<span class="kw">fn</span> <span class="fn-call">identity</span>&lt;T&gt;(x: T) -> T { x }
-<span class="fn-call">identity</span>(<span class="nm">42</span>)        <span class="cm">// integer</span>
-<span class="fn-call">identity</span>(<span class="st">"hello"</span>)  <span class="cm">// text</span>
+<span class="kw">fn</span> identity&lt;<span class="en">T</span>&gt;(x: <span class="en">T</span>) -&gt; <span class="en">T</span> { x }
+<span class="fn-call">identity</span>(<span class="nm">42</span>);          <span class="cm">// integer</span>
+<span class="fn-call">identity</span>(<span class="st">"hello"</span>);     <span class="cm">// text</span>
 
-<span class="cm">// Operations on T need a bound — `&lt;T: Ordered&gt;` compares, `&lt;T: Addable&gt;` adds:</span>
-<span class="kw">fn</span> <span class="fn-call">largest</span>&lt;T: <span class="ty">Ordered</span>&gt;(a: T, b: T) -&gt; T { <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b } }
+<span class="cm">// Interface bounds work, and are satisfied structurally:</span>
+<span class="kw">fn</span> largest&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(a: <span class="en">T</span>, b: <span class="en">T</span>) -&gt; <span class="en">T</span> { <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b } }
+<span class="fn-call">largest</span>(<span class="nm">3</span>, <span class="nm">9</span>);         <span class="cm">// 9</span>
+<span class="fn-call">largest</span>(<span class="st">"ada"</span>, <span class="st">"bob"</span>); <span class="cm">// "bob" — same function</span>
 
-<span class="cm">// A per-type version is what you write when no bound fits:</span>
-<span class="kw">fn</span> <span class="fn-call">max_int</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -> <span class="ty"><a href="stdlib-types.html">integer</a></span> {
-    <span class="kw">if</span> a > b { a } <span class="kw">else</span> { b }
+<span class="cm">// A per-type version is still what you write when the bound does not fit:</span>
+<span class="kw">fn</span> <span class="fn-call">max_int</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
+    <span class="kw">if</span> a &gt; b { a } <span class="kw">else</span> { b }
 }</code></pre>
 </div>
 <div>
@@ -405,11 +407,11 @@ T = <span class="fn-call">TypeVar</span>(<span class="st">"T"</span>)
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code><span class="kw">fn</span> <span class="fn-call">connect</span>(host: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">80</span>, tls: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>) -> <span class="ty"><a href="stdlib-types.html">text</a></span> { ... }
+  <pre><code><span class="kw">fn</span> <span class="fn-call">connect</span>(host: <span class="ty"><a href="stdlib-types.html">text</a></span>, port: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">80</span>, tls: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{host}:{port} tls={tls}"</span> }
 
 <span class="fn-call">connect</span>(<span class="st">"localhost"</span>);                <span class="cm">// uses defaults</span>
 <span class="fn-call">connect</span>(<span class="st">"localhost"</span>, tls: <span class="kw">false</span>);    <span class="cm">// named arg — skips port</span>
-<span class="fn-call">connect</span>(<span class="st">"localhost"</span>, <span class="nm">443</span>, <span class="kw">false</span>);   <span class="cm">// positional — all explicit</span></code></pre>
+<span class="fn-call">connect</span>(<span class="st">"localhost"</span>, <span class="nm">443</span>, <span class="kw">false</span>);    <span class="cm">// positional — all explicit</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>
@@ -460,10 +462,10 @@ T = <span class="fn-call">TypeVar</span>(<span class="st">"T"</span>)
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
-  <pre><code>area  = <span class="en"><a href="stdlib-math.html">PI</a></span> * r ** <span class="nm">2.0</span>      <span class="cm">// ** exponentiation (like Python)</span>
-bits  = a | b              <span class="cm">// bitwise OR</span>
-xor   = a ^ b              <span class="cm">// bitwise XOR — not exponentiation</span>
-cube  = x ** <span class="nm">3</span>             <span class="cm">// integer cube — exact: 2 ** 10 == 1024</span></code></pre>
+  <pre><code>area  = <span class="en"><a href="stdlib-math.html">PI</a></span> * r ** <span class="nm">2.0</span>;      <span class="cm">// ** exponentiation (like Python)</span>
+bits  = a | b;              <span class="cm">// bitwise OR</span>
+xor   = a ^ b;              <span class="cm">// bitwise XOR — not exponentiation</span>
+cube  = x ** <span class="nm">3</span>;             <span class="cm">// integer cube — exact: 2 ** 10 == 1024</span></code></pre>
 </div>
 <div>
   <p class="lang-label python-label">Python</p>

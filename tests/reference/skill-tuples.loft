@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Tuples — the notation, the literal, element access, destructuring,
+// a tuple in a match, and nesting.
+
+fn min_max(values: vector<integer>) -> (integer, integer) {
+  lo = values[0] ?? 0;
+  hi = lo;
+  for v in values { if v < lo { lo = v; } if v > hi { hi = v; } }
+  (lo, hi)
+}
+
+// Function return
+fn classify(t: (integer, text)) -> text {
+    match t {
+        (0, _)   => "zero",
+        (n, msg) => "{n}: {msg}",
+    }
+}
+
+fn test_the_tuple_forms() {
+  values = [4, 9, 1];
+  // Type notation — two or more element types (single-element tuples
+  // are not allowed; use the bare type instead).
+  t: (integer, text) = (3, "hi");
+
+  // Literal
+  pair = (1, "hello");
+
+  // Element access (zero-based integer literal — NOT a variable index).
+  a = pair.0;        // integer
+  b = pair.1;        // text
+
+  // Element assignment
+  pair.0 = 5;
+  pair.0 += 3;
+
+  // Destructuring
+  (lo, hi) = min_max(values);
+
+  // Nested tuples — chain the `.N` accessors.
+  nested: ((integer, integer), boolean) = ((1, 2), true);
+  inner_first  = nested.0.0;       // 1
+  inner_second = nested.0.1;       // 2
+  flag         = nested.1;          // true
+  assert(t.0 == 3 and a == 1 and b == "hello" and pair.0 == 8, "notation, literal, access, assignment");
+  assert(lo == 1 and hi == 9, "destructuring");
+  assert(classify((0, "x")) == "zero" and classify((2, "two")) == "2: two", "a tuple in a match");
+  assert(inner_first == 1 and inner_second == 2 and flag, "nesting");
+}

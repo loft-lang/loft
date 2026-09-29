@@ -1,3 +1,7 @@
+// @EXPECT_WARNING: is stored into the return value of the non-null type
+// ↑ This file covers a function declared NON-null whose branch returns `null` — still legal,
+// and `(N-Join)` + `(N-Store)` warn it (loft#1714).  The declaration stays non-null on purpose:
+// the `-> T?` spelling lowers through a different return path, which is not what this covers.
 // @PLN25 nullable sequences — a vector<T> can be null (absent), distinct from
 // an empty []. Null tests via the store_nr sentinel, NOT rec==0 (which empty
 // also has), so `[] == null` is false. Runs on both --interpret and --native.

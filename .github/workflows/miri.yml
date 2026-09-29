@@ -153,6 +153,61 @@ jobs:
             *) echo "::warning::the plan audit could not complete (exit $rc); its result is UNKNOWN, not clean" ;;
           esac
 
+  stale-claims:
+    # @nightly-class: report — a limitation the reference still states after its issue closed (@PLN176)
+    name: Stale limitation claims in the reference docs
+    # Nightly-only: a sentence goes stale when its ISSUE closes, which is an event outside
+    # any commit — a push-time gate never fires for it.  `make ci` prints the offline half
+    # (which sentences are limitations, and their guards); this leg asks the tracker.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Ask the tracker about every limitation sentence
+        # A limitation on LOFT.md is what an agent reads first and believes, so one that
+        # outlives its issue routes every consumer around a feature that works — the fix
+        # delivers nothing until the page catches up.  Measured 2026-09-28: two of five such
+        # sentences described bugs fixed three weeks earlier, each with a regression guard
+        # asserting the opposite of the page.  ONE tracking issue, refreshed while any
+        # sentence is stale and closed when none is (the `notify` pattern above); the body
+        # names each sentence with the guard that says which way its issue went.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          out=$(python3 scripts/rule_tags.py claims --issues --gate 2>&1); rc=$?
+          set -e
+          echo "$out"
+          gh label create stale-claim --color 5319e7 \
+            --description "A reference doc states a limitation whose issue has closed (@PLN176)" --force >/dev/null 2>&1 || true
+          existing=$(gh issue list --state open --label stale-claim \
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ "$rc" = 0 ]; then
+            echo "every limitation sentence cites an open issue"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "✅ No limitation sentence cites a closed issue as of $RUN_URL — closing." || true
+              gh issue close "$existing" --reason completed || true
+            fi
+            exit 0
+          fi
+          # Unreachable issues also exit 1: an answer the tracker could not give is UNKNOWN,
+          # not clean, and the body says which.
+          echo "::warning::a reference doc states a limitation whose issue has closed (or could not be asked)"
+          body=$(printf 'A hand-written reference doc states a limitation whose tracking issue has CLOSED — the page is describing a bug that may be fixed, and every agent that reads it routes around a feature that may work (@PLN176).\n\nRun: %s\n\n```\n%s\n```\n\nFor each line: a LIFTED limitation leaves the page — state the current behaviour with the guard it names and move the record to the doc'"'"'s `-history.md` companion; one that still holds cites the rule that makes it a decision (DOC_CONTRACT rule 23).  This issue refreshes while any sentence is stale and closes when none is.' "$RUN_URL" "$out")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "updated existing issue #$existing"
+          else
+            gh issue create --title "A reference doc states a limitation whose issue has closed" \
+              --label stale-claim --body "$body"
+            echo "opened a new tracking issue"
+          fi
+
   miri:
     # @nightly-class: unsound — hard UB — alignment, OOB, UAF, uninit
     name: Miri hard-UB gate (${{ matrix.os }})
@@ -183,7 +238,8 @@ jobs:
           components: miri
 
       - name: Cache cargo registry + miri target
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -241,6 +297,15 @@ jobs:
             database::worker_output_slot_tests::adopt_store_pushes_to_parent_allocations \
             database::worker_output_slot_tests::take_slot_returns_owned_store_and_leaves_sentinel \
             database::store_rebase_tests::translate_rewrites_mapped
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/miri
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   asan:
     # @nightly-class: unsound — an out-of-bounds or use-after-free access
@@ -286,7 +351,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -339,6 +405,15 @@ jobs:
           #   loft's proc-macro deps under `-Zsanitizer` + `--target` — the same E0463
           #   that keeps doctests out of this sweep. They carry no ASan coverage either
           #   way, and the normal Test jobs validate what they assert.
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # @PLN85 — the interpreter LEAK GATE.  SEPARATE from the ASan UAF/OOB sweep above:
   # its own runner (the slow single-threaded leak pass never gates the fast sweep) and
@@ -376,7 +451,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mold
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -501,6 +577,15 @@ jobs:
         run: >
           ABIN=target/${{ matrix.target }}/release/loft
           bash scripts/asan_leak_scan.sh tests/scripts/*.loft tests/docs/*.loft
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   poison:
     # @nightly-class: unsound — a store-internal use-after-free the allocator hides
@@ -517,7 +602,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -565,6 +651,15 @@ jobs:
           cargo nextest run --profile ci --release
           --lib --test issues --test wrap --test strings --test frame_vars
           -E 'not test(library_suite)'
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   stack-shadow:
     # @nightly-class: unsound — a frame slot nobody wrote, mistyped, or stale
@@ -581,7 +676,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -627,6 +723,15 @@ jobs:
           cargo nextest run --profile ci --release
           --lib --test issues --test wrap --test strings --test frame_vars
           -E 'not test(library_suite)'
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   tsan:
     # @nightly-class: unsound — a data race, which is UB and has no other coverage
@@ -645,7 +750,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -681,6 +787,15 @@ jobs:
           --target x86_64-unknown-linux-gnu
           --config 'target.x86_64-unknown-linux-gnu.rustflags=["-Zsanitizer=thread"]'
           --release --no-fail-fast --test threading --test threading_chars
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   native-asan:
     # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
@@ -700,7 +815,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -756,6 +872,15 @@ jobs:
             ./target/release/loft --native "tests/scripts/$s.loft"
             echo "::endgroup::"
           done
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   valgrind:
     # @nightly-class: unsound — an invalid or uninitialised read in the SHIPPED release binary
@@ -774,7 +899,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold valgrind
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -827,6 +953,15 @@ jobs:
           name: valgrind-sweep
           path: target/vg-red/
           if-no-files-found: warn
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   release-gate-sweeps:
     # @nightly-class: report — coverage replayed for release evidence, not an instrument
@@ -845,7 +980,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -872,6 +1008,15 @@ jobs:
       # reason names this job.
       - name: Interpreter corpus — whole, in one process
         run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   debug-asserts:
     # @nightly-class: unsound — a violated internal invariant
@@ -888,7 +1033,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -927,6 +1073,15 @@ jobs:
           cargo test --release --no-fail-fast
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip library_suite
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   audit:
     # @nightly-class: report — an advisory against a dependency is not the language broken
@@ -997,7 +1152,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1057,6 +1213,15 @@ jobs:
             /tmp/loft_*_test.rs
           if-no-files-found: ignore
           retention-days: 14
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Doc-index hygiene (plan-37) — the authoritative DAILY catch.  The per-PR
   # `index-hygiene` job in ci.yml is advisory (non-blocking), so a broken
@@ -1074,15 +1239,22 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
+      # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).
+      # The path list must stay IDENTICAL to that job's, or the restore never matches.
+      - name: Restore cargo registry and build (ci.yml's test job's, read-only)
+        uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.loft/build-cache
             target
-          key: ubuntu-hygiene-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ubuntu-hygiene-cargo-
+            !target/loft-native-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # `make index` runs `target/release/loft --native-release` (it exits 1
@@ -1128,7 +1300,8 @@ jobs:
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -1181,6 +1354,15 @@ jobs:
           elif echo "$out" | grep -q "NOT GREEN"; then
             echo "::warning::library audit (native) not green — see job summary"
           fi
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # @PLN54 S7 — the nightly's own smoke alarm.  Nothing gates on this workflow, and
   # `continue-on-error` / `fail-fast: false` legs keep the OVERALL run green even
@@ -1296,7 +1478,7 @@ jobs:
   # without opening anything.
   daily-status:
     name: Daily status (the one place to look)
-    needs: [stale-plans-audit, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
+    needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
             toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a

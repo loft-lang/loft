@@ -20,7 +20,7 @@
 //       tools/audience-demo/crystal_stress.loft
 
 use audience_crystal::*;
-use gridmesh;
+use gridmesh::*;
 
 // Average full-build CPU cost per segment (µs), over `reps` builds.
 fn us_per_seg(snap: CellSnap, st: CrystalState, reps: integer) -> integer {

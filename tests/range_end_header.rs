@@ -16,8 +16,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_doubled", 0, 2),      // through a field path
     ("n_square_sum", 0, 2),   // nested, the header held by the outer loop
     ("n_grows", 1, 1),        // pushes onto v: grows, keeps its local
-    ("n_into_other", 1, 1),   // pushes onto another vector: grows, keeps its local
-    ("n_empty_sum", 0, 1),    // growth-free
+    ("n_into_other", 0, 1), // pushes onto ANOTHER vector: since `@FR-R-Base`'s growth clause it holds v's base and reads the header
+    ("n_empty_sum", 0, 1),  // growth-free
     ("n_all_but_last", 1, 1), // an end that is not a plain length
 ];
 

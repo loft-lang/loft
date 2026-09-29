@@ -197,6 +197,7 @@ fn visit_list(ls: &mut Vec<Value>, cx: &mut Cx) {
 /// `if 0 <= lo && lo <= hi && hi <= len(V) { keep } else { the statements as written }`.
 fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
     let ops = cx.ops;
+    crate::rewrite_census::fired("R-Compact", 1);
     if crate::keys::trace_compact() {
         eprintln!(
             "[compact] fn={} t={} ADMITTED: the rebuild is one in-place keep of [lo, hi)",

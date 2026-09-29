@@ -1491,6 +1491,7 @@ pub struct LoftStore {
     pub claim_fn: ...,                   // allocate words → rec
     pub reload_fn: ...,                  // refresh ptr/size after alloc
     pub resize_fn: ...,                  // resize record → new rec
+    pub foreign_fn: ...,                 // adopt the cdylib's own bytes, no copy (@PLN174 F5)
 }
 ```
 
@@ -1577,6 +1578,23 @@ The `vector_push_*` methods update `v.rec` in place if the vector record
 moves during resize. The minimum allocation is 11 elements (matching the
 interpreter's convention). The `store_nr` is derived automatically from
 the `LoftStore` handle.
+
+### A read-only answer with no copy (@PLN174 F5)
+
+```rust
+// Hand loft the cdylib's own Vec<u8> as a `vector<u8>`: no copy, released with the last
+// loft handle over it (in this crate's allocator).  Reads answer exactly what
+// `alloc_vector_from_bytes` answers; a WRITE into it halts the program with the advice
+// to copy first (`w = v`).  Copies on a host without `foreign_fn`.
+let decoded: Vec<u8> = decode(input);
+unsafe { store.foreign_vector_from_owned(decoded) }
+```
+
+Use it where the library's contract already says "read the result" — a decoded payload,
+a file's bytes — never for a buffer the caller is meant to grow.  A library that calls it
+declares the loft floor that carries loft-ffi 0.1.2 in `loft.toml` (`loft = ">=…"`): on an
+older host the field is past the handle it was given.  DATABASE.md § Foreign stores has
+the runtime side.
 
 ### Callback architecture
 
@@ -2309,6 +2327,7 @@ and the library-extraction arc.
 | **PKG.PREBUILT** (@PLN21) — native prebuilts, no rustc to *use* a lib | **Producer SHIPPED, distribution glue OPEN.** `loft build-native` + the 4-OS `prebuild-native.yml` build cdylibs; consumer `fetch_prebuilt` loads a host-matching one.  Remaining: wire workflow artifacts → `index.json binaries[<triple>]`, the submit-CI gates, and a manylinux glibc baseline.  Scoped to **hand-written** native libs (auto-compiled libs are loft-build-locked — [plans/21](plans/21-prebuilt-native-libs/README.md)). |
 | **PKG.EXTRACT** — move `lib/*/` to per-family GitHub repos | **In progress.** Libraries already live in `loft-lang/loft-libs-*` + published; the prerequisite arc (drain library `#native` code out of the compiler crate) is active — [`lib_plans/12-library-extraction/`](lib_plans/12-library-extraction). |
 | **PKG.STUB** — generated API stubs + `loft api` | **SHIPPED** (stubs on install/update/pin, `loft api [name]`, `tests/api_discovery.rs`).  Remaining: parser-walk upgrade shared with [API_SURFACE.md](API_SURFACE.md) `api-lint`. |
+| **PKG.FOREIGN-HOST** — a host hands a frame over as a FOREIGN store (@PLN174, closed 2026-09-28 with this tail) | **Open, a design pick.** The library side is built: a cdylib answers its buffer with no copy (`LoftStore::foreign_vector_from_owned`, loft-ffi 0.1.2) and cbor reads a frame's payloads as spans (−11 % on `check_request` over a foreign frame, `alloc-temp.md` § F6).  What is left is WHICH host produces pluginabi's frame that way — the engine's plugin channel in Rust through that bridge, or the browser through a typed array (`BROWSER_INTEROP.md`, the plan's F7) — and its cells are `174-foreign-bridge.loft`'s under the target's parity gate. |
 | **PKG.CNAME** — a `[c]` library named ONCE, by identity | **Design only, not built** — [plans/24-c-abi-binding/LIBRARY_NAMING.md](plans/24-c-abi-binding/LIBRARY_NAMING.md).  Today a manifest names a library by its Linux ELF filename and every consumer recovers the identity by string surgery; four measured failures came out of that, each currently carrying its own local workaround (`-l:<file>` for the link stem, `host_lib_variants` for the probe, "at most one optional library per package" for symbol attribution).  **Trigger: the fifth one** — a new platform, or any consumer that has to re-derive a spelling from a filename. |
 
 **Remaining, in order:**

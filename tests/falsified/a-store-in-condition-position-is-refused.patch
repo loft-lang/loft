@@ -1,0 +1,697 @@
+diff --git b/src/create.rs a/src/create.rs
+index f81196b..be3ab4c 100644
+--- b/src/create.rs
++++ a/src/create.rs
+@@ -192,23 +192,6 @@ pub const OPERATORS: &[fn(&mut State)] = &["
+         }
+     }
+     writeln!(into, "];")?;
+-    // The loft name of every slot above, in the same order: what a stdlib parsed at run
+-    // time is checked against (`stdlib_ops::verify`), because the table is POSITIONAL —
+-    // one declaration more or fewer in `default/` moves every later body under the wrong
+-    // opcode, and nothing but this list can tell.
+-    writeln!(
+-        into,
+-        "\n/// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations\n\
+-         /// of the `default/` this binary was generated from.\n\
+-         pub const OPERATOR_NAMES: &[&str] = &["
+-    )?;
+-    for d_nr in 0..data.definitions() {
+-        let n = &data.def(d_nr).name;
+-        if data.def(d_nr).is_operator() {
+-            writeln!(into, "    \"{n}\",")?;
+-        }
+-    }
+-    writeln!(into, "];")?;
+     for d_nr in 0..data.definitions() {
+         let n = &data.def(d_nr).name;
+         if !data.def(d_nr).is_operator() {
+diff --git b/src/fill.rs a/src/fill.rs
+index 7117dc1..37067eb 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -348,330 +348,6 @@ pub const OPERATORS: &[fn(&mut State)] = &[
+     coroutine_retain,
+ ];
+ 
+-/// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
+-/// of the `default/` this binary was generated from.
+-pub const OPERATOR_NAMES: &[&str] = &[
+-    "OpGoto",
+-    "OpGotoWord",
+-    "OpGotoFalse",
+-    "OpGotoFalseWord",
+-    "OpCall",
+-    "OpReturn",
+-    "OpFreeStack",
+-    "OpReserveFrame",
+-    "OpConstTrue",
+-    "OpConstFalse",
+-    "OpCastTextFromBool",
+-    "OpVarBool",
+-    "OpPutBool",
+-    "OpNot",
+-    "OpRangeDefault",
+-    "OpConstInt",
+-    "OpConstShort",
+-    "OpConstTiny",
+-    "OpVarInt",
+-    "OpVarCharacter",
+-    "OpPutInt",
+-    "OpVarNarrow",
+-    "OpPutNarrow",
+-    "OpPutCharacter",
+-    "OpConvIntFromNull",
+-    "OpConvBoolFromNull",
+-    "OpConvCharacterFromNull",
+-    "OpConvCharacterFromInt",
+-    "OpConstLongText",
+-    "OpCastIntFromText",
+-    "OpCastSingleFromText",
+-    "OpCastFloatFromText",
+-    "OpAbsInt",
+-    "OpMinSingleInt",
+-    "OpBitNotSingleInt",
+-    "OpConvFloatFromInt",
+-    "OpConvSingleFromInt",
+-    "OpConvBoolFromInt",
+-    "OpAddInt",
+-    "OpMinInt",
+-    "OpMulInt",
+-    "OpDivInt",
+-    "OpRemInt",
+-    "OpAddIntNullable",
+-    "OpMinIntNullable",
+-    "OpMulIntNullable",
+-    "OpDivIntNullable",
+-    "OpRemIntNullable",
+-    "OpLandInt",
+-    "OpLorInt",
+-    "OpEorInt",
+-    "OpSLeftInt",
+-    "OpSRightInt",
+-    "OpEqInt",
+-    "OpNeInt",
+-    "OpLtInt",
+-    "OpLeInt",
+-    "OpFormatInt",
+-    "OpFormatStackInt",
+-    "OpConstSingle",
+-    "OpVarSingle",
+-    "OpPutSingle",
+-    "OpConvSingleFromNull",
+-    "OpAbsSingle",
+-    "OpMinSingleSingle",
+-    "OpCastIntFromSingle",
+-    "OpConvFloatFromSingle",
+-    "OpConvBoolFromSingle",
+-    "OpAddSingle",
+-    "OpMinSingle",
+-    "OpMulSingle",
+-    "OpDivSingle",
+-    "OpRemSingle",
+-    "OpDivSingleNullable",
+-    "OpRemSingleNullable",
+-    "OpMathFuncSingle",
+-    "OpMathFunc2Single",
+-    "OpPowSingle",
+-    "OpEqSingle",
+-    "OpNeSingle",
+-    "OpLtSingle",
+-    "OpLeSingle",
+-    "OpFormatSingle",
+-    "OpFormatStackSingle",
+-    "OpConstFloat",
+-    "OpVarFloat",
+-    "OpPutFloat",
+-    "OpConvFloatFromNull",
+-    "OpAbsFloat",
+-    "OpMathPiFloat",
+-    "OpMathEFloat",
+-    "OpMathFuncFloat",
+-    "OpMathFunc2Float",
+-    "OpPowFloat",
+-    "OpMinSingleFloat",
+-    "OpCastSingleFromFloat",
+-    "OpCastIntFromFloat",
+-    "OpConvBoolFromFloat",
+-    "OpAddFloat",
+-    "OpMinFloat",
+-    "OpMulFloat",
+-    "OpDivFloat",
+-    "OpRemFloat",
+-    "OpDivFloatNullable",
+-    "OpRemFloatNullable",
+-    "OpEqFloat",
+-    "OpNeFloat",
+-    "OpLtFloat",
+-    "OpLeFloat",
+-    "OpFormatFloat",
+-    "OpFormatStackFloat",
+-    "OpVarText",
+-    "OpArgText",
+-    "OpConstText",
+-    "OpConvTextFromNull",
+-    "OpLengthText",
+-    "OpSizeText",
+-    "OpLengthCharacter",
+-    "OpConvBoolFromText",
+-    "OpInitText",
+-    "OpAppendText",
+-    "OpPutText",
+-    "OpGetTextSub",
+-    "OpTextCharacter",
+-    "OpTextCharacterNullable",
+-    "OpConvBoolFromCharacter",
+-    "OpClearText",
+-    "OpFreeText",
+-    "OpEqText",
+-    "OpNeText",
+-    "OpLtText",
+-    "OpLeText",
+-    "OpFormatText",
+-    "OpFormatStackText",
+-    "OpAppendCharacter",
+-    "OpTextCompare",
+-    "OpCastCharacterFromInt",
+-    "OpConvIntFromCharacter",
+-    "OpVarEnum",
+-    "OpConstEnum",
+-    "OpPutEnum",
+-    "OpConvBoolFromEnum",
+-    "OpCastTextFromEnum",
+-    "OpCastEnumFromText",
+-    "OpConvIntFromEnum",
+-    "OpCastEnumFromInt",
+-    "OpConvEnumFromNull",
+-    "OpDatabase",
+-    "OpFormatDatabase",
+-    "OpFormatStackDatabase",
+-    "OpConvBoolFromRef",
+-    "OpConvRefFromNull",
+-    "OpInitRef",
+-    "OpNullRefSentinel",
+-    "OpInitRefSentinel",
+-    "OpFreeRef",
+-    "OpStoreTag",
+-    "OpFreeRefTag",
+-    "OpFreeRefIfDistinct",
+-    "OpFreeRefOrHandUp",
+-    "OpFreeRefUnlessEntry",
+-    "OpFreeScratch",
+-    "OpSizeofRef",
+-    "OpVarRef",
+-    "OpPutRef",
+-    "OpEqRef",
+-    "OpNeRef",
+-    "OpGetRef",
+-    "OpSetRef",
+-    "OpSetDbRef",
+-    "OpGetDbRef",
+-    "OpGetField",
+-    "OpGetInt",
+-    "OpGetCharacter",
+-    "OpGetSingle",
+-    "OpGetFloat",
+-    "OpGetByte",
+-    "OpGetByteNullable",
+-    "OpGetEnum",
+-    "OpSetEnum",
+-    "OpGetBoolean",
+-    "OpSetBoolean",
+-    "OpGetShort",
+-    "OpGetText",
+-    "OpSetInt",
+-    "OpSetCharacter",
+-    "OpSetSingle",
+-    "OpSetFloat",
+-    "OpSetByte",
+-    "OpSetByteNullable",
+-    "OpSetShort",
+-    "OpGetInt4",
+-    "OpSetInt4",
+-    "OpGetInt4Raw",
+-    "OpSetInt4Raw",
+-    "OpGetInt4Full",
+-    "OpGetShortRaw",
+-    "OpSetShortRaw",
+-    "OpGetShortSpare",
+-    "OpGetShortFull",
+-    "OpSetText",
+-    "OpVarVector",
+-    "OpTagFault",
+-    "OpLengthVector",
+-    "OpVectorIsNull",
+-    "OpRefIsNull",
+-    "OpDistinctStore",
+-    "OpRefAlias",
+-    "OpSizeVector",
+-    "OpSizeStruct",
+-    "OpSizeScalar",
+-    "OpLengthSorted",
+-    "OpClearVector",
+-    "OpGetVector",
+-    "OpVectorRef",
+-    "OpGetVectorNullable",
+-    "OpVectorRefNullable",
+-    "OpCastVectorFromText",
+-    "OpRemoveVector",
+-    "OpKeepVectorRange",
+-    "OpAppendTextBytes",
+-    "OpInsertVector",
+-    "OpNewRecord",
+-    "OpFinishRecord",
+-    "OpAppendVector",
+-    "OpPushInt",
+-    "OpPushInt4",
+-    "OpPushFloat",
+-    "OpPushSingle",
+-    "OpPushBoolean",
+-    "OpPushEnum",
+-    "OpPushCharacter",
+-    "OpPushByte",
+-    "OpReplaceVector",
+-    "OpClaimChildRec",
+-    "OpRefFromChildRec",
+-    "OpGetRecord",
+-    "OpValidate",
+-    "OpHashAdd",
+-    "OpHashFind",
+-    "OpHashRemove",
+-    "OpLengthHash",
+-    "OpReserveHash",
+-    "OpSizeHash",
+-    "OpLengthIndex",
+-    "OpEqBool",
+-    "OpNeBool",
+-    "OpPanic",
+-    "OpPrint",
+-    "OpIterate",
+-    "OpStep",
+-    "OpRemove",
+-    "OpClear",
+-    "OpAppendCopy",
+-    "OpCopyRecord",
+-    "OpPlaceRecord",
+-    "OpMoveRecord",
+-    "OpFreeRecordIn",
+-    "OpCopyRefOrNull",
+-    "OpBindOrCopy",
+-    "OpReplaceKeyed",
+-    "OpClearKeyed",
+-    "OpIndexGroup",
+-    "OpLinkRecord",
+-    "OpFillKeyed",
+-    "OpSetKeyed",
+-    "OpLengthSpatial",
+-    "OpLengthTrie",
+-    "OpStaticCall",
+-    "OpCreateStack",
+-    "OpInitCreateStack",
+-    "OpGetStackText",
+-    "OpGetStackRef",
+-    "OpSetStackRef",
+-    "OpSetStackFnRef",
+-    "OpGetStackFnRef",
+-    "OpDropFnRef",
+-    "OpFnRefDetachShared",
+-    "OpFnRefClosure",
+-    "OpAppendStackText",
+-    "OpAppendStackCharacter",
+-    "OpClearStackText",
+-    "OpParallelBegin",
+-    "OpParallelArm",
+-    "OpParallelJoin",
+-    "OpPreAllocVector",
+-    "OpReserveVector",
+-    "OpGetFile",
+-    "OpGetDir",
+-    "OpGetFileText",
+-    "OpWriteFile",
+-    "OpReadFile",
+-    "OpSeekFile",
+-    "OpSizeFile",
+-    "OpDelete",
+-    "OpMoveFile",
+-    "OpTruncateFile",
+-    "OpSyncFile",
+-    "OpDeliver",
+-    "OpExpose",
+-    "OpRelease",
+-    "OpCallRef",
+-    "OpMkdir",
+-    "OpMkdirAll",
+-    "OpRmdir",
+-    "OpReverseVector",
+-    "OpSortVector",
+-    "OpCoroutineCreate",
+-    "OpCoroutineNext",
+-    "OpCoroutineReturn",
+-    "OpCoroutineYield",
+-    "OpCoroutineExhausted",
+-    "OpVarFnRef",
+-    "OpPutFnRef",
+-    "OpConstRef",
+-    "OpConstStoreText",
+-    "OpCallRefStore",
+-    "OpBindFnRefResult",
+-    "OpCoroutineRetain",
+-];
+-
+ fn goto(s: &mut State) {
+     let v_step = s.code::<i8>();
+     s.code_pos = (s.code_pos as i32 + i32::from(v_step)) as u32;
+diff --git b/src/lib.rs a/src/lib.rs
+index 8152c44..d909cb6 100644
+--- b/src/lib.rs
++++ a/src/lib.rs
+@@ -310,7 +310,6 @@ pub mod null_census;
+ pub mod spent;
+ pub mod stack_census;
+ pub mod stack_verify;
+-pub mod stdlib_ops;
+ // `net::fetch_bytes` (behind `store_load_url*`) exists exactly where `load_url`
+ // does: a native `registry` build, or the browser (`--html`) target.
+ pub mod host;
+diff --git b/src/main.rs a/src/main.rs
+index 0ae8381..92adc93 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -9220,14 +9220,6 @@ fn main() {
+         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
+         if !stdlib_warm {
+             if let Err(e) = p.parse_dir(&default_str, true, false) {
+-                if e.kind() == std::io::ErrorKind::InvalidData {
+-                    // The library was found and read, and refused: a parse error in it,
+-                    // or a `default/` that does not match this binary (`stdlib_ops`).
+-                    // The message carries its own cure; the path hint below would
+-                    // send the reader looking for a directory that is right there.
+-                    eprintln!("loft: {e}");
+-                    std::process::exit(1);
+-                }
+                 eprintln!(
+                     "loft: cannot load standard library from `{}`: {e}",
+                     default_dir.display()
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index b86da88..64f7704 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3338,15 +3338,7 @@ use #count instead"
+         }
+         let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+-            let at = self.lexer.peek().position.clone();
+-            let tp = self.expression(&mut if_expr);
+-            // The filter is a CONDITION, and it took the expression raw: a store there
+-            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+-            // interpreter, and a comprehension's filter answered wrong on the same
+-            // spelling.  Routed through the one condition coercion so it is refused
+-            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+-            // present-or-absent here as it is there.
+-            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
++            self.expression(&mut if_expr);
+             if_expr
+         } else {
+             Value::Null
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 6de6f77..5deca09 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5173,7 +5173,7 @@ impl Parser {
+         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+         // the arms below, and an `else if` chain's own conditions, are past the pair.
+         self.fit_in_condition = false;
+-        self.convert_condition_at(&mut test, &tp, Some(&cond_at));
++        self.convert_condition(&mut test, &tp);
+         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
+         // matching branch (then for `!= null`/truthy, else for `== null`).
+         let narrow = self.narrowing_from_condition(&test);
+@@ -18062,7 +18062,7 @@ impl Parser {
+             // a heap handle raw here: the interpreter accepted `assert(v)` while `--native`
+             // refused to compile it (`(DbRef) as u8`), which is one program and two drivers
+             // disagreeing about whether it is a program at all.
+-            self.convert_condition_at(&mut test, &types[0], Some(call_pos));
++            self.convert_condition(&mut test, &types[0]);
+             let message = if list.len() > 1 {
+                 list[1].clone()
+             } else {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 25b5342..4870b8e 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1489,13 +1489,12 @@ impl Parser {
+         // loft#986 — see `in_control_head`: the `{` after the condition opens the body.
+         let outer_head = self.in_control_head;
+         self.in_control_head = true;
+-        let cond_at = self.lexer.peek().position.clone();
+         let cond_tp = self.expression(&mut cond);
+         self.in_control_head = outer_head;
+         // The same coercion `if` performs — a `while` over a collection handle is the
+         // identical position, and reading a pointer's first byte as the flag is how the
+         // loop ran the wrong number of times.
+-        self.convert_condition_at(&mut cond, &cond_tp, Some(&cond_at));
++        self.convert_condition(&mut cond, &cond_tp);
+         if !self.first_pass && matches!(cond, Value::Null) {
+             diagnostic!(self.lexer, Level::Error, "Expected condition after 'while'");
+             return;
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 1953467..f79f62d 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -3761,19 +3761,6 @@ impl Parser {
+     /// # Errors
+     /// With filesystem problems.
+     pub fn parse_dir(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
+-        self.parse_dir_inner(dir, default, debug)?;
+-        // The stdlib is checked ONCE, here at the top-level call and never inside the
+-        // recursion below, where the list is still being filled: its operator declarations
+-        // must be, slot for slot, the ones this binary's dispatch table was generated from,
+-        // or the refusal is the ONLY thing standing between the run and a corrupt
+-        // reference (`stdlib_ops`).
+-        if default && let Err(msg) = crate::stdlib_ops::verify(&self.data, dir) {
+-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+-        }
+-        Ok(())
+-    }
+-
+-    fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
+         let paths = read_dir(dir)?;
+         let mut files: BTreeSet<String> = BTreeSet::new();
+         for path in paths {
+@@ -3793,7 +3780,7 @@ impl Parser {
+             let from = self.data.definitions();
+             let data = metadata(&f)?;
+             if data.is_dir() {
+-                self.parse_dir_inner(&f, default, debug)?;
++                self.parse_dir(&f, default, debug)?;
+             } else {
+                 self.parse(&f, default);
+                 // Errors stop the load; warnings and advice do not.  `parse`
+@@ -5231,39 +5218,6 @@ impl Parser {
+     /// next argument off its slot and ended a run in a SIGSEGV.  The type list is the one
+     /// [`coalesce_not_null`](Parser::coalesce_not_null) uses, for the same reason.
+     pub(crate) fn convert_condition(&mut self, code: &mut Value, tp: &Type) -> bool {
+-        self.convert_condition_at(code, tp, None)
+-    }
+-
+-    /// [`convert_condition`](Parser::convert_condition) anchored at the condition's own
+-    /// start, so the refusal below names the expression and not the `{` after it.
+-    ///
+-    /// **A store stays a statement (@C130).**  `if v[9] = 2 { … }` is the C `=`-for-`==`
+-    /// typo, and it is refused here rather than read as a flag: the expression answers
+-    /// NOTHING, so there is no value to test.  Nothing is wrong with the pair of types —
+-    /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
+-    /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
+-    /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
+-    /// ()`): one program, two drivers disagreeing whether it is a program (measured
+-    /// 2026-09-28, both `if` and `while`).  A `Never` condition (a `return` in it) is not
+-    /// this case and keeps its own path.
+-    pub(crate) fn convert_condition_at(
+-        &mut self,
+-        code: &mut Value,
+-        tp: &Type,
+-        at: Option<&Position>,
+-    ) -> bool {
+-        if matches!(tp.base(), Type::Void) {
+-            if !self.first_pass {
+-                let msg = "A condition needs a value, and this expression answers nothing \
+-                           — write `==` to compare, or move the store to its own line";
+-                if let Some(at) = at {
+-                    diagnostic_at!(self.lexer, at, Level::Error, "{msg}");
+-                } else {
+-                    diagnostic!(self.lexer, Level::Error, "{msg}");
+-                }
+-            }
+-            return false;
+-        }
+         if Self::is_heap_handle(tp) {
+             if !self.first_pass {
+                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 412c70b..dd60378 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3103,15 +3103,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         self.vars.defined(for_var);
+         let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+-            let at = self.lexer.peek().position.clone();
+-            let tp = self.expression(&mut if_expr);
+-            // The filter is a CONDITION, and it took the expression raw: a store there
+-            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+-            // interpreter, and a comprehension's filter answered wrong on the same
+-            // spelling.  Routed through the one condition coercion so it is refused
+-            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+-            // present-or-absent here as it is there.
+-            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
++            self.expression(&mut if_expr);
+             if_expr
+         } else {
+             Value::Null
+diff --git b/src/stdlib_ops.rs a/src/stdlib_ops.rs
+deleted file mode 100644
+index 87fc354..0000000
+--- b/src/stdlib_ops.rs
++++ /dev/null
+@@ -1,141 +0,0 @@
+-// Copyright (c) 2026 Jurjen Stellingwerff
+-// SPDX-License-Identifier: LGPL-3.0-or-later
+-
+-//! @I67 (opcode implementations) — a standard library that does not match the binary is
+-//! refused at load.
+-//!
+-//! The interpreter dispatches an operator by POSITION: `Data::op_code` hands every operator
+-//! declaration in `default/*.loft` the next ordinal in parse order, and
+-//! [`fill::OPERATORS`](crate::fill::OPERATORS) — generated from the same files — carries the
+-//! body for each ordinal, with no name beside it.  So a binary from one tree run against
+-//! another tree's `default/` does not fail: one declaration more or fewer moves every later
+-//! body under the wrong opcode, and the run ends in a corrupt reference somewhere past the
+-//! first shifted op (`Store access out of bounds … the reference is corrupt` inside a body
+-//! the program never called).  A bytecode cache laid out by a different binary is the
+-//! sibling of this class and is keyed on the build id (`build.rs`); a stdlib read from disk
+-//! has no such key, so it is checked by content, against the names the generator wrote
+-//! beside the table.
+-//!
+-//! The check is one walk over the parsed operator definitions, at the end of the top-level
+-//! `Parser::parse_dir` of the stdlib.  Three shapes are refused, each with its cure: a slot
+-//! whose name differs, a declaration past the table (an operator `default/` declares and
+-//! `make fill` has not yet given a body), and a table entry the library does not declare.
+-//! A pure-loft edit to `default/` — anything that is not an operator declaration — passes,
+-//! so the edit-and-rerun loop needs no rebuild.
+-
+-use crate::data::Data;
+-
+-/// Refuse a parsed stdlib whose operator declarations are not, slot for slot, the ones this
+-/// binary's dispatch table was generated from.  One walk over the definitions and nothing
+-/// allocated on the way through: the front end's allocation count is a gate
+-/// (`tests/frontend_counts.rs`), and this runs on every stdlib parse.
+-///
+-/// # Errors
+-///
+-/// The whole user-facing message — which slot differs, or which declaration has no body, or
+-/// which body has no declaration — and the cure.
+-pub fn verify(data: &Data, dir: &str) -> Result<(), String> {
+-    let parsed = (0..data.definitions())
+-        .map(|d_nr| data.def(d_nr))
+-        .filter(|def| def.is_operator() && def.op_code() != u16::MAX)
+-        .map(|def| (def.op_code(), def.name()));
+-    verify_names(parsed, crate::fill::OPERATOR_NAMES, dir)
+-}
+-
+-/// The comparison behind [`verify`], on `(slot, name)` pairs so it can be tested without a
+-/// parse.  The pairs arrive in declaration order, which is slot order (`Data::op_code`
+-/// numbers them as they are declared), so the first pair that parts from `expected` is the
+-/// lowest slot that does.
+-///
+-/// # Errors
+-///
+-/// As [`verify`]: the message names the first slot where the pairs and `expected` part.
+-pub fn verify_names<'a>(
+-    parsed: impl Iterator<Item = (u16, &'a str)>,
+-    expected: &[&str],
+-    dir: &str,
+-) -> Result<(), String> {
+-    let intro = || {
+-        format!(
+-            "the standard library at `{dir}` does not match this loft binary (build {})",
+-            env!("LOFT_BUILD_ID")
+-        )
+-    };
+-    let mut count = 0usize;
+-    for (slot, have) in parsed {
+-        count += 1;
+-        let Some(want) = expected.get(usize::from(slot)) else {
+-            return Err(format!(
+-                "{}: operator slot {slot} declares `{have}`, and this binary has no body for \
+-                 it.\n  An operator was added to `default/` after this binary was built: run \
+-                 `make fill` and rebuild (`cargo build --bin loft`).",
+-                intro()
+-            ));
+-        };
+-        if have != *want {
+-            return Err(format!(
+-                "{}: operator slot {slot} declares `{have}` where the binary carries \
+-                 `{want}`.\n  The binary and `default/` come from different trees.  Rebuild \
+-                 loft from the tree that owns this `default/` (`cargo build --bin loft`; \
+-                 `make fill` first when an operator was added or removed), or pass `--path` \
+-                 pointing at the tree this binary was built from.",
+-                intro()
+-            ));
+-        }
+-    }
+-    if count < expected.len() {
+-        let missing = expected[count];
+-        return Err(format!(
+-            "{}: the binary carries `{missing}` at operator slot {count}, and the library \
+-             declares nothing there.\n  This `default/` is older than the binary: rebuild \
+-             loft from the tree that owns it (`cargo build --bin loft`), or pass `--path` \
+-             pointing at the tree this binary was built from.",
+-            intro()
+-        ));
+-    }
+-    Ok(())
+-}
+-
+-#[cfg(test)]
+-mod tests {
+-    use super::verify_names;
+-
+-    fn slots<'a>(v: &'a [&'a str]) -> impl Iterator<Item = (u16, &'a str)> + 'a {
+-        v.iter()
+-            .enumerate()
+-            .map(|(i, s)| (u16::try_from(i).unwrap(), *s))
+-    }
+-
+-    #[test]
+-    fn a_matching_library_passes() {
+-        assert!(verify_names(slots(&["OpA", "OpB"]), &["OpA", "OpB"], "d").is_ok());
+-        assert!(verify_names(slots(&[]), &[], "d").is_ok());
+-    }
+-
+-    #[test]
+-    fn a_shifted_slot_names_both_operators_and_its_slot() {
+-        let e =
+-            verify_names(slots(&["OpA", "OpNew", "OpB"]), &["OpA", "OpB"], "lib/x").unwrap_err();
+-        assert!(e.contains("`lib/x`"), "{e}");
+-        assert!(
+-            e.contains("slot 1 declares `OpNew` where the binary carries `OpB`"),
+-            "{e}"
+-        );
+-    }
+-
+-    #[test]
+-    fn a_declaration_past_the_table_names_make_fill() {
+-        let e = verify_names(slots(&["OpA", "OpB", "OpC"]), &["OpA", "OpB"], "d").unwrap_err();
+-        assert!(
+-            e.contains("slot 2 declares `OpC`, and this binary has no body"),
+-            "{e}"
+-        );
+-        assert!(e.contains("make fill"), "{e}");
+-    }
+-
+-    #[test]
+-    fn a_library_short_of_the_table_names_the_missing_operator() {
+-        let e = verify_names(slots(&["OpA"]), &["OpA", "OpB"], "d").unwrap_err();
+-        assert!(e.contains("carries `OpB` at operator slot 1"), "{e}");
+-    }
+-}

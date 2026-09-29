@@ -99,7 +99,7 @@ CACHE="${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
 # control sha: 11 resolve from `main`, 25 from another branch, 199 ONLY from a PR ref, and 124
 # from no public ref at all.  So this answers about two thirds of the corpus and cannot answer
 # the rest; a receipt whose control no longer exists needs a different FORM rather than a better
-# lookup — TESTING.md § What a falsification receipt is worth.
+# lookup — GUARDS.md § What a receipt owes its next reader.
 #
 # Resolvability is also a property of the CHECKOUT, not of the guard: two clones disagree about
 # whether the same receipt is checkable, because each keeps whichever loose objects its own gc
@@ -125,7 +125,7 @@ resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is u
   fi
   RESOLVED_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}") || { RESOLVED_SHA=""; return 1; }
   echo "control $ref recovered from a PR ref — it is on no branch, so this receipt depends on" >&2
-  echo "  GitHub retaining refs/pull/*; it is not durable.  TESTING.md § falsification receipt." >&2
+  echo "  GitHub retaining refs/pull/*; it is not durable.  GUARDS.md § The patch receipt." >&2
   return 0
 }
 if [ -n "$PATCHFILE" ]; then
@@ -141,7 +141,7 @@ elif [ -z "$BULK" ]; then
     echo "  The control is on no branch of this remote and under no refs/pull/*/head, so NO" >&2
     echo "  clone can build it — this receipt records a falsification nobody can re-run." >&2
     echo "  Re-falsify the guard against a control that still exists, or record the" >&2
-    echo "  reintroducing patch instead of a ref: TESTING.md § falsification receipt." >&2
+    echo "  reintroducing patch instead of a ref: GUARDS.md § The patch receipt." >&2
     exit 2; }
   SHA=$(git rev-parse --short "$RESOLVED_SHA")
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"

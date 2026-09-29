@@ -1,4 +1,4 @@
-use p144_types;
+use p144_types::*;
 
 pub fn box_ensure(b: &Box) {
   if len(b.items) == 0 {

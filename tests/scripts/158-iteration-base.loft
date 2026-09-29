@@ -14,9 +14,10 @@
 // `LOFT_NO_NN_FAST=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
 //
 // Predictions (tests/iteration_base.rs pins them): w1-w5, w8, w9, w12, w14 take the address
-// from the base (w9 hands the view to a callee too, so its `DbRef` lives beside it); the
-// walks of w6 and w7 that GROW a store hold no address at all — `(R-RecPtr)` declines a
-// remainder that may grow one — while their index still steps unchecked; w11's elements
+// from the base (w9 hands the view to a callee too, so its `DbRef` lives beside it); w6,
+// whose callee grows the WALKED vector, holds no address at all — `(R-RecPtr)` declines a
+// remainder that may grow the view's store — while its index still steps unchecked; w7
+// grows ANOTHER store (`out`) and keeps its address (`(R-Base)`'s growth clause); w11's elements
 // own heap and its reads are not fused; w13 walks scalars, which is another iterator, and
 // keeps the checked step; w15 binds by explicit index and keeps `rec_ptr`.
 //

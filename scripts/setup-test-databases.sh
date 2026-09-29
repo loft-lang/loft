@@ -2,7 +2,7 @@
 # Create the PostgreSQL and MariaDB test databases the sqldb fixture expects.
 #
 # These are the two backends of the local four-backend bar that need a SERVER
-# (doc/claude/TESTING.md § Database backends).  CI never runs them — it gates
+# (doc/claude/TEST_ENVIRONMENTS.md § Database backends).  CI never runs them — it gates
 # sqlite only — so this exists to make a developer box reproducible, and to say
 # what the setup actually is rather than leaving it as folklore on one machine.
 #

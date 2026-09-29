@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Error handling: null + FileResult, no exceptions — a fallible operation
+// answers null, a mutating file operation answers a `FileResult`.
+
+struct Config { entries: hash<Entry[key]> }
+struct Entry { key: text, value: text }
+fn get(self: Config, key: text) -> text? { self.entries[key].value }
+
+fn test_null_is_the_error_of_a_lookup_and_a_missing_file() {
+  config = Config { entries: [Entry { key: "lang", value: "loft" }] };
+  seen = "";
+  name = config.get("user") ?? "anonymous";  // fallback
+  f = file("tests/reference/no-such-file.txt");
+  if !f.exists() { seen = "not found"; }             // guard
+  assert(name == "anonymous", "a missed lookup took the fallback");
+  assert(seen == "not found", "a missing file is a guard, not a stop");
+  assert(config.get("lang") == "loft", "a present key answers its value");
+}
+
+fn test_a_file_result_names_what_happened() {
+  seen = "";
+  result = delete("tests/reference/never-created.dat");
+  if result == FileResult.NotFound { seen = "already gone"; }
+  if result == FileResult.PermissionDenied { seen = "access denied"; }
+  if !result.ok() { seen += " — delete failed"; }
+  assert(seen == "already gone — delete failed", "NotFound, and not ok");
+}

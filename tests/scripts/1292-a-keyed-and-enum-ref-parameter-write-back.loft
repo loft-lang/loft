@@ -23,7 +23,7 @@
 // A keyed collection's slot holds a DbRef exactly as a vector's does, so the write-back
 // repoints it the same way.  The allow-list's omission cost an ICE, which is the trade the
 // wrong way round: a missing entry should cost an optimisation, never correctness
-// (PERFORMANCE.md § Design: P8 makes the same argument for the hoist gate).
+// (PERFORMANCE-history.md § Design: P8 makes the same argument for the hoist gate).
 //
 // ⚠ **STILL REFUSED, and deliberately so** — `h = []` and `h = other` on a `&` keyed
 // parameter, and every spelling on a `&sorted`.  Those lower to a clear-plus-replace and to a
@@ -40,7 +40,7 @@
 // @falsified-at: 4c6a7a1b — interpret exit 1 -> 0, native exit 1 -> 0.  On that build the
 //   keyed cell is an ICE and the enum cell is a parse error, so no assertion runs at all.
 //   ⚠ That control is on no public ref, so this receipt records a falsification that
-//   cannot be re-run — see TESTING.md § The patch receipt for the form that can be.
+//   cannot be re-run — see GUARDS.md § The patch receipt for the form that can be.
 //   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
 //   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
 //   those is clean on both. The native side was not scored in this sweep.

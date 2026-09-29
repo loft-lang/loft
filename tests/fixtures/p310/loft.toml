@@ -20,7 +20,13 @@ loft    = ">=0.8"
 # glb-0.1.1 (republished 2026-07-18) is broken (`use mesh;`/`use scene;` ->
 # Library not found), whereas 0.1.0 correctly uses `use mesh3d;`.  Bump these
 # deliberately when the graphics FFI surface the guard exercises changes.
+#
+# graphics 0.9.3 is the first release that declares its read-only parameters `const`,
+# which C124 requires (0.3.0 passed a `const` to a plain parameter and is now refused).
+# glb and mesh3d stay at 0.1.0: their later releases name `scene`'s types through the
+# `mesh3d` facade, which C98 no longer passes on until mesh3d is republished with
+# `pub use` — bump them to that release.
 [dependencies]
-graphics = "=0.3.0"
+graphics = "=0.9.3"
 glb = "=0.1.0"
 mesh3d = "=0.1.0"

@@ -8,7 +8,7 @@
 // `op=194` whenever this default return was executed from a caller
 // loaded through a separate `use`.
 
-use p143_types;
+pub use p143_types::*;
 
 pub struct Map {
   m_chunks: vector<Chunk>

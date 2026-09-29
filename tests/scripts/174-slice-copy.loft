@@ -1,0 +1,99 @@
+// @PLN174 F4a — a SLICE of a scalar-element vector bound to a local is ONE block copy
+// (`OpSliceVector`, `Stores::vector_slice`) where it was a loop minting a record per
+// element; a heap, struct, type-variable or linked element keeps the loop.  The two forms
+// must answer the same bytes: `LOFT_NO_SLICE_COPY=1` keeps the loop everywhere and is the
+// A/B (tests/slice_copy.rs runs this file both ways on both backends and compares).  Every
+// value is hand-computed.  `(Slice-Value)`'s clamp and freshness hold in both forms.
+//
+// @falsified-at: none — the op has no earlier build to catch; the receipt is the A/B:
+//   with the copy on and off this file prints the same lines on both backends, and a
+//   sabotage that copied from `lo - 1` printed `0 3 …` for `21 39 …` in c1 (2026-09-28).
+
+struct P { x: integer, y: integer }
+
+fn gsl<T>(v: vector<T>) -> vector<T> { r = v[1..3]; r }
+fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+fn main() {
+  m: vector<integer> = [];
+  for i in 0..20 { m += [i * 3]; }
+
+  // c1: a plain slice — elements 7..14: 21, 24, …, 39
+  s = m[7..14];
+  assert(len(s) == 7 && s[0] == 21 && s[6] == 39 && total(s) == 210, "c1 {len(s)} {s[0]} {s[6]} {total(s)}");
+
+  // c2: negative, open and inclusive bounds
+  t = m[-3..];
+  assert(len(t) == 3 && t[0] == 51 && t[2] == 57, "c2 {len(t)} {t[0]} {t[2]}");
+  u = m[..2];
+  assert(len(u) == 2 && u[1] == 3, "c2 open {len(u)} {u[1]}");
+  v = m[2..=4];
+  assert(len(v) == 3 && v[2] == 12, "c2 incl {len(v)} {v[2]}");
+
+  // c3: clamped, reversed and empty
+  a = m[15..99];
+  assert(len(a) == 5 && a[4] == 57, "c3 clamp {len(a)} {a[4]}");
+  b = m[5..2];
+  assert(len(b) == 0, "c3 reversed {len(b)}");
+  c = m[-99..3];
+  assert(len(c) == 3 && c[0] == 0, "c3 floor {len(c)} {c[0]}");
+  d = m[20..];
+  assert(len(d) == 0, "c3 empty {len(d)}");
+
+  // c4: the append form, and a self-append (the source is the destination)
+  w: vector<integer> = [1000];
+  w += m[2..=4];
+  assert(len(w) == 4 && w[1] == 6 && w[3] == 12, "c4 {len(w)} {w[1]} {w[3]}");
+  w += w[1..3];
+  assert(len(w) == 6 && w[4] == 6 && w[5] == 9, "c4 self {len(w)} {w[4]} {w[5]}");
+
+  // c5: a slice of a slice, and the copy is FRESH — writing it leaves the source alone
+  ss = s[1..3];
+  assert(len(ss) == 2 && ss[0] == 24 && ss[1] == 27, "c5 {ss[0]} {ss[1]}");
+  ss[0] = -1;
+  assert(ss[0] == -1 && s[1] == 24 && m[8] == 24, "c5 fresh {ss[0]} {s[1]} {m[8]}");
+
+  // c6: narrow, float, single and boolean element kinds
+  bytes: vector<u8> = [];
+  for i in 0..10 { bytes += [(200 + i) as u8? ?? 0]; }
+  bs = bytes[3..6];
+  assert(len(bs) == 3 && bs[0] == 203 && bs[2] == 205, "c6 u8 {bs[0]} {bs[2]}");
+  fl: vector<float> = [0.5, 1.5, 2.5, 3.5];
+  fs = fl[1..3];
+  assert(len(fs) == 2 && fs[0] == 1.5 && fs[1] == 2.5, "c6 float {fs[0]} {fs[1]}");
+  sg: vector<single> = [0.25f, 0.5f, 0.75f];
+  sgs = sg[-2..];
+  assert(len(sgs) == 2 && sgs[0] == 0.5f && sgs[1] == 0.75f, "c6 single {sgs[0]}");
+  bo: vector<boolean> = [true, false, true, true];
+  bos = bo[1..];
+  assert(len(bos) == 3 && !bos[0] && bos[1] && bos[2], "c6 boolean");
+
+  // c7: a text element and a vector element keep the loop — same answers
+  ts: vector<text> = ["a", "bb", "ccc", "dddd"];
+  tss = ts[1..3];
+  assert(len(tss) == 2 && tss[0] == "bb" && tss[1] == "ccc", "c7 text {tss[0]} {tss[1]}");
+  vv: vector<vector<integer>> = [[1], [2, 2], [3, 3, 3]];
+  vvs = vv[1..];
+  assert(len(vvs) == 2 && len(vvs[1]) == 3 && vvs[0][1] == 2, "c7 vec {len(vvs)} {len(vvs[1])}");
+
+  // c8: a struct element keeps the loop
+  ps: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }];
+  pss = ps[1..];
+  assert(len(pss) == 2 && pss[0].x == 3 && pss[1].y == 6, "c8 {pss[0].x} {pss[1].y}");
+
+  // c9: inside a generic the element is a type variable — the loop form, right in both instances
+  gi = gsl(m);
+  assert(len(gi) == 2 && gi[0] == 3 && gi[1] == 6, "c9 int {gi[0]} {gi[1]}");
+  gt = gsl(ts);
+  assert(len(gt) == 2 && gt[0] == "bb", "c9 text {gt[0]}");
+
+  // c10: a slice of a MAPPED file's bytes — the copy reads the foreign store's span
+  assert(write_bytes("loft_174_slice.tmp", bytes), "c10 write");
+  fm = file_map("loft_174_slice.tmp") ?? [];
+  fms = fm[2..5];
+  assert(len(fms) == 3 && fms[0] == 202 && fms[2] == 204, "c10 {len(fms)} {fms[0]} {fms[2]}");
+  fmt = fm[-1..];
+  assert(len(fmt) == 1 && fmt[0] == 209, "c10 tail {fmt[0]}");
+  assert(delete("loft_174_slice.tmp"), "cleanup");
+  println("slice copy ok");
+}

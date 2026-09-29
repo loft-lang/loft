@@ -1,7 +1,7 @@
 // loft#788 — B first. Identical to `dupname_ab_main.loft` with the two `use`
 // lines swapped, and nothing else changed.
-use dupname_b;
-use dupname_a;
+use dupname_b::*;
+use dupname_a::*;
 
 fn main() {
   c = Chunk { ck_cx: 1, ck_cz: 2, ck_cells: 9 };

@@ -107,7 +107,7 @@ Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md
 | `full` | IR tree + bytecode + execution | Everything at once; output is very large |
 | `static` | IR tree and bytecode only (no execution) | Codegen bugs, wrong IR, wrong opcode selection |
 | `crash_tail:N` | Last N lines before panic | Crash triage when full output is too large |
-| `locks` | Every store-lock / store-unlock event with store_nr + rec | "Write to locked store at rec=N fld=M" panics — pinpoints which op acquired the lock |
+| `locks` | Every store-lock / store-unlock event with store_nr + rec | "Write to locked store at rec=N fld=M" panics — pinpoints which op acquired the lock.  `LOFT_LOCK_BT=1` (an env switch, not a preset) adds, at a REFUSED write, the store number and the Rust backtrace of the writer — a runtime path (a bridge marshal, a loop buffer's reset) looks like the program's own statement from the loft call chain alone |
 | `type_timeline:<varname>` | Every type-mutation event for a specific named variable (old → new + origin + the SOURCE LINE that wrote it; set `LOFT_TIMELINE_BT=1` for the stack behind it) | "Why is var X type T at this point?" — flip / change_var_type / depend / substitute_type traces.  A dep list is REPLACED, not merged (`Type::depending`), so "who wrote this dep last" is usually the whole question.  ⚠ Matches by NAME across every parsed function including the stdlib — check `v_nr=` before believing an origin (below) |
 | `ir:<fn_name>` | IR tree dump for the named function only (no bytecode, no execution trace) | "What IR did the parser emit for fn X?" — focused codegen-bug diagnosis |
 | `slots:<fn_name>` | Slot-allocation summary for the named function — each var's final slot OR a reason why it was skipped | "Why is var X at slot 65535?" — `Incorrect var X[65535]` codegen panics |
@@ -338,7 +338,7 @@ LOFT_IR=distance LOFT_LOG=full loft myprog.loft 2>trace.txt
 | `LOFT_LOG` | `crash_tail:50` | Last 50 execution steps before a crash |
 | `LOFT_DUMP_DEPTH` | `3` | Struct nesting depth in dumps (default 2) |
 | `LOFT_DUMP_ELEMENTS` | `4` | Max vector elements in dumps (default 8) |
-| `LOFT_TRACE_ASSERTS` | `/tmp/ran.txt` | Appends `file:line` for every `assert` that EXECUTES — both backends, every process.  Diff against the `assert(` sites in the source to find the ones a suite contains and never runs, and read a whole file tracing at a constant offset as a wrong injected LINE ([TESTING.md](TESTING.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)) |
+| `LOFT_TRACE_ASSERTS` | `/tmp/ran.txt` | Appends `file:line` for every `assert` that EXECUTES — both backends, every process.  Diff against the `assert(` sites in the source to find the ones a suite contains and never runs, and read a whole file tracing at a constant offset as a wrong injected LINE ([GUARDS.md](GUARDS.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)) |
 
 ---
 
@@ -1087,7 +1087,7 @@ LOFT_NO_CACHE=1 loft --native p.loft
 whole-program bundle in `$XDG_CACHE_HOME/loft` (`cache::program_cache_paths`,
 default-ON — `LOFT_NO_CACHE` disables; and already OFF for a binary under
 `target/{debug,release}/`, so on a from-source loft the bundle is not one of
-your variables — PERFORMANCE.md § Which loft am I measuring), the stdlib bundle
+your variables — STARTUP_CACHE.md § Which loft am I measuring), the stdlib bundle
 (`LOFT_STDLIB_CACHE`), `target/` build artefacts, and an installed
 `$(which loft)` on `PATH`.
 
@@ -1143,7 +1143,7 @@ unbounded allocation on the next; `LOFT_TIMEOUT` bounds time, not memory. Wrap a
 repeat-run harness in `( ulimit -v 6000000; exec loft … )` — the kernel's OOM killer is
 free to kill a bystander instead of the runaway (it took out two unrelated sessions
 during this hunt). Test runs additionally carry loft's own store ceiling, which names
-the type that filled the heap (TESTING.md § Store-memory ceiling).
+the type that filled the heap (RUN_BOUNDS.md § Store-memory ceiling).
 
 ## When it fails in CI but passes locally
 
@@ -1295,6 +1295,13 @@ struct fields.
 | `LOFT_TRACE_SCHEMA=1` (#618) | Every `Stores` type registration and rollback, plus the **DEF** behind each (`fill d_nr=… name=… -> reg=…`). | **"Double structure type" aborts**, and any suspicion that a speculative parse (REPL capture, `infer_type`) is not schema-neutral. The abort names only the colliding type; the fault is normally ONE def filled twice (a rolled-back parse re-creating it), which is visible only as the same `d_nr` registering a bare name and then a `src0::`-qualified one. |
 | `LOFT_TRACE_COPY=1` | Native-side OpCopyRecord trace (src, dst, size, free_src). | Companion to `LOFT_TRACE_CR` for native; pin schema-mismatch copies (compile-side layout vs runtime-side layout disagree). |
 | `LOFT_TRACE_FINISH=1` | Every `finish_type` entry/exit for tuple types (size, align, field_groups count). | Pin tuple-schema propagation gaps (compiler side has groups, runtime side doesn't → wrong size).  Added during PLAN51 V-a diagnosis. |
+| `LOFT_TRACE_KEYS=1` | The baked key-comparison descriptors per keyed collection (`t_nr`, name, the descriptors). | Key ARITY desynchronised from the lookup twice (a `spatial<T[x,y]>`, a tuple key field), and both times the symptom was a collection read from the wrong store, naming no key. |
+| `LOFT_TRACE_VADD=1` | One line per vector concat / append-copy with the STRIDE `vector_add` resolved (read once; the op is runtime-hot). | A wrong element or width out of `v += w` over a nested element type — the instrument that settled the nested stride. |
+| `LOFT_TRACE_RETFRESH=1` | Per callee, the return-freshness verdict WITH the tail it read (`tail=…`). | A `false` costs a leak the caller never sees and a wrong `true` a use-after-free; "no return sites" and "a tail this cannot read" are different answers with the same verdict, so the tail comes along. |
+| `LOFT_TRACE_PREAMBLE=1` | The parser's call-preamble decisions per argument (`pass1`, the argument, whether it inlines, its deps, the hidden-buffer flag). | An argument evaluated twice, or a hidden buffer handed where a value was due. |
+| `LOFT_TRACE_INSTANCE_KEY=1` | Each method-shaped generic instance key rewritten (`old key -> new key`) with the spelling of every binding. | Two instances of one generic that should be one (a duplicate `t_…` emitted), or one that should be two. |
+| `LOFT_TRACE_CLOSURE_KEEP=1` | Per function, the closure-keep analysis: the records kept, their holders and which are owning. | A captured record freed under a live closure, or kept past its last use. |
+| `LOFT_TRACE_PAR_WORKERS=1` | Per `parallel` dispatch (native only, read once): the site, `n_rows`, threads, DISTINCT workers and the indices each took. | A `par` that ran on one thread, or two workers that took the same row. |
 | `LOFT_KEEP_NATIVE_RS=1` | Preserves the generated Rust at `/tmp/loft_native_*.rs` instead of cleaning it. | Read the generated Rust at a specific line a runtime panic cites.  Added during PLAN51 V-c diagnosis. |
 | `check_store_leaks` (interp, **`--interpret` only** — see note) / `LOFT_NATIVE_LEAK_CHECK=1` (native) | At-exit summary of unfreed stores, **aggregated by type** (`kt=68 ChunkKey×6026`). | Pin *which type* leaks.  Run the **same** repro on both backends — a leak on one and not the other means a backend-specific free emission bug (the @P317 symptom-2 shape). |
 | `--native-emit out.rs` | Writes the generated Rust and exits. | A native-only bug.  Read the generated function: look for a `null_named(...)` placeholder that is overwritten without a free, or a missing/extra `OpFreeRef`. |
@@ -1564,7 +1571,7 @@ The cure is to split the walk: one function recognises only the construct and ha
 second, which is the only one that rewrites, so the arm's node kind is reachable only THROUGH the
 construct. ⚠ **A green `make ci` and a clean `find_problems --changed` both passed over it; the
 `LOFT_POISON=1` sweep found it in 90 seconds** — that sweep is not optional after touching shared
-parser or codegen machinery (TESTING.md § the nightly sweeps). And bisect such a regression by
+parser or codegen machinery ([CI_BUDGET.md § What runs when — today](CI_BUDGET.md#what-runs-when--today): `make ci` does not run it). And bisect such a regression by
 disabling each candidate fix in place (`if false && …`, an incremental rebuild, one failing file)
 rather than by building historical commits: three ~15s cycles named it.
 
@@ -1928,7 +1935,7 @@ Mechanics (`src/timeout.rs`): `arm(secs, grace)` spawns a `loft-watchdog` thread
 that sleeps to `secs + grace`, prints a breadcrumb, and **process-aborts** — so it
 bounds the WHOLE process: the `--native` compile, the interpreter loop, everything.
 The breadcrumb names the loft `fn`, its `file:line`, and the `entry` it was reached
-from (under `--tests`, the test) — see [TESTING.md](TESTING.md) for the format.
+from (under `--tests`, the test) — see [LOFT_TEST.md § Output format](LOFT_TEST.md#output-format) for the format.
 `arm` is idempotent (first deadline wins) and `secs == 0` leaves it disarmed (the
 default for ad-hoc runs — hence the hang risk). `LOFT_TIMEOUT` is read before argv,
 so it is the floor; an explicit `--timeout` only re-arms if nothing armed yet.
@@ -2224,7 +2231,7 @@ steady-state runtime.
 
 ## See also
 - [../DEVELOPERS.md](../DEVELOPERS.md) — Developer guide: pipeline overview, quality requirements, feature proposals
-- [TESTING.md](TESTING.md) — Test framework, `code!` / `expr!` macros, LogConfig debug presets
+- [TESTING.md](TESTING.md) — Test framework, `code!` / `expr!` macros; [RUNNING_TESTS.md](RUNNING_TESTS.md) — LogConfig debug presets
 - [PROBLEMS.md](PROBLEMS.md) — Known bugs with severity, workarounds, and fix paths
 - [SLOTS.md](SLOTS.md) — Slot assignment design (for the slots-dump enhancement)
 - [LIFETIME.md](LIFETIME.md) — Dep tracking and scope-based freeing (for the dep-graph enhancement)
