@@ -18,14 +18,14 @@ interleaved samples; both lanes printed the same result hash or the row would no
 
 ## laptop · x86_64-linux · 2026-09-29
 
-Commit `fc2a0d30c`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
+Commit `c8ec0efba`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
 
 ### Where we stand
 
 | population | routines | median | within 2× | 2–3× | over 3× |
 |---|---:|---:|---:|---:|---:|
-| every measured routine | 205 | **2.90×** | 64 | 41 | 100 |
-| shipped routines — stdlib + libraries (the `(Perf-Weight)` population) | 162 | **2.97×** | 49 | 32 | 81 |
+| every measured routine | 205 | **2.91×** | 64 | 41 | 100 |
+| shipped routines — stdlib + libraries (the `(Perf-Weight)` population) | 162 | **3.00×** | 49 | 32 | 81 |
 | stdlib | 36 | **1.99×** | 18 | 6 | 12 |
 | libraries | 126 | **3.32×** | 31 | 26 | 69 |
 | consumer shapes — hot loops of real programs, modelled | 30 | **3.16×** | 8 | 7 | 15 |
@@ -44,7 +44,7 @@ class points at one part of the compiler or runtime rather than at one program.
 | **keyed** | hash, sorted and index collections: insert, find, update, remove, ordered walk | 22 | **3.92×** | 1.99× | 17.13× `build_index` | 1 | 21 |
 | **record-build** | appending records to a vector, and returning built records | 16 | **3.69×** | 1.49× | 21.79× `decode` | 2 | 9 |
 | **call** | many small calls or recursion: the per-call frame and argument passing | 15 | **3.14×** | 1.64× | 16.39× `edgeset_count` | 1 | 8 |
-| **parallel** | `par`: work split over threads and its results gathered | 6 | **2.90×** | 0.63× | 5.29× `par` | 2 | 2 |
+| **parallel** | `par`: work split over threads and its results gathered | 6 | **2.94×** | 0.64× | 5.34× `par` | 2 | 2 |
 | **text-scan** | reading text: byte and character walks, find, contains, a line loop | 11 | **2.69×** | 1.09× | 10.77× `mapfile_to_painted` | 4 | 4 |
 | **native-boundary** | a native (Rust cdylib) routine: the cost of crossing into it | 9 | **2.54×** | 1.02× | 10.51× `doc_read` | 3 | 3 |
 | **vector-read** | indexed reads of scalar vectors, and reductions over them | 17 | **2.41×** | 1.06× | 16.23× `draw_quads` | 7 | 5 |
@@ -193,12 +193,12 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `par` | 11_par | engine | **5.29** | 5.27–5.37 | 9.07 ms | 1.72 ms | **over 3x** | `par` over 100k records, four threads |
-| `par_text` | 19_stdlib_par | stdlib | **3.19** | 3.17–3.20 | 22.28 ms | 6.98 ms | **over 3x** | per-element text formatting, texts gathered |
-| `par_reduce` | 19_stdlib_par | stdlib | **2.90** | 2.88–2.92 | 5.55 ms | 1.91 ms | over 2x | per-element integer work gathered, then summed |
-| `par_records` | 19_stdlib_par | stdlib | **2.89** | 2.85–2.95 | 1.74 ms | 602.2 µs | over 2x | a vector of records read per worker, integer results gathered |
-| `par_map_float` | 19_stdlib_par | stdlib | **0.82** | 0.81–0.85 | 6.75 ms | 8.20 ms | ok | a float kernel per element of a large vector, results gathered |
-| `par_small` | 19_stdlib_par | stdlib | **0.63** | 0.62–0.63 | 7.02 ms | 11.18 ms | ok | many small par regions: the fixed cost of one region |
+| `par` | 11_par | engine | **5.34** | 5.31–5.46 | 9.10 ms | 1.70 ms | **over 3x** | `par` over 100k records, four threads |
+| `par_text` | 19_stdlib_par | stdlib | **3.19** | 3.16–3.21 | 22.34 ms | 7.01 ms | **over 3x** | per-element text formatting, texts gathered |
+| `par_records` | 19_stdlib_par | stdlib | **2.96** | 2.88–2.97 | 1.75 ms | 591.6 µs | over 2x | a vector of records read per worker, integer results gathered |
+| `par_reduce` | 19_stdlib_par | stdlib | **2.91** | 2.88–2.92 | 5.56 ms | 1.91 ms | over 2x | per-element integer work gathered, then summed |
+| `par_map_float` | 19_stdlib_par | stdlib | **0.83** | 0.82–0.84 | 6.73 ms | 8.09 ms | ok | a float kernel per element of a large vector, results gathered |
+| `par_small` | 19_stdlib_par | stdlib | **0.64** | 0.64–0.65 | 7.16 ms | 11.14 ms | ok | many small par regions: the fixed cost of one region |
 
 #### text-scan — reading text: byte and character walks, find, contains, a line loop
 
@@ -346,7 +346,7 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 |---|---|---|---:|---|---:|---:|---|---|
 | `parse_num` | 13_stdlib_text | stdlib | **0.96** | 0.95–0.98 †639aaa2c3 | 40.3 µs | 42.1 µs | ok | `as float?` over 2,000 tokens |
 
-† measured at an earlier commit than `fc2a0d30c` (a partial run re-measures only what it names); the commit follows the mark.
+† measured at an earlier commit than `c8ec0efba` (a partial run re-measures only what it names); the commit follows the mark.
 
 ## Coverage — what is measured, and what is waiting
 
