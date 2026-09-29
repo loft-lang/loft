@@ -1,5 +1,5 @@
 {
-  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry).",
+  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file.",
   "artefacts": [
     {
       "name": "optional-ratchet",
@@ -206,5 +206,8 @@
   "shrink_files": [
     "tests/falsified.baseline",
     "tests/falsified_docs.baseline"
+  ],
+  "row_files": [
+    "doc/claude/QUALITY.md"
   ]
 }

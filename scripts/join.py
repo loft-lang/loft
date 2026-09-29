@@ -146,6 +146,21 @@ def reverse_applies(commit, files, index_env):
     return r.returncode == 0
 
 
+def only_rows(commit, path, registry):
+    """Does `commit` change `path` only in measured audit ROWS — lines a re-derive rewrites?
+
+    QUALITY.md is a hand-written doc holding `| **N** |` rows that `rederive` re-measures; a
+    commit whose only change there is such a row carries nothing a join must take, and once the
+    row moved on this tree its hunk no longer applies in reverse, which read it as missing."""
+    if path not in registry.get("row_files", []):
+        return False
+    diff = subprocess.run(["git", "diff", "-U0", f"{commit}^", commit, "--", path], cwd=ROOT,
+                          capture_output=True, text=True).stdout
+    changed = [l[1:] for l in diff.splitlines()
+               if l[:1] in "+-" and not l.startswith(("+++", "---"))]
+    return bool(changed) and all(re.fullmatch(r"\| \*\*\d+\*\* \|", l.strip()) for l in changed)
+
+
 def classify(commit, registry, index_env, scheduled):
     subject = git("log", "-1", "--format=%s", commit).strip()
     files = [f for f in git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
@@ -163,7 +178,8 @@ def classify(commit, registry, index_env, scheduled):
         row["class"] = "DUP"
         row["dup_of"] = scheduled[subject]
         return row
-    present = [f for f in code if reverse_applies(commit, [f], index_env)]
+    present = [f for f in code
+               if reverse_applies(commit, [f], index_env) or only_rows(commit, f, registry)]
     if len(present) == len(code):
         row["class"] = "HERE"
     elif present:
