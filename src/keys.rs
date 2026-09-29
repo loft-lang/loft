@@ -433,14 +433,21 @@ impl DbRef {
     }
 }
 
+/// `@FR-E-Eq-Key`, @C91 — a float key's order: `total_cmp`, which is total over the null NaN,
+/// with the sign of zero dropped first, so two keys are one entry exactly when `==` answers
+/// true, and `0.0 == -0.0` does.  `total_cmp` alone orders `-0.0` before `0.0`, which kept them as
+/// two entries of one `hash` / `sorted` / `index`.
 #[inline]
 fn single_cmp(v1: f32, v2: f32) -> Ordering {
-    v1.total_cmp(&v2)
+    let zero = |v: f32| if v == 0.0 { 0.0 } else { v };
+    zero(v1).total_cmp(&zero(v2))
 }
 
+/// See [`single_cmp`] (`@FR-E-Eq-Key`).
 #[inline]
 fn float_cmp(v1: f64, v2: f64) -> Ordering {
-    v1.total_cmp(&v2)
+    let zero = |v: f64| if v == 0.0 { 0.0 } else { v };
+    zero(v1).total_cmp(&zero(v2))
 }
 
 /// Use-after-free detector (`LOFT_UAF=1`).  When on, `free_named` records each

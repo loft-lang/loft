@@ -27,7 +27,7 @@
 <p><code>hex_field</code> is occupancy over a bounded window of hex coordinates, plus the tracer that turns a set of filled cells into closed loops whose vertices are exact LATTICE INTEGERS. No floats in the geometry, no epsilon compare, so no drift — which is what makes exact diffs, exact undo and exact rotation possible.</p>
 <p>It is not the coordinate system: <code>hex_grid</code> owns conversions, neighbours and distance. It is not the world either — <code>hex_world</code> does chunked sparse addressing across many windows, and <code>hex_terrain</code> layers heights and materials. Reach for <code>hex_field</code> when you have a set of cells and need its OUTLINE, or a small map you can hand to a renderer.</p>
 <p>Every threshold here is dimensionless — hex steps and lattice units. The package never states a metre; a consumer picks metres-per-hex and converts once, at its own edge.</p>
-<pre><code><span class="kw">use</span> hex_field;</code></pre>
+<pre><code><span class="kw">use</span> hex_field::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   s = hex_field::<span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">5</span>, <span class="nm">5</span>);
   hex_field::<span class="fn-call">hexset_set</span>(s, <span class="nm">2</span>, <span class="nm">2</span>, <span class="kw">true</span>);</code></pre>

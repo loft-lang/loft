@@ -265,6 +265,11 @@ fn write_field(out: &mut String, f: &Field) {
     write_content(out, &Field::default_to_wire(f.default.as_ref()));
     out.push_str(",\"nullable\":");
     out.push_str(if f.nullable { "true" } else { "false" });
+    // Written only for a reference field, so a snapshot of a schema without one is
+    // byte-identical to what it was before the key existed.
+    if f.target != u16::MAX {
+        let _ = write!(out, ",\"target\":{}", f.target);
+    }
     out.push_str(",\"other_indexes\":");
     u16_list(out, &f.other_indexes);
     out.push('}');
@@ -282,6 +287,11 @@ fn field_from(p: &Parsed) -> Result<Field, SchemaDecodeError> {
             .ok()
             .and_then(|v| as_bool(v).ok())
             .unwrap_or(false),
+        // Absent in a snapshot of a field that is no reference, and in every older one.
+        target: field(p, "target")
+            .ok()
+            .and_then(|v| as_u16(v).ok())
+            .unwrap_or(u16::MAX),
         other_indexes: u16_vec(field(p, "other_indexes")?)?,
     })
 }

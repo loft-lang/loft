@@ -23,13 +23,243 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>mesh3d API</h1>
 <article>
-<p><a href="lib-mesh3d.html">← mesh3d</a> · version 0.1.1</p>
-<p>The registry does not record a public surface for <code>mesh3d</code> 0.1.1. The field was added after this version was published, and it is filled from source at a package's next release — so this page fills itself in when <code>mesh3d</code> ships again.</p>
-<p>Both of these work today:</p>
-<pre><code>loft api mesh3d
-</code></pre>
-<p>prints the surface with its documentation, read from the package itself; and the source is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-assets/tree/main/mesh3d">https://github.com/loft-lang/loft-libs-assets/tree/main/mesh3d</a></p>
+<p><a href="lib-mesh3d.html">← mesh3d</a> · version 0.1.2</p>
+<p class="lib-legend">59 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Vec2</span></code></pre>
+<p>A 2D vector / point.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vec2</span>(vx: <span class="ty"><a href="stdlib-types.html">float</a></span>, vy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Vec2</span></code></pre>
+<p>Make one.  Texture coordinates are what this is usually carrying.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Vec3</span></code></pre>
+<p>A 3D vector / point.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vec3</span>(vx: <span class="ty"><a href="stdlib-types.html">float</a></span>, vy: <span class="ty"><a href="stdlib-types.html">float</a></span>, vz: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>Make one.  The workhorse of the package — positions, normals and directions are all this type, and which of the three a value is depends on what the caller does with it, not on the type.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Vec4</span></code></pre>
+<p>A 4D vector (homogeneous coordinates).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vec4</span>(vx: <span class="ty"><a href="stdlib-types.html">float</a></span>, vy: <span class="ty"><a href="stdlib-types.html">float</a></span>, vz: <span class="ty"><a href="stdlib-types.html">float</a></span>, vw: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Vec4</span></code></pre>
+<p>Make one.  The w is what separates a POINT (w = 1, moved by a translation) from a DIRECTION (w = 0, which a translation must leave alone).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add3</span>(va: const <span class="en">Vec3</span>, vb: const <span class="en">Vec3</span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>Component-wise sum.  Answers a FRESH vector and touches neither argument — which is what the <code>const</code> on both of them says.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sub3</span>(va: const <span class="en">Vec3</span>, vb: const <span class="en">Vec3</span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>The way from <code>vb</code> to <code>va</code>.  <code>sub3(target, eye)</code> is where the camera is looking; length and direction both come out of it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scale3</span>(sv: const <span class="en">Vec3</span>, ss: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>Stretch by a scalar.  After <code>normalize3</code> this reads as *that far along that direction*, which is how a step or an offset is built.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dot3</span>(da: const <span class="en">Vec3</span>, db: const <span class="en">Vec3</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>How much of <code>da</code> points along <code>db</code>.  Zero is perpendicular and negative is facing away — the one test a back-face cull and a diffuse light term are both written on.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cross</span>(ca: const <span class="en">Vec3</span>, cb: const <span class="en">Vec3</span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>The vector perpendicular to both, right-handed.  A triangle's face normal is the cross of two of its edges, which is where most calls come from.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">length3</span>(lv: const <span class="en">Vec3</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>How long it is.  Comparing two lengths does not need the square root — <code>dot3(v, v)</code> orders them the same way and is cheaper.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">normalize3</span>(nv: const <span class="en">Vec3</span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>The same direction at length 1 — what a normal, a light direction and an axis all have to be before the arithmetic below means anything.</p>
+<p>⚠ A ZERO vector answers ZERO rather than a NaN, so a degenerate triangle poisons one normal instead of the whole mesh.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Mat4</span></code></pre>
+<p>A 4x4 transformation matrix stored as 16 floats in column-major order. m[0..3] = column 0, m[4..7] = column 1, m[8..11] = column 2, m[12..15] = column 3.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_identity</span>() -&gt; <span class="en">Mat4</span></code></pre>
+<p>Create an identity matrix.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_translate</span>(tx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ty: <span class="ty"><a href="stdlib-types.html">float</a></span>, tz: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Create a translation matrix.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_scale</span>(sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, sz: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Create a uniform scale matrix.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_mul</span>(ma: const <span class="en">Mat4</span>, mb: const <span class="en">Mat4</span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Multiply two 4x4 matrices (A * B). Result = A applied after B.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_transform</span>(tm: const <span class="en">Mat4</span>, tv: const <span class="en">Vec3</span>) -&gt; <span class="en">Vec3</span></code></pre>
+<p>Transform a Vec3 by a Mat4 (as a point, w=1).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_perspective</span>(fov_y: <span class="ty"><a href="stdlib-types.html">float</a></span>, aspect: <span class="ty"><a href="stdlib-types.html">float</a></span>, near: <span class="ty"><a href="stdlib-types.html">float</a></span>, far: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Perspective projection matrix. fov_y = vertical field of view in radians, aspect = width/height.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_look_at</span>(eye: const <span class="en">Vec3</span>, target: const <span class="en">Vec3</span>, up: const <span class="en">Vec3</span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>View matrix looking from eye towards target with up direction.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_rotate_y</span>(angle: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Rotation around the Y axis by angle radians.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_rotate_x</span>(angle: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Rotation around the X axis by angle radians.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_ortho</span>(left: <span class="ty"><a href="stdlib-types.html">float</a></span>, right: <span class="ty"><a href="stdlib-types.html">float</a></span>, bottom: <span class="ty"><a href="stdlib-types.html">float</a></span>, top: <span class="ty"><a href="stdlib-types.html">float</a></span>, near: <span class="ty"><a href="stdlib-types.html">float</a></span>, far: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Orthographic projection matrix. Maps the box [left,right] x [bottom,top] x [near,far] to the [-1,1] cube.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mat4_trs</span>(tx: <span class="ty"><a href="stdlib-types.html">float</a></span>, ty: <span class="ty"><a href="stdlib-types.html">float</a></span>, tz: <span class="ty"><a href="stdlib-types.html">float</a></span>, ry: <span class="ty"><a href="stdlib-types.html">float</a></span>, sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, sz: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mat4</span></code></pre>
+<p>Combined translate + rotate_y + scale in one call.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Vertex</span></code></pre>
+<p>A single vertex with position, normal, and texture coordinates.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vertex</span>(vp: math::<span class="en">Vec3</span>, vn: math::<span class="en">Vec3</span>, vuv: math::<span class="en">Vec2</span>) -&gt; <span class="en">Vertex</span></code></pre>
+<p>One vertex: where it is, which way it faces, and where it samples a texture. <code>mesh_to_floats_uv</code> writes those three in exactly this order, so a GL consumer's attribute layout is read off this line.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Triangle</span></code></pre>
+<p>A triangle defined by three vertex indices.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Mesh</span></code></pre>
+<p>A mesh: a collection of vertices and triangles.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mesh</span>(mn: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Mesh</span></code></pre>
+<p>An empty mesh under a name.  Fill it with <code>add_vertex</code>, then <code>add_triangle</code> with the indices <code>add_vertex</code> handed back — the triangles index the vertex array, so a vertex shared by two faces is added once and named twice.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_vertex</span>(self: <span class="en">Mesh</span>, av: <span class="en">Vertex</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Add a vertex to the mesh and return its index.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_triangle</span>(self: <span class="en">Mesh</span>, ti0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ti1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ti2: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Add a triangle by vertex indices.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_quad</span>(self: <span class="en">Mesh</span>, qi0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qi1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qi2: <span class="ty"><a href="stdlib-types.html">integer</a></span>, qi3: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Build a simple quad (two triangles) from 4 vertices. Vertices should be in counter-clockwise order.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cube</span>() -&gt; <span class="en">Mesh</span></code></pre>
+<p>Create a unit cube centered at origin (side length 1). 24 vertices (4 per face with correct per-face normals), 12 triangles.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">plane</span>(pn: <span class="ty"><a href="stdlib-types.html">text</a></span>, pw: <span class="ty"><a href="stdlib-types.html">float</a></span>, pd: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Mesh</span></code></pre>
+<p>Create a flat horizontal plane centered at origin. pw = width (x-axis), pd = depth (z-axis); normal = (0, 1, 0).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sphere</span>(sn: <span class="ty"><a href="stdlib-types.html">text</a></span>, sr: <span class="ty"><a href="stdlib-types.html">float</a></span>, ss: <span class="ty"><a href="stdlib-types.html">integer</a></span>, st: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Mesh</span></code></pre>
+<p>Create a UV sphere centered at origin. sr = radius, ss = longitudinal slices (≥3), st = latitudinal stacks (≥2). Produces (ss+1)*(st+1) vertices and ss*st*2 triangles.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mesh_to_floats_uv</span>(mu: const <span class="en">Mesh</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;</code></pre>
+<p>Flatten a mesh to a vector&lt;single&gt; for GL upload. Expands triangles: for each triangle, emits 3 vertices with pos+normal (stride=6). Returns the flat buffer suitable for gl_upload_vertices(data, 6). Flatten a mesh to a vector&lt;single&gt; with UV coords for GL upload. Expands triangles: for each triangle, emits 3 vertices with pos+normal+uv (stride=8). Returns the flat buffer suitable for gl_upload_vertices(data, 8).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">mesh_to_floats</span>(mf: const <span class="en">Mesh</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;</code></pre>
+<p>Flatten a mesh to a vector&lt;single&gt; for GL upload.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Material</span></code></pre>
+<p>A simple PBR-like material.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">material</span>(mname: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Material</span></code></pre>
+<p>A neutral material: light grey, half rough, not metal.  Everything below adjusts this rather than building one from nothing, so a new field gets a sane value in one place.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">material_color</span>(mname: <span class="ty"><a href="stdlib-types.html">text</a></span>, mr: <span class="ty"><a href="stdlib-types.html">float</a></span>, mg: <span class="ty"><a href="stdlib-types.html">float</a></span>, mb: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Material</span></code></pre>
+<p>Shorthand: opaque dielectric material with the given color.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">material_metal</span>(mname: <span class="ty"><a href="stdlib-types.html">text</a></span>, mr: <span class="ty"><a href="stdlib-types.html">float</a></span>, mg: <span class="ty"><a href="stdlib-types.html">float</a></span>, mb: <span class="ty"><a href="stdlib-types.html">float</a></span>, mrough: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Material</span></code></pre>
+<p>Shorthand: metallic material with the given color and roughness.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_color</span>(self: <span class="en">Material</span>, scr: <span class="ty"><a href="stdlib-types.html">float</a></span>, scg: <span class="ty"><a href="stdlib-types.html">float</a></span>, scb: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Repaint a material in place.  Alpha, metallic and roughness are left alone, which is what makes this safe to call on a material somebody else built.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Node</span></code></pre>
+<p>A node in the scene graph with a mesh, material, and transform.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">node</span>(nn: <span class="ty"><a href="stdlib-types.html">text</a></span>, nm: <span class="ty"><a href="stdlib-types.html">integer</a></span>, nmat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Node</span></code></pre>
+<p>Put a mesh in the scene at the origin, naming the mesh and the material by the indices <code>add_mesh</code> and <code>add_material</code> answered.  <code>node_at</code> is this with a transform, and is the one to reach for — a node built here and then mutated is two steps where one would do.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">node_at</span>(nn: <span class="ty"><a href="stdlib-types.html">text</a></span>, nm: <span class="ty"><a href="stdlib-types.html">integer</a></span>, nmat: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xf: math::<span class="en">Mat4</span>) -&gt; <span class="en">Node</span></code></pre>
+<p>Create a node with an explicit transform (avoids mutation of transform field).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Camera</span></code></pre>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">camera</span>(cname: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Camera</span></code></pre>
+<p>A camera with usable defaults: field 60, clipping at 0.1 and 100, standing at z = 5 and looking at the origin.</p>
+<p>⚠ THE FIELD IS IN DEGREES AND NOTHING HERE CONVERTS IT.  <code>Camera</code> is carried as data — no routine in this package or in <code>glb</code> reads <code>fov</code> — so the caller that eventually builds a projection owns the conversion, and <code>mat4_perspective</code> wants RADIANS.  Handing it this number unchanged asks for a 60-radian field and gets a picture nobody can read.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en">LightType</span></code></pre>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Light</span></code></pre>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">directional_light</span>(ln: <span class="ty"><a href="stdlib-types.html">text</a></span>, lr: <span class="ty"><a href="stdlib-types.html">float</a></span>, lg: <span class="ty"><a href="stdlib-types.html">float</a></span>, lb: <span class="ty"><a href="stdlib-types.html">float</a></span>, li: <span class="ty"><a href="stdlib-types.html">float</a></span>, ldir: math::<span class="en">Vec3</span>) -&gt; <span class="en">Light</span></code></pre>
+<p>A light with a direction and no place — the sun.  Every surface in the scene receives it at the same angle, however far away it is.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">point_light</span>(ln: <span class="ty"><a href="stdlib-types.html">text</a></span>, lr: <span class="ty"><a href="stdlib-types.html">float</a></span>, lg: <span class="ty"><a href="stdlib-types.html">float</a></span>, lb: <span class="ty"><a href="stdlib-types.html">float</a></span>, li: <span class="ty"><a href="stdlib-types.html">float</a></span>, lpos: math::<span class="en">Vec3</span>) -&gt; <span class="en">Light</span></code></pre>
+<p>A light with a place and no direction — a lamp.  It carries a direction field because <code>Light</code> is one struct for all three kinds; nothing reads it here.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scene</span></code></pre>
+<p>A complete 3D scene.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">scene</span>(sn: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="en">Scene</span></code></pre>
+<p>An empty scene.  The five <code>add_*</code> below fill it, and each answers the INDEX the rest of the scene refers to that thing by.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_mesh</span>(self: <span class="en">Scene</span>, sm: mesh::<span class="en">Mesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Add a mesh to the scene and return its index.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_material</span>(self: <span class="en">Scene</span>, smat: <span class="en">Material</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Add a material to the scene and return its index.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_node</span>(self: <span class="en">Scene</span>, sn: <span class="en">Node</span>)</code></pre>
+<p>Add a node to the scene.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_camera</span>(self: <span class="en">Scene</span>, sc: <span class="en">Camera</span>)</code></pre>
+<p>Add a camera to the scene.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_light</span>(self: <span class="en">Scene</span>, sl: <span class="en">Light</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Add a light and answer its index.</p>
+</div>
 
   </article>
 <script src="search-index.js"></script>

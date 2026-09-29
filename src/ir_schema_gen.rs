@@ -772,6 +772,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let vec_other_indexes = db.vector(t0);
     db.field(t89, "other_indexes", vec_other_indexes);
     db.field(t89, "nullable", t4);
+    db.field(t89, "target", 0);
     let t127 = db.vector(t9);
     let _ = t127; // may be unused
     db.field(t90, "nr", 0);

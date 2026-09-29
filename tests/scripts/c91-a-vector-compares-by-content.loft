@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq` — A VECTOR COMPARES BY CONTENT.  `==` on two vectors of one element type
+// compares their length and then each element with the element's own `==`, in order.  It was
+// refused (*No matching operator*, deviation D-op-17), so no program that ran changes.
+//
+// Every expected value is worked out by hand: equal elements in the same order are equal
+// whatever store holds them; one differing element, a different length or a different order
+// is not; `0.0 == -0.0` holds inside a vector as it does outside; a literal is a vector like
+// any other.
+//
+// @falsified-at: 68826592e — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `vector == vector`, so the program does not compile there).
+// @falsified-by: tests/falsified/c91-a-vector-compares-by-content.patch — interpret exit 1 -> 0,
+//   native exit 1 -> 0
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends; the cells
+//   run from a `main` report no leak on either backend.
+
+struct P { x: integer, t: text }
+
+fn test_scalar_elements() {
+  a = [1, 2];
+  b = [1, 2];
+  c = [1, 2, 3];
+  assert(a == b, "equal integers in order");
+  assert(!(a != b), "!= is the complement");
+  assert(!(a == c), "a shorter vector differs");
+  assert(!(c == a), "a longer vector differs");
+  assert(!(a == [2, 1]), "the order is part of the content");
+  assert(a == [1, 2], "a literal operand is a vector like any other");
+  assert([0.0] == [-0.0], "0.0 == -0.0 inside a vector");
+  assert(!([1.5] == [2.5]), "different floats differ");
+  n: vector<u8> = [1, 200];
+  m: vector<u8> = [1, 200];
+  assert(n == m, "narrow elements compare by value");
+}
+
+fn test_text_and_struct_elements() {
+  s = ["x", "y"];
+  assert(s == ["x", "y"], "texts by their characters");
+  assert(!(s == ["x", "z"]), "one differing text");
+  p = [P { x: 1, t: "a" }, P { x: 2, t: "b" }];
+  q = [P { x: 1, t: "a" }, P { x: 2, t: "b" }];
+  r = [P { x: 1, t: "a" }, P { x: 2, t: "c" }];
+  assert(p == q, "struct elements by their fields");
+  assert(p != r, "one differing field of the last element");
+}
+
+fn test_nested_and_empty() {
+  a = [[1], [2, 3]];
+  b = [[1], [2, 3]];
+  c = [[1], [2]];
+  assert(a == b, "nested vectors element by element");
+  assert(!(a == c), "an inner vector of another length");
+  e: vector<integer> = [];
+  f: vector<integer> = [];
+  assert(e == f, "two empty vectors are equal");
+  assert(!(e == [1]), "an empty vector differs from a full one");
+}
+
+fn test_a_copy_equals_its_source() {
+  a = [P { x: 1, t: "a" }];
+  b = a;
+  b[0].x = 1;
+  assert(a == b, "b = a copies (C86), and the copy holds the same content");
+  b[0].t = "changed";
+  assert(a != b, "until the copy is changed");
+  assert(!(&a == &b), "and it was never the same record");
+}

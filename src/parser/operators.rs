@@ -1337,9 +1337,33 @@ impl Parser {
             // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
             // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
             // logical-and.)
+            let amp_start = {
+                let p = self.lexer.peek_pos();
+                (p.line, p.pos)
+            };
             if self.lexer.has_token("&") {
                 self.amp_pending = true;
                 let t = self.parse_part(var_tp, code, parent_tp);
+                // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
+                // just before a `==` / `!=`, or opening the right operand of one, is recorded
+                // rather than refused; the comparison claims it only when it is that whole
+                // operand, and refuses it otherwise (`handle_operator`).
+                if self.lexer.peek_token("==")
+                    || self.lexer.peek_token("!=")
+                    || self.eq_rhs_at == Some(amp_start)
+                {
+                    self.amp_pending = false;
+                    let end = {
+                        let p = self.lexer.peek_pos();
+                        (p.line, p.pos)
+                    };
+                    self.amp_identity = Some(super::AmpIdentity {
+                        start: amp_start,
+                        end,
+                        place: Self::is_amp_place(code, &self.data),
+                    });
+                    return t;
+                }
                 // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
                 // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
                 // since loft statements are `;`-terminated — is always followed by `;`
@@ -1498,6 +1522,10 @@ impl Parser {
             // points at the operator token (e.g. the `/`), not at whatever
             // the lexer drifted to while parsing the RHS.
             let op_pos = self.lexer.pos().clone();
+            let op_start = {
+                let p = self.lexer.peek_pos();
+                (p.line, p.pos)
+            };
             let mut operator = "";
             for op in OPERATORS[precedence] {
                 if self.lexer.has_token(op) {
@@ -1643,6 +1671,18 @@ impl Parser {
                     }
                 }
                 return current_type;
+            }
+            // `@FR-E-Eq` — a recorded `&<operand>` is the LEFT side of `&a == &b` only when it
+            // spans this whole operand, from `operand_pos` to the operator.
+            if let Some(amp) = self.amp_identity.take() {
+                let whole = amp.start == (operand_pos.line, operand_pos.pos)
+                    && amp.end == op_start
+                    && matches!(operator, "==" | "!=");
+                if whole {
+                    self.eq_amp_left = Some(amp);
+                } else {
+                    self.refuse_amp_operand();
+                }
             }
             // @PLN102 — non-associative comparison guard (see `compared_at_this_level`).
             if matches!(operator, "==" | "!=" | "<" | "<=" | ">" | ">=") {
@@ -4776,11 +4816,46 @@ impl Parser {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
             let tp = parent_tp.clone();
-            *parent_tp = ctp.clone();
+            // The right operand is a VALUE of its own, never a destination inside the left
+            // one: a vector literal given the left operand's deps as its parent built its
+            // elements into a store it never created (`a == [1, 2]`, an ICE).
+            *parent_tp = match ctp.base() {
+                Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
+                _ => ctp.clone(),
+            };
             let second_pos = self.lexer.peek_pos().clone();
+            let is_eq = operator == "==" || operator == "!=";
+            let left_amp = self.eq_amp_left.take();
+            let outer_rhs = std::mem::replace(
+                &mut self.eq_rhs_at,
+                is_eq.then_some((second_pos.line, second_pos.pos)),
+            );
             let second_type =
                 self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+            self.eq_rhs_at = outer_rhs;
             self.known_var_or_type(&second_code, &second_pos);
+            let right_amp = self.amp_identity.take().and_then(|amp| {
+                let end = self.lexer.peek_pos();
+                if amp.start == (second_pos.line, second_pos.pos) && amp.end == (end.line, end.pos)
+                {
+                    Some(amp)
+                } else {
+                    self.refuse_amp_operand();
+                    None
+                }
+            });
+            if is_eq && (left_amp.is_some() || right_amp.is_some()) {
+                self.identity_compare(
+                    code,
+                    operator,
+                    second_code,
+                    [ctp, &second_type],
+                    [left_amp, right_amp],
+                );
+                *ctp = Type::Boolean;
+                *parent_tp = tp;
+                return None;
+            }
             if !self.first_pass && (operator == "==" || operator == "!=") {
                 if second_type == Type::Null
                     && lhs_not_null
@@ -5286,6 +5361,100 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         None
+    }
+
+    /// A `&<operand>` recorded as a possible side of `&a == &b` that turned out to be part of
+    /// a wider operand (`x + &a == y`, `&a + 1 == y`): the sub-expression `&` the binding rule
+    /// refuses.
+    fn refuse_amp_operand(&mut self) {
+        if !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&` is not a general operator — it binds a reference only as the whole \
+                 right-hand side of an assignment (`a = &b`), and asks identity only as a whole \
+                 side of `&a == &b`; do not use `&` in an argument or sub-expression"
+            );
+        }
+    }
+
+    /// `&a == &b` / `&a != &b` — `@FR-E-Eq`, @C91: whether both names are ONE record, which
+    /// `==` never asks (it compares content).  Both sides must be `&<place>` of one heap type;
+    /// `&` on one side only asks nothing and is refused with both spellings.
+    fn identity_compare(
+        &mut self,
+        code: &mut Value,
+        operator: &str,
+        second_code: Value,
+        types: [&Type; 2],
+        amps: [Option<super::AmpIdentity>; 2],
+    ) {
+        let lowered = self.cl(
+            if operator == "==" {
+                "OpEqRef"
+            } else {
+                "OpNeRef"
+            },
+            &[code.clone(), second_code],
+        );
+        *code = lowered;
+        if self.first_pass {
+            return;
+        }
+        let [Some(left), Some(right)] = amps else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&` on one side of `{operator}` asks nothing — `&a {operator} &b` asks whether \
+                 two names are one record, `a {operator} b` compares what they hold; write `&` \
+                 on both sides or on neither"
+            );
+            return;
+        };
+        if !left.place || !right.place {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` compares two places — a variable, struct field or vector \
+                 element — and a temporary (a literal, computed value or call result) is no \
+                 record anything else can name; compare its content with `a {operator} b`"
+            );
+            return;
+        }
+        // A link to a heap value (`c = &a`) holds the same record handle as its target, so
+        // the `&` of the TYPE is peeled and the handle compared as it is.
+        let heap = |t: &Type| {
+            matches!(
+                t.peel_link(),
+                Type::Reference(..)
+                    | Type::Vector(..)
+                    | Type::Hash(..)
+                    | Type::Sorted(..)
+                    | Type::Index(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+                    | Type::Enum(_, true, _)
+            )
+        };
+        let (l, r) = (types[0].peel_link(), types[1].peel_link());
+        if !heap(l) || !heap(r) {
+            let scalar = if heap(l) { r } else { l };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` asks whether two names are one record, and `{}` is a value \
+                 held in place, not a record — compare the values with `a {operator} b`",
+                scalar.source_name(&self.data)
+            );
+        } else if !l.is_equal(r) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`&a {operator} &b` compares two places of one type, not a `{}` and a `{}`",
+                l.source_name(&self.data),
+                r.source_name(&self.data)
+            );
+        }
     }
 }
 

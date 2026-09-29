@@ -68,8 +68,8 @@ pub interface Ordered {
   op < (self: Self, other: Self) -> boolean
 }
 
-// Types that support the `==` equality operator.
-// Satisfied by integer, single, float, text, boolean, and user types defining OpEq.
+// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
+// A tuple compares element by element, as its concrete `==` does.
 //
 // `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 pub interface Equatable {
@@ -957,6 +957,12 @@ fn OpEqRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec == 0 && @v2.rec == 0 }} else {{ @v1 == @v2 }}"
 fn OpNeRef(v1: reference, v2: reference) -> boolean;
 #rust"if @v1.rec == 0 || @v2.rec == 0 {{ @v1.rec != 0 || @v2.rec != 0 }} else {{ @v1 != @v2 }}"
+// `@FR-E-Eq`, @C91 — CONTENT equality of two stored values of type `tp`: the one runtime home is
+// `Stores::eq_content` (src/database/equality.rs), which both backends call.
+fn OpEqContent(v1: reference, v2: reference, tp: const u16) -> boolean;
+#rust"stores.eq_content(&@v1, &@v2, @tp)"
+fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
+#rust"!stores.eq_content(&@v1, &@v2, @tp)"
 // Can be used to get another record within the same database
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
 #rust"stores.get_ref(&@v1, u32::from(@fld))"

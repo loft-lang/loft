@@ -27,7 +27,7 @@
 <p><code>graphics</code> is the surface everything else in this family draws onto: a <code>Canvas</code> of packed RGBA pixels, the primitives that mark it (rectangles, lines, circles, ellipses, béziers, triangles, sprites), PNG output, and — beyond the software canvas — the OpenGL bindings, a <code>Painter2D</code> for fixed-function 2-D over GL, sprite sheets, and audio.</p>
 <p>It is deliberately not the layer above it. <code>stage</code> holds the scene TREE you mutate and hands this package a draw list; <code>text2d</code> draws text with no font file; <code>drawing</code> renders a <code>.draw</code> scene authored as lines of text; <code>tween</code> moves properties in time. Reach for <code>graphics</code> when you want to put pixels somewhere, and for one of those when you want something to decide WHICH pixels.</p>
 <p>Everything below is the software canvas, which needs no window and no display — the same half the package's own CI can run.</p>
-<pre><code><span class="kw">use</span> graphics;</code></pre>
+<pre><code><span class="kw">use</span> graphics::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
 <p>A canvas is a width, a height and a fill colour.</p>
 <pre><code>  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">8</span>, <span class="nm">4</span>, graphics::<span class="fn-call">rgb</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>));

@@ -41,7 +41,7 @@ fn main() {
 
   // The same key twice is one record, and a HIT fetches nothing.
   q = people[42];
-  println("same={p == q} after_hit={people.len()}");
+  println("same={&p == &q} after_hit={people.len()}");
 
   r = people[7];
   println("second={r.name} resident2={people.len()}");

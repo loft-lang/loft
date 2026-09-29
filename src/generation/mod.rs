@@ -1842,6 +1842,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Enum(_, true, _)
         | Type::Index(_, _, _)
         // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (C125).
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
@@ -6675,6 +6676,7 @@ extern crate loft;"
         )?;
         self.output_init(w, from, till)?;
         writeln!(w, "    db.finish();")?;
+        self.emit_reference_targets(w)?;
         // Mirror `compile::build_const_vectors` so module-scope `const`
         // vectors (`const NUMS = [10, 20, 30]`) populate `db.const_refs`
         // before `n_main` runs.  Without this, `OpConstRef(<d_nr>)`
@@ -6816,6 +6818,7 @@ extern crate loft;"
         // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
         self.output_init(w, 0, till)?;
         writeln!(w, "    db.finish();")?;
+        self.emit_reference_targets(w)?;
         // Initiative 03 Phase 3b: emit code to build CONST_STORE
         // vectors and populate `db.const_refs` — mirrors the
         // interpreter path in `compile::build_const_vectors`.
@@ -7238,6 +7241,27 @@ extern crate loft;"
             )?;
             writeln!(w, "}}")
         }
+    }
+
+    /// `@FR-E-Eq`, @C91 — replay [`crate::database::Field::target`] in the generated `init()`:
+    /// the known type each stored `reference<T>` field names, so content `==` follows it on
+    /// `--native` exactly as in the interpreter.  `init()` registers every type in the
+    /// compile-time order, so the numbers are the same ids.
+    fn emit_reference_targets(&self, w: &mut dyn Write) -> std::io::Result<()> {
+        for (tp, row) in self.stores.types.iter().enumerate() {
+            if let crate::database::Parts::Struct(fields)
+            | crate::database::Parts::EnumValue(_, fields) = &row.parts
+            {
+                for f in fields.iter().filter(|f| f.target != u16::MAX) {
+                    writeln!(
+                        w,
+                        "    db.set_field_target({tp}, {:?}, {});",
+                        f.name, f.target
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Use this to emit only the `init` body that registers all types.

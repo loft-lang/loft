@@ -19,7 +19,7 @@ decide.
   PLANNING.md's priorities and QUALITY.md's open work; a pointer in "Out of scope" is enough.
 - **Reopening needs new evidence** — a use case, an incident or a measurement not available at
   the decision.  Add it to the entry's record and change the entry here; never flip one silently.
-- **Adding an entry:** take the next free id (the highest is C129).  Append the deliberation —
+- **Adding an entry:** take the next free id (the highest is C130).  Append the deliberation —
   question, evaluation, dated decision, revisit trigger — to the record, and write the compact
   entry here under the same heading, in the shape the entries below use: **Decision** and
   **Why**, then **Revisit when**, the date and the record link.  In the source doc, strike the
@@ -29,8 +29,13 @@ decide.
   `tests/` that fails on a build breaking it — cites `@C<n>`.  `./scripts/idx tag:@C<n>` lists
   them and `./scripts/idx decisions` counts them per entry (`make index` first).  A decision no
   site can keep is not a decision: reopen it.  Where code and entry disagree, the code moves,
-  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and an entry
-  numbered C130 or later lands with its guard (`tests/index_hygiene.rs`).
+  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and every entry
+  has its guard (`tests/index_hygiene.rs`) — a new one lands with it.
+- **A decision about a library is guarded in that library** — a test under its `tests/` citing
+  `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
+  `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which
+  `idx decisions` counts (`library`) and the gate above accepts; the `lib-main-health`
+  nightly fails when a library guard appears or disappears without that file following.
 - **`Catalogue:`** names the `@F`/`@I` catalogue entries a decision limits or shapes, so
   `./scripts/idx tag:@F<n>` shows a feature's design bounds beside its code (@PLN92).
 
@@ -510,9 +515,15 @@ two operands are one record is only the fast path of content equality, never its
 collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
 identity `==` reported where a value is stored: `b = a; a == b` answered false, and
 `value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
-decided by what is written; how fast it is, by the compiler.  **Not built yet:** `==` on a plain
-struct still compares identity and `&a == &b` is still refused; the change follows its census
-(@PLN175).
+decided by what is written; how fast it is, by the compiler.  Built by @PLN175 in ten steps,
+census before every flip.
+
+**Holds at:** `@C91` — `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`
+(struct, nested, tuple, lists, cycles, nullable pairs, a value struct's reference),
+`c91-a-collection-and-an-enum-value-compare-by-content.loft`, `c91-a-vector-compares-by-content.loft`,
+`c91-an-identity-compare-names-one-record.loft` and `c91-an-identity-compare-refuses-what-it-cannot-ask.loft`
+(`&a == &b`), `c91-a-float-key-agrees-with-equality.loft` (keys), `c91-every-type-is-equatable.loft`
+(generics), and `tests/store_content_eq.rs` (`Stores::eq_content`, the census trace); both backends.
 
 **Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
 identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
@@ -971,6 +982,10 @@ kind becomes hard to reason about and so impossible to verify.
 **Revisit when.** Temporaries that cannot be removed or reused cost more than a few percent,
 measured on the release binary with `perf`.  Decided 2026-09-17 —
 [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
+**Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md) (owner,
+2026-09-29: a foreign-data view that still presents a store, @PLN174, is the model working — every
+read routine served it unchanged); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
+(a heap value is one `DbRef` on both backends — a second kind needs a second representation).
 **Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
 
 ## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set

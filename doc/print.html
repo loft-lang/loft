@@ -1483,8 +1483,8 @@ if parser::parse("user_code", snippet) &gt; 0 {
 </section>
 <section class="print-section" id="17-libraries">
 <h1>Libraries</h1>
-<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it with <code>use name;</code> at the top of your file. That one line does two things: it brings every <code>pub</code> name in the library into your own namespace, so you can write them bare, and it gives you the <code>name::</code> prefix, which reaches everything the library defines. A definition without <code>pub</code> is reachable only through the prefix. So <code>pub</code> is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but <code>name::thing</code> still finds it. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
-<pre><code><span class="kw">use</span> testlib;</code></pre>
+<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it at the top of your file. <code>use name;</code> gives you the <code>name::</code> prefix, which reaches everything the library defines. <code>use name::*;</code> also brings every <code>pub</code> name into your own namespace, so you can write them bare; <code>use name::(a, b);</code> brings in just those. A definition without <code>pub</code> is reachable only through the prefix. So <code>pub</code> is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but <code>name::thing</code> still finds it. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write <code>pub use name::*;</code> to pass the names on as well. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
+<pre><code><span class="kw">use</span> testlib::*;</code></pre>
 <h2 id="constants-and-enums">Constants and Enums</h2>
 <p>A library constant reads like one of your own, and so does an enum variant. You can compare, order, and convert enum values exactly as you would with enums defined in the same file. The <code>libname::</code> prefix is always available and is what disambiguates a variant name two enums share.</p>
 <h2 id="struct-construction-and-field-access">Struct Construction and Field Access</h2>
@@ -1497,7 +1497,7 @@ if parser::parse("user_code", snippet) &gt; 0 {
   testlib::<span class="en">Point</span> {x: self.x + dx, y: self.y + dy }
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
-<p>A library constant, both ways: the prefix always works, and the bare name works because <code>use testlib;</code> brought every <code>pub</code> name into this file.</p>
+<p>A library constant, both ways: the prefix always works, and the bare name works because <code>use testlib::*;</code> brought every <code>pub</code> name into this file.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(testlib::<span class="en">MAX_SIZE</span> == <span class="nm">100</span>, <span class="st">"library constant MAX_SIZE"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">MIN_SIZE</span> == <span class="nm">1</span>, <span class="st">"the same constant, written bare"</span>);</code></pre>
 <p>Library enum variants: comparison and ordering work as normal.</p>
@@ -3257,7 +3257,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <section class="print-section" id="33-features">
 <h1>Feature catalogue</h1>
 <p>Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in <code>doc/features/</code> in the repository, where <code>@F2</code> is <code>F2.md</code>.</p>
-<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 71 of the 87 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
+<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 72 of the 88 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
 <p>The catalogue is generated from the <code>loft-lang/features</code> issue tracker, which is the single source of truth: every entry is an issue, and <code>make features-check</code> regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.</p>
 <h2 id="language-features">Language features</h2>
 <ul>
@@ -3348,6 +3348,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F120</strong> — Lexer library (lib/lexer)</li>
 <li><strong>@F121</strong> — Parser library (lib/parser)</li>
 <li><strong>@F122</strong> — Multiple dispatch — one name, a definition per combination of parameter types</li>
+<li><strong>@F123</strong> — Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view</li>
 </ul>
 <h2 id="tooling-and-infrastructure">Tooling and infrastructure</h2>
 <ul>
@@ -4026,7 +4027,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code>pub interface Equatable {
   op == (self: Self, other: Self) -&gt; boolean
 }</code></pre>
-<p>Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.</p>
+<p>Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.</p>
 <p>`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.</p>
 </div>
 <div class="item">

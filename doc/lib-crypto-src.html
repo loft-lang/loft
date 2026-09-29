@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>crypto source</h1>
 <article>
-<p><a href="lib-crypto.html">← crypto</a> · <a href="lib-crypto-api.html">API reference</a> · version 0.3.9</p>
+<p><a href="lib-crypto.html">← crypto</a> · <a href="lib-crypto-api.html">API reference</a> · version 0.3.10</p>
 <p class="lib-legend">11 file(s), 1588 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -569,7 +569,7 @@
 <span id="tests-aead-kex-loft-L10"><span class="cm">//   AES-256-GCM  — Project Wycheproof aes_gcm_test.json tcId 91 (keySize 256,</span></span>
 <span id="tests-aead-kex-loft-L11"><span class="cm">//                  ivSize 96, tagSize 128, result "valid").</span></span>
 <span id="tests-aead-kex-loft-L12"></span>
-<span id="tests-aead-kex-loft-L13"><span class="kw">use</span> crypto;</span>
+<span id="tests-aead-kex-loft-L13"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-aead-kex-loft-L14"></span>
 <span id="tests-aead-kex-loft-L15"><span class="cm">// ── X25519 ECDH — RFC 7748 §6.1 ──────────────────────────────────────</span></span>
 <span id="tests-aead-kex-loft-L16"><span class="cm">//</span></span>
@@ -730,7 +730,7 @@
 <span id="tests-crypto-loft-L12"><span class="cm">// substitution via a UTF-8 input that produces a `/` in standard</span></span>
 <span id="tests-crypto-loft-L13"><span class="cm">// base64.</span></span>
 <span id="tests-crypto-loft-L14"></span>
-<span id="tests-crypto-loft-L15"><span class="kw">use</span> crypto;</span>
+<span id="tests-crypto-loft-L15"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-crypto-loft-L16"></span>
 <span id="tests-crypto-loft-L17"><span class="cm">// Helper: build a string of N copies of a single character.</span></span>
 <span id="tests-crypto-loft-L18"><span class="kw">fn</span> <span class="fn-call">repeat</span>(c: <span class="ty"><a href="stdlib-types.html">text</a></span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
@@ -944,7 +944,7 @@
 <span id="tests-ed25519-loft-L18"><span class="cm">//           sig = 92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da</span></span>
 <span id="tests-ed25519-loft-L19"><span class="cm">//                 085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00</span></span>
 <span id="tests-ed25519-loft-L20"></span>
-<span id="tests-ed25519-loft-L21"><span class="kw">use</span> crypto;</span>
+<span id="tests-ed25519-loft-L21"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-ed25519-loft-L22"></span>
 <span id="tests-ed25519-loft-L23"><span class="cm">// ── RFC 8032 TEST 1 (empty message) ──────────────────────────────────</span></span>
 <span id="tests-ed25519-loft-L24"></span>
@@ -1063,7 +1063,7 @@
 <span id="tests-es256-loft-L27"><span class="cm">// native store-lifetime bug (the arg's pointer arrives null while its length</span></span>
 <span id="tests-es256-loft-L28"><span class="cm">// survives).  Binding first is the ed25519 tests' convention too.</span></span>
 <span id="tests-es256-loft-L29"></span>
-<span id="tests-es256-loft-L30"><span class="kw">use</span> crypto;</span>
+<span id="tests-es256-loft-L30"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-es256-loft-L31"></span>
 <span id="tests-es256-loft-L32"><span class="cm">// ── RFC 6979 A.2.5, message "sample" ─────────────────────────────────</span></span>
 <span id="tests-es256-loft-L33"></span>
@@ -1198,7 +1198,7 @@
 <span id="tests-es256-parity-loft-L16"><span class="cm">// = a 32-byte scalar).  Values are bound to LOCALS before each native call — a</span></span>
 <span id="tests-es256-parity-loft-L17"><span class="cm">// bare literal handed straight in as a temporary hits a native store-lifetime</span></span>
 <span id="tests-es256-parity-loft-L18"><span class="cm">// bug (arg pointer arrives null).</span></span>
-<span id="tests-es256-parity-loft-L19"><span class="kw">use</span> crypto;</span>
+<span id="tests-es256-parity-loft-L19"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-es256-parity-loft-L20"></span>
 <span id="tests-es256-parity-loft-L21"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
 <span id="tests-es256-parity-loft-L22">  sk = <span class="st">"ya+p2EW6dRZrXCFXZ7HWk05Qw9s26JsSe4piKxIPZyE="</span>;</span>
@@ -1265,7 +1265,7 @@
 <span id="tests-hpke-loft-L27"><span class="cm">//   pt     = 4265617574792069732074727574682c20747275746820626561757479</span></span>
 <span id="tests-hpke-loft-L28"><span class="cm">//   ct     = e5d84cd531cfb583096e7cfa9641bd3079cf3a91cda813c52deb5f512be9931980a41de125a925cdad859d5b7a</span></span>
 <span id="tests-hpke-loft-L29"></span>
-<span id="tests-hpke-loft-L30"><span class="kw">use</span> crypto;</span>
+<span id="tests-hpke-loft-L30"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-hpke-loft-L31"></span>
 <span id="tests-hpke-loft-L32">const <span class="en">SK_E</span>   = <span class="st">"F51LU7Y2XEW2AMQWO2HZXLwvTZ428WlVWNziZauLqxE="</span>;</span>
 <span id="tests-hpke-loft-L33">const <span class="en">SK_R</span>   = <span class="st">"SXtFAmZM/qXVrws5k02sciQqdPhIBFHhrufWpTMgMz0="</span>;</span>
@@ -1354,7 +1354,7 @@
 <span id="tests-random-loft-L11"><span class="cm">// library's `base64_decode` is UTF-8-lossy (random non-UTF-8 octets become a</span></span>
 <span id="tests-random-loft-L12"><span class="cm">// 3-byte replacement char), so a decoded length would not equal n.</span></span>
 <span id="tests-random-loft-L13"></span>
-<span id="tests-random-loft-L14"><span class="kw">use</span> crypto;</span>
+<span id="tests-random-loft-L14"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-random-loft-L15"></span>
 <span id="tests-random-loft-L16"><span class="kw">fn</span> <span class="fn-call">test_random_bytes_length_32</span>() {</span>
 <span id="tests-random-loft-L17">  out = crypto::<span class="fn-call">random_bytes</span>(<span class="nm">32</span>);</span>
@@ -1400,7 +1400,7 @@
 <span id="tests-sha256-bytes-loft-L2"><span class="cm">// bytes_concat_b64 — the ztcbor signing / content_hash path.  MUST give the</span></span>
 <span id="tests-sha256-bytes-loft-L3"><span class="cm">// identical result on interpret / --native / --native-wasm / --html: this file is</span></span>
 <span id="tests-sha256-bytes-loft-L4"><span class="cm">// the parity check for the four byte bridges the wasm gate depends on.</span></span>
-<span id="tests-sha256-bytes-loft-L5"><span class="kw">use</span> crypto;</span>
+<span id="tests-sha256-bytes-loft-L5"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-sha256-bytes-loft-L6"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
 <span id="tests-sha256-bytes-loft-L7">  <span class="cm">// sha256_b64 (Python hashlib vectors) — raw / non-UTF-8 byte hashing.</span></span>
 <span id="tests-sha256-bytes-loft-L8">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sha256_b64</span>(<span class="st">""</span>) == <span class="st">"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="</span>, <span class="st">"empty"</span>);</span>
@@ -1440,7 +1440,7 @@
 <span id="tests-worked-examples-loft-L19"><span class="cm">// function result handed straight through as a TEMPORARY hits a native store-lifetime</span></span>
 <span id="tests-worked-examples-loft-L20"><span class="cm">// bug (the argument's pointer arrives null while its length survives).  That is the</span></span>
 <span id="tests-worked-examples-loft-L21"><span class="cm">// convention in ed25519.loft and es256.loft too.</span></span>
-<span id="tests-worked-examples-loft-L22"><span class="kw">use</span> crypto;</span>
+<span id="tests-worked-examples-loft-L22"><span class="kw">use</span> crypto::*;</span>
 <span id="tests-worked-examples-loft-L23"></span>
 <span id="tests-worked-examples-loft-L24"><span class="cm">// @CRY-001 — two hashing doors, and why there are two.  `sha256` takes loft `text` and</span></span>
 <span id="tests-worked-examples-loft-L25"><span class="cm">// answers a 64-character lowercase HEX digest; `sha256_b64` takes the BASE64 of a raw</span></span>

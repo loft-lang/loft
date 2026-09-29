@@ -29,7 +29,7 @@ fn main() {
 
   // The record the query saw again must be the SAME one, never a second copy.
   g2 = people[42];
-  println("identity={g == g2} name={g2.name}");
+  println("identity={&g == &g2} name={g2.name}");
   println("brought_in={people[1].name},{people[2].name}");
 
   // A predicate matching nothing is not a failure.

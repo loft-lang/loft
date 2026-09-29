@@ -23,12 +23,12 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_world API</h1>
 <article>
-<p><a href="lib-hex_world.html">← hex_world</a> · version 0.2.0</p>
+<p><a href="lib-hex_world.html">← hex_world</a> · version 0.2.1</p>
 <p class="lib-legend">17 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Cell</span></code></pre>
 <p>4-byte cell.  c_color uses the u8 typedef (integer limit(0,255) size(1)); c_age uses u16 (size(2)).  Storage packs to exactly 4 bytes per cell — the projector ships them through the binary surface in chunk-major order.</p>
-<p>c_color = 0 means &quot;empty&quot; (no crystal, no TTT mark).  Both clients treat 0 as background; non-zero as live content.</p>
+<p>c_color = 0 means &quot;empty&quot; (no crystal, no TTT mark).  Both clients treat 0 as background; non-zero as live content.  It is a SENTINEL, not a colour: a colour-0 cell stores its other fields but is invisible to cell_count, neighbour_count, the decay pass and world_save.  Start a palette at 1.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Chunk</span></code></pre>
@@ -36,19 +36,19 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">World</span></code></pre>
-<p>Top-level container.  Sparse: only chunks with at least one non-empty cell live in <code>chunks</code>; empty chunks are removed by the tick loop's GC pass.  <code>tick</code> is monotonic per server lifetime.</p>
+<p>Top-level container.  Sparse: only chunks with at least one non-empty cell live in <code>chunks</code>; empty chunks are removed by the tick loop's GC pass — that pass is the CALLER's.  Nothing in this library frees a chunk: <code>set_cell</code> says so, <code>tick_and_decay</code> empties cells without touching <code>chunks</code>, and the only reclaim it offers is a <code>world_save</code> / <code>world_load</code> round trip, which writes non-empty chunks only. <code>tick</code> is monotonic per server lifetime.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>floor(v / 32) — handles negative v correctly (C-style <code>/</code> rounds toward zero, which silently maps cell (-1, 0) to chunk 0 instead of chunk -1).</p>
+<p>floor(v / 32) — handles negative v correctly (C-style <code>/</code> rounds toward zero, which silently maps cell (-1, 0) to chunk 0 instead of chunk -1).  Use this rather than <code>v / 32</code> for any coordinate that can go west or north of the origin, which in a world that grows both ways is half of them.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hex_idx_32</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>v mod 32, always in [0, 31].</p>
+<p>v mod 32, always in [0, 31].  <code>v % 32</code> is NOT this: it answers a negative slot for a negative v, which then indexes nothing.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_empty</span>() -&gt; <span class="en">Cell</span></code></pre>
-<p>Default empty cell.  All fields zero; serialises to four 0x00 bytes on the wire.</p>
+<p>Default empty cell.  All fields zero; serialises to four 0x00 bytes on the wire.  Also what <code>get_cell</code> answers for a cell that is not there at all — the two are deliberately indistinguishable.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">build_chunk</span>(cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cz: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Chunk</span></code></pre>
@@ -60,27 +60,27 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_chunk</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
-<p>True iff a chunk exists at the global (q, r).</p>
+<p>True iff a chunk exists at the global (q, r).  The only way to distinguish &quot;no chunk here&quot; from &quot;chunk here, cell empty&quot; — <code>get_cell</code> answers the same thing for both, on purpose.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ensure_chunk</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
-<p>Ensure a chunk exists at the global (q, r); creates a 32x32 of empty cells if absent.</p>
+<p>Ensure a chunk exists at the global (q, r); creates a 32x32 of empty cells if absent — 1024 cells per first touch, and never freed again by this library.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">get_cell</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Cell</span></code></pre>
-<p>Read the cell at global (q, r).  Returns <code>cell_empty()</code> when the chunk does not exist (sparse-world convention — empty chunks are implicitly all-empty).</p>
+<p>Read the cell at global (q, r).  Returns <code>cell_empty()</code> when the chunk does not exist (sparse-world convention — empty chunks are implicitly all-empty).  Reading never allocates, so a read sweep over any region is free however wide; ask <code>has_chunk</code> if you need the difference.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_cell</span>(self: &amp;<span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>, value: <span class="en">Cell</span>)</code></pre>
-<p>Write a cell at global (q, r).  Creates the containing chunk on demand; does NOT GC empty chunks (the tick loop's end-of-tick pass owns that).</p>
+<p>Write a cell at global (q, r).  Creates the containing chunk on demand; does NOT GC empty chunks (the tick loop's end-of-tick pass owns that — and it is the caller's loop, not this library's).</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cell_count</span>(self: <span class="en">World</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>Total number of non-empty cells across every chunk.</p>
+<p>Total number of non-empty cells across every chunk.  &quot;Non-empty&quot; is <code>c_color != 0</code>, so this can answer 0 for a world holding heights and ages.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">neighbour_count</span>(self: <span class="en">World</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
-<p>Count filled axial-hex neighbours of the cell at global (q, r). Returns 0..=6.  Empty centre cell is fine — neighbours are read independently of the centre's state.</p>
+<p>Count filled axial-hex neighbours of the cell at global (q, r). Returns 0..=6.  Empty centre cell is fine — neighbours are read independently of the centre's state.  AXIAL: the six deltas carry no parity term, so these (q, r) are not the odd-r offset pair <code>hex_grid</code> uses, though both are <code>(integer, integer)</code> spelled q and r.  &quot;Filled&quot; is <code>c_color != 0</code>.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tick_and_decay</span>(self: &amp;<span class="en">World</span>, base_lifetime: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</code></pre>

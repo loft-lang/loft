@@ -168,6 +168,15 @@ struct DeferredPar {
     count: u16,
 }
 
+/// A `&<operand>` that may be one side of `&a == &b` (`@FR-E-Eq`): its source span, and whether
+/// the operand is a place (`&` names a record only through one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct AmpIdentity {
+    pub(crate) start: (u32, u32),
+    pub(crate) end: (u32, u32),
+    pub(crate) place: bool,
+}
+
 /// Which binding position a leading `&` may occupy at the point the operand parser
 /// reaches it, and therefore which token ENDS the operand the `&` annotates.
 ///
@@ -530,6 +539,18 @@ pub struct Parser {
     /// could only peek the NEXT token, which cannot tell the whole RHS from the LAST
     /// operand of one — the hole that let `b = 1 + &a;` compile.
     pub(crate) amp_head: AmpHead,
+    /// `@FR-E-Eq` / @C91 — a `&<place>` written as a WHOLE operand of `==` / `!=`, which asks
+    /// identity (`&a == &b`).  The prefix-`&` parse cannot tell a whole operand from the last
+    /// operand of a wider one (`x + &a == y`), so it records the operand's span here and the
+    /// comparison claims it only when the span is exactly its operand; anything unclaimed is
+    /// refused as the sub-expression `&` it is.
+    pub(crate) amp_identity: Option<AmpIdentity>,
+    /// Where the right operand of the `==` / `!=` being parsed begins, so a `&` that opens it
+    /// is recognised as an identity operand (see [`Parser::amp_identity`]).
+    pub(crate) eq_rhs_at: Option<(u32, u32)>,
+    /// The left operand of the `==` / `!=` about to be handled was a whole `&<place>` — set by
+    /// the operator loop, read once by `handle_operator`.
+    pub(crate) eq_amp_left: Option<AmpIdentity>,
     /// The local an assignment is writing, for the duration of that assignment's right-hand
     /// side; `u16::MAX` outside one.  Paired with [`Parser::assign_replaces`], which says
     /// whether the write REPLACES the target (`=`, which repoints it at a fresh store) or
@@ -1659,6 +1680,9 @@ impl Parser {
             arms_of_statement_construct: false,
             match_void_arm: false,
             amp_head: AmpHead::default(),
+            amp_identity: None,
+            eq_rhs_at: None,
+            eq_amp_left: None,
             assign_target: u16::MAX,
             assign_replaces: false,
             build_snapshot_len: 0,
@@ -8454,6 +8478,13 @@ impl Parser {
         {
             return g_nr;
         }
+        // An INFERRED tuple bound to a variable (`same((1, 2), (1, 2))`) has no stored form
+        // until something registers it, and the monomorph's body is built on that form —
+        // the same registration an inferred tuple literal takes (`Data::ensure_tuple_defs`,
+        // loft#943).  Without it the instance looked up `def(u32::MAX)`: an ICE.
+        for (_, b) in &var_bindings {
+            self.data.ensure_tuple_defs(&mut self.lexer, b);
+        }
         if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
             if !self.first_pass {
                 let unbound: Vec<String> = var_bindings
@@ -9029,6 +9060,49 @@ impl Parser {
         });
     }
 
+    /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
+    const CONTENT_EQ_PENDING: i32 = i32::MIN;
+
+    /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
+    /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
+    /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
+    /// generic and a concrete `==` cannot answer differently.  Run inside the instance's frame
+    /// (`fill_monomorph_body`), where a lowering that needs a temporary (a tuple's) makes it.
+    fn resolve_content_eq(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(_, args) = code.unspan_mut()
+            && args.len() == 4
+            && matches!(args[2].unspan(), Value::Int(Self::CONTENT_EQ_PENDING))
+            && let Value::Int(holder) = *args[3].unspan()
+        {
+            let concrete = bindings
+                .iter()
+                .find(|(h, _)| *h as i32 == holder)
+                .map_or(Type::Unknown(0), |(_, t)| t.clone());
+            let operands = [args[0].clone(), args[1].clone()];
+            let mut lowered = Value::Null;
+            let tp = self.call_op(
+                &mut lowered,
+                "==",
+                &operands,
+                &[concrete.clone(), concrete.clone()],
+            );
+            if matches!(tp.peel_link(), Type::Boolean) && lowered != Value::Null {
+                *code = lowered;
+            } else if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Internal error: `==` on `{}` inside a generic has no comparison \
+                     (report this as a bug)",
+                    concrete.source_name(&self.data)
+                );
+                *code = Value::Boolean(false);
+            }
+            return;
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
+    }
+
     fn fill_monomorph_body(
         &mut self,
         d_nr: u32,
@@ -9104,6 +9178,9 @@ impl Parser {
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = code;
+        // Inside the instance's own frame (its variables, its context), so a comparison that
+        // needs a temporary — a tuple's element-wise one — makes it in the right function.
+        self.resolve_content_eq(&mut code, bindings);
         let returned = self.data.def(d_nr).returned().clone();
         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
         {
@@ -9579,6 +9656,26 @@ impl Parser {
             .count()
     }
 
+    /// Does content `==` cover the type `concrete_nr` names — a struct (a `value struct` and a
+    /// tuple's `__tuple<…>` included), a struct-enum or one of its variants, a vector, a keyed
+    /// collection?
+    /// `(G-Sat-Eq)` admits such a type for an `OpEq` bound it declares no operator for.
+    fn content_comparable(&self, concrete_nr: u32) -> bool {
+        let name = self.data.def(concrete_nr).name();
+        match self.data.def_type(concrete_nr) {
+            DefType::Struct => true,
+            DefType::EnumValue => true,
+            DefType::Enum => matches!(
+                self.data.def(concrete_nr).returned().peel_link(),
+                Type::Enum(_, true, _)
+            ),
+            _ => matches!(
+                name,
+                "vector" | "hash" | "sorted" | "index" | "spatial" | "trie"
+            ),
+        }
+    }
+
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
@@ -9641,6 +9738,15 @@ impl Parser {
                     .data
                     .possible_with_signature(&method_suffix, want, &concrete_type)
                     .unwrap_or(u32::MAX);
+            }
+            // `(G-Sat-Eq)`, @C91 — every type satisfies `==`: one with no `OpEq` of its own is
+            // compared by content, which the monomorph lowers (`content_eq_pending`).
+            if found == u32::MAX
+                && method_suffix == "OpEq"
+                && want == 2
+                && self.content_comparable(concrete_nr)
+            {
+                continue;
             }
             if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
@@ -9744,7 +9850,12 @@ impl Parser {
             if concrete_nr == u32::MAX {
                 continue; // can't check without a concrete type def_nr
             }
-            let concrete_name = self.shown_type_name(concrete_nr);
+            // A tuple is spelled as the author wrote it, not as its synthetic `__tuple<…>`.
+            let concrete_name = if matches!(bound.peel_link(), Type::Tuple(_)) {
+                bound.source_name(&self.data)
+            } else {
+                self.shown_type_name(concrete_nr)
+            };
             for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
                 let iface_name = self.data.def(iface_nr).name().to_string();
                 for why in self.satisfaction_failures(iface_nr, concrete_nr) {
@@ -10940,6 +11051,18 @@ impl Parser {
                     .collect();
                 // Re-resolve call target if it references the type variable.
                 let new_d = Self::re_resolve_call(d, tv_nr, concrete, data);
+                // `(G-Sat-Eq)`, @C91 — a bound `==` over a type with no `OpEq` of its own is its
+                // content `==`.  Its schema row is not reachable from here, so the call is
+                // marked and `resolve_content_eq` (parser side) fills the row in.
+                if new_args.len() == 2
+                    && Data::is_bound_stub_for(data.def(d).name(), "OpEq", 2)
+                    && (new_d == u32::MAX || new_d == d || data.def(new_d).name() == "OpEqRef")
+                {
+                    let mut marked = new_args;
+                    marked.push(Value::Int(Self::CONTENT_EQ_PENDING));
+                    marked.push(Value::Int(tv_nr as i32));
+                    return Value::Call(data.def_nr("OpEqContent"), marked);
+                }
                 // I9-vec: fix vector element access with baked-in elm_size=0.
                 // The template bakes elm_size=0 for type-variable elements and omits the
                 // value-extraction wrapper (OpGetInt/OpGetFloat/etc.).  Fix both here.
@@ -15003,11 +15126,74 @@ impl Parser {
         }
     }
 
-    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT: every field
-    /// compared with its own type's `==`, left to right, stopping at the first that differs —
-    /// a float field by float equality, a text by its characters, a nested value struct by
-    /// its own content, a reference field by identity (DESIGN_DECISIONS C91: bounded to the
-    /// value's own storage, never a reference-chase).
+    /// The schema row both operands of a CONTENT comparison are stored as (`@FR-E-Eq`, @C91) —
+    /// the `tp` `OpEqContent` walks them by — when they are two values of one kind that `==`
+    /// compares by content in the store: two vectors of one element type, two keyed
+    /// collections of one element and key, two records of one struct, or two struct-enum
+    /// values of one enum (a variant is compared as its enum, so two variants differ).
+    fn content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+        let [a, b] = types else {
+            return None;
+        };
+        match (a.peel_link(), b.peel_link()) {
+            (Type::Vector(ea, _), Type::Vector(eb, _)) => {
+                if !ea.is_equal(eb) || ea.is_unknown() {
+                    return None;
+                }
+                let elem = (**ea).clone();
+                Some(self.vector_of(&elem))
+            }
+            (
+                l @ (Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..)),
+                r,
+            ) if l.is_equal(r) => {
+                let l = l.clone();
+                self.keyed_field_kt(&l)
+            }
+            // A struct by its fields, through every `reference<T>` it holds.  A `value struct`
+            // keeps its inline field-by-field comparison (`value_struct_eq`).
+            (Type::Reference(da, _), Type::Reference(db, _))
+                if da == db
+                    && self.data.def_type(*da) == DefType::Struct
+                    && !self.data.is_value_struct(*da) =>
+            {
+                let known = self.data.def(*da).known_type();
+                (known != u16::MAX).then_some(known)
+            }
+            (l, r) => {
+                let (ea, eb) = (self.struct_enum_of(l)?, self.struct_enum_of(r)?);
+                let known = self.data.def(ea).known_type();
+                (ea == eb && known != u16::MAX).then_some(known)
+            }
+        }
+    }
+
+    /// The enum a struct-enum value belongs to: the enum itself, or a variant's parent.
+    /// The synthetic `__nullable<S>` is not one: it is the tagged spelling of a struct's
+    /// absence, and a struct's `==` is the struct's.
+    fn struct_enum_of(&self, tp: &Type) -> Option<u32> {
+        match tp.peel_link() {
+            Type::Enum(d, true, _) if !self.data.def(*d).name.starts_with("__nullable<") => {
+                Some(*d)
+            }
+            Type::Reference(v, _) if self.data.def_type(*v) == DefType::EnumValue => {
+                let parent = self.data.def(*v).parent;
+                (parent != u32::MAX && self.data.def_type(parent) == DefType::Enum)
+                    .then_some(parent)
+            }
+            _ => None,
+        }
+    }
+
+    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT (`@FR-E-Eq`,
+    /// @C91): every field compared with its own type's `==`, left to right, stopping at the
+    /// first that differs — a float field by float equality, a text by its characters, a
+    /// nested value struct by its own content.  A reference field still compares by identity:
+    /// that is deviation D-op-16, closed when `==` on a struct becomes content.
     ///
     /// An operand that runs code is evaluated ONCE into a temporary; any other is read in
     /// place per field.  `None` when a field has no `==`, which leaves the comparison to the
@@ -15053,7 +15239,56 @@ impl Parser {
     }
 
     fn call_op(&mut self, code: &mut Value, op: &str, list: &[Value], types: &[Type]) -> Type {
-        self.call_op_as(code, op, op, list, types)
+        let tp = self.call_op_as(code, op, op, list, types);
+        if matches!(op, "==" | "!=")
+            && !self.first_pass
+            && crate::env_once!(std::env::var_os("LOFT_TRACE_EQ_IDENTITY").is_some())
+        {
+            self.trace_eq_identity(code, op, types);
+        }
+        tp
+    }
+
+    /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
+    /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
+    /// operand types and the kind whose answer the content `==` changes.  Silent on a test
+    /// against the `null` literal, which asks presence and keeps its answer.
+    /// `scripts/eq_census.sh` collects it.
+    fn trace_eq_identity(&self, code: &Value, op: &str, types: &[Type]) {
+        let Value::Call(nr, _) = code else {
+            return;
+        };
+        if !matches!(self.data.def(*nr).name.as_str(), "OpEqRef" | "OpNeRef")
+            || types.iter().any(|t| matches!(t, Type::Null))
+        {
+            return;
+        }
+        let Some(first) = types.first() else {
+            return;
+        };
+        let kind = match first.peel_link() {
+            Type::Reference(d, _) => match self.data.def_type(*d) {
+                DefType::Enum | DefType::EnumValue => "struct-enum",
+                _ if self.data.is_value_struct(*d) => "value-struct",
+                _ => "struct",
+            },
+            Type::Vector(..) => "vector",
+            Type::Hash(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => "collection",
+            _ => "other",
+        };
+        let pos = self.lexer.pos();
+        let name = |t: Option<&Type>| t.map_or(String::new(), |t| self.data.type_name_str(t));
+        eprintln!(
+            "[eq-identity] {}:{}  {kind}  {} {op} {}",
+            pos.file,
+            pos.line,
+            name(types.first()),
+            name(types.get(1)),
+        );
     }
 
     /// [`Self::call_op`] where the operator the author WROTE differs from the one being
@@ -15269,6 +15504,23 @@ impl Parser {
                         return Type::Boolean;
                     }
                 }
+            }
+            // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by
+            // CONTENT (`Stores::eq_content`): a vector by length and then element by element,
+            // a keyed collection by its records, an enum value by its variant and then fields.
+            if matches!(op, "==" | "!=")
+                && list.len() == 2
+                && let Some(tp) = self.content_eq_type(types)
+            {
+                *code = self.cl(
+                    if op == "==" {
+                        "OpEqContent"
+                    } else {
+                        "OpNeContent"
+                    },
+                    &[list[0].clone(), list[1].clone(), Value::Int(i32::from(tp))],
+                );
+                return Type::Boolean;
             }
             // `@FR-E-Eq`, loft#1580 — a `value struct` is a VALUE, and values compare
             // by content over their own storage.  Without a user `OpEq` the loop below matched

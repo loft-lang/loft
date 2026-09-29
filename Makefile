@@ -165,7 +165,7 @@ SUDO := $(shell d="$(PREFIX)"; while [ -n "$$d" ] && [ "$$d" != / ] && [ ! -e "$
 # skipped runtimes.  Set by `make install-native` / `install-user-fast`.
 NATIVE_ONLY ?=
 
-.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
+.PHONY: check-wasm-threads check-no-threading par-gates gate ci-miri all check-targets doctor install install-user install-native install-user-fast install-artifacts install-artifacts-native install-wasm-artifacts uninstall uninstall-user debug test quick profile clean clean-wasm fill ci ship run-tests clippy memory last meld generate gtest pdf bench test-native test-wasm test-html-render loft-test wasm-assets test-packages test-package-native-tests test-gl-headless test-gl-smoke test-gl-golden update-gl-golden serve wasm gallery game crystal-editor play native-editor editor-dist help rebuild-native-cdylibs view-build view-refresh view index index-install-hook hooks libcatalogue guards-fetch guards-check features-fetch features-gen features-check surface-gen surface-check optional-ratchet optional-ratchet-pin api-compat check-contract-goldens contract-labels-test
 
 # Print the overview at the top of this file.  Useful when you land on a
 # fresh checkout and want to know what buttons are available without
@@ -912,6 +912,12 @@ optional-ratchet:  ## @FR-N-Shape ratchet: fail if MORE shape tests go blind to 
 
 optional-ratchet-pin:  ## Re-pin the ratchet after a walk that lowered it
 	@python3 scripts/ir_walker_audit.py optional --write-ratchet
+
+guards-fetch:  ## @PLN175 — refresh index/library_guards.json: the @C<n> guards in each library's tests/ at origin/main (network; gh)
+	@python3 scripts/fetch-library-guards.py
+
+guards-check:  ## @PLN175 — fail when a library guard was added or removed since index/library_guards.json (network; gh; nightly in lib-main-health)
+	@python3 scripts/fetch-library-guards.py --check
 
 features-fetch:  ## Refresh index/features.json from the loft-lang/features tracker (network; gh + jq)
 	@gh issue list -R $(FEATURES_REPO) --state all --limit 200 \

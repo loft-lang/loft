@@ -963,6 +963,16 @@ footgun). Parenthesise if you truly mean the boolean compare (`(a == b) == c`), 
 types (consistent with `bool < int`, which was always rejected). Convert explicitly if you
 really mean it. (`b == null` on a `boolean?` is fine — `null` is not an integer.)
 
+**`==` compares what a value holds, for every type (C91).** Two structs are equal when their
+fields are, a vector when its elements are (in order), a `hash` / `sorted` / `index` / `spatial` /
+`trie` when it holds the same records whatever order they were inserted in, a struct-enum value
+when the variant and its fields are; a `reference<T>` field is followed to the record it names,
+and a cyclic value terminates.  `b = a` copies (C86), so `a == b` is `true` afterwards.  A type's
+own `OpEq` replaces this; `x == null` still tests presence.  Whether two names are **one record**
+is asked with `&` on both sides — `&a == &b` / `&a != &b` — and `&` on one side only is refused.
+`0.0 == -0.0`, and a float key agrees: `0.0` and `-0.0` are one entry of a keyed collection.
+Rule: [formal/operational.md](formal/operational.md) `(E-Eq)`.
+
 **Tuples compare lexicographically.** All six operators work between two tuples of the same
 arity: the first element decides, and later elements are consulted only while the earlier
 ones are equal — so `(1, 9) < (2, 0)` and `(1, 9) < (1, 10)`, while `(1, 9) < (1, 9)` is

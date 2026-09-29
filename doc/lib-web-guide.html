@@ -27,7 +27,7 @@
 <p><code>web</code> is the client half: HTTP requests (<code>http_get</code> and friends, including byte-range reads of a large remote file), a WebSocket client that reconnects on its own, and a small binary packer for the frames you send over it.</p>
 <p>It is not the server — that is <code>server</code>, which is built on this package and whose guide does a live round trip between the two. It is not a browser DOM binding either; on wasm the same calls are routed through the host's <code>fetch()</code> and <code>WebSocket</code>, so a loft program compiled for the browser writes the code below unchanged.</p>
 <p>⚠ This guide runs WITHOUT a network, exactly as the package's CI does — the live HTTP examples live in <code>tests-network/http.loft</code>. That is not a gap being papered over: the contracts worth teaching here are what a call answers when the other end is NOT there, and having no server is what makes them demonstrable.</p>
-<pre><code><span class="kw">use</span> web;</code></pre>
+<pre><code><span class="kw">use</span> web::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
   <span class="fn-call">a_request_that_cannot_reach_anything</span>();</code></pre>
 <p>Every section is a function, and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API is caught, and the assertions that check the example is RIGHT never run.</p>

@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq` — A KEYED COLLECTION AND A STRUCT-ENUM VALUE COMPARE BY CONTENT.  `==` on two
+// `hash`, `sorted`, `index`, `spatial` or `trie` of one element and key compares the records
+// they hold, whatever order they were inserted in; on two values of one struct-enum it compares
+// the variant and then that variant's fields.  Both compared identity (deviations D-op-19 and
+// D-op-20): two collections built alike, and a copy, answered false.
+//
+// Every expected value is worked out by hand: the same records are equal in any insertion
+// order; one differing field, one record more or fewer, or another variant is not.
+//
+// @falsified-at: 299ab2fb9 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native
+//   exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/c91-a-collection-and-an-enum-value-compare-by-content.patch —
+//   interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8
+//   assertion failures -> 0
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends; the cells
+//   run from a `main` report no leak on either backend.
+
+enum Shape { Circle { r: integer }, Square { s: integer }, Dot }
+struct E { k: integer, v: text }
+struct P { x: integer, y: integer, name: text }
+struct H { shape: Shape, n: integer }
+
+fn test_hash() {
+  a: hash<E[k]> = [E { k: 1, v: "a" }, E { k: 2, v: "b" }];
+  b: hash<E[k]> = [E { k: 2, v: "b" }, E { k: 1, v: "a" }];
+  c: hash<E[k]> = [E { k: 1, v: "a" }, E { k: 2, v: "c" }];
+  d: hash<E[k]> = [E { k: 1, v: "a" }];
+  assert(a == b, "the same records in another insertion order");
+  assert(!(a == c), "one differing field");
+  assert(a != d, "one record fewer");
+  assert(d != a, "one record more");
+  e = a;
+  assert(e == a, "a copy (C86) holds the same records");
+  assert(!(&e == &a), "and is another collection");
+}
+
+fn test_sorted_and_index() {
+  s1: sorted<E[k]> = [E { k: 1, v: "a" }, E { k: 2, v: "b" }];
+  s2: sorted<E[k]> = [E { k: 2, v: "b" }, E { k: 1, v: "a" }];
+  s3: sorted<E[k]> = [E { k: 1, v: "a" }, E { k: 3, v: "b" }];
+  assert(s1 == s2, "sorted: insertion order is not content");
+  assert(s1 != s3, "sorted: another key");
+  i1: index<E[k]> = [E { k: 1, v: "a" }, E { k: 2, v: "b" }];
+  i2: index<E[k]> = [E { k: 2, v: "b" }, E { k: 1, v: "a" }];
+  i3: index<E[k]> = [];
+  assert(i1 == i2, "index: insertion order is not content");
+  assert(i1 != i3, "index: an empty one differs");
+}
+
+fn test_spatial_and_trie() {
+  p1: spatial<P[x, y]> = [P { x: 1, y: 2, name: "a" }, P { x: 5, y: 6, name: "b" }];
+  p2: spatial<P[x, y]> = [P { x: 5, y: 6, name: "b" }, P { x: 1, y: 2, name: "a" }];
+  p3: spatial<P[x, y]> = [P { x: 1, y: 2, name: "a" }, P { x: 5, y: 6, name: "c" }];
+  assert(p1 == p2, "spatial: insertion order is not content");
+  assert(p1 != p3, "spatial: one differing field");
+  t1: trie<E[v]> = [E { k: 1, v: "apple" }, E { k: 2, v: "apricot" }];
+  t2: trie<E[v]> = [E { k: 2, v: "apricot" }, E { k: 1, v: "apple" }];
+  t3: trie<E[v]> = [E { k: 1, v: "apple" }];
+  assert(t1 == t2, "trie: insertion order is not content");
+  assert(t1 != t3, "trie: one record fewer");
+}
+
+fn test_struct_enum_values() {
+  a: Shape = Circle { r: 1 };
+  b: Shape = Circle { r: 1 };
+  c: Shape = Circle { r: 2 };
+  d: Shape = Square { s: 1 };
+  e: Shape = Dot;
+  f: Shape = Dot;
+  assert(a == b, "one variant, the same fields");
+  assert(a != c, "one variant, another field value");
+  assert(a != d, "another variant, even with the same field value");
+  assert(e == f, "a variant without fields");
+  assert(a != e, "a variant with fields and one without");
+  x = H { shape: Circle { r: 5 }, n: 1 };
+  y = H { shape: Circle { r: 5 }, n: 2 };
+  assert(x.shape == y.shape, "an enum field compares its value, not its host");
+}

@@ -32,11 +32,12 @@
 <h2 id="the-smallest-thing-that-does-something">The smallest thing that does something</h2>
 <p><code>file(path).png()</code> decodes the whole file in one call. Afterwards the width, height, name and every pixel are already in memory.</p>
 <p>A relative path resolves against the FILE that names it, not the working directory — so <code>../tests/map.png</code> below is the 256x256 fixture this package ships beside its tests, reached from <code>docs/</code>. In your own program the path is just the path: <code>file("sprites.png").png()</code>. (Add <code>#cwd</code> above the <code>use</code> line if you would rather have paths resolve against the working directory.)</p>
-<pre><code><span class="kw">use</span> imaging;</code></pre>
+<pre><code><span class="kw">use</span> imaging::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
-  img = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();</code></pre>
-<p><code>png()</code> answers null when there is nothing to decode. Past that check the image is COMPLETE — there is no half-filled <code>Image</code> to guard against.</p>
-<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(img, <span class="st">"map.png should decode"</span>);
+  loaded = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();</code></pre>
+<p><code>png()</code> answers <code>Image?</code>: null when there is nothing to decode, so the result is discharged before a field is read — here after checking it, with <code>?? Image { }</code>. Past that check the image is COMPLETE — there is no half-filled <code>Image</code> to guard against.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(loaded, <span class="st">"map.png should decode"</span>);
+  img = loaded ?? <span class="en">Image</span> { };
   <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"{img.name} is {img.width}x{img.height}, {len(img.data)} pixels"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(img.data) == img.width * img.height, <span class="st">"the vector is the whole image"</span>);</code></pre>
 <p>Every section below is a function and <code>main</code> calls each one. A section <code>main</code> does not call still COMPILES — so a renamed API would still be caught while its assertions, the half that checks the example is RIGHT rather than merely spelled correctly, silently never run.</p>
@@ -51,8 +52,9 @@
 <h2 id="finding-a-pixel">Finding a pixel</h2>
 <p><code>img.data</code> is one FLAT <code>vector&lt;Pixel&gt;</code> in row-major order. The pixel at column x, row y is <code>data[y * width + x]</code>, and <code>len(data) == width * height</code> always holds on an image <code>png()</code> handed back. There is no per-row vector and no two-dimensional index — the arithmetic is the interface.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">addressing</span>() {
-  img = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(img, <span class="st">"map.png should decode"</span>);</code></pre>
+  loaded = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(loaded, <span class="st">"map.png should decode"</span>);
+  img = loaded ?? <span class="en">Image</span> { };</code></pre>
 <p>The centre pixel of a 256x256 image.</p>
 <pre><code>  centre = img.data[<span class="nm">128</span> * img.width + <span class="nm">128</span>];
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(centre, <span class="st">"the centre pixel is in range"</span>);</code></pre>
@@ -71,8 +73,9 @@
 <p>A <code>Pixel</code> carries <code>r</code>, <code>g</code>, <code>b</code> and <code>a</code>, each 0-255. Alpha is CARRIED, not dropped: a source file with no alpha channel arrives fully opaque (<code>a == 255</code>), never invisible.</p>
 <p>Two packed forms exist because they answer different questions. <code>value()</code> is <code>0xRRGGBB</code> and deliberately has no alpha in it — that is the pre-alpha contract, so a colour comparison written years ago keeps answering what it answered. <code>rgba()</code> is <code>0xAARRGGBB</code>, the byte order <code>graphics::Canvas</code> uses, so a decoded image hands over to a canvas without a per-channel loop.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">channels</span>() {
-  img = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(img, <span class="st">"map.png should decode"</span>);</code></pre>
+  loaded = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(<span class="st">"../tests/map.png"</span>).<span class="fn-call">png</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(loaded, <span class="st">"map.png should decode"</span>);
+  img = loaded ?? <span class="en">Image</span> { };</code></pre>
 <pre><code>  first = img.data[<span class="nm">0</span>];
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first, <span class="st">"the first pixel is in range"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first.r &gt;= <span class="nm">0</span> &amp;&amp; first.r &lt;= <span class="nm">255</span>, <span class="st">"red is a byte: {first.r}"</span>);
@@ -104,8 +107,9 @@
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(swatch.data[<span class="nm">0</span>].a == <span class="nm">255</span>, <span class="st">"the declared default made the red pixel opaque"</span>);</code></pre>
 <pre><code>  scratch = <span class="st">"../tests/_tmp_guide_swatch.png"</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(swatch.<span class="fn-call">save_png</span>(scratch), <span class="st">"save_png reports success"</span>);</code></pre>
-<pre><code>  reloaded = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(scratch).<span class="fn-call">png</span>();
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(reloaded, <span class="st">"the file we just wrote decodes"</span>);
+<pre><code>  back = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(scratch).<span class="fn-call">png</span>();
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(back, <span class="st">"the file we just wrote decodes"</span>);
+  reloaded = back ?? <span class="en">Image</span> { };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(reloaded.width == <span class="nm">2</span> &amp;&amp; reloaded.height == <span class="nm">2</span>, <span class="st">"dimensions survive the round trip"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(reloaded.data[<span class="nm">0</span>].r == <span class="nm">255</span> &amp;&amp; reloaded.data[<span class="nm">0</span>].g == <span class="nm">0</span> &amp;&amp; reloaded.data[<span class="nm">0</span>].b == <span class="nm">0</span>,
          <span class="st">"and so does the red pixel"</span>);
@@ -117,20 +121,13 @@
 <pre><code>  img.data[i] = imaging::Pixel { r: 0, g: 0, b: 0 };   // yes
   img.data[i].r = 0;                                    // not a thing
 </code></pre>
-<p>And <code>limit(0, 255)</code> is a RANGE, not a clamp. A channel built outside it stores <strong>0</strong> rather than saturating at 255 — so the obvious way to brighten an image turns its brightest pixels black, which looks like a decoding bug and is not. Clamp the value yourself before you build the pixel.</p>
+<p>And <code>limit(0, 255)</code> is a RANGE, not a clamp. A channel built from a value that may not fit — <code>bright.r * 2</code> can reach 510 — is REFUSED at compile time (<code>cannot implicitly narrow integer to integer(0, 255)</code>), so you say what an unfitting value becomes. <code>?? 255</code> is the saturating brighten: a value that fits is kept, one that does not becomes 255. (<code>min(…, 255)</code> is not accepted as that proof; the fallback is the spelling the compiler reads.)</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">the_surprise</span>() {
   bright = imaging::<span class="en">Pixel</span> { r: <span class="nm">200</span>, g: <span class="nm">100</span>, b: <span class="nm">50</span> };</code></pre>
-<p>Doubling without a clamp: 400 is outside the range, so it stores 0.</p>
-<pre><code>  doubled = imaging::<span class="en">Pixel</span> { r: bright.r * <span class="nm">2</span>, g: bright.g * <span class="nm">2</span>, b: bright.b * <span class="nm">2</span> };
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled.r == <span class="nm">0</span>, <span class="st">"400 is out of range and stores 0, not 255"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled.g == <span class="nm">200</span> &amp;&amp; doubled.b == <span class="nm">100</span>, <span class="st">"the channels that stayed in range are fine"</span>);</code></pre>
-<p>The cure is one <code>min</code> at the call site.</p>
-<pre><code>  safe = imaging::<span class="en">Pixel</span> {
-    r: <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(bright.r * <span class="nm">2</span>, <span class="nm">255</span>),
-    g: <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(bright.g * <span class="nm">2</span>, <span class="nm">255</span>),
-    b: <span class="bi"><a href="stdlib-min-max-clamp.html">min</a></span>(bright.b * <span class="nm">2</span>, <span class="nm">255</span>)
-  };
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(safe.r == <span class="nm">255</span>, <span class="st">"clamped before the pixel is built"</span>);
+<p>Doubling, saying what an out-of-range channel becomes: 400 does not fit and becomes 255; 200 and 100 fit and are kept.</p>
+<pre><code>  doubled = imaging::<span class="en">Pixel</span> { r: bright.r * <span class="nm">2</span> ?? <span class="nm">255</span>, g: bright.g * <span class="nm">2</span> ?? <span class="nm">255</span>, b: bright.b * <span class="nm">2</span> ?? <span class="nm">255</span> };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled.r == <span class="nm">255</span>, <span class="st">"400 is out of range and saturates to 255"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled.g == <span class="nm">200</span> &amp;&amp; doubled.b == <span class="nm">100</span>, <span class="st">"the channels that stayed in range are kept"</span>);
 }</code></pre>
 <h2 id="where-to-go-next">Where to go next</h2>
 <p>The API reference lists every signature with its contract. The package's own tests are the best-explained calls in it — <code>tests/worked-examples.loft</code> carries <code>@IMG-001</code> (whole-image-or-null, and the addressing rule), <code>@IMG-002</code> (every colour type arrives as RGBA), <code>@IMG-003</code> (replacing a pixel, and why the local you read one into is a view of its slot rather than a snapshot) and <code>@IMG-004</code> (the range that is not a clamp, above).</p>

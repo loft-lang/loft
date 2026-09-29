@@ -187,9 +187,9 @@ Loft is inspired by Rust but designed for general-purpose scripting with a short
 === Variables — no let or mut
 
 ```rust
-x = 42
-x += 1
-const y = 42   // opt-in: locked in debug builds
+x = 42;
+x += 1;
+const y = 42;   // opt-in: locked in debug builds
 ```
 
 ```rust
@@ -234,7 +234,7 @@ fn push_two(v: &vector<integer>) {
     v += [1, 2];  // caller sees the change
 }
 // const: read-only (locked in debug builds)
-fn count(v: const vector<integer>) - integer {
+fn count(v: const vector<integer>) -> integer {
     len(v)
 }
 // &: explicit write-back for primitives
@@ -263,11 +263,11 @@ Downside The compile-time guarantees are much weaker. Rust's borrow checker stat
 === ^ is XOR; \*\* or pow() for exponentiation
 
 ```rust
-sq   = 2 ** 10          // ** exponentiation — integers: 1024
-area = PI * r ** 2.0   // floats too; pow(r, 2.0) also works
-bits = a | b              // bitwise OR
-mask = a & b              // bitwise AND
-xor  = a ^ b              // bitwise XOR
+sq   = 2 ** 10;          // ** exponentiation — integers: 1024
+area = PI * r ** 2.0;    // floats too; pow(r, 2.0) also works
+bits = a | b;            // bitwise OR
+mask = a & b;            // bitwise AND
+xor  = a ^ b;            // bitwise XOR
 ```
 
 ```rust
@@ -350,6 +350,7 @@ Downside The \#attribute syntax is unique to loft and unfamiliar to everyone els
 for x in 1..5 {
     for y in 1..5 {
         if x * y >= 6 { x#break; }
+        pairs += 1;
     }
 }
 ```
@@ -369,14 +370,14 @@ Downside Rust's lifetime-label syntax 'outer is explicit and visually separate f
 === Methods by self name, not impl blocks
 
 ```rust
-fn greet(self: Person) - text {
+fn greet(self: Person) -> text {
     "Hello, {self.name}!"
 }
-fn name_len(self: const Person) - integer {
+fn name_len(self: const Person) -> integer {
     len(self.name)  // const: read-only access guaranteed
 }
-p.greet()     // dot syntax
-greet(p)      // free-function call — identical
+p.greet();     // dot syntax
+greet(p);      // free-function call — identical
 ```
 
 ```rust
@@ -402,10 +403,10 @@ enum Shape {
     Circle { r: float },
     Rect   { w: float, h: float }
 }
-fn area(self: Circle) - float { PI * pow(self.r, 2.0) }
-fn area(self: Rect)   - float { self.w * self.h }
+fn area(self: Circle) -> float { PI * pow(self.r, 2.0) }
+fn area(self: Rect)   -> float { self.w * self.h }
 
-s.area()    // dispatches on the runtime variant
+s.area();   // dispatches on the runtime variant
 ```
 
 ```rust
@@ -430,7 +431,7 @@ Downside Rust's match is exhaustive: the compiler forces you to handle every var
 ```rust
 // Capture works when called in the same scope:
 offset = 10;
-shift = fn(x: integer) - integer { x + offset };
+shift = fn(x: integer) -> integer { x + offset };
 assert(shift(5) == 15, "shift");
 
 // Capturing and non-capturing lambdas both work with map/filter/reduce:
@@ -438,8 +439,8 @@ shifted = map([1, 2, 3], shift);   // carries `offset` with it
 evens   = filter([1, 2, 3, 4], |x| { x % 2 == 0 });
 
 // Cross-scope: returning a capturing lambda works:
-fn make_adder(n: integer) - fn(integer) - integer {
-    fn(x: integer) - integer { x + n }
+fn make_adder(n: integer) -> fn(integer) -> integer {
+    fn(x: integer) -> integer { x + n }
 }
 ```
 
@@ -468,18 +469,18 @@ Downside You do not choose the capture mode, so a case Rust expresses by picking
 
 ```rust
 // Pass-through generics work:
-fn identity<T>(x: T) - T { x }
-identity(42)        // integer
-identity("hello")  // text
+fn identity<T>(x: T) -> T { x }
+identity(42);          // integer
+identity("hello");     // text
 
 // Interface bounds work, and are satisfied structurally:
 fn largest<T: Ordered>(a: T, b: T) -> T { if a > b { a } else { b } }
-largest(3, 9)        // 9
-largest("ada", "bob")  // "bob" — same function
+largest(3, 9);         // 9
+largest("ada", "bob"); // "bob" — same function
 
 // A per-type version is still what you write when the bound does not fit:
-fn max_int(a: integer, b: integer) - integer {
-    if a  b { a } else { b }
+fn max_int(a: integer, b: integer) -> integer {
+    if a > b { a } else { b }
 }
 ```
 
@@ -499,12 +500,12 @@ Downside Interface bounds (\<T: Ordered\>, \<T: Addable\>, \<T: Printable\>) are
 === String formatting — embedded expressions
 
 ```rust
-msg  = "Hi {name}, score: {score:6.2}"   // width.precision
-rank = "seed {n:+}"                      // sign shows on integers: "seed +42"
-prec = "{value:.2}"                      // precision only
-hex  = "{n:#x}"
-list = "{for x in 1..4 {x*2}}"          // [2,4,6]
-     = "{\"hello\":3}"                    // nested string literal — works
+msg  = "Hi {name}, score: {score:6.2}";   // width.precision
+rank = "seed {n:+}";                      // sign shows on integers: "seed +42"
+prec = "{value:.2}";                      // precision only
+hex  = "{n:#x}";
+list = "{for x in 1..4 {x*2}}";          // [2,4,6]
+nest = "{\"hello\"}";                     // nested string literal — works
 ```
 
 ```rust
@@ -523,7 +524,7 @@ Downside Unknown radix letters in specifiers are compile-time errors (e.g. :5z o
 === Built-in parallel for-loops — par(...)
 
 ```rust
-fn double(r: const Score) - integer { r.value * 2 }
+fn double(r: const Score) -> integer { r.value * 2 }
 
 sum = 0;
 for item in scores par(b=double(item), 4) {
@@ -531,7 +532,7 @@ for item in scores par(b=double(item), 4) {
 }               // results arrive in original order
 
 // Method form:
-for item in scores par(b=item.value(), 4) { ... }
+for item in scores par(b=item.twice(), 4) { sum += b; }
 ```
 
 ```rust
@@ -558,10 +559,10 @@ Loft and Python share a similar surface syntax — assignment without type annot
 === Variables — static types inferred at first assignment
 
 ```rust
-x = 42           // integer — fixed at first assignment
-x += 1
-name = "Bob"     // text — a different variable, not a rebind
-x = "oops"      // compile error: cannot assign text to integer
+x = 42;          // integer — fixed at first assignment
+x += 1;
+name = "Bob";    // text — a different variable, not a rebind
+// x = "oops";   // compile error: cannot assign text to integer
 ```
 
 ```python
@@ -580,10 +581,10 @@ Downside Types are fixed at first assignment and cannot change. Python's dynamic
 ```rust
 struct User {
     email: text?,            // `?`: may be absent
-    age:   integer,            // never null — the default
+    age:   integer,          // never null — the default
 }
 u = User { age: 30 };
-if u.email == null { print("no email"); }
+if u.email == null { print("no email\n"); }
 u.age = null;  // warns: the slot holds null anyway
 ```
 
@@ -612,10 +613,10 @@ Downside The default is the safe one — a field is non-null unless its type say
 struct Point { x: float, y: float }
 p = Point { x: 1.0, y: 2.0 };
 p.x += 0.5;
-p.z;          // compile error: no field z on Point
-p.x = "hi"; // compile error: cannot assign text to float
+// p.z;          // compile error: no field z on Point
+// p.x = "hi";   // compile error: cannot assign text to float
 
-fn distance(self: const Point) - float {
+fn distance(self: const Point) -> float {
     sqrt(self.x * self.x + self.y * self.y) ?? 0.0
 }
 ```
@@ -681,10 +682,10 @@ enum Shape {
     Circle { r: float },
     Rect   { w: float, h: float }
 }
-fn area(self: Circle) - float { PI * pow(self.r, 2.0) }
-fn area(self: Rect)   - float { self.w * self.h }
+fn area(self: Circle) -> float { PI * pow(self.r, 2.0) }
+fn area(self: Rect)   -> float { self.w * self.h }
 
-s.area()   // dispatches on the runtime variant
+s.area();   // dispatches on the runtime variant
 ```
 
 ```python
@@ -713,11 +714,11 @@ Downside Unlike Rust's match, loft does not enforce exhaustiveness — a missing
 === String formatting — embedded expressions
 
 ```rust
-msg  = "Hi {name}, score: {score:8.2}"
-sign = "seed {n:+}"              // sign shows on integers: "seed +42"
-hex  = "{n:#x}"
-list = "{for x in 1..4 {x*2}}"   // [2,4,6]
-pad  = "{count:08}"               // zero-padded (integers)
+msg  = "Hi {name}, score: {score:8.2}";
+sign = "seed {n:+}";              // sign shows on integers: "seed +42"
+hex  = "{n:#x}";
+list = "{for x in 1..4 {x*2}}";   // [2,4,6]
+pad  = "{count:08}";              // zero-padded (integers)
 ```
 
 ```python
@@ -737,13 +738,13 @@ Downside Python f-strings accept arbitrary expressions: method calls ({obj.metho
 
 ```rust
 nums:   vector<integer> = [1, 2, 3];
-lookup: hash<text>    = {};
-lookup["key"] = "value";
-scores: sorted<integer> = {};
-scores[user] = 95;  // O(log n) keyed insert
+lookup: hash<Entry[key]> = [];
+lookup += [Entry { key: "key", value: "value" }];
+scores: sorted<Score[user]> = [];
+scores += [Score { user: "ann", points: 95 }];  // O(log n) keyed insert
 
 // Element type is enforced at compile time:
-nums += ["x"];  // compile error: expected integer
+// nums += ["x"];  // compile error: expected integer
 ```
 
 ```python
@@ -768,16 +769,16 @@ Downside Python's built-in dict and list are among the most heavily optimised da
 ```rust
 // Capture works when called in the same scope:
 offset = 10;
-shift = fn(x: integer) - integer { x + offset };
+shift = fn(x: integer) -> integer { x + offset };
 assert(shift(5) == 15, "shift");
 
 // Lambdas work with map/filter/reduce, capturing or not:
-doubled = map([1, 2, 3], fn(x: integer) - integer { x * 2 });
+doubled = map([1, 2, 3], fn(x: integer) -> integer { x * 2 });
 evens   = filter([1, 2, 3, 4], |x| { x % 2 == 0 });
 
 // Capturing lambda with map:
 offset = 10;
-shifted = map(nums, fn(x: integer) - integer { x + offset });
+shifted = map(nums, fn(x: integer) -> integer { x + offset });
 ```
 
 ```python
@@ -801,7 +802,7 @@ Downside You do not choose the capture mode, and it is not the same for every ty
 
 ```rust
 // Logic errors: assert aborts the program
-fn divide(a: float, b: float) - float {
+fn divide(a: float, b: float) -> float {
     assert(b != 0.0, "division by zero");
     a / b ?? 0.0
 }
@@ -811,21 +812,21 @@ f = file("data.txt");
 if f#exists {
     data = f.content();
 } else {
-    print("file not found");
+    print("file not found\n");
 }
 
 // Mutating ops return a FileResult enum; match on the bare variant
 result = delete("old.txt");
 match result {
-    Ok               = print("deleted"),
-    NotFound         = print("not found"),
-    PermissionDenied = print("permission denied"),
-    IsDirectory      = print("is a directory"),
-    _                = print("other error"),
+    Ok               => print("deleted\n"),
+    NotFound         => print("not found\n"),
+    PermissionDenied => print("permission denied\n"),
+    IsDirectory      => print("is a directory\n"),
+    _                => print("other error\n"),
 }
 
 // Or just check success:
-if !move("a.txt", "b.txt").ok() { print("rename failed"); }
+if !move("a.txt", "b.txt").ok() { print("rename failed\n"); }
 ```
 
 ```python
@@ -864,7 +865,7 @@ Downside Logic errors (assert, panic) abort the entire program — there is no t
 === Built-in parallel for-loops — par(...)
 
 ```rust
-fn score(item: const Record) - integer { item.value * 2 }
+fn score(item: const Record) -> integer { item.value * 2 }
 
 total = 0;
 for item in records par(s=score(item), 4) {
@@ -893,16 +894,18 @@ Downside Workers can return primitives (integer, long, float, boolean), text, an
 
 ```rust
 // Pass-through generics work:
-fn identity<T>(x: T) - T { x }
-identity(42)        // integer
-identity("hello")  // text
+fn identity<T>(x: T) -> T { x }
+identity(42);          // integer
+identity("hello");     // text
 
-// Operations on T need a bound — `<T: Ordered>` compares, `<T: Addable>` adds:
+// Interface bounds work, and are satisfied structurally:
 fn largest<T: Ordered>(a: T, b: T) -> T { if a > b { a } else { b } }
+largest(3, 9);         // 9
+largest("ada", "bob"); // "bob" — same function
 
-// A per-type version is what you write when no bound fits:
-fn max_int(a: integer, b: integer) - integer {
-    if a  b { a } else { b }
+// A per-type version is still what you write when the bound does not fit:
+fn max_int(a: integer, b: integer) -> integer {
+    if a > b { a } else { b }
 }
 ```
 
@@ -925,11 +928,11 @@ Downside Operations on T require an explicit interface bound (\<T: Ordered\> for
 === Function signatures — defaults and named args, but no \*args
 
 ```rust
-fn connect(host: text, port: integer = 80, tls: boolean = true) - text { ... }
+fn connect(host: text, port: integer = 80, tls: boolean = true) -> text { "{host}:{port} tls={tls}" }
 
 connect("localhost");                // uses defaults
 connect("localhost", tls: false);    // named arg — skips port
-connect("localhost", 443, false);   // positional — all explicit
+connect("localhost", 443, false);    // positional — all explicit
 ```
 
 ```python
@@ -976,10 +979,10 @@ Downside Python's ecosystem is its defining advantage. NumPy, pandas, scikit-lea
 === Exponentiation with \*\* or pow(); ^ is XOR
 
 ```rust
-area  = PI * r ** 2.0      // ** exponentiation (like Python)
-bits  = a | b              // bitwise OR
-xor   = a ^ b              // bitwise XOR — not exponentiation
-cube  = x ** 3             // integer cube — exact: 2 ** 10 == 1024
+area  = PI * r ** 2.0;      // ** exponentiation (like Python)
+bits  = a | b;              // bitwise OR
+xor   = a ^ b;              // bitwise XOR — not exponentiation
+cube  = x ** 3;             // integer cube — exact: 2 ** 10 == 1024
 ```
 
 ```python
@@ -3662,10 +3665,10 @@ The count is the whole point: a snippet that does not parse answers a NON-zero n
 
 = Libraries
 
-A library is a `.loft` file you can share across projects. Place it in a `lib/` directory and import it with `use name;` at the top of your file. That one line does two things: it brings every `pub` name in the library into your own namespace, so you can write them bare, and it gives you the `name::` prefix, which reaches everything the library defines. A definition without `pub` is reachable only through the prefix. So `pub` is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but `name::thing` still finds it. `use` statements must come before any `fn` or `struct` definition in your file. Putting a `use` after a definition is a syntax error.
+A library is a `.loft` file you can share across projects. Place it in a `lib/` directory and import it at the top of your file. `use name;` gives you the `name::` prefix, which reaches everything the library defines. `use name::\*;` also brings every `pub` name into your own namespace, so you can write them bare; `use name::(a, b);` brings in just those. A definition without `pub` is reachable only through the prefix. So `pub` is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but `name::thing` still finds it. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write `pub use name::\*;` to pass the names on as well. `use` statements must come before any `fn` or `struct` definition in your file. Putting a `use` after a definition is a syntax error.
 
 ```rust
-use testlib;
+use testlib::*;
 ```
 
 === Constants and Enums
@@ -3694,7 +3697,7 @@ fn shifted(self: testlib::Point, dx: float, dy: float) -> testlib::Point {
 fn main() {
 ```
 
-A library constant, both ways: the prefix always works, and the bare name works because `use testlib;` brought every `pub` name into this file.
+A library constant, both ways: the prefix always works, and the bare name works because `use testlib::\*;` brought every `pub` name into this file.
 
 ```rust
   assert(testlib::MAX_SIZE == 100, "library constant MAX_SIZE");
@@ -6884,7 +6887,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 71 of the 87 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 72 of the 88 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -6977,6 +6980,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F120\*\* — Lexer library (lib/lexer)
 - \*\*\@F121\*\* — Parser library (lib/parser)
 - \*\*\@F122\*\* — Multiple dispatch — one name, a definition per combination of parameter types
+- \*\*\@F123\*\* — Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view
 
 === Tooling and infrastructure
 
@@ -7771,7 +7775,7 @@ pub interface Equatable {
 }
 ```
 
-Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.
+Types that support the `==` equality operator: every type (\@C91), by its own OpEq or by content. A tuple compares element by element, as its concrete `==` does.
 `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 
 ```rust

@@ -27,7 +27,7 @@
 <p><code>crypto</code> is the primitives: SHA-256 and HMAC, base64 both ways, Ed25519 and ECDSA-P256 signatures, X25519 Diffie-Hellman, HKDF, AES-256-GCM, HPKE, and random bytes.</p>
 <p>It is not a protocol. There is no TLS here, no password hashing (no argon2, no bcrypt), no key store and no certificate handling — those are decisions a library should not make for you. It gives you the pieces and expects you to know which one you want.</p>
 <p>⚠ <strong>Read this before anything else: every argument and every answer is BASE64 TEXT.</strong> Keys, messages, nonces, ciphertexts, digests from the <code>_b64</code> doors — all of them. The signatures say <code>text -&gt; text</code> and cannot tell you that, which is why the section below exists and why it is the first one.</p>
-<pre><code><span class="kw">use</span> crypto;</code></pre>
+<pre><code><span class="kw">use</span> crypto::*;</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
 <p>Hashing plain text, and the bridge every other call needs.</p>
 <pre><code>  digest = crypto::<span class="fn-call">sha256</span>(<span class="st">"hello"</span>);

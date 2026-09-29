@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @C91 — two references compare the records they name, and an absent one only equals another
-// absent one.  With either side optional, `==` lowered to `OpEqBool` over two presence tests, so
+// @C91 — two references compare the records they name (by content since C91 step 7; `&` asks
+// whether they are one record), and an absent one only equals another absent one.  With either side optional, `==` lowered to `OpEqBool` over two presence tests, so
 // two PRESENT references to different records compared equal — `n.next == m.next` answered true
 // for nodes 10 and 20 on both backends, with no diagnostic.  The presence test is right only
 // against the `null` literal.  Each cell varies one thing: the targets, their presence, the
@@ -32,6 +32,12 @@ fn main() {
   assert(!(z.next != y.next), "`!=` on two absent");
   assert(n.next != z.next, "`!=` present against absent");
   assert(!(n.next == null) && z.next == null && n.next != null, "the null literal still tests presence");
+  // @C91 — the records are compared by CONTENT, and `&` asks whether they are one.
+  e = NrNode { v: 10, next: null };
+  o = NrNode { v: 6, next: e };
+  assert(n.next == o.next, "two references to different records with equal content are equal");
+  assert(!(&n.next == &o.next), "and are two records");
+  assert(&n.next == &k.next, "two references to one record are one record");
   s1 = NrS { x: 7 };
   p = nr_pick(true, s1);
   q = nr_pick(false, s1);

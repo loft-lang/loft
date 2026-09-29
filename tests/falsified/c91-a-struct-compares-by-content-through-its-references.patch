@@ -1,0 +1,501 @@
+diff --git b/src/data_store.rs a/src/data_store.rs
+index d88491e8f..8df45fa8a 100644
+--- b/src/data_store.rs
++++ a/src/data_store.rs
+@@ -400,14 +400,13 @@ pub(crate) const DCSINGLE_V: u32 = 4; // single
+ pub(crate) const DCSTR_V: u32 = 4; // text
+ 
+ /// `DbField` record (element of `Parts::Struct` / `EnumValue` field vectors).
+-pub(crate) const DBFIELD_STRIDE: u32 = 37;
++pub(crate) const DBFIELD_STRIDE: u32 = 29;
+ pub(crate) const DBFIELD_CONTENT: u32 = 0; // u16 known_type
+ pub(crate) const DBFIELD_POSITION: u32 = 8; // u16 byte offset
+-pub(crate) const DBFIELD_NAME: u32 = 24;
+-pub(crate) const DBFIELD_DEFAULT: u32 = 28; // vector<DbContent> (box-of-one)
+-pub(crate) const DBFIELD_OTHER_INDEXES: u32 = 32; // vector<integer>
+-pub(crate) const DBFIELD_NULLABLE: u32 = 36; // @PLN127 arc D — declared nullable (1 byte)
+-pub(crate) const DBFIELD_TARGET: u32 = 16; // @C91 — u16 known_type a reference field names
++pub(crate) const DBFIELD_NAME: u32 = 16;
++pub(crate) const DBFIELD_DEFAULT: u32 = 20; // vector<DbContent> (box-of-one)
++pub(crate) const DBFIELD_OTHER_INDEXES: u32 = 24; // vector<integer>
++pub(crate) const DBFIELD_NULLABLE: u32 = 28; // @PLN127 arc D — declared nullable (1 byte)
+ 
+ /// `EnumPair` `(u16, text)` element of `Parts::Enum`.
+ pub(crate) const ENUMPAIR_STRIDE: u32 = 12;
+@@ -1566,7 +1565,6 @@ mod tests {
+         assert_eq!(pos(ids.db_field, "default"), DBFIELD_DEFAULT);
+         assert_eq!(pos(ids.db_field, "other_indexes"), DBFIELD_OTHER_INDEXES);
+         assert_eq!(pos(ids.db_field, "nullable"), DBFIELD_NULLABLE);
+-        assert_eq!(pos(ids.db_field, "target"), DBFIELD_TARGET);
+ 
+         assert_eq!(u32::from(stores.size(ids.enum_pair)), ENUMPAIR_STRIDE);
+         assert_eq!(pos(ids.enum_pair, "nr"), ENUMPAIR_NR);
+diff --git b/src/database/equality.rs a/src/database/equality.rs
+index 0c68e1abc..d28689769 100644
+--- b/src/database/equality.rs
++++ a/src/database/equality.rs
+@@ -16,21 +16,13 @@ impl Stores {
+     /// its elements in the tree's order.  Two handles that are one place answer `true` at
+     /// once; that is the fast path, never the meaning.
+     ///
+-    /// A stored `reference<T>` field is followed to the record it names ([`Field::target`]),
+-    /// so two references compare what they point at.  A pair of records met again while it is
+-    /// being compared counts as equal (coinduction), which is what makes a cycle — a list whose
+-    /// last node points back at its first, a node that points at itself — terminate.
++    /// A stored `reference<T>` (`Parts::DbRef`) is compared as the handle it is: the schema
++    /// row carries no target type to follow it into (deviation D-op-16, formal/operational.md).
+     ///
+     /// # Panics
+     /// On a `tp` that is no stored type, as the schema walks do.
+     #[must_use]
+     pub fn eq_content(&self, a: &DbRef, b: &DbRef, tp: u16) -> bool {
+-        let mut seen = Vec::new();
+-        self.eq_walk(a, b, tp, &mut seen)
+-    }
+-
+-    /// [`Self::eq_content`] with the record pairs already under comparison.
+-    fn eq_walk(&self, a: &DbRef, b: &DbRef, tp: u16, seen: &mut Vec<(DbRef, DbRef, u16)>) -> bool {
+         if a == b {
+             return true;
+         }
+@@ -44,9 +36,7 @@ impl Stores {
+         }
+         let (sa, sb) = (self.store(a), self.store(b));
+         match &self.types[tp as usize].parts {
+-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+-                self.eq_fields(a, b, fields, seen)
+-            }
++            Parts::Struct(fields) | Parts::EnumValue(_, fields) => self.eq_fields(a, b, fields),
+             Parts::Enum(variants) => {
+                 let (va, vb) = (sa.get_byte(a.rec, a.pos, 0), sb.get_byte(b.rec, b.pos, 0));
+                 if va != vb {
+@@ -59,7 +49,7 @@ impl Stores {
+                     return true;
+                 };
+                 match self.types.get(variant as usize).map(|t| &t.parts) {
+-                    Some(Parts::EnumValue(_, fields)) => self.eq_fields(a, b, fields, seen),
++                    Some(Parts::EnumValue(_, fields)) => self.eq_fields(a, b, fields),
+                     _ => true,
+                 }
+             }
+@@ -74,8 +64,6 @@ impl Stores {
+             }
+             Parts::Int(_, _) => sa.get_i32_raw(a.rec, a.pos) == sb.get_i32_raw(b.rec, b.pos),
+             Parts::IntRaw(_, _) => sa.get_u32_raw(a.rec, a.pos) == sb.get_u32_raw(b.rec, b.pos),
+-            // A stored handle reached WITHOUT its field — no target to follow — is the
+-            // handle it is; `eq_fields` follows the ones a field names.
+             Parts::DbRef => (0..3).all(|w| {
+                 sa.get_u32_raw(a.rec, a.pos + 4 * w) == sb.get_u32_raw(b.rec, b.pos + 4 * w)
+             }),
+@@ -86,12 +74,7 @@ impl Stores {
+                     rec,
+                     pos: 8,
+                 };
+-                self.eq_walk(
+-                    &child(a.store_nr, ra),
+-                    &child(b.store_nr, rb),
+-                    *content,
+-                    seen,
+-                )
++                self.eq_content(&child(a.store_nr, ra), &child(b.store_nr, rb), *content)
+             }
+             Parts::Vector(content)
+             | Parts::Sorted(content, _)
+@@ -100,7 +83,7 @@ impl Stores {
+             | Parts::Index(content, _, _)
+             | Parts::Hash(content, _)
+             | Parts::Radix(content, _)
+-            | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content, seen),
++            | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content),
+             Parts::Base => panic!(
+                 "eq_content on the base type {} ({})",
+                 tp, self.types[tp as usize].name
+@@ -147,23 +130,16 @@ impl Stores {
+     /// A collection of `content` elements: two absent collections are one value; otherwise
+     /// element by element in the collection's own order (a hash in key order, a spatial index
+     /// or trie in its tree's order), and a different count differs.
+-    fn eq_collection(
+-        &self,
+-        a: &DbRef,
+-        b: &DbRef,
+-        tp: u16,
+-        content: u16,
+-        seen: &mut Vec<(DbRef, DbRef, u16)>,
+-    ) -> bool {
++    fn eq_collection(&self, a: &DbRef, b: &DbRef, tp: u16, content: u16) -> bool {
+         if let Some(answer) = self.eq_absent_collections(a, b) {
+             return answer;
+         }
+-        let mut pairwise = |ea: &[DbRef], eb: &[DbRef]| {
++        let pairwise = |ea: &[DbRef], eb: &[DbRef]| {
+             ea.len() == eb.len()
+                 && ea
+                     .iter()
+                     .zip(eb)
+-                    .all(|(x, y)| self.eq_walk(x, y, content, seen))
++                    .all(|(x, y)| self.eq_content(x, y, content))
+         };
+         match &self.types[tp as usize].parts {
+             Parts::Hash(_, _) => {
+@@ -196,7 +172,7 @@ impl Stores {
+                     match (ea.rec == 0, eb.rec == 0) {
+                         (true, true) => return true,
+                         (false, false) => {
+-                            if !self.eq_walk(&ea, &eb, content, seen) {
++                            if !self.eq_content(&ea, &eb, content) {
+                                 return false;
+                             }
+                         }
+@@ -212,13 +188,7 @@ impl Stores {
+     /// `#…` is the collection's own bookkeeping (a tree link, a back pointer) and a field whose
+     /// first other-index is `u16::MAX` is a secondary VIEW of a collection another field
+     /// holds — neither is content, exactly as the renderer skips them.
+-    fn eq_fields(
+-        &self,
+-        a: &DbRef,
+-        b: &DbRef,
+-        fields: &[Field],
+-        seen: &mut Vec<(DbRef, DbRef, u16)>,
+-    ) -> bool {
++    fn eq_fields(&self, a: &DbRef, b: &DbRef, fields: &[Field]) -> bool {
+         fields.iter().all(|f| {
+             if f.name.starts_with('#') || f.other_indexes.first() == Some(&u16::MAX) {
+                 return true;
+@@ -235,45 +205,10 @@ impl Stores {
+                 return self.store(&fa).get_byte(fa.rec, fa.pos, 0)
+                     == self.store(&fb).get_byte(fb.rec, fb.pos, 0);
+             }
+-            if f.target != u16::MAX {
+-                return self.eq_reference(&fa, &fb, f.target, seen);
+-            }
+-            self.eq_walk(&fa, &fb, f.content, seen)
++            self.eq_content(&fa, &fb, f.content)
+         })
+     }
+ 
+-    /// Two stored `reference<T>` slots: the records they name, compared as `target`.  Both
+-    /// absent are equal and one absent differs; a pair already under comparison is assumed
+-    /// equal, which is where a cycle ends.
+-    fn eq_reference(
+-        &self,
+-        fa: &DbRef,
+-        fb: &DbRef,
+-        target: u16,
+-        seen: &mut Vec<(DbRef, DbRef, u16)>,
+-    ) -> bool {
+-        let read = |r: &DbRef| {
+-            let s = self.store(r);
+-            DbRef {
+-                store_nr: s.get_u32_raw(r.rec, r.pos) as u16,
+-                rec: s.get_u32_raw(r.rec, r.pos + 4),
+-                pos: s.get_u32_raw(r.rec, r.pos + 8),
+-            }
+-        };
+-        let (ra, rb) = (read(fa), read(fb));
+-        if ra.rec == 0 || rb.rec == 0 {
+-            return ra.rec == 0 && rb.rec == 0;
+-        }
+-        if seen
+-            .iter()
+-            .any(|&(x, y, t)| x == ra && y == rb && t == target)
+-        {
+-            return true;
+-        }
+-        seen.push((ra, rb, target));
+-        self.eq_walk(&ra, &rb, target, seen)
+-    }
+-
+     /// Two collection slots of which one or both are ABSENT (a `vector<T>?` holding null):
+     /// `Some(both absent)`, or `None` when both hold a collection to compare.
+     fn eq_absent_collections(&self, a: &DbRef, b: &DbRef) -> Option<bool> {
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index 437ba7c58..a4ef90f9e 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -149,12 +149,6 @@ pub struct Field {
+     /// carried rather than RENDERED — `layout_dump` and `LayoutDesc::render_dump`
+     /// are untouched, so the @PLN97 layout identity is too.
+     pub nullable: bool,
+-    /// `@FR-E-Eq`, @C91 — the known type a stored `reference<T>` field (`Parts::DbRef`) names,
+-    /// or `u16::MAX`.  The 12-byte row is shared by every reference field, so this is the
+-    /// only place the runtime learns what one points at: content `==` follows it
+-    /// (`Stores::eq_content`).  Carried like `nullable`, never RENDERED, so the @PLN97 layout
+-    /// identity is untouched.  Set by `typedef::fill_all` once every target has its row.
+-    pub target: u16,
+     pub(self) other_indexes: Vec<u16>, // For now only fields on the same record
+ }
+ 
+@@ -199,7 +193,6 @@ impl Field {
+         position: u16,
+         default: Content,
+         nullable: bool,
+-        target: u16,
+         other_indexes: Vec<u16>,
+     ) -> Field {
+         Field {
+@@ -208,7 +201,6 @@ impl Field {
+             position,
+             default: Self::default_from_wire(default),
+             nullable,
+-            target,
+             other_indexes,
+         }
+     }
+diff --git b/src/database/snapshot.rs a/src/database/snapshot.rs
+index 8a98a23ca..8a6f0c894 100644
+--- b/src/database/snapshot.rs
++++ a/src/database/snapshot.rs
+@@ -265,11 +265,6 @@ fn write_field(out: &mut String, f: &Field) {
+     write_content(out, &Field::default_to_wire(f.default.as_ref()));
+     out.push_str(",\"nullable\":");
+     out.push_str(if f.nullable { "true" } else { "false" });
+-    // Written only for a reference field, so a snapshot of a schema without one is
+-    // byte-identical to what it was before the key existed.
+-    if f.target != u16::MAX {
+-        let _ = write!(out, ",\"target\":{}", f.target);
+-    }
+     out.push_str(",\"other_indexes\":");
+     u16_list(out, &f.other_indexes);
+     out.push('}');
+@@ -287,11 +282,6 @@ fn field_from(p: &Parsed) -> Result<Field, SchemaDecodeError> {
+             .ok()
+             .and_then(|v| as_bool(v).ok())
+             .unwrap_or(false),
+-        // Absent in a snapshot of a field that is no reference, and in every older one.
+-        target: field(p, "target")
+-            .ok()
+-            .and_then(|v| as_u16(v).ok())
+-            .unwrap_or(u16::MAX),
+         other_indexes: u16_vec(field(p, "other_indexes")?)?,
+     })
+ }
+diff --git b/src/database/types.rs a/src/database/types.rs
+index 5a77b1ab3..f95c8212f 100644
+--- b/src/database/types.rs
++++ a/src/database/types.rs
+@@ -453,7 +453,6 @@ impl Stores {
+                 position: u16::MAX,
+                 default: None,
+                 nullable: false,
+-                target: u16::MAX,
+                 other_indexes: others,
+             });
+             if num > 8
+@@ -1968,7 +1967,6 @@ impl Stores {
+                 position: 0,
+                 default: None,
+                 nullable: false,
+-                target: u16::MAX,
+                 other_indexes: Vec::new(),
+             });
+             fields.push(Field {
+@@ -1977,7 +1975,6 @@ impl Stores {
+                 position: 0,
+                 default: None,
+                 nullable: false,
+-                target: u16::MAX,
+                 other_indexes: Vec::new(),
+             });
+             fields.push(Field {
+@@ -1986,7 +1983,6 @@ impl Stores {
+                 position: 0,
+                 default: None,
+                 nullable: false,
+-                target: u16::MAX,
+                 other_indexes: Vec::new(),
+             });
+             left as u16
+@@ -2420,31 +2416,6 @@ impl Stores {
+         (owned, borrow)
+     }
+ 
+-    /// `@FR-E-Eq`, @C91 — record that field `field_name` of record type `tp`, a stored
+-    /// `reference<T>`, names records of known type `target` ([`Field::target`]).  Only a
+-    /// `DbRef`-shaped field takes one; any other field is left alone.
+-    pub fn set_field_target(&mut self, tp: u16, field_name: &str, target: u16) {
+-        let dbref = |s: &Self, content: u16| {
+-            matches!(
+-                s.types.get(content as usize).map(|t| &t.parts),
+-                Some(Parts::DbRef)
+-            )
+-        };
+-        let Some(i) = (match self.types.get(tp as usize).map(|t| &t.parts) {
+-            Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) => fields
+-                .iter()
+-                .position(|f| f.name == field_name && dbref(self, f.content)),
+-            _ => None,
+-        }) else {
+-            return;
+-        };
+-        if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
+-            &mut self.types[tp as usize].parts
+-        {
+-            fields[i].target = target;
+-        }
+-    }
+-
+     /// Is `content` the 12-byte `DbRef` shape a closure record ADOPTS — i.e. may
+     /// `free_named`'s cascade reclaim the store this field points at?  False for
+     /// the borrowed shape and for every non-`DbRef` field.
+@@ -4039,7 +4010,6 @@ mod layout_tests {
+                 position: 0,
+                 default: None,
+                 nullable: false,
+-                target: u16::MAX,
+                 other_indexes: Vec::new(),
+             });
+         }
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 72e65f397..eeeef4b94 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -6676,7 +6676,6 @@ extern crate loft;"
+         )?;
+         self.output_init(w, from, till)?;
+         writeln!(w, "    db.finish();")?;
+-        self.emit_reference_targets(w)?;
+         // Mirror `compile::build_const_vectors` so module-scope `const`
+         // vectors (`const NUMS = [10, 20, 30]`) populate `db.const_refs`
+         // before `n_main` runs.  Without this, `OpConstRef(<d_nr>)`
+@@ -6818,7 +6817,6 @@ extern crate loft;"
+         // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
+         self.output_init(w, 0, till)?;
+         writeln!(w, "    db.finish();")?;
+-        self.emit_reference_targets(w)?;
+         // Initiative 03 Phase 3b: emit code to build CONST_STORE
+         // vectors and populate `db.const_refs` — mirrors the
+         // interpreter path in `compile::build_const_vectors`.
+@@ -7247,27 +7245,6 @@ extern crate loft;"
+     /// Sorting by `known_type` ensures the runtime recreates type IDs in the same order
+     /// as the compile-time database, keeping field indices consistent.
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+-    /// `@FR-E-Eq`, @C91 — replay [`crate::database::Field::target`] in the generated `init()`:
+-    /// the known type each stored `reference<T>` field names, so content `==` follows it on
+-    /// `--native` exactly as in the interpreter.  `init()` registers every type in the
+-    /// compile-time order, so the numbers are the same ids.
+-    fn emit_reference_targets(&self, w: &mut dyn Write) -> std::io::Result<()> {
+-        for (tp, row) in self.stores.types.iter().enumerate() {
+-            if let crate::database::Parts::Struct(fields)
+-            | crate::database::Parts::EnumValue(_, fields) = &row.parts
+-            {
+-                for f in fields.iter().filter(|f| f.target != u16::MAX) {
+-                    writeln!(
+-                        w,
+-                        "    db.set_field_target({tp}, {:?}, {});",
+-                        f.name, f.target
+-                    )?;
+-                }
+-            }
+-        }
+-        Ok(())
+-    }
+-
+     fn output_init(&mut self, w: &mut dyn Write, from: u32, till: u32) -> std::io::Result<()> {
+         // Base types are pre-registered by `Stores::new()` with fixed indices
+         // 0..=6 (integer, long, single, float, boolean, text, character — see
+diff --git b/src/ir_read.rs a/src/ir_read.rs
+index a72aa77d0..a6b8a2cf2 100644
+--- b/src/ir_read.rs
++++ a/src/ir_read.rs
+@@ -980,7 +980,6 @@ fn read_db_fields(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaField>
+                 r.field_int(stores, ds::DBFIELD_POSITION) as u16,
+                 default,
+                 r.field_bool(stores, ds::DBFIELD_NULLABLE),
+-                r.field_int(stores, ds::DBFIELD_TARGET) as u16,
+                 read_dep_list(stores, r, ds::DBFIELD_OTHER_INDEXES),
+             )
+         })
+diff --git b/src/ir_schema_gen.rs a/src/ir_schema_gen.rs
+index 066728e55..0dff23ab0 100644
+--- b/src/ir_schema_gen.rs
++++ a/src/ir_schema_gen.rs
+@@ -772,7 +772,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
+     let vec_other_indexes = db.vector(t0);
+     db.field(t89, "other_indexes", vec_other_indexes);
+     db.field(t89, "nullable", t4);
+-    db.field(t89, "target", 0);
+     let t127 = db.vector(t9);
+     let _ = t127; // may be unused
+     db.field(t90, "nr", 0);
+diff --git b/src/ir_store.rs a/src/ir_store.rs
+index 12fb0e367..675f78ce1 100644
+--- b/src/ir_store.rs
++++ a/src/ir_store.rs
+@@ -664,8 +664,6 @@ fn write_db_fields(stores: &mut Stores, parent: &Record, off: u32, fields: &[Sch
+         // @PLN127 arc D — carried through the round trip, or a schema read back
+         // from a store would answer "not nullable" for every field.
+         r.set_field_bool(stores, ds::DBFIELD_NULLABLE, f.nullable);
+-        // @C91 — the known type a stored `reference<T>` field names (`u16::MAX` for none).
+-        r.set_field_int(stores, ds::DBFIELD_TARGET, i64::from(f.target));
+         // default: single Content -> one-element vector<DbContent> (box-of-one).
+         let dr = r
+             .field_recvec(ds::DBFIELD_DEFAULT, ds::DBCONTENT_STRIDE)
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 5052d58e2..f72fb0ca4 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -15009,8 +15009,8 @@ impl Parser {
+     /// The schema row both operands of a CONTENT comparison are stored as (`@FR-E-Eq`, @C91) —
+     /// the `tp` `OpEqContent` walks them by — when they are two values of one kind that `==`
+     /// compares by content in the store: two vectors of one element type, two keyed
+-    /// collections of one element and key, two records of one struct, or two struct-enum
+-    /// values of one enum (a variant is compared as its enum, so two variants differ).
++    /// collections of one element and key, or two struct-enum values of one enum (a variant
++    /// is compared as its enum, so two different variants differ rather than refuse).
+     fn content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
+         let [a, b] = types else {
+             return None;
+@@ -15034,16 +15034,6 @@ impl Parser {
+                 let l = l.clone();
+                 self.keyed_field_kt(&l)
+             }
+-            // A struct by its fields, through every `reference<T>` it holds.  A `value struct`
+-            // keeps its inline field-by-field comparison (`value_struct_eq`).
+-            (Type::Reference(da, _), Type::Reference(db, _))
+-                if da == db
+-                    && self.data.def_type(*da) == DefType::Struct
+-                    && !self.data.is_value_struct(*da) =>
+-            {
+-                let known = self.data.def(*da).known_type();
+-                (known != u16::MAX).then_some(known)
+-            }
+             (l, r) => {
+                 let (ea, eb) = (self.struct_enum_of(l)?, self.struct_enum_of(r)?);
+                 let known = self.data.def(ea).known_type();
+diff --git b/src/typedef.rs a/src/typedef.rs
+index 0126e16c4..00770a35f 100644
+--- b/src/typedef.rs
++++ a/src/typedef.rs
+@@ -765,32 +765,10 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
+             }
+         }
+     }
+-    record_reference_targets(data, database);
+     report_unknown_key_fields(data, lexer);
+     false
+ }
+ 
+-/// `@FR-E-Eq`, @C91 — give every stored `reference<T>` field its target's known type
+-/// ([`crate::database::Field::target`]).  Done once every type of the parse has its row,
+-/// because a field may name a record type declared after it; the 12-byte row the field is
+-/// stored as is shared by every reference, so this is how content `==` can follow one.
+-fn record_reference_targets(data: &Data, database: &mut Stores) {
+-    for d in 0..data.definitions() {
+-        let kt = data.def(d).known_type;
+-        if kt == u16::MAX || !matches!(data.def_type(d), DefType::Struct | DefType::EnumValue) {
+-            continue;
+-        }
+-        for a in 0..data.attributes(d) {
+-            if let Type::Reference(t, deps) = data.attr_type(d, a).base()
+-                && !deps.is_empty()
+-                && data.def(*t).known_type != u16::MAX
+-            {
+-                database.set_field_target(kt, &data.attr_name(d, a), data.def(*t).known_type);
+-            }
+-        }
+-    }
+-}
+-
+ /// loft#874 — report the key fields a keyed collection named that its ELEMENT type
+ /// does not have.
+ ///

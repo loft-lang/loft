@@ -23,13 +23,99 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_way API</h1>
 <article>
-<p><a href="lib-hex_way.html">← hex_way</a> · version 0.1.1</p>
-<p>The registry does not record a public surface for <code>hex_way</code> 0.1.1. The field was added after this version was published, and it is filled from source at a package's next release — so this page fills itself in when <code>hex_way</code> ships again.</p>
-<p>Both of these work today:</p>
-<pre><code>loft api hex_way
-</code></pre>
-<p>prints the surface with its documentation, read from the package itself; and the source is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-world/tree/main/hex_way">https://github.com/loft-lang/loft-libs-world/tree/main/hex_way</a></p>
+<p><a href="lib-hex_way.html">← hex_way</a> · version 0.1.2</p>
+<p class="lib-legend">21 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Track</span></code></pre>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_new</span>() -&gt; <span class="en">Track</span></code></pre>
+<p>An empty track.  Append straights and arcs in order; the track IS the sequence, and segment index is the only identity a caller needs.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_straight</span>(t: <span class="en">Track</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Append a straight from one point to another.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_arc</span>(t: <span class="en">Track</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>, r: <span class="ty"><a href="stdlib-types.html">float</a></span>, a0: <span class="ty"><a href="stdlib-types.html">float</a></span>, a1: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Append an arc: centre, radius and the angles it runs between.  Arcs and straights are measured and sampled through the same routines, so a mixed track needs no special case.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>One segment's length.  The unit <code>track_len</code> sums and the unit a position along the track is measured in.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_len</span>(t: <span class="en">Track</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>The whole track's length, for pacing a mover or normalising a position to 0..1.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_point</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>Point at arc-length <code>s</code> along segment i.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_tangent</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>The direction of travel a distance <code>s</code> into segment <code>i</code> — what a mover faces, and what a carriage or a camera is aligned to.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_curvature</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>Signed curvature: + turning left (centre on the left of travel), - turning right.</p>
+<p>The same left-positive convention <code>track_offset</code> uses, which is why the two are checked against each other: on a turn signed positive, the positive offset is the INSIDE rail.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">offset_legal</span>(t: <span class="en">Track</span>, d: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>I-CURV — an offset degenerates when |d| &gt;= R.  This IS the minimum curve radius, and it falls out of the geometry rather than being a tuning constant.</p>
+<p>|d|, not d, because a way has BOTH rails: the outer one is never in trouble and the inner one collapses at the tightest turn anywhere on the track.  So the question is &quot;may this WAY be this wide&quot;, and past the answer <code>track_offset</code> still returns a Track — one whose inner arc has a NEGATIVE length and is no longer equidistant.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_offset</span>(t: <span class="en">Track</span>, d: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Track</span></code></pre>
+<p>The parallel track at distance d (left normal positive).  For straights and arcs the offset is again a straight / a concentric arc, so equidistance is EXACT here — the only cost anywhere is flattening, err ~ c^2/(8R).</p>
+<p>EQUIDISTANCE DOES NOT PICK A SIDE, and that is the trap this function fell into.  A left offset of a turn moves TOWARDS the centre, so its radius SHRINKS by d; only a right offset grows.  Reading the sweep direction the other way up puts every arc on the far side of the way from its straights — still exactly d from the centreline, still passing an equidistance gate, and no longer JOINED.  The number that sees it is the gap at a joint, not the distance to the line.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_distance</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>Distance from a point to the centreline (min over segments).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_distance</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>How far a point lies from the track.  The test for &quot;am I on the road&quot;, and the reason the per-segment distance is kept cheap.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_surfaces</span>(t: <span class="en">Track</span>, sf: <span class="en">Surfaces</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Register this track's segments as surfaces; returns the id of the FIRST one (ids are contiguous, so segment i has id first+i).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nearest_seg</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>Which segment of the track is nearest this point?  This is the P3 arbitration rule in embryo: nearest-surface-wins, ties to the lower index — deterministic, order-free.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_mark</span>(t: <span class="en">Track</span>, halfwidth: <span class="ty"><a href="stdlib-types.html">float</a></span>, s: <span class="en">HexSet</span>)</code></pre>
+<p>MARK ONLY — phase 1 of the two-phase build.</p>
+<p>P3 lesson: marking cells and cutting edges must NOT be interleaved per part. If each part cuts its own boundary as it lands, a later part can turn an already-blocked edge into an interior one — and that stale edge is never cleared, so the result depends on which part ran first. Mark every part, THEN cut once.</p>
+<p>A cell is marked on its CENTRE, so the footprint quantises and <code>halfwidth</code> does not survive the trip: between two rings of centres, every width gives the same cells.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cut_arb</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>, sf: <span class="en">Surfaces</span>, nsurf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>CUT ONCE — phase 2. For each boundary edge of the FINAL footprint, pick the nearest surface among ALL registered ones (ties to the lower id). Order-independent by construction: it never looks at what was stamped when, only at the finished cells.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_stamp</span>(t: <span class="en">Track</span>, halfwidth: <span class="ty"><a href="stdlib-types.html">float</a></span>, s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>,</code></pre>
+<p>Mark the way's footprint into <code>s</code>, cut its boundary into <code>e</code>, and tag every blocked edge with the surface of the NEAREST segment.  One walk, one source of truth.</p>
+<p>For ONE way.  Calling it once per part of a multi-part way is the interleaving the phase-1 note above forbids — same cells, walls left standing inside the finished footprint, and their owner decided by the stamping order.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_param</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>Arc length from the start of segment i to the point on it nearest (px,py).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_param</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span></code></pre>
+<p>Arc length from the START OF THE WAY to the point on it nearest (px,py).  This is the milepost: the parameter stations, signals, steps and mileage markers are all stated in.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_steps</span>(t: <span class="en">Track</span>, s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, rise: <span class="ty"><a href="stdlib-types.html">float</a></span>, tread: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>A STAIRCASE: every <code>tread</code> of travel along the way raises the ground by <code>rise</code>.</p>
+<p>The same routine is a terraced hillside, or a ramp at rise = 0.  What makes it a good test of the whole model is that the tread is quantised by the CELL ROWS, and the row spacing depends on the direction of travel (the 24-direction tiers) — so a tread that is clean along one heading skips whole steps along another, which shows up as a DOUBLE RISER between adjacent cells.  That is a real defect (a trip hazard), and it is what sets the minimum tread per direction.</p>
+<p>The number: a flight's shortest safe tread is the spacing of its own cells along the way — sqrt(3) = 1.732 down a row, 1.5 down a column.  There is no tread that is fine enough for every heading.</p>
+</div>
 
   </article>
 <script src="search-index.js"></script>

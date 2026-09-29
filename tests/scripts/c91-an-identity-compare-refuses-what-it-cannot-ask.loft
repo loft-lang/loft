@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq` — `&a == &b` asks whether two names are one record, so each refusal names
+// what the program can write instead: `&` on one side only asks nothing (write it on both or
+// neither); a scalar or `text` is a value held in place, not a record; a temporary is no
+// record anything else names; two places of different types cannot be one record.
+//
+// @falsified-at: a57dfed9d — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 7/7, native
+//   exit 1 -> 0, native expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches):
+//   the control refuses each cell with the generic "`&` is not a general operator".
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.
+//   Score it again with `scripts/falsify.sh <this file> a57dfed9d`.
+
+struct P { x: integer }
+struct Q { y: integer }
+
+// @EXPECT_ERROR: `&` on one side of `==` asks nothing
+fn test_amp_on_the_left_only() {
+  a = P { x: 1 };
+  b = a;
+  assert(&a == b, "unreached");
+}
+
+// @EXPECT_ERROR: `&` on one side of `!=` asks nothing
+fn test_amp_on_the_right_only() {
+  a = P { x: 1 };
+  b = a;
+  assert(a != &b, "unreached");
+}
+
+// @EXPECT_ERROR: `integer` is a value held in place, not a record
+fn test_a_scalar_has_no_record() {
+  x = 1;
+  y = 1;
+  assert(&x == &y, "unreached");
+}
+
+// @EXPECT_ERROR: `text` is a value held in place, not a record
+fn test_a_text_has_no_record() {
+  s = "a";
+  r = "a";
+  assert(&s == &r, "unreached");
+}
+
+// @EXPECT_ERROR: a temporary (a literal, computed value or call result) is no record
+fn test_a_temporary_is_no_record() {
+  a = P { x: 1 };
+  assert(&a == &P { x: 1 }, "unreached");
+}
+
+// @EXPECT_ERROR: compares two places of one type, not a `P` and a `Q`
+fn test_two_types_are_two_records() {
+  a = P { x: 1 };
+  q = Q { y: 1 };
+  assert(&a == &q, "unreached");
+}
+
+// @EXPECT_ERROR: asks identity only as a whole side of `&a == &b`
+fn test_amp_inside_a_wider_operand() {
+  n = 1;
+  m = 2;
+  assert(n + &m == 3, "unreached");
+}

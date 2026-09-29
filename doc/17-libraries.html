@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <span class="cur">Libraries</span> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>Libraries</h1>
 <article>
-<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it with <code>use name;</code> at the top of your file. That one line does two things: it brings every <code>pub</code> name in the library into your own namespace, so you can write them bare, and it gives you the <code>name::</code> prefix, which reaches everything the library defines. A definition without <code>pub</code> is reachable only through the prefix. So <code>pub</code> is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but <code>name::thing</code> still finds it. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
-<pre><code><span class="kw">use</span> testlib;</code></pre>
+<p>A library is a <code>.loft</code> file you can share across projects. Place it in a <code>lib/</code> directory and import it at the top of your file. <code>use name;</code> gives you the <code>name::</code> prefix, which reaches everything the library defines. <code>use name::*;</code> also brings every <code>pub</code> name into your own namespace, so you can write them bare; <code>use name::(a, b);</code> brings in just those. A definition without <code>pub</code> is reachable only through the prefix. So <code>pub</code> is about the BARE spelling rather than about secrecy: leaving it off keeps a name out of your namespace and out of any import, but <code>name::thing</code> still finds it. A name you import is yours to use, not to hand on: a file that imports YOURS does not receive it. Write <code>pub use name::*;</code> to pass the names on as well. <code>use</code> statements must come before any <code>fn</code> or <code>struct</code> definition in your file. Putting a <code>use</code> after a definition is a syntax error.</p>
+<pre><code><span class="kw">use</span> testlib::*;</code></pre>
 <h2 id="constants-and-enums">Constants and Enums</h2>
 <p>A library constant reads like one of your own, and so does an enum variant. You can compare, order, and convert enum values exactly as you would with enums defined in the same file. The <code>libname::</code> prefix is always available and is what disambiguates a variant name two enums share.</p>
 <h2 id="struct-construction-and-field-access">Struct Construction and Field Access</h2>
@@ -37,7 +37,7 @@
   testlib::<span class="en">Point</span> {x: self.x + dx, y: self.y + dy }
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
-<p>A library constant, both ways: the prefix always works, and the bare name works because <code>use testlib;</code> brought every <code>pub</code> name into this file.</p>
+<p>A library constant, both ways: the prefix always works, and the bare name works because <code>use testlib::*;</code> brought every <code>pub</code> name into this file.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(testlib::<span class="en">MAX_SIZE</span> == <span class="nm">100</span>, <span class="st">"library constant MAX_SIZE"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">MIN_SIZE</span> == <span class="nm">1</span>, <span class="st">"the same constant, written bare"</span>);</code></pre>
 <p>Library enum variants: comparison and ordering work as normal.</p>
@@ -132,16 +132,18 @@ entry = "src/mylib.loft"   override the default entry path
 // @NAME: Libraries
 // @TITLE: Library system — importing and using external loft modules.
 // A library is a `.loft` file you can share across projects. Place it in a
-// `lib/` directory and import it with `use name;` at the top of your file.
-// That one line does two things: it brings every `pub` name in the library into
-// your own namespace, so you can write them bare, and it gives you the `name::`
-// prefix, which reaches everything the library defines.
+// `lib/` directory and import it at the top of your file. `use name;` gives you
+// the `name::` prefix, which reaches everything the library defines. `use name::*;`
+// also brings every `pub` name into your own namespace, so you can write them bare;
+// `use name::(a, b);` brings in just those.
 // A definition without `pub` is reachable only through the prefix. So `pub` is
 // about the BARE spelling rather than about secrecy: leaving it off keeps a name
 // out of your namespace and out of any import, but `name::thing` still finds it.
+// A name you import is yours to use, not to hand on: a file that imports YOURS does
+// not receive it. Write `pub use name::*;` to pass the names on as well.
 // `use` statements must come before any `fn` or `struct` definition in your
 // file. Putting a `use` after a definition is a syntax error.
-use testlib;
+use testlib::*;
 // ## Constants and Enums
 // A library constant reads like one of your own, and so does an enum variant.
 // You can compare, order, and convert enum values exactly as you would with
@@ -166,7 +168,7 @@ fn shifted(self: testlib::Point, dx: float, dy: float) -&gt; testlib::Point {
 
 fn main() {
   // A library constant, both ways: the prefix always works, and the bare name
-  // works because `use testlib;` brought every `pub` name into this file.
+  // works because `use testlib::*;` brought every `pub` name into this file.
   assert(testlib::MAX_SIZE == 100, "library constant MAX_SIZE");
   assert(MIN_SIZE == 1, "the same constant, written bare");
   // Library enum variants: comparison and ordering work as normal.

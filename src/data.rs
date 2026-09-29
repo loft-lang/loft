@@ -3792,6 +3792,7 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Enum(_, true, _)
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (C125).
         // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
         // member of one overlapped its neighbours.
         | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
@@ -8642,6 +8643,20 @@ impl Data {
         Self::mangle_method(&h, method)
     }
 
+    /// Is `name` a bound-method stub ([`Self::bound_stub_name`]) for `method` at `arity`, of
+    /// any holder?
+    #[must_use]
+    pub fn is_bound_stub_for(name: &str, method: &str, arity: usize) -> bool {
+        // Compared piece by piece: this is asked of every two-operand call a monomorph's
+        // body makes, and a `format!` per call is what the front end's allocation pin counts.
+        name.starts_with("t_")
+            && name
+                .strip_suffix(method)
+                .and_then(|r| r.strip_suffix('_'))
+                .and_then(|r| r.strip_suffix(char::from_digit(arity as u32, 10)?))
+                .is_some_and(|r| r.ends_with(Self::HOLDER_MARK))
+    }
+
     /// Is `name` taken by a definition in ANY source?
     ///
     /// [`Self::def_nr`] answers for the CURRENT source plus the stdlib, which is the right
@@ -12709,6 +12724,8 @@ impl Data {
             | Type::Sorted(_, _, _)
             | Type::RefVar(_)
             | Type::Enum(_, true, _)
+            | Type::Radix(_, _, _)
+            | Type::Trie(_, _, _)
             | Type::Index(_, _, _) => "DbRef",
             Type::Routine(_) => "u32",
             Type::Unknown(_) => "??",
