@@ -25,6 +25,8 @@
 //   (the unfused position) fails five of the seven tests; a fused store addressed without
 //   the pushed result's step never increments `i`, and the run is killed by the watchdog.
 //   A compare-and-jump testing the wrong comparison (`kind ^ 1`) fails three.
+//   A walk step of one byte whatever the character's width fails `test_char_walk`.  Only
+//   since the per-character count and rebuild: the separator counts alone passed it.
 
 fn arith(a: integer, b: integer) -> text {
   x = a + b;
@@ -72,7 +74,25 @@ fn count(s: text, sep: character) -> integer {
   n
 }
 
+fn chars(s: text) -> integer {
+  n = 0;
+  for c in s {
+    if c != ' ' { n += 1; }
+  }
+  n
+}
+
+fn rebuilt(s: text) -> text {
+  out = "";
+  for c in s { out += "{c}"; }
+  out
+}
+
 fn test_char_walk() {
+  // Six characters in nine bytes: a step of the wrong width visits byte positions inside
+  // `é`, `ü` and `ñ`, which a count of every character and a rebuild both see.
+  assert(chars("é,ü,,ñ") == 6, "one step per character");
+  assert(rebuilt("é,ü,,ñ") == "é,ü,,ñ", "each step reads a whole character");
   // Three commas each; in the second text every other character is two bytes wide, so a
   // step with the wrong width lands inside a character.
   assert(count("a,b,,c", ',') == 3, "an ASCII walk");
