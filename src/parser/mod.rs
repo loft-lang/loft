@@ -674,6 +674,16 @@ pub struct Parser {
     /// always resolving the newest release.  `None` until first looked up.
     #[cfg(feature = "registry")]
     root_dep_pins: Option<std::collections::HashMap<String, String>>,
+    /// The declaration that governs the whole PROGRAM's registry versions, answered once
+    /// from the entry file (@PLN143 arc B) at the first registry lookup — a program that
+    /// `use`s nothing never asks.  A `use` inside a dependency resolves through it too:
+    /// read from the file doing the `use`, a dependency in the registry cache found its own
+    /// cached `loft.toml` and a lock that never exists there, so the consumer's pin for a
+    /// transitive package was ignored.
+    program_scope: Option<crate::resolution_scope::ResolutionScope>,
+    /// The entry file, as the lexer already holds it (a shared handle, no copy), for
+    /// `program_scope`.  `None` before the entry file is loaded.
+    program_entry: Option<std::sync::Arc<str>>,
     /// loft#1687 — per package a declared scope could not satisfy from the cache: the
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
@@ -1721,6 +1731,8 @@ impl Parser {
             module_clash_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             root_dep_pins: None,
+            program_scope: None,
+            program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
@@ -2510,6 +2522,9 @@ impl Parser {
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
+        if !default && self.program_entry.is_none() {
+            self.program_entry = Some(self.lexer.pos().file.clone());
+        }
         self.first_pass = true;
         crate::diagnostics::set_first_pass(true);
         self.pending_imports.clear();
@@ -3718,6 +3733,9 @@ impl Parser {
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
+        if !default && self.program_entry.is_none() {
+            self.program_entry = Some(self.lexer.pos().file.clone());
+        }
         self.parse_file();
         self.resolve_deferred_unknowns();
         self.between_passes();
@@ -17456,7 +17474,16 @@ impl Parser {
         // here, and handed to each probe that needs it.  Re-deriving it inside a probe
         // would put the old three-sites-must-agree brittleness back with one extra step
         // between it and the reader.
-        let scope = crate::resolution_scope::resolution_scope(&cur_script);
+        if self.program_scope.is_none() {
+            let entry = self.program_entry.clone();
+            self.program_scope = Some(crate::resolution_scope::resolution_scope(
+                entry.as_deref().unwrap_or(&cur_script),
+            ));
+        }
+        let scope = self
+            .program_scope
+            .clone()
+            .unwrap_or(crate::resolution_scope::ResolutionScope::Bare);
         // A sidecar pin belongs on the project's side of that line: `loft pin <script>`
         // wrote it FOR this script, so it is a declaration the author made — even though
         // what it resolves to is a package in the registry cache.
@@ -18335,6 +18362,10 @@ impl Parser {
     /// so a root pin overrides the default "resolve newest", including for a
     /// package pulled transitively by a lib that didn't pin it itself.  This is
     /// what makes `glb = "=0.1.0"` (exact) — or any range — an honoured option.
+    ///
+    /// The REQUIREMENT, never the raw value: an inline table (`{ version = "=0.1.0" }`) is
+    /// read through [`crate::manifest::extract_version_req`] here, once, so no caller
+    /// compares a version against the table's text.
     #[cfg(feature = "registry")]
     fn root_dep_constraint(&mut self, id: &str) -> Option<String> {
         if self.root_dep_pins.is_none() {
@@ -18344,8 +18375,10 @@ impl Parser {
                 if let Some(manifest) =
                     crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                 {
-                    for (name, req) in manifest.dependencies {
-                        map.insert(name, req);
+                    for (name, value) in manifest.dependencies {
+                        if let Some(req) = crate::manifest::extract_version_req(&value) {
+                            map.insert(name, req.to_string());
+                        }
                     }
                 }
             }
@@ -18785,7 +18818,7 @@ impl Parser {
         // used to be a leg here reading the CWD's `loft.lock` — a file an earlier RUN
         // wrote, in a directory that is not even the program's, deciding which version
         // this run gets.
-        let Some(version) = scope.pinned_version(id) else {
+        let Some(version) = self.lock_pin_in_force(id, scope, cur_script) else {
             return false;
         };
         self.resolve_registry_installed(id, &version, f);
@@ -18794,6 +18827,31 @@ impl Parser {
             return true;
         }
         false
+    }
+
+    /// The governing lock's version for `id`, when no declaration in force has since
+    /// excluded it: the root `loft.toml`'s, and that of the package whose file says
+    /// `use id` (`cur_script`).
+    ///
+    /// [`crate::install::constraint_for`] is the one home of that rule (a lock records how
+    /// the manifest was last RESOLVED, so a pin a declaration has moved away from is stale
+    /// and the declaration wins); this asks it whether the pin still stands.  The load used
+    /// to take the pin without asking, while the install beside it did ask: `=0.1.0`
+    /// declared over a `0.1.2` lock loaded 0.1.2, and nothing said so.
+    #[cfg(feature = "registry")]
+    fn lock_pin_in_force(
+        &mut self,
+        id: &str,
+        scope: &crate::resolution_scope::ResolutionScope,
+        cur_script: &str,
+    ) -> Option<String> {
+        let pinned = scope.pinned_version(id)?;
+        let stands = |declared: Option<String>| {
+            crate::install::constraint_for(Some(&pinned), declared.as_deref()).as_deref()
+                == Some(pinned.as_str())
+        };
+        (stands(self.root_dep_constraint(id)) && stands(Self::declaring_range(cur_script, id)))
+            .then_some(pinned.clone())
     }
 
     /// No-op when the registry feature is off — a lockfile pins a REGISTRY version, and
@@ -18909,8 +18967,9 @@ impl Parser {
         // decide only which file LOADED, so a pinned version that was not extracted yet
         // was installed as "newest", and a fresh box ran a different program than the
         // machine that pinned it.
+        let pinned = self.lock_pin_in_force(id, scope, cur_script);
         let pin = crate::install::constraint_for(
-            scope.pinned_version(id).as_deref(),
+            pinned.as_deref(),
             self.root_dep_constraint(id).as_deref(),
         );
         match crate::install::auto_install_if_in_catalog(id, pin.as_deref(), &opts) {
@@ -19066,24 +19125,24 @@ impl Parser {
         if std::path::Path::new(f).exists() {
             return;
         }
-        let constraints: Vec<String> = if *scope == crate::resolution_scope::ResolutionScope::Bare {
-            Vec::new()
-        } else {
-            let root = self.root_dep_constraint(id);
-            let root = root
-                .as_deref()
-                .and_then(crate::manifest::extract_version_req);
-            let mut cs: Vec<String> =
-                crate::install::constraint_for(scope.pinned_version(id).as_deref(), root)
+        let mut constraints: Vec<String> =
+            if *scope == crate::resolution_scope::ResolutionScope::Bare {
+                Vec::new()
+            } else {
+                let pinned = self.lock_pin_in_force(id, scope, cur_script);
+                let root = self.root_dep_constraint(id);
+                crate::install::constraint_for(pinned.as_deref(), root.as_deref())
                     .into_iter()
-                    .collect();
-            if let Some(own) = Self::declaring_range(cur_script, id)
-                && !cs.contains(&own)
-            {
-                cs.push(own);
-            }
-            cs
-        };
+                    .collect()
+            };
+        // The package whose file says `use id` declared a range for it, and that holds in
+        // every scope: a cached library used from a bare script is bound by its own
+        // `[dependencies]` all the same (loft#1687).
+        if let Some(own) = Self::declaring_range(cur_script, id)
+            && !constraints.contains(&own)
+        {
+            constraints.push(own);
+        }
         if let Some((version, _)) =
             crate::registry_index::newest_cached_loadable_satisfying(id, &constraints)
         {

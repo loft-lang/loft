@@ -578,12 +578,11 @@ Error: conflicting dependency versions for 'math':
 |---|---|
 | `">=0.2"` | Any version 0.2.0 or higher |
 | `">=0.2.1"` | Any version 0.2.1 or higher |
-| `"=0.2.0"` | Exactly 0.2.0 |
+| `"=0.2.0"` or `"0.2.0"` | Exactly 0.2.0 |
+| `"^0.2"` / `"~0.2.1"` | 0.2.x (caret: at least 0.2.0; tilde: at least 0.2.1) |
+| `">=0.2, <0.2.5"` | Every part at once |
 | `{ path = "../math" }` | Local directory (no version check) |
 | `{ version = ">=1.0" }` | Same as string form, explicit syntax |
-
-No caret (`^`) or tilde (`~`) ranges — only `>=` and `=`.  This keeps
-the resolver simple and predictable.
 
 ### Cycle detection
 
@@ -638,6 +637,20 @@ source = "~/.loft/lib/utils"
 
 Subsequent builds use `loft.lock` for reproducibility.  `loft update`
 re-resolves and rewrites the lock file.
+
+The lock is the RESOLVED form of the declarations, never a declaration of its own — cargo's
+rule.  So:
+
+- **A lock entry a declaration has since excluded is stale, and the declaration wins.**  Edit
+  `glb = "=0.1.0"` into `loft.toml` over a lock recording 0.1.2 and the next run loads
+  0.1.0; `loft install` then rewrites the entry.  The declarations asked are the project's
+  `[dependencies]` and those of the package whose file says `use glb`.
+- **One lock governs the whole program** — the entry file's.  A `use` inside a dependency
+  resolves through it too, so the consumer's lock pins a transitive package.
+- **`loft install` binds a transitive package to what the project declares for it**, on top
+  of what the package pulling it requires, so the lock records the version the program
+  loads whatever order `[dependencies]` lists.  A declaration no dependency can accept is
+  refused at install, naming both sides.
 
 ---
 
