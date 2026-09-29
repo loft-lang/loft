@@ -3065,11 +3065,14 @@ fn multi_pattern_partial_overlap() {
         .error("multi-pattern arm: every listed pattern must bind the same captures (u) at multi_pattern_partial_overlap:2:58");
 }
 
-// A guard on a multi-pattern arm (must hold for whichever pattern matched) is Phase 4.
+// A guard on a multi-pattern arm holds for whichever pattern matched (`@FR-P-Guard` ×
+// `@FR-P-Multi`); it was refused as deferred work.  The value cells, the fall-through and a
+// text capture are in `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
 #[test]
-fn multi_pattern_guard_deferred() {
+fn multi_pattern_guard_holds() {
     code!("enum Rec { Ra { k: integer }, Rb { k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { k } if k > 0 => k, _ => 0 } }")
-        .error("a guard is not yet supported on a multi-pattern arm (Phase 4) at multi_pattern_guard_deferred:2:67");
+        .expr("f(Rb { k: 4 }) * 100 + f(Ra { k: -3 })")
+        .result(Value::Int(400));
 }
 
 // A field sub-pattern inside a non-first listed pattern is Phase 4.
@@ -5262,4 +5265,18 @@ fn a_block_after_a_qualified_struct_variant_is_still_a_block() {
     )
     .expr("probe()")
     .result(Value::Int(15));
+}
+
+/// `@FR-M-Total` for a guarded multi-pattern arm: a guard can reject, so the arm covers none of
+/// its variants, and a match whose only arm is guarded is not exhaustive.
+#[test]
+fn a_guarded_multi_pattern_arm_covers_nothing() {
+    code!(
+        "enum Tg { A { v: integer }, B { v: integer } }\n\
+         fn test() { t = A { v: 5 }; r = match t { A { v }, B { v } if v > 2 => v }; assert(r == 5, \"r\"); }"
+    )
+    .error(
+        "match on Tg is not exhaustive — missing: A, B; add the missing variants or a '_ =>' \
+         wildcard at a_guarded_multi_pattern_arm_covers_nothing:2:40",
+    );
 }

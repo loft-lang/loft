@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Guard` × `@FR-P-Multi` — a guard on a multi-pattern arm `A { v }, B { v } if c => …`
+// holds for whichever listed pattern matched, and when it is false selection moves to the NEXT
+// arm, exactly as for a single-pattern arm.  Each rule was implemented; their composition was
+// refused ("a guard is not yet supported on a multi-pattern arm").
+//
+// The fall-through cell (`A { v: 1 }` reaching the later `A { v } => -v`) is the one that tells
+// a guard from a filter on the result, and the `text` payload is there because a branch rebinds
+// a text capture from its own variant's offsets and the guard must read that branch's value.
+// Coverage is the other half (`@FR-M-Total`): a guarded arm covers none of its variants, so the
+// same arm with no `_` is refused naming both — scored by `tests/parse_errors.rs`
+// `a_guarded_multi_pattern_arm_covers_nothing`.
+//
+// Axes this file MOVES:  which listed pattern matched, guard true/false, payload kind.
+// Axes it HOLDS FIXED:   two listed patterns (a third takes the same branch loop).
+
+enum T { A { v: integer }, B { v: integer }, C { w: text } }
+enum U { P { s: text }, Q { s: text } }
+
+fn f(t: T) -> integer {
+  match t { A { v }, B { v } if v > 2 => v * 10, A { v } => -v, _ => -100 }
+}
+
+fn g(u: U) -> text {
+  match u { P { s }, Q { s } if len(s) > 2 => "long:{s}", _ => "short" }
+}
+
+fn test_the_guard_holds_for_either_pattern_and_falls_through_when_false() {
+  got = "{f(A { v: 5 })} {f(B { v: 7 })} {f(A { v: 1 })} {f(B { v: 1 })} {f(C { w: \"x\" })}";
+  assert(got == "50 70 -1 -100 -100", "integer payload: {got}");
+}
+
+fn test_a_text_capture_is_the_matched_variants_own() {
+  got = "{g(P { s: \"abc\" })} {g(Q { s: \"hello\" })} {g(Q { s: \"hi\" })}";
+  assert(got == "long:abc long:hello short", "text payload: {got}");
+}

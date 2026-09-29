@@ -6241,6 +6241,9 @@ impl Parser {
             // Emitted as one `if disc==Vi { binds_i; body }` branch per pattern —
             // identical to hand-expanding into separate single-pattern arms.
             let mut multi_branches: Vec<(i32, Vec<Value>)> = Vec::new();
+            // The variants this arm's EXTRA patterns marked covered, so a guard parsed after
+            // them can take the marks back (`@FR-M-Total`: a guarded arm covers nothing).
+            let mut multi_covered: Vec<u32> = Vec::new();
             if self.lexer.peek_token(",") && valid_enum && e_nr != u32::MAX {
                 let shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
                     .iter()
@@ -6312,8 +6315,8 @@ impl Parser {
                     }
                     // Union coverage (M-Total): each listed total pattern counts
                     // toward exhaustiveness, exactly like the `|` or-pattern arm.
-                    if !self.first_pass {
-                        covered.insert(ev);
+                    if !self.first_pass && covered.insert(ev) {
+                        multi_covered.push(ev);
                     }
                     multi_branches.push((disc, stmts_i));
                 }
@@ -6331,20 +6334,17 @@ impl Parser {
             // parse optional guard clause after pattern + field bindings.
             // Field-bound variables are in scope for the guard expression.
             let guard_opt = self.parse_optional_guard();
-            // @PLN35 Phase 3: a guard on a multi-pattern arm must hold for whichever
-            // pattern matched; replicating it per branch is Phase 4.  Reject for now.
-            let guard_opt = if guard_opt.is_some() && !multi_branches.is_empty() {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a guard is not yet supported on a multi-pattern arm (Phase 4)"
-                    );
+            // @FR-P-Guard × @FR-P-Multi — a guard on a multi-pattern arm holds for whichever
+            // pattern matched: each extra pattern's branch below carries a clone of it, run
+            // after that branch's own bindings.  It was refused ("not yet supported") while the
+            // two rules it composes were each implemented.  A guard can reject, so the arm
+            // covers none of its variants — the extra patterns' coverage marks come back out.
+            let multi_guard = guard_opt.clone().filter(|_| !multi_branches.is_empty());
+            if multi_guard.is_some() {
+                for ev in multi_covered.drain(..) {
+                    covered.remove(&ev);
                 }
-                None
-            } else {
-                guard_opt
-            };
+            }
             // L2: combine field sub-pattern conditions with the explicit guard (if any).
             let guard_opt = if field_conditions.is_empty() {
                 guard_opt
@@ -6465,9 +6465,9 @@ impl Parser {
 
             // @PLN35 Phase 3: capture the raw arm body + type for the extra
             // multi-pattern branches before the single-arm assembly below consumes
-            // them.  A multi-pattern arm carries no guard and no field sub-pattern
-            // conditions (both rejected above), so each branch is a plain
-            // `block(binds_i; body)`.
+            // them.  A multi-pattern arm carries no field sub-pattern conditions
+            // (rejected above), so each branch is `block(binds_i; body)`, or its binds
+            // kept apart and the guard beside them when the arm has one.
             let multi_extra: Option<(Value, Type)> =
                 (!multi_branches.is_empty()).then(|| (arm_body.clone(), arm_type.clone()));
 
@@ -6506,6 +6506,19 @@ impl Parser {
                     // writes the result into `A`'s.
                     let mut body_i = body.clone();
                     self.retarget_text_payload_writes(&mut body_i, &stmts_i);
+                    if let Some(guard) = &multi_guard {
+                        let mut guard_i = guard.clone();
+                        self.retarget_text_payload_writes(&mut guard_i, &stmts_i);
+                        arms.push(EnumArm {
+                            discs: vec![disc],
+                            code: body_i,
+                            tp: tp.clone(),
+                            guard: Some(guard_i),
+                            bindings: stmts_i,
+                            cond: None,
+                        });
+                        continue;
+                    }
                     let code_i = if stmts_i.is_empty() {
                         body_i
                     } else {
