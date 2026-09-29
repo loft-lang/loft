@@ -15,6 +15,14 @@
 // Each fn has its own source name, statements FOLLOW every loop so a parse that did not
 // resume would report there, and `@EXPECT_ERROR` is fatal when unmatched while an unexpected
 // error fails the file: the count is the assertion, ONE report per fn.
+//
+// @falsified-at: 0a455420e — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 4/4, native exit 1 -> 0, native expectations FAIL/4 -> 4/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-refused-loop-source-reports-once.patch — the same channels.
+//   CHANNEL: the EXPECTATIONS — the control reports sixteen errors for the four refusals.
+//   WITNESS: "Expect token ;" four times, "expected integer, got void" four times, and the
+//   comprehension's "Need an iterable expression", "Expect token ]", "Expect token }" and
+//   "Syntax error: unexpected ']'".
+//   HOLDS: no leak and no panic on either tree; the four refusals read the same on both.
 struct E { k: integer, v: integer }
 
 // @EXPECT_ERROR: cannot iterate over vector<integer>? because it is NULLABLE
