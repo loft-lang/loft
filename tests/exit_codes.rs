@@ -1800,3 +1800,35 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     assert_eq!(out, "fine\n");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// `--help` on a subcommand is a request, not a mistake: it prints that subcommand's
+/// usage on stdout and exits 0, while an unknown option still fails.
+#[test]
+fn a_subcommand_answers_help_with_its_usage() {
+    for sub in ["fmt", "fix"] {
+        let out = Command::new(loft_bin())
+            .args([sub, "--help"])
+            .current_dir(workspace_root())
+            .output()
+            .expect("run loft");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "loft {sub} --help exited {:?}",
+            out.status.code()
+        );
+        assert!(
+            stdout.starts_with(&format!("usage: loft {sub} ")),
+            "loft {sub} --help printed {stdout:?}"
+        );
+        let bogus = Command::new(loft_bin())
+            .args([sub, "--no-such-option"])
+            .current_dir(workspace_root())
+            .output()
+            .expect("run loft");
+        assert!(
+            !bogus.status.success(),
+            "loft {sub} accepted an unknown option"
+        );
+    }
+}

@@ -168,8 +168,10 @@ Plans live in [`loft-lang/plans`](https://github.com/loft-lang/plans); GitHub's
 plan.  Closing is explicit and cross-repo:
 
 - **A PR that completes a plan** carries a close directive in its body —
-  `Closes @PLN<n>` (or `Closes loft-lang/plans#<n>`).  The plan stays
-  `status:active` while the work is only on the cycle branch.
+  `Closes @PLN<n>` (or `Closes loft-lang/plans#<n>`).  A plan does not wait for the
+  merge: it is closed by hand the moment its work is finished and verified, with its
+  label swapped to `status:finished` (the `loft-plan-workflow` skill § Closing or
+  deferring a plan); the directive closes a plan still open when the PR merges.
 - **On merge to `main`** (the release), the
   [`close-plans` workflow](../../.github/workflows/close-plans.yml) reads the
   merge PR's directives and runs

@@ -63,7 +63,7 @@ Check before you commit:
 git add -N <every new doc>           # the lint, the link check and the baseline pin read
                                      #   TRACKED files only: an untracked split doc is unchecked
 wc -l <doc>                          # ≤ 1000 for a working doc
-python3 scripts/doc_lint.py <doc>    # no size / history / timeline finding you added
+python3 scripts/doc_lint.py --since HEAD <doc>   # only the findings your edit added: want none
 ```
 
 ## The reviewer's pass
@@ -115,10 +115,10 @@ site guaranteeing it.  The story itself goes to the commit message and the issue
 ### The questions only a reader can answer
 
 - Does each function description say **why to use it**, and each body comment **what** the
-  non-obvious code achieves (DOC_QUALITY rules 5–6)?
+  non-obvious code achieves (DOC_QUALITY § The rules 5–6)?
 - Is user-facing text plain: common words, one idea per sentence, no idioms, a term
   explained on first use (§ Write for every reader)?
 - Does a maintainer doc answer **one** question, and is it navigable under its headings
-  (§ Maintainer docs, rules 1–2)?
-- Is a contract doc stating the rule, or telling how it came to be (rule 4)?
-- Does every reference row name something that exists (rule 8)?
+  (§ Maintainer docs 1–2)?
+- Is a contract doc stating the rule, or telling how it came to be (§ Maintainer docs 4)?
+- Does every reference row name something that exists (§ The rules 8)?

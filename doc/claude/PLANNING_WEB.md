@@ -28,7 +28,7 @@ declaration.  For every annotated struct, the compiler synthesises a `to_json` m
 reuses the existing `:j` JSON format flag.  No new Rust dependencies are needed.
 **Fix path:**
 
-**Step 1 — Parser** (`src/parser/parser.rs` or `src/parser/expressions.rs`):
+**Step 1 — Parser** (`src/parser/expressions.rs`):
 Extend the annotation-parsing path that currently handles `#rust "..."` to also accept
 bare `#json`.  Store a `json: bool` flag on the struct definition node (parallel to how
 `#rust` stores its string).  Emit a clear parse error if `#json` is placed on anything
@@ -36,7 +36,7 @@ other than a struct.
 *Test:* `#json` before a struct compiles without error; `#json` before a `fn` produces a
 single clear diagnostic.
 
-**Step 2 — Synthesis** (`src/state/typedef.rs`):
+**Step 2 — Synthesis** (`src/typedef.rs`):
 During type registration, for each struct with `json: true`, synthesise an implicit `pub fn`
 definition equivalent to:
 ```loft
@@ -45,7 +45,7 @@ pub fn to_json(self: T) -> text { "{self:j}" }
 The synthesised def shares the struct's source location for error messages.
 *Test:* `"{user:j}"` and `user.to_json()` produce identical output for a `#json` struct.
 
-**Step 3 — Error for missing annotation** (`src/state/typedef.rs`):
+**Step 3 — Error for missing annotation** (`src/typedef.rs`):
 If `to_json` is called on a struct without `#json`, emit a compile error:
 `"to_json requires #json annotation on struct T"`.
 *Test:* Unannotated struct calling `.to_json()` produces a single clear diagnostic.
@@ -64,7 +64,7 @@ synthesises a `from_json(body: text) -> T` function.  The result is a normal cal
 fn-ref: `User.from_json` can be passed to `map` without any special syntax.
 **Fix path:**
 
-**Step 1 — Synthesis** (`src/state/typedef.rs`):
+**Step 1 — Synthesis** (`src/typedef.rs`):
 After H2 is in place, extend the `#json` synthesis pass (H1 Step 2) to also emit
 `from_json`.  For each field, select the extractor by type:
 
@@ -80,7 +80,7 @@ The synthesised `from_json` body is a struct-literal expression using the above 
 Fields not in the table (nested structs, enums, vectors) are silently skipped in this
 phase (H5 adds them).
 
-**Step 2 — fn-ref validation** (`src/state/compile.rs` or `src/state/codegen.rs`):
+**Step 2 — fn-ref validation** (`src/compile.rs` or `src/state/codegen.rs`):
 Verify that `Type.from_json` resolves as a callable fn-ref with type
 `fn(text) -> Type`, so it can be passed directly to `json_items(...).map(...)` and
 `json_items(...).filter(...)`.
@@ -193,7 +193,7 @@ body is non-empty (the common case).  Callers who need a different content type 
 real HTTP endpoints and verifies the full round-trip.
 **Fix path:**
 
-**Step 1 — Nested `#json` struct fields** (`src/state/typedef.rs`):
+**Step 1 — Nested `#json` struct fields** (`src/typedef.rs`):
 For a field `addr: Address` where `Address` is `#json`-annotated, emit:
 ```loft
 addr: Address.from_json(json_nested(body, "addr"))
@@ -201,7 +201,7 @@ addr: Address.from_json(json_nested(body, "addr"))
 The compiler must verify that `Address` is `#json` at the point of synthesis; if not,
 emit: `"field 'addr' has type Address which is not annotated with #json"`.
 
-**Step 2 — `vector<T>` array fields** (`src/state/typedef.rs`):
+**Step 2 — `vector<T>` array fields** (`src/typedef.rs`):
 For a field `items: vector<Item>` where `Item` is `#json`, emit:
 ```loft
 items: json_items(json_nested(body, "items")).map(Item.from_json)
@@ -209,7 +209,7 @@ items: json_items(json_nested(body, "items")).map(Item.from_json)
 This relies on `map` with fn-refs, which already works.  If `Item` is not `#json`, emit
 a compile error.
 
-**Step 3 — Plain enum fields** (`src/state/typedef.rs`):
+**Step 3 — Plain enum fields** (`src/typedef.rs`):
 For a field `status: Status` where `Status` is a plain (non-struct) enum, emit a `match`
 on the string value:
 ```loft
@@ -223,7 +223,7 @@ The default fallback uses the first variant; a compile-time warning notes it.
 Struct-enum variants in JSON (e.g. `{"type": "Paid", "amount": 42}`) are not supported
 in this phase — a compile error is emitted if a struct-enum field appears in a `#json` struct.
 
-**Step 4 — `not null` field validation** (`src/state/typedef.rs`):
+**Step 4 — `not null` field validation** (`src/typedef.rs`):
 Fields declared `not null` whose JSON key is absent should emit a runtime warning (via the
 logger) and keep the zero value rather than panicking.  This matches loft's general approach
 of never crashing on bad data.

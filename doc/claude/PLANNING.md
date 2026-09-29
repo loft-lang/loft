@@ -45,7 +45,7 @@ instead of re-proposing it.
 - [I — Interfaces](#i--interfaces) *(completed — I1–I8 + I9 stdlib; P136 loop bug open)*
 - [A — Architecture](#a--architecture)
   - [A12 — Lazy work-variable initialization](#a12--lazy-work-variable-initialization) *(deferred to 1.1+)*
-- [S, P70, C43, C47–C53](PLANNING_STABILITY.md) · [N, O, AOT](PLANNING_NATIVE.md) · [H, R, W, E](PLANNING_WEB.md) — split by subject
+- [S, P70, C47–C53](PLANNING_STABILITY.md) · [N, O, AOT](PLANNING_NATIVE.md) · [H, R, W, E](PLANNING_WEB.md) — split by subject
 - [Quick Reference](#quick-reference) → [ROADMAP.md](ROADMAP.md)
 
 ---
@@ -157,7 +157,7 @@ state every tick.  Depends on `game_protocol`.  Phases:
 
 The ticket bodies below are split by subject.  Shipped, withdrawn and superseded items, and the old milestone reasoning, are in [PLANNING-history.md](PLANNING-history.md).
 
-- [PLANNING_STABILITY.md](PLANNING_STABILITY.md) — S-tier stability hardening; slot reuse (P70, C43), closures (C47, C48), name clash (C52), match arms (C53).
+- [PLANNING_STABILITY.md](PLANNING_STABILITY.md) — S-tier stability hardening; slot reuse (P70), closures (C47, C48), name clash (C52), match arms (C53).
 - [PLANNING_NATIVE.md](PLANNING_NATIVE.md) — Tier N native codegen, O-tier performance, AOT libraries.
 - [PLANNING_WEB.md](PLANNING_WEB.md) — H HTTP / JSON, R repository, W web IDE, E library ergonomics (C57); its first-run presentation design is [FIRST_CONTACT.md](FIRST_CONTACT.md).
 
@@ -910,7 +910,7 @@ See [ROADMAP.md](ROADMAP.md) — items in implementation order, grouped by miles
 - [../DEVELOPERS.md](../DEVELOPERS.md) — Feature proposal process, quality gates, scope rules, and backwards compatibility
 - [THREADING.md](THREADING.md) — Parallel for-loop design (A1 detail)
 - [LOGGER.md](LOGGER.md) — Logger design (A2 detail)
-- [FORMATTER.md](FORMATTER.md) — Code formatter design (backlog item)
+- [FORMATTER.md](FORMATTER.md) — `loft fmt`, the parser-driven formatter
 - [NATIVE.md](NATIVE.md) — Native Rust code generation: root cause analysis, step details, verification (Tier N detail)
 - [PERFORMANCE.md](PERFORMANCE.md) — Benchmark results and implementation designs for O1–O7 (interpreter and native performance improvements)
 - [WEB_IDE.md](lib_plans/62-web-ide/README.md) — Web IDE full design: architecture, JS API contract, per-milestone deliverables and tests, export ZIP layout (Tier W detail)

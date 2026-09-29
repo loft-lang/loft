@@ -456,7 +456,7 @@ examples) lives there.
 
 **The DEBUG-method depth and the worked references are repo-specific.** The routes
 below point into *this* repository (loft); carrying this skill into another tree
-(e.g. loft2) means keeping the body + the `design-protocol` sibling unchanged and
+means keeping the body + the `design-protocol` sibling unchanged and
 repointing these links at that tree's equivalents — its debugging policy, its test
 layout.
 

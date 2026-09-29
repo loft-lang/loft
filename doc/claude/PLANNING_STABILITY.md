@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # PLANNING — stability and compiler-correctness items
 
-Split from [PLANNING.md](PLANNING.md) by subject: the S-tier stability hardening items and the slot, closure, name-clash and match-arm items (P70, C43, C47, C48, C52, C53).  Shipped items are in [PLANNING-history.md](PLANNING-history.md).
+Split from [PLANNING.md](PLANNING.md) by subject: the S-tier stability hardening items and the slot, closure, name-clash and match-arm items (P70, C47, C48, C52, C53).  Shipped items are in [PLANNING-history.md](PLANNING-history.md).
 
 ---
 
@@ -179,173 +179,13 @@ manifestation) was fixed in 0.8.2 and is no longer a separate row.
 **Status:** Workaround in place — `Type::Text` excluded from the large-type
 TOS-override in `generate_set` (`codegen.rs:~689`).  Stable; no regressions.
 
-**Real fix (only if C43 text slot reuse needs it):** switch `OpFreeText` to
+**Real fix (only if text slot reuse needs it):** switch `OpFreeText` to
 take a variable number instead of a pre-resolved stack offset, so codegen
 resolves the final position at emit time — same pattern as `OpFreeRef`.
 Touches `scopes.rs` (emit `Value::Var(v)`) and `codegen.rs` (resolve at
 emit).  Safe but affects every text-variable scope exit.
 
-**Effort:** Medium.  **Target:** deferred to C43.
-
----
-
-## C43 — Text slot reuse: zone-2 dead-slot tracking
-
-**Problem:** Text variables (24 bytes each) cannot reuse dead slots, wasting
-stack space when many short-lived text variables are used sequentially.
-
-**Root cause:** Text variables are placed by zone 2 (`place_large_and_recurse`
-in `slots.rs`), which assigns slots sequentially at TOS without dead-slot
-reuse.  Zone 1 has dead-slot reuse but only handles variables ≤ 8 bytes.
-
-**Failed attempt:** A naive same-type reuse check caused slot conflicts
-because it only compared against one dead variable, not ALL assigned
-variables.  `nums` at [40,52) was still live when `_map_result_5` reused
-slot 44.  Full conflict scan (like zone-1) is required.
-
-**Files:** `src/variables/slots.rs`
-
-P70 (text TOS-override) is NOT blocking: text-to-text same-size reuse
-places the variable at the dead slot's existing position — no movement
-occurs, so the `generate_set` TOS-override path is never triggered.
-
----
-
-### C43.1 — Zone-2 dead-slot finder with full conflict scan
-
-**Goal:** A standalone `find_reusable_zone2_slot` function that returns a
-safe reuse slot or `None`.
-
-**File:** `src/variables/slots.rs`
-
-**Implementation:**
-```rust
-/// Find a dead zone-2 variable whose slot can be reused by variable `v`.
-/// Returns `Some(slot)` if a conflict-free candidate exists, `None` otherwise.
-/// Guards: same size, same type discriminant, dead (last_use < v.first_def),
-/// no spatial+temporal overlap with any other assigned variable.
-fn find_reusable_zone2_slot(
-    function: &Function,
-    v: usize,
-    scope: u16,
-) -> Option<u16> {
-    let v_size = size(&function.variables[v].type_def, &Context::Variable);
-    let v_first = function.variables[v].first_def;
-    let v_last = function.variables[v].last_use;
-    let v_disc = std::mem::discriminant(&function.variables[v].type_def);
-    for (j, jv) in function.variables.iter().enumerate() {
-        if j == v || jv.stack_pos == u16::MAX || jv.scope != scope {
-            continue;
-        }
-        let j_size = size(&jv.type_def, &Context::Variable);
-        // Same size + same type family (e.g., text-to-text only).
-        if j_size != v_size || std::mem::discriminant(&jv.type_def) != v_disc {
-            continue;
-        }
-        // Dead: candidate's last use is before our first definition.
-        if jv.last_use >= v_first {
-            continue;
-        }
-        // Full conflict scan: verify no other variable overlaps both
-        // spatially (byte range) and temporally (live interval).
-        let slot = jv.stack_pos;
-        let conflict = function.variables.iter().enumerate().any(|(k, kv)| {
-            if k == v || k == j || kv.stack_pos == u16::MAX {
-                return false;
-            }
-            let ks = kv.stack_pos;
-            let ke = ks + size(&kv.type_def, &Context::Variable);
-            // Spatial overlap: [slot, slot+v_size) ∩ [ks, ke) ≠ ∅
-            let spatial = slot < ke && ks < slot + v_size;
-            // Temporal overlap: [v_first, v_last] ∩ [k_first, k_last] ≠ ∅
-            let temporal = v_first <= kv.last_use && v_last >= kv.first_def;
-            spatial && temporal
-        });
-        if !conflict {
-            return Some(slot);
-        }
-    }
-    None
-}
-```
-
-**Debug guard:** When `function.logging` is true, emit:
-```
-[assign_slots]   zone2-reuse '{}' reuses dead '{}' at slot={}
-```
-
-**Verification:**
-1. Add a unit test `zone2_reuse_conflict_free` that creates three 24-byte
-   variables: v1 (live 0–10), v2 (live 5–15, overlaps v1), v3 (live 11–20,
-   does not overlap v1).  Assert v3 reuses v1's slot but v2 does not.
-2. `cargo test --lib assign_slots` — all slot tests pass.
-
----
-
-### C43.2 — Wire zone-2 reuse into `place_large_and_recurse`
-
-**Goal:** Call `find_reusable_zone2_slot` before advancing `*tos`.
-
-**File:** `src/variables/slots.rs`, function `place_large_and_recurse`
-
-**Change:** In the `if v_size > 8` block (line ~183), before `let v_slot = *tos`:
-```rust
-let v_slot = if let Some(slot) = find_reusable_zone2_slot(function, v, scope) {
-    slot
-} else {
-    let s = *tos;
-    *tos += v_size;
-    s
-};
-```
-
-Remove the existing `*tos += v_size` after `pre_assigned_pos = v_slot`.
-
-**Debug guard:** `function.logging` message distinguishes "zone2" (new slot)
-from "zone2-reuse" (reused slot).
-
-**Verification:**
-1. `cargo test --lib assign_slots` — all unit tests pass including the new
-   `zone2_reuse_conflict_free` from C43.1.
-2. `cargo test warning_only_program` — the `46-caveats.loft` script that
-   triggered the original failure must pass (the full conflict scan prevents
-   the `nums` / `_map_result_5` partial overlap).
-
----
-
-### C43.3 — Enable `assign_slots_sequential_text_reuse` test — **Done**
-
-`#[ignore]` removed; test runs unconditionally in `src/variables/slots.rs`.
-
----
-
-### C43.4 — Integration test: text-heavy script with slot validation
-
-**Goal:** Verify text slot reuse works end-to-end in a loft program.
-
-**File:** `tests/expressions.rs`
-
-**Test:**
-```rust
-#[test]
-fn text_slot_reuse_sequential() {
-    // Two sequential text variables with non-overlapping lifetimes
-    // should not cause stack corruption.
-    code!(
-        "fn check() -> text {
-             a = \"hello\";
-             b = a + \" world\";
-             c = \"goodbye\";
-             d = c + \" world\";
-             d
-         }"
-    )
-    .expr("check()")
-    .result(Value::str("goodbye world"));
-}
-```
-
-**Verification:** `make ci` — zero failures across all test suites.
+**Effort:** Medium.  **Target:** deferred.
 
 ---
 

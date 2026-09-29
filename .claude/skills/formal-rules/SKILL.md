@@ -21,9 +21,10 @@ deliberating a fix that has a choice in it.
 
 1. **A rules home** — a directory of Markdown docs, one per domain. A rule is
    DEFINED by a line `  (Name)  prose` inside a fenced code block (the rules-block
-   shape), or by a deviation-register entry (`### D-xxx-N — …` header or
-   `> **D-xxx-N — …` blockquote). Section headers and parenthesised mentions in
-   prose are NOT definitions — both produced false positives when treated as such.
+   shape), or by a deviation-register entry (`### D-xxx-N — …` header,
+   `> **D-xxx-N — …` blockquote, or a `- **D-xxx-N …` bullet inside the chapter's
+   `## Deviations` section). Section headers and parenthesised mentions in prose are
+   NOT definitions — both produced false positives when treated as such.
 2. **A namespaced citation tag: `@FR-<Name>`** in a code comment at each site that
    enforces the rule. A bare `@Name` is not unambiguous in a tree that already uses
    `@` for anything else (measured in loft: a bare-`@` scan returned 4142 hits, not
@@ -33,7 +34,9 @@ deliberating a fix that has a choice in it.
    cannot continue a tag. Never rename rules to dodge a matcher.
 4. **Only a DEFINED rule is a citation target.** Family prefixes that appear in
    prose (`D-own`, `B-Ref`) read like rules and are not; citing one is an error the
-   checker reports.
+   checker reports. A deviation is citable only while it is OPEN — at the site that
+   implements the shortfall, so closing it finds every site to change. A CLOSED
+   deviation is history: cite the rule it was measured against instead.
 5. **The checker gates**: every citation resolves, no rule defined twice. Run it in
    CI so a renamed or deleted rule cannot leave dangling citations.
 
@@ -48,10 +51,12 @@ python3 scripts/rule_tags.py sites <tag>   # which code sites enforce this rule
 python3 scripts/rule_tags.py registers     # each chapter's stated `OPEN: n` vs its entries;
                                            #   `--issues` flags an open entry whose issue closed
 python3 scripts/rule_tags.py dups          # rules cited from 2+ sites — duplication by MEANING
+python3 scripts/rule_tags.py coverage      # share of rules with a code annotation / an active
+                                           #   guard, against the floors (a report)
 ```
 
-**Adopting it in another project**: vendor the file unchanged and point two
-environment variables at your layout —
+**Adopting it in another project**: vendor the file unchanged and point its two
+roots at your layout —
 
 ```bash
 RULES_DIR=docs/rules CITE_DIRS=src:lib CITE_EXTS=.rs,.py python3 rule_tags.py check
@@ -59,7 +64,7 @@ RULES_DIR=docs/rules CITE_DIRS=src:lib CITE_EXTS=.rs,.py python3 rule_tags.py ch
 
 (`RULES_DIR` = where the rules docs live; `CITE_DIRS` = colon-separated dirs whose
 files are scanned for citations; `CITE_EXTS` = comma-separated extensions,
-default `.rs`.) Then write the first rules doc in the definition shape above, cite
+default `.rs,.loft`.) Then write the first rules doc in the definition shape above, cite
 it from one site, and wire `check` into CI before the register grows.
 
 ## Working with the register
@@ -81,9 +86,11 @@ it from one site, and wire `check` into CI before the register grows.
   convention's authority; `formal/IMPLEMENTATIONS.md` indexes merged enforcement.
 - Checker: `scripts/rule_tags.py` (defaults already point here); `check` runs in CI as the
   `doc_hygiene::every_rule_citation_resolves` test, which shells out to this same command so
-  the gate and the tool cannot drift — grep for `rule_tags` in `Makefile`/`.github/` and you
-  will not find it, which is not the same as it not running.
+  the gate and the tool cannot drift — the `rule_tags` calls in `Makefile`/`.github/` are its
+  OTHER subcommands (`claims`, `fences`, `sections`, `coverage`), so a grep there does not
+  show that `check` runs.
   `registers` is a REPORT, not a gate: its issue half needs the tracker, and a stale
-  count is a doc fix rather than a reason to fail a build.
+  count is a doc fix rather than a reason to fail a build. `make rule-coverage` runs
+  `coverage`.
 - Tag family context: CLAUDE.md § Tracker tags (why `@FR-` cannot collide with
   `@F<digits>`, `@PLN`, `@P`, corpus annotations).

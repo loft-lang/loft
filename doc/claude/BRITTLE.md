@@ -84,7 +84,7 @@ leak), P121 (tuple heap corruption), P122/P123 (loop-store exhaustion).
 ## 2. Hard-coded vector-record layout (`+4` count, `+8` data)
 
 **Files:** `src/vector.rs`, `src/state/io.rs:505`, `src/native.rs`
-`populate_frame_variables`, `src/lib/graphics/native/src/lib.rs:908`.
+`populate_frame_variables`, `tests/fixtures/libs/graphics/native/src/lib.rs`.
 
 **What it does:** A `vector<T>` record is stored as
 `[size i32 | length i32 | element_0 | element_1 | ...]`, so the length
