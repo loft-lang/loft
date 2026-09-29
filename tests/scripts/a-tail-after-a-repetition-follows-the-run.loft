@@ -14,6 +14,13 @@
 //                        variant); the run's length (empty, one, several); a subject too short
 //                        for the tail; the cursor's position after the match.
 // Axes it HOLDS FIXED:   a contiguous run (no separator); variant tail elements.
+//
+// @falsified-at: e8ccec570 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused both shapes, so no assertion ran on it.  The VALUES are scored apart by a
+//   mutation that admits them but reads the tail from the END (`tail_forward = false`):
+//   interpret 2 assertion failures -> 0, native 4 -> 0.
+// @falsified-by: tests/falsified/a-tail-after-a-repetition-follows-the-run.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak (the `wrap.rs` gate), panic and free-refusal are clean on both backends.
 
 enum Tok { Num { n: integer }, End { e: integer } }
 struct Cur { src: vector<Tok>, pos: integer }
