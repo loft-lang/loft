@@ -170,13 +170,20 @@ pub fn install_one(
 ) -> Result<InstallReport, String> {
     let index = load_index(opts)?;
     let mut graph: Vec<ResolvedPackage> = Vec::new();
+    let declared = declared_requirements(opts);
+    // A package named WITHOUT a version installs what the project declares for it: the
+    // manifest is authoritative, so `loft install graphics` under `graphics = "=0.9.3"` is
+    // 0.9.3.  It resolved the newest instead and wrote that to the lock, beside a declaration
+    // it left standing — and the load, which lets a declaration overrule the lock, then used
+    // the other version (loft#1751).  `loft install x@v` is how a declared pin moves.
+    let constraint = constraint.or_else(|| declared.get(package_name).map(String::as_str));
     resolve_declared(
         &index,
         package_name,
         constraint,
         opts,
         &held_versions(opts),
-        &declared_requirements(opts),
+        &declared,
         &mut graph,
     )?;
     check_against_lockfile(&graph, opts)?;

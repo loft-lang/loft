@@ -1014,12 +1014,13 @@ fn install_from_registry_with_opts(args: &[String], opts: &loft::install::Instal
                         println!("  created loft.toml (package `{pkg}`)");
                     }
                 }
+                let path = manifest.to_string_lossy().to_string();
                 if manifest.exists()
-                    && loft::manifest::record_dependency(
-                        &manifest.to_string_lossy(),
-                        name,
-                        &requirement,
-                    )
+                    && (loft::manifest::record_dependency(&path, name, &requirement)
+                        // An explicit version MOVES an existing declaration: left standing,
+                        // it overruled the lock this install wrote (loft#1751).
+                        || (version.is_some()
+                            && loft::manifest::replace_dependency(&path, name, &requirement)))
                 {
                     println!("  declared in loft.toml: {name} = \"{requirement}\"");
                 }
