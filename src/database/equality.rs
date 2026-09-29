@@ -16,13 +16,21 @@ impl Stores {
     /// its elements in the tree's order.  Two handles that are one place answer `true` at
     /// once; that is the fast path, never the meaning.
     ///
-    /// A stored `reference<T>` (`Parts::DbRef`) is compared as the handle it is: the schema
-    /// row carries no target type to follow it into (deviation D-op-16, formal/operational.md).
+    /// A stored `reference<T>` field is followed to the record it names ([`Field::target`]),
+    /// so two references compare what they point at.  A pair of records met again while it is
+    /// being compared counts as equal (coinduction), which is what makes a cycle — a list whose
+    /// last node points back at its first, a node that points at itself — terminate.
     ///
     /// # Panics
     /// On a `tp` that is no stored type, as the schema walks do.
     #[must_use]
     pub fn eq_content(&self, a: &DbRef, b: &DbRef, tp: u16) -> bool {
+        let mut seen = Vec::new();
+        self.eq_walk(a, b, tp, &mut seen)
+    }
+
+    /// [`Self::eq_content`] with the record pairs already under comparison.
+    fn eq_walk(&self, a: &DbRef, b: &DbRef, tp: u16, seen: &mut Vec<(DbRef, DbRef, u16)>) -> bool {
         if a == b {
             return true;
         }
@@ -36,7 +44,9 @@ impl Stores {
         }
         let (sa, sb) = (self.store(a), self.store(b));
         match &self.types[tp as usize].parts {
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => self.eq_fields(a, b, fields),
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                self.eq_fields(a, b, fields, seen)
+            }
             Parts::Enum(variants) => {
                 let (va, vb) = (sa.get_byte(a.rec, a.pos, 0), sb.get_byte(b.rec, b.pos, 0));
                 if va != vb {
@@ -49,7 +59,7 @@ impl Stores {
                     return true;
                 };
                 match self.types.get(variant as usize).map(|t| &t.parts) {
-                    Some(Parts::EnumValue(_, fields)) => self.eq_fields(a, b, fields),
+                    Some(Parts::EnumValue(_, fields)) => self.eq_fields(a, b, fields, seen),
                     _ => true,
                 }
             }
@@ -64,6 +74,8 @@ impl Stores {
             }
             Parts::Int(_, _) => sa.get_i32_raw(a.rec, a.pos) == sb.get_i32_raw(b.rec, b.pos),
             Parts::IntRaw(_, _) => sa.get_u32_raw(a.rec, a.pos) == sb.get_u32_raw(b.rec, b.pos),
+            // A stored handle reached WITHOUT its field — no target to follow — is the
+            // handle it is; `eq_fields` follows the ones a field names.
             Parts::DbRef => (0..3).all(|w| {
                 sa.get_u32_raw(a.rec, a.pos + 4 * w) == sb.get_u32_raw(b.rec, b.pos + 4 * w)
             }),
@@ -74,7 +86,12 @@ impl Stores {
                     rec,
                     pos: 8,
                 };
-                self.eq_content(&child(a.store_nr, ra), &child(b.store_nr, rb), *content)
+                self.eq_walk(
+                    &child(a.store_nr, ra),
+                    &child(b.store_nr, rb),
+                    *content,
+                    seen,
+                )
             }
             Parts::Vector(content)
             | Parts::Sorted(content, _)
@@ -83,7 +100,7 @@ impl Stores {
             | Parts::Index(content, _, _)
             | Parts::Hash(content, _)
             | Parts::Radix(content, _)
-            | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content),
+            | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content, seen),
             Parts::Base => panic!(
                 "eq_content on the base type {} ({})",
                 tp, self.types[tp as usize].name
@@ -130,16 +147,23 @@ impl Stores {
     /// A collection of `content` elements: two absent collections are one value; otherwise
     /// element by element in the collection's own order (a hash in key order, a spatial index
     /// or trie in its tree's order), and a different count differs.
-    fn eq_collection(&self, a: &DbRef, b: &DbRef, tp: u16, content: u16) -> bool {
+    fn eq_collection(
+        &self,
+        a: &DbRef,
+        b: &DbRef,
+        tp: u16,
+        content: u16,
+        seen: &mut Vec<(DbRef, DbRef, u16)>,
+    ) -> bool {
         if let Some(answer) = self.eq_absent_collections(a, b) {
             return answer;
         }
-        let pairwise = |ea: &[DbRef], eb: &[DbRef]| {
+        let mut pairwise = |ea: &[DbRef], eb: &[DbRef]| {
             ea.len() == eb.len()
                 && ea
                     .iter()
                     .zip(eb)
-                    .all(|(x, y)| self.eq_content(x, y, content))
+                    .all(|(x, y)| self.eq_walk(x, y, content, seen))
         };
         match &self.types[tp as usize].parts {
             Parts::Hash(_, _) => {
@@ -172,7 +196,7 @@ impl Stores {
                     match (ea.rec == 0, eb.rec == 0) {
                         (true, true) => return true,
                         (false, false) => {
-                            if !self.eq_content(&ea, &eb, content) {
+                            if !self.eq_walk(&ea, &eb, content, seen) {
                                 return false;
                             }
                         }
@@ -188,7 +212,13 @@ impl Stores {
     /// `#…` is the collection's own bookkeeping (a tree link, a back pointer) and a field whose
     /// first other-index is `u16::MAX` is a secondary VIEW of a collection another field
     /// holds — neither is content, exactly as the renderer skips them.
-    fn eq_fields(&self, a: &DbRef, b: &DbRef, fields: &[Field]) -> bool {
+    fn eq_fields(
+        &self,
+        a: &DbRef,
+        b: &DbRef,
+        fields: &[Field],
+        seen: &mut Vec<(DbRef, DbRef, u16)>,
+    ) -> bool {
         fields.iter().all(|f| {
             if f.name.starts_with('#') || f.other_indexes.first() == Some(&u16::MAX) {
                 return true;
@@ -205,8 +235,43 @@ impl Stores {
                 return self.store(&fa).get_byte(fa.rec, fa.pos, 0)
                     == self.store(&fb).get_byte(fb.rec, fb.pos, 0);
             }
-            self.eq_content(&fa, &fb, f.content)
+            if f.target != u16::MAX {
+                return self.eq_reference(&fa, &fb, f.target, seen);
+            }
+            self.eq_walk(&fa, &fb, f.content, seen)
         })
+    }
+
+    /// Two stored `reference<T>` slots: the records they name, compared as `target`.  Both
+    /// absent are equal and one absent differs; a pair already under comparison is assumed
+    /// equal, which is where a cycle ends.
+    fn eq_reference(
+        &self,
+        fa: &DbRef,
+        fb: &DbRef,
+        target: u16,
+        seen: &mut Vec<(DbRef, DbRef, u16)>,
+    ) -> bool {
+        let read = |r: &DbRef| {
+            let s = self.store(r);
+            DbRef {
+                store_nr: s.get_u32_raw(r.rec, r.pos) as u16,
+                rec: s.get_u32_raw(r.rec, r.pos + 4),
+                pos: s.get_u32_raw(r.rec, r.pos + 8),
+            }
+        };
+        let (ra, rb) = (read(fa), read(fb));
+        if ra.rec == 0 || rb.rec == 0 {
+            return ra.rec == 0 && rb.rec == 0;
+        }
+        if seen
+            .iter()
+            .any(|&(x, y, t)| x == ra && y == rb && t == target)
+        {
+            return true;
+        }
+        seen.push((ra, rb, target));
+        self.eq_walk(&ra, &rb, target, seen)
     }
 
     /// Two collection slots of which one or both are ABSENT (a `vector<T>?` holding null):

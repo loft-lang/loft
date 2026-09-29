@@ -36,22 +36,25 @@ fn identity_sites(name: &str, src: &str) -> Vec<String> {
         .collect()
 }
 
-/// The census names each `==` / `!=` that compares identity — by line, kind and operand
+/// The census names each `==` / `!=` that still compares identity — by line, kind and operand
 /// types — and is silent where the answer does not depend on identity: a `null` test, a
-/// scalar, a `value struct` compared by content.  A trace that went silent would report a
-/// flip as changing nothing; one that also fired on `x == null` would send that site to be
-/// converted to `&a == &b`, which is not what it asks.
+/// scalar, and (since the C91 flips) a struct, a struct-enum and a keyed collection, which
+/// compare by content.  Two records of DIFFERENT struct types are the identity lowering left,
+/// so the trace must still name that one: a trace that went silent everywhere would report a
+/// future flip as changing nothing.
 #[test]
 fn the_census_names_identity_compares_and_nothing_else() {
     let sites = identity_sites(
         "census.loft",
         "struct P { x: integer }
+struct Q { x: integer }
 value struct V { x: integer }
 enum S { Circle { r: integer }, Square { s: integer } }
 struct E { k: integer, v: integer }
 fn main() {
   a = P { x: 1 };
   b = P { x: 1 };
+  q = Q { x: 1 };
   n: P? = null;
   m = P { x: 2 };
   v = V { x: 1 };
@@ -60,25 +63,21 @@ fn main() {
   d = Circle { r: 1 };
   h: hash<E[k]> = [];
   g: hash<E[k]> = [];
-  assert(!(a == b), \"struct\");
-  assert(a != b, \"struct ne\");
+  assert(a == b, \"struct\");
+  assert(!(a != b), \"struct ne\");
   assert(n == null, \"null test\");
   assert(!(m == null), \"null test on a non-optional struct\");
   assert(v == w, \"value struct\");
   assert(1 == 1, \"scalar\");
-  assert(!(c == d), \"struct-enum\");
-  assert(!(h == g), \"collection\");
+  assert(c == d, \"struct-enum\");
+  assert(h == g, \"collection\");
+  assert(!(a == q), \"two struct types\");
 }
 ",
     );
     assert_eq!(
         sites,
-        vec![
-            "census.loft:16  struct  P == P",
-            "census.loft:17  struct  P != P",
-            "census.loft:22  struct-enum  Circle == Circle",
-            "census.loft:23  collection  hash<E> == hash<E>",
-        ],
+        vec!["census.loft:26  struct  P == Q"],
         "the identity census"
     );
 }

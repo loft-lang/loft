@@ -19,7 +19,7 @@ fn main() {
     println("{p.name}, resident: {parts.len()}");       // washer, resident: 1
 
     q = parts[91];                                      // a hit never leaves the process
-    println("same: {p == q}, resident: {parts.len()}"); // same: true, resident: 1
+    println("same: {&p == &q}, resident: {parts.len()}"); // same: true, resident: 1
 
     // A key the source does not have reads as null — and asking why tells a
     // genuine absence apart from a source you could not reach. Nothing failed

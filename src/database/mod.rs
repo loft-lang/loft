@@ -149,6 +149,12 @@ pub struct Field {
     /// carried rather than RENDERED — `layout_dump` and `LayoutDesc::render_dump`
     /// are untouched, so the @PLN97 layout identity is too.
     pub nullable: bool,
+    /// `@FR-E-Eq`, @C91 — the known type a stored `reference<T>` field (`Parts::DbRef`) names,
+    /// or `u16::MAX`.  The 12-byte row is shared by every reference field, so this is the
+    /// only place the runtime learns what one points at: content `==` follows it
+    /// (`Stores::eq_content`).  Carried like `nullable`, never RENDERED, so the @PLN97 layout
+    /// identity is untouched.  Set by `typedef::fill_all` once every target has its row.
+    pub target: u16,
     pub(self) other_indexes: Vec<u16>, // For now only fields on the same record
 }
 
@@ -193,6 +199,7 @@ impl Field {
         position: u16,
         default: Content,
         nullable: bool,
+        target: u16,
         other_indexes: Vec<u16>,
     ) -> Field {
         Field {
@@ -201,6 +208,7 @@ impl Field {
             position,
             default: Self::default_from_wire(default),
             nullable,
+            target,
             other_indexes,
         }
     }

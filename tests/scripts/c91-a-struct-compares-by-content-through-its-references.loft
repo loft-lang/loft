@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C91, `@FR-E-Eq` — A STRUCT COMPARES BY CONTENT, THROUGH ITS REFERENCES.  `==` on two records
+// of one struct compares their fields with each field's own `==`, and follows a
+// `reference<T>` field to the record it names; a pair met again while it is being compared
+// counts as equal, so a cyclic value terminates.  It compared identity (deviations D-op-14,
+// D-op-15, D-op-16 and D-op-18): `c = a` — a copy, C86 — answered `a == c` false, and a
+// `value struct` against a `struct` with the same fields flipped the answer.
+//
+// Every expected value is worked out by hand from that rule.  `&a == &b` is the spelling of
+// identity, and each cell that could be read either way carries both.
+//
+// @falsified-at: 4154721b5 — interpret exit 1 -> 0, interpret 7 assertion failures -> 0, native
+//   exit 1 -> 0, native 14 assertion failures -> 0
+// @falsified-by: tests/falsified/c91-a-struct-compares-by-content-through-its-references.patch —
+//   interpret exit 1 -> 0, interpret 7 assertion failures -> 0, native exit 1 -> 0, native 14
+//   assertion failures -> 0
+// HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends; the cells
+//   run from a `main` report no leak on either backend.
+
+struct P { x: integer, t: text }
+struct Q { p: P, n: integer }
+struct N { v: integer, next: reference<N>? }
+value struct V { k: integer, r: reference<N>? }
+
+fn test_a_struct_and_its_copy() {
+  a = P { x: 1, t: "a" };
+  b = P { x: 1, t: "a" };
+  c = a;
+  d = P { x: 1, t: "b" };
+  assert(a == b, "two records built alike are equal");
+  assert(a == c, "a copy equals its source");
+  assert(!(&a == &c), "and is another record");
+  assert(a != d, "one differing field");
+  assert(!(a != b), "!= is the complement");
+}
+
+fn test_a_struct_holding_a_struct() {
+  a = Q { p: P { x: 1, t: "a" }, n: 2 };
+  b = Q { p: P { x: 1, t: "a" }, n: 2 };
+  c = Q { p: P { x: 1, t: "z" }, n: 2 };
+  assert(a == b, "the embedded struct by its content");
+  assert(a != c, "a deep field differs");
+}
+
+fn test_a_tuple_of_structs() {
+  a = (P { x: 1, t: "a" }, 2);
+  b = (P { x: 1, t: "a" }, 2);
+  c = (P { x: 2, t: "a" }, 2);
+  assert(a == b, "each element with its own ==");
+  assert(a != c, "one element differs");
+}
+
+fn test_references_are_followed() {
+  a2 = N { v: 2, next: null };
+  a1 = N { v: 1, next: a2 };
+  b2 = N { v: 2, next: null };
+  b1 = N { v: 1, next: b2 };
+  c2 = N { v: 3, next: null };
+  c1 = N { v: 1, next: c2 };
+  assert(a1 == b1, "two lists with equal nodes");
+  assert(a1 != c1, "a node down the list differs");
+  assert(a1.next == b1.next, "a reference field compares the record it names");
+  assert(!(&a1.next == &b1.next), "which is not the same record");
+}
+
+fn test_cycles_terminate() {
+  x1 = N { v: 1, next: null };
+  x2 = N { v: 2, next: x1 };
+  x1.next = x2;
+  y1 = N { v: 1, next: null };
+  y2 = N { v: 2, next: y1 };
+  y1.next = y2;
+  z1 = N { v: 1, next: null };
+  z2 = N { v: 9, next: z1 };
+  z1.next = z2;
+  assert(x1 == y1, "two equal two-node cycles");
+  assert(x1 != z1, "a cycle with one differing node");
+  s = N { v: 5, next: null };
+  s.next = s;
+  t = N { v: 5, next: null };
+  t.next = t;
+  u = N { v: 6, next: null };
+  u.next = u;
+  assert(s == t, "two equal self-loops");
+  assert(s != u, "a self-loop with another value");
+}
+
+fn test_nullable_pairs() {
+  a: P? = null;
+  b: P? = null;
+  c: P? = P { x: 1, t: "a" };
+  d: P? = P { x: 1, t: "a" };
+  assert(a == b, "two absent are equal");
+  assert(a != c, "absent differs from present");
+  assert(c == d, "two present compare their content");
+  assert(c != null && a == null, "the null literal still tests presence");
+}
+
+fn test_a_value_struct_follows_its_reference() {
+  a2 = N { v: 2, next: null };
+  a1 = N { v: 1, next: a2 };
+  b2 = N { v: 2, next: null };
+  b1 = N { v: 1, next: b2 };
+  c1 = N { v: 7, next: null };
+  p = V { k: 1, r: a1 };
+  q = V { k: 1, r: b1 };
+  w = V { k: 1, r: c1 };
+  assert(p == q, "a value struct's reference field compares what it names");
+  assert(p != w, "and differs when that differs");
+}

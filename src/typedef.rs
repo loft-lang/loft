@@ -765,8 +765,32 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
             }
         }
     }
+    record_reference_targets(data, database);
     report_unknown_key_fields(data, lexer);
     false
+}
+
+/// `@FR-E-Eq`, @C91 — give every stored `reference<T>` field its target's known type
+/// ([`crate::database::Field::target`]).  Done once every type of the parse has its row,
+/// because a field may name a record type declared after it; the 12-byte row the field is
+/// stored as is shared by every reference, so this is how content `==` can follow one.
+fn record_reference_targets(data: &Data, database: &mut Stores) {
+    for d in 0..data.definitions() {
+        let kt = data.def(d).known_type;
+        if kt == u16::MAX || !matches!(data.def_type(d), DefType::Struct | DefType::EnumValue) {
+            continue;
+        }
+        // Read in place: this runs over every definition on every `fill_all`, and a cloned
+        // type or name per attribute is what the front end's allocation pin measures.
+        for at in data.def(d).attributes() {
+            if let Type::Reference(t, deps) = at.typedef.base()
+                && !deps.is_empty()
+                && data.def(*t).known_type != u16::MAX
+            {
+                database.set_field_target(kt, &at.name, data.def(*t).known_type);
+            }
+        }
+    }
 }
 
 /// loft#874 — report the key fields a keyed collection named that its ELEMENT type

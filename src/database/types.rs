@@ -453,6 +453,7 @@ impl Stores {
                 position: u16::MAX,
                 default: None,
                 nullable: false,
+                target: u16::MAX,
                 other_indexes: others,
             });
             if num > 8
@@ -1967,6 +1968,7 @@ impl Stores {
                 position: 0,
                 default: None,
                 nullable: false,
+                target: u16::MAX,
                 other_indexes: Vec::new(),
             });
             fields.push(Field {
@@ -1975,6 +1977,7 @@ impl Stores {
                 position: 0,
                 default: None,
                 nullable: false,
+                target: u16::MAX,
                 other_indexes: Vec::new(),
             });
             fields.push(Field {
@@ -1983,6 +1986,7 @@ impl Stores {
                 position: 0,
                 default: None,
                 nullable: false,
+                target: u16::MAX,
                 other_indexes: Vec::new(),
             });
             left as u16
@@ -2414,6 +2418,31 @@ impl Stores {
         let owned = register(self, DBREF_OWNED);
         let borrow = register(self, DBREF_BORROW);
         (owned, borrow)
+    }
+
+    /// `@FR-E-Eq`, @C91 — record that field `field_name` of record type `tp`, a stored
+    /// `reference<T>`, names records of known type `target` ([`Field::target`]).  Only a
+    /// `DbRef`-shaped field takes one; any other field is left alone.
+    pub fn set_field_target(&mut self, tp: u16, field_name: &str, target: u16) {
+        let dbref = |s: &Self, content: u16| {
+            matches!(
+                s.types.get(content as usize).map(|t| &t.parts),
+                Some(Parts::DbRef)
+            )
+        };
+        let Some(i) = (match self.types.get(tp as usize).map(|t| &t.parts) {
+            Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) => fields
+                .iter()
+                .position(|f| f.name == field_name && dbref(self, f.content)),
+            _ => None,
+        }) else {
+            return;
+        };
+        if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
+            &mut self.types[tp as usize].parts
+        {
+            fields[i].target = target;
+        }
     }
 
     /// Is `content` the 12-byte `DbRef` shape a closure record ADOPTS — i.e. may
@@ -4010,6 +4039,7 @@ mod layout_tests {
                 position: 0,
                 default: None,
                 nullable: false,
+                target: u16::MAX,
                 other_indexes: Vec::new(),
             });
         }

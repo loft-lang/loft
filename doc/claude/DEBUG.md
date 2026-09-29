@@ -606,9 +606,11 @@ that has not said which slot it is.
 **Which `==` compares identity?  `LOFT_TRACE_EQ_IDENTITY=1`** prints one line per `==` / `!=`
 the parser lowers to `OpEqRef` / `OpNeRef` — `file:line`, the kind (`struct`, `struct-enum`,
 `collection`, …) and both operand types — and nothing for a test against the `null` literal.
-Those are the sites whose answer `@C91`'s content `==` changes; `scripts/eq_census.sh` runs it
-over this tree, every library at `main` and read-only snapshots of the consumer applications,
-and writes `index/eq_census.txt` (guard: `tests/store_content_eq.rs`).
+Before `@C91`'s flips those were the sites whose answer content `==` changed; since them, a
+struct, a struct-enum and a collection compare by content and the trace names what is left
+(two records of different struct types).  `scripts/eq_census.sh` runs it over this tree,
+every library at `main` and read-only snapshots of the consumer applications, and writes
+`index/eq_census.txt` — committed as the pre-flip census (guard: `tests/store_content_eq.rs`).
 
 `loft --introspect <file>` packages the dump primitives behind one
 flag, dumping bytecode + generated Rust + slot tables + per-fn type

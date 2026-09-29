@@ -98,11 +98,12 @@ fn c1() -> text {
   b = W { x: 1, y: 9 };
   "{a == b}"
 }
-/// c2 — control: a plain `struct` compares identity.
+/// c2 — control: a plain `struct` compares by content too (@C91), and `&a == &b` asks whether
+/// the two names are one record.
 fn c2() -> text {
   a = Plain { x: 1 };
   b = Plain { x: 1 };
-  "{a == b} {a == a}"
+  "{a == b} {a == a} {&a == &b} {&a == &a}"
 }
 
 fn main() {
@@ -115,6 +116,6 @@ fn main() {
   ok("g7 operands run once  ", g7(), "true 2");
   ok("g8 narrow and bool    ", g8(), "true false");
   ok("c1 own OpEq wins      ", c1(), "true");
-  ok("c2 plain struct       ", c2(), "false true");
+  ok("c2 plain struct       ", c2(), "true true false true");
   println("a value struct compares by content: every cell holds");
 }

@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **6** (D-op-14…22 — C91's content `==`, opened 2026-09-29 and closed step by step by @PLN175, D-op-17, D-op-19, D-op-20, D-op-21 and D-op-22 closed the same day; D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
+OPEN: **2** (D-op-14…22 — C91's content `==`, opened AND closed 2026-09-29 by @PLN175 steps 2–7; D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -234,7 +234,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
 
-### D-op-14 … D-op-22 — OPEN (2026-09-29, @PLN175): `==` is not yet content for every type
+### D-op-14 … D-op-22 — OPENED AND CLOSED (2026-09-29, @PLN175): `==` was not content for every type
 
 - **Violates:** `(E-Eq)` / `(E-Eq-Key)` as amended by C91 (owner, 2026-09-28): content for every
   type, `&a == &b` for identity, keys agreeing with `==`.
@@ -262,6 +262,17 @@ only as strong as the rules above it, not only as strong as its oracle.
   compared as its enum), lower to `OpEqContent`.  The census found no identity site of either
   kind in any file that compiles.  Guard
   `tests/scripts/c91-a-collection-and-an-enum-value-compare-by-content.loft`, both backends.
+- **D-op-14, D-op-15, D-op-16 and D-op-18 CLOSED (2026-09-29, step 7):** two records of one
+  `struct` lower to `OpEqContent` (a `value struct` keeps its inline comparison, whose
+  reference field now reaches the same content `==`).  A stored `reference<T>` is a 12-byte
+  row shared by every reference, so each such field now carries its target's known type
+  (`Field::target`: set by `typedef::fill_all` once every type has its row, carried through
+  the IR store and the snapshot, replayed by the native `init()`), and `Stores::eq_content`
+  follows it with a set of pairs under comparison, which ends a cycle.  The census's 22
+  identity sites were read: the lazy-store tests and F108 ask whether a hit is ONE record and
+  now say `&a == &b`; the 1580 / 1581 controls asserted the old identity and now assert
+  content beside an `&` cell; the rest already meant content.  Guard
+  `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`, both backends.
 - **Closed by** the ten steps of [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175),
   each entry naming its step in [operational.md](operational.md) § Deviations.
 

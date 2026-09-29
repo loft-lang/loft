@@ -15009,8 +15009,8 @@ impl Parser {
     /// The schema row both operands of a CONTENT comparison are stored as (`@FR-E-Eq`, @C91) —
     /// the `tp` `OpEqContent` walks them by — when they are two values of one kind that `==`
     /// compares by content in the store: two vectors of one element type, two keyed
-    /// collections of one element and key, or two struct-enum values of one enum (a variant
-    /// is compared as its enum, so two different variants differ rather than refuse).
+    /// collections of one element and key, two records of one struct, or two struct-enum
+    /// values of one enum (a variant is compared as its enum, so two variants differ).
     fn content_eq_type(&mut self, types: &[Type]) -> Option<u16> {
         let [a, b] = types else {
             return None;
@@ -15033,6 +15033,16 @@ impl Parser {
             ) if l.is_equal(r) => {
                 let l = l.clone();
                 self.keyed_field_kt(&l)
+            }
+            // A struct by its fields, through every `reference<T>` it holds.  A `value struct`
+            // keeps its inline field-by-field comparison (`value_struct_eq`).
+            (Type::Reference(da, _), Type::Reference(db, _))
+                if da == db
+                    && self.data.def_type(*da) == DefType::Struct
+                    && !self.data.is_value_struct(*da) =>
+            {
+                let known = self.data.def(*da).known_type();
+                (known != u16::MAX).then_some(known)
             }
             (l, r) => {
                 let (ea, eb) = (self.struct_enum_of(l)?, self.struct_enum_of(r)?);
