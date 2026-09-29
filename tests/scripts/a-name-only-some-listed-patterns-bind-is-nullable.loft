@@ -14,6 +14,7 @@
 //                        the capture's kind (integer, text, struct, vector, plain enum), where it
 //                        comes from (a field, a later pattern's sub-pattern, both), a guard reading
 //                        it, repeated calls (a stale slot), a same-named outer local.
+//                        a field declared `S?` beside a pattern that lacks it.
 // Axes it HOLDS FIXED:   a struct-enum subject passed as a parameter.
 
 struct P { x: integer, y: integer }
@@ -80,6 +81,17 @@ fn test_a_later_patterns_sub_pattern_may_capture() {
   assert(got == "[a] [b] o", "a sub-pattern capture every pattern binds: {got}");
   got = "{later_sub(Rs { i: Sp { x: 5 }, k: 0 })} {later_sub(Ra { u: 6 })} {later_sub(Rs { i: Sq { y: \"q\" }, k: 0 })}";
   assert(got == "5|0|- 0|6|- 0|0|q", "sub-pattern captures in first and third: {got}");
+}
+
+struct Pt { x: integer }
+enum Opt { Oa { p: Pt? }, Ob { q: integer }, Oc { p: Pt?, q: integer } }
+fn opt(e: Opt) -> text {
+  match e { Oa { p }, Ob { q }, Oc { p, q } => "{if p == null { -1 } else { p.x }}/{q ?? -2}" }
+}
+
+fn test_a_partial_name_over_a_nullable_field() {
+  got = "{opt(Oa { p: Pt { x: 3 } })} {opt(Oa { p: null })} {opt(Ob { q: 5 })} {opt(Oc { p: Pt { x: 8 }, q: 9 })} {opt(Oc { p: null, q: 1 })}";
+  assert(got == "3/-2 -1/-2 -1/5 8/9 -1/1", "nullable field: {got}");
 }
 
 fn test_the_names_end_with_the_arm() {

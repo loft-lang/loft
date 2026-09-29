@@ -9623,11 +9623,14 @@ impl Parser {
                             }
                             let tp = self.vars.tp(v_nr).clone();
                             if let Some((slot, slot_ty)) = shared.get(name).cloned() {
-                                let slot_ty = match slot_ty {
-                                    Type::Optional(inner) => *inner,
-                                    other => other,
+                                let fits = match &slot_ty {
+                                    Type::Optional(inner) => {
+                                        match_arm_types_unify(&slot_ty, &tp)
+                                            || match_arm_types_unify(inner, &tp)
+                                    }
+                                    other => match_arm_types_unify(other, &tp),
                                 };
-                                if !self.first_pass && !match_arm_types_unify(&slot_ty, &tp) {
+                                if !self.first_pass && !fits {
                                     diagnostic!(
                                         self.lexer,
                                         Level::Error,
@@ -9664,17 +9667,19 @@ impl Parser {
                                     .map_or_else(|| tp.clone(), |(_, p)| p)
                             };
                             // A slot a partial name made `τ?` (`@FR-P-Alt-Diff`, the caller) is
-                            // still `τ` to the patterns that bind it — pass 2 sees pass 1's widening.
-                            let slot_ty = match shared_ty {
-                                Type::Optional(inner)
-                                    if !matches!(field_type, Type::Optional(_)) =>
-                                {
-                                    inner.as_ref()
-                                }
-                                other => other,
+                            // still `τ` to the patterns that bind it — pass 2 sees pass 1's
+                            // widening — so either spelling of the slot may match the field.
+                            let widened_from = match shared_ty {
+                                Type::Optional(inner) => Some(inner.as_ref()),
+                                _ => None,
                             };
-                            let ok =
-                                match_arm_types_unify(&bound_ty(slot_ty), &bound_ty(&field_type));
+                            let fits = |slot: &Type| {
+                                match_arm_types_unify(&bound_ty(slot), &bound_ty(&field_type))
+                            };
+                            let slot_ty = widened_from
+                                .filter(|inner| !fits(shared_ty) && fits(inner))
+                                .unwrap_or(shared_ty);
+                            let ok = fits(slot_ty);
                             if !ok && !self.first_pass {
                                 diagnostic!(
                                     self.lexer,
