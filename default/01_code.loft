@@ -69,7 +69,7 @@ pub interface Ordered {
 }
 
 // Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
-// A tuple bound here is still refused (loft#1738).
+// A tuple compares element by element, as its concrete `==` does.
 //
 // `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 pub interface Equatable {

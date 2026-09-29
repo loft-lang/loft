@@ -210,12 +210,8 @@ decided boundary, so it belongs here as a scope rule, not as a deviation to clos
 
 ## Deviations
 
-**OPEN: 1.**
-- **D-gen-6** (opened 2026-09-29, loft#1738) — a TUPLE bound to `T: Equatable` is refused
-  (*missing OpEq*), against (G-Sat-Eq): a concrete tuple `==` is lowered element by element
-  into temporaries of the current function, which a monomorph's re-resolution does not have.
-
-The record, and the four closed deviations, are in the companion
+**OPEN: 0.**
+The record, and every closed deviation, are in the companion
 [interfaces-history.md](interfaces-history.md).
 
 ## Conformance

@@ -933,7 +933,7 @@ interfaces are one stub, so the second is taken to agree with the first.
 `text` satisfies `Ordered` and `Equatable`. No extra declarations are needed.
 Every type satisfies `Equatable` (`(G-Sat-Eq)`, C91): a struct, `value struct`, struct-enum,
 vector or keyed collection with no `op ==` of its own is compared by content in the monomorph,
-exactly as a concrete `a == b` on it is; a tuple bound to it is still refused (loft#1738).
+exactly as a concrete `a == b` on it is; a tuple element by element, nested tuples included.
 
 **Stdlib functions converted from native to bounded-generic loft** (depends on I8):
 

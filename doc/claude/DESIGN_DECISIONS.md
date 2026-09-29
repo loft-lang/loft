@@ -516,8 +516,7 @@ collections agree with `==`.  No `===`.  **Why.** Every variable is its own valu
 identity `==` reported where a value is stored: `b = a; a == b` answered false, and
 `value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
 decided by what is written; how fast it is, by the compiler.  Built by @PLN175 in ten steps,
-census before every flip; a tuple bound to `T: Equatable` is the one gap left (D-gen-6,
-loft#1738).
+census before every flip.
 
 **Holds at:** `@C91` — `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`
 (struct, nested, tuple, lists, cycles, nullable pairs, a value struct's reference),

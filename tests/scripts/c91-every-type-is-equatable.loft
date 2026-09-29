@@ -6,7 +6,8 @@
 // it is; a type that declares `OpEq` keeps its own.  A struct, a `value struct`, a vector and
 // a struct-enum were refused (*"does not satisfy interface 'Equatable': missing OpEq"*,
 // deviation D-gen-5), so `same<T: Equatable>` could compare an integer but not a record.
-// A tuple is not covered yet (D-gen-6, loft#1738).
+// A tuple was refused the same way (D-gen-6, loft#1738); it compares element by element,
+// nested tuples included, exactly as the concrete tuple `==` does.
 //
 // Every expected value is worked out by hand: equal content is `true`, one differing field or
 // element is `false`, and `U`'s own `OpEq` compares `x` alone.
@@ -14,6 +15,8 @@
 // @falsified-at: d18e860a9 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses every
 //   binding here with "missing OpEq", so the program does not compile there).
 // @falsified-by: tests/falsified/c91-every-type-is-equatable.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-at: f4d43fa0d — interpret exit 1 -> 0, native exit 1 -> 0 (the tuple cells: the
+//   control refuses `same((1, 2), (1, 2))` with "missing OpEq", loft#1738).
 // HOLDS: leak, panic and free-refusals are unmoved on both trees and both backends.
 
 struct P { x: integer, t: text }
@@ -53,6 +56,16 @@ fn test_a_keyed_collection() {
   c: hash<E[k]> = [E { k: 1, v: "a" }];
   assert(same(a, b), "a hash by its records");
   assert(!same(a, c), "one record fewer");
+}
+
+fn test_a_tuple() {
+  assert(same((1, 2), (1, 2)), "a tuple element by element");
+  assert(!same((1, 2), (1, 3)), "one differing element");
+  assert(differs((1, "a"), (1, "b")), "a text element");
+  assert(same((P { x: 1, t: "a" }, 2.5), (P { x: 1, t: "a" }, 2.5)), "a struct element by content");
+  assert(!same(([1, 2], true), ([1], true)), "a vector element by content");
+  assert(same(((1, 2), 3), ((1, 2), 3)), "a nested tuple");
+  assert(!same(((1, 2), 3), ((1, 9), 3)), "a nested tuple that differs");
 }
 
 fn test_an_own_op_eq_wins() {
