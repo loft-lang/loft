@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Point` × `@FR-P-Multi` — a field of a pattern may itself be a pattern, in any listed
+// pattern of a multi-pattern arm `A { v: 5 }, B { v: 6 } => …`.  It TESTS the field: the branch
+// matches only when its own sub-patterns hold, and each listed pattern tests its own.  The
+// composition was refused ("a field sub-pattern is not yet supported in a multi-pattern arm")
+// in every position; a sub-pattern in the FIRST pattern and one in a LATER pattern were two
+// separate refusals, because a later pattern parsed `f:` as a single identifier.
+//
+// A listed pattern that can fail on its field covers nothing (`@FR-M-Total`), which is why
+// every function keeps a fall-through arm; the refusals for a sub-pattern that BINDS a name in
+// a later pattern, and for a partial overlap, are in `tests/parse_errors.rs`.
+//
+// Axes this file MOVES:  the sub-pattern kind (literal, range, unit variant), which listed
+//                        pattern carries it (first / later / both), a guard beside it.
+// Axes it HOLDS FIXED:   two listed patterns; one level of sub-pattern.
+
+enum Sub { Sp, Sq }
+enum T { A { v: integer, i: Sub }, B { v: integer, i: Sub }, C { w: integer } }
+
+fn lit(t: T) -> integer { match t { A { v: 5 }, B { v: 6 } => 1, _ => 0 } }
+fn first(t: T) -> integer { match t { A { v: 1..=3, i }, B { i } => 10, _ => 0 } }
+fn nested(t: T) -> integer { match t { A { i: Sp, v }, B { i: Sq, v } => v, _ => -1 } }
+fn guarded(t: T) -> integer {
+  match t { A { i: Sp, v }, B { i: Sp, v } if v > 2 => v, A { v } => -v, _ => -100 }
+}
+
+fn test_each_listed_pattern_tests_its_own_field() {
+  got = "{lit(A { v: 5, i: Sp })} {lit(B { v: 6, i: Sp })} {lit(A { v: 6, i: Sp })} {lit(B { v: 5, i: Sp })}";
+  assert(got == "1 1 0 0", "literal: {got}");
+  got2 = "{first(A { v: 2, i: Sp })} {first(A { v: 4, i: Sp })} {first(B { v: 99, i: Sq })}";
+  assert(got2 == "10 0 10", "first pattern only: {got2}");
+}
+
+fn test_a_unit_variant_sub_pattern_and_a_guard_beside_it() {
+  got = "{nested(A { v: 3, i: Sp })} {nested(A { v: 3, i: Sq })} {nested(B { v: 4, i: Sq })} {nested(B { v: 4, i: Sp })}";
+  assert(got == "3 -1 4 -1", "variant sub-pattern: {got}");
+  got2 = "{guarded(A { v: 5, i: Sp })} {guarded(B { v: 7, i: Sp })} {guarded(B { v: 7, i: Sq })} {guarded(A { v: 1, i: Sp })}";
+  assert(got2 == "5 7 -100 -1", "sub-pattern and guard: {got2}");
+}

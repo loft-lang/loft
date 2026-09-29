@@ -3075,11 +3075,21 @@ fn multi_pattern_guard_holds() {
         .result(Value::Int(400));
 }
 
-// A field sub-pattern inside a non-first listed pattern is Phase 4.
+// A field sub-pattern TESTS its field and captures nothing, so `Ra { i }, Rb { i: Sp }` binds `i`
+// in one listed pattern only — the partial overlap, refused on its own terms.  Sub-patterns that
+// bind no name work in any listed pattern: `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
 #[test]
-fn multi_pattern_subpattern_deferred() {
+fn multi_pattern_subpattern_binds_no_capture() {
     code!("enum Sub { Sp, Sq }\nenum Rec { Ra { i: Sub }, Rb { i: Sub } }\nfn f(r: Rec) -> integer { match r { Ra { i }, Rb { i: Sp } => 0, _ => 1 } }")
-        .error("a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4) at multi_pattern_subpattern_deferred:3:57");
+        .error("multi-pattern arm: every listed pattern must bind the same captures (i) at multi_pattern_subpattern_binds_no_capture:3:62");
+}
+
+/// A sub-pattern in a LATER listed pattern that binds a name binds a variable the shared arm
+/// body never reads, so it is refused by name instead of answering the first pattern's value.
+#[test]
+fn a_capture_in_a_later_listed_patterns_sub_pattern_is_refused() {
+    code!("enum Sub { Sp { x: integer }, Sq }\nenum Rec { Ra { i: Sub, k: integer }, Rb { i: Sub, k: integer } }\nfn f(r: Rec) -> integer { match r { Ra { k }, Rb { i: Sp { x }, k } => k, _ => 0 } }")
+        .error("a capture inside `i`'s sub-pattern in a later pattern of a multi-pattern arm is not visible to the arm's body — capture it in the first pattern, or give this pattern an arm of its own at a_capture_in_a_later_listed_patterns_sub_pattern_is_refused:3:64");
 }
 
 // Union exhaustiveness: the listed variants are ALL covered by the multi-pattern
