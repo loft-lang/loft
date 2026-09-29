@@ -33,8 +33,11 @@ the stack, each elimination rule declining on a NAMED condition; its § Order's 
 BUILT the same day (§ Built 2026-09-29: the callee's own buffer is a fresh record —
 `resolve_move` 14.0× → 5.3×, `emit_to_material` 10.6× → 8.1×); next in that order are the
 destination-directed builds (`panel_build`'s three locals) and the appended tuple
-(`vertex`); `smooth` of loft#1570 took the window the same day (5.4× → 4.6× here) and
-waits on the two open items in `records.md`'s smooth paragraph, both general.  The branch was A/B'd against
+(`vertex`); `smooth` of loft#1570 went 5.4× → **2.67×** here in four steps the same day
+(`records.md`'s smooth paragraph: the window, the callee admission with the hoist's own
+allowances, and two shaves on frees) — under the bar on this box, the x86-64 laptop's
+measurement closes the issue.  `make perf-check` (before a commit) and `make perf-trend`
+(the committed history) are the two instruments this arc added for the next mover.  The branch was A/B'd against
 `origin/main` on this box on the way (`rules.md` § Measured on the way): 71 of 79 routines
 within noise, the three movers explained, none a regression.
 

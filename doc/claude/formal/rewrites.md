@@ -732,9 +732,14 @@ in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 �
   (R-Callee)     a user callee whose store writes are all (R-InPlace) sets — through
                  any address, transitively through callees it admits the same way —
                  or whose only writes land fixed-width scalars in its own hidden
-                 return buffer, is admitted under (R-InPlace) as a direct set is.  A
-                 CallRef, a Parallel, a Yield and a recursion keep the WRITER
-                 verdict.
+                 return buffer, is admitted under (R-InPlace) as a direct set is.
+                 Its body is read with the header hoist's own allowances — a
+                 null-discharge buffer's mint and defaults, a lazy buffer's mint, a
+                 record free, and its DEAD buffers (R-ValueRecord: a tuple answer's
+                 buffer is never minted, so its mint, clear and frees are nothing;
+                 the fact is per FUNCTION, read off one program-wide table) — since
+                 none reallocates a store a caller's header describes.  A CallRef,
+                 a Parallel, a Yield and a recursion keep the WRITER verdict.
 ```
 
 **In words.** @PLN157 § V-l (`in_place_only_writer`) and § V-c

@@ -575,6 +575,33 @@ definition — C122, a rewrite is free only where its conditions hold.  The land
 [formal/rewrites.md § Every rewrite is switchable and
 falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable).
 
+## Trends, and the check before a commit
+
+The portal (`make perf-portal`) writes ONE row per routine into
+`bench/portal/results/<host>.tsv` — the machine's latest measurement — and the page reads
+that row.  The history is the file's git history: every commit that touched it is one
+measurement of the whole lane set on that machine, and a routine that got slower between
+two joins is visible nowhere else (the census reads admissions, the speed gate reads test
+times).  Two scripts read it:
+
+- **`make perf-trend`** (`scripts/perf_trend.py`) walks that history and prints the MOVERS
+  — every routine whose latest measurement differs from the one before by 15 % or more, with
+  the two loft commits it sits between (the bisect range) — or, with `ARGS="--routine
+  <name>"`, one routine's whole series.  Ratios are compared within one machine only.  Read
+  when a row looks wrong: `ease` +41 % between the 24 and 27 September measurements was
+  found this way, after the fact.
+- **`make perf-check`** (`scripts/perf_check.py`) is the same comparison BEFORE a commit:
+  it measures the lanes the change touched — by default the programs whose rewrite
+  admissions the census says moved, or `ARGS="--only 16,17"` / `--package DIR=NAME` — and
+  compares each routine's ratio to Rust with this machine's last committed row, listing
+  every move of 15 % or more and exiting 1 on a slowdown.  `--record` makes the run the
+  machine's baseline (the results file), which is committed with the change, so the trend
+  history grows one point per landed compiler change instead of one per portal run.
+
+Both are REPORTS.  A routine on a 200 ns twin swings 10 % between two runs (`bench/stats.py`
+flags those rows noisy and coarse), so a move is one that repeats; and the density of the
+history is the density of the commits, which is why `--record` exists.
+
 ## Benchmark results
 
 Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **refreshed

@@ -268,12 +268,19 @@ impl OpEmitter for OpFreeRefEmitter {
             } else {
                 (String::new(), String::new())
             };
-            write!(ctx.w, "OpFreeRef(cell,")?;
-            ctx.emit(db_val)?;
-            write!(ctx.w, ", \"{label}\")")?;
-            // Reset variable to null sentinel after free.
+            // A VARIABLE's free is guarded by its own null test, inline: a discharge or
+            // result buffer that was never minted on this path (the common case of a `?`
+            // that found its element) then costs a compare instead of a call the runtime
+            // answers with the same test.  The reset to the sentinel stays inside.
             if let Value::Var(_) = db_val {
-                write!(ctx.w, "; {lvalue}.store_nr = u16::MAX")?;
+                write!(
+                    ctx.w,
+                    "if {lvalue}.store_nr != u16::MAX {{ OpFreeRef(cell,{lvalue}, \"{label}\"); {lvalue}.store_nr = u16::MAX; }}"
+                )?;
+            } else {
+                write!(ctx.w, "OpFreeRef(cell,")?;
+                ctx.emit(db_val)?;
+                write!(ctx.w, ", \"{label}\")")?;
             }
         }
         Ok(())

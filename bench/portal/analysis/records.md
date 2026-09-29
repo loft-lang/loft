@@ -463,18 +463,35 @@ mechanisms, in the order they were taken:
    table).  Hand-priced first on the emitted Rust (−13 %, same hash), then built: **884 →
    742 ns per op (5.4× → 4.6×)** on this box.  Cell m15 of `158-mint-window.loft`; m12's
    pin moved (its tuple result is now delivered through the element's address).
-2. **The outer loop's hoist — OPEN.**  `LOFT_TRACE_HOIST_DECLINE` (which now names the
-   innermost blocking node) says the `half_chord(…)` call blocks loop 14: the callee mints
-   a `__ref_1` buffer for `ctrl`'s result that is DEAD at emission (`ctrl` answers a tuple),
-   but `call_writes_store` reads the callee's IR and sees a store write.  A callee's dead
-   buffers must be exempt in that walk (`hoist::dead_buffers` per callee, program-wide).
-   Worth `n_ctrl`'s and `half_chord`'s lookups (~15 %) only together with 3.
-3. **A parameter beside a pushed return buffer — OPEN, needs a design.**  `sp_out` adopts
-   the return buffer and `pts` is a parameter, so `(R-Alias)` drops `pts`'s header: the
-   caller could hand the buffer in `pts`'s own store.  A header stays valid across any
-   growth but the pushed vector's own, so the exact hazard is `pts` BEING `sp_out`; a
-   runtime select at the prelude (`if pts is sp_out { the push header } else { pts's
-   header }`, one hoisted boolean, a predictable branch per read) would keep the header
-   without a second copy of the loop.  Worth ~20 % (`length_vector` + `get_vector` in
-   `smooth_pts` itself).  With 2 and 3 the row is estimated at 2.9–3.1×: at the bar, not
-   safely under it.  The Rust twin is 160 ns for 61 points; the arithmetic is the same.
+2. **The outer loop's hoist — BUILT.**  `LOFT_TRACE_HOIST_DECLINE` (which now names the
+   innermost blocking node) said the `half_chord(…)` call blocks loop 14: `ctrl`'s
+   `pts[j]?` discharge mints a buffer and writes its defaults, `half_chord` frees the
+   buffers of `ctrl`'s tuple results, and the two callee tests (`in_place_only_writer`,
+   `retbuf_only_writer`) read every such native op as a write.  They now carry the header
+   hoist's own allowances (`hoist::callee_allowance`: a discharge buffer's mint, a lazy
+   buffer's, a record free, a DEAD buffer's mint/clear/free, the last read off a
+   program-wide per-function table `HoistOwned::dead_by_fn`), and the memo never pins a
+   verdict reached without those facts.  Loop 14 hoists: `pts` and `flags` hold headers,
+   `half_chord__inv` takes `pts`'s header and a base derived at the call and hands both on
+   to `ctrl__inv`, whose `len(pts)` is the header's length and whose `pts[j]?` is one
+   fused read.  **742 → 500 ns per op (4.6× → 3.09×)**; the verifier run of the whole
+   drawing bench is green.
+3. **A parameter beside a pushed return buffer — MEASURED, not the hazard it read as.**
+   `sp_out` ADOPTS the return buffer; `(R-Alias)` drops a parameter's header only beside
+   a push to the `__retbuf` variable itself, and adoption keeps the local's name — so
+   `pts` kept its header, and the question was whether that is sound.  Probed: `v =
+   grow(v)` where `grow` adopts its buffer and holds `src`'s header answers the same on
+   both backends and under `LOFT_HOIST_VERIFY=1`, because the adopted buffer is a store
+   minted for the call, never the argument's — the parser hands no live store in as a
+   buffer while a view of it is passed (the cross-call growth refusal).  Documented as the
+   rule's reading; no select needed.
+4. **The frees — BUILT, two shaves.**  At 3.09× the profile's remaining share was ~70
+   `OpFreeRef` calls per op on buffers that hold nothing: `half_chord`'s `__ref_1`/`__ref_2`
+   for `ctrl`'s tuple results (dead by any reading, but `dead_buffers` iterated the frame's
+   MINTED set, and these are minted by no one — now a never-minted buffer whose every
+   mention is an admitted callee's buffer argument or a free is dead too: 500 → 487 ns),
+   and `ctrl`'s two `?` discharge buffers, minted only on the absent arm and freed on every
+   exit (now a VARIABLE's free is guarded by its own null test inline, the compare the
+   runtime made after the call: 487 → **433 ns, 2.67×**, range 2.59–2.74).  The whole
+   drawing bench under `LOFT_HOIST_VERIFY=1` prints the same hash.  **`smooth` is under the
+   bar on this box**; the closing measurement for loft#1570 is the x86-64 laptop's.

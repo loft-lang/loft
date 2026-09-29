@@ -759,6 +759,9 @@ pub struct Output<'a> {
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
+    /// Every function's dead value-record buffers, computed once beside `value_records`
+    /// and handed to each function's [`hoist::HoistOwned`] for the callee walks.
+    pub dead_by_fn: std::rc::Rc<HashMap<u32, HashSet<u16>>>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -2197,6 +2200,7 @@ impl<'a> Output<'a> {
             distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
                 .is_ok_and(|v| v != "0"),
             placed_locals: HashSet::new(),
+            dead_by_fn: std::rc::Rc::default(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
@@ -2712,6 +2716,7 @@ impl Output<'_> {
             records: self.loop_records.keys().copied().collect(),
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
+            dead_by_fn: std::rc::Rc::clone(&self.dead_by_fn),
         };
         self.group_ends.clear();
         self.declared.clear();
@@ -8295,6 +8300,25 @@ extern crate loft;"
             self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
             crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
+            // Every function's DEAD buffers, once: a loop judging a call reads the callee's
+            // body with its own dead buffers exempt (`HoistOwned::for_callee`).
+            self.dead_by_fn = std::rc::Rc::new(
+                (0..self.data.definitions.len() as u32)
+                    .filter(|d| !matches!(self.data.def(*d).code(), Value::Null))
+                    .map(|d| (d, hoist::dead_buffers(self.data, d, &self.value_records)))
+                    .filter(|(_, s)| !s.is_empty())
+                    .collect(),
+            );
+            if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                for (d, set) in self.dead_by_fn.iter() {
+                    let vars = self.data.def(*d).variables();
+                    eprintln!(
+                        "[valuerec] {} dead buffers: {:?}",
+                        self.data.def(*d).name(),
+                        set.iter().map(|v| vars.name(*v)).collect::<Vec<_>>()
+                    );
+                }
+            }
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();

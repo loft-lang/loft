@@ -9,6 +9,43 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A pre-commit performance check, and the routines' trend (2026-09-29)
+
+`scripts/perf_check.py` (`make perf-check`) measures the lanes a compiler change touched —
+by default the programs whose rewrite admissions the census says moved — and compares each
+routine's ratio to Rust with this machine's last committed row (`bench/portal/results/
+<host>.tsv`, merged by the portal's `merge_run`, which `--record` reuses), listing every move
+of 15 % or more and exiting 1 on a slowdown.  `scripts/perf_trend.py` (`make perf-trend`)
+walks that file's git history and names the movers between a routine's last two
+measurements with the loft commits they sit between — `ease` +41 % between the 24 and 27
+September laptop runs is the first finding; `fill_polygon`, asked about, never regressed in
+the committed history (7.28 → 2.92 ms).  Both are reports, documented in PERFORMANCE.md
+§ Trends, and the check before a commit.
+
+### Two shaves on frees (2026-09-29)
+
+A buffer never minted in a frame — handed to tuple-answering callees as their (dropped)
+buffer argument and freed, nothing else — is a dead buffer too (`hoist::dead_buffers` iterated
+the frame's MINTED set alone), so its frees are emitted as nothing.  And a variable's free is
+guarded by its own null test inline (`if v.store_nr != u16::MAX { OpFreeRef(…) }`): a `?`
+discharge buffer that found its element pays a compare instead of a call the runtime answered
+with the same test.  Drawing's `smooth` 500 → 433 ns per op (3.09× → 2.67× of Rust), same
+hash under the verifier.
+
+### A callee is judged with the header hoist's own allowances (2026-09-29)
+
+`(R-Callee)`'s two tests (`in_place_only_writer`, `retbuf_only_writer`) read every native op
+in a callee's body as a write unless it was a scalar setter or store-free — so a callee whose
+`pts[j]?` discharge minted a buffer, or that freed the buffers of a tuple-returning callee's
+results, declined every loop that called it.  They now carry the header hoist's allowances
+(`hoist::callee_allowance`: a null-discharge buffer's mint and defaults, a lazy buffer's
+mint, a record free, and a DEAD buffer's mint, clear or free — the last per function from a
+program-wide table, `HoistOwned::dead_by_fn`, computed once beside the value records), and
+neither memo pins a verdict reached without those facts.  Drawing's `smooth` outer loop
+hoists: `pts` and `flags` hold headers, the `half_chord` twin takes a header and a base and
+hands them to `ctrl`'s twin — 742 → 500 ns per op (4.6× → 3.09× of Rust).  `LOFT_TRACE_HOIST_DECLINE`
+descends into a statement's children to name the culprit.
+
 ### A builder's tuple lands in the appended slot through the window (2026-09-29)
 
 `(R-PushFill)`'s record window and `(R-RecPtr)`'s mint window both declined the shape

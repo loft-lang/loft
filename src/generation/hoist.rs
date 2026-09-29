@@ -279,6 +279,22 @@ pub struct HoistOwned {
     /// The DEAD buffers (`dead_buffers`): a value-record call's result buffer that is never
     /// minted — its `OpDatabase`, `OpClear` and frees are emitted as nothing.
     pub dead_buffers: HashSet<u16>,
+    /// The same fact for EVERY function of the program, so a CALLEE's body is judged with
+    /// its own dead buffers exempt (`call_writes_store`): a program-wide table, shared.
+    pub dead_by_fn: Rc<HashMap<u32, HashSet<u16>>>,
+}
+
+impl HoistOwned {
+    /// The emitter-owned facts of callee `d_nr`, as its own body's walk needs them: its
+    /// dead buffers, and the table to answer the same for what it calls.
+    #[must_use]
+    pub fn for_callee(&self, d_nr: u32) -> HoistOwned {
+        HoistOwned {
+            dead_buffers: self.dead_by_fn.get(&d_nr).cloned().unwrap_or_default(),
+            dead_by_fn: Rc::clone(&self.dead_by_fn),
+            ..HoistOwned::default()
+        }
+    }
 }
 
 /// The generation-time tiers of the hoist family — one flag per admitted rewrite, each an
@@ -1785,8 +1801,11 @@ fn body_writes(
                     trace_write_decline(n);
                     return true;
                 }
-            } else if call_writes_store(*d, data, cache, active) {
-                let Some(w) = callee_writes(*d, data, stores, cache, writes, active) else {
+            } else if call_writes_store(*d, data, cache, active, owned) {
+                let inner = owned.map(|o| o.for_callee(*d));
+                let Some(w) =
+                    callee_writes(*d, data, stores, cache, writes, active, inner.as_ref())
+                else {
                     ok = false;
                     trace_write_decline(n);
                     return true;
@@ -1819,6 +1838,7 @@ fn callee_writes(
     cache: &mut HashMap<u32, bool>,
     writes: &mut WriteCache,
     active: &mut HashSet<u32>,
+    owned: Option<&HoistOwned>,
 ) -> Option<Rc<WriteSet>> {
     if let Some(known) = writes.get(&d_nr) {
         return known.clone();
@@ -1827,7 +1847,7 @@ fn callee_writes(
     let answer = if matches!(def.code(), Value::Null) || !active.insert(d_nr) {
         None
     } else {
-        let inner = if in_place_only_writer(d_nr, data, cache, active) {
+        let inner = if in_place_only_writer(d_nr, data, cache, active, owned) {
             // A callee's body: its own emitter-owned mints are not this frame's, so none
             // is admitted here (the conservative side — an untyped mint declines).
             body_writes(
@@ -1841,7 +1861,7 @@ fn callee_writes(
                 &mut HashSet::new(),
                 None,
             )
-        } else if retbuf_only_writer(d_nr, data, cache, active) {
+        } else if retbuf_only_writer(d_nr, data, cache, active, owned) {
             def.hidden_return_buffer_attr()
                 .and_then(|attr| plain_record_type(data, &def.attributes()[attr].typedef))
                 .map(|tp| WriteSet {
@@ -1937,8 +1957,8 @@ fn callee_inputs_inner(
         return None;
     }
     let mut active = HashSet::new();
-    if call_writes_store(d_nr, data, cache, &mut active)
-        && !in_place_only_writer(d_nr, data, cache, &mut active)
+    if call_writes_store(d_nr, data, cache, &mut active, None)
+        && !in_place_only_writer(d_nr, data, cache, &mut active, None)
     {
         return None;
     }
@@ -1950,7 +1970,7 @@ fn callee_inputs_inner(
     // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
     // admitted body has a typed set of its own, or no twin.
     let written = if def.hidden_return_buffer_attr().is_some()
-        && retbuf_only_writer(d_nr, data, cache, &mut active)
+        && retbuf_only_writer(d_nr, data, cache, &mut active, None)
     {
         let attr = def.hidden_return_buffer_attr()?;
         WriteSet {
@@ -4197,8 +4217,8 @@ fn foreign_store_writer(
             let def = data.def(*d);
             let name = def.name();
             if !matches!(def.code(), Value::Null) {
-                if call_writes_store(*d, data, cache, active)
-                    && !in_place_only_writer(*d, data, cache, active)
+                if call_writes_store(*d, data, cache, active, None)
+                    && !in_place_only_writer(*d, data, cache, active, None)
                 {
                     why = Some("a callee that writes a store in its scope");
                     return true;
@@ -5942,7 +5962,7 @@ pub fn is_element_address(data: &Data, d_nr: u32) -> bool {
 /// and is still sound to reuse (it only declines a hoist); a `false` cannot have, because
 /// a cycle contributes `true` and any caller of it answers `true` too.
 pub fn may_write_store(node: &Value, data: &Data, cache: &mut HashMap<u32, bool>) -> bool {
-    writes_store(node, data, cache, &mut HashSet::new(), None)
+    writes_store(node, data, cache, &mut HashSet::new(), None, None)
 }
 
 fn writes_store(
@@ -5951,6 +5971,7 @@ fn writes_store(
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     blocks_header_hoist(
         node,
@@ -5961,7 +5982,7 @@ fn writes_store(
         vars,
         HoistTiers::default(),
         &mut HashSet::new(),
-        None,
+        owned,
     )
 }
 
@@ -6026,6 +6047,23 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
         && matches!(args.first().map(Value::unspan), Some(Value::Var(v))
             if *v < vars.count()
                 && matches!(vars.tp(*v).base(), Type::Reference(_, _) | Type::Enum(_, true, _)))
+}
+
+/// What a callee's body may run and still be an in-place-only or return-buffer-only writer,
+/// beside its own sets: the header hoist's own allowances — a null-discharge buffer's mint,
+/// a lazy buffer's, a record free (it moves nothing), and a DEAD buffer's mint, clear or
+/// free.  Asked of one native op; `(R-Callee)`.
+fn callee_allowance(
+    name: &str,
+    args: &[Value],
+    vars: &crate::variables::Function,
+    data: &Data,
+    owned: Option<&HoistOwned>,
+) -> bool {
+    null_buffer_alloc(name, args, Some(vars), data).is_some()
+        || lazy_buffer_mint(name, args, Some(vars))
+        || (crate::keys::retbuf_hoist_enabled() && frees_a_record(name, args, Some(vars)))
+        || dead_buffer_op(name, args, owned)
 }
 
 /// `(R-ValueRecord)` — a DEAD buffer's mint, clear and free are emitted as nothing: the
@@ -6183,7 +6221,7 @@ fn blocks_header_hoist(
                 || fresh_copy
             {
                 false
-            } else if call_writes_store(*d, data, cache, active) {
+            } else if call_writes_store(*d, data, cache, active, owned) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted
                 // under the same tier as a direct in-place setter, for the same reason
                 // (its writes move nothing).  The arguments still walk below this node,
@@ -6191,7 +6229,7 @@ fn blocks_header_hoist(
                 !(known
                     && tiers.in_place
                     && crate::keys::inplace_callee_hoist_enabled()
-                    && in_place_only_writer(*d, data, cache, active))
+                    && in_place_only_writer(*d, data, cache, active, owned))
             } else {
                 false
             }
@@ -6206,6 +6244,7 @@ fn call_writes_store(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     if (d_nr as usize) >= data.definitions.len() {
         return true;
@@ -6217,20 +6256,33 @@ fn call_writes_store(
     let writes = if matches!(def.code(), Value::Null) {
         !native_op_is_store_free(def)
     } else if active.insert(d_nr) {
-        let inner = writes_store(def.code(), data, cache, active, Some(def.variables()));
+        // The callee's OWN dead buffers are exempt in its walk (`(R-ValueRecord)`: a tuple
+        // answer's buffer is never minted), read off the program-wide table.
+        let callee_owned = owned.map(|o| o.for_callee(d_nr));
+        let inner = writes_store(
+            def.code(),
+            data,
+            cache,
+            active,
+            Some(def.variables()),
+            callee_owned.as_ref(),
+        );
         // @PLN157 § V-c — a body whose only writes land in its own scalar return
         // buffer moves no header a caller could have hoisted.
         let inner = inner
             && !(crate::keys::retbuf_hoist_enabled()
-                && retbuf_only_writer(d_nr, data, cache, active));
+                && retbuf_only_writer(d_nr, data, cache, active, callee_owned.as_ref()));
         active.remove(&d_nr);
         inner
     } else {
         true // recursion — the conservative answer rather than a fixed point
     };
-    // Safe to memoise either way: a `true` only ever declines a hoist, and a `false` cannot
-    // have come from the branch above, since a cycle contributes `true` to every caller.
-    cache.insert(d_nr, writes);
+    // A `false` is final however it was reached (a cycle contributes `true`, so none comes
+    // from that branch); a `true` reached WITHOUT the emitter's facts (no dead buffer
+    // exempt) may be pessimistic and is not memoised, so a later ask with them can answer.
+    if !writes || owned.is_some() {
+        cache.insert(d_nr, writes);
+    }
     writes
 }
 
@@ -6255,6 +6307,7 @@ fn in_place_only_writer(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     let key = d_nr | IN_PLACE_KEY;
     if let Some(known) = cache.get(&key) {
@@ -6274,10 +6327,12 @@ fn in_place_only_writer(
                 !(native_op_is_store_free(callee)
                     || IN_PLACE_SET_OPS.contains(&callee.name())
                     || scalar_file_read(data, callee.name(), args, Some(def.variables()))
-                    || scalar_stack_ref(callee.name(), args, Some(def.variables())))
+                    || scalar_stack_ref(callee.name(), args, Some(def.variables()))
+                    || callee_allowance(callee.name(), args, def.variables(), data, owned))
             } else {
-                call_writes_store(*op, data, cache, active)
-                    && !in_place_only_writer(*op, data, cache, active)
+                let inner = owned.map(|o| o.for_callee(*op));
+                call_writes_store(*op, data, cache, active, inner.as_ref())
+                    && !in_place_only_writer(*op, data, cache, active, inner.as_ref())
             }
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
@@ -6285,8 +6340,11 @@ fn in_place_only_writer(
     });
     active.remove(&d_nr);
     // A verdict reached while a cycle was open is `false` on the recursive edge only, which
-    // never admits a hoist; memoising it is safe either way.
-    cache.insert(key, only_in_place);
+    // never admits a hoist.  A `false` reached WITHOUT the emitter's facts (no dead buffer
+    // exempt) may be pessimistic and is not memoised; a `true`, or any verdict with them, is.
+    if only_in_place || owned.is_some() {
+        cache.insert(key, only_in_place);
+    }
     only_in_place
 }
 
@@ -6308,6 +6366,7 @@ fn retbuf_only_writer(
     data: &Data,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     let def = data.def(d_nr);
     let Some(attr) = def.hidden_return_buffer_attr() else {
@@ -6337,8 +6396,10 @@ fn retbuf_only_writer(
                 let into_buffer =
                     matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
                 !(into_buffer && (name == "OpDatabase" || IN_PLACE_SET_OPS.contains(&name)))
+                    && !callee_allowance(name, args, def.variables(), data, owned)
             } else {
-                call_writes_store(*op, data, cache, active)
+                let inner = owned.map(|o| o.for_callee(*op));
+                call_writes_store(*op, data, cache, active, inner.as_ref())
             }
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => true,
@@ -9781,8 +9842,8 @@ fn tuple_param_candidates(
             }
             let written = written.get_or_insert_with(|| {
                 let mut active = HashSet::new();
-                if !call_writes_store(d_nr, data, &mut cache, &mut active)
-                    || retbuf_only_writer(d_nr, data, &mut cache, &mut active)
+                if !call_writes_store(d_nr, data, &mut cache, &mut active, None)
+                    || retbuf_only_writer(d_nr, data, &mut cache, &mut active, None)
                 {
                     return Some(WriteSet::default());
                 }
@@ -13171,9 +13232,13 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
         }
         false
     });
-    for w in minted {
+    // A buffer never minted in this frame — handed to admitted callees as their buffer and
+    // freed, nothing else — holds nothing either: the callees answer tuples and mint into
+    // no buffer, so it stays the null it was declared as, and its frees are nothing.
+    for w in minted.iter().copied().chain(dropped.keys().copied()) {
         if !vars.is_argument(w)
             && !locals.contains_key(&w)
+            && crate::data::is_dbref(vars.tp(w).base())
             && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
         {
             out.insert(w);
