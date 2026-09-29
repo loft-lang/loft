@@ -11543,7 +11543,7 @@ impl Data {
             return None;
         }
         let fn_key = format!("n_{name}");
-        let libs = self
+        let mut libs: Vec<u16> = self
             .applied
             .iter()
             .filter(|imp| imp.into_source == into_source)
@@ -11553,7 +11553,22 @@ impl Data {
                     .iter()
                     .filter(|(into, _)| *into == into_source)
                     .map(|(_, q)| self.get_source(q)),
-            );
+            )
+            .collect();
+        // A library reached through a `pub use` is one the program imports too, so the
+        // one that kept the name may sit below a facade: `moros_sim` passes `player` on,
+        // and `player`'s plain `use moros_render::*;` is where `hex_to_world` stopped.
+        // Nearest first, so the library the program named answers before its modules.
+        let mut i = 0;
+        while i < libs.len() {
+            let lib = libs[i];
+            for imp in &self.applied {
+                if imp.public && imp.into_source == lib && !libs.contains(&imp.lib_source) {
+                    libs.push(imp.lib_source);
+                }
+            }
+            i += 1;
+        }
         for lib in libs {
             for key in [name, fn_key.as_str()] {
                 if let Some(&(_, from)) = self
