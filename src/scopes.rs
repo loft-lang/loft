@@ -20274,10 +20274,11 @@ impl Scopes<'_> {
                 // lift `t = S{…}; t = (if c { s } else { null }) ?? d` aliased `s` (loft#1752).
                 // An owner-typed binding keeps the runtime copy it already gets.
                 // @FR-O-Proxy asks copy — chooses whether this arm copies; authorises no free.
+                let whole_into_view =
+                    self.whole_value_hoists.contains(x) && !function.tp(bound).depend().is_empty();
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
-                    && !(self.whole_value_hoists.contains(x)
-                        && !function.tp(bound).depend().is_empty())
+                    && !whole_into_view
                 {
                     return None;
                 }
