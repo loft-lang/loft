@@ -12,7 +12,8 @@
 //
 // Predictions, MEASURED on the emission (tests/vector_base.rs, iteration_base.rs, join_read.rs,
 // record_ptr.rs and twin_base.rs pin the same clause on their own cells): c1, c8, c11, c12,
-// c13, c14 and c16 bind a base for the vector they read while another store grows; c4's two
+// c13, c14, c16 and c18 (a nullable view tested against null beside the pushes — `!= null`
+// is a `DbRef` compare, store-free) bind a base for the vector they read while another store grows; c4's two
 // loops and c10's walk hold the walked vector's base and take the loop variable's address
 // from it, and c4's `x = bg.items[i]?` keeps its address beside the growth of `acc`; c2 (the
 // grown vector itself), c3 (a sibling field of one record), c5 (two parameters — a caller
@@ -199,6 +200,18 @@ fn c16() -> integer {
   m.chunks[3]?.hexes[63]? + len(m.chunks[0]?.hexes) + len(m.chunks)
 }
 
+// c18 — the mesh3d `mesh_to_floats` shape: a NULLABLE element view tested against null
+// beside the pushes.  `p != null` compares two `DbRef`s and touches no store, so it does
+// not decline the loop's hoist: `ents` keeps its header and base, `out` its push header,
+// and the two pushes per present element go through it.  Index 5 is past the end (absent).
+fn c18() -> integer {
+  ents: vector<Ent> = [];
+  for i in 0..5 { ents += [Ent { id: i * 10, q: i }]; }
+  out: vector<integer> = [];
+  for k in 0..6 { p = ents[k]; if p != null { out += [p.id, p.q]; } }
+  out[8]? * 100 + out[9]? + len(out)
+}
+
 // c17 — the read and the growth share a root: `m.chunks` read and grown.
 fn c17() -> integer {
   m = Map { chunks: [Chunk { cx: 5, hexes: [] }], seed: 0 };
@@ -267,4 +280,8 @@ fn main() {
   r17 = c17();
   println("c17 {r17}");
   assert(r17 == 205, "c17");
+  // c18: 5 present elements → 10 pushes; out[8] = 40, out[9] = 4: 4000 + 4 + 10 = 4014.
+  r18 = c18();
+  println("c18 {r18}");
+  assert(r18 == 4014, "c18");
 }

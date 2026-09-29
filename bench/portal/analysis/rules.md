@@ -70,6 +70,7 @@ each is a case the rule's text names as its next clause or its known limit.
 | "iterator block is `iter next`/`for text next`, not a range" (suite-wide) | 299 | `(R-Fill)`, `(R-BoundedNest)`, `(R-PushFill)`, `(R-GuardedChain)`, `(R-Counter)` | none of the counted-loop rules see a `while` or a `for e in v` walk; `binary_read`'s loop is a `while` |
 | "rebound in the body", "handed to a call outside a text-value position" — `slice_shrink`, `format_specs`, `make_names` | 20 | `(R-TextBorrow)` | a `&p` link, a rebind, or a text-building op with `p` as destination needs a `String` slot |
 | "Grown through parameter (whole)" | 50 | `(R-Base)` | growth through a parameter blocks the base for the whole loop |
+| a nullable view tested against null (`if v != null`) — `mesh_to_floats`, `mesh_to_floats_uv` | 4 loops | `(R-Header)`'s store-free list | **BUILT 2026-09-29**: `OpEqRef` / `OpNeRef` compare two `DbRef`s and touch no store, now listed beside `OpRefIsNull`; `mesh_to_floats` 36.9× → 15.8× here |
 
 And the clauses the rule texts name, in the order the rows pay for them:
 
