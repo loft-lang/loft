@@ -11412,7 +11412,10 @@ impl Parser {
     /// `bindings`, a test in `elem_conds`.  Answers whether the pattern was refused.  Shared by a
     /// tuple SUBJECT and a tuple ELEMENT of a slice pattern, which `(G-Pat-Group)` tells apart
     /// from a group by its missing operators.
-    #[expect(clippy::too_many_lines, reason = "moved whole out of `parse_tuple_match`")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "moved whole out of `parse_tuple_match`"
+    )]
     fn parse_tuple_pattern_elements(
         &mut self,
         tmp: u16,

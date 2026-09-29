@@ -10037,10 +10037,7 @@ use a separate collection or add after the loop"
         // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
         // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
         if matches!(elm_tp.base(), Type::Vector(_, _)) {
-            ops.push(self.cl(
-                "OpCopyRecord",
-                &[src, Value::Var(elm_var), element_id],
-            ));
+            ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), element_id]));
         } else if self.is_type_var_element(&elm_tp) {
             // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
             // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
@@ -10051,23 +10048,14 @@ use a separate collection or add after the loop"
             // constant store on the interpreter and was E0610 on native.
             let row = i32::from(self.data.def(ed_nr).known_type())
                 | i32::from(crate::keys::COPY_FRESH_DEST);
-            ops.push(self.cl(
-                "OpCopyRecord",
-                &[src, Value::Var(elm_var), Value::Int(row)],
-            ));
+            ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), Value::Int(row)]));
         } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &src) {
             // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
             // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
             // 1-byte element slots at once.  Shared with the `+=` append site.
             ops.push(op);
         } else {
-            ops.push(self.set_field(
-                ed_nr,
-                usize::MAX,
-                0,
-                Value::Var(elm_var),
-                src,
-            ));
+            ops.push(self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm_var), src));
         }
         ops.push(self.cl(
             "OpFinishRecord",
