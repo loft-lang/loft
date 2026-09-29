@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**The interpreter runs about twice as fast.**  `loft --interpret` spent most of each
+operation on bookkeeping: every push and pop of its stack went through the general store
+checks, and the dispatch loop did the work of the debugger, profiler and memory checkers
+even when none was on.  The stack now has a direct path, and a plain run uses a lean loop.
+Each instrument keeps its checked path when you turn it on.  Over the 79 bench routines the
+interpreter is 2.0× faster (median), and the loop-heavy ones gain most (`index_write`,
+`split`, `sum`: 2.1×).  Same output everywhere.
+
 **A loop that calls a helper whose `??` fallback carries a text keeps its fast paths on
 `--native`.**  `q = seqs[n] ?? Seq { first: 0, count: 1, name: "" }` inside a helper made
 every loop calling it give up its headers, because the fallback's text field counted as a
