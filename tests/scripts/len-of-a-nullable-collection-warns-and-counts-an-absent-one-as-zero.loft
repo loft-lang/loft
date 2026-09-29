@@ -13,6 +13,12 @@
 // indexed a store before testing the null, where `length_vector` tests it first.
 //
 // Each fn carries exactly one report; each value is hand-computed (two elements, then 0).
+//
+// @falsified-at: 5dc6bde70 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.patch — the same channels.
+//   CHANNEL: the EXIT — the control refuses the keyed `len` calls at compile time.
+//   WITNESS: "expected hash, got hash<E[k]>? on argument 1 of call to len".
+//   HOLDS: no leak and no panic on either tree; the control runs no cell.
 struct E { k: integer, v: integer }
 struct T { k: text, v: integer }
 
