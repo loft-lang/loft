@@ -14430,7 +14430,8 @@ impl Parser {
         let Type::Enum(e, _, _) = enum_tp else {
             return false;
         };
-        match (true_type, false_type) {
+        // Through `Rewritten`, as `variant_parent_enum` reads it.
+        match (&true_type.unrewritten(), &false_type.unrewritten()) {
             // A sibling variant, and only a sibling: the arm's def must belong to THIS
             // enum.  The acceptance sites read this predicate too (`arm_joins_to_enum`),
             // so an unrelated struct reaching it would be waved past the conversion it
@@ -14445,6 +14446,18 @@ impl Parser {
         }
     }
 
+    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
+    /// question without building the answer, for the predicates asked of every arm.
+    fn names_variant(&self, tp: &Type) -> bool {
+        let mut tp = tp.base();
+        while let Type::Rewritten(inner) = tp {
+            tp = inner;
+        }
+        matches!(tp, Type::Reference(d, _)
+            if matches!(self.data.def_type(*d), DefType::EnumValue)
+                && self.data.def(*d).parent != u32::MAX)
+    }
+
     /// The ENUM a variant type belongs to — `Some(Enum(E))` for a `Reference(S)` whose def
     /// is one of `E`'s variants, `None` for anything else.
     ///
@@ -14456,15 +14469,17 @@ impl Parser {
     ///
     /// `Definition::parent` makes this O(1) — a variant records its enum — so it is cheap
     /// enough to ask on every `if` that yields a record.
-    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
-    /// question without building the answer, for the predicates asked of every arm.
-    fn names_variant(&self, tp: &Type) -> bool {
-        matches!(tp.base(), Type::Reference(d, _)
-            if matches!(self.data.def_type(*d), DefType::EnumValue)
-                && self.data.def(*d).parent != u32::MAX)
-    }
-
+    ///
+    /// Through `Rewritten`: the marker says a value is built in place (loft#943) and what it
+    /// IS stays the variant.  Pass 1 marks a variant literal this way and pass 2 does not, so
+    /// stopping at the marker made the two passes join `if c { Circle {…} } else { Sq {…} }`
+    /// differently — pass 1 accepted `Sq` AS a `Circle` (`@FR-T-Syn`, D-types-24).  A `τ?` is
+    /// NOT peeled here: whether the slot may be absent is the caller's to carry.
     pub(super) fn variant_parent_enum(&self, tp: &Type) -> Option<Type> {
+        let mut tp = tp;
+        while let Type::Rewritten(inner) = tp {
+            tp = inner;
+        }
         let Type::Reference(d, deps) = tp else {
             return None;
         };

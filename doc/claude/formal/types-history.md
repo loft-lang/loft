@@ -1307,6 +1307,19 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-24** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(T-Syn)`: one expression, one
+  synthesised type on both passes.  Pass 1 marks a variant literal `Rewritten(Circle)` (built in
+  place) and pass 2 does not, and `variant_parent_enum` / `joins_to_enum` stopped at the marker —
+  so on pass 1 the arms of `if c { Circle {…} } else { Sq {…} }` never joined: the `Sq` arm was
+  checked against `Circle` and ACCEPTED as one, and the join was typed `Circle`.  Pass 2 typed it
+  `Shape`.  That disagreement is what D-types-22's inferred-local refusal was; after D-types-22's
+  `variant_join` it was absorbed, and a pass-1 decision could still read the wrong type.  **Fix.**
+  Both read through `Rewritten`.  **Instrument.**  `LOFT_AUDIT_RETYPE=1` reports every PASS-2
+  retype of a variable pass 1 typed as another shape — each is an expression synthesised twice
+  differently.  Over the corpus it named this one and, through parameter defaults (the one place
+  pass 1's tree is replayed), led to calls.md D-call-25 and D-call-26; the rest were inference
+  completing (a generic resolved on pass 2), `#663`'s width adoption and the nullable-struct
+  synthesis, both documented.
 * **D-types-22, D-types-23** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Var)` composed with
   `(I-Join)`/`(N-Join)` and `(C-Tuple)`: two DIFFERENT variants of one enum join to the enum
   wherever they meet, and nothing is licensed between two variants.  Walking `(T-Sub)` found

@@ -6679,11 +6679,18 @@ impl Parser {
         if d_nr == u32::MAX {
             return None;
         }
+        // The HIDDEN attributes are the return mechanism `ref_return` / `text_return` added to
+        // the minted function (its return buffer, a work buffer) — not parameters the default
+        // was parsed with.  Read back as parameters they widened pass 2's signature past pass
+        // 1's, and the re-type of "parameter" 1 landed on the body's first local: a record
+        // `match` default was refused as "'_match_subj_1' cannot change type from integer to
+        // P" (`@FR-T-Syn` — one signature on both passes).
         let params: Vec<Argument> = self
             .data
             .def(d_nr)
             .attributes()
             .iter()
+            .filter(|a| !a.hidden)
             .map(|a| Argument {
                 name: a.name.clone(),
                 typedef: a.typedef.clone(),

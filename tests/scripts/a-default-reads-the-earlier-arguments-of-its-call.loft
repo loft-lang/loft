@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Default` — a `= e` default fills its parameter at each call that omits it, with every
+// EARLIER parameter bound to the argument that call supplied (formal/calls.md D-call-25): a
+// default replayed at the call site swapped `Var(n)` for the call's argument through five
+// node shapes, none of them a TUPLE: `t: (integer, integer) = (k, 9)` read the caller's own
+//     first local for `k` — `h(1)` answered `(0, 9)`, `h(5)` what the last call left, and
+//     `(k, k * 2)` printed uninitialised memory, silently on the interpreter, while native did
+//     not compile.
+//
+// The refusal half — a `match` default over records, D-call-26 — is
+// `a-match-default-over-records-compiles.loft`, apart, so that its refusal on the control does not
+// stop this file before its values are scored.
+//
+// Every cell is called at least twice with DIFFERENT arguments, because the defect read a value
+// the previous call left behind: a single call can pass by the stale slot holding the answer.
+//
+// Controls that were right before: a scalar, text or record default reading `k`, an `if` over
+// records, and a tuple argument supplied explicitly.
+//
+// Axes this file MOVES:  the default's shape (tuple of scalars, tuple with a text member, nested
+//                        use `k * 2`, record, `if`, scalar), which earlier parameter it reads
+//                        (first, second), an explicit argument beside the default.
+// Axes it HOLDS FIXED:   integer earlier parameters.  A TEXT-carrying tuple default that has to
+//                        be lowered into a function (a formatted member, a `match`) does not
+//                        compile natively — loft#1758.
+//
+// @falsified-at: 79e926b32 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-default-reads-the-earlier-arguments-of-its-call.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter — the control compiled and answered the tuple cells wrong
+//   (`0,9` for `h(1)`); exit natively, where the control did not compile them.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+struct P { x: integer, n: text }
+
+fn t_int(k: integer, t: (integer, integer) = (k, 9)) -> text { "{t.0},{t.1}" }
+fn t_mul(k: integer, t: (integer, integer) = (k, k * 2)) -> text { "{t.0},{t.1}" }
+fn t_text(k: integer, t: (integer, text) = (k, "d")) -> text { "{t.0}{t.1}" }
+fn t_second(a: integer, k: integer, t: (integer, text) = (k, "d")) -> text { "{a}:{t.0}{t.1}" }
+fn i_struct(k: integer, p: P = if k == 1 { P { x: 11, n: "a" } } else { P { x: 22, n: "b" } }) -> text { "{p.x}{p.n}" }
+fn r_struct(k: integer, p: P = P { x: k, n: "r" }) -> text { "{p.x}{p.n}" }
+fn s_scalar(k: integer, j: integer = k + 1) -> integer { j }
+
+fn test_a_tuple_default_reads_the_arguments_of_its_own_call() {
+  got = "{t_int(1)} {t_int(5)} {t_mul(1)} {t_mul(5)} {t_text(1)} {t_text(5)} {t_second(7, 1)} {t_second(8, 5)}";
+  assert(got == "1,9 5,9 1,2 5,10 1d 5d 7:1d 8:5d", "tuple defaults: {got}");
+  mixed = "{t_text(3, (4, "x"))} {t_text(6)}";
+  assert(mixed == "4x 6d", "explicit beside default: {mixed}");
+}
+
+fn test_the_controls_that_were_right_stay_right() {
+  got = "{i_struct(1)} {i_struct(2)} {r_struct(3)} {r_struct(4)} {s_scalar(1)} {s_scalar(5)}";
+  assert(got == "11a 22b 3r 4r 2 6", "controls: {got}");
+}

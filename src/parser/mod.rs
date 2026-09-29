@@ -17141,36 +17141,26 @@ impl Parser {
     /// replace `Value::Var(i)` for `i < args.len()` with `args[i]`
     /// in a default-expression tree.  Used at call sites to transplant a
     /// default's earlier-parameter references into the caller's scope.
-    fn substitute_param_refs(val: Value, args: &[Value]) -> Value {
-        match val {
-            Value::Var(n) if (n as usize) < args.len() => args[n as usize].clone(),
-            Value::Call(op, xs) => Value::Call(
-                op,
-                xs.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::CallRef(op, xs) => Value::CallRef(
-                op,
-                xs.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::Set(v, inner) => {
-                Value::Set(v, Box::new(Self::substitute_param_refs(*inner, args)))
-            }
-            Value::Insert(ops) => Value::Insert(
-                ops.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::Span(b) => {
-                let (pos, inner) = *b;
-                let new_inner = Self::substitute_param_refs(inner, args);
-                Value::with_span(pos, new_inner)
-            }
-            other => other,
+    /// `@FR-F-Default` — a default's reference to an EARLIER parameter, `Var(n)` for
+    /// `n < args.len()`, replaced by the caller's argument for it.  Through EVERY node shape
+    /// (`Value::for_each_child_mut`, the exhaustive child list): a hand-kept list of five shapes
+    /// left a TUPLE literal's members alone, so `t: (integer, integer) = (k, 9)` read the
+    /// CALLER's `Var(0)` for `k` — `h(1)` answered `(0, 9)`, silently, and native did not
+    /// compile.  A replacement is not descended into: it is the caller's expression, and its own
+    /// variables are the caller's.
+    fn substitute_param_refs(mut val: Value, args: &[Value]) -> Value {
+        if let Value::Var(n) = val {
+            return if (n as usize) < args.len() {
+                args[n as usize].clone()
+            } else {
+                val
+            };
         }
+        val.for_each_child_mut(&mut |c| {
+            let child = std::mem::replace(c, Value::Null);
+            *c = Self::substitute_param_refs(child, args);
+        });
+        val
     }
     // ********************
     // * Parser functions *

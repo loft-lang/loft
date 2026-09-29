@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Default` — a default is well-formed exactly where the same expression written as the
+// argument is (formal/calls.md D-call-26).  A `match` over records needs a temporary, so the
+// default is lowered into a function of its own, and pass 2 re-typed that function's parameters
+// from its ATTRIBUTES — including the hidden return buffer a record result adds.  "Parameter" 1
+// was the body's first local: `p: P = match k { 1 => P {…}, _ => P {…} }`, over a struct or an
+// enum, was refused "Variable '_match_subj_1' cannot change type from integer to P".  An `if`
+// default has no local at that slot and always compiled.  The value half is
+// `a-default-reads-the-earlier-arguments-of-its-call.loft`.
+//
+// @falsified-at: 79e926b32 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-match-default-over-records-compiles.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control refused the `match` defaults, so it does not compile this file.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+enum Shape { Circle { r: float }, Sq { s: float } }
+struct P { x: integer, n: text }
+struct H { n: integer }
+
+fn m_struct(k: integer, p: P = match k { 1 => P { x: 11, n: "a" }, _ => P { x: 22, n: "b{k}" } }) -> text { "{p.x}{p.n}" }
+fn m_enum(k: integer, s: Shape = match k { 1 => Circle { r: 1.5 }, _ => Sq { s: 2.5 } }) -> text { "{s}" }
+fn m(self: H, k: integer, p: P = match k { 1 => P { x: self.n, n: "s" }, _ => P { x: 22, n: "t" } }) -> text { "{p.x}{p.n}" }
+
+fn test_a_match_default_over_records_compiles_and_answers() {
+  got = "{m_struct(1)} {m_struct(2)} {m_enum(1)} {m_enum(2)} {H { n: 9 }.m(1)} {H { n: 9 }.m(2)}";
+  assert(got == "11a 22b2 Circle {{r:1.5}} Sq {{s:2.5}} 9s 22t", "match defaults: {got}");
+}

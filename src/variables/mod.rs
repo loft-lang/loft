@@ -5286,6 +5286,34 @@ impl Function {
     /// (loft#666) — and the origin word alone ("depend") cannot answer it.
     #[track_caller]
     fn trace_type_change(&self, var_nr: u16, new_tp: &Type, origin: &str) {
+        // `LOFT_AUDIT_RETYPE=1` — every retype on PASS 2 of a variable pass 1 had already typed
+        // as a different SHAPE.  Pass 2 starts from pass 1's variable table, so such a retype
+        // means pass 1 synthesised another type for the same expression (`@FR-T-Syn` asks for
+        // one): the inferred join of `if c { Circle {…} } else { Sq {…} }` was typed by its
+        // first arm on pass 1 and by the enum on pass 2 (D-types-22).  Not a user diagnostic —
+        // it reports the compiler, like `LOFT_AUDIT_PASS1`.  `is_equal` keeps the refinements
+        // pass 2 exists for quiet: an integer width, a borrow list.
+        if crate::env_once!(std::env::var_os("LOFT_AUDIT_RETYPE").is_some())
+            && !crate::diagnostics::IN_FIRST_PASS.load(std::sync::atomic::Ordering::Relaxed)
+            && let Some(v) = self.variables.get(var_nr as usize)
+            && !v.type_def.is_unknown()
+            && !matches!(v.type_def.base(), Type::Null | Type::Never)
+            && !crate::data::Data::type_has_unresolved(&v.type_def)
+            && !v.type_def.is_equal(new_tp)
+            // `is_equal` still compares a borrow list inside a tuple; a borrow is not a shape.
+            && v.type_def.without_deps() != new_tp.without_deps()
+            // A work buffer promoted to a `&` link of its own type is a lowering, not a retype.
+            && !matches!(new_tp.base(), Type::RefVar(inner) if inner.is_equal(v.type_def.base()))
+        {
+            eprintln!(
+                "[audit_retype] {origin} {file} {func}::{var}  {old:?}  ->  {new:?}",
+                file = self.file,
+                func = self.name,
+                var = v.name,
+                old = v.type_def,
+                new = new_tp,
+            );
+        }
         let Some(target) = crate::log_config::type_timeline_target() else {
             return;
         };
