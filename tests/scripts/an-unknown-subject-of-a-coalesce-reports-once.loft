@@ -12,6 +12,13 @@
 //
 // Each fn has its own unknown name, and `@EXPECT_ERROR` is fatal when unmatched while an
 // unexpected error fails the file, so the count is the assertion: ONE report per fn.
+//
+// @falsified-at: aa4348da7 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 3/4, native exit 1 -> 0, native expectations FAIL/4 -> 3/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-unknown-subject-of-a-coalesce-reports-once.patch — the same channels.
+//   CHANNEL: the EXPECTATIONS — on the control the three field and element fns report a
+//   `coalesce-default-type-mismatch` behind their own error, and the file fails.
+//   WITNESS: "`??` default of type `integer` is not assignable to `never`" in `c_field`.
+//   HOLDS: no leak and no panic on either tree; every fn reports its own unknown name.
 
 // @EXPECT_ERROR: Unknown function u_direct
 fn c_direct() { assert((u_direct(3) ?? 0) == 0, "u"); }
