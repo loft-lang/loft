@@ -260,7 +260,7 @@ corruption spreads:
 width warnings) — are **silent during ordinary `cargo test` runs on every platform**, in both
 dev and `--release`, because of the `Cargo.toml` line in § [Hang guard](#hang-guard-loft_max_ops).
 Only the cargo-fuzz target (which forces `-Cdebug-assertions`) and an explicit calibration run
-check them — [DEBUG.md § The debug-assertions calibration run](DEBUG.md#the-debug-assertions-calibration-run-target-da).
+check them — [DEBUG_STORES.md § The debug-assertions calibration run](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da).
 A green suite is therefore no evidence for an invariant only these checks assert.  Latent
 out-of-bounds writes inside `Store` are also absorbed by Linux's allocator slack (16-byte chunk
 minimum) and caught by Windows as `STATUS_HEAP_CORRUPTION (0xc0000374)` at deallocation;

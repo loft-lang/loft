@@ -2,7 +2,7 @@
 //
 // `xs[(0, 0)..: lim()]` with `lim` below refused with "spatial slice limit must be an
 // integer", while the same program with `lim` above compiled — so declaration order
-// decided whether the program built, which LOFT.md § File structure says it must not.
+// decided whether the program built, which LOFT_DECLARATIONS.md § File structure says it must not.
 //
 // Fifth site of one rule.  The first two (`call_op`, `parse_match`'s `!valid_enum` exit)
 // were fixed when operand deferral widened; that widening then retro-broke the published

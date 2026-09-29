@@ -1,4 +1,4 @@
-// loft#1551 / `formal/heap.md` D-heap-13 — a COLLECTION a call answers, bound to a local,
+// loft#1551 / `formal/heap-history.md` D-heap-13 — a COLLECTION a call answers, bound to a local,
 // releases its elements at the owner's scope end.
 //
 // `(H-Move)` makes `d = mkv()` a move — a fresh call result placed where it is produced — so
@@ -76,7 +76,7 @@ fn a3() { d = mkv(4); n = take(d); note("r{n}"); }
 // a9 / o1 — a whole-collection bind of a collection the function owns.  `e = d` copies the
 // elements (measured: growing `e` leaves `d` at 1), and `(H-Move)` makes it a MOVE: the
 // elements go with the copy, and one release follows.  Both released twice until
-// `formal/heap.md` D-heap-23 handed the release over; o1 is the same pair without a call, and
+// `formal/heap-history.md` D-heap-23 handed the release over; o1 is the same pair without a call, and
 // the two answer alike, which is what makes it this cell's oracle.
 fn a9() { d = mkv(10); e = d; note("r{len(e)}"); }
 fn o1() { f: vector<H> = [mk(30)]; g = f; note("r{len(g)}"); }

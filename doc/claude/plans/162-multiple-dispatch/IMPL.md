@@ -702,7 +702,7 @@ verification step that is fixed on the spot.
    lowering.  Consequence for step 8 / step 14: the canonical `match` of `Disp-Match-Equiv`
    EXISTS now, and its element form is one lowering shared with the top-level arm — the
    oracle pairing has a real second program to run.
-2. **A scalar payload bound by a pattern is a COPY** (LOFT.md § Match expressions — a
+2. **A scalar payload bound by a pattern is a COPY** (LOFT_CONTROL.md § Match expressions — a
    documented rule, not a deviation), so the design's `w.hp -= 3` through a binding does not
    land.  The program keeps each entity's mutable state in a nested `Status` record, which a
    binding views.  Consequence for `Disp-Match-Equiv`: the equivalence is stated over the

@@ -3,7 +3,7 @@
 //
 // @FR-Slice-Value — a value slice's bound is `size + bound` when it is NEGATIVE, floored at
 // the start, and the two kinds that take one (`vector<τ>` and `text`) answer the same shape
-// on both backends.  The rule is LOFT.md § Vectors ("negative slice bounds count from the
+// on both backends.  The rule is LOFT_DATA.md § Vectors ("negative slice bounds count from the
 // end", @P384) and STDLIB.md § text slice ("both ends clamp, a reversed range gives `""`,
 // and a negative bound counts from the end") — one rule, four surfaces: the scalar `v[-1]` /
 // `s[-1]`, the vector slice, the text slice, and `char_slice`.

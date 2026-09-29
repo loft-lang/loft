@@ -7,7 +7,7 @@
 // bind's (`@FR-O-Latest`); the scope pass now records the backing the latest bind on THIS path
 // filled (`Scopes::bind_backing`) and the arm's release reads that one.  Before, such a local
 // kept the pre-init in front of the `if` and was released after the `if`'s successor ran — the
-// count right, the order late (`formal/heap.md` D-heap-38).
+// count right, the order late (`formal/heap-history.md` D-heap-38).
 //
 // Cells, every trace worked out by hand: both arms move `v` in (b1 true, b2 false), both arms
 // build a literal (b3), one arm moves and the other builds (b4 each way), inside a loop body

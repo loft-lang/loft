@@ -1640,7 +1640,7 @@ pub(crate) fn rlibs_in_dir(
 }
 
 /// Whether the host-native backend links `#native` packages by C-ABI (their
-/// cdylib `.so`) instead of as Rust rlibs — see NATIVE.md § Resolution: separate
+/// cdylib `.so`) instead of as Rust rlibs — see NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate
 /// the API id from the Rust part.  Both the codegen (`Output::native_cabi`) and
 /// the linker flags below read this, so they always agree on a given host.
 ///
@@ -1786,7 +1786,7 @@ pub(crate) fn add_native_extern_flags(
     let loft_rlibs = loft_deps_dir.map(rlibs_in_dir).unwrap_or_default();
 
     for (crate_name, pkg_dir) in &data.native_packages {
-        // Host-native C-ABI link (NATIVE.md § Resolution: separate the API id
+        // Host-native C-ABI link (NATIVE_ARTIFACT_IDENTITY.md § Resolution: separate the API id
         // from the Rust part).  Link the package's cdylib `.so` by C-ABI instead
         // of its rlib via `--extern`: the `.so` seals the package's whole Rust
         // crate graph (its own `loft_ffi` copy included), so no `-L dependency=`

@@ -1093,7 +1093,7 @@ pub struct Parser {
     pub(crate) capture_owner: std::collections::HashMap<String, u32>,
     /// loft#1540 — the names in `capture_context` whose value is read-only: an enclosing binding
     /// marked value-const, or a capture the enclosing lambda itself received read-only.  A
-    /// capture shares a record or collection with the binding it names (LOFT.md § Closures), so
+    /// capture shares a record or collection with the binding it names (LOFT_LITERALS.md § Closures), so
     /// the closure may write it no more than that binding may.
     pub(crate) capture_const: std::collections::HashSet<String>,
     /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
@@ -4321,7 +4321,7 @@ impl Parser {
     /// Does a binding of this type NAME the value it was given — a record, a struct-enum or a
     /// collection — rather than hold its own copy, as a scalar and `text` do?  The question
     /// C124 asks of a parameter (`calls.md` F-ParamHeap) and loft#1540 of a closure's capture
-    /// (LOFT.md § Closures: a record or collection capture shares the value).  A `&` link is
+    /// (LOFT_LITERALS.md § Closures: a record or collection capture shares the value).  A `&` link is
     /// peeled first; whether the binding IS a link is the caller's separate question.
     pub(crate) fn names_callers_value(tp: &Type) -> bool {
         matches!(
@@ -7517,7 +7517,7 @@ impl Parser {
                         self.lexer,
                         name_pos,
                         Level::Error,
-                        "Unknown function {name} — did you mean the method `x.{name}(…)` on {receivers}? ({declared_by}; see LOFT.md § Methods and function calls)"
+                        "Unknown function {name} — did you mean the method `x.{name}(…)` on {receivers}? ({declared_by}; see LOFT_DATA.md § Methods and function calls)"
                     );
                 }
             }

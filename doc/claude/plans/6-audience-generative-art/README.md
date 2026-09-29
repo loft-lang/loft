@@ -512,7 +512,7 @@ underlying issue mid-build risks unrelated regressions.
   of a slot-for-slot copy that broke when `Store::claim` over-sized the dest
   bucket record).  Diagnosis tooling added the same session: `LOFT_LOG=zero_claim` /
   `copy_check`, leak-report-by-type, and an enriched store-allocator tripwire
-  (see [DEBUG.md § Debugging store-ownership bugs](../../DEBUG.md)).
+  (see [DEBUG_STORES.md § Debugging store-ownership bugs](../../DEBUG_STORES.md)).
 
 ### Risks (operational)
 

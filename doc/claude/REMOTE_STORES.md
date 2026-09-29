@@ -145,8 +145,8 @@ local file, ship against a URL" work.
 
 There is a third way, for when the program should not have to say which entries it
 wants: `store_bind_lazy` binds a collection to one of these sources once, and every
-lookup that MISSES fetches its own entry ([STDLIB.md § Lazy store
-binding](STDLIB.md), `@F108`). Same reader, same pages — driven by the lookups
+lookup that MISSES fetches its own entry ([STDLIB_FILES.md § Lazy store
+binding](STDLIB_FILES.md), `@F108`). Same reader, same pages — driven by the lookups
 instead of by a call.
 
 That binding also takes a source these functions do not: **`sqlite:<path>`**, where

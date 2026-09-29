@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Closures and § Closure capture — a lambda copies the scalars it captures
+// @PAGE: LOFT_LITERALS.md § Closures and § Closure capture — a lambda copies the scalars it captures
 // at definition time, and a returned closure keeps working after its maker's frame is gone.
 
 fn test_a_capture_is_taken_at_definition_time() {

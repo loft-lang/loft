@@ -254,7 +254,7 @@ Two decisions are built in, and both are measurements rather than taste:
   path, and this sweep measured that premise false (a text returned from a call on two arms,
   or read straight out of a vector element, loses one buffer PER CALL with no fault at all).
 - **A leaked or over-freed STORE is not a valgrind error.**  The store arena is one valid
-  allocation (DEBUG.md § Debugging store-ownership bugs), so that half of the release's
+  allocation (DEBUG_STORES.md § Debugging store-ownership bugs), so that half of the release's
   memory gate is `M-leaks` under `LOFT_STRICT_STORES=1`, and this sweep does not pretend to
   cover it.
 

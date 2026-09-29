@@ -43,8 +43,7 @@ The parser **rejects** code that violates these rules.
 | `character` | Single Unicode char; literal: `'a'`, `'😊'`; `c as integer` → codepoint | `'\0'` |
 | `text` | UTF-8 string (primary string type) | internal null pointer |
 
-**There is no `long` type and no `l` literal suffix** — both were
-removed.  `integer` is already 64-bit (i64), so integer literals are
+**There is no `long` type and no `l` literal suffix.**  `integer` is already 64-bit (i64), so integer literals are
 plain (`86400000`, not `86400000l`), and `now()` / `File.size` return a
 full-range `integer`.  Writing `long` or `10l` is a parse error
 (*"Undefined type long"* / *"Expect token ;"*).
@@ -218,7 +217,7 @@ bare-name form.  Both produce the same file-scope immutable constant:
 <!-- from tests/reference/skill-constants.loft -->
 ```loft
 TAU      = 6.28318530717958;    // bare-name form
-const E  = 2.71828182845905;    // const-keyword form (P246, 2026-05-11)
+const E  = 2.71828182845905;    // const-keyword form
 pub const MAX_SIZE = 256;       // pub + const combine for exported constants
 ```
 
@@ -254,7 +253,7 @@ Parameter modifiers:
 - Omit modifier — pass by value/copy (heap values still alias: field/element mutation propagates)
 
 A local reference is bound with `a = &b` (or `a: &T = b`); the operand must be addressable (a
-variable / struct field / vector element). Full model: [LOFT.md § References](../../../doc/claude/LOFT.md).
+variable / struct field / vector element). Full model: [LOFT_DECLARATIONS.md § References](../../../doc/claude/LOFT_DECLARATIONS.md).
 
 A function body ending in an expression (no `;`) returns that value. Functions without `->` return `void`.
 
@@ -299,42 +298,12 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 
 **`use` declarations must appear before any other declarations in the file.**
 
-### Finding a library's API (do this BEFORE writing `use` calls)
+### Finding a library's API
 
-Libraries live OUTSIDE the project (`~/.loft/registry/<name>-<version>/`,
-`~/.loft/lib/<name>/`), so the project tree alone does not show what they
-export.  Which surface is the truth depends on what you are doing:
-
-- **Writing a program that USES a library** — the version your project locks is the
-  one that runs, so its stubs are the truth.  Use the list below.
-- **Working ON a library, inside the loft repo** — read `origin/main` through the
-  catalogue: `make libcatalogue`, then `doc/claude/LIBRARIES.md` (CLAUDE.md, @PLN112).
-  An installed copy or a clone can lag `origin/main`, and `loft api <name>` reads the
-  installed copy.
-
-Discovery surface for a program, nearest first:
-
-1. **`.loft/api/<name>.api`** in the project — generated public-API stubs
-   (signatures + doc comments) for every locked dependency.  Written by
-   `loft install` / `loft update` / `loft pin`; read these first.
-2. **`.loft/api/_available.api`** — the registry CATALOG: every package you
-   could `loft install` (name, latest version, one-line description), written
-   alongside the per-dep stubs.  Read this to see what EXISTS, not just what's
-   installed.
-3. **`loft api`** — list every library reachable from the cwd (project deps,
-   installed registry packages, user libraries) with their source paths.
-4. **`loft api <name>`** — print one library's full public surface.
-5. **`loft api --registry`** — print the whole installable catalog on demand
-   (the live form of `_available.api`).  The catalog is cached ~1h; add
-   **`--refresh`** to force a re-fetch (e.g. after a package was just published
-   or its description changed).
-6. **`loft search <query>`** / **`loft info <name>`** — query the registry
-   for libraries not installed yet; `loft install <name>` fetches one and
-   refreshes the stubs.
-
-Never guess a library function's signature: check the stub or `loft api`
-output, and read the real source at the path they name when you need the
-implementation.
+**Read [library-api.md](library-api.md) before writing `use` of a library.**  Never guess a
+signature: for a program, read `.loft/api/<name>.api` (or `loft api <name>`); to see what exists,
+`.loft/api/_available.api` / `loft api --registry`; when working ON a library in this repo,
+`make libcatalogue` then `doc/claude/LIBRARIES.md`.
 
 ---
 
@@ -422,10 +391,6 @@ flag         = nested.1;          // true
   type (`(integer?, text)`) to allow it. (`not null` is a retired no-op.)
 - **Compound assignment on tuple LHS is rejected** — `(a, b) += (1, 2)`
   is a compile error; rewrite as `a += 1; b += 2;` or rebuild the tuple.
-
-Comparing a tuple-element `character` against a literal (`t.0 == 'a'`)
-works on both backends — the old P207 native E0308 was fixed 2026-05-04;
-no cast or destructure workaround is needed.
 
 ---
 
@@ -755,10 +720,7 @@ Match is an expression — all arms must produce the same type (or void).
 
 **The arm separator is `=>`, never `->`.**  `->` is the lambda /
 function return-type arrow; using it in a match arm produces a clear
-diagnostic ("match arm separator is `=>`, not `->`") — but only because
-the parser was hardened against it.  Older drafts of TUPLES.md showed
-`->` for arms; that was always wrong.  If a `match` arm in your code
-uses `->`, fix it before running anything.
+diagnostic ("match arm separator is `=>`, not `->`").  Fix any `->` arm before running.
 
 **Scalar-match arms need commas between them**; enum and tuple match
 also accept newline-separated arms.  When in doubt, comma-separate —
@@ -906,125 +868,15 @@ the parameter is the callee's own binding.)
 
 ## File I/O patterns
 
-### Path resolution — relative means program-relative
-
-A **relative** path resolves against the **program's own directory**
-(`source_dir()` — source dir under `--interpret`, exe dir under `--native`), not
-the process cwd.  So `file("assets/x")` loads the asset bundled beside the
-program on every backend, regardless of launch directory.  **Absolute paths are
-untouched.**  The file builtins (`file`, `exists`, `read_file`/`write_file`,
-`delete`/`move`/`mkdir`, image loads) all resolve this way — so **don't hand-roll
-`"{source_dir()}/{path}"` joins** in normal loft; just pass the relative path.
-(Do the explicit join only when handing a path to a *non-loft* consumer, e.g. a
-native asset loader that reads the filesystem directly.)
-
-A program that must resolve a *user-supplied* relative path against the **working
-directory** (CLI tools — `loft tidy.loft data.csv`) declares `#cwd` as the
-file-top directive (before the first declaration).  `LOFT_PATHS=program|cwd`
-overrides per-invocation.
-
-### Text files (UTF-8)
-
-<!-- from tests/reference/skill-files.loft -->
-```loft
-out = file("{temp_dir()}/loft-reference-output.txt");
-out.write("one\ntwo\n");
-f = file("{temp_dir()}/loft-reference-output.txt");
-content = f.content();         // full text content (UTF-8)
-lines = f.lines();             // vector<text> of lines
-dir = file(temp_dir());
-names = "";
-for ef in dir.files() {
-  path = ef.path;
-  names += path;
-}
-size_bytes = f.size;            // integer (i64) — works for any file
-```
-
-**`f.content()` is UTF-8-only** (`-> text?`).  On a binary file it
-returns **null** with a warning.  For non-text data use
-`read_bytes(path) -> vector<u8>` / `write_bytes`, or the structured
-binary idiom below.
-
-### Binary files (structured reads and writes)
-
-Set `f#format` to `LittleEndian` or `BigEndian`, then use `f#read`
-for reads and `f += value` for writes.  `#next` seeks to an
-absolute byte offset.  All file-handle operations should live
-inside a `{ ... }` scope block so the handle flushes/closes at
-block exit:
-
-<!-- from tests/reference/skill-files.loft -->
-```loft
-// `file()` opens WITHOUT truncating — `f += …` appends to what is there, so a rerun would
-// double the file; start from nothing.
-delete("{temp_dir()}/loft-reference-model.glb");
-// --- Write a binary chunk-structured file ---
-{
-  f = file("{temp_dir()}/loft-reference-model.glb");
-  f#format = LittleEndian;
-  f += (0x46546C67 as i32);   // 4 bytes: i32 magic
-  f += (2 as i32);            // 4 bytes: i32 version
-  f += (32 as u8);            // 1 byte (ASCII space)
-  f += "chunk of text";       // raw UTF-8 bytes
-  f += my_float_vector;       // vector<single> → 4 bytes per element
-}
-```
-<!-- from tests/reference/skill-files.loft -->
-```loft
-// --- Read the 12-byte GLB header ---
-{
-  f = file("{temp_dir()}/loft-reference-model.glb");
-  f#format = LittleEndian;
-  magic   = f#read as i32;            // 0x46546C67 = 'glTF'
-  version = f#read as i32;
-  space   = f#read as u8;
-  // Seek past the header + JSON data to a later chunk:
-  f#next = (9 + json_len) as integer;
-  text_len = 13;
-  assert(magic == 0x46546C67 and version == 2 and space == 32, "the header fields read back");
-  assert(f.size == 4 + 4 + 1 + text_len + 8, "and the file is exactly the bytes written");
-}
-```
-
-Notes:
-- **Prefer `f#read as <type>` (no parens) for fixed-width reads.**
-  The byte count is inferred from the type — `as i32` reads 4
-  bytes, `as u8` reads 1, `as u16` reads 2, `as integer` reads 8.
-  The legacy `f#read(n) as T` form still works but the `(n)` must
-  match the type's storage width exactly or the runtime panics in
-  `src/database/io.rs:276`.  The inferred form makes that mismatch
-  impossible.  `as text` still needs `f#read(n) as text` because
-  text has no fixed width.
-- **`s.field = f#read` (no `as T`) infers width from the LHS field's
-  declared type** — symmetric with `f += s.field`.  For a struct
-  `S { a: i32, b: u8, c: u16 }`, both sides become:
-  `f += s.a; f += s.b; f += s.c` to write, `s.a = f#read; s.b = f#read;
-  s.c = f#read` to read.  Changing a field's declared type
-  (`i32` → `i64`) automatically updates both sites at the next compile —
-  no manual cast edits needed.
-- **Always cast scalar writes to the intended width.**  Bare
-  `f += int_var` writes 8 bytes (loft stores integers as i64).  To
-  write 4 bytes use `f += (int_var as i32)`; for 1 / 2 bytes use
-  `as u8` / `as u16`.  Strongly-typed struct fields (`u8`, `u16`, or a
-  range-limited `integer limit(0, 255)`) write at their declared width
-  automatically.
-- `f += expr` appends `expr` to the file, respecting the `#format`
-  endianness.  `text` → raw bytes, `vector<T>` → each element in
-  sequence at its declared width.
-- `f.size` returns an `integer` (i64); compare with `0`.
-- `f#next = offset as integer` seeks.  Reading position advances
-  automatically after each `f#read` — don't manually advance it
-  between sequential reads.
-- **Whole-buffer reads: `read_bytes(path) -> vector<u8>`** (and
-  `write_bytes(path, v)`), from the stdlib.  Reach for the `f#read`
-  loop only for structured, offset-driven access.
-
-Example binary reader/writer patterns live in
-`tests/fixtures/libs/graphics/src/glb.loft` (writer) and
-`tests/fixtures/libs/graphics/tests/glb.loft` (reader).
+**Read [file-io.md](file-io.md) before any program that opens a file.**  It covers path resolution
+(a relative path is PROGRAM-relative, `#cwd` for CLI tools), UTF-8 text files (`content`, `lines`,
+`write`), and binary files (`f#format`, `f#read as <type>`, `f += (x as i32)`, `f#next`,
+`read_bytes` / `write_bytes`).  Two rules to carry without opening it: `f.content()` is
+UTF-8-only (`text?`, null on a binary file), and a scalar write is 8 bytes unless cast to its
+width (`f += (n as i32)`).
 
 ---
+
 
 ## Nullable defaults, the copy-write hazard, and null-checking reads
 
@@ -1077,10 +929,9 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `Allocating a used store` | A store is being reused while still held — check parallel blocks / store lifetimes (a `key` field name is NOT the cause; that works) |
 | `Unknown function say` | Use `println()` |
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |
-| `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm.  (P206 — was a parser hang before the recovery helper landed.) |
+| `match arm separator is \`=>\`, not \`->\`` | Replace `->` with `=>` in the arm. |
 | `'fn' definitions must be at file scope, not inside a function or block` | Move the helper fn out of the enclosing fn body.  Lambdas (`|x| { … }` or `fn(x: T) { … }`) are the only function-shaped values allowed inside a fn body. |
 | `compound assignment is not supported for tuple destructuring — use (a, b) = expr instead` | Rebuild the tuple: `(a, b) = (a + 1, b + 2)` — or update each element directly. |
-| Native E0308 on `t.0 == 'a'` where `t` is `(character, …)` | Fixed (P207, 2026-05-04) — if seen on an old build, update loft; current builds compile this on both backends. |
 
 ---
 
@@ -1123,9 +974,8 @@ loft --native-wasm out.wasm --path /path/to/repo/ file.loft # compile to wasm
 - [ ] No `long` type / no `l` literal suffix — `integer` is i64; literals are plain (`86400000`), `f.size` compares with `0`
 - [ ] String type in struct fields is `text`, not `string`
 - [ ] No `character == text` comparisons — use `"{c}" == t`
-- [ ] Never reassign a text parameter — copy to local first
 - [ ] `v[i]` and `s.field` can be passed directly as `&` parameters
-- [ ] Match arm separator is `=>`, never `->` (the parser used to hang on this — P206)
+- [ ] Match arm separator is `=>`, never `->`
 - [ ] No single-element tuples; `(integer)` is just `integer`
 - [ ] Tuple element access uses an integer literal (`t.0`, not `t.i`)
 - [ ] No compound assignment on a tuple LHS (`(a, b) +=` is rejected)

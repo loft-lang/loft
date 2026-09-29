@@ -17,9 +17,9 @@ signal, so holding it open only aged the shipped half into a false "future".
 
 | ID | Feature | Where it is documented |
 |----|---------|------------------------|
-| C55 | Type aliases (`type Handler = fn(Request) -> Response;`) | [LOFT.md § Types and type aliases](../../LOFT.md) |
+| C55 | Type aliases (`type Handler = fn(Request) -> Response;`) | [LOFT_DECLARATIONS.md § Types and type aliases](../../LOFT_DECLARATIONS.md) |
 | C56 | `?? return` null early-exit | [LOFT.md § Null handling](../../LOFT.md) |
-| A15 | `parallel { }` blocks | [LOFT.md § Parallel blocks](../../LOFT.md), [THREADING.md](../../THREADING.md) |
+| A15 | `parallel { }` blocks | [LOFT_CONTROL.md § Parallel blocks](../../LOFT_CONTROL.md), [THREADING.md](../../THREADING.md) |
 
 A15 ships its SYNTAX; the arms currently run sequentially, so the concurrency the
 game-server pattern wanted is not delivered.  That residue belongs with threading,

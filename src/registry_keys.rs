@@ -5,7 +5,7 @@
 //! Trust-root public keys for the loft package registry.
 //!
 //! PKG.REG R3.5.  See
-//! [PKG_REGISTRY.md § Index signing](../doc/claude/PKG_REGISTRY.md#index-signing--indexjsonsig)
+//! [PKG_REGISTRY_TRUST.md § Index signing](../doc/claude/PKG_REGISTRY_TRUST.md#index-signing--indexjsonsig)
 //! for the threat model + key-rotation procedure.
 //!
 //! Each entry is a 32-byte Ed25519 public key (raw, NOT PEM/DER).

@@ -5324,7 +5324,7 @@ use a separate collection or add after the loop"
             // branch and keeps its dep by not being converted at all.  The `?` is what makes
             // the two types differ, which is what routes it here, which is what loses the
             // backing.  A copy of the tuple then had no work-ref to hand its release to and
-            // released the member's resource TWICE (`formal/heap.md` D-heap-1).
+            // released the member's resource TWICE (`formal/heap-history.md` D-heap-1).
             if s_type.depend().is_empty() {
                 f_type.clone()
             } else {

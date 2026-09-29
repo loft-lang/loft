@@ -4,7 +4,7 @@
 // @PLN164 B1b — a callee that promotes a local onto its return buffer, handed a LIVE buffer.
 //
 // B1 kept these buffers null (`Scopes::minted_pairs`) because the interpreter's rebind of the
-// promoted local freed the store the caller handed (formal/ownership.md D-own-43).  Every
+// promoted local freed the store the caller handed (formal/ownership-history.md D-own-43).  Every
 // cell below is run with the pool admitting them (the default once B1b lands) and with
 // `LOFT_NO_ADOPT_BUFFER_REUSE=1`, on both backends, under `LOFT_STRICT_STORES=1`,
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_NATIVE_LEAK_CHECK=1`.  Every value is

@@ -422,6 +422,6 @@ Related documents:
 - [ROADMAP.md](ROADMAP.md) — milestone ordering
 - [PLANNING.md](PLANNING.md) — priority backlog (registry, FFI, LSP)
 - [WEB_SERVER_LIB.md](lib_plans/future/08-server/README.md) — server library design
-- [DATABASE.md § Constant store](DATABASE.md#constant-store-const_store) — Phase A startup-speed mechanism (deferred Phase B/C in [`plans/82-const-store/`](plans/82-const-store))
+- [DATABASE_STORES.md § Constant store](DATABASE_STORES.md#constant-store-const_store) — Phase A startup-speed mechanism (deferred Phase B/C in [`plans/82-const-store/`](plans/82-const-store))
 - [PACKAGES.md](PACKAGES.md) — package format + registry
 - [SERVER_FEATURES.md](plans/37-server-features/README.md) — language features for server ergonomics

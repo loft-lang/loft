@@ -381,6 +381,6 @@ ownership — each is a type fact that should drive codegen mechanically.
 - [INTERMEDIATE.md](INTERMEDIATE.md) — Value/Type enums, bytecode ops, State layout
 - [SLOTS.md](SLOTS.md) — stack-slot assignment
 - [LIFETIME.md](LIFETIME.md) / [DEPS_INVENTORY.md](DEPS_INVENTORY.md) — the dep/ownership model the type signals build on
-- [DEBUG.md § Introspection CLI](DEBUG.md) — `loft introspect` to capture bytecode for the working-vs-broken comparison
+- [DEBUG_INTROSPECT.md § Introspection CLI](DEBUG_INTROSPECT.md) — `loft introspect` to capture bytecode for the working-vs-broken comparison
 - First application: [plans/85-store-lifetime-retirement/](plans/85-store-lifetime-retirement/)
 - Instrument-before-fix, worked: [plans/130-element-view-invalidation/](plans/130-element-view-invalidation/README.md) § Method — the worked example (CLOSED; the rules above are what it produced)

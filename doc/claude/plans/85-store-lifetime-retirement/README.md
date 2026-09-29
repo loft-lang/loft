@@ -111,7 +111,7 @@ Plan id: [@PLN85](https://github.com/loft-lang/plans/issues/85) · investigation
 > (`cargo +nightly fuzz run program_ownership`, H5 + poison fully live — it caught F1+F2 in
 > its first five minutes; both FIXED), `LOFT_POISON=1 cargo test` green (the @PLN54-S3
 > criterion), and the debug-assertions calibration run
-> ([DEBUG.md](../../DEBUG.md#the-debug-assertions-calibration-run-target-da)).  What remains
+> ([DEBUG.md](../../DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da)).  What remains
 > in the gate doc: the open DA-inventory cells (§ final honest DA map) and the unfuzzed
 > axes list — see [STABILITY_ROADMAP.md § the wide-release bar](../../STABILITY_ROADMAP.md).
 

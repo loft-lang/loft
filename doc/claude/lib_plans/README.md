@@ -128,7 +128,7 @@ Library-specific notes:
 - Bugs in the library code itself stay in PROBLEMS.md (single
   cross-cutting issue tracker).  No separate library issue
   tracker.  *(Superseded: a library bug is filed in its
-  `loft-libs-<chunk>` repo's tracker — [LIBRARY_AUTHORING.md § 5e](../LIBRARY_AUTHORING.md).)*
+  `loft-libs-<chunk>` repo's tracker — [LIBRARY_PUBLISH.md § 5e](../LIBRARY_PUBLISH.md).)*
 - Bugs in the **core-language layer** that block a library
   phase get a P-id and the library phase pauses (or works
   around with an annotation pointing at the P-id).
@@ -193,4 +193,4 @@ acceptable.
 | Dir | Initiative | Closed |
 |---|---|---|
 | [`finished/23-http-session-auth/`](finished/23-http-session-auth) | HTTP response headers + cookie-jar `HttpSession` + `base64_encode`/`decode` on `lib/web`.  Unblocked native Garmin login (training port A2). | 2026-05-27 |
-| [`finished/29-library-wasm-bridges/`](finished/29-library-wasm-bridges) | Library-owned `--html` extensions — each library carries `wasm/src/lib.rs` (Rust bridge) + `wasm/host.js` (JS host imports) + `[wasm.bridge]` manifest section.  Drained `lib/imaging`'s wasm-bridge from 4 compiler/tooling locations; pattern documented in [PACKAGES.md § Wasm bridges](../PACKAGES.md#wasm-bridges-library-owned---html-extensions). | 2026-05-29 |
+| [`finished/29-library-wasm-bridges/`](finished/29-library-wasm-bridges) | Library-owned `--html` extensions — each library carries `wasm/src/lib.rs` (Rust bridge) + `wasm/host.js` (JS host imports) + `[wasm.bridge]` manifest section.  Drained `lib/imaging`'s wasm-bridge from 4 compiler/tooling locations; pattern documented in [PACKAGES.md § Wasm bridges](../PACKAGES_TARGETS.md#wasm-bridges-library-owned---html-extensions). | 2026-05-29 |

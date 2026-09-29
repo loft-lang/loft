@@ -15,7 +15,7 @@ lands in the shared store and is visible to the outer scope (which keeps ownersh
 leak-clean on interpret + native, including escape past scope. Two closures capturing the
 same collection both mutate the one store. Regression: `tests/scripts/505-collection-capture.loft`
 (both backends + leak) and `tests/parse_errors.rs::p511_bare_append_through_capture_parses`
-(parse-level guard). LOFT.md § Closures documents the contract. Promoted from
+(parse-level guard). LOFT_LITERALS.md § Closures documents the contract. Promoted from
 [loft-lang/loft#511](https://github.com/loft-lang/loft/issues/511). Tracked as `@PLN93`.
 
 Approach B (store a captured collection as a `Reference`-DbRef, recover the collection
@@ -128,7 +128,7 @@ and the probes are graduated to `tests/scripts/NNN-collection-capture.loft`.
 | **3a** — reject mutation through a bare capture (loud) | **Done** — `+=` / `h[k]=` rejected (parser/expressions.rs) |
 | **3b** — reject iteration through a bare capture (loud; native defect) | **Done** — `for e in h` rejected (parser/collections.rs) |
 | **4** — escape / lifetime guard (C5) | **Done** — a closure capturing a local collection returned past its scope reads correctly + leak-clean on both backends (the store survives with the escaping closure) |
-| **5** — harden + land: `tests/scripts/505` (lookup) + `506` (rejections), full suites, docs, close #511 | **Done** — full suite green (canonical rebuild order), LOFT.md § Closures updated |
+| **5** — harden + land: `tests/scripts/505` (lookup) + `506` (rejections), full suites, docs, close #511 | **Done** — full suite green (canonical rebuild order), LOFT_LITERALS.md § Closures updated |
 | **6a** — iteration over a bare capture | **Done** — the loop element is bound as a BORROW of the closure so the per-iteration free never whole-store-frees the shared collection (native only; mirrors the #481 coroutine fix, `parser/collections.rs`). Both backends, leak-clean |
 | **6b** — mutation through a bare capture | **Partial** — point-assignment `h[key] = value` works (update + insert, both backends); **append `h += …` still rejected** — the keyed-`+=` insert is gated on a local-var target, so a captured DbRef target emits NO insert (see § below). Workaround: `h[key] = value`, or a struct-field wrap |
 
@@ -188,7 +188,7 @@ needs write-back" worry was a red herring; the real gap was the omitted insert a
 
 **Landed tests / docs.** `505` gains hash/sorted/index/vector append + two-closure-shared +
 append-then-read (both backends + leak); `tests/parse_errors.rs::p511_bare_append_through_capture_parses`
-(parse guard); `506` (the append-rejection test) deleted; `LOFT.md § Closures` updated.
+(parse guard); `506` (the append-rejection test) deleted; `LOFT_LITERALS.md § Closures` updated.
 
 ## See also
 

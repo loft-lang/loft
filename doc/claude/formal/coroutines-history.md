@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/coroutines-history.md — the deviation register for [coroutines.md](coroutines.md)
 
 > **The rules are next door.**  [coroutines.md](coroutines.md) states what must always be true of the
@@ -223,7 +224,7 @@ a deviation — recorded here so it is not mistaken for a bug:
 > text-field cell in `tests/oracle/26-coroutine-laziness.loft` (the nightly cross-backend
 > sweep), the latter proven to fail on a pristine tree at `415e7ba8` with exactly the eager
 > trace `q0 q1 q2 q3 q4 w0 w1`.
-> Slices 2-4 of [COROUTINE.md § Design: lazy loop yields (CL-9)](../COROUTINE.md#design-lazy-loop-yields-cl-9)
+> Slices 2-4 of [COROUTINE_LAZY_YIELDS.md § Design: lazy loop yields (CL-9)](../COROUTINE_LAZY_YIELDS.md)
 > close the rest. Tracked as [loft#836](https://github.com/loft-lang/loft/issues/836).
 
 - **Conformance is otherwise differential, and this is the hardest case** — the two backends

@@ -51,7 +51,7 @@
 // (`c = H { s: p.0 }`) needs the container's cascade to skip one field; the callee returning a
 // member of its copy, and a member of the parameter returned DIRECTLY (`return p.0`), both hand
 // the caller a second record of its own resource — and that last one releases a store already
-// RECYCLED, so its hook reads an id the program never set.  `formal/heap.md` D-heap-1 carries
+// RECYCLED, so its hook reads an id the program never set.  `formal/heap-history.md` D-heap-1 carries
 // them; asserting their present answer would pin a defect.
 //
 // The trace file is this guard's own — and its own means THIS file, not this family: several

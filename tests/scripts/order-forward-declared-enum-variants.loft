@@ -1,6 +1,6 @@
 // A file may name its enums and their variants before it declares them.
 //
-// LOFT.md § File structure: "A loft file may contain (in any order)".  Two distinct
+// LOFT_DECLARATIONS.md § File structure: "A loft file may contain (in any order)".  Two distinct
 // defects broke that for enums, both fixed together because both are the same fault
 // reached by different spellings — a pass-1 placeholder that pass 2 could not upgrade.
 //

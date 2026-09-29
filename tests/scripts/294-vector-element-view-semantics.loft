@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-// #338 — pins the DOCUMENTED struct-element semantics (LOFT.md § Vectors):
+// #338 — pins the DOCUMENTED struct-element semantics (LOFT_DATA.md § Vectors):
 // element reads into a local are dep-tracked VIEWS, slot writes are
 // byte-copies, and plain var-to-var struct assignment deep-copies.  If a
 // future design pass changes element reads to copies, this test must be

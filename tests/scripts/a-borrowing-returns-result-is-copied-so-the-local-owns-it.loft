@@ -7,7 +7,7 @@
 // source.  `(B-View)` is the contrast — a struct-typed PROJECTION really is a view, and a write
 // through it DOES reach the container.
 //
-// This is the measurement `formal/ownership.md` D-own-40 and `heap.md` D-heap-6 rest on, and it
+// This is the measurement `formal/ownership-history.md` D-own-40 and `heap-history.md` D-heap-6 rest on, and it
 // is here because the rule alone is not enough to settle what those entries needed: they turn on
 // whether such a local's assignments MIX ownership for `(O-Witness)`, and reading "the return
 // borrows" as "the local views" gets the answer backwards.  The copy is what makes a local whose

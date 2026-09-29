@@ -350,7 +350,7 @@ Performance, refactor, internal cleanup with clear payoff.
 | O4 | Native: direct-emit local collections | M | ✓ | PERFORMANCE.md § Open performance work (N1) |
 | O5 | Native: omit `stores` from pure functions | M | ✓ | PERFORMANCE.md § Open performance work (N2) |
 | A12 | Lazy work-variable initialization | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
-| O2 | Stack raw pointer cache | M | ✓ | PLANNING.md (no PERFORMANCE.md design yet) |
+| O2 | Stack raw pointer cache | M | ✓ | PLANNING_NATIVE.md (no PERFORMANCE.md design yet) |
 | @P393 | Vector store-lifetime watermark — function-local vectors free at scope-end not last-use; literal-init double-allocates.  Stage A: verified **no leak** (exit gate passes); benign watermark + noisy `LOFT_STORES=warn` floor.  Quickest win = raise heuristic threshold (XS) | S-M (XS heuristic / S cluster II / M cluster I) | Stage A ✓; Stage B/C pending (design call) | plans/2-vector-store-watermark/README.md |
 
 ### Constant store deferred-tail

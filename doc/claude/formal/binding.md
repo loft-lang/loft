@@ -294,7 +294,7 @@ independent positions. The FIELD axis (`const v: T` / `v: const T` on a struct f
 a struct-attribute property, documented in [LOFT.md § Fields](../LOFT.md) (the
 four-quadrant table), not this doc's `&`-binding surface. The PARAM axis (`p: const T`) is
 parameter-binding — see [calls.md](calls.md) (parameter binding) and
-[LOFT.md § Functions](../LOFT.md) for the const-param prose; today only VALUE-const is
+[LOFT_DECLARATIONS.md § Functions](../LOFT_DECLARATIONS.md) for the const-param prose; today only VALUE-const is
 wired for parameters (binding-const params are not yet, see Const-Bind below). Design
 source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const-model.md).
 

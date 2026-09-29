@@ -371,7 +371,7 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  on the one store it is given.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
-negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
+negative bounds LOFT_DATA.md § Vectors (@P384) + STDLIB.md § text slice.
 **To verify when writing:** the exact clamp values on both backends; freshness (a value slice is
 independent of the source — cross-link heap.md H-Alloc / iteration.md I-Comp).
 

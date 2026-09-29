@@ -98,7 +98,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
   in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  **`~`
   because the gate pins 94 cells that release wrongly today, none with a diagnostic** —
-  `heap.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
+  `heap-history.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
   empty.  *Trace guards beside it, all `tests/scripts/`, all both-backends:
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
@@ -294,7 +294,7 @@ sweep is green.
 
 **Still open after verification (not testable-to-close — they need action, not probes):**
 1. **CL-9 / the coroutine decided edge** — native eager loop yields. Removal DESIGN written
-   ([COROUTINE.md § lazy loop yields](../COROUTINE.md#design-lazy-loop-yields-cl-9)); needs the build.
+   ([COROUTINE_LAZY_YIELDS.md § lazy loop yields](../COROUTINE_LAZY_YIELDS.md)); needs the build.
 2. **D-op-1 / D-op-2** — the differential-oracle meta-deviations; open BY DESIGN. "More testing" =
    growing the corpus, which this worklist did (3 new programs) and which continues.
 

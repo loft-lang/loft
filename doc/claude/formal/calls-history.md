@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/calls-history.md — the deviation register for [calls.md](calls.md)
 
 > **The rules are next door.**  [calls.md](calls.md) states what must always be true of the

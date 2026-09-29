@@ -354,7 +354,7 @@ You've seen the language surface.  Pick one of:
   what the rendering library can do.
 - **Try the parallel surface** — loft makes parallelism a one-line
   addition: `for s in items par(r = work(s), 4) { ... }` runs the
-  worker on 4 threads.  See [STDLIB.md § Parallel] and
+  worker on 4 threads.  See [STDLIB_RUNTIME.md § Parallel] and
   `examples/structs.loft` for a starter.
 - **Set up your editor** — see
   [editors/vscode/](../editors/vscode) for the VS Code extension

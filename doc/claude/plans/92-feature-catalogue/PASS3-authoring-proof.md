@@ -154,7 +154,7 @@ non-technical prose across the null / functions / math / IR areas — consistent
 every `## Example` is *run*, authoring surfaced reference errors that un-runnable
 fragments had hidden for a long time:
 
-- **`sizeof(integer)` documented as `4`** (LOFT.md § Sizeof) — it is **8**. Fixed.
+- **`sizeof(integer)` documented as `4`** (LOFT_DATA.md § Sizeof) — it is **8**. Fixed.
 - **`n: integer = null`** shown as a valid annotation (loft-write skill) — the language
   **rejects** it (`use … 'as'`); the idiom is `null as integer`. Fixed.
 - A third suspected gap — an enum struct-variant inside a vector literal — was a **false

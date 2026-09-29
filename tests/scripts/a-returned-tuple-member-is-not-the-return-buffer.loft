@@ -50,7 +50,7 @@
 //   would pass on a harness that had stopped recording.
 //
 // Three neighbouring shapes are deliberately ABSENT because they still release twice and
-// `formal/heap.md` D-heap-1 carries them: a copy off a tuple PARAMETER's member, a bound
+// `formal/heap-history.md` D-heap-1 carries them: a copy off a tuple PARAMETER's member, a bound
 // projection returned (`x = t.0; return x`, where the suppression lands on the VIEW and the
 // member's backing still drops), and a nested member returned (`return t.0.0`).  Asserting
 // their present answer would pin a defect into the suite.

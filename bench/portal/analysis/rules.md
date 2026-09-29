@@ -38,7 +38,7 @@ pricing stays in the other files here; this one is read from the RULES' side.
    (`(R-SplitTable)` and `(R-GuardFree)`, each with its `LOFT_NO_*` switch), the traces of
    `(R-LitHoist)` and the element fuse, and seven switches no document named
    (`LOFT_TRACE_KEYS`, `_VADD`, `_RETFRESH`, `_PREAMBLE`, `_INSTANCE_KEY`, `_CLOSURE_KEEP`,
-   `_PAR_WORKERS` — `DEBUG.md` § Debugging store-ownership bugs).  A trace run should read
+   `_PAR_WORKERS` — `DEBUG_STORES.md` § Debugging store-ownership bugs).  A trace run should read
    the rule's home doc, not this one file.
 3. **One known defect sat outside the deviation list — FILED loft#1729, deviation D-rw-6
    (`rewrites.md` OPEN: 1).**  `(R-Const)`'s bind of a top-level constant that is then

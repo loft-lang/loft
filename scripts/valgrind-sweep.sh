@@ -26,7 +26,7 @@
 #     text field default — bounded, one block per field, the same frame the ASan leak gate
 #     names.  It suppresses nothing else on purpose: see the file for the text-buffer class
 #     LSan hides and this sweep does not.
-#   * loft's own store arena is INVISIBLE to memcheck (DEBUG.md § Debugging store-ownership
+#   * loft's own store arena is INVISIBLE to memcheck (DEBUG_STORES.md § Debugging store-ownership
 #     bugs): a leaked or over-freed STORE is a wrong answer, never a valgrind error.  That
 #     half of the memory gate is `M-leaks` under `LOFT_STRICT_STORES=1`, not this one.
 #

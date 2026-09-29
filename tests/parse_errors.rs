@@ -3706,7 +3706,7 @@ fn b_ref_reshape_callee_growth_two_frames_down_is_error() {
 /// keys on `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so
 /// `b.v.remove(0)` — a removal from a field of `b` — was collected by nothing.
 ///
-/// It is the cell that corrects `heap.md` D-heap-11's Boundary paragraph, which claimed a
+/// It is the cell that corrects `heap-history.md` D-heap-11's Boundary paragraph, which claimed a
 /// callee's removal already refused while only its growth did not.  Neither did.
 #[test]
 fn b_ref_reshape_callee_removal_from_a_field_is_error() {

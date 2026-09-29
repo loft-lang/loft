@@ -312,7 +312,7 @@ fn m13_conditional_second_handoff() {
     );
 }
 
-// ── a MEMBER copied into another container (heap.md D-heap-7 family 4) ────────
+// ── a MEMBER copied into another container (heap-history.md D-heap-7 family 4) ────────
 //
 // The source container keeps owning the member and its cascade releases it, while the
 // destination releases its copy — so the FIRST copy is already the double.  The owner's call
@@ -551,7 +551,7 @@ fn q5_member_overwritten_inside_an_arm() {
     );
 }
 
-// ── a PARAMETER placed in a structure (heap.md D-heap-7 family 2) ─────────────────
+// ── a PARAMETER placed in a structure (heap-history.md D-heap-7 family 2) ─────────────────
 //
 // The caller keeps owning what it passed, so a copy of a parameter — or of a member of it — into a
 // container is a second owner, and so is the caller's copy of a returned member.  Inside a
@@ -813,7 +813,7 @@ fn g7_copy_of_a_parameter_copy_handed_on_twice() {
 }
 
 /// OUTSIDE by the rule — a WHOLE parameter returned is a plain value, a release to get right
-/// rather than a shape to warn about (heap.md D-heap-7 family 2, still open).  Released twice.
+/// rather than a shape to warn about (heap-history.md D-heap-7 family 2, still open).  Released twice.
 #[test]
 fn z7_whole_parameter_returned_is_not_a_warning() {
     check_prog(

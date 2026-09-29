@@ -11,7 +11,7 @@ into the **`loft-lang`** organisation, so one org owns the whole stack — `loft
 **no-copy shared model**: org-default GitHub workflows, one `loft-lang/.github`
 repo for issue templates + labels, and a single ownership/permissions model — see
 [ISSUE_TRACKING.md § Convention](ISSUE_TRACKING.md) and
-[LIBRARY_AUTHORING.md § 5e](LIBRARY_AUTHORING.md).
+[LIBRARY_PUBLISH.md § 5e](LIBRARY_PUBLISH.md).
 
 ## Why move
 

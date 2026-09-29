@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Interfaces and bounded generics — an unbounded `T` cannot be rendered,
+// @PAGE: LOFT_DESIGN.md § Interfaces and bounded generics — an unbounded `T` cannot be rendered,
 // and the refusal says why.
 // @EXPECT_ERROR: Printable
 

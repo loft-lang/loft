@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Vectors — a bind to an element is a VIEW of that slot, so a swap through a
+// @PAGE: LOFT_DATA.md § Vectors — a bind to an element is a VIEW of that slot, so a swap through a
 // temp loses one record, and a view used after the vector changed is a copy taken first.
 // The refusal of `&` to a keyed element is in vector-views-refused.loft.
 

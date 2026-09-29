@@ -512,7 +512,7 @@ either conclusion.
    (caught + closed 2 real bugs in its first five minutes), `LOFT_POISON=1 cargo test`
    fully green (24 latent memory bugs fixed across the poison campaign), and the
    debug-assertions calibration run
-   ([DEBUG.md](DEBUG.md#the-debug-assertions-calibration-run-target-da)).  The residue
+   ([DEBUG.md](DEBUG_STORES.md#the-debug-assertions-calibration-run-target-da)).  The residue
    is enumerated, not anecdotal: the open DA cells + unfuzzed axes in
    [plans/85 fuzz-proof-gate.md](plans/85-store-lifetime-retirement/fuzz-proof-gate.md).
    **Build-order dependency — RESOLVED.** Gate 1 was blocked by gate 2: the ownership invariant

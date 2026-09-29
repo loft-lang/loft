@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Building a value instead of text — a format string assigned to a type
+// @PAGE: LOFT_LITERALS.md § Building a value instead of text — a format string assigned to a type
 // that defines `lit` plus `hole_…` methods BUILDS that type, and the type is told which
 // bytes the author wrote and which came from a value.
 

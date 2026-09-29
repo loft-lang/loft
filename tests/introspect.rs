@@ -357,7 +357,7 @@ fn missing_file_errors() {
 //
 // The state these report decides whether an unqualified name resolves, and it
 // used to be inspectable only by adding an `eprintln!` to the parser.  The
-// assertions pin the three facts DEBUG.md § `--show-resolution` teaches a reader
+// assertions pin the three facts DEBUG_INTROSPECT.md § `--show-resolution` teaches a reader
 // to read, so the doc and the output cannot drift apart:
 //   1. the `context:` line (which stdlib and `--lib` paths this run searched),
 //   2. `defined` vs `visible` per source,

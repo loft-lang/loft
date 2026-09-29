@@ -26,7 +26,7 @@
 //
 // Since 2026-09-21 a droppable's first bind no longer takes the lift: it is written out to
 // c_shared's statement form, so the binding OWNS what its arm moved and releases it at its own
-// death, as `(H-Move)` says (`formal/heap.md` D-heap-18 — kept with the source, a binding placed
+// death, as `(H-Move)` says (`formal/heap-history.md` D-heap-18 — kept with the source, a binding placed
 // again released twice).  Every count below is unchanged; the ORDER moved in ten cells,
 // because the binding is declared after the locals it took from and so dies first.  c_rebound
 // is the one worth reading: the old trace released 111 at `a`'s reassignment, before `t` read

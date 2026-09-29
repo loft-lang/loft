@@ -194,8 +194,8 @@ fn check_new_decisions_are_guarded(index: &str) {
         "decision(s) {unguarded:?} in doc/claude/DESIGN_DECISIONS.md have no guard: every \
          decision is kept by a test that cites `@C<n>` and fails on a build that breaks it — \
          under tests/ here, or in the library it is about (`make guards-fetch`).  A decision \
-         no guard can keep is reopened, not documented — DESIGN_DECISIONS.md § Using the \
-         register."
+         no guard can keep is reopened, not documented — DESIGN_DECISIONS_RULES.md § Using \
+         the register."
     );
 }
 

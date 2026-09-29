@@ -1039,7 +1039,7 @@ pub fn check(
             // free static memory on a wrong guess — the failure that cannot be
             // recovered from. Borrowed is therefore the only default, and a
             // caller-frees function goes through the plan's shim, which is what
-            // the shims are for. Stated at the boundary in PACKAGES.md.
+            // the shims are for. Stated at the boundary in PACKAGES_C_BINDING.md.
             (CType::Pointer { pointee, .. }, LoftCShape::Pointer) if pointee.ends_with("char") => {}
             // A text return from a pointer that is not spelled `char *`. The
             // declaration is the sole authority here, so it has to SAY it means a

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PAGE: LOFT.md § Variable scoping — a name bound inside a block ends with it, a loop
+// @PAGE: LOFT_DESIGN.md § Variable scoping — a name bound inside a block ends with it, a loop
 // variable is its loop's, and a name bound before a loop is shared with it.  The two
 // refusals are in scoping-refused.loft.
 

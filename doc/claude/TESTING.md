@@ -295,7 +295,7 @@ under a 2 GiB address-space limit, because `LOFT_MEMORY_LIMIT` ([RUN_BOUNDS.md �
 **The baselines.**  `tests/ownership_drop_gate.baseline` (interpreter) and
 `tests/ownership_drop_gate.native.baseline` list every cell that is not clean, as
 `cell KIND,KIND`.  A line is an open defect registered in `formal/heap.md` (`D-heap-1`,
-`D-heap-7`) — not accepted behaviour.  The test fails on a NEW line (a cell that now releases
+`D-heap-7`; the entries are in `formal/heap-history.md`) — not accepted behaviour.  The test fails on a NEW line (a cell that now releases
 wrongly, or differently) and on a GONE line (a fix: retire the line in the same commit).  A
 missing baseline fails; it is never written on first sight.  Each run also prints every cell
 where the two backends disagree.

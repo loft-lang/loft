@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/tuples-history.md — the deviation register for [tuples.md](tuples.md)
 
 > **The rules are next door.**  [tuples.md](tuples.md) states what must always be true of the

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/types-history.md — the deviation register for [types.md](types.md)
 
 > **The rules are next door.**  [types.md](types.md) states what must always be true of the

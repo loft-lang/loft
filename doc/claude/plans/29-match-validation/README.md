@@ -97,7 +97,7 @@ Two axes.
 | 03 — range + guard + null | S1–S4 | P4, P7, P8 | Cross-mode equivalence on numeric ranges; guard short-circuit ordering; null subject handling. |
 | 04 — nested + cross-cutting | S3, S4 | P9 | Nested struct-enum-in-struct, tuple-in-struct, struct-in-tuple combos. |
 | 05 — vector match | S6 | P1–P9 | Vector-specific patterns (rest patterns, slice match if loft supports them). |
-| 06 — freeze + doc | — | — | Update LOFT.md § Match where the matrix surfaces under-documented behaviour. |
+| 06 — freeze + doc | — | — | Update LOFT_CONTROL.md § Match where the matrix surfaces under-documented behaviour. |
 
 ## Pre-flight gate
 
@@ -123,7 +123,7 @@ more cells needed."
 
 ## Cross-references
 
-- [LOFT.md § Match](../../LOFT.md) — language reference.
+- [LOFT_CONTROL.md § Match](../../LOFT_CONTROL.md) — language reference.
 - [TUPLES.md § T1.9](../../TUPLES.md) — tuple match specification.
 - `src/parser/control.rs` — `parse_match`, `parse_scalar_match`,
   `parse_tuple_match`, `parse_vector_match`.

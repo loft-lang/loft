@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/binding-history.md — the deviation register for [binding.md](binding.md)
 
 > **The rules are next door.**  [binding.md](binding.md) states what must always be true of the
@@ -1635,7 +1636,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   The message gained a population-dependent joiner: the callee form names the callee's act before
   the reason, and for a droppable view the growth CAUSES the copy (`so`) where for a `&` link the
   two are parallel facts (`and`).  With one joiner both read *"would grow `b`, and … and …"*.
-  Found while re-measuring `heap.md` D-heap-11, whose own **Boundary** paragraph described this
+  Found while re-measuring `heap-history.md` D-heap-11, whose own **Boundary** paragraph described this
   asymmetry incorrectly and is corrected there.
 
 * **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
@@ -1665,7 +1666,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   (*"keeps today's answer"*).  It pinned the compiler, not the rule, and is now
   `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error` — a cell that
   refuses belongs in the refusal harness, because it takes a whole `.loft` file with it.
-  Found while measuring `heap.md` D-heap-11, whose cure reuses this gate.
+  Found while measuring `heap-history.md` D-heap-11, whose cure reuses this gate.
 
 * **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
   distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
@@ -2107,7 +2108,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   `OpBindOrCopy`, which copies the borrowed arm.  The boundary agrees — a binding whose previous
   assignment was itself a view views on the interpreter too.  It is the third fact a pass before the
   scan reads off the join where the author's spelling has it (family 7's per-path flags and
-  D-bind-33's call-arm owner were the other two, `heap.md` D-heap-7).
+  D-bind-33's call-arm owner were the other two, `heap-history.md` D-heap-7).
   **Closed by carrying the scan's own decision.**  The first scan records, by the address of each
   `Set`'s value node, the reassignments it writes out per arm; the caller rewrites exactly those in
   the original code, strips the arm locals' deps the parser gave the binding, and scans again — so
@@ -2120,7 +2121,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
   else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
   through `x`, on both backends; the first bind from the same join copied.  The releases went wrong
-  with it (`heap.md` D-heap-7, `p_j1`/`p_j2`): the displaced `mk(9)` was never released, and neither
+  with it (`heap-history.md` D-heap-7, `p_j1`/`p_j2`): the displaced `mk(9)` was never released, and neither
   was a record assigned to `x` after the join, because the binding stayed typed as a view of `a`.
   **Between two mechanisms.**  A first bind lifts each arm into a temp of its own (D-bind-16,
   loft#1321); a reassignment cannot borrow those temps (`(O-Latest)`), so it is written out per arm

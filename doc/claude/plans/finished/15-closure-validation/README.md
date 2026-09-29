@@ -175,7 +175,7 @@ Each cell `(C, D)` has one of:
 
 - [LIFETIME.md § Function](../../../LIFETIME.md) — the closure-leak gap
   this plan validates.
-- [LOFT.md § Closures](../../../LOFT.md) — language reference.
+- [LOFT_LITERALS.md § Closures](../../../LOFT_LITERALS.md) — language reference.
 - [loft-write skill § Higher-order functions](../../../../../.claude/skills/loft-write/SKILL.md)
   — capture semantics summary.
 - [@PLAN14 phase 03](../14-tuple-validation/03-closures.md) — tuple

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/collections-history.md — the deviation register for [collections.md](collections.md)
 
 > **The rules are next door.**  [collections.md](collections.md) states what must always be true of the

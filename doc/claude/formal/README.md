@@ -160,24 +160,15 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Twelve deviations are open, in five chapters:** heap.md 5, closures.md 2, operational.md 2,
-binding.md 2 and performance.md 1 (`rule_tags.py registers`, re-measured on the joined tree
-2026-09-22, after heap.md's `D-heap-26` closed and `D-heap-28` to `D-heap-32`, tuples.md's
-`D-tup-15` and coroutines.md's `D-cor-4` each opened and closed that day, coroutines.md's
-`D-cor-3` and collections.md's `D-col-5` closed, and coroutines.md's `D-cor-5` opened with
-`(G-Hold)`; re-measured again 2026-09-22, after heap.md's `D-heap-34` and `D-heap-35` opened and
-closed with loft#1597, and coroutines.md's `D-cor-5` closed with loft#1601; and once more,
-after heap.md's `D-heap-36` opened with loft#1600 as a design question, `D-heap-37` opened and
-closed beside it, and `D-heap-38` opened; and closures.md's `D-clo-35` opened and closed with loft#1606, `D-clo-36` and `D-clo-37`
-opened beside it). Every other chapter is at 0, and each zero is a claim to re-measure against the
-oracle line its chapter names. The two in operational.md are the **meta** entry,
+**Open deviations are counted by `python3 scripts/rule_tags.py registers`**, per chapter and
+against each chapter's own `OPEN: n` line; a chapter at 0 is a claim to re-measure against the
+oracle line it names.  The two in operational.md are the **meta** entry,
 `D-op-1`/`D-op-2` — there being no shared operational semantics, the interpreter is the spec and
 a backend divergence is test-caught rather than definition-caught (@PLN89's differential
 oracle, an open-ended instrument and not a one-shot close); every operational chapter below
 inherits them. No open row is a rule that
 needs changing. What closed, when, and what it cost is each chapter's `<area>-history.md`;
-this paragraph and the table below are derived from the chapters and say nothing the
-chapters do not.
+the table below is derived from the chapters and says nothing the chapters do not.
 
 > ⚠ **This paragraph and the table below are a CLAIM to re-measure, exactly like an `OPEN: 0`.**
 > They read `0` for closures.md and ownership.md while each carried three live entries, and `1`
@@ -199,10 +190,10 @@ chapters do not.
 | doc | area | status |
 |---|---|---|
 | [types.md](types.md) | type system + conversion relation (incl. integer width) | **0 open** — the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
-| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **1 open** (D-bind-38, `(B-Ref-Lvalue)`: a link to a TEXT place is refused, where the rule says it links; D-bind-39, the narrow-INTEGER face, closed 2026-09-23 with loft#1567) — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
+| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
-| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **1 open** (D-heap-9 — `H-Copy-Lease`'s `OpCopy` hook, @PLN163 P4; `H-Copy-Refuse` and `H-Spent` are compile errors since 2026-09-23) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
+| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **0 open** — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
 | [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **0 open** — `D-layout-1` closed 2026-09-21 (loft#1562): every path that reads an existing image — `store_load`, the bind of an existing file, the whole-image URL loaders and the paged loaders — refuses a store whose `.dschema` records another layout (`L-Sound`). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
 | [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension, a generator held by a record or a collection (`G-Hold`) | **0 open** — lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
@@ -210,7 +201,7 @@ chapters do not.
 | [calls.md](calls.md) | function call & return — args, parameter binding, the frame | **0 open** — args left-to-right; scalar params by value, heap params share (`F-ParamHeap`), `&` writes back; returns independent; a void tail is dropped (`F-Drop`) and a block's value is its tail's (`F-Block`); register in [calls-history.md](calls-history.md) |
 | [matching.md](matching.md) | `match` — enum-variant dispatch + payload binding | **0 own** — an expression; struct-payload patterns bind by name; `_` is the final catch-all; compile-time exhaustiveness |
 | [tuples.md](tuples.md) | tuples — construct / project / destructure | **0 open** — D-tup-9 (a type-variable member of a tuple literal, loft#1365) opened and closed 2026-09-05 — positional products (n≥2), `.i` a compile-time index, destructuring, tuple returns, the reference tuple (`T-Ref-Rep`); ⚠ its differential oracle is all-`(integer, integer)`; register in [tuples-history.md](tuples-history.md) |
-| [closures.md](closures.md) | lambdas / closures / fn-refs — capture + apply | **2 open** (`D-clo-36` a returned closure's capture hooks, `D-clo-37` a loop-body capture's reused backing) — both lambda forms capture identically; scalar-by-value / heap-shared capture; first-class into every container (`L-Escape`); `D-clo-18`/`D-clo-20` are decided refusals (C115); register in [closures-history.md](closures-history.md) |
+| [closures.md](closures.md) | lambdas / closures / fn-refs — capture + apply | **0 open** — both lambda forms capture identically; scalar-by-value / heap-shared capture; first-class into every container (`L-Escape`); `D-clo-18`/`D-clo-20` are decided refusals (C115); register in [closures-history.md](closures-history.md) |
 | [formatting.md](formatting.md) | text formatting — `"{x}"` interpolation + value→text rendering | **0 own** — arbitrary-expression interpolation, per-type render, the width/align/pad/precision/radix specs, fault-safe interpolation, one rendering sink, `F-Target` (a template builds a VALUE against a type defining `lit`/`hole_*`); register in [formatting-history.md](formatting-history.md) |
 | [interfaces.md](interfaces.md) | interfaces (traits) + generics — bounds, satisfaction, monomorphization | **0 open** — STRUCTURAL satisfaction (no `impl`), bounded generics, parser-side monomorphization, static satisfaction check; compile-time only (decided edges); register in [interfaces-history.md](interfaces-history.md) |
 | [collections.md](collections.md) | collection kinds (`vector`/`hash`/`sorted`/`index`/`spatial`/`trie`), indexing & slicing | **0 open** (`D-col-5`, loft#1576, closed 2026-09-22: a displaced record now leaves every keyed member of its linked group); the six kinds, indexing, slicing (`Slice-Open`/`Slice-Cap` hold), linked groups; still a SCOPE doc graduating to rules; register in [collections-history.md](collections-history.md) |

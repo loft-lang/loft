@@ -10,7 +10,7 @@ in a single day on `libraries4` (commits `1c12d7ec` → `a49b2345` →
 `b1831793` → `cd89c84b` → this commit).
 
 Reference for the shipped pattern lives in
-[PACKAGES.md § Wasm bridges](../../../PACKAGES.md#wasm-bridges-library-owned---html-extensions) —
+[PACKAGES.md § Wasm bridges](../../../PACKAGES_TARGETS.md#wasm-bridges-library-owned---html-extensions) —
 the three-part library layout (`wasm/src/lib.rs` + `wasm/host.js` +
 `[wasm.bridge]` manifest), the rustc-direct compile recipe, the
 `LOFT_WASM_EXTENSIONS` self-registration mechanism, and the
@@ -72,7 +72,7 @@ shim) would arrive as separate plan slots and reuse the pattern.
 
 ## See also
 
-- [PACKAGES.md § Wasm bridges](../../../PACKAGES.md#wasm-bridges-library-owned---html-extensions) — design reference.
+- [PACKAGES.md § Wasm bridges](../../../PACKAGES_TARGETS.md#wasm-bridges-library-owned---html-extensions) — design reference.
 - [PROBLEMS.md @P321](../../../PROBLEMS.md) — the bug that triggered this plan (browser-WASM dimension); now FIXED.
 - [`../../12-library-extraction/`](../../12-library-extraction) — sibling drain of compiler-crate library code on the non-wasm side.
 - `lib/imaging/loft.toml` + `lib/imaging/wasm/{Cargo.toml,src/lib.rs,host.js}` — the canonical implementation.

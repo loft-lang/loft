@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 > **Status — DONE / SHIPPED 2026-07-08.** All arcs landed on `main` (PR #532) and are proven
 > end-to-end by a real published consumer (`time 0.2.0`). User-facing reference:
-> [LOFT.md § First-grade custom types](../../LOFT.md). Per-arc build detail: [STEPS.md](STEPS.md).
+> [LOFT_DATA.md § First-grade custom types](../../LOFT_DATA.md). Per-arc build detail: [STEPS.md](STEPS.md).
 
 ## What shipped
 
@@ -58,7 +58,7 @@ Building `time 0.2.0` on the shipped hook exposed two defects, filed as ordinary
 
 ## See also
 
-- [LOFT.md § First-grade custom types](../../LOFT.md) — the user-facing reference (operators /
+- [LOFT_DATA.md § First-grade custom types](../../LOFT_DATA.md) — the user-facing reference (operators /
   `to_text` / `as`), including the #533 workaround note.
 - [STEPS.md](STEPS.md) — the per-arc implementation detail + probes (historical record).
 - [@PLN101](../101-value-structs/README.md) — Arc D (value structs, zero-cost).

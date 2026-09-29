@@ -11,7 +11,7 @@
 // actually met (`a-tuple-pattern-names-a-variant`).
 //
 // Two things the transcription had to change, and why (IMPL.md § Step 0):
-// - a SCALAR payload bound by a pattern is a copy (LOFT.md § Match expressions), so the state
+// - a SCALAR payload bound by a pattern is a copy (LOFT_CONTROL.md § Match expressions), so the state
 //   an arm writes lives in a nested `Status` record, which a binding views;
 // - `world.remove(f)` / `world.spawn(…)` are a vector of removed ids and a vector of spawned
 //   entities, so a row asserts WHICH entity went, not how many.

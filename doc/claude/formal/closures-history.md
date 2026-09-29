@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/closures-history.md — the deviation register for [closures.md](closures.md)
 
 > **The rules are next door.**  [closures.md](closures.md) states what must always be true of the

@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/matching-history.md — the deviation register for [matching.md](matching.md)
 
 > **The rules are next door.**  [matching.md](matching.md) states what must always be true of the

@@ -165,4 +165,4 @@ off until *its* text changes (content-hash ledger).
 ## Relationship to other docs
 - [LIBRARY_AUTHORING.md § 3](LIBRARY_AUTHORING.md) "Pre-release checklist" is the `[auto]` mechanical core of this list (tests, warnings, version, deterministic package); this doc is the superset (adds the Goal-by-Goal + doc-quality `[review]` bar + the verified administration).
 - [GOALS.md](GOALS.md) defines the six goals; this applies them at the library level.
-- [LIBRARY_AUTHORING.md § 5e](LIBRARY_AUTHORING.md) is the dev workflow that produces a release; this is the bar that release must clear.
+- [LIBRARY_PUBLISH.md § 5e](LIBRARY_PUBLISH.md) is the dev workflow that produces a release; this is the bar that release must clear.

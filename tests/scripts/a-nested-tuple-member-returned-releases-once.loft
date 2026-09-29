@@ -48,7 +48,7 @@
 //   would pass on a harness that had stopped recording.
 //
 // Two neighbouring shapes are deliberately ABSENT because they still release twice and
-// `formal/heap.md` D-heap-1 carries them: a `??` on the returned member (`return t.0.0 ?? d`,
+// `formal/heap-history.md` D-heap-1 carries them: a `??` on the returned member (`return t.0.0 ?? d`,
 // and `return t.0 ?? d` at FLAT depth too, so the axis is the `??` and not the nesting), and a
 // copy off a tuple PARAMETER's member.  Asserting their present answer would pin a defect.
 //

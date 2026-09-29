@@ -15,7 +15,7 @@ description: >-
 # loft-ship — one source, four targets, identical behavior
 
 A loft library ships to **four targets**, and the runtime — not the consumer — picks the
-variant ([PACKAGES.md § Target matrix](../../../doc/claude/PACKAGES.md)):
+variant ([PACKAGES_BUILD.md § Target matrix](../../../doc/claude/PACKAGES_BUILD.md)):
 
 | | Interpreter | `--native` | `--native-wasm` | `--html` (browser) |
 |---|---|---|---|---|
@@ -65,7 +65,7 @@ rewrite for speed is a per-routine edge case with its reason recorded.
    library; the stdlib is just the library every program imports).
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
    knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
-   (PACKAGES.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
+   (PACKAGES_BUILD.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
    opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test` and `loft test --native`;
    the test runner has no wasm mode, so the wasm target is checked by the library CI's
    WASM cross-build and by a program entry, `loft --native-wasm <program>.loft`. Tier 2 adds a

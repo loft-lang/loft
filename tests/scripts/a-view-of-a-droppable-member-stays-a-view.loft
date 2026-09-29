@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// heap.md D-heap-11 / `(H-View-Drop)` — a view of a member that owns a droppable stays a view.
+// heap-history.md D-heap-11 / `(H-View-Drop)` — a view of a member that owns a droppable stays a view.
 //
 // `(B-View)` answers a disturbed view with a COPY and tells the author, which is the right answer
 // for every type whose copy is just another value.  For a type that owns a droppable it is not:

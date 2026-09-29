@@ -1,3 +1,4 @@
+<!-- size-exempt: a record companion, read by anchor and grep (DOC_QUALITY § Maintainer docs 2) -->
 # formal/grammar-history.md — the deviation register for [grammar.md](grammar.md)
 
 > **The rules are next door.**  [grammar.md](grammar.md) states what must always be true of the
@@ -14,7 +15,7 @@ predicted — they leave formal/ rather than being driven to zero).
 > [LOFT.md § Operators](../LOFT.md#operators) carries the full twelve-level ladder (the stale
 > table is fixed: `**` added at level 10, `as` moved to 11) with an explicit associativity
 > statement (all left-assoc except `**` right-assoc) and the unary-binds-tightest note
-> (`-2 ** 2 == 4`). [LOFT.md § Summary of grammar](../LOFT.md) no longer collapses operators
+> (`-2 ** 2 == 4`). [LOFT_DECLARATIONS.md § Summary of grammar](../LOFT_DECLARATIONS.md) no longer collapses operators
 > into one undefined `op`: it enumerates `binary_op` and cross-references § Operators for the
 > grouping. The "read-the-parser tax" (FORMALIZATION.md rough spot #4) is paid down — the two
 > user-facing statements pin every expression's shape, matching `OPERATORS` / `parse_operators`.

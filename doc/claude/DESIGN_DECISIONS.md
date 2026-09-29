@@ -5,51 +5,24 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Closed-by-Decision Register
 
-Questions that were evaluated and decided, so they do not come back every session.  Before
-proposing one of these as a feature, fix or plan item, read its entry: if nothing material
-has changed, the decision stands.  Each entry states the decision, the reason it rests on and
-what would reopen it; the question as raised, the trade-offs and the evidence are in
-[DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md) under the same heading, which each
-entry's **record** link opens.  [SUBJECTS.md](SUBJECTS.md) groups the entries by the axis they
-decide.
-
-## Using the register
-
-- **Closed is not backlog.**  A closed question stays out of ROADMAP.md's milestones,
-  PLANNING.md's priorities and QUALITY.md's open work; a pointer in "Out of scope" is enough.
-- **Reopening needs new evidence** — a use case, an incident or a measurement not available at
-  the decision.  Add it to the entry's record and change the entry here; never flip one silently.
-- **Adding an entry:** take the next free id (the highest is C130).  Append the deliberation —
-  question, evaluation, dated decision, revisit trigger — to the record, and write the compact
-  entry here under the same heading, in the shape the entries below use: **Decision** and
-  **Why**, then **Revisit when**, the date and the record link.  In the source doc, strike the
-  question (`~~…~~`) and point at the entry.
-- **A decision is held to what it says (@PLN175).**  Every place that keeps it — the refusal
-  site, the code that implements it, the doc that states it, and at least one guard under
-  `tests/` that fails on a build breaking it — cites `@C<n>`.  `./scripts/idx tag:@C<n>` lists
-  them and `./scripts/idx decisions` counts them per entry (`make index` first).  A decision no
-  site can keep is not a decision: reopen it.  Where code and entry disagree, the code moves,
-  unless the owner reopens the entry.  Gate: every `@C<n>` names an entry here, and every entry
-  has its guard (`tests/index_hygiene.rs`) — a new one lands with it.
-- **A decision about a library is guarded in that library** — a test under its `tests/` citing
-  `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
-  `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which
-  `idx decisions` counts (`library`) and the gate above accepts; the `lib-main-health`
-  nightly fails when a library guard appears or disappears without that file following.
-- **`Catalogue:`** names the `@F`/`@I` catalogue entries a decision limits or shapes, so
-  `./scripts/idx tag:@F<n>` shows a feature's design bounds beside its code (@PLN92).
+Questions evaluated and decided, so they do not come back every session: before proposing one as a
+feature, fix or plan item, read its entry — if nothing material has changed, it stands.  An entry
+states the decision, its reason and what would reopen it; its **record** link opens the question,
+trade-offs and evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md).
+[SUBJECTS.md](SUBJECTS.md) groups the entries by axis;
+[DESIGN_DECISIONS_RULES.md](DESIGN_DECISIONS_RULES.md#using-the-register) says how an entry is read,
+added and held by a guard.
 
 ---
 
 ## C3 — WASM `par()` runs sequentially
 
-**Decision.** Reopened and changed by @PLN117 (owner, finished): in the browser a program that uses
-`par` gets the THREADED runtime — Web Workers over a `SharedArrayBuffer` — and runs its bodies in
-parallel; `--threads` / `--no-threads` override the choice.  It runs `par` sequentially, with the
-same answer, where the threaded runtime is not available: a host that does not send the COOP/COEP
-headers, or a build without the nightly toolchain its atomics std needs (the build says so).
-**Why.** The original reasons — bundle size, worker start-up, COOP/COEP — became costs paid only by
-a page that uses `par`, and a page without the headers still runs.
+**Decision.** In the browser a program that uses `par` gets the THREADED runtime — Web Workers
+over a `SharedArrayBuffer` — and runs its bodies in parallel; `--threads` / `--no-threads`
+override the choice.  Where that runtime is not available (no COOP/COEP headers, or a build
+without the nightly toolchain its atomics std needs, which the build says) `par` runs
+sequentially with the same answer.  **Why.** Bundle size, worker start-up and COOP/COEP are costs
+paid only by a page that uses `par`, and a page without the headers still runs.
 
 **Revisit when.** The threaded runtime no longer needs a nightly toolchain to build.  Decided
 2026-04, changed by @PLN117 — [record](DESIGN_DECISIONS-history.md#c3--wasm-par-runs-sequentially).
@@ -77,8 +50,7 @@ parameter type, or from `34 as u8`.  **Why.** Context typing already covers ever
 suffixes would add lexer ambiguity and put the intent on the literal instead of the binding.
 
 **Revisit when.** A real program needs a literal-size distinction `as <T>` cannot express
-reasonably ("Rust does it" is not evidence).  Decided 2026-04-13 —
-[record](DESIGN_DECISIONS-history.md#c54d--rust-style-numeric-literal-suffixes).
+reasonably ("Rust does it" is not evidence).  Decided 2026-04-13 — [record](DESIGN_DECISIONS-history.md#c54d--rust-style-numeric-literal-suffixes).
 **Holds at:** `@C54.D` — `tests/scripts/a-declined-form-is-refused-with-its-cure.loft` (the refusal names the cure).
 **Catalogue:** @F4 (width integers), @F5 (type conversions — `as`).
 
@@ -102,18 +74,16 @@ at file scope, not inside a function or block`); a local helper is a lambda,
 both are sugar with no capability closures lack.
 
 **Revisit when.** A real workflow shows the typed-lambda form costing more developer time than
-implementing nested `fn` would.  Decided 2026-05-04 —
-[record](DESIGN_DECISIONS-history.md#c63--no-nested-fn-definitions-inside-fn-bodies).
+implementing nested `fn` would.  Decided 2026-05-04 — [record](DESIGN_DECISIONS-history.md#c63--no-nested-fn-definitions-inside-fn-bodies).
 **Catalogue:** @F16 (functions & declarations).
 
 ## C64 — Tuple struct-ref elements use MOVE semantics (not copy + null)
 
-**Decision.** Superseded by the binding rules.  A destructured tuple member binds as its TYPE
+**Decision.** A destructured tuple member binds as its TYPE
 binds: a plain struct member is a VIEW of the tuple's member (formal/binding.md `(B-View)` — a
 struct-typed projection names an interior place), a collection or `text` member is a COPY
 (`(B-Copy)`), and a `value struct` member a value.  The tuple stays whole; nothing moves.
-**Why.** The move this entry described is not what either backend does: after `(a, _) = t`, `t` is
-still read and a write through `a` reaches `t.0`, as `(B-View)` says it must.
+**Why.** After `(a, _) = t`, `t` is still read and a write through `a` reaches `t.0`.
 
 **Revisit when.** `(B-View)` changes.  Decided 2026-05-11, superseded 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
 **Holds at:** `@C64` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`; `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
@@ -121,10 +91,9 @@ still read and a write through `a` reaches `t.0`, as `(B-View)` says it must.
 
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
-**Decision.** Superseded by `value struct`.  A tuple element of a plain struct type is a reference
-to a record (E5), and of a `value struct` type a value (E6): destructuring, projecting or copying
-the tuple gives an independent value, on both backends.  **Why.** The entry's premise — loft has
-no inline by-value struct — ended with `value struct` (@PLN101), which was its own revisit trigger.
+**Decision.** A tuple element of a plain struct type is a reference to a record (E5), and of a
+`value struct` type a value (E6): destructuring, projecting or copying the tuple gives an
+independent value, on both backends.  **Why.** `value struct` (@PLN101) is loft's by-value struct.
 
 **Revisit when.** Never for the fold; it no longer applies.  Decided 2026-05-11, superseded
 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
@@ -140,11 +109,9 @@ typed error.  Calculation faults yield null in EVERY mode (C80); a `{…}` inter
 wrong value, while a developer wants the loud stop.
 
 **Revisit when.** A deployment shape surfaces where log-and-continue is wrong.  Decided
-2026-05-11, calculation faults revised by C80 on 2026-06-24 —
-[record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
-**Holds at:** `@C66` — `panic_halts_both_backends.rs::production_mode_logs_and_continues_on_both_backends`
-(production continues, both backends; the halting rows above it are its control); LOGGER.md.
-The locked-store write keeps the same promise: `@C80`, `tests/locked_writes.rs`.
+2026-05-11, calculation faults revised by C80 on 2026-06-24 — [record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
+**Holds at:** `@C66` — `./scripts/idx tag:@C66`: production continues on both backends
+(`tests/panic_halts_both_backends.rs`), the locked-store write too (`tests/locked_writes.rs`).
 **Catalogue:** @F38 (arithmetic safety), @F44 (logging — panic/assert).
 
 ## C67 — Fail at startup, not at runtime (no programmer-side try/catch for internal bugs)
@@ -157,12 +124,9 @@ every programmer and hides crashes from the supervisor.
 
 **Revisit when.** A class of internal bug escapes compile-time analysis, or typed errors grow
 more boilerplate than a catch would — the typed-error mechanism may then evolve; try/catch for
-internal-bug recovery stays closed.  Decided 2026-05-13 —
-[record](DESIGN_DECISIONS-history.md#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs).
-**Holds at:** `try`/`catch` refused by name (`src/parser/control.rs`,
-`tests/scripts/c67-a-try-block-is-refused-by-name.loft`); a reachable unimplemented native is a
-compile error, not a runtime panic (`src/generation/mod.rs`, P269), and the interpreter refuses
-the same program at startup (`tests/exit_codes.rs::a_called_native_with_no_implementation_stops_the_program_at_startup`).
+internal-bug recovery stays closed.  Decided 2026-05-13 — [record](DESIGN_DECISIONS-history.md#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs).
+**Holds at:** `@C67` — `./scripts/idx tag:@C67`: `try`/`catch` refused by name; a reachable
+unimplemented native refused at compile time and at startup (`tests/exit_codes.rs`).
 **Catalogue:** @F44 (logging — panic/assert).
 
 ## C68 — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)
@@ -173,8 +137,7 @@ replace an existing entry with the same key — the latest insert wins, and `len
 occupied coordinate to replace, not stack a shadowed duplicate.
 
 **Revisit when.** Bulk inserts of known-unique keys are measured too slow for the dedup check.
-Decided 2026-05-21 (the same day's append/upsert split was reversed) —
-[record](DESIGN_DECISIONS-history.md#c68--keyed-collections-dedup-on-insert--and-collkeyvalue).
+Decided 2026-05-21 (the same day's append/upsert split was reversed) — [record](DESIGN_DECISIONS-history.md#c68--keyed-collections-dedup-on-insert--and-collkeyvalue).
 **Catalogue:** @F7 (hash), @F8 (sorted), @F9 (index).
 
 ## C69 — `!x` on a non-boolean is a null test, not logical-not
@@ -186,8 +149,7 @@ with `!null == true`.  `!x` on a statically non-null operand warns that it is al
 
 **Revisit when.** The idiom is shown to cause a recurring class of bugs the warning and the
 documentation miss, AND a replacement is prototyped that does not churn the stdlib ("I expected
-C semantics" is not evidence).  Decided 2026-06-03 —
-[record](DESIGN_DECISIONS-history.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
+C semantics" is not evidence).  Decided 2026-06-03 — [record](DESIGN_DECISIONS-history.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
 **Holds at:** `tests/parse_errors.rs::gh253_bang_on_not_null_warns`, `gh253_bang_on_nullable_is_quiet`.
 **Catalogue:** @F37 (operators — unary `!`), @F1 (null model).
 
@@ -200,8 +162,7 @@ name — the brittlest mechanism available; and the `.loft` source is the better
 as fast as serialized IR loads.
 
 **Revisit when.** First-run parse of a never-seen `use` set is measured to be a real bottleneck
-AND a relocation scheme is prototyped without the global-index brittleness.  Decided 2026-06-02 —
-[record](DESIGN_DECISIONS-history.md#c70--no-per-library-ir-snapshot--cache).
+AND a relocation scheme is prototyped without the global-index brittleness.  Decided 2026-06-02 — [record](DESIGN_DECISIONS-history.md#c70--no-per-library-ir-snapshot--cache).
 
 ## C71 — Native libraries compile, scripts interpret — the steady-state execution model
 
@@ -348,17 +309,15 @@ they halt in development and tests and log-and-continue in production (C66).  St
 stop (C67).  **Why.** As in a spreadsheet, one bad cell never stops the others: degradation stays
 local, with no unwinding or cleanup blocks to get wrong.
 
-**No runtime exceptions — ever (owner ruling 2026-09-28).**  Nothing a running program does stops
-it: no new runtime error kind, no check that halts, and any found is removed.  The only halts are
-`panic`/`assert`, the call-depth limit and a write to a locked store (`@FR-H-WriteLocked`), and
-all four in development and test builds only, never in production — there the locked write is
-logged and discarded; the depth limit reports the recursion fully ([@PLN177](plans/177-growable-stack.md),
-[CAVEATS.md](CAVEATS.md#recursion-depth-is-capped-and-the-cap-halts-the-run) until it lands).  What a
-fix may use instead: a compile-time refusal, a compile-time warning that a construction needs
-inspecting, the programmer's OWN optional inspection of one specific expression (`?? fallback`, a
-checked result), or degrading to null with a log line.  Every fault — division by zero, an index out of
-range, overflow, anything — answers a value the programmer MAY inspect on that expression, and is
-never a hard stop in production.
+**No runtime exceptions — ever.**  Nothing a running program does stops it: no new runtime error
+kind, no check that halts, and any found is removed.  The only halts — `panic`, `assert`, the
+call-depth limit and a write to a locked store (`@FR-H-WriteLocked`) — happen in development and
+test builds only; in production the locked write is logged and discarded, and the depth limit
+reports the recursion fully ([@PLN177](plans/177-growable-stack.md); until it lands,
+[CAVEATS.md](CAVEATS.md#recursion-depth-is-capped-and-the-cap-halts-the-run)).  A fix uses
+instead a compile-time refusal, a compile-time warning that a construction needs inspecting, the
+programmer's OWN optional inspection of one expression (`?? fallback`, a checked result), or null
+with a log line: every fault answers a value the programmer MAY inspect on that expression.
 
 **Revisit when.** Silent null-and-continue loses critical information for a consumer — and even
 then the fix is more observability, never a halt.  Decided 2026-06-24 — [record](DESIGN_DECISIONS-history.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation).
@@ -412,8 +371,8 @@ folded into it; @PLN148 builds that stack as `webapp`, `auth`, `acme` and `sql`
 lives in `server` forces its dependencies on every program that only answers requests.
 
 **Revisit when.** A primitive `server` lacks blocks a library above it; then add that primitive
-(as @PLN148's `reload_tls`), not the layer.  Decided 2026-07-02, amended 2026-09-29 (owner: the
-framework is on the roadmap, as its own libraries) — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
+(as @PLN148's `reload_tls`), not the layer.  Decided 2026-07-02, amended
+2026-09-29 — [record](DESIGN_DECISIONS-history.md#c84--server-ships-as-minimal-tcpws-primitives-not-a-fully-featured-http-framework).
 **Holds at:** `@C84` — `loft-libs-net` `server/tests/c84_surface.loft` (the package's public
 surface is the transport set; a new name fails its CI until someone adds it on purpose).
 **Catalogue:** the `server` library (`loft-lang/loft-libs-net`).
@@ -444,9 +403,7 @@ compiler's invisible optimisation or the programmer's explicit `&`.
 widened — which argues for widening `ElidePlan`, never for flipping the semantics.  Decided
 2026-07-03 — [record](DESIGN_DECISIONS-history.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule).
 **Catalogue:** @F21 (references), @I60 (deps).
-**Holds at:** `tests/scripts/201-bind-copies-projection-views.loft`,
-`tests/scripts/774-view-outlives-reassigned-container.loft`; `formal/binding.md` `(B-Ref-Reshape)`;
-[OWNERSHIP_MODEL.md § A view lasts as long as the thing it names](OWNERSHIP_MODEL.md#a-view-lasts-as-long-as-the-thing-it-names--and-loft-says-when-it-does-not).
+**Holds at:** `./scripts/idx tag:@C86`; `formal/binding.md` `(B-Ref-Reshape)`; [OWNERSHIP_MODEL.md § A view lasts as long as the thing it names](OWNERSHIP_MODEL.md#a-view-lasts-as-long-as-the-thing-it-names--and-loft-says-when-it-does-not).
 
 ## C87 — `#rust"..."` template path is KEPT; do NOT migrate it away to per-Op emitters (@PLN81 closed)
 
@@ -457,8 +414,6 @@ reaches all four targets.  A native crate bridges a capability loft lacks; it is
 for a routine loft can express (`(Perf-Cure)`, [formal/performance.md](formal/performance.md)).
 **Why.** Migrating the ~200 templates to per-Op emitters makes a new operator cost a struct and a
 registration instead of one line; the emission-bug class is better served by hardening the path.
-The library reading the 2026-07-08 decision rested on never held: the parser accepted `#rust`
-only in `default/`, and no published library used it (owner, 2026-09-29).
 
 **Revisit when.** Emission genuinely needs one source of truth — then fold the few hand-written
 emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-25 and 2026-09-29 — [record](DESIGN_DECISIONS-history.md#c87--rust-template-path-is-kept-do-not-migrate-it-away-to-per-op-emitters-pln81-closed).
@@ -467,11 +422,10 @@ emitters INTO `#rust`, never the reverse.  Decided 2026-07-08, amended 2026-09-2
 
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
-**Decision.** The scope-exit `OpFreeRef` gate in `src/scopes.rs` keeps its dep-derived half;
-"emit more frees and rely on a free being idempotent" is declined.  **Why.** The concern —
-cleanup correctness should not hang on dep-tracker precision — is real, but the right vehicle is
-one ownership query (the `ownership_of` oracle) replacing the gate's special cases, not a blunter
-gate.
+**Decision.** The scope-exit `OpFreeRef` gate in `src/scopes.rs` keeps its dep-derived half; "emit
+more frees and rely on a free being idempotent" is declined.  **Why.** The concern — cleanup
+correctness should not hang on dep-tracker precision — is real, but the right vehicle is one
+ownership query (the `ownership_of` oracle) replacing the gate's special cases, not a blunter gate.
 
 **Revisit when.** The `ownership_of` oracle graduates from observer to authority; making it the
 free-emission authority is then a fresh plan.  Decided 2026-07-09 — [record](DESIGN_DECISIONS-history.md#c88--the-scope-exit-free-gate-stays-dep-derived-simplify-it-if-ever-by-promoting-pln94s-ownership-oracle-to-authority-not-by-pln79s-drop-the-gate-half--rely-on-idempotent-free-pln79-closed).
@@ -513,17 +467,11 @@ same record; `&` on only one side is refused, and a scalar or `text` has no reco
 two operands are one record is only the fast path of content equality, never its meaning, and a
 `value struct` is a layout choice with the same `==`.  Key comparison and hashing in keyed
 collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
-identity `==` reported where a value is stored: `b = a; a == b` answered false, and
-`value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
-decided by what is written; how fast it is, by the compiler.  Built by @PLN175 in ten steps,
-census before every flip.
+identity `==` would answer by where a value is stored.  What `==` means is
+decided by what is written; how fast it is, by the compiler.
 
-**Holds at:** `@C91` — `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`
-(struct, nested, tuple, lists, cycles, nullable pairs, a value struct's reference),
-`c91-a-collection-and-an-enum-value-compare-by-content.loft`, `c91-a-vector-compares-by-content.loft`,
-`c91-an-identity-compare-names-one-record.loft` and `c91-an-identity-compare-refuses-what-it-cannot-ask.loft`
-(`&a == &b`), `c91-a-float-key-agrees-with-equality.loft` (keys), `c91-every-type-is-equatable.loft`
-(generics), and `tests/store_content_eq.rs` (`Stores::eq_content`, the census trace); both backends.
+**Holds at:** `@C91` — `./scripts/idx tag:@C91`: the `tests/scripts/c91-*.loft` guards (content,
+collections, vectors, identity, keys, generics) and `tests/store_content_eq.rs`, both backends.
 
 **Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
 identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
@@ -722,7 +670,7 @@ table's width changes for another reason.  Decided 2026-08-10 — [record](DESIG
 (stdlib or entry project), a call site everywhere, so an unused over-ceiling binding in a dependency
 does not fail your build; past 32, write an ANSI-C shim.  The diagnostic keeps its code
 `c-binding-not-interpretable`.  **Why.** A backend-specific ceiling is a portability trap that fires
-downstream, and extending the trampoline ladder was mechanical.  Arity is refused at the declaration
+downstream.  Arity is refused at the declaration
 (unlike `#c` on wasm, at the call) because an over-ceiling binding works on no target.
 
 **Revisit when.** A real C API needs more than 32 integer-class slots; the ceiling then moves for
@@ -861,21 +809,18 @@ element layout and a closure's environment differs per lambda; carrying it would
 fn-typed collection and give the collection a second ownership discipline.  A struct field
 co-locates the record (C75).
 
-**Revisit when.** Not stated.  Decided 2026-09-04 (loft#1358) —
-[record](DESIGN_DECISIONS-history.md#c116--a-collection-element-holds-a-plain-fn-ref-never-a-capturing-closure).
+**Revisit when.** Not stated.  Decided 2026-09-04 (loft#1358) — [record](DESIGN_DECISIONS-history.md#c116--a-collection-element-holds-a-plain-fn-ref-never-a-capturing-closure).
 Holds at `Parser::refuse_capturing_closure_in_collection`.
 
 ## C117 — a linked group's members must share one element LAYOUT; the tag-aware dense read is declined
 
 **Decision.** A struct declaring both a dense `vector<E>` and a `vector<E?>` beside a keyed member
-is refused; the message names the cures (`vector<E?>` for both, or drop the keyed member).
-**Why.** One record set that may hold absence cannot be read through a non-null element type:
-left alone the dense member silently leaves its group, and made to join it misreads the tag as
-data.  A tag-aware dense read would give `vector<E>` a layout its author did not write
-(`(N-Dense)`).
+is refused; the message names the cures (`vector<E?>` for both, or drop the keyed member). **Why.**
+One record set that may hold absence cannot be read through a non-null element type: left alone the
+dense member silently leaves its group, and made to join it misreads the tag as data.  A tag-aware
+dense read would give `vector<E>` a layout its author did not write (`(N-Dense)`).
 
-**Revisit when.** Not stated; declined, not deferred.  Decided 2026-09-06 (loft#1385) —
-[record](DESIGN_DECISIONS-history.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined).
+**Revisit when.** Not stated; declined, not deferred.  Decided 2026-09-06 (loft#1385) — [record](DESIGN_DECISIONS-history.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined).
 Holds at `(Col-Group)`, [formal/collections.md](formal/collections.md).
 
 ## C118 — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
@@ -886,8 +831,7 @@ producer is decoding a document with a missing key, and the append binds no elem
 question is which store the record joins, and an absent collection has one sensible answer.
 
 **Revisit when.** A consumer shows the silent instantiation hid a defect — evidence for an
-`advice` note, not an error.  Decided 2026-09-07 (loft#1434) —
-[record](DESIGN_DECISIONS-history.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined).
+`advice` note, not an error.  Decided 2026-09-07 (loft#1434) — [record](DESIGN_DECISIONS-history.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined).
 Holds at `(Col-Insert-Absent)`, [formal/collections.md](formal/collections.md).
 **Catalogue:** @F1 (null model), @F38.
 
@@ -913,8 +857,7 @@ established BEFORE the arithmetic rules out a fault (`(R-Range)`, `(R-GuardedCha
 game with fault-free checked runs may come, never as a default.  **Why.** A rewrite must leave every
 observable value as the interpreter answers it, faults included.
 
-**Revisit when.** Nothing reopens it; the successor is a range proof.  Decided 2026-09-15 —
-[record](DESIGN_DECISIONS-history.md#c120--integer-arithmetic-on-native-stays-sentinel-aware-after-a-fault-the-non-null-proof-does-not-close-over----).
+**Revisit when.** Nothing reopens it; the successor is a range proof.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c120--integer-arithmetic-on-native-stays-sentinel-aware-after-a-fault-the-non-null-proof-does-not-close-over----).
 Holds at [NATIVE.md § Optimisation tiers](NATIVE.md#optimisation-tiers--semantics-runs-performance-lanes-shipped-binaries).
 
 ## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
@@ -926,8 +869,7 @@ own variable.  **Why.** A release moving with a copy leaves a structure without 
 releases twice; inferring moves from later use lets a later line redefine an earlier one.
 
 **Revisit when.** A consumer needs a droppable OUT of a container it keeps using — that wants a
-named `take`, not an implicit move.  Decided 2026-09-15 —
-[record](DESIGN_DECISIONS-history.md#c121--a-copy-of-a-droppable-takes-its-own-lease-or-is-refused-the-release-no-longer-moves-with-a-copy).
+named `take`, not an implicit move.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c121--a-copy-of-a-droppable-takes-its-own-lease-or-is-refused-the-release-no-longer-moves-with-a-copy).
 Holds at `(H-Copy-Lease)`, `(H-Copy-Refuse)`, [formal/heap.md](formal/heap.md).
 **Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension
 
@@ -940,8 +882,7 @@ is a boundary is a BUILD fact (`--native-release` compiles its loft libraries in
 `#rust` native, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
 program cannot observe is the compiler's; what it can is the language's (C120, other side).
 
-**Revisit when.** Not stated.  Decided 2026-09-15 —
-[record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
+**Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
 Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
 
 ## C123 — one name has one body per receiver type; `both` is how a function takes both spellings
@@ -953,8 +894,7 @@ another type is an overload.  `self` and `both` now mean the same, so `both` is 
 a line requires knowing how loft resolves it.
 
 **Revisit when.** Never for two behaviours under one name on one type — the cure is a second name.
-Remove `both` once no published version declares it.  Decided 2026-09-15 —
-[record](DESIGN_DECISIONS-history.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings).
+Remove `both` once no published version declares it.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings).
 **Catalogue:** @F16 (method and function calls) · INC#8 · `formal/calls.md` (F-OneBody)
 
 ## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
@@ -980,11 +920,8 @@ the temporary instead — `(R-ValueRecord)`, `(O-ViewField)`, `(R-Place)`, `(R-I
 kind becomes hard to reason about and so impossible to verify.
 
 **Revisit when.** Temporaries that cannot be removed or reused cost more than a few percent,
-measured on the release binary with `perf`.  Decided 2026-09-17 —
-[record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
-**Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md) (owner,
-2026-09-29: a foreign-data view that still presents a store, @PLN174, is the model working — every
-read routine served it unchanged); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
+measured on the release binary with `perf`.  Decided 2026-09-17 — [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
+**Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
 (a heap value is one `DbRef` on both backends — a second kind needs a second representation).
 **Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
 
@@ -997,8 +934,7 @@ collections stay record sets (no `hash<K, V>`), and the SQL `hole_*` family stay
 `reduce` need a second variable to stop being special forms.
 
 **Revisit when.** A keyed type has a use a record set cannot express, or a target wants an OPEN
-set of hole kinds.  Decided 2026-09-21 —
-[record](DESIGN_DECISIONS-history.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set).
+set of hole kinds.  Decided 2026-09-21 — [record](DESIGN_DECISIONS-history.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set).
 **Catalogue:** @F25 (generics) · @F26 (bounded generics) · @F94 · revises C110.
 
 ## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
@@ -1027,8 +963,7 @@ still aliases.  Eliding the copy where unobservable is allowed.  **Why.** Sharin
 closure outlive the frame that owns the value; a generator hands out values, not windows into its
 state, as `(G-Own)` already says for a yielded record.
 
-**Revisit when.** Not stated.  Decided 2026-09-25 —
-[record](DESIGN_DECISIONS-history.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures).
+**Revisit when.** Not stated.  Decided 2026-09-25 — [record](DESIGN_DECISIONS-history.md#c128--a-yielded-lambda-owns-copies-of-what-it-captures).
 **Catalogue:** loft#1676 · `formal/coroutines.md` `(G-Own)`
 
 ## C129 — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
@@ -1045,22 +980,19 @@ target, silently; a value-range proof is portable by construction.
 
 ## C130 — A store carries its own failure arm: else after the assignment
 
-**Decision.** An assignment statement may end in `else { … }`, run exactly when the store did
-not take: an index out of range, a null index, a write through `nullref` at any step of the
-chain, a narrow slot the value did not fit, a lock fault.  The place is spelled once; the store
-stays a statement (a store in condition position is refused) and has no success arm.  An
-unguarded dropped write logs one Warn line in every build kind — that log is the default
-resolution, and a missing `else` is never diagnosed.  `else` supersedes `if !place`, which stays
-accepted.  **A lock fault is not a dropped write (owner, 2026-09-28):** writing a locked store is
-a program error, not a missing element, so unguarded it halts a DEVELOPMENT run with the lock
-report, and a production run logs and discards it (`@FR-H-WriteLocked`, C80).  **Why.**
-Re-spelling the place copies a chain exactly where the copy goes wrong, and re-reads instead of
-reporting; a store as a condition is the `=`-for-`==` typo; `||` or `??` would give "or" a third
-meaning; a result wrapper is declined by C89.
+**Decision.** An assignment statement may end in `else { … }`, run exactly when the store did not
+take: an index out of range, a null index, a write through `nullref` at any step of the chain, a
+narrow slot the value did not fit, a lock fault.  The place is spelled once; the store stays a
+statement (a store in condition position is refused) and has no success arm.  An unguarded dropped
+write logs one Warn line in every build kind — that log is the default resolution, and a missing
+`else` is never diagnosed.  `else` supersedes `if !place`, which stays accepted.  **A lock fault is
+not a dropped write:** writing a locked store is a program error, not a missing element, so
+unguarded it halts a DEVELOPMENT run with the lock report, and a production run logs and discards it
+(`@FR-H-WriteLocked`, C80).  **Why.** Re-spelling the place copies a chain exactly where the copy
+goes wrong, and re-reads instead of reporting; a store as a condition is the `=`-for-`==` typo; `||`
+or `??` would give "or" a third meaning; a result wrapper is declined by C89.
 
 **Revisit when.** A consumer shows the Warn line is noise in a real program — and even then the
 answer is a cheaper guard (`else {}`), never a mode split or a compile-time nag.  Decided
 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
-**Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](plans/178-store-else.md) ·
-`formal/heap.md` `(H-WriteOOB)` / `(H-WriteNull)` / `(H-WriteLocked)`, `formal/operational.md`
-`(E-Uncomp-Seen)` / `(E-Report)`.
+**Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](plans/178-store-else.md) · `formal/heap.md` `(H-WriteOOB)` / `(H-WriteNull)` / `(H-WriteLocked)`, `formal/operational.md` `(E-Uncomp-Seen)` / `(E-Report)`.

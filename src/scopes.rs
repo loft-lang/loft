@@ -315,7 +315,7 @@ struct Scopes<'s> {
     /// join, and retired when either end is reassigned (@FR-O-Latest — the fact belongs to
     /// the latest assignment, and a view whose BASE was rebuilt names a different record).
     view_backing: HashMap<u16, (u16, (u16, u16))>,
-    /// loft#1510 / `formal/heap.md` D-heap-4 — a local whose LATEST assignment delivered a
+    /// loft#1510 / `formal/heap-history.md` D-heap-4 — a local whose LATEST assignment delivered a
     /// CONSTRUCTION's work-ref record (`construction_work_ref`), mapped to that work-ref.
     /// Read by the owned→view transition free: releasing the store by identity there must
     /// run the type's cascade first and then disarm the work-ref, whose own scope-end drop
@@ -323,7 +323,7 @@ struct Scopes<'s> {
     /// discipline as [`Self::owned_refs`]; an entry that does not survive a join falls back
     /// to the bare free (losing the hook, never doubling it).
     construction_backing: HashMap<u16, u16>,
-    /// loft#1607 / `formal/heap.md` D-heap-38 — a VECTOR local's latest bind on THIS path, mapped
+    /// loft#1607 / `formal/heap-history.md` D-heap-38 — a VECTOR local's latest bind on THIS path, mapped
     /// to the backing that bind filled (`w = OpGetField(__vdb_N, …)`).  The variable's type names
     /// one backing, the LAST bind's (`@FR-O-Latest`), which is the wrong one for an arm that bound
     /// an earlier one; the scope-end release reads this first.  Same per-arm save and intersect
@@ -3946,7 +3946,7 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
     out
 }
 
-/// `formal/heap.md` D-heap-15 — write a join COPIED into a container out per arm:
+/// `formal/heap-history.md` D-heap-15 — write a join COPIED into a container out per arm:
 /// `OpCopyRecord(if c { a } else { b }, dest, tp)` becomes
 /// `if c { OpCopyRecord(a, dest, tp) } else { OpCopyRecord(b, dest, tp) }`.
 ///
@@ -6024,7 +6024,7 @@ fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
 /// Rewrites the reassignments a first scan wrote out per arm into that per-arm statement form, in
 /// `code` itself, and removes from `vars` the deps the parser gave each such binding for its local
 /// arms.  A rescan from the result reads, in every analysis that runs before the scan, what the
-/// author's own per-arm spelling gives it (`formal/binding.md` D-bind-34, `heap.md` D-heap-7).
+/// author's own per-arm spelling gives it (`formal/binding.md` D-bind-34, `heap-history.md` D-heap-7).
 /// Returns whether anything was rewritten.
 ///
 /// Each site is found by the address of its `Set`'s value node, which the scan recorded while
@@ -6427,7 +6427,7 @@ fn run_scan_phase(
     // a copy that takes its release and the DESTINATION for a copy off a PARAMETER, because the
     // caller owns what it holds (`per_path_stops`).  Stopped on every path instead, the second
     // lost a release: after `x = mk(); if c { x = p; }` the stopped `x` left `mk()` unreleased
-    // on the path where the copy did not run (heap.md `D-heap-7`, the branch not taken).
+    // on the path where the copy did not run (heap-history.md `D-heap-7`, the branch not taken).
     // `(H-Drop)` — the locals that hold the caller's record on every path, marked before any reader
     // of `copy_moves_drop_from` runs: the per-path registration just below, the statement scan, and
     // the double-move lint after the scope pass all read the mark through that one decider.
@@ -6436,7 +6436,7 @@ fn run_scan_phase(
         function.mark_caller_record(v);
     }
     // A copy that stops its DESTINATION written in a LOOP body is per path too — per iteration: the
-    // next pass displaces what this one copied, so the answer is the flag's (heap.md `D-heap-7`, the
+    // next pass displaces what this one copied, so the answer is the flag's (heap-history.md `D-heap-7`, the
     // loop).  A copy that moves its source's release keeps the loop's early seed.
     let loop_copies = loop_self_stopping_copies(orig_code, &function, data);
     scopes.per_path_pairs = per_path_handoffs(orig_code)
@@ -9296,7 +9296,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         let mut orig_code = data.definitions[d_nr as usize].code.clone();
         let mut orig_vars = Function::copy(&data.def(d_nr).variables);
         // A join copied into a container is written out per arm before any analysis reads it,
-        // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
+        // so each arm's copy hands its own source over (`formal/heap-history.md` D-heap-15).
         write_out_joined_copies(&mut orig_code, &orig_vars, data);
         reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
         retain_shared_handles(d_nr, &mut orig_code, &orig_vars, data, database);
@@ -12689,7 +12689,7 @@ impl Scopes<'_> {
             // owned: `v` holds a copy of its own, and whether that record's release is `v`'s is
             // the flag's to answer, per path.  Recorded as a view, the arm that copied and the
             // arm that did not disagreed at the join, so a later rebind released neither
-            // (heap.md `D-heap-7`).
+            // (heap-history.md `D-heap-7`).
             if self.copy_flagged_on_target(function, data, v, value)
                 || matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
             {
@@ -19715,7 +19715,7 @@ impl Scopes<'_> {
         // callee handed null mints a store of its own.  Each such arm is given a temp too —
         // `x = a ?? mk(7)` then owns `mk(7)`'s store on the path that made it, exactly as the
         // `if` spelling of the same join does through its `join-arm-owner` block
-        // (`formal/heap.md` D-heap-16).
+        // (`formal/heap-history.md` D-heap-16).
         let mut owned: Vec<u16> = Vec::new();
         self.lift_owned_call_tails(node, home, function, data, &mut owned);
         // loft#1623 — every frame-owned temp this join's value may live in, recorded against the
@@ -21808,7 +21808,7 @@ fn owner_witness_locals(
 /// call answering a borrow, a join?  The `viewed` half of [`owner_witness_locals`].
 ///
 /// A CONSTRUCTION into its own work-ref is NOT one, and answering `true` for it fabricated the
-/// VIEW half of a mix that does not exist (loft#1517, `formal/heap.md` D-heap-6).  The work-ref
+/// VIEW half of a mix that does not exist (loft#1517, `formal/heap-history.md` D-heap-6).  The work-ref
 /// is the compiler's own temp for this very literal, so no other BINDING owns what it names, and
 /// the local adopts the store outright ([`Scopes::scan_set`]'s hand-off disarm) — which is also
 /// `@FR-O-Owner`'s single owner, and it only holds once the local is NOT witnessed.

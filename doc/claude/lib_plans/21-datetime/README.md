@@ -12,7 +12,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 registry**, with all 24 lib tests green on `--interpret` AND `--native`, and the DateTime surface
 verified identical on **wasm** (wasm32-wasip2 / wasmtime) — now gated going forward by the
 differential oracle's third backend (`tests/oracle/29`). User-facing API:
-[LOFT.md § Value structs / First-grade custom types](../../LOFT.md).
+[LOFT_DATA.md § Value structs / First-grade custom types](../../LOFT_DATA.md).
 
 The prerequisites the pivoted design needed all shipped this cycle: the per-type
 `to_text(self, spec)` format hook + direct operator dispatch + `as` conversions
@@ -295,7 +295,7 @@ three-backend `time` gate already covers it with no extra parity path.  The
 
 - [DESIGN.md](DESIGN.md) — the struct + general `to_text(self, spec)` format-hook
   design that supersedes the old built-in arcs A/B/C.
-- `doc/claude/LOFT.md § String formatting` — the format system the `to_text` hook
+- `doc/claude/LOFT_LITERALS.md § String formatting` — the format system the `to_text` hook
   (arc F) extends.
 - `doc/claude/BROADENING.md` — Data/ETL gap list naming the date hole.
 - `../personal/training/MIGRATION.md` — the driving consumer + parity oracle.

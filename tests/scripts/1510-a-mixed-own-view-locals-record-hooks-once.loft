@@ -3,7 +3,7 @@
 // @catches: LOFT_NO_OWNER_WITNESS — the switch emits the pre-witness form, whose release of a local that both owns and views is what this program checks.
 //
 // A mixed own/view local's owned record runs its OpDrop hook exactly once (loft#1510,
-// `formal/heap.md` D-heap-4).
+// `formal/heap-history.md` D-heap-4).
 //
 // `heap.md (H-Drop)` runs the hook at the record's death; `(O-Latest)` says a static deps
 // list cannot carry per-assignment ownership, so a local that OWNS after one assignment and
