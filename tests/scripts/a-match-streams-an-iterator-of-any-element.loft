@@ -22,6 +22,14 @@
 //                        position (head, tail after `..`) and form (bindings, literal, `_`,
 //                        variant, guard); a bare binding of a whole tuple element.
 // Axes it HOLDS FIXED:   two-member tuples; one match per function.
+//
+// @falsified-at: f440fa9d9 — interpret exit 1 -> 0, native exit 1 -> 0.  CHANNEL: exit — the
+//   control refused the stream and the tuple patterns, so no assertion ran on it.  The tuple
+//   READ is a value defect, scored apart by a mutation that drops only its unbox from
+//   `read_slice_elem`: interpret 2 assertion failures -> 0 (`bare`, `rest`), native exit 1 -> 0
+//   (the `DbRef as (i64, i64)` compile failure).
+// @falsified-by: tests/falsified/a-match-streams-an-iterator-of-any-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak (LOFT_STRICT_STORES=1), panic and free-refusal are clean on both backends.
 
 enum Col { Red, Green, Blue }
 enum Tk { Num { n: integer }, Word { w: text } }
