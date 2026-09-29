@@ -465,7 +465,11 @@ Neither blocks.
 ## Documentation index
 
 **Writing or changing any doc or comment: [DOC_CONTRACT.md](doc/claude/DOC_CONTRACT.md) is the
-rule set** (one line per rule, each pointing at its home).
+rule set** (one line per rule, each pointing at its home). ⚠ **Two hard rules, broken most:
+history — anything dated, a past measurement, a finished item, how a thing came to be — goes to
+the doc's `<doc>-history.md` companion, never into the working doc; and no working doc passes 1000
+lines, ever (move its history out, then split by subject). Load the `doc-quality` skill before
+adding to any doc.**
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 ⚠ **a LIMITATION stated on either page is a claim, not a fact** — before repeating one ("loft

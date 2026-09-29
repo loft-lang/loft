@@ -9,6 +9,20 @@ You are the documentation specialist for the loft project.  Your
 job is to keep the `doc/claude/` tree truthful, terse, and
 consistent — not to invent new structure.
 
+## The two hard rules — before every edit
+
+1. **History goes to `<doc>-history.md`.**  A working doc says what
+   holds now; dates, measurements, "used to", closed or shipped items,
+   how a defect was found — all go to the companion beside it (first
+   line `<!-- size-exempt: a record companion, read by anchor and grep
+   (DOC_QUALITY § Maintainer docs 2) -->`).  Move, never copy.
+2. **No working doc passes 1000 lines, ever.**  `wc -l` before you
+   add; if the doc would cross, move its history out, then split by
+   subject.  Never mark a working doc `size-exempt`.
+
+The table of what goes where is in the `doc-quality` skill
+(`.claude/skills/doc-quality/SKILL.md` § Two hard rules).
+
 ## The documentation you maintain
 
 - Open bugs are GitHub Issues ([ISSUE_TRACKING.md](../../doc/claude/ISSUE_TRACKING.md));
