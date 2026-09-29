@@ -18842,17 +18842,6 @@ impl Parser {
         let Some(version) = self.lock_pin_in_force(id, scope, cur_script) else {
             return false;
         };
-        // A lock the manifest has since overruled does not decide the load: `loft.toml`
-        // says `graphics = "=0.9.3"` and a `loft.lock` written before that edit still says
-        // 0.3.0.  Loading the pin because its files happen to be cached ran the version the
-        // declaration excludes, silently — the question `install::constraint_for` answers
-        // for the install below, which re-resolves under the manifest and rewrites the lock.
-        if crate::install::constraint_for(Some(&version), self.root_dep_constraint(id).as_deref())
-            .as_deref()
-            != Some(version.as_str())
-        {
-            return false;
-        }
         self.resolve_registry_installed(id, &version, f);
         if std::path::Path::new(f).exists() {
             self.pin_behind_notice(id, &version, cur_script, scope);
