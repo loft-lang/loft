@@ -24,6 +24,8 @@
 //   fails the two block cells only: it COPIED into the `??` hoist, so the cast and branch cells
 //   answer right on the control and leak the copy instead, which this runner does not score —
 //   `tests/leak_cases.rs` carries that half.
+//   ARMED: this file's assertion channel needs nothing armed; the native LEAK half it names
+//   needs `LOFT_NATIVE_LEAK_CHECK=1`, which `tests/leak_cases.rs` sets for its native sweep.
 //   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
 //   requires HERE to be clean, so all four are clean on both; the two view cells pass on both.
 
