@@ -7,7 +7,10 @@
 // "Unknown cast", the second answering null from a slot typed non-null.  The runtime cells are the
 // sibling file.
 //
-// @falsified-at: PENDING
+// @falsified-at: f298fb423 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/c131-a-cast-to-a-variant-is-refused-where-it-cannot-keep-its-promise.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree gives neither message.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 enum Col { Red, Blue }
 enum Shape { Circle { radius: integer }, Rect { w: integer } }

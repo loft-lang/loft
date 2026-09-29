@@ -10,7 +10,11 @@
 // true.  On native a hit also leaked the record it was deep-copied into.  The refusals (a provable miss, a variant with no default) are the sibling file.
 // Values are hand-computed.
 //
-// @falsified-at: PENDING
+// @falsified-at: f298fb423 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/c131-a-cast-to-a-variant-answers-the-variant.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the first assertion — on the control tree a miss answers null, not the default.
+// HOLDS: leak, panic and free-refusal are clean on both trees (the native leak of a hit was
+//   fixed with the copy gate, 90b744034).
 
 struct Pt { x: integer, y: integer }
 enum Shape { Circle { radius: integer, tag: text, at: Pt }, Rect { w: integer, h: integer } }
