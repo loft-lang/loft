@@ -3569,7 +3569,16 @@ use #count instead"
             // loft#986 — see `in_control_head`: the `{` after the iterable opens the body.
             let outer_head = self.in_control_head;
             self.in_control_head = true;
+            // The iterable is never the enclosing block's VALUE, so the block's expected type
+            // (`seed_leaving_value_hint`, pushed before every statement because a statement
+            // is not known to be the tail until it ends) is not its type: `for i in [0, 1]`
+            // inside a `-> vector<Pin>` function was built as a `vector<Pin>` and refused.  The
+            // channel is RESTORED after: a block whose own result is unknown (a `match` arm's
+            // `{ for …; CNull }`) hands its statements the expectation it inherited, and the
+            // tail after the loop still needs it.
+            let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            self.expected = block_expected;
             self.in_control_head = outer_head;
             // if #fields was detected, take the compile-time unrolling path.
             if self.fields_of != u32::MAX {

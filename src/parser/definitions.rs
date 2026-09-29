@@ -3465,17 +3465,28 @@ impl Parser {
                 let value_start = self.lexer.link();
                 let unresolved_before = self.unresolved_names;
                 let unresolved_types_before = self.unresolved_types;
-                let mut t = Value::Var(arguments.len() as u16);
+                // Parsed as a VALUE (`Null`), not into the slot `Var(arguments.len())`: no variable
+                // occupies that number while the default is parsed, so a literal building
+                // "into" it met its own element temporary minted at the same number, and a
+                // seeded `vector<S>` default failed with "Variable '_elm_1' cannot change type".
+                // The slot stays the marker for a default whose parse BUILT nothing — a pass-1
+                // call to a function declared below (loft#1170) — which is not the `null` literal
+                // that means "no default".
+                let null_literal = self.lexer.peek_token("null");
+                let mut t = Value::Null;
                 // loft#1067 — the parameter's declared type is the expected type for its
                 // DEFAULT, exactly as it is for an argument a caller passes: a default is
                 // checked against it a few lines below, and `fn takes(f: fn(integer) ->
                 // integer = |x| { x * 2 })` has no other way to say what `x` is.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&typedef) {
-                    self.expected = typedef.base().clone();
+                if let Some(h) = self.argument_hint(typedef.base().clone()) {
+                    self.expected = h;
                 }
                 let dtype = self.expression(&mut t);
                 self.expected = saved_expected;
+                if matches!(t, Value::Null) && !null_literal {
+                    t = Value::Var(arguments.len() as u16);
+                }
                 // @PLN102 arc-E (E2 Tier-0): type-check + coerce the default
                 // expression against the parameter type, exactly as a call-site
                 // argument is (`convert` then `validate_convert`, mod.rs:5907).
@@ -6441,8 +6452,10 @@ impl Parser {
         // loft#1067 — a DEFAULT is checked against the declared type, so
         // `fn takes(f: fn(integer) -> integer = |x| { x * 2 })` infers `x`
         // exactly as a caller passing the same lambda would.
-        if self.enum_context(a_type) || Self::seeds_lambda_hint(a_type) {
-            self.expected = a_type.clone();
+        // A field default is the same position as a parameter's (`argument_hint`): a bare
+        // `vector<E>` literal default resolves its variants against `E` as well.
+        if let Some(h) = self.argument_hint(a_type.clone()) {
+            self.expected = h;
         }
         // loft#698 — where the default's value is BUILT decides whether it
         // can be replayed.  Mark the source position first: a default that

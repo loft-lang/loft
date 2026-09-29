@@ -1307,6 +1307,21 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-20, D-types-21** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(T-Chk)` pushes the
+  expected type "structurally into sub-expressions", and at an argument, a tail or a default
+  it stopped at the literal's brackets.  **-20** `(T-Chk-Vec)`: the expected `vector<τ>` reached
+  a bare literal's elements only when `τ` was a narrow integer (#432's scope), so `f([1, 2])`
+  into a `vector<float>` parameter, `fn g() -> vector<(float, integer)> { [(1, 2)] }`, a lambda
+  tail and a parameter default were refused while `v: vector<float> = [1, 2]` compiled; a
+  `vector<S>` or `vector<vector<float>>` parameter DEFAULT failed with *"Variable '_elm_1' cannot
+  change type"* once seeded, because it was parsed into a variable slot nothing occupied.  The
+  hint now seeds any element type naming no type variable, and a literal that is the RECEIVER
+  of a chain (`[1, 2].map(…)`) takes none.  **-21** `(T-Chk-Var)`: the list of expected-type
+  shapes an argument pushes was written five times and disagreed — a named argument, a method
+  argument and a parameter default reported a bare variant ambiguous where a positional
+  argument resolved it, a method argument took no tuple member types, and a struct-field
+  default took no collection.  One list, `argument_hint`, now serves every spelling.  All were
+  refusals.  Guard `tests/scripts/an-expected-element-type-reaches-every-literal-position.loft`.
 * **D-types-18, D-types-19** *(opened 2026-09-29, CLOSED 2026-09-29)* — two field stores that
   skipped `convert`, so `(C-Num)`, `(C-Tuple)` and the width rules did not reach them.  **-18**:
   a field DEFAULT was converted only integer → integer, so `p: float = 7` stored the integer's

@@ -18669,14 +18669,8 @@ impl Parser {
                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
                             // parameter the positional form does, so it must infer the
                             // same way; the spelling of the argument is not the axis.
-                            if Self::seeds_collection_hint(&expected)
-                                || self.interpolation_target(&expected) != u32::MAX
-                                || Self::seeds_lambda_hint(&expected)
-                                || self.seeds_instance_hint(&expected)
-                            {
-                                self.expected = expected;
-                            } else if let Some(tuple) = self.tuple_hint_type(&expected) {
-                                self.expected = tuple;
+                            if let Some(h) = self.argument_hint(expected) {
+                                self.expected = h;
                             }
                             break;
                         }
@@ -18737,46 +18731,16 @@ impl Parser {
                 } else {
                     self.fnref_param_hint(name, arg_idx)
                 };
-                if let Some(expected) = hinted {
-                    if Self::seeds_lambda_hint(&expected) {
-                        // A `fn(…)` parameter, so a SHORT-form lambda argument can infer its
-                        // parameter types — the fn-ref position of the push the `fn_def_nr`
-                        // block above makes for a named callee.
-                        //
-                        // This arm was held CLOSED when loft#1280 landed, because seeding it
-                        // made the short form parse and land in a dispatch that could not
-                        // carry a fn-ref argument at all (loft#1285: no output and exit 0 on
-                        // `--interpret`, E0308 on `--native`).  With that dispatch fixed —
-                        // the 20-byte pair at the interpreter's call site, the `fn_ref_context`
-                        // binding in the native emitter, and the `CallRef` arm in the
-                        // reachability walk — the refusal has nothing left to protect.
-                        self.expected = expected;
-                    } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
-                        self.expected = expected;
-                    } else if Self::seeds_collection_hint(&expected) {
-                        // #432 — seed a bare vector-literal argument's element width
-                        // from the parameter type, so it builds at the callee's
-                        // stride instead of `vector<integer>`.  Both passes (like the
-                        // enum hint): the literal's element type must agree across
-                        // passes, and the callee is already registered on pass 1.
-                        self.expected = expected;
-                    } else if self.interpolation_target(&expected) != u32::MAX {
-                        // @PLN124 — seed a format-string argument's target type, so
-                        // `f("… {x} …")` BUILDS the parameter's type instead of
-                        // rendering text the call would then reject. Both passes, for
-                        // the same reason the two hints above are: taking the branch
-                        // mints an accumulator, and a one-pass mint would shift the
-                        // name-keyed variable tables.
-                        self.expected = expected;
-                    } else if let Some(tuple) = self.tuple_hint_type(&expected) {
-                        // loft#1122 — seed a tuple argument's MEMBER types, so
-                        // `f(([], 9))` and `f((Dot, 9))` resolve against the parameter
-                        // the way the same literal does in a declared local.  Both
-                        // passes, for the reason the enum hint above states: a bare
-                        // variant seeded on one pass only becomes a stray placeholder
-                        // var that shadows the real variant on the other.
-                        self.expected = tuple;
-                    }
+                // Every spelling of an argument position pushes the same shapes
+                // (`argument_hint`): a `fn(…)` for a short lambda (the fn-ref dispatch of
+                // loft#1285 carries it), an enum for a bare variant, a collection for a bare
+                // literal's element type (#432), a format string's target (@PLN124), and a
+                // tuple's member types (loft#1122) — on BOTH passes, because a bare variant
+                // seeded on one pass only becomes a stray placeholder on the other.
+                if let Some(expected) = hinted
+                    && let Some(h) = self.argument_hint(expected)
+                {
+                    self.expected = h;
                 }
             }
             // for map/filter/reduce, infer lambda hint from the vector
@@ -19974,29 +19938,25 @@ impl Parser {
         Type::Text(Deps::none())
     }
 
-    /// #432 — should a bare vector-literal argument be seeded with this parameter
-    /// type's element width (`vector_hint`)?  Only for a CONCRETE narrow-integer
-    /// element (`vector<u8>` … `vector<i32>`): an untyped integer literal infers
-    /// `vector<integer>` (8-byte stride) and the callee would reinterpret it at the
-    /// narrow stride.  Each branch below is deliberately NOT covered:
-    /// - A generic `vector<T>` (element is a `Reference` to a type-var) must NOT
-    ///   seed — the literal cannot be built at an abstract element type, and seeding
-    ///   it wrongly fails `min_of([3, 1, 2])` with "would lose precision".
-    /// - `vector<single>` is excluded on purpose: a float literal infers
-    ///   `vector<float>` and f64→f32 is rejected as precision-loss regardless of the
-    ///   constant, so seeding would turn the (separate, pre-existing) stride bug
-    ///   into a fresh compile error — out of #432's "integer-vector literal" scope.
-    /// - Struct/enum element vectors already build from their own literal.
+    /// May a bare vector literal take its ELEMENT type from this expected type — `(T-Chk-Vec)`
+    /// (`@FR-T-Chk-Vec`): `[e₁ … eₙ] ⇐ vector<τ>` checks each `eᵢ ⇐ τ`, so a `vector<u8>`
+    /// parameter builds a 1-byte-stride literal (#432), a `vector<float>` one converts `[1, 2]`
+    /// member by member (`@FR-C-Num`), and a `vector<E>` one resolves `[North, South]` against
+    /// `E`.  A typed local already did all three through its own `var_tp`; an argument, a
+    /// function or lambda tail and a default reach the literal only through this channel, and
+    /// it admitted narrow integers alone — so `f([1, 2])` into a `vector<float>` was refused
+    /// while `v: vector<float> = [1, 2]` compiled.
     ///
-    /// Recurses through nested vector layers so `vector<vector<u8>>` seeds too (the
-    /// outer literal is seeded; inner literals thread their element type through
-    /// `var_tp`).  The leaf must be a narrow integer.
-    pub(crate) fn seeds_vector_hint(expected: &Type) -> bool {
+    /// The one element type that must NOT seed is one still naming a TYPE VARIABLE (a generic
+    /// `vector<T>` parameter): the literal cannot be built at an abstract element type, and
+    /// seeding it wrongly fails `min_of([3, 1, 2])`.  An unresolved placeholder does not seed
+    /// either — it is the parser's, not the author's.
+    pub(crate) fn seeds_vector_hint(&self, expected: &Type) -> bool {
         match expected {
             Type::Vector(elem, _) => {
-                // @PLN25: peel `Optional(τ)` so a `vector<u8?>` literal seeds its narrow
-                // stride like `vector<u8>` (else #432 stride-reinterpretation corruption).
-                matches!(elem.base(), Type::Integer(_)) || Self::seeds_vector_hint(elem)
+                !elem.is_unknown()
+                    && !elem.any_node(&mut |t| t.is_unknown())
+                    && !self.data.mentions_type_var(elem)
             }
             _ => false,
         }
@@ -20004,13 +19964,13 @@ impl Parser {
 
     /// loft#703 — may a bare `[…]` argument take its CONTAINER from this parameter type?
     ///
-    /// `seeds_vector_hint` above answers the narrower #432 question — may the parameter
-    /// override the element WIDTH the literal already inferred.  A keyed parameter is a
+    /// `seeds_vector_hint` above answers the narrower question — may the parameter give
+    /// the literal's ELEMENTS their type.  A keyed parameter is a
     /// different question with no trade-off in it: `[K { … }]` infers `vector<K>`, which
     /// is not a `hash<K[k]>` at any width, so the parameter type is the only thing that
     /// can say what to build and passing one was simply impossible without it.
-    pub(crate) fn seeds_collection_hint(expected: &Type) -> bool {
-        Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
+    pub(crate) fn seeds_collection_hint(&self, expected: &Type) -> bool {
+        self.seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
     }
 
     /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
@@ -20275,12 +20235,8 @@ impl Parser {
                     let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
                         let expected = self.callee_param_hint(hint_nr, a, &types);
-                        if Self::seeds_collection_hint(&expected)
-                            || self.interpolation_target(&expected) != u32::MAX
-                            || Self::seeds_lambda_hint(&expected)
-                            || self.seeds_instance_hint(&expected)
-                        {
-                            self.expected = expected;
+                        if let Some(h) = self.argument_hint(expected) {
+                            self.expected = h;
                         }
                     }
                 }
@@ -20314,12 +20270,8 @@ impl Parser {
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
                 // library API actually presents.  A `fn(…)` parameter types a short
                 // lambda, as it does for the free spelling of the same call.
-                if Self::seeds_collection_hint(&expected)
-                    || self.interpolation_target(&expected) != u32::MAX
-                    || Self::seeds_lambda_hint(&expected)
-                    || self.seeds_instance_hint(&expected)
-                {
-                    self.expected = expected;
+                if let Some(h) = self.argument_hint(expected) {
+                    self.expected = h;
                 }
             }
             // @PLN165 arc E — a `#builtin` method's lowering is its special form, and so are

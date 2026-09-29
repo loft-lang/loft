@@ -883,12 +883,20 @@ impl Parser {
             // `[…]` infers `vector<K>`, which is not a narrower or wider version of
             // `hash<K[k]>` but a different container — so there is no inference to
             // override, only the one answer.
+            // A literal that is the RECEIVER of a chain (`[1, 2].map(…)`) is not the value the
+            // expected type describes, so it takes none (`Lexer::peek_literal_receiver`); a
+            // scan that cannot tell keeps the hint.
             let hint = if is_collection(&self.expected)
                 && (self.lexer.peek_token("]") || is_keyed(&self.expected))
             {
                 self.expected.without_deps()
             } else {
-                self.vector_hint()
+                let seed = self.vector_hint();
+                if !seed.is_unknown() && self.lexer.peek_literal_receiver() == Some(true) {
+                    Type::Unknown(0)
+                } else {
+                    seed
+                }
             };
             self.expected = Type::Unknown(0);
             // #501 — a vector literal parsed as an assignment RHS reuses the LHS var

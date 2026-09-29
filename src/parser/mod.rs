@@ -1058,8 +1058,9 @@ pub struct Parser {
     /// four: readers dispatch on its SHAPE via the helpers below —
     /// - a `Type::Function` → short-form lambda (`|x| {…}`) parameter inference ([`Self::lambda_hint`]);
     /// - an enum type → a bare value-position variant (`f(Red)`) resolves against it ([`Self::enum_hint`]);
-    /// - a `Type::Vector` of concrete narrow elements → a bare literal (`[10,255,20]`) builds at the
-    ///   element width (#432, [`Self::vector_hint`]);
+    /// - a `Type::Vector` of a concrete element type → a bare literal (`[10,255,20]`, `[1, 2]`,
+    ///   `[North, South]`) is checked element by element against it (`(T-Chk-Vec)`,
+    ///   [`Self::vector_hint`]);
     /// - any type → an `f#read` infers its byte width from it ([`Self::read_target_type`]).
     ///
     /// (`var_tp` already carries the type for typed-local decls / `==` / struct-field init,
@@ -4562,6 +4563,25 @@ impl Parser {
         }
     }
 
+    /// The `⇐` push an ARGUMENT or a parameter DEFAULT makes (`@FR-T-Chk`): which shapes of
+    /// the parameter's type reach the value being parsed.  One list for every spelling of
+    /// the position — positional or named, free function or method, or the default a caller
+    /// omits — because the spelling is not the axis: `f(X)` resolved a bare variant against
+    /// the parameter's enum while `f(p: X)`, `h.m(X)` and `fn f(p: B = X)` reported it
+    /// ambiguous, and a method argument took no tuple member types (`@FR-T-Chk-Var`).
+    pub(crate) fn argument_hint(&self, expected: Type) -> Option<Type> {
+        if Self::seeds_lambda_hint(&expected)
+            || self.enum_context(&expected)
+            || self.seeds_instance_hint(&expected)
+            || self.seeds_collection_hint(&expected)
+            || self.interpolation_target(&expected) != u32::MAX
+        {
+            Some(expected)
+        } else {
+            self.tuple_hint_type(&expected)
+        }
+    }
+
     /// Read through `base()`, so a nullable tuple asks what its base asks — whether a slot
     /// may be absent says nothing about what its members are.
     pub(crate) fn tuple_hint_type(&self, tp: &Type) -> Option<Type> {
@@ -4617,10 +4637,10 @@ impl Parser {
         }
     }
 
-    /// Expected `vector<…>` element-width hint for a bare literal — `expected` filtered to a
-    /// concrete narrow-element vector (#432; [`Self::seeds_vector_hint`]).
+    /// Expected `vector<…>` element type for a bare literal — `expected` filtered to a vector
+    /// whose element type names no type variable ([`Self::seeds_vector_hint`]).
     pub(crate) fn vector_hint(&self) -> Type {
-        if Self::seeds_vector_hint(&self.expected) {
+        if self.seeds_vector_hint(&self.expected) {
             self.expected.without_deps()
         } else {
             Type::Unknown(0)
