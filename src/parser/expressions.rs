@@ -10001,6 +10001,81 @@ use a separate collection or add after the loop"
         deps.len() == 1 && self.vars.name(deps[0]).starts_with("__vdb_")
     }
 
+    /// Append one element `src` to the vector `var_nr` as a fresh record `elm_var`: the
+    /// `OpNewRecord` / write / `OpFinishRecord` triple, with the write the ELEMENT TYPE needs —
+    /// a `vector<T>` element deep-copied (`OpCopyRecord`), a type variable in the shape each
+    /// monomorph re-lowers, a narrow integer at its own width, anything else through
+    /// `set_field`.  The one home for that choice: the comprehension and the `match` stream
+    /// buffer both append through it.
+    pub(crate) fn append_element_ops(
+        &mut self,
+        var_nr: u16,
+        elm_tp: &Type,
+        elm_var: u16,
+        src: Value,
+    ) -> Vec<Value> {
+        let elm_tp = elm_tp.clone();
+        let ed_nr = self.data.type_def_nr(&elm_tp);
+        let fld = Value::Int(i32::from(u16::MAX));
+        let mut ops = Vec::new();
+        let container_id = Value::Int(i32::from(self.vector_of(&elm_tp)));
+        let element_id = Value::Int(i32::from(
+            self.data
+                .vector_element_type(&elm_tp, &mut self.database)
+                .unwrap_or(u16::MAX),
+        ));
+        ops.push(v_set(
+            elm_var,
+            self.cl(
+                "OpNewRecord",
+                &[Value::Var(var_nr), container_id.clone(), fld.clone()],
+            ),
+        ));
+        // A `vector<T>` element is an AGGREGATE — deep-copy the whole element into the fresh
+        // record (as the struct/Reference case does).  `set_field(ed_nr, f_nr=MAX, …)` PEELS
+        // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
+        // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
+        // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
+        if matches!(elm_tp.base(), Type::Vector(_, _)) {
+            ops.push(self.cl(
+                "OpCopyRecord",
+                &[src, Value::Var(elm_var), element_id],
+            ));
+        } else if self.is_type_var_element(&elm_tp) {
+            // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+            // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
+            // which each monomorph re-lowers at its concrete element type
+            // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
+            // in a field read the rewrite does not match, so every scalar instance kept a
+            // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
+            // constant store on the interpreter and was E0610 on native.
+            let row = i32::from(self.data.def(ed_nr).known_type())
+                | i32::from(crate::keys::COPY_FRESH_DEST);
+            ops.push(self.cl(
+                "OpCopyRecord",
+                &[src, Value::Var(elm_var), Value::Int(row)],
+            ));
+        } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &src) {
+            // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
+            // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
+            // 1-byte element slots at once.  Shared with the `+=` append site.
+            ops.push(op);
+        } else {
+            ops.push(self.set_field(
+                ed_nr,
+                usize::MAX,
+                0,
+                Value::Var(elm_var),
+                src,
+            ));
+        }
+        ops.push(self.cl(
+            "OpFinishRecord",
+            &[Value::Var(var_nr), Value::Var(elm_var), container_id, fld],
+        ));
+        ops
+    }
+
     pub(crate) fn materialize_iterator(
         &mut self,
         code: &mut Value,
@@ -10020,8 +10095,6 @@ use a separate collection or add after the loop"
             && let Value::Iter(_, init, next, _) = code.clone()
             && matches!(*next, Value::Block(_))
         {
-            let ed_nr = self.data.type_def_nr(&elm_tp);
-            let fld = Value::Int(i32::from(u16::MAX));
             let elm_var = self.unique_elm_var(lhs_parent_tp, &elm_tp, var_nr);
             let for_var = self.create_unique("slice_elm", &elm_tp);
             // The per-element source is `for_var = next`, a READ of `subject[i]`.  `for_var`
@@ -10065,61 +10138,7 @@ use a separate collection or add after the loop"
             // `u8`/`u16`/4-byte subtypes pack at 1/2/4 bytes, not the wide integer
             // row) and a nested `vector<T>` element (#553 — a 4-byte handle row)
             // land on the same ids the append uses.
-            let container_id = Value::Int(i32::from(self.vector_of(&elm_tp)));
-            let element_id = Value::Int(i32::from(
-                self.data
-                    .vector_element_type(&elm_tp, &mut self.database)
-                    .unwrap_or(u16::MAX),
-            ));
-            lp.push(v_set(
-                elm_var,
-                self.cl(
-                    "OpNewRecord",
-                    &[Value::Var(var_nr), container_id.clone(), fld.clone()],
-                ),
-            ));
-            // A `vector<T>` element is an AGGREGATE — deep-copy the whole element into the fresh
-            // record (as the struct/Reference case does).  `set_field(ed_nr, f_nr=MAX, …)` PEELS
-            // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
-            // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
-            // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
-            if matches!(elm_tp, Type::Vector(_, _)) {
-                lp.push(self.cl(
-                    "OpCopyRecord",
-                    &[Value::Var(for_var), Value::Var(elm_var), element_id],
-                ));
-            } else if self.is_type_var_element(&elm_tp) {
-                // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
-                // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
-                // which each monomorph re-lowers at its concrete element type
-                // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
-                // in a field read the rewrite does not match, so every scalar instance kept a
-                // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
-                // constant store on the interpreter and was E0610 on native.
-                let row = i32::from(self.data.def(ed_nr).known_type())
-                    | i32::from(crate::keys::COPY_FRESH_DEST);
-                lp.push(self.cl(
-                    "OpCopyRecord",
-                    &[Value::Var(for_var), Value::Var(elm_var), Value::Int(row)],
-                ));
-            } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &Value::Var(for_var)) {
-                // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
-                // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
-                // 1-byte element slots at once.  Shared with the `+=` append site.
-                lp.push(op);
-            } else {
-                lp.push(self.set_field(
-                    ed_nr,
-                    usize::MAX,
-                    0,
-                    Value::Var(elm_var),
-                    Value::Var(for_var),
-                ));
-            }
-            lp.push(self.cl(
-                "OpFinishRecord",
-                &[Value::Var(var_nr), Value::Var(elm_var), container_id, fld],
-            ));
+            lp.extend(self.append_element_ops(var_nr, &elm_tp, elm_var, Value::Var(for_var)));
             let needs_db = self.vector_needs_db(var_nr, &elm_tp, true);
             let mut stmts = Vec::new();
             if op == "=" && !needs_db {

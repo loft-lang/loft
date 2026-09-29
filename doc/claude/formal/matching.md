@@ -276,9 +276,9 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **3** — `D-match-10`, `-11` and `-13`, each a refusal of a program the pattern rules
+OPEN: **2** — `D-match-10` and `-11`, each a refusal of a program the pattern rules
 define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`,
-which it closed, and `D-match-12`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+which it closed, and `D-match-12` and `-13`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
 The walk's finding is one shape seven times: each rule held on its own and was refused where two
@@ -294,10 +294,17 @@ open four now say what holds and what to write instead.
   `b`, to every element, and `a` read as an unknown variable.  Found while settling D-match-12.
   A second rest (or a scalar repetition beside one) is now refused at parse time
   (`two_rests_are_refused`, `scalar_rep_rest_is_a_second_rest` in `tests/parse_errors.rs`).
-- **D-match-13 — OPEN (loft#1737).** A `match` over an `iterator<(τ, …)>` is refused and must be
-  collected first, where the iterator-input rule materialises its subject whatever the element
-  type and a `vector<(τ, …)>` subject matches tuple patterns.  Closes when the stream path takes
-  tuple elements (`stream_match_complex_deferred` in `tests/parse_errors.rs` is its pin).
+- **D-match-13 — OPENED AND CLOSED 2026-09-29 (loft#1737).** A `match` over an `iterator<τ>` was
+  refused for every `τ` but a scalar, text or struct-enum, where the iterator-input rule
+  materialises the subject whatever its element type.  Three defects, one composition each: the
+  stream buffer carried its own copy of the comprehension's append and wrote a `vector<τ>`
+  element as a scalar (it now appends through the comprehension's `append_element_ops`); a slice
+  element over a TUPLE read the element's DbRef instead of unboxing it — garbage on
+  `--interpret`, `DbRef as (i64, i64)` on `--native`; and `[(a, b), ..]` was read as an
+  alternation, where `(G-Pat-Group)` makes a `( … )` with no pattern operator a tuple pattern
+  (`@FR-P-Point`).  `tests/scripts/a-match-streams-an-iterator-of-any-element.loft`.  A
+  generator yielding `(integer, text)` stays refused on `--native` — by the GENERATOR, not the
+  match (coroutines-history.md D-cor-2).
 - **D-match-12 — OPENED AND CLOSED 2026-09-29 (loft#1736).** A `..rest` or a non-literal element
   after a scalar repetition `xs:T*` was refused, over a question the rules had not answered: read
   as `(P-Rep)`'s greedy run, `xs` takes every element and any tail never matches — which the

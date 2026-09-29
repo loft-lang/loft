@@ -1018,7 +1018,9 @@ is fed.** So:
    evaporated** — the buffer holds all pulled items, so backtracking is a free index (no anchor/
    revert, no eviction).  text / vector / tuple elements ride a different `next` channel → deferred
    with a clean diagnostic (collect-idiom hint).  Guard `tests/scripts/35p-iterator-match.loft`,
-   `parse_errors::stream_match_complex_deferred`.
+   `parse_errors::stream_match_complex_deferred` (retired 2026-09-29: every element type streams
+   since the buffer appends through `append_element_ops`, the comprehension's own append —
+   loft#1737, `tests/scripts/a-match-streams-an-iterator-of-any-element.loft`).
 2b. **DONE (text + struct-enum element channels).** `iterator<text>` (token strings) and
    `iterator<StructEnum>` (struct-enum token streams) now stream-match on both backends, leak-clean.
    The one fix: the append record var (`stream_elm`) needed `skip_free` — without it scope cleanup

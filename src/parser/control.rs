@@ -5819,29 +5819,6 @@ impl Parser {
             Type::Iterator(elem_box, _) => {
                 let elm_tp = (**elem_box).clone();
                 let iter_tp = subject_type.clone();
-                // Supported element types: scalars, `text`, and struct-enums (the token-stream
-                // cases).  A plain enum / vector / tuple / struct element rides a different
-                // coroutine `next` channel or append shape — deferred; a clean error points at the
-                // collect idiom that works today.
-                if !self.first_pass
-                    && !matches!(
-                        elm_tp.base(),
-                        Type::Integer(_)
-                            | Type::Float
-                            | Type::Boolean
-                            | Type::Character
-                            | Type::Single
-                            | Type::Text(_)
-                            | Type::Enum(_, true, _)
-                    )
-                {
-                    let en = elm_tp.source_name(&self.data);
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<{en}>` is none of those — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
-                    );
-                }
                 let match_pos = self.lexer.pos().clone();
                 let (buf, vec_tp, setup) =
                     self.collect_iterator_subject(subject, &iter_tp, &elm_tp, &match_pos);
@@ -7761,6 +7738,13 @@ impl Parser {
             self.expr_not_null_name.clear();
             return self.get_val(elm_tp, nullable, 0, get, u32::MAX);
         }
+        // A TUPLE element is stored as a `__tuple<…>` record and lives on the stack as its
+        // members, so the read unboxes the element's DbRef member by member — the one read
+        // `v[i]` makes.  Handed the DbRef itself, a `vector<(…)>` slice binding read garbage on
+        // the interpreter's stack layout and failed to compile on `--native` (loft#1737).
+        if let Type::Tuple(elems) = elm_tp.base() {
+            return self.unbox_tuple_from_dbref(get, elems);
+        }
         let td = self.data.type_def_nr(elm_tp);
         self.get_field(td, usize::MAX, get)
     }
@@ -7811,7 +7795,7 @@ impl Parser {
         // string per yield.  A scalar emits no free at all, so it never reaches either.
         if matches!(
             elm_tp.base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
         ) {
             self.vars.set_skip_free(x);
         }
@@ -7832,15 +7816,6 @@ impl Parser {
         ));
         let channel_tag = crate::coroutine_layout::channel_tag(elm_tp);
         let value_size = (channel_tag << 8) | byte_size;
-        // Append triple (scalar/text element): the same `OpNewRecord` / `set_field` / `OpFinishRecord`
-        // a `buf += [x]` comprehension emits.
-        let elem_known = self.vector_of(elm_tp);
-        let known = Value::Int(i32::from(if elem_known == u16::MAX {
-            0
-        } else {
-            elem_known
-        }));
-        let fld = Value::Int(i32::from(u16::MAX));
 
         // `vector_db` takes the ELEMENT type: handed `vec_tp`, the buffer's store was typed
         // `vector<vector<E>>`, and its release could not see the records it holds.
@@ -7853,35 +7828,27 @@ impl Parser {
             &[Value::Var(gen_var), Value::Int(value_size)],
         );
         let exhausted = self.cl("OpCoroutineExhausted", &[Value::Var(gen_var)]);
-        let new_rec = self.cl(
-            "OpNewRecord",
-            &[Value::Var(buf), known.clone(), fld.clone()],
-        );
-        let set_val = self.set_field(ed_nr, usize::MAX, 0, Value::Var(elm), Value::Var(x));
-        let finish = self.cl(
-            "OpFinishRecord",
-            &[Value::Var(buf), Value::Var(elm), known, fld],
-        );
-        // `(G-Own)`: a record the generator hands over is `x`'s own, so the append MOVES it
+        // The append a `[for x in <iter> { x }]` comprehension emits, through its one home:
+        // this buffer carried its own copy, which wrote a `vector<T>` element as a scalar and
+        // so refused every element type but a scalar, text or struct-enum (loft#1737).
+        let mut append_ops = self.append_element_ops(buf, elm_tp, elm, Value::Var(x));
+        // `(G-Own)`: a value the generator hands over is `x`'s own, so the append MOVES it
         // into the buffer — the copy frees `x`'s store (`COPY_FREE_SOURCE`) and runs no drop
         // hook, since the resource went with the copy the buffer releases.  `x` stays
         // `skip_free`: nothing is left for its scope end to release.
-        let mut set_val = set_val;
         if crate::coroutine_layout::yield_handed_over(elm_tp) {
             let copy_d = self.data.def_nr("OpCopyRecord");
-            if let Value::Call(d, args) = set_val.unspan_mut()
-                && *d == copy_d
-                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == x)
-                && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
-            {
-                *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+            for op in &mut append_ops {
+                if let Value::Call(d, args) = op.unspan_mut()
+                    && *d == copy_d
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == x)
+                    && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
+                {
+                    *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+                }
             }
         }
-        let append = v_block(
-            vec![v_set(elm, new_rec), set_val, finish],
-            Type::Void,
-            "stream append",
-        );
+        let append = v_block(append_ops, Type::Void, "stream append");
         // `@FR-P-IterBound` — the pull is BOUNDED by `max_lookahead`, and exceeding it is a
         // defined runtime error, never a hang (loft#1678).  The subject is materialised before
         // the patterns run (`35p-iterator-match.loft`), so an endless source had no ceiling and
@@ -10856,6 +10823,52 @@ impl Parser {
                             self.skip_rest_of_slice();
                         }
                         break;
+                    } else if let Type::Tuple(elems) = elm_tp.base()
+                        && group_kind == SliceGroupKind::Other
+                        && self.lexer.has_token("(")
+                    {
+                        // `@FR-P-Point` × `(G-Pat-Group)` — a `( … )` with no pattern operator is
+                        // a TUPLE pattern, and over a tuple element it tests that one element,
+                        // position by position, exactly as a tuple subject's arm does.  It was
+                        // read as an alternation and refused (loft#1737).  A head element
+                        // counts forward from 0, a tail element back from the end.
+                        let elems = elems.clone();
+                        let position = if has_rest {
+                            -(tail_total - tail.len() as i32)
+                        } else {
+                            head.len() as i32
+                        };
+                        let tmp = self.create_unique("slice_tuple", &elm_tp);
+                        self.vars.defined(tmp);
+                        let mut t_binds: Vec<Value> = Vec::new();
+                        let mut t_conds: Vec<Value> = Vec::new();
+                        self.parse_tuple_pattern_elements(tmp, &elems, &mut t_binds, &mut t_conds);
+                        // The test reads the element itself, because the bindings run only once
+                        // the arm commits; the bindings read it again for the same reason.
+                        if !t_conds.is_empty() {
+                            let mut test = t_conds.remove(0);
+                            for c in t_conds {
+                                test = v_if(test, c, Value::Boolean(false));
+                            }
+                            let read =
+                                self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
+                            elem_conds.push(v_block(
+                                vec![v_set(tmp, read), test],
+                                Type::Boolean,
+                                "tuple element test",
+                            ));
+                        }
+                        if !t_binds.is_empty() {
+                            let read =
+                                self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
+                            bindings.push(v_set(tmp, read));
+                            bindings.append(&mut t_binds);
+                        }
+                        if has_rest {
+                            tail.push("_".to_string());
+                        } else {
+                            head.push("_".to_string());
+                        }
                     } else if !has_rest && self.lexer.peek_token("(") {
                         // @PLN35 Phase 4 (P-Alt) — a parenthesized single-element alternation
                         // `( V1 { f } | V2 { f } )` in a head slice-element position. Tag-test
@@ -11271,6 +11284,186 @@ impl Parser {
         result_type
     }
 
+    /// The elements of a tuple pattern `( p₀, p₁, … )` over the tuple held in `tmp`, the lexer just
+    /// past the `(`; consumes through the `)`.  Each position is `_`, a binding, a literal or a
+    /// variant sub-pattern — `@FR-P-Point`: a tuple element is ONE value.  A binding lands in
+    /// `bindings`, a test in `elem_conds`.  Answers whether the pattern was refused.  Shared by a
+    /// tuple SUBJECT and a tuple ELEMENT of a slice pattern, which `(G-Pat-Group)` tells apart
+    /// from a group by its missing operators.
+    #[expect(clippy::too_many_lines, reason = "moved whole out of `parse_tuple_match`")]
+    fn parse_tuple_pattern_elements(
+        &mut self,
+        tmp: u16,
+        elem_types: &[Type],
+        bindings: &mut Vec<Value>,
+        elem_conds: &mut Vec<Value>,
+    ) -> bool {
+        let mut bad_pattern = false;
+        // Element-by-element pattern
+        for (i, elem_type) in elem_types.iter().enumerate() {
+            // The break is NOT gated on the pass: both passes must walk the
+            // arm the same way, or the first one wanders into positions the
+            // second never visits and stops making progress.
+            if i > 0 && !self.lexer.has_token(",") {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "expected ',' between tuple pattern elements"
+                    );
+                }
+                break;
+            }
+            // A `..` rest is not part of the tuple design — arity is fixed
+            // (TUPLES.md § "What is NOT supported"), so there is nothing for a
+            // rest to stand for.  Refuse it by name and skip to the closing
+            // `)`, rather than letting it fall through to the literal branch
+            // below, where `expression` consumes the `..` but leaves the `)`
+            // unclaimed and the arm loop spinning (loft#832).
+            if self.lexer.peek_token("..") || self.lexer.peek_token("..=") {
+                bad_pattern = true;
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `..` rest pattern is not supported in a tuple pattern — \
+                         a tuple's arity is fixed, so write every position, \
+                         using `_` for the ones you do not bind"
+                    );
+                }
+                self.lexer.has_token("..=");
+                self.lexer.has_token("..");
+                self.lexer.recover_to(&[")"]);
+                break;
+            }
+            let elem_type = elem_type.clone();
+            let elem_get = Value::TupleGet(tmp, i as u16);
+            if self.peek_is_variant_subpattern(&elem_type) {
+                // @FR-P-Point — a unit or struct variant is a point pattern over ONE
+                // value, and a tuple element is one value, so an enum element takes
+                // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
+                // each position and binds the payload it names, through the one
+                // lowering the top-level arm and the slice head share.
+                let mut sub_conds: Vec<Value> = Vec::new();
+                let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                if let Some(c) = self.parse_field_sub_pattern(
+                    elem_get,
+                    &elem_type,
+                    bindings,
+                    &mut sub_conds,
+                    &mut aliases,
+                ) {
+                    elem_conds.push(c);
+                }
+                elem_conds.append(&mut sub_conds);
+                // The names a sub-pattern bound belong to this arm; its end restores them.
+                self.pattern_binds_pending.append(&mut aliases);
+            } else if let Some(id) = self.lexer.has_identifier() {
+                if id == "_" {
+                    // element wildcard — no condition, no binding
+                } else if id.starts_with(char::is_uppercase) {
+                    // @FR-M-Unit — a capitalised name is a VARIANT of the element's
+                    // enum, or it is nothing: the language never reads one as a
+                    // variable (`Foo = 5` is unknown), so it cannot be a binding here
+                    // either, and binding it would make the arm match every tuple.
+                    // Refused by name, as a top-level arm refuses it.
+                    bad_pattern = true;
+                    if !self.first_pass {
+                        if let Some((e_nr, _)) = self.pattern_variant_enum(&elem_type) {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "'{}' is not a variant of {}",
+                                id,
+                                self.data.def(e_nr).name()
+                            );
+                        } else {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "'{}' is not a variant — this tuple element is {}, \
+                                 which has no variants; a binding is lower_case",
+                                id,
+                                elem_type.source_name(&self.data)
+                            );
+                        }
+                    }
+                    // A payload written after a name that is no variant is skipped
+                    // whole, so the arm reaches its `=>` with one diagnostic, not a
+                    // cascade.  Step INSIDE the group first: `recover_to` skips a
+                    // nested group as a unit, so asked from the `{` it would walk
+                    // past the matching `}` and on through the elements after it.
+                    if self.lexer.has_token("{") {
+                        self.lexer.recover_to(&["}"]);
+                        self.lexer.has_token("}");
+                    }
+                } else {
+                    // binding variable — always matches, captures element value
+                    let bind_nr = self.pattern_binding(&id, &elem_type);
+                    self.vars.defined(bind_nr);
+                    bindings.push(v_set(bind_nr, elem_get));
+                }
+            } else {
+                // literal: build elem_get == literal condition
+                let negate = self.lexer.has_token("-");
+                let lit: Value = if let Some(n) = self.lexer.has_integer() {
+                    let v = n as i32;
+                    Value::Int(if negate { -v } else { v })
+                } else if let Some(n) = self.lexer.has_long() {
+                    let v = n as i64;
+                    Value::Long(if negate { -v } else { v })
+                } else if let Some(n) = self.lexer.has_float() {
+                    Value::Float(if negate { -n } else { n })
+                } else if let Some(s) = self.lexer.has_cstring() {
+                    Value::Text(s)
+                } else if self.lexer.has_token("true") {
+                    Value::Boolean(true)
+                } else if self.lexer.has_token("false") {
+                    Value::Boolean(false)
+                } else {
+                    let mut e = Value::Null;
+                    self.expression(&mut e);
+                    e
+                };
+                let mut elem_cond = Value::Null;
+                self.call_op(
+                    &mut elem_cond,
+                    "==",
+                    &[elem_get, lit],
+                    &[elem_type.clone(), elem_type],
+                );
+                elem_conds.push(elem_cond);
+            }
+        }
+        if !self.lexer.has_token(")") {
+            bad_pattern = true;
+            if !self.first_pass {
+                // A `,` here means the pattern listed MORE elements than the
+                // subject has; anything else is ordinary junk.  Naming the
+                // arity is what tells the author which side to change.
+                if self.lexer.peek_token(",") {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "tuple pattern has more elements than the {}-element subject tuple",
+                        elem_types.len()
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "expected ')' to close tuple pattern"
+                    );
+                }
+            }
+            // Skip the surplus so the arm reaches its `=>` — without this the
+            // cursor stays parked on the `,` and the arm loop spins (loft#832).
+            self.lexer.recover_to(&[")"]);
+            self.lexer.has_token(")");
+        }
+        bad_pattern
+    }
+
     /// Parse a `match` expression whose subject is a `Type::Tuple`.
     ///
     /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
@@ -11278,11 +11471,10 @@ impl Parser {
     /// Arms are separated by `,` or `;` (optional after the last arm).
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_tuple_match(&mut self, subject: Value, subject_type: &Type, code: &mut Value) -> Type {
-        let Type::Tuple(elem_types) = subject_type else {
+        let Type::Tuple(elem_types) = subject_type.base() else {
             unreachable!("parse_tuple_match called with non-tuple subject")
         };
         let elem_types = elem_types.clone();
-        let arity = elem_types.len();
 
         // Store the tuple in a temp var so elements can be read multiple times.
         let tmp = self.create_unique("match_tuple", subject_type);
@@ -11331,167 +11523,13 @@ impl Parser {
                     );
                 }
             } else if self.lexer.has_token("(") {
-                // Element-by-element pattern
-                for (i, elem_type) in elem_types.iter().enumerate().take(arity) {
-                    // The break is NOT gated on the pass: both passes must walk the
-                    // arm the same way, or the first one wanders into positions the
-                    // second never visits and stops making progress.
-                    if i > 0 && !self.lexer.has_token(",") {
-                        if !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "expected ',' between tuple pattern elements"
-                            );
-                        }
-                        break;
-                    }
-                    // A `..` rest is not part of the tuple design — arity is fixed
-                    // (TUPLES.md § "What is NOT supported"), so there is nothing for a
-                    // rest to stand for.  Refuse it by name and skip to the closing
-                    // `)`, rather than letting it fall through to the literal branch
-                    // below, where `expression` consumes the `..` but leaves the `)`
-                    // unclaimed and the arm loop spinning (loft#832).
-                    if self.lexer.peek_token("..") || self.lexer.peek_token("..=") {
-                        bad_pattern = true;
-                        if !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a `..` rest pattern is not supported in a tuple pattern — \
-                                 a tuple's arity is fixed, so write every position, \
-                                 using `_` for the ones you do not bind"
-                            );
-                        }
-                        self.lexer.has_token("..=");
-                        self.lexer.has_token("..");
-                        self.lexer.recover_to(&[")"]);
-                        break;
-                    }
-                    let elem_type = elem_type.clone();
-                    let elem_get = Value::TupleGet(tmp, i as u16);
-                    if self.peek_is_variant_subpattern(&elem_type) {
-                        // @FR-P-Point — a unit or struct variant is a point pattern over ONE
-                        // value, and a tuple element is one value, so an enum element takes
-                        // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
-                        // each position and binds the payload it names, through the one
-                        // lowering the top-level arm and the slice head share.
-                        let mut sub_conds: Vec<Value> = Vec::new();
-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
-                        if let Some(c) = self.parse_field_sub_pattern(
-                            elem_get,
-                            &elem_type,
-                            &mut bindings,
-                            &mut sub_conds,
-                            &mut aliases,
-                        ) {
-                            elem_conds.push(c);
-                        }
-                        elem_conds.append(&mut sub_conds);
-                        // The names a sub-pattern bound belong to this arm; its end restores them.
-                        self.pattern_binds_pending.append(&mut aliases);
-                    } else if let Some(id) = self.lexer.has_identifier() {
-                        if id == "_" {
-                            // element wildcard — no condition, no binding
-                        } else if id.starts_with(char::is_uppercase) {
-                            // @FR-M-Unit — a capitalised name is a VARIANT of the element's
-                            // enum, or it is nothing: the language never reads one as a
-                            // variable (`Foo = 5` is unknown), so it cannot be a binding here
-                            // either, and binding it would make the arm match every tuple.
-                            // Refused by name, as a top-level arm refuses it.
-                            bad_pattern = true;
-                            if !self.first_pass {
-                                if let Some((e_nr, _)) = self.pattern_variant_enum(&elem_type) {
-                                    diagnostic!(
-                                        self.lexer,
-                                        Level::Error,
-                                        "'{}' is not a variant of {}",
-                                        id,
-                                        self.data.def(e_nr).name()
-                                    );
-                                } else {
-                                    diagnostic!(
-                                        self.lexer,
-                                        Level::Error,
-                                        "'{}' is not a variant — this tuple element is {}, \
-                                         which has no variants; a binding is lower_case",
-                                        id,
-                                        elem_type.source_name(&self.data)
-                                    );
-                                }
-                            }
-                            // A payload written after a name that is no variant is skipped
-                            // whole, so the arm reaches its `=>` with one diagnostic, not a
-                            // cascade.  Step INSIDE the group first: `recover_to` skips a
-                            // nested group as a unit, so asked from the `{` it would walk
-                            // past the matching `}` and on through the elements after it.
-                            if self.lexer.has_token("{") {
-                                self.lexer.recover_to(&["}"]);
-                                self.lexer.has_token("}");
-                            }
-                        } else {
-                            // binding variable — always matches, captures element value
-                            let bind_nr = self.pattern_binding(&id, &elem_type);
-                            self.vars.defined(bind_nr);
-                            bindings.push(v_set(bind_nr, elem_get));
-                        }
-                    } else {
-                        // literal: build elem_get == literal condition
-                        let negate = self.lexer.has_token("-");
-                        let lit: Value = if let Some(n) = self.lexer.has_integer() {
-                            let v = n as i32;
-                            Value::Int(if negate { -v } else { v })
-                        } else if let Some(n) = self.lexer.has_long() {
-                            let v = n as i64;
-                            Value::Long(if negate { -v } else { v })
-                        } else if let Some(n) = self.lexer.has_float() {
-                            Value::Float(if negate { -n } else { n })
-                        } else if let Some(s) = self.lexer.has_cstring() {
-                            Value::Text(s)
-                        } else if self.lexer.has_token("true") {
-                            Value::Boolean(true)
-                        } else if self.lexer.has_token("false") {
-                            Value::Boolean(false)
-                        } else {
-                            let mut e = Value::Null;
-                            self.expression(&mut e);
-                            e
-                        };
-                        let mut elem_cond = Value::Null;
-                        self.call_op(
-                            &mut elem_cond,
-                            "==",
-                            &[elem_get, lit],
-                            &[elem_type.clone(), elem_type],
-                        );
-                        elem_conds.push(elem_cond);
-                    }
-                }
-                if !self.lexer.has_token(")") {
+                if self.parse_tuple_pattern_elements(
+                    tmp,
+                    &elem_types,
+                    &mut bindings,
+                    &mut elem_conds,
+                ) {
                     bad_pattern = true;
-                    if !self.first_pass {
-                        // A `,` here means the pattern listed MORE elements than the
-                        // subject has; anything else is ordinary junk.  Naming the
-                        // arity is what tells the author which side to change.
-                        if self.lexer.peek_token(",") {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "tuple pattern has more elements than the {}-element subject tuple",
-                                arity
-                            );
-                        } else {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "expected ')' to close tuple pattern"
-                            );
-                        }
-                    }
-                    // Skip the surplus so the arm reaches its `=>` — without this the
-                    // cursor stays parked on the `,` and the arm loop spins (loft#832).
-                    self.lexer.recover_to(&[")"]);
-                    self.lexer.has_token(")");
                 }
                 // All element positions were wildcards/bindings with no literal conditions.
                 // The arm is effectively unconditional (wildcard) when there are no bindings

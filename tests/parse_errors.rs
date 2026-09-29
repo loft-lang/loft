@@ -3190,14 +3190,6 @@ fn tail_and_rest_rejected() {
         .error("a fixed tail after a repetition cannot combine with `..rest` (yet) at tail_and_rest_rejected:2:74");
 }
 
-// @PLN35 Phase 7 — streaming `match` over an unsupported element type (a tuple; scalar / text /
-// struct-enum DO work) is deferred with a clean error pointing at the collect idiom.
-#[test]
-fn stream_match_complex_deferred() {
-    code!("fn g() -> iterator<(integer, integer)> { yield (1, 2); }\nfn f() -> integer { match g() { [ _ ] => 1, _ => -1 } }")
-        .error("a `match` streams an iterator of scalar, text or struct-enum elements, and `iterator<(integer, integer)>` is none of those — collect it first: `match [for x in <iter> { x }] { … }` at stream_match_complex_deferred:2:32");
-}
-
 // @PLN35 PC2 — a sub-rule invocation `[ name: rule ]` in a cursor match must be the WHOLE slice
 // pattern for now; mixing it with fixed elements (the running-pos + revert) is deferred.
 #[test]

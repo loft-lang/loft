@@ -67,8 +67,9 @@ tables.
 
 - **@PLN35 Phase 7 — streaming `match` over an `iterator<T>` is EAGER (materialise-then-match).**
   `match some_iter { … }` pulls the whole coroutine into a buffer `vector<T>` (behind the Cursor
-  seam), then runs the normal vector-match.  Consequences: (1) the source must be FINITE — an
-  unbounded iterator loops forever pulling (caught by `loft --timeout`, not a silent hang); (2) a
+  seam), then runs the normal vector-match — for ANY element type (loft#1737).  Consequences:
+  (1) the source must be FINITE — the pull stops at `max_lookahead` elements (`LOFT_MAX_LOOKAHEAD`,
+  default one million) with a defined error naming the `match` (`(P-IterBound)`, loft#1678); (2) a
   side-effecting `next()` is UB-by-contract (the pull order is the buffer order); (3) the whole
   stream is buffered, so it is not memory-lazy.  A truly LAZY per-read pull + a per-match
   `max_lookahead` bound was scoped and DEFERRED: it needs `read_slice_elem`/`cursor_len` to pull
