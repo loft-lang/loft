@@ -332,6 +332,45 @@ fn arc_c1_a_declared_scope_does_not_take_the_newest_cached() {
     );
 }
 
+/// A lock the manifest has since OVERRULED does not decide which version loads.
+///
+/// `loft.toml` says `probepkg = "=0.2.0"`; the `loft.lock` beside it was written before that
+/// edit and still pins 0.1.0; both copies are cached.  The pin was loaded because its files
+/// were on disk, so the program ran the version its own declaration excludes, silently
+/// (a fixture pinning `graphics = "=0.9.3"` over a stale 0.3.0 lock).  The control is the
+/// same lock under a range it still satisfies (`^0.1`): there the lock is the resolved form
+/// of the range and must keep deciding, not drift to the newest cached copy.
+#[test]
+fn a_lock_the_manifest_overrules_does_not_decide_the_load() {
+    let home = empty_home("lock_overruled");
+    cache_pkg(&home, "probepkg", "0.1.0", ">=0.8");
+    cache_pkg(&home, "probepkg", "0.2.0", ">=0.8");
+    let run = |dep: &str| {
+        let pkg = home.join(format!("proj_{}", dep.replace(['=', '^', '.'], "")));
+        write(
+            &pkg.join("loft.toml"),
+            &format!(
+                "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\nprobepkg = \"{dep}\"\n"
+            ),
+        );
+        write(&pkg.join("loft.lock"), &pin_lock("0.1.0"));
+        probe_script(&pkg.join("src"));
+        run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")])
+    };
+    let overruled = run("=0.2.0");
+    let kept = run("^0.1");
+    let _ = std::fs::remove_dir_all(&home);
+
+    assert!(
+        overruled.contains("probepkg-0.2.0") && !overruled.contains("probepkg-0.1.0"),
+        "the manifest pins =0.2.0, so the stale 0.1.0 lock must not load:\n{overruled}"
+    );
+    assert!(
+        kept.contains("probepkg-0.1.0"),
+        "control: `^0.1` still admits the locked 0.1.0, which keeps deciding:\n{kept}"
+    );
+}
+
 // ── arc D: `loft install` in a directory that is not a package declares one ────────
 
 /// Build a one-package registry on disk and return its `file://` index URL.
