@@ -81,3 +81,90 @@ this is where it is written down.
    cell corpora before and after), and the precondition for the next mover — the
    self-reading push once the parser stops copying, a bulk fill for a constant
    comprehension.
+
+## Deviations carried by rewrites.md until 2026-09-29
+
+Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
+
+- **D-rw-6 — OPENED AND CLOSED 2026-09-28 (loft#1729).**  `(R-Const)` makes a constant's view
+  B-Copy's copy the moment it is "handed to a parameter the callee writes", and a top-level
+  vector constant handed there went through as the VIEW: the callee's first write reached the
+  write-locked constant store and a development run halted (*"write to a constant"*), on both
+  backends.  loft#1686 had covered the bind (`c = CODES` copies); the argument was the other
+  road.  **Fix.**  `Parser::constant_arg_needs_copy`: at a loft-defined callee's non-`const`,
+  non-`&` vector parameter, an `OpConstRef` argument travels as a copy
+  (`materialize_collection_value`) when the callee writes that parameter
+  (`callee_param_writes`) — read only for a callee parsed before the caller, since the copy
+  mints its temporaries on both parser passes and pass 1 has no later body; a forward or
+  recursive callee is assumed to write.  A callee that only reads still receives the view.
+  Guard `tests/scripts/1729-a-constant-handed-to-a-writing-parameter-travels-as-a-copy.loft`.
+
+- **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
+  literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed
+  before the store.  The re-init comes first, and #330 lifts an initialiser that reads the
+  local above it.  A COLLECTION member cannot be lifted: it is primed with its field place and
+  its literal writes through the field, after the re-init.  So `s = Bx { v: [s.n + 1], n: 2 }`
+  read the cleared record: `1` for `6`, an element `null`, a comprehension over the local's own
+  vector an empty vector, and with `n` written first, the NEW `n`.  Silent, on both backends,
+  and older than @PLN164.  Found while probing `D-heap-25`'s vector-member cell.  Closed: the
+  parser watches for the author naming the local while such a member is parsed
+  (`Parser::rebuild_watch`, set in `var_usages`).  If it does, the literal is parsed again with
+  the in-place hint declined, built apart and bound — the retry the parser already took for a
+  postfix.  Two defects on that road were fixed with it.  The lexer's interpolation state was
+  not replayed with the tokens, so a literal parsed twice refused every `"…{x}…"` inside it
+  (guard `tests/scripts/a-literal-parsed-twice-keeps-its-interpolations.loft`).  And the
+  work-ref the literal builds into keeps naming the binding's store for reuse on the next pass
+  (loft#1513), so in a loop the re-init cleared the record the literal was about to read:
+  `Scopes::scan_set` now gives that reuse up for a construction that reads its binding.
+  Guard `tests/scripts/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft`.
+  The same read through a call that returns its argument (`s = me(Bx { … s.n … })` in a loop)
+  was `D-op-11`, closed the same day.
+
+- **D-rw-4 — OPENED AND CLOSED 2026-09-21 (loft#1571).**  `(R-InPlaceLiteral)` stages every
+  field expression that may read the place, and the staging asked whether an expression NAMED
+  the destination.  It missed three other names a place has.  For an ELEMENT destination the
+  place is the whole variable, and that branch tested only a direct read of `v`, so a view
+  local (`p = v[0]; v[0] = Pt { x: p.y, y: p.x }`) was never staged.  A view that reaches the
+  destination through another view, such as a loop variable over the container, was missed by
+  the one-level deps test.  And a heap PARAMETER, where the destination is a caller's
+  (`sw(v, v[0])`), has no deps in the callee at all.  Each answered `2,2` for `2,1` on both
+  backends, silently: the element spelling since @PLN164 C1, the field spelling through a
+  parameter (`w.p = Pt { … }` inside `sw3(w, w.p)`) since the field road was built.  Found
+  while probing `D-heap-24`'s control, a record rebuilt from its own fields.  Closed at the
+  staging: a naming of any variable in `Function::store_viewers(root)` counts as a read of the
+  place.  That is `(R-ElemFirst)`'s answer to the same question for a growth (`D-rw-3`), moved
+  out of `hoist::destination_views` so that both readers ask one home.  Guard
+  `tests/scripts/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft`
+  (16 cells and 3 controls: views, parameters, a loop variable, a nested literal, narrow-int,
+  float, enum and text fields).
+
+- **D-rw-3 — OPENED AND CLOSED 2026-09-17 (loft#1553).**  `(R-ElemFirst)` moves the append's
+  mint — its GROWTH — to the temp's declaration, and the gate asked only whether a statement in
+  between NAMED `out`.  A view of `out`'s element is another variable: `e = out[0]; ws = [];
+  ws += […]; w = e.fid; out += [F { fpts: ws }]` left `e` a view (the scope pass saw the growth
+  at the append, after the read), and on `--native` it read the vector record the early mint
+  had relocated — `4609434218613702656` for `100` at the eleventh element, silently, since
+  @PLN157 § V-z.  Found by @PLN164 E-2b's growth-boundary sweep.  Closed at the gate: the
+  window may not read a local whose deps close over `out`'s store or, where that store is a
+  caller's, a heap parameter; a view of a sibling field is spared by the scope pass's own place
+  model.  Guard `tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft`;
+  cells `g25`–`g27` of `164-element-place.loft` for the field destination.
+
+- **D-rw-2 — OPENED AND CLOSED 2026-09-17 (loft#1552).**  `(R-ElemFirst)` says the temp is consumed
+  exactly once, and the gate counted its READS but never its BINDINGS: `p: vector<Pt> = [];
+  if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the early element's field at the
+  declaration, the conditional rebind pointed `p` at the call's store, and the suppressed copy
+  left the element holding the empty vector — `len(out[0].pts)` 0 where the interpreter says 3
+  (`1000` for `1093` in the guard), silently, on `--native` since @PLN157 § V-z.  Found by
+  @PLN164 E-2's cell `g13`, which widened the same gate.  Closed at the gate: the declaration
+  must be the temp's only binding.  Guard
+  `tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft`.
+
+- **D-rw-1 — CLOSED 2026-09-09.**  `one_op_wrapper` asked the body's SHAPE and not
+  the definition's ORIGIN, so a user function whose body is one op (`fn reader(w:
+  W) -> integer { w.a }`) was emitted as its op; the wasm live-dispatch probe
+  flipped it to the interpreter and counted 0 dispatches where it expected 2.  The
+  rule was always (R-Wrapper)'s "stdlib"; the code now asks `def.source() ==
+  STD_SOURCE`, and cell c11 of `V-o-wrapper-op-cells.loft` pins the user call.
+  Found by the GitHub gate on the rebased tree (run 34323456806); the local
+  curated set never runs the wasm probe.
