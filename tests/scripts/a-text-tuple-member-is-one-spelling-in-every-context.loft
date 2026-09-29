@@ -12,6 +12,12 @@
 //                        a `??`) and the context (inline argument, `if` join, block argument,
 //                        `match` arm, return, a typed local), repeated calls.
 // Axes it HOLDS FIXED:   a `(text, float)` tuple.
+//
+// @falsified-at: ee614fb5a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-text-tuple-member-is-one-spelling-in-every-context.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter (the `??` member read freed text); exit on native, whose
+//   pre-fix emission did not compile.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 fn txt(k: integer) -> text { "t{k}" }
 fn opt(k: integer) -> text? { if k > 0 { "o{k}" } else { null } }

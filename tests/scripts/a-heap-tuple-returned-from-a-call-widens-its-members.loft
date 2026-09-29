@@ -11,6 +11,11 @@
 //                        early `return` statement), the widening (`float`, `single`), the heap
 //                        member (text, struct), the no-conversion control, repeated calls.
 // Axes it HOLDS FIXED:   two-member tuples.
+//
+// @falsified-at: ee614fb5a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-heap-tuple-returned-from-a-call-widens-its-members.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the defect was a refusal, so the control does not compile this file.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 struct P { x: integer }
 fn mk(k: integer) -> (text, integer) { ("m{k}", k) }
