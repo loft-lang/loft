@@ -227,7 +227,19 @@ detected rather than misread.
 
 ## Shell scripts
 
-Three shapes that read as correct and are not, each measured in this repo's own scripts:
+Four shapes that read as correct and are not, each measured in this repo's own scripts:
+
+- **Commit-message text is not data once it reaches a shell string.**  A probe that read
+  `git log --format='%H%x09%s%x09%b'`, split it on newlines and handed each first field to
+  `sh -c "git show --format= --name-only {h}"` ran every BODY line as a command: a body
+  quoting `` `make ci` `` started `make ci` in the checkout, and body words beside a `>`
+  became zero-byte files named `BROKEN`, `DRIFT,`, `58.4` at the tree root.  The gate ran
+  again per matching line for twenty minutes, filled the session's disk allowance and
+  tripped every hygiene hook on the way.  A commit message, an issue body, a file name from
+  a listing: each may carry backticks, `$(…)`, `>` and newlines, so it goes to `subprocess`
+  as a LIST argument (`["git", "show", h]`), never interpolated into `shell=True`, and a
+  `%b` format is split on a record separator it cannot contain (`-z`, or `%x00`), never on
+  the newline it is made of.
 
 - **`"$A$'\n'$B"` does not insert a newline.** Inside double quotes `$'\n'` is the five
   characters `$ ' \ n '`, so the last row of `$A` fuses with the first row of `$B` into one
