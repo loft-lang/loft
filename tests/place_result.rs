@@ -198,3 +198,93 @@ fn the_store_census_drops_by_one_per_admitted_call() {
         "interpreter: {off} mints under the switch, {on} with placement"
     );
 }
+
+/// `@FR-R-Place`'s callee clause, the CHAIN form (2026-09-29): the guard
+/// `tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft` says the values hold;
+/// this pins the IR — the chain cell `slot_chain` is placed (an `OpPlaceRecord` at its
+/// buffer's init, an `OpMoveRecord` at the field store) exactly like the control `slot_mk`,
+/// the three declines (`slot_bound`, `slot_view`, `slot_chain_bound`) keep the copy, and the
+/// switch restores the copy shape in the chain cell.
+const CHAIN_CELLS: &str = "tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft";
+
+fn chain_ir(env: &[(&str, &str)]) -> String {
+    let mut cmd = loft();
+    cmd.arg("introspect")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_CELLS));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "introspect failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn fn_ir<'a>(text: &'a str, name: &str) -> &'a str {
+    let start = text
+        .find(&format!("fn {name}("))
+        .unwrap_or_else(|| panic!("{name}'s IR"));
+    let rest = &text[start..];
+    let end = rest
+        .find("}#block(1)")
+        .expect("the function's closing block")
+        + "}#block(1)".len();
+    &rest[..end]
+}
+
+#[test]
+fn a_chain_exit_is_placed_like_a_literal_and_the_declines_keep_the_copy() {
+    let text = chain_ir(&[]);
+    for name in ["n_slot_mk", "n_slot_chain"] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("= OpPlaceRecord(").count(),
+            1,
+            "{name}: one placed buffer"
+        );
+        assert_eq!(
+            ir.matches("OpMoveRecord(").count(),
+            1,
+            "{name}: the field store is a move"
+        );
+        assert_eq!(
+            ir.matches("OpCopyRecord(").count(),
+            0,
+            "{name}: no copy left"
+        );
+    }
+    for name in [
+        "n_slot_bound",
+        "n_slot_view",
+        "n_slot_chain_bound",
+        "n_add_chain",
+    ] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("OpPlaceRecord(").count(),
+            0,
+            "{name}: declined, no placement"
+        );
+        assert_eq!(
+            ir.matches("OpMoveRecord(").count(),
+            0,
+            "{name}: declined, no move"
+        );
+    }
+}
+
+#[test]
+fn the_switch_keeps_the_chain_cells_copy() {
+    let text = chain_ir(&[("LOFT_NO_PLACE_RESULT", "1")]);
+    let ir = fn_ir(&text, "n_slot_chain");
+    assert_eq!(ir.matches("OpPlaceRecord(").count(), 0);
+    assert_eq!(ir.matches("OpMoveRecord(").count(), 0);
+    assert_eq!(
+        ir.matches("OpCopyRecord(").count(),
+        1,
+        "the copy is back under the switch"
+    );
+}

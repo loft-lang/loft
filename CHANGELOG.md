@@ -312,6 +312,10 @@ said.  It is refused now, as the `if` spelling always was.  (loft#1390)
   well.  It now reuses the standard library it already read, so a small program starts in about
   a sixth of the work it took before.  A changed standard library is still always read again.
 
+**A record that arrives through a chain of calls is built where it will live.**  A helper
+that ends in `return build(n)` used to cost a store of its own for every result, on top of
+the one its inner builder wrote; it now hands the caller's buffer through, on both backends.
+
 **A loop that calls a helper whose `??` fallback carries a text keeps its fast paths on
 `--native`.**  `q = seqs[n] ?? Seq { first: 0, count: 1, name: "" }` inside a helper made
 every loop calling it give up its headers, because the fallback's text field counted as a

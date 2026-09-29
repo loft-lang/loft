@@ -130,7 +130,9 @@ never freed — and is the first bisect step for a wrong, empty or stale vector 
 assignment from a call.  Declined where an argument reaches the destination, where the callee
 MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
-byte-identical under the switch — so the gain is structural.
+byte-identical under the switch — so the gain is structural.  Since 2026-09-29 the callee clause admits a CHAIN exit
+(`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
+that arrives through a chain is placed like a literal's; the switch covers it with the rest.
 
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a

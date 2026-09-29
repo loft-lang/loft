@@ -2450,7 +2450,11 @@ on the drawing bench).
                  or not that record exists yet — is handed a return buffer CLAIMED IN
                  S (R-Callee: a buffer may be a record the caller offered), so the
                  result is never minted in a store of its own and the later store into
-                 the destination is a relocation within S (R-MoveLast).  When the
+                 the destination is a relocation within S (R-MoveLast).  The callee
+                 writes that buffer on every exit: a fresh literal built into it, or a
+                 CHAIN exit that hands the same buffer to a callee of which this holds
+                 (asked recursively; a cycle declines) — a chain function's buffer is
+                 the `__ref_N` the chain renamed it to.  When the
                  destination place EXISTS at the call and no argument of the call
                  reaches it, the buffer IS the place and nothing moves.  Declines: a
                  path that reads the result after a RELOCATING store (the destination
@@ -2559,6 +2563,17 @@ rule — the B2 relocation only a destination in an element appended to a PARAME
 collection, outside a loop, with no second destination or host — and a narrower admission
 costs the rewrite and never a value.  The declines written into the rules above are the
 ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
+*The chain form of the callee clause (2026-09-29, `place_result::chain_writes_buffer`):*
+`return mk(n)` hands the buffer through, and the exit test read it as an exit answering
+another store, so every chain-built result cost a store of its own — the shape a decoder's
+`decode` (`return d`) and every `return build(…)` wrapper has.  Guard
+`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`, the placement MATRIX for a
+decoder's shapes (the chains, the wrapper-field shapes the next clause must admit, the
+placement sites and their three declines); pin `tests/place_result.rs`.  The matrix also
+records what the decoder still needs and this rule does not yet admit: a bind INSIDE a loop
+(the pass reads top-level binds only), a destination in a LOCAL's store, and the placed
+thing being a heap-owning FIELD of a wrapper result whose scalars are read after the move.
+
 The rules are written BEFORE the phases so that a question met while building one is
 answered here rather than decided in the code.
 

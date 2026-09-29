@@ -10,6 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-Place)`'s callee clause admits a chain exit (2026-09-29)
+
+`place_result::callee_writes_buffer_at_every_exit` read `return g(…)` as an exit answering a
+store other than the buffer, and a chain function's buffer attribute is the `__ref_N` the
+chain renamed it to, which the `__retbuf` name test refused before any exit was asked.  Now
+the buffer is whatever attribute the callee's return-buffer index names, and a chain block
+(`{ one_buffer_chain: buf = g(…, buf); …; buf }`) writes the buffer iff `g` writes ITS buffer
+on every exit — `chain_writes_buffer`, recursive with a cycle guard.  On the placement
+matrix (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`) the chain cell is
+placed like the literal control and its stores per call go 2 → 1; the three declines hold,
+and the clause's recursion is what refuses a chain to a callee whose exits answer different
+stores (sabotage: a store fault on `--native`).  No library bench program carries the shape
+yet (census unchanged); the decoder rows wait on the loop, local-host and wrapper-field
+admissions the matrix records.
+
 ### A `??` fallback's text set is the discharge buffer's own (2026-09-29)
 
 `hoist::discharge_buffer_set` (`@FR-R-InPlace`'s hidden-buffer allowance, `@FR-R-Callee`):

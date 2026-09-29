@@ -645,3 +645,24 @@ item 1 — records that own heap answered as VALUES (a `Decoded` crossing the ca
 whose payload is a handle), so a decode allocates once for the tree, not once per node —
 and that is a rule extension of `(R-ValueRecord)`, not a site fix.  The double decode is
 the library's design and the twin's too; it does not move the ratio, only the absolute.
+
+## The placement matrix (2026-09-29) — what a decoder's shapes need from `(R-Place)`
+
+Built before any code (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`),
+hand-computed, stores counted per call with `LOFT_ALLOC_REPORT`.  The boundary today:
+
+| shape | decision | stores/call |
+|---|---|---:|
+| p2 a literal-only callee's result into a literal field of a parameter's element | placed | 1 (the host literal) |
+| p3 the same through a chain (`return mk(n)`) | placed since the chain clause (was: "not a fresh literal on every exit") | 1 (was 2) |
+| p0/p1 the result appended WHOLE (`r.items += [v]`) | "the copy carries a flag" | 2 |
+| w2 the wrapper's field copied out and returned (`v = d.value; return v`) | "a reference into the local leaves the receiver chain" | 3 |
+| w1 the decoder loop (`sub = read(…)` in a loop, `items += [sub.value]`, `p = sub.next` after) | never a candidate: the bind is inside a loop and the host is a local | — |
+| w4 recursion, w7 two heap fields, w9 a branch join, w3 an alias | not candidates / declined | — |
+
+So the chain clause is landed and the decoder is still whole: what it needs next, in
+order, is (a) a bind inside a loop with the per-iteration buffer, (b) a destination in a
+local vector's store, (c) the placed thing being the ONE heap-owning field of a wrapper whose
+scalars are read after the move (a field move that zeroes its source so the wrapper's free
+finds nothing), and (d) the local vector returned inside the exit literal built in the
+return buffer's store.  Each is an ownership argument with cells already in the matrix.

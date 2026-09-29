@@ -362,28 +362,52 @@ fn own_return_buffer(data: &Data, d_nr: u32) -> Option<u16> {
 }
 
 /// `(R-Place)`'s callee clause: every exit of `fn_nr` is a fresh literal written into the
-/// `__retbuf` the caller handed (B2 unit 1's contract), and the body's last statement is
-/// such an exit, so no path answers another store.  A callee whose buffer attribute was
-/// promoted onto a local (`o = P { … }; …; o`) declines here exactly as unit 1 declines it:
-/// the local IS the buffer, and a literal built beside it would share the record.
+/// return buffer the caller handed (B2 unit 1's contract) — or a CHAIN that hands that same
+/// buffer to a callee of which this holds — and the body's last statement is such an exit,
+/// so no path answers another store.  A callee whose buffer attribute was promoted onto a
+/// local (`o = P { … }; …; o`) declines here exactly as unit 1 declines it: the local IS the
+/// buffer, and a literal built beside it would share the record.
 ///
-/// An exit has three SPELLINGS in the IR and all are read: `return { Object …; __retbuf }`
-/// (the `Return` wraps the literal's block), `{ Object …; return __retbuf }` (the `Return`
-/// is the block's last operator — the form a function with text work-refs takes, their
-/// frees standing between the writes and the return), and for the body's last statement
-/// alone the bare tail `{ Object …; __retbuf }` as the parser leaves it before the scope
-/// pass wraps it (the preview's view).  A `Return` met anywhere else is an exit that answers
-/// something other than the buffer.
+/// The buffer is the attribute at the callee's return-buffer index by WHATEVER name it
+/// carries: `__retbuf`, or the `__ref_N` a chain exit renamed it to
+/// (`Parser::chain_return_buffer_var`) — a chain function's exits spell that name.
+///
+/// An exit has four SPELLINGS in the IR and all are read: `return { Object …; buf }` (the
+/// `Return` wraps the literal's block), `{ Object …; return buf }` (the `Return` is the
+/// block's last operator — the form a function with text work-refs takes, their frees
+/// standing between the writes and the return), the chain `return { one_buffer_chain: buf =
+/// g(…, buf); …; buf }` — an exit that writes the buffer iff `g` writes ITS buffer on every
+/// exit, asked recursively, a cycle declining — and for the body's last statement alone the
+/// bare tail `{ Object …; buf }` (or the chain block) as the parser leaves it before the
+/// scope pass wraps it (the preview's view).  A `Return` met anywhere else is an exit that
+/// answers something other than the buffer.
 fn callee_writes_buffer_at_every_exit(data: &Data, fn_nr: u32, buf_idx: usize) -> bool {
-    let def = data.def(fn_nr);
-    if def
-        .attributes()
-        .get(buf_idx)
-        .is_none_or(|a| a.name != "__retbuf")
-    {
+    chain_writes_buffer(data, fn_nr, buf_idx, &mut HashSet::new())
+}
+
+fn chain_writes_buffer(data: &Data, fn_nr: u32, buf_idx: usize, active: &mut HashSet<u32>) -> bool {
+    if !active.insert(fn_nr) {
         return false;
     }
-    let buf_var = def.variables().var("__retbuf");
+    let answer = chain_writes_buffer_inner(data, fn_nr, buf_idx, active);
+    active.remove(&fn_nr);
+    answer
+}
+
+fn chain_writes_buffer_inner(
+    data: &Data,
+    fn_nr: u32,
+    buf_idx: usize,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let def = data.def(fn_nr);
+    let Some(attr) = def.attributes().get(buf_idx) else {
+        return false;
+    };
+    if attr.name != "__retbuf" && !attr.name.starts_with("__ref_") {
+        return false;
+    }
+    let buf_var = def.variables().var(&attr.name);
     if buf_var == u16::MAX || !def.variables().is_argument(buf_var) {
         return false;
     }
@@ -393,16 +417,26 @@ fn callee_writes_buffer_at_every_exit(data: &Data, fn_nr: u32, buf_idx: usize) -
     let Some(last) = bl.operators.last() else {
         return false;
     };
-    let (mut exits, mut all_into_buffer) = (0usize, true);
-    if tail_object_yielding(last, buf_var) {
-        // The third spelling, the parser's tail before the scope pass wraps it in a
-        // `Return`: the body's last statement IS the literal's block, yielding the buffer.
-        exits += 1;
+    let mut cx = Exits {
+        data,
+        buf_var,
+        active,
+        count: 0,
+        ok: true,
+    };
+    if tail_object_yielding(last, buf_var) || chain_block(data, last, buf_var).is_some() {
+        // The tail spelling, the parser's tail before the scope pass wraps it in a
+        // `Return`: the body's last statement IS the literal's block (or the chain block),
+        // yielding the buffer.
+        cx.count += 1;
+        if let Some(target) = chain_block(data, last, buf_var) {
+            cx.chain(target);
+        }
         for op in &bl.operators[..bl.operators.len() - 1] {
-            check_exits(op, buf_var, &mut exits, &mut all_into_buffer);
+            cx.check(op);
         }
     } else {
-        if !is_exit(last, buf_var) {
+        if !cx.is_exit(last) {
             if crate::keys::trace_place() {
                 eprintln!(
                     "[place] callee {} last statement is not an exit: {}",
@@ -416,9 +450,105 @@ fn callee_writes_buffer_at_every_exit(data: &Data, fn_nr: u32, buf_idx: usize) -
             }
             return false;
         }
-        check_exits(def.code(), buf_var, &mut exits, &mut all_into_buffer);
+        cx.check(def.code());
     }
-    exits > 0 && all_into_buffer
+    cx.count > 0 && cx.ok
+}
+
+/// The exit walk of one callee: counts the exits and whether every one writes the buffer.
+struct Exits<'a> {
+    data: &'a Data,
+    buf_var: u16,
+    active: &'a mut HashSet<u32>,
+    count: usize,
+    ok: bool,
+}
+
+impl Exits<'_> {
+    /// A chain exit's target writes its own buffer on every exit — or this exit does not.
+    fn chain(&mut self, (g, g_buf): (u32, usize)) {
+        if !chain_writes_buffer(self.data, g, g_buf, self.active) {
+            self.ok = false;
+        }
+    }
+
+    fn is_exit(&mut self, op: &Value) -> bool {
+        match op.unspan() {
+            Value::Return(inner) => {
+                if crate::parser::Parser::tail_fresh_object_workref(inner) == Some(self.buf_var) {
+                    return true;
+                }
+                if let Some(target) = chain_block(self.data, inner, self.buf_var) {
+                    self.chain(target);
+                    return true;
+                }
+                false
+            }
+            Value::Block(bl) => buffer_object_returning(bl, self.buf_var),
+            _ => false,
+        }
+    }
+
+    fn check(&mut self, node: &Value) {
+        match node.unspan() {
+            Value::Return(inner) => {
+                self.count += 1;
+                if crate::parser::Parser::tail_fresh_object_workref(inner) == Some(self.buf_var) {
+                } else if let Some(target) = chain_block(self.data, inner, self.buf_var) {
+                    self.chain(target);
+                } else {
+                    self.ok = false;
+                }
+            }
+            Value::Block(bl) if buffer_object_returning(bl, self.buf_var) => {
+                self.count += 1;
+                let n = bl.operators.len();
+                for op in &bl.operators[..n - 1] {
+                    self.check(op);
+                }
+            }
+            n => n.for_each_child(&mut |c| self.check(c)),
+        }
+    }
+}
+
+/// The chain spelling — `{ one_buffer_chain: buf = g(…, buf); …; buf }`: a block the parser
+/// names so, yielding the buffer, whose one call binds the buffer from a loft-defined `g`
+/// handed that same buffer at its own return-buffer index.  Answers `(g, g's buffer index)`.
+/// Enforces `@FR-R-Place` (the callee clause's chain form).
+fn chain_block(data: &Data, op: &Value, buf_var: u16) -> Option<(u32, usize)> {
+    let Value::Block(bl) = op.unspan() else {
+        return None;
+    };
+    if !bl.name.starts_with("one_buffer_chain")
+        || !matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(w)) if *w == buf_var)
+    {
+        return None;
+    }
+    let mut target = None;
+    for op in &bl.operators {
+        let Value::Set(w, rhs) = op.unspan() else {
+            continue;
+        };
+        if *w != buf_var {
+            continue;
+        }
+        let Value::Call(g, args) = rhs.unspan() else {
+            return None;
+        };
+        if (*g as usize) >= data.definitions.len() || !data.def(*g).is_loft_defined() {
+            return None;
+        }
+        let g_buf = data.def(*g).hidden_return_buffer_attr()?;
+        if !matches!(args.get(g_buf).map(Value::unspan), Some(Value::Var(b)) if *b == buf_var) {
+            return None;
+        }
+        if target.is_some() {
+            return None;
+        }
+        target = Some((*g, g_buf));
+    }
+    target
 }
 
 /// The tail spelling: an `Object` block building into the buffer whose value is the
@@ -436,36 +566,6 @@ fn buffer_object_returning(bl: &Block, buf_var: u16) -> bool {
         && bl.result.depend() == [buf_var]
         && matches!(bl.operators.last().map(Value::unspan),
             Some(Value::Return(r)) if matches!(r.unspan(), Value::Var(w) if *w == buf_var))
-}
-
-/// Is `op` an exit that answers the buffer, in either spelling?
-fn is_exit(op: &Value, buf_var: u16) -> bool {
-    match op.unspan() {
-        Value::Return(inner) => {
-            crate::parser::Parser::tail_fresh_object_workref(inner) == Some(buf_var)
-        }
-        Value::Block(bl) => buffer_object_returning(bl, buf_var),
-        _ => false,
-    }
-}
-
-fn check_exits(node: &Value, buf_var: u16, exits: &mut usize, ok: &mut bool) {
-    match node.unspan() {
-        Value::Return(inner) => {
-            *exits += 1;
-            if crate::parser::Parser::tail_fresh_object_workref(inner) != Some(buf_var) {
-                *ok = false;
-            }
-        }
-        Value::Block(bl) if buffer_object_returning(bl, buf_var) => {
-            *exits += 1;
-            let n = bl.operators.len();
-            for op in &bl.operators[..n - 1] {
-                check_exits(op, buf_var, exits, ok);
-            }
-        }
-        n => n.for_each_child(&mut |c| check_exits(c, buf_var, exits, ok)),
-    }
 }
 
 /// Does `node` name variable `w` anywhere — as a `Var`, or in one of the variants that
