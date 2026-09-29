@@ -12,8 +12,10 @@
 //! versions, but the test still catches beams / ground / palette
 //! gone, mispositioned, or recoloured.
 //!
-//! Skips (does not fail) when xvfb-run, the graphics cdylib, or a
-//! working software-GL context is unavailable.  Updating:
+//! Skips (does not fail) when xvfb-run or a working software-GL context is
+//! unavailable — unless `LOFT_REQUIRE_GL_GOLD=1`, which CI's Linux leg sets
+//! because it installs both, so a skip there is a retired guard and not an
+//! absent display.  A program that does not COMPILE is never a skip.  Updating:
 //!
 //!   UPDATE_GOLD=1 cargo test --test crystal_editor_gold
 //!
@@ -32,10 +34,18 @@ fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
-fn graphics_native_built() -> bool {
-    workspace_root()
-        .join("lib/graphics/native/target/release/libloft_graphics_native.so")
-        .exists()
+/// Skip this environment, or fail where CI promised the environment exists.
+///
+/// The guard used to gate on `lib/graphics/native/…/libloft_graphics_native.so`,
+/// a path that left this repository with the graphics library.  Every run then
+/// skipped at that first line — CI's included, although CI installs Xvfb and
+/// Mesa for this test alone — and the demo stopped compiling unnoticed.
+fn skip(reason: &str) {
+    assert!(
+        std::env::var_os("LOFT_REQUIRE_GL_GOLD").is_none_or(|v| v == "0"),
+        "crystal GL gold did not run, and LOFT_REQUIRE_GL_GOLD says it must: {reason}"
+    );
+    eprintln!("skipping crystal GL gold: {reason}");
 }
 
 fn has_cmd(cmd: &str) -> bool {
@@ -121,15 +131,27 @@ fn compare_rgba(a: &[u8], b: &[u8]) -> DiffReport {
 
 #[test]
 fn crystal_editor_gl_matches_gold() {
-    if !graphics_native_built() {
-        eprintln!("skipping crystal GL gold: graphics cdylib not built");
-        return;
-    }
     if !has_cmd("xvfb-run") {
-        eprintln!("skipping crystal GL gold: xvfb-run not installed");
+        skip("xvfb-run not installed");
         return;
     }
     let root = workspace_root();
+    // A program that does not compile produces no screenshot either, and the
+    // screenshot check below reads that as "no software GL".  Ask first.
+    let check = Command::new(loft_bin())
+        .args(["--no-warnings", "--path"])
+        .arg(format!("{}/", root.display()))
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .args(["--check", "tools/audience-demo/crystal_editor.loft"])
+        .current_dir(&root)
+        .output()
+        .expect("invoke loft --check");
+    assert!(
+        check.status.success(),
+        "tools/audience-demo/crystal_editor.loft does not compile:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
     let _ = std::fs::remove_file(&shot);
     let out = Command::new("xvfb-run")
@@ -173,11 +195,11 @@ fn crystal_editor_gl_matches_gold() {
     if !shot.exists() {
         // No framebuffer captured — almost always a missing software-GL
         // context in this environment, not a rendering regression.  Skip.
-        eprintln!(
-            "skipping crystal GL gold: no screenshot produced (software GL unavailable?)\nstdout={}\nstderr={}",
+        skip(&format!(
+            "no screenshot produced (software GL unavailable?)\nstdout={}\nstderr={}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr),
-        );
+        ));
         return;
     }
 
@@ -200,10 +222,10 @@ fn crystal_editor_gl_matches_gold() {
     // screen) and CI always produce the exact gold size, so a dimension
     // mismatch here is environmental — skip gracefully.
     if (aw, ah) != (ew, eh) {
-        eprintln!(
-            "skipping crystal GL gold: framebuffer {aw}x{ah} != gold {ew}x{eh} \
+        skip(&format!(
+            "framebuffer {aw}x{ah} != gold {ew}x{eh} \
              (HiDPI/display-scaled environment — run via `make test-gl-golden` for a controlled size)"
-        );
+        ));
         return;
     }
     let diff = compare_rgba(&actual, &expected);

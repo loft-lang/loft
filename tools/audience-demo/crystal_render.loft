@@ -16,9 +16,9 @@
 // a 512×512 Canvas via lib/graphics' 2D rasterizer, save_png to
 // `<out.png>`.  Pure CPU, no GL — runs in any environment.
 
-use audience_crystal;
-use graphics;
-use gridmesh;
+use audience_crystal::*;
+use graphics::*;
+use gridmesh::*;
 
 CANVAS_SIZE = 512;
 CANVAS_SCALE = 2.6;   // pixels per world unit — tuned so the linked /
@@ -211,8 +211,9 @@ fn draw_thick_aa(cv: graphics::Canvas, x0: integer, y0: integer,
     cv.draw_aa_line(x0, y0, x1, y1, color);
     return;
   }
-  px = (0.0 - dy) / ln;
-  py = dx / ln;
+  // `ln` is past the 0.0001 guard above, so the fallback cannot be taken.
+  px = (0.0 - dy) / ln ?? 0.0;
+  py = dx / ln ?? 0.0;
   half = (width - 1) / 2;
   for k in (0 - half)..(half + 1) {
     ox = (px * k as float) as integer;

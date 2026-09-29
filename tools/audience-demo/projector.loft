@@ -33,10 +33,10 @@
 //   # Now any seed/clear event hitting the server appears as a coloured
 //   # hex in the projector window within a frame.
 
-use graphics;
-use math;
-use engine_host;
-use gridmesh;              // build_index (shared spatial-index primitive)
+use graphics::*;
+use math::*;
+use engine_host::*;
+use gridmesh::*;              // build_index (shared spatial-index primitive)
 use audience_crystal::*;   // CellSnap, CrystalMesh, CrystalState, crystal_segments_aged,
                            // update_state, pick_centers, palette_r/g/b, cell_wx/wz,
                            // HEX_SIZE, SQRT3, KIND_MAIN/SIDE, GROWTH_TICKS, …
@@ -90,14 +90,14 @@ fn parse_xyc(payload: text) -> (integer, integer, integer) {
   if i == null {
     (0, 0, 0)
   } else {
-    x = payload[..i] as integer;
+    x = payload[..i] as integer ?? 0;
     rest = payload[i + 1..];
     j = rest.find(",");
     if j == null {
       (x, 0, 0)
     } else {
-      y = rest[..j] as integer;
-      c = rest[j + 1..] as integer;
+      y = rest[..j] as integer ?? 0;
+      c = rest[j + 1..] as integer ?? 0;
       (x, y, c)
     }
   }
@@ -701,7 +701,7 @@ fn apply_frame(world: World, cryst: &CrystalIncr, crystal_births: &vector<single
     println("projector: dropped malformed frame {frame}");
     return;
   }
-  msg_id = frame[..colon] as integer;
+  msg_id = frame[..colon] as integer?;
   payload = frame[colon + 1..];
   if msg_id != 4 {
     if msg_id != 5 { println("projector: ignoring msg_id={msg_id} payload={payload}"); }
@@ -793,7 +793,7 @@ fn server_port(url: text, fallback: integer) -> integer {
   hp = if slash != null { rest[..slash] } else { rest };
   colon = hp.find(":");
   if colon == null { return fallback; }
-  port = hp[colon + 1..] as integer;
+  port = hp[colon + 1..] as integer?;
   if port == null { fallback } else { port }
 }
 

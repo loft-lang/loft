@@ -10,7 +10,7 @@
 // of a per-segment mixed value with coords quantised at f32 resolution).
 
 use audience_crystal::*;
-use gridmesh;
+use gridmesh::*;
 
 fn build_block(side: integer) -> CellSnap {
   bxs: vector<integer> = []; bys: vector<integer> = []; bcs: vector<integer> = [];

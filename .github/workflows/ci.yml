@@ -764,6 +764,11 @@ jobs:
           # macOS/Windows: those resolve the library differently (or not at all),
           # and a skip there is surfaced by the ledger rather than enforced.
           LOFT_REQUIRE_SQLITE: ${{ runner.os == 'Linux' && '1' || '' }}
+          # Same bargain for the crystal editor's GL gold: Linux installs Xvfb
+          # and Mesa above for that test alone.  It skipped on every run for
+          # months behind a gate on a path that had left the repo, and the demo
+          # it guards stopped compiling without anything turning red.
+          LOFT_REQUIRE_GL_GOLD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           # The exclusions and the shard boundary both live in the script — the
           # sharded PR legs and the unsharded push/nightly legs have to agree on

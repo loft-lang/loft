@@ -63,7 +63,7 @@ name = \"eh_aud_server_leg\"
 version = \"0.0.0\"
 
 [dependencies]
-server = \"0.2.0\"
+server = \"0.7.1\"
 ";
 
 const SERVER_LOCK: &str = "\
@@ -72,16 +72,16 @@ schema_version = 1
 
 [[package]]
 name = \"web\"
-version = \"0.2.0\"
-url = \"https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.2.0/web-0.2.0.tar.gz\"
-sha256 = \"e5a46ea562590f389db1d725ab7954f1361474c15201b12c188f0b57438d2494\"
+version = \"0.4.2\"
+url = \"https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.2/web-0.4.2.tar.gz\"
+sha256 = \"44d0469d0ecc3ca08006b80d4c507e8c2a4005c650e01fa59ca3a866da123e25\"
 source = \"registry\"
 
 [[package]]
 name = \"server\"
-version = \"0.2.0\"
-url = \"https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.2.0/server-0.2.0.tar.gz\"
-sha256 = \"5cc1b878211d937740e7561fc1406dc61de099c6aabaaa8841d0cb3023856c4e\"
+version = \"0.7.1\"
+url = \"https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.1/server-0.7.1.tar.gz\"
+sha256 = \"08bbdc7abcc1fc2e508de942592b3c2875d7aa06c5c6f456c74b20d65bcfd2db\"
 source = \"registry\"
 deps = [\"web\"]
 ";
@@ -142,7 +142,7 @@ fn server_available() -> bool {
         return false;
     }
     let probe = pkg.join("srvprobe.loft");
-    let body = "use server;\nfn _p(s: server::Server) -> server::Server { s }\nfn main() {}\n";
+    let body = "use server::*;\nfn _p(s: server::Server) -> server::Server { s }\nfn main() {}\n";
     if std::fs::write(&probe, body).is_err() {
         return false;
     }

@@ -22,7 +22,7 @@
 //   LOFT_PROBE_CLIENTS  number of clients to spawn (default 4)
 //   LOFT_PROBE_SECS     duration of the drain phase (default 3)
 
-use web;
+use web::*;
 
 const PORT:        integer = 18084;
 const TICK_INT_US: integer = 33333;
@@ -30,7 +30,7 @@ const SIGHT_RANGE: float   = 80.0;
 
 fn env_int(name: text, dflt: integer) -> integer {
   raw = env_variable(name) ?? "";
-  if raw == "" { dflt } else { raw as integer }
+  if raw == "" { dflt } else { raw as integer ?? dflt }
 }
 
 struct Counts {
@@ -49,9 +49,10 @@ fn note_echo(m: text, i: integer, tot: vector<integer>, hold: vector<integer>) {
   if a == null { return; }
   b = payload[a + 1..].find(",");
   if b == null { return; }
-  t0 = payload[..a] as integer;
-  t1 = payload[a + 1..a + 1 + b] as integer;
-  t5 = payload[a + 1 + b + 1..] as integer;
+  t0 = payload[..a] as integer?;
+  t1 = payload[a + 1..a + 1 + b] as integer?;
+  t5 = payload[a + 1 + b + 1..] as integer?;
+  if t0 == null || t1 == null || t5 == null { return; }
   t6 = ticks();
   tot  += [t6 - t0];
   hold += [t5 - t1];
@@ -82,7 +83,7 @@ fn count_for(h: web::WsHandler, tot: vector<integer>, hold: vector<integer>) -> 
     // Frame format: "<msg_id>:<payload>" — same convention as PLAN36.
     i = m.find(":");
     if i == null { c.garbled = c.garbled + 1; continue; }
-    kind = m[..i] as integer;
+    kind = m[..i] as integer?;
     if      kind == 2 { c.poses = c.poses + 1; }
     else if kind == 3 { c.exits = c.exits + 1; }
     else if kind == 5 { note_echo(m, i, tot, hold); }
@@ -170,7 +171,7 @@ fn run_probe(n: integer, secs: integer) {
       gm = ge.message;
       gidx = gm.find(":");
       if gidx == null { continue; }
-      gkind = gm[..gidx] as integer;
+      gkind = gm[..gidx] as integer?;
       if      gkind == 2 { per_client_poses[gci] = per_client_poses[gci] + 1; }
       else if gkind == 3 { per_client_exits[gci] = per_client_exits[gci] + 1; }
       else if gkind == 5 { note_echo(gm, gidx, echo_tot, echo_hold); }

@@ -24,8 +24,8 @@
 // Run:    ./target/release/loft --lib lib/ tools/audience-demo/crystal_editor.loft
 // Smoke:  add `--smoke` to paint a cluster headlessly and screenshot.
 use audience_crystal::*;
-use gridmesh;
-use graphics;
+use gridmesh::*;
+use graphics::*;
 
 WIN_W = 1000;            // requested window size (logical)
 WIN_H = 1000;
@@ -69,7 +69,7 @@ void main() {{
 // screen<->world is exact and picking is its inverse:
 //   clipX = (wx - cam_x) / (VIEW_HALF*aspect)   clipY = (cam_z - wz)/VIEW_HALF
 fn topdown_mvp(cam_x: float, cam_z: float, aspect: float) -> vector<float> {
-  ix = 1.0 / (VIEW_HALF * aspect);
+  ix = 1.0 / (VIEW_HALF * aspect) ?? 0.0;   // a zero-width window has no projection
   iy = 1.0 / VIEW_HALF;
   [ix, 0.0, 0.0, 0.0,
    0.0, 0.0, 0.0, 0.0,
@@ -79,8 +79,8 @@ fn topdown_mvp(cam_x: float, cam_z: float, aspect: float) -> vector<float> {
 
 // Screen-space MVP: pixel (top-left origin) → NDC, for the palette overlay.
 fn screen_mvp(sw: float, sh: float) -> vector<float> {
-  sx = 2.0 / sw;
-  sy = 2.0 / sh;
+  sx = 2.0 / sw ?? 0.0;   // likewise a zero-sized window
+  sy = 2.0 / sh ?? 0.0;
   [sx, 0.0, 0.0, 0.0,
    0.0, 0.0 - sy, 0.0, 0.0,
    0.0, 0.0, 0.0, 0.0,

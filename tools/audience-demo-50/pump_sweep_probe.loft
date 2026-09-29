@@ -14,8 +14,8 @@
 //   LOFT_NO_CACHE=1 LOFT_PROBE_CLIENTS=12 LOFT_PROBE_SECS=60 \
 //     loft --interpret tools/audience-demo-50/probe.loft
 
-use server;
-use web;
+use server::*;
+use web::*;
 
 const PORT: integer = 18084;
 

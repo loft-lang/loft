@@ -1,10 +1,10 @@
 [package]
 name    = "audience_crystal"
 version = "0.1.0"
-loft    = ">=0.8"
+loft    = ">=2026.10.0"
 
 [library]
 entry = "src/audience_crystal.loft"
 
 [dependencies]
-gridmesh = ">=0.1"
+gridmesh = ">=0.2.3"
