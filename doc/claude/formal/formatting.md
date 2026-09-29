@@ -33,12 +33,18 @@ of interleaved literal runs `sᵢ` and interpolations `{eᵢ:fᵢ}`.
               (`·` is concatenation).  eᵢ is an ARBITRARY expression — a variable, field access
               `a.b`, index `v[i]`, call `f(x)`, arithmetic — parsed at full language level.
   (F-Escape)  inside a template `{{` denotes a literal `{` and `}}` a literal `}`; a single `{`
-              opens an interpolation.  Everything outside `{…}` is copied verbatim.
+              opens an interpolation.  Everything else outside `{…}` is copied verbatim.  A
+              single `}` with no hole open, and a `{` whose hole does not close on its own line,
+              are STATIC errors (`format-unescaped-brace`, `format-unclosed-hole`) — never
+              copied, because either reading of the author's intent is a guess; the cure,
+              doubling, is what `loft fix --apply` writes.  Both quote forms, `"…"` and
+              `` `…` ``, and every position a text literal can stand in obey it alike.
 ```
 
 **In words.** `"hi {name}, {a + b} left"` renders the literals unchanged and splices each
 `{…}` by evaluating the expression and rendering its value; the pieces are concatenated in source
-order. To put a real brace in the output, double it — `"{{lit}}"` renders `{lit}`. The braces
+order. To put a real brace in the output, double it — `"{{lit}}"` renders `{lit}`.  A lone brace is
+not quietly copied: `"a}b"` and `"a{b"` are refused, naming the fix. The braces
 hold *any* expression, not just a bare name (verified: `{42:#x}`, `{col}`, `{a / b}`).
 
 ### Desugaring — a template is a text accumulator, one sink for both backends

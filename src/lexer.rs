@@ -1368,6 +1368,7 @@ impl Lexer {
                 break;
             } else if c == '{' && self.interpolate_strings {
                 self.next_char();
+                // `@FR-F-Escape` — `{{` is one literal `{`; the second is consumed below.
                 if let Some('{') = self.iter.peek() {
                     res.push(c);
                 } else if !self.hole_closes_on_this_line() {

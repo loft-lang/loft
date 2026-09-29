@@ -1,0 +1,12 @@
+diff --git a/src/lexer.rs b/src/lexer.rs
+index 410e9825d..f3fe95fb4 100644
+--- a/src/lexer.rs
++++ b/src/lexer.rs
+@@ -1370,6 +1370,7 @@ impl Lexer {
+                 self.next_char();
+                 if let Some('{') = self.iter.peek() {
+                     res.push(c);
++                    res.push(c);
+                 } else if !self.hole_closes_on_this_line() {
+                     // Say it here, where the `{` is, and carry on as though the author
+                     // had written `{{` — which is the fix offered.  Opening a hole that

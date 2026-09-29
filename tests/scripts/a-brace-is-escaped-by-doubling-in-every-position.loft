@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Escape` — inside a template `{{` is a literal `{` and `}}` a literal `}`, in every
+// position a text literal can stand in and in both quote forms.  Walked 2026-09-29 as a rule
+// with no guard: 19 positions agreed on both backends; the one disagreement was the RULE, which
+// said a lone brace is "copied verbatim" while the compiler refuses it by design
+// (`format-unescaped-brace`, `format-unclosed-hole`, guarded in tests/e1_code_set.rs) — the rule
+// now says so.
+//
+// Each expected value below is itself a template, so its braces are doubled too.
+//
+// Axes this file MOVES:  where the escape sits (alone, at either end, touching a hole on either
+//                        side, beside a format spec), who consumes the text (println, a local,
+//                        `len`, `==`, `+`, a return, an argument, a vector element, a constant,
+//                        a nested template in a hole), the quote form (`"…"`, `` `…` ``).
+// Axes it HOLDS FIXED:   ASCII text; integer holes.
+//
+// @falsified-by: tests/falsified/a-brace-is-escaped-by-doubling-in-every-position.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter — the mutation keeps BOTH braces of a `{{` in a `"…"`
+//   literal, a rule that holds, so the control is a mutation and not a ref.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+C = "k{{v}}";
+
+fn ret() -> text { "<{{}}>" }
+fn width(t: text) -> integer { len(t) }
+
+fn test_doubling_renders_one_brace_wherever_it_sits() {
+  n = 5;
+  got = "a{{b}}c|x{{|}}y|{{{n}}}|{n}}}{{{n}|{{{n:03}}}";
+  assert(got == "a{{b}}c|x{{|}}y|{{5}}|5}}{{5|{{005}}", "positions: {got}");
+}
+
+fn test_every_consumer_sees_the_single_brace() {
+  s = "{{}}";
+  t = "a{{" + "}}b";
+  v = ["{{a}}", "b"];
+  nested = "{"{{x}}"}";
+  assert(len(s) == 2 && s == "{{}}" && t == "a{{}}b", "local/+: {s} {t}");
+  assert(ret() == "<{{}}>" && width("{{{{") == 2 && len(v[0]) == 3 && C == "k{{v}}", "call/elem/const");
+  assert(nested == "{{x}}", "a template inside a hole: {nested}");
+}
+
+fn test_a_backtick_block_escapes_the_same_way() {
+  s = `x{{y}}`;
+  shader = `
+    void main() {{
+      go();
+    }}
+  `;
+  assert(s == "x{{y}}", "backtick: {s}");
+  assert(shader == "void main() {{\n  go();\n}}", "dedented code block: [{shader}]");
+}

@@ -5668,6 +5668,10 @@ impl Parser {
         }
     }
 
+    /// `@FR-T-Sub` — a value synthesised as `is_type` is accepted where `should` is expected
+    /// when `is_type ⤳ should`, and `code` is rewritten to deliver it (a widening, a member-wise
+    /// tuple rebuild, a variant into its enum).  `false` when no conversion is licensed; the
+    /// caller owns the diagnostic.
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
