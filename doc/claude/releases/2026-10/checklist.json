@@ -3,6 +3,11 @@
     "at": "2026-09-16 10:13",
     "note": "scripts/close-shipped-plans.sh --range v2026.9.0..HEAD --dry-run, 2026-09-16. Eight plan-close directives in range, naming loft-lang/plans issues 149 150 152 153 155 159 160 162, and ALL EIGHT report \"already closed, skipping\". Nothing shipped in this range left a plan open, which is the whole question the step asks. Deliberately run in dry-run only: the acting form calls gh issue close against a separate repo, and closing plan issues is the owner call, not the reviewer one. No outward action taken."
   },
+  "M-docs-review": {
+    "at": "2026-09-29 18:12",
+    "commit": "99ee20513395bc8205e13960576832b25c9434f9",
+    "note": "2026-09-29 steps 1-4 + 8: make work lists only #1739 (fixed 429041e7b); scripts/linkcheck.sh 416 links OK and every working-doc src/ path checked (CODE, PLANNING_WEB, BRITTLE, SLOTS, PLANNING_STABILITY fixed; FORMATTER.md rewritten \u2014 it described the deleted Rust formatter); no orphan docs; every working doc under 1000 lines (the subject splits); make clippy-review: 39 dead + 8 partly dead suppressions and 5 dead crate-level allows reported, not yet removed."
+  },
   "M-falsify-receipts": {
     "at": "2026-09-16 09:10",
     "note": "make falsify-review run 2026-09-16 on 369f6de7e, and the --since v2026.9.0 read. Census: 486 falsification receipts; controls still publicly reachable 292, unreachable 194 (66 of those carry a patch); 106 patch receipts, 43 still applying and 63 no longer applying (listed by the report, to re-derive or downgrade to a marker). --since v2026.9.0 (24 commits) reads 194 controls unreachable NOW; this item has never run in any recorded cycle, so there is no previous line to subtract and this run ESTABLISHES the baseline the next cycle subtracts from to get the inflow rate. Scoring individual patch receipts with the instrument each names is the per-guard read and stays for the tag candidate."
@@ -26,6 +31,11 @@
   "M-monthly-docs": {
     "at": "2026-09-16 10:13",
     "note": "Both halves run 2026-09-16. make libraries-review: 8 reviewed, 41 never reviewed, 2 exempt, 1 deferred, 6 owe a verdict, 0 stale rows; 1441 published pub items with 36 undocumented (2 fn, 34 type); 359 in-tree pub fns. Five sources moved past their watermark (default, lib/code.loft, lib/lexer.loft, lib/parser.loft, lib/testlib.loft) and EACH reports 0 pub fn line(s) changed, so no public surface moved in any of them. make features-review: 71 entries with a runnable example, 14 exempt, 2 deferred (F47, F100), 0 unwritten, 0 owe a verdict, 35 infra entries needing no example. WHAT REMAINS: the by-hand read of those five prose deltas is NOT done. The census is what this tick records; the zero pub-fn-line finding is why the deltas are low risk, not why they are read."
+  },
+  "M-ops-census": {
+    "at": "2026-09-29 18:12",
+    "commit": "99ee20513395bc8205e13960576832b25c9434f9",
+    "note": "2026-09-29 make ops-census: 324 declared / 306 emitted / 11 unexercised / 7 orphan. Two unexercised were test gaps, now covered (OpRemSingleNullable in 02-floats, OpDeliver in pln105-expose-iterate); the other 11 are census blind spots \u2014 lambda bodies (OpFreeRefOrHandUp), IR-only ops codegen rewrites (OpConvRefFromNull, OpCreateStack), LOFT_STORE_TAG-gated ops no test arms (OpStoreTag, OpFreeRefTag), name-only mentions (OpGotoFalse, OpConstLongText, OpGetRef, OpSetRef, OpGetShortSpare, OpHashAdd). OpGoto was live only through two stray bytes behind OpSetStackRef \u2014 fixed 47ba568c6. The 7 orphans are retirement candidates, not verdicts."
   },
   "M-perf-pass": {
     "at": "2026-09-16 09:54",
