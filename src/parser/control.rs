@@ -8019,10 +8019,10 @@ impl Parser {
     /// @PLN35 slice 2 — collect a per-iteration FIELD projection from a struct-enum repetition
     /// run `( V { field } )*`.  Like `materialize_named_rest`, but the per-element read projects
     /// `variant.field` (`get_field`) instead of the whole element, so the result is a fresh
-    /// `vector<field_type>` — a scalar/text projection.  The run already tag-tested every element
-    /// against `variant_def_nr`, so the field read is valid at each index.  A scalar/text field is
-    /// an OWNED value (no DbRef into the subject), so — unlike the whole-element case — no borrow
-    /// dep is needed and `materialize_iterator` deep-copies it into the projection's own store.
+    /// `vector<field_type>`.  The run already tag-tested every element against
+    /// `variant_def_nr`, so the field read is valid at each index.  A scalar/text field is an
+    /// OWNED value; a heap field is a view into the subject and is read under a borrow dep, as a
+    /// whole element is — either way `materialize_iterator` copies it into the projection.
     /// Reads `v[lo..hi]` with `step` (2 for a separated run `(V)*(Sep)`).
     #[allow(clippy::too_many_arguments)]
     fn materialize_field_projection(
@@ -8087,7 +8087,13 @@ impl Parser {
             Box::new(next),
             Box::new(Value::Null),
         );
-        let iter_tp = Type::Iterator(Box::new(field_type.clone()), Box::new(Type::Null));
+        // `@FR-H-Alloc` — a HEAP field (a vector, a struct, a struct-enum) is a VIEW into the
+        // subject's store, exactly as a whole element is, so the per-element read carries the
+        // same borrow dep `materialize_named_rest` gives it: typed as an owned value, its
+        // scope-end free released the SUBJECT's record on every iteration (loft#1735).  Each one
+        // is deep-copied into the projection; a scalar or text field is unchanged.
+        let field_borrowed = Self::element_view_of(field_type, v);
+        let iter_tp = Type::Iterator(Box::new(field_borrowed), Box::new(Type::Null));
         self.materialize_iterator(
             &mut mat,
             &iter_tp,
@@ -8096,6 +8102,12 @@ impl Parser {
             proj_var,
             "=",
         );
+        // The copies are the projection's own, so its ELEMENT type drops the borrow again while
+        // keeping the vector-level deps `materialize_iterator` set — as `materialize_named_rest`.
+        if let Type::Vector(_, vdeps) = self.vars.tp(proj_var).base().clone() {
+            self.vars
+                .set_type(proj_var, Type::Vector(Box::new(field_type.clone()), vdeps));
+        }
         bindings.push(mat);
     }
 
@@ -8398,9 +8410,9 @@ impl Parser {
             0
         };
         // @PLN35 slice 2 — `( V { field, … } )*` captures a per-iteration FIELD PROJECTION: each
-        // named scalar/text field collects into its own fresh `vector<field_type>` (vs a `name:`
-        // prefix, which collects whole elements).  The run tag-tests `V`, so every element carries
-        // the field.  A non-scalar field, or a name that is not a field of `V`, is rejected.
+        // named field collects into its own fresh `vector<field_type>` (vs a `name:` prefix, which
+        // collects whole elements), whatever its type (`@FR-P-Rep-Ty`).  The run tag-tests `V`, so
+        // every element carries the field.  A name that is not a field of `V` is rejected.
         let mut field_caps: Vec<(String, usize, Type)> = Vec::new();
         if self.lexer.has_token("{") {
             if valid {
@@ -8414,25 +8426,8 @@ impl Parser {
                             .map(|(i, a)| (i + 1, a.typedef.clone()))
                     };
                     match found {
-                        Some((attr_idx, ftype))
-                            if matches!(
-                                ftype.base(),
-                                Type::Integer(_)
-                                    | Type::Boolean
-                                    | Type::Float
-                                    | Type::Single
-                                    | Type::Character
-                                    | Type::Text(_)
-                            ) =>
-                        {
+                        Some((attr_idx, ftype)) => {
                             field_caps.push((fname, attr_idx, ftype));
-                        }
-                        Some(_) if !self.first_pass => {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a repetition collects the field `{fname}` only when it is a scalar or text — capture the elements instead, `(x: {real})*`, and read `{fname}` from each"
-                            );
                         }
                         None if !self.first_pass => {
                             diagnostic!(
@@ -8441,7 +8436,7 @@ impl Parser {
                                 "`{fname}` is not a field of {real}"
                             );
                         }
-                        Some(_) | None => {}
+                        None => {}
                     }
                     if !self.lexer.has_token(",") {
                         break;

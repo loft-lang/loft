@@ -276,9 +276,9 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **2** — `D-match-10` and `-11`, each a refusal of a program the pattern rules
-define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`,
-which it closed, and `D-match-12` and `-13`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+OPEN: **1** — `D-match-10`, a refusal of a program the pattern rules define, found by
+the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`, which it closed,
+and `D-match-11` to `-13`, closed the same day.  `D-match-14` opened and closed with it.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
 The walk's finding is one shape seven times: each rule held on its own and was refused where two
@@ -313,10 +313,14 @@ open four now say what holds and what to write instead.
   makes the run the slice's one rest, typed, so a tail of any form is `(P-Rest)`'s `t`, and a
   `..rest` after it is the second rest `(P-Rest)` refuses.  The scalar path is now parsed AS a
   rest rather than beside one (`tests/scripts/a-scalar-repetition-is-a-typed-rest.loft`).
-- **D-match-11 — OPEN (loft#1735).** `(P-Rep-Ty)` collects a capture inside `(a)*` into a
-  `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) is refused, because each
-  inner store must be copied into the fresh vector (`(H-Alloc)`).  The workaround the message
-  names — capture the elements, `(g: Grp)*` — is exact.
+- **D-match-11 — OPENED AND CLOSED 2026-09-29 (loft#1735).** `(P-Rep-Ty)` collects a capture
+  inside `(a)*` into a `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) was
+  refused.  Admitting it answered every value right and freed the SUBJECT: the per-element read of
+  a heap field is a view into the subject's store, and typed as an owned value its scope-end free
+  released the subject's record each iteration — visible only to `LOFT_STRICT_STORES=1`, on both
+  backends.  The read now carries the borrow dep a whole element's read carries, and each field
+  is deep-copied into the projection (`@FR-H-Alloc`)
+  (`tests/scripts/a-repetition-collects-a-heap-field-per-element.loft`).
 - **D-match-10 — OPEN (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm granularity, so a capture
   only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when another pattern matched —
   as a single-element alternation already answers.  Refused, because the first pattern's shared

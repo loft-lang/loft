@@ -3167,14 +3167,6 @@ fn two_rests_are_refused() {
         .error("a slice pattern holds one variable-length part, and `..b` is a second one after `..a` — the first already takes every element the fixed ones leave; drop one of them at two_rests_are_refused:1:61");
 }
 
-// @PLN35 slice 2 — a per-iteration capture of a NON-scalar field `( V { heap } )*` is deferred
-// (only scalar/text fields project into a vector today).
-#[test]
-fn field_capture_nonscalar_deferred() {
-    code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("a repetition collects the field `items` only when it is a scalar or text — capture the elements instead, `(x: B)*`, and read `items` from each at field_capture_nonscalar_deferred:2:60");
-}
-
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
 #[test]
 fn field_capture_unknown_field() {
