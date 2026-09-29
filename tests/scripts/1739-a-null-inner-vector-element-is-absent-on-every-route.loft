@@ -16,6 +16,8 @@
 // @falsified-at: c532b0c26 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1739-a-null-inner-vector-element-is-absent-on-every-route.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the first failing assert on the control tree (the literal's null element reads present).
+// HOLDS: leak, panic and free-refusal are clean on both trees; only the exit moves (the control
+//   tree's first failing assertion).
 
 struct Holder { g: vector<vector<integer>?> }
 

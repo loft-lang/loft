@@ -3600,7 +3600,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let elem_known = self.vector_of(in_t);
         let known = Value::Int(i32::from(if elem_known == u16::MAX {
             0
-        } else if matches!(in_t, Type::Vector(_, _))
+        } else if matches!(in_t.base(), Type::Vector(_, _))
             && self.database.size(self.database.content(elem_known)) < 4
         {
             self.database.vector(elem_known)
@@ -3644,7 +3644,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // discriminates on specific variants: a `Span` around any of them hides the shape,
         // the generator var is not found, and the loop silently loses the break — which is
         // the unbounded append @P325 was.
-        let coroutine_gen_var = if matches!(in_type, Type::Iterator(_, _))
+        let coroutine_gen_var = if matches!(in_type.base(), Type::Iterator(_, _))
             && let Value::Set(_, rhs) = for_next.unspan()
             && let Value::Call(_, next_args) = rhs.unspan()
             && let Some(Value::Var(v)) = next_args.first().map(Value::unspan)
@@ -3717,7 +3717,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             None => vec_expr.clone(),
         };
         let mut lp = vec![for_next];
-        if matches!(in_type, Type::Text(_))
+        if matches!(in_type.base(), Type::Text(_))
             && let Some(idx) = pre_var
         {
             // loft#755 — a comprehension / par materialisation over text
@@ -3731,7 +3731,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 lp.push(step);
             }
         } else if let Some((src, index_var)) = vector_end
-            && matches!(in_type, Type::Vector(_, _))
+            && matches!(in_type.base(), Type::Vector(_, _))
         {
             // loft#1000 — a VECTOR ends on its LENGTH, never on the element's value.
             // The same rule the `for` STATEMENT already uses, and for the same reason:
@@ -3742,7 +3742,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             for step in self.vector_loop_break(&src, index_var) {
                 lp.push(step);
             }
-        } else if !matches!(in_type, Type::Iterator(_, _)) {
+        } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
             let mut test_for = Value::Var(for_var);
             self.convert(&mut test_for, var_tp, &Type::Boolean);
             test_for = self.cl("OpNot", &[test_for]);
@@ -3871,7 +3871,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // into tp so that (a) the block's result type keeps the db alive until the
             // block exits, and (b) the caller receives the correct Vector<T,[db]> type,
             // preventing scopes from emitting a redundant OpFreeRef for the result variable.
-            if let Type::Vector(elem, _) = &tp {
+            if let Type::Vector(elem, _) = tp.base() {
                 tp = Type::Vector(elem.clone(), Deps::frame(self.vars.tp(vec).depend()));
             }
         }

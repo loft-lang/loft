@@ -16,6 +16,8 @@
 // @falsified-at: c532b0c26 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1739b-a-temporary-minted-in-the-second-pass-only-keeps-later-ones-typed.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the refusal — the control tree does not compile this program.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
 
 fn main() {
   v: vector<vector<integer>> = [[1, 2], [3]];
