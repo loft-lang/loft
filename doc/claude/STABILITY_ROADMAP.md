@@ -111,6 +111,57 @@ to have been failing silently.
 | open deviations (`rule_tags.py registers`) | 0 that block a tag | 3: `D-op-1`, `D-op-2` (definitional, never resolvable in a release) and `D-perf-1` (loft#1570) | 6 → 3: D-bind-38/39/44 and D-heap-8/9 closed by #1715–#1729 |
 | the tracker | — (not a meter) | 4 open, 0 pick-up work: 3 `fixed-pending-merge` (one parser message, two `ci-advisory` regressions on main's 70079f138 — the browser `make game` and the pinned lib fixtures), 1 `status:planned` | — |
 
+**Trend read (2026-09-29) — the same meters as ten weekly points, not one.**  Asked by
+the owner: *are we reaching language stability?*  The tracker by week filed (`created:`
+queries), the trailers on `main`'s merge commits by week (the `contract:` meter as
+`make bug-review` § 5 reads it), and the tree at each week's end.  Labels begin in the
+week of 08-17, `hit-by:` in the week of 08-31; the last row is two days.
+
+| week of | issues filed | `silent-wrong` (share) | not found by loft | `regression` | strained / settled (share) | merges | fixes referenced | guard files | rules defined |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 08-03 | 86 | — | — | — | — | 11 | 80 | 636 | 233 |
+| 08-10 | 105 | — | — | — | — | 8 | 103 | 740 | 240 |
+| 08-17 | 119 | 26 (22 %) | 50 | — | — | 11 | 119 | 841 | 244 |
+| 08-24 | 140 | 52 (37 %) | — | — | 8 / 60 (12 %) | 9 | 108 | 961 | 259 |
+| 08-31 | 166 | 80 (48 %) | 4 | 2 | 29 / 158 (16 %) | 9 | 166 | 1206 | 277 |
+| 09-07 | 114 | 55 (48 %) | 5 | 0 | 20 / 142 (12 %) | 7 | 109 | 1371 | 321 |
+| 09-14 | 28 | 10 (36 %) | 3 | 0 | 13 / 42 (24 %) | 4 | 23 | 1475 | 349 |
+| 09-21 | 138 | 73 (53 %) | 9 | 2 | 54 / 236 (19 %) | 14 | 136 | 1789 | 388 |
+| 09-28 † | 27 | 11 (41 %) | 0 | 3 | 5 / 20 (20 %) | 2 | 20 | 1835 | 390 |
+
+Beside the table: open deviations 6 → 3 in the last week (two of the three definitional);
+`silent-wrong` open on main 0; the consumer nightly red on every night it has existed
+(five, since 09-24); the release gate never green (three runs, last 09-08); `main`'s own
+push CI green on 7 of its last 60 runs, a figure that counts the advisory jobs and so says
+only that the advisory surface has never been steadily green.
+
+**What the series say.**  Two things are moving in opposite directions, and "stable" is
+the second one.
+
+- *The contract is converging.*  Rules defined +72 % in ten weeks and +41 in the last two;
+  guard files ×3.3; the deviation registers at three with one resolvable; nothing
+  `silent-wrong` open on main; regressions two or three a week and mostly CI-advisory
+  shape; consumer-found issues in single digits since the consumers went quiet.  That is
+  coverage, and it is what the walk is for.
+- *Discovery is not converging.*  The week's yield tracks the week's effort — 166 with nine
+  merges, 28 with four, 138 with fourteen — and the `silent-wrong` share of what is found
+  is RISING (22 % → 53 %), which is the walk reaching the cells the freeze will bind, not a
+  language running out of wrong answers.  And the `contract:strained` share, the one meter
+  that measures whether a fix still moves a rule or a surface, reads 12 → 16 → 12 → 24 →
+  19 → 20 %: flat to rising over six weeks, against a target of 0 for two consecutive
+  weeks.  One fix in five still changes what the language promises.
+
+**Verdict.**  Not reaching stability yet, on the evidence; reaching it on the path.  The
+meters that will call it stable are the strained share and the consumer gate, and neither
+has begun to fall — the first because the walk is still in the chapters that yield (the
+owner's October is `heap.md`, the least-walked core chapter), the second because it has
+never been green.  The shape to expect if the path is right: `silent-wrong` per walked
+week falling chapter by chapter once the core chapters are exhausted, and the strained
+share falling with it, since a rule already written is a fix that settles.  The shape that
+would say the path is wrong: the strained share still at 20 % after `heap.md` closes, which
+would mean the rules are being written to match the code after all.  The December read is
+where that is decided; nothing in these ten weeks decides it earlier.
+
 **What the day moved.**  The join to main (#1730) closed five of the six deviations that
 blocked the 2026.10.0 tag and the one open `silent-wrong`; the walk's yield is now hygiene
 gates on new files rather than wrong answers (this branch's own day: a store in condition
