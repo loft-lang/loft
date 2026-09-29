@@ -516,8 +516,9 @@ collections agree with `==`.  No `===`.  **Why.** Every variable is its own valu
 identity `==` reported where a value is stored: `b = a; a == b` answered false, and
 `value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
 decided by what is written; how fast it is, by the compiler.  **Not built yet:** `==` on a plain
-struct still compares identity and `&a == &b` is still refused; the change follows its census
-(@PLN175).
+struct, a collection and a struct-enum still compares identity, `vector == vector` and `&a == &b`
+are refused, and a float key keeps `0.0` and `-0.0` apart; the build is ten small steps, census
+before every flip — [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175).
 
 **Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
 identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
