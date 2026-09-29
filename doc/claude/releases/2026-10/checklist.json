@@ -32,6 +32,11 @@
     "at": "2026-09-16 10:13",
     "note": "Both halves run 2026-09-16. make libraries-review: 8 reviewed, 41 never reviewed, 2 exempt, 1 deferred, 6 owe a verdict, 0 stale rows; 1441 published pub items with 36 undocumented (2 fn, 34 type); 359 in-tree pub fns. Five sources moved past their watermark (default, lib/code.loft, lib/lexer.loft, lib/parser.loft, lib/testlib.loft) and EACH reports 0 pub fn line(s) changed, so no public surface moved in any of them. make features-review: 71 entries with a runnable example, 14 exempt, 2 deferred (F47, F100), 0 unwritten, 0 owe a verdict, 35 infra entries needing no example. WHAT REMAINS: the by-hand read of those five prose deltas is NOT done. The census is what this tick records; the zero pub-fn-line finding is why the deltas are low risk, not why they are read."
   },
+  "M-ndb": {
+    "at": "2026-09-30 00:41",
+    "commit": "ef27ed8bc3dfc2c33a262365449569c21a961e05",
+    "note": "gdb (stock, no plugin) on a --native-debug build of fact(5) at ef27ed8bc: 'break loft_native_*::n_fact' resolves to the preserved .rs line 3314, bt shows n_fact <- n_main, info args var_n = 5; objdump decodedline names the preserved .rs, which exists. lldb not installed on this host. Help text for --native-debug fixed (114630b3f)."
+  },
   "M-ops-census": {
     "at": "2026-09-29 18:12",
     "commit": "99ee20513395bc8205e13960576832b25c9434f9",
