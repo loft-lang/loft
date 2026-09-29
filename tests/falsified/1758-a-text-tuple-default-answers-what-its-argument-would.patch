@@ -1,0 +1,43 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 334635724..8a3a76bcb 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6844,12 +6844,7 @@ impl Parser {
+         }
+         let d_nr = self.context;
+         if self.first_pass {
+-            // loft#1758, `@FR-F-Ret` — a lifetime-bearing tuple is returned BOXED, exactly as a
+-            // declared `-> (text, integer)` is: handed back bare, a text member viewed a record
+-            // the minted frame freed on exit.  The caller unboxes it where the default becomes
+-            // the argument (`add_defaults`), as it does for `f(k, mk(k))`.
+-            let returned = self.boxed_tuple_return(a_type.clone());
+-            self.data.set_returned(d_nr, returned);
++            self.data.set_returned(d_nr, a_type.clone());
+         }
+         self.vars
+             .append(&mut self.data.definitions[d_nr as usize].variables);
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 076b11c1b..c3f30c334 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -17164,20 +17164,6 @@ impl Parser {
+                         }
+                         substituted = Value::Call(d, inner);
+                     }
+-                    // loft#1758, `@FR-F-Default` — the default answers what the same expression
+-                    // written as the argument would, and a call returning a lifetime-bearing
+-                    // tuple hands back the BOXED `__tuple<…>` record (`boxed_tuple_return`).
+-                    // An argument written by hand is unboxed on its way into a tuple parameter
+-                    // (`convert`'s stored-tuple arm); a default's call has to take the same
+-                    // conversion, or the callee reads the record's DbRef as its tuple — `null`
+-                    // members on the interpreter, a type error under `--native`.
+-                    if matches!(tp, Type::Tuple(_))
+-                        && matches!(all_types[a_nr], Type::Reference(_, _))
+-                    {
+-                        let boxed = all_types[a_nr].clone();
+-                        self.convert(&mut substituted, &boxed, &tp);
+-                        all_types[a_nr] = tp.clone();
+-                    }
+                     actual[a_nr] = substituted;
+                 }
+             }

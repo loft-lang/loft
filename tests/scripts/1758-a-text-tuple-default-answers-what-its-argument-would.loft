@@ -13,6 +13,16 @@
 // Cells: a formatted member, a `match`, an `if`, a call to a declared text-tuple function, a
 // literal member (control), a method default reading `self`, a loop, a struct FIELD default, and
 // the same parameter given explicitly.
+//
+// @falsified-at: a8230cafd — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1758-a-text-tuple-default-answers-what-its-argument-would.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the interpreter's assertion channel, and native's exit (the file does not compile).
+//   WITNESS: on the control the interpreter fails the call-default cell with
+//   `call default: null:null null:null` (the formatted, match and if cells pass there), and
+//   native refuses to compile the program: `error[E0308]: mismatched types` in `main` and in the
+//   field default's minted `__dflt_R_t`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
+//   requires HERE to be clean, so all four are clean on both.
 
 fn fmt_d(k: integer, t: (text, integer) = ("v{k}", k)) -> text { "{t.0},{t.1}" }
 fn match_d(k: integer, t: (integer, text) = match k { 1 => (7, "a"), _ => (k, "b") }) -> text { "{t.0}{t.1}" }
