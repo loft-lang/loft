@@ -79,18 +79,18 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-29 | `fb3fa30aa` |
-| `doc-quality` | 2026-09-29 | `fb3fa30aa` |
+| `design-protocol` | 2026-09-30 | `07b7d4bdd` |
+| `doc-quality` | 2026-09-30 | `cf988686d` |
 | `draw` | 2026-09-16 | `9720dfd06` |
-| `engineering-rigor` | 2026-09-29 | `fb3fa30aa` |
-| `formal-rules` | 2026-09-29 | `fb3fa30aa` |
-| `loft-codegen` | 2026-09-29 | `527cc1cec` |
-| `loft-debug` | 2026-09-29 | `527cc1cec` |
-| `loft-plan-workflow` | 2026-09-29 | `fb3fa30aa` |
-| `loft-ship` | 2026-09-29 | `527cc1cec` |
-| `loft-test` | 2026-09-29 | `527cc1cec` |
-| `loft-write` | 2026-09-29 | `527cc1cec` |
-| `split-file` | 2026-09-29 | `fb3fa30aa` |
+| `engineering-rigor` | 2026-09-30 | `cf988686d` |
+| `formal-rules` | 2026-09-30 | `cf988686d` |
+| `loft-codegen` | 2026-09-30 | `07b7d4bdd` |
+| `loft-debug` | 2026-09-30 | `cf988686d` |
+| `loft-plan-workflow` | 2026-09-30 | `cf988686d` |
+| `loft-ship` | 2026-09-30 | `cf988686d` |
+| `loft-test` | 2026-09-30 | `e40c64c46` |
+| `loft-write` | 2026-09-30 | `cf988686d` |
+| `split-file` | 2026-09-30 | `cf988686d` |
 
 ## Findings that outlive a single review
 

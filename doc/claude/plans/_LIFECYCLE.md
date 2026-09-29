@@ -21,8 +21,10 @@ Two outcomes share most of the procedure:
   the trigger. If a floor **shipped** (some phases delivered, rest paused) →
   `status:parked`; if **nothing** shipped (all phases still to start) → `status:future`.
 
-If remaining work has no concrete trigger, the design moves to
-[`../DESIGN_DECISIONS.md`](../DESIGN_DECISIONS.md).  "Will get to it later" is not
+If remaining work has no concrete trigger, the design moves to the decision register
+[`../DESIGN_DECISIONS.md`](../DESIGN_DECISIONS.md) — an index: the entry goes in the subject's
+`DESIGN_DECISIONS_<SUBJECT>.md` under the id `./scripts/idx next-decision` names
+([`../DESIGN_DECISIONS_RULES.md`](../DESIGN_DECISIONS_RULES.md)).  "Will get to it later" is not
 a trigger; "when 3+ template-path bugs accumulate" is.
 
 ## Pick the outcome

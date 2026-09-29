@@ -186,15 +186,18 @@ commit having reached the trunk — the code lands on main later, on its own clo
   grows SHIPPED / DEFERRED rows; the deferred phases keep their full design
   content).  Label per `_LIFECYCLE.md`'s outcome table: `status:parked` if a floor
   shipped, `status:future` if nothing did.
-- Paused with **no** concrete trigger → the design moves to the closed-by-decision
-  register (`doc/claude/DESIGN_DECISIONS.md`), not a deferred state.
+- Paused with **no** concrete trigger → the design becomes a closed-by-decision entry, not a
+  deferred state: id from `./scripts/idx next-decision`, the entry in the subject's
+  `DESIGN_DECISIONS_<SUBJECT>.md`, a row in the `DESIGN_DECISIONS.md` index (procedure:
+  `DESIGN_DECISIONS_RULES.md`).
 
 **For each shipped phase:**
 
 1. **Tag** sections REFERENCE / CLOSURE-RECORD / HISTORICAL.
 2. **Move reference content OUT** to its home doc — either create-and-move (a phase
    that grew a whole subsystem → its own reference doc) or trim-only (content
-   already has a home → just delete the duplicate).
+   already has a home → just delete the duplicate).  The home is a WORKING doc: current-state
+   prose only, anything dated goes to its `<doc>-history.md`, and it stays ≤ 1000 lines.
 3. **Trim the README** to a lead `Status — DONE/SHIPPED <date>` line + a cross-link
    to where the reference content now lives.
 

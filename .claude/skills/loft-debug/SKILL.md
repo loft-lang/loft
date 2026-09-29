@@ -60,7 +60,8 @@ irreversible moves not to make.
   investigate (CLAUDE.md § Debugging policy) — read the dump and reason.
 - **Tight loop**: `./scripts/find_problems.sh --subject <name>` (seconds) while
   iterating — one full gate per change of unknown reach, and `scripts/ci-run.sh recheck`
-  after it rather than a restart (CLAUDE.md § Key commands).
+  after it rather than a restart (CLAUDE.md § Key commands); a CANCELLED gate takes
+  `ci-run.sh start` again, which resumes it.
 - **Full suite, detached**: `./scripts/find_problems.sh --bg` → `--peek` mid-run /
   `--wait` to block; structured summary on finish in `/tmp/loft_problems.txt`.
 

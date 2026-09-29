@@ -93,4 +93,5 @@ changed that should not have; find it and undo it with the inverse edit.
 Title `split <file> into N parts` or `carve <subject> out of <file>`; body is the parts and
 one line each on what they hold.  Nothing else in the PR.  Tick the row with the PR link
 and the pick's commit:
-`scripts/release-checklist.py --done M-file-split --note "<PR link>, pick at <sha>"`.
+`scripts/release-checklist.py --done M-file-split --note "<PR link>; pick at <sha>; non-move count <n>; gate <PASSED sha>"`
+— a tick note says what ran, on which commit, and what it answered (RELEASE.md).
