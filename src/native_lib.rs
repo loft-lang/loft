@@ -2035,6 +2035,18 @@ fn report_unprobeable(so: &std::path::Path, why: &str) {
     );
 }
 
+/// A digest of the package directories compiled into an auto-native artifact, in sorted
+/// order so the order they were resolved in does not name a second artifact.
+fn contributing_fingerprint(contributing: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut dirs: Vec<&String> = contributing.iter().collect();
+    dirs.sort_unstable();
+    dirs.dedup();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    dirs.hash(&mut h);
+    h.finish()
+}
+
 fn type_layout_fingerprint(stores: &Stores) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -2094,7 +2106,18 @@ pub fn cached_or_build_shared_cdylib(
     // caller's type-table layout into the freshness key so a context mismatch
     // rebuilds instead of silently linking an index-incompatible cdylib.
     let layout_fp = type_layout_fingerprint(stores);
-    let fp = mix_fp(crate::cache::loft_build_fingerprint(), layout_fp);
+    // And WHICH packages were compiled in.  The artifact carries the code of every library
+    // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
+    // different versions build different libraries — with the SAME layout when the versions
+    // declare the same types.  Keyed on layout alone, the second run adopted the first
+    // one's artifact and ran the other version's code without a word (a registry package's
+    // `native-auto/` is shared by every consumer on the box).  `contributing` is the set
+    // `source_newer_than` already reads as this artifact's sources, so one set answers both
+    // "is it current" and "is it this build"; a version is a different directory.
+    let fp = mix_fp(
+        mix_fp(crate::cache::loft_build_fingerprint(), layout_fp),
+        contributing_fingerprint(contributing),
+    );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast
     // path below reads `so.exists()` and the sidecar WITHOUT the build lock, so a
