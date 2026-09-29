@@ -306,6 +306,19 @@ said.  It is refused now, as the `if` spelling always was.  (loft#1390)
   well.  It now reuses the standard library it already read, so a small program starts in about
   a sixth of the work it took before.  A changed standard library is still always read again.
 
+**Appending a small computed record to a vector in a loop is one write per field on
+`--native`, even beside a lookup into another vector.**  `out += [pt(x, y)]` next to
+`a = pts[i]?` used to resolve the vector's store per field; the loop now reserves once and
+writes each point straight into its slot.  The drawing library's `smooth` went from 5.4× to
+4.6× of its Rust twin here; the rest of that gap is two known items, and the issue stays open.
+
+**Small records passed into a function that builds more of them stay in registers on
+`--native`.**  A function like `step(from: Vec3, d: Vec3)` whose body calls `vec3(…)` used to
+receive its parameters as store records, because the builder's writes looked like writes to
+a record the caller might share.  A builder writes only its own fresh result, so the
+parameters now travel as plain floats and the builder's result does too: a physics step
+built on `vec3` ran 2.5× faster with the same answers.
+
 **A loop that builds one vector while reading another runs its reads at full speed on
 `--native`.**  `out += [w[i]? * 2]`, `for e in ents { out += [e.q] }`, `out += [v[i]?.id]`:
 the reads of `w`, `ents` and `v` used to resolve their store per element because the loop

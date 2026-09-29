@@ -354,3 +354,144 @@ game_protocol `msg_ping`) are re-read on the x86-64 lane at the next portal re-m
 `msg_ping` returns a nested record PAIR by value, so it is the row to read first.  Cells
 `tests/scripts/158-nested-value-record.loft`; the `nested_field` pin's n12 row moved
 (2 → 9 reads through the address: the callee's parameter is a tuple now, filled at the site).
+
+## The record lifecycle, profiled (2026-09-29) — what the elimination rules still leave
+
+The four slow record rows of the moros/dryopea lane, each run alone (60 iterations of its
+driver, `perf` at 499 Hz over the native binary on the idle arm64 box), attributed by module:
+
+| routine | store lifecycle — mint, claim, `copy_claims`, free | the routine's own code | the rest |
+|---|---:|---:|---|
+| `panel_build` (10.3×) | 55 % + 9 % libc allocator | 25 % | text formatting |
+| `emit_to_material` (11.6×) | 47 % | 31 % | 17 % vector append and finish |
+| `resolve_move` (13.4×) | 47 % | 47 % | `map_get_hex` alone 21 % — a hash lookup, five per call |
+| `truncate_to` (12.1×) | 4 samples: too fast at 60 iterations; the same copy-and-free shape as `panel_build` | | |
+
+Half of each row is records the Rust twin keeps on the stack or moves.  The elimination
+rules are not the limit; their ADMISSION conditions are, and every rule's trace names the
+condition it declined on for these functions:
+
+- **`(R-ValueRecord)` is blocked by consumers, not shape.**  `Rect`, `Hex`, `Vertex` and
+  `Vec2` travel as tuples; `Vec3` does not, because `resolve_move` declines to carry `from`
+  and `dxyz` as tuples — *"the body may write a record of its type"*.  The body writes `Vec3`
+  records only into the fresh return buffers of its own `vec3` calls, but the callee write
+  set is keyed by TYPE, so a fresh buffer reads as a possible alias of the parameter.  That
+  one imprecision keeps every `vec3` a store record: four mints and frees per `resolve_move`,
+  eight per hex in `emit_hex_surface`.  It is the store-identity question `(R-Base)`'s growth
+  clause answered for loops (`hoist::StoreFacts`), asked of a callee's write set.
+- **`(R-Place)` admits one destination shape.**  A call result into a record-literal field of
+  an element appended to a PARAMETER's collection, from a literal-exit callee.  Declined here:
+  `panel_build`'s three locals (built for the fields of the frame's OWN return literal — the
+  return buffer is never a host), `hex_to_world` (exits through `vec3(x, y, z)`, a call),
+  `e` in `c_truncate_to` and `up` in `emit_hex_surface` ("handed to a loft-defined call").
+  Each is a local with exactly one owning sink.
+- **`(R-MoveLast)` relocates within one store, so it inherits `(R-Place)`'s gap.**
+  `Panel { p_toolbar: pb_buttons, … }` finds `pb_buttons` in its own store and the return
+  buffer in the caller's: the "move" is a deep copy of six buttons with two texts each, then
+  a free of the source — `copy_claims` 5.5 % and `remove_claims_mode` 6 % at the top of the
+  profile.
+- **No move crosses a call.**  `history_push(tl, e)` appends its by-value parameter; a
+  by-value parameter IS the caller's record (`(B-Ref-Uniform)`), so the append deep-copies
+  the `Stroke` tree and the caller frees `e`.  The twin writes `h.entries.push(e)`.
+- **A loop-local record a push takes is minted per pass.**  `tri = Triangle {…};
+  m.triangles += [tri]` declines `(R-LoopRecord)` ("a native op takes it otherwise"): six
+  mint-copy-free per hex where the inline spelling would build in the slot.
+- **The appended tuple** (`m.vertices += [vertex(…)]`) is still a mint, eight stores and a
+  finish — `vector_finish`, `record_finish`, `insert_record` in the emit profile; the
+  `(R-PushRec)` clause priced in § R8.
+- **The per-frame free is a full walk** (`owned_walk`): `p = panel_build(…)` in a loop frees
+  the previous tree; no rule hands the old store back as the buffer.
+
+### Order, with the ceiling
+
+The lifecycle share above is the ceiling: these rows can lose about half their time to the
+rules, not reach parity — `map_get_hex`, the text formatting and the geometry stay.
+
+1. **Callee write sets by store identity** — a write into the callee's own fresh buffer
+   cannot alias a parameter (`hoist::StoreFacts` in the value-record parameter admission).
+   No new rule; flips `Vec3` to a tuple; reaches three of the four rows.  Expected:
+   `resolve_move` −40 % (four of the 47 %), `emit_hex_surface`'s eight `vec3` mints per hex.
+2. **Destination-directed builds** — `(R-Place)` widened from "a call result into a
+   parameter's element literal" to "a local with one owning sink": a field of the frame's
+   return literal or an appended element, built by a call, a literal or a vector build, the
+   return buffer a host.  `(R-MoveLast)` then relocates in-store.  `panel_build`'s three
+   locals, `tri`, `up`, `centre`.  Expected: most of panel_build's 55 %.
+3. **The appended tuple** (§ R8's next clause): `vertex`, every `add_vertex` shape.
+4. **A move through a by-value parameter** — caller's local dead after the call, callee's
+   parameter used once as an appended element or stored field: relocate, not copy.  Needs a
+   design note: it changes what a callee may assume of its parameter's store after the append.
+5. **Store reuse across a rebind from a call** for a heap-owning tree — a per-frame UI's
+   shape; a new rule with a lifetime argument, so last.
+
+Evidence: 182 / 36 / 120 / 4 samples at 499 Hz, so the shares are within a few points;
+the decline reasons are exact (`LOFT_TRACE_VALUEREC`, `LOFT_TRACE_PLACE`, `LOFT_TRACE_POOL`,
+`LOFT_TRACE_LOOP_RECORD`, `LOFT_TRACE_RECPTR` over the lane's emission).
+
+## Built (2026-09-29) — a callee's own buffer is a fresh record
+
+§ Order's first item, as designed: the fallback walk of the tuple-parameter gate
+(`hoist::may_write_existing`, the one a body `body_writes` cannot type) now seeds a callee's
+own return buffer as fresh in the callee's walk, keeps the frame's buffer fresh through a
+rebind of the local it was promoted onto, and counts a mint into a local that owns its store
+(`hoist::owning_local`) as a fresh record.  No new rule and no switch of its own
+(`LOFT_NO_VALUE_RECORD` covers it); `LOFT_TRACE_VALUEREC=1` now names the op that keeps a
+parameter a record.  On the moros/dryopea lane `resolve_move`'s `from` and `dxyz` are carried
+as tuples, and `vec3` and `hex_to_world` become value records (14 functions as tuples, 9
+parameters, from 12 and 7).  Measured on this arm64 box, old compiler against new, same
+hashes: **`resolve_move` 4.19 → 1.65 ms (14.0× → 5.33×, −60 %)**, **`emit_to_material`
+1.21 → 0.97 ms (10.6× → 8.1×, −20 %)**, `panel_build` and `truncate_to` unmoved as
+predicted (their cost is the copy-and-free pair, § Order 2 and 4).  Cells
+`tests/scripts/158-a-callees-own-buffer-is-a-fresh-record.loft`: the resolve_move shape, a
+builder into a fresh local's field, a builder two calls deep, and the aliasing negatives
+(c4b / c5b: a parameter naming the record written reads the write back) — the falsifier is
+the sabotage recorded in the cell header.  What `resolve_move` still pays is `map_get_hex`,
+five hash lookups per call (the keyed class), and the `MoveResult` return.
+
+**`smooth` (loft#1570), profiled the same day** (`perf` over the lane binary, 300 samples):
+`n_smooth_pts` 40 % self, `length_vector` 20 %, `get_vector` 12 %, `n_ctrl` 12 %,
+`vec_header` 6 %, `OpFreeRef` 4 %.  `pt`, `half_chord` and `ctrl` are already tuples.  Three
+mechanisms, in the order they were taken:
+
+1. **The appended tuple through the window — BUILT.**  `sp_out += [raster::pt(…)]` is a mint,
+   two `store_mut` writes and a finish per point.  The mint window (`(R-RecPtr)`'s mint
+   clause) declined the element because a copy FROM a value local INTO it was not a
+   "fusable write" — it lowers to setters, so it is one now — and the record push window
+   (`(R-PushFill)`'s record clause) declined because `sp_a` "may view the pushed vector": a
+   view of a no-heap RECORD reads fields and never a length, so it cannot observe a deferred
+   length bump, and the copy into the fresh element is the slot's own write.  Both refined;
+   the window's write test is asked as the header hoist asks it (in-place tier, the variable
+   table).  Hand-priced first on the emitted Rust (−13 %, same hash), then built: **884 →
+   742 ns per op (5.4× → 4.6×)** on this box.  Cell m15 of `158-mint-window.loft`; m12's
+   pin moved (its tuple result is now delivered through the element's address).
+2. **The outer loop's hoist — BUILT.**  `LOFT_TRACE_HOIST_DECLINE` (which now names the
+   innermost blocking node) said the `half_chord(…)` call blocks loop 14: `ctrl`'s
+   `pts[j]?` discharge mints a buffer and writes its defaults, `half_chord` frees the
+   buffers of `ctrl`'s tuple results, and the two callee tests (`in_place_only_writer`,
+   `retbuf_only_writer`) read every such native op as a write.  They now carry the header
+   hoist's own allowances (`hoist::callee_allowance`: a discharge buffer's mint, a lazy
+   buffer's, a record free, a DEAD buffer's mint/clear/free, the last read off a
+   program-wide per-function table `HoistOwned::dead_by_fn`), and the memo never pins a
+   verdict reached without those facts.  Loop 14 hoists: `pts` and `flags` hold headers,
+   `half_chord__inv` takes `pts`'s header and a base derived at the call and hands both on
+   to `ctrl__inv`, whose `len(pts)` is the header's length and whose `pts[j]?` is one
+   fused read.  **742 → 500 ns per op (4.6× → 3.09×)**; the verifier run of the whole
+   drawing bench is green.
+3. **A parameter beside a pushed return buffer — MEASURED, not the hazard it read as.**
+   `sp_out` ADOPTS the return buffer; `(R-Alias)` drops a parameter's header only beside
+   a push to the `__retbuf` variable itself, and adoption keeps the local's name — so
+   `pts` kept its header, and the question was whether that is sound.  Probed: `v =
+   grow(v)` where `grow` adopts its buffer and holds `src`'s header answers the same on
+   both backends and under `LOFT_HOIST_VERIFY=1`, because the adopted buffer is a store
+   minted for the call, never the argument's — the parser hands no live store in as a
+   buffer while a view of it is passed (the cross-call growth refusal).  Documented as the
+   rule's reading; no select needed.
+4. **The frees — BUILT, two shaves.**  At 3.09× the profile's remaining share was ~70
+   `OpFreeRef` calls per op on buffers that hold nothing: `half_chord`'s `__ref_1`/`__ref_2`
+   for `ctrl`'s tuple results (dead by any reading, but `dead_buffers` iterated the frame's
+   MINTED set, and these are minted by no one — now a never-minted buffer whose every
+   mention is an admitted callee's buffer argument or a free is dead too: 500 → 487 ns),
+   and `ctrl`'s two `?` discharge buffers, minted only on the absent arm and freed on every
+   exit (now a VARIABLE's free is guarded by its own null test inline, the compare the
+   runtime made after the call: 487 → **433 ns, 2.67×**, range 2.59–2.74).  The whole
+   drawing bench under `LOFT_HOIST_VERIFY=1` prints the same hash.  **`smooth` is under the
+   bar on this box**; the closing measurement for loft#1570 is the x86-64 laptop's.

@@ -367,10 +367,14 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  push's own vector operand, every other variable the body names cannot
                  name its store either by the ownership test (R-Alias) keeps a read
                  candidate under — a scalar or a text, a local that owns its own
-                 store, a parameter while the root is no return buffer; a view taken
-                 before the loop fails it — and every other statement, and every
-                 pushed value, writes no store at all, so no buffer is reallocated
-                 under the held address.  The single exit is the counted loop's own
+                 store, a parameter while the root is no return buffer, a view of a
+                 plain NO-HEAP record (it reads fields and never a length, and the
+                 window's slots lie past every element it can name); a vector view
+                 taken before the loop fails it — and every other statement, and
+                 every pushed value, GROWS no store (the header hoist's own
+                 allowances: an in-place scalar set, a discharge buffer's mint and
+                 defaults, a record free), so no buffer is reallocated under the
+                 held address.  The single exit is the counted loop's own
                  (no `break`, `return`, `continue` or inner loop), so the close runs
                  on every path out.  A body that fails any of these keeps the header
                  push, which costs the window and never a value.  THE RECORD CLAUSE:
@@ -383,8 +387,9 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  reservation holds.  The window's admission is the scalar clause's,
                  read over the groups' operands: a field set whose root is the fresh
                  element is a write through the window's slot (it can name no other
-                 element), the finish's element operand is that slot too, and any
-                 other mention of the vector — a read, a view of it or of an element
+                 element), so is a whole-record copy INTO the fresh element (a
+                 builder's tuple delivered), the finish's element operand is that
+                 slot too, and any other mention of the vector — a read, a view of it or of an element
                  named in the body, a second pushed path, a group whose element's
                  own heap the literal fills (a claim in the store whose base the
                  window holds) — keeps the header mints.  A windowed mint takes its
@@ -727,9 +732,14 @@ in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 �
   (R-Callee)     a user callee whose store writes are all (R-InPlace) sets — through
                  any address, transitively through callees it admits the same way —
                  or whose only writes land fixed-width scalars in its own hidden
-                 return buffer, is admitted under (R-InPlace) as a direct set is.  A
-                 CallRef, a Parallel, a Yield and a recursion keep the WRITER
-                 verdict.
+                 return buffer, is admitted under (R-InPlace) as a direct set is.
+                 Its body is read with the header hoist's own allowances — a
+                 null-discharge buffer's mint and defaults, a lazy buffer's mint, a
+                 record free, and its DEAD buffers (R-ValueRecord: a tuple answer's
+                 buffer is never minted, so its mint, clear and frees are nothing;
+                 the fact is per FUNCTION, read off one program-wide table) — since
+                 none reallocates a store a caller's header describes.  A CallRef,
+                 a Parallel, a Yield and a recursion keep the WRITER verdict.
 ```
 
 **In words.** @PLN157 § V-l (`in_place_only_writer`) and § V-c
@@ -822,7 +832,9 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  element `e = OpNewRecord(…)` holds its address over its own
                  WINDOW — from the mint (after its growth step, if it had one) up
                  to its `OpFinishRecord(…, e, …)` in the same block — when the
-                 window meets the conditions above in the remainder's place.
+                 window meets the conditions above in the remainder's place; a copy
+                 INTO e from a value local (R-ValueLocal) is a fusable write of e,
+                 since it lowers to one typed setter per field, and grows nothing.
                  THE ORDER CLAUSE: "frees no record before a later use of r" is
                  asked in EXECUTION order through the extent's structure — a
                  block its statements in sequence, an `if` its condition then
@@ -3120,7 +3132,18 @@ to bisect to.
   still counts all of them.  The frame's own return buffer is seeded FRESH for that walk,
   so a literal exit and its sub-record copies contribute nothing; `(R-Rebind)` is what
   makes that exemption hold, since it hands a callee the caller's record as its buffer
-  only where every read of the parameter is staged ahead of the first write.  Declines:
+  only where every read of the parameter is staged ahead of the first write.  The walk a
+  body `body_writes` cannot type falls back to (`hoist::may_write_existing`) carries the
+  same exemptions: a CALLEE's own return buffer is fresh in the callee's
+  walk too, the frame's buffer stays fresh through a rebind of the local it was promoted
+  onto (`to = vec3(…)` where `to` is the buffer), and a mint into a local that OWNS its
+  store (`hoist::owning_local`) makes that local fresh for what is written into it — so
+  `resolve_move(from: Vec3, …)`, whose body only builds `Vec3`s through `vec3`, carries its
+  parameters, and `vec3` stops being consumed as a record at those sites (the moros/dryopea
+  lane: `vec3` and `hex_to_world` tuples, four mints and frees fewer per `resolve_move`).
+  Cells `tests/scripts/158-a-callees-own-buffer-is-a-fresh-record.loft` (c4b and c5b are
+  the aliasing negatives: a parameter that names the record written reads the write back,
+  which a tuple copy could not).  Declines:
   a parameter the body rebinds, a nullable or `&` one, a record with a view leaf, a
   function reached through a fn-ref dispatch, and any body the walk cannot type
   (recursion, a `CallRef`, a `par`, a local record literal written after its mint).  With

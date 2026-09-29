@@ -112,6 +112,20 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
                                          #   adds a library's own bench.  A REPORT, never a gate
+make perf-check [ARGS="--only 16,17"]     # BEFORE COMMITTING a compiler change: measures the
+                                         #   lanes the census says the change touched (or
+                                         #   ARGS' lanes) and compares each routine's ratio to
+                                         #   Rust with this machine's last committed row
+                                         #   (bench/portal/results/<host>.tsv); a move ≥ 15 %
+                                         #   is listed, a slowdown exits 1.  `--record` makes
+                                         #   the run the new baseline — commit it with the
+                                         #   change, that file IS the trend history
+make perf-trend [ARGS="--routine ease"]   # how each routine MOVED over the committed portal
+                                         #   history: the movers between their last two
+                                         #   measurements, or one routine's whole series with
+                                         #   the commits each point sits between (the bisect
+                                         #   range).  A report; ratios compare within one
+                                         #   machine only
 python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the

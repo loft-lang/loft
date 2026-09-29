@@ -100,8 +100,18 @@ def measure(argv):
     if code != 0:
         os.remove(fresh)
         sys.exit(code)
-    meta, rows = read_run(fresh)
+    merge_run(fresh)
     os.remove(fresh)
+
+
+def merge_run(fresh):
+    """Merge one `stats.py --tsv` run into this machine's results file (the half of
+    [`measure`] `scripts/perf_check.py --record` shares): the rows it measured replace
+    theirs, every other row is kept."""
+    import platform
+    os.makedirs(RESULTS, exist_ok=True)
+    out = os.path.join(RESULTS, f"{platform.node() or 'unknown'}.tsv")
+    meta, rows = read_run(fresh)
     if not rows:
         # A run that measured nothing (a `--help` passed through, an `--only` that matched
         # no bench) has no header of its own: merging it would blank the machine's.

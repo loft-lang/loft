@@ -1,0 +1,133 @@
+// @PLN158 (records.md § The record lifecycle, profiled) — a by-value record PARAMETER is
+// carried as a tuple (`@FR-R-ValueLocal`) when the body writes no record of its type that
+// EXISTS before the call.  A callee's own hidden return buffer is such a record: minted from
+// its sentinel or the caller's owned local, never a parameter's record — so `to = vec3(…)`
+// inside `step(from: Vec3, …)` is no reason to keep `from` a store record.  Before this
+// clause the callee's field writes into its buffer read as writes of an existing `Vec3`,
+// `from` stayed a record, and every `vec3` call in the program minted a store (the
+// moros/dryopea `resolve_move` row: four mints and frees per call).
+// The interpreter takes no tuple and is the oracle; every value is hand-computed.
+// `LOFT_NO_VALUE_RECORD=1` and `LOFT_HOIST_VERIFY=1` must answer the same.
+//
+// Predictions, MEASURED on the trace (`LOFT_TRACE_VALUEREC=1`): step, nudge, far and mid
+// carry their Vec3 parameters as tuples (before the clause, step and nudge kept records:
+// step because `vec3` writes its own buffer, nudge because the literal writes `b`, a local
+// just minted); `pt`-shaped builders `vec3`, `far`, `sum3` answer tuples where their result
+// is not stored into a record — `vec3` keeps its record HERE because `step`'s early
+// `return to` stores one into the frame's buffer, while in the moros/dryopea lane it is a
+// tuple.  hold, hold2, poke, poke2 and poke3 keep `p` a record: their bodies write an EXISTING
+// Vec3 — through the `&` link, or an element of the vector parameter — and c4b / c5b / c5c are
+// the cells where that matters: `p` aliases the record written and reads the write back.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-29) — `hoist::may_write_existing` made to
+// answer "writes nothing" for every body: poke3's `p` is carried as a tuple and c5c answers
+// `10 6` for `13 6` on --native (the parameter's copy no longer sees the write through the
+// element it aliases; c4b and c5b are untouched, since the typed walk, not the fallback,
+// declines them).  Restored: interpret / native / LOFT_NO_VALUE_RECORD / LOFT_HOIST_VERIFY
+// green and equal.
+
+struct Vec3 { x: float, y: float, z: float }
+struct Body { pos: Vec3, tag: integer }
+
+fn vec3(vx: float, vy: float, vz: float) -> Vec3 { Vec3 { x: vx, y: vy, z: vz } }
+fn sum3(a: Vec3) -> float { a.x + a.y + a.z }
+
+// c1 — the resolve_move shape: builders of the parameter's type called in the body.
+fn step(from: Vec3, d: Vec3) -> Vec3 {
+  to = vec3(from.x + d.x, from.y, from.z);
+  mid = vec3(to.x, from.y + d.y, from.z + d.z);
+  if sum3(mid) > 100.0 { return to; }
+  mid
+}
+
+// c2 — the builder's result stored into a field of a LOCAL record, then read back.
+fn nudge(p: Vec3, k: float) -> float {
+  b = Body { pos: vec3(p.x * k, p.y * k, p.z * k), tag: 3 };
+  b.pos.x + b.pos.y * 10.0 + b.pos.z * 100.0 + b.tag as float
+}
+
+// c3 — a builder two calls deep (`far` calls `vec3`).
+fn far(a: Vec3, b: Vec3) -> Vec3 { vec3(b.x - a.x, b.y - a.y, b.z - a.z) }
+fn mid(a: Vec3, b: Vec3) -> float { f = far(a, b); sum3(f) / 2.0 }
+
+// c4 — NEGATIVE: the body writes an EXISTING record of the parameter's type through a link.
+fn hold(p: Vec3, target: &Vec3) -> float {
+  target.x = p.x + 1.0;
+  target.y = p.y;
+  p.x + target.x
+}
+
+// c5 — NEGATIVE: the body writes an element of its vector parameter (an existing record).
+fn poke(p: Vec3, vs: vector<Vec3>) -> float {
+  vs[0].z = p.z * 2.0;
+  vs[0]?.z + p.x
+}
+
+// c4b / c5b — the negatives with the parameter ALIASING the record written: `p` reads the
+// write through the link (a by-value record parameter is the caller's record), which a
+// tuple copy taken at entry would not see.  The interpreter's answer is the contract.
+fn hold2(p: Vec3, target: &Vec3) -> float {
+  target.x = p.x + 1.0;
+  p.x + target.x
+}
+fn poke2(p: Vec3, vs: vector<Vec3>) -> float {
+  vs[0].z = p.z * 2.0;
+  vs[0]?.z + p.z
+}
+// c5c — the same aliasing negative in a body the write-set walk cannot type (a local record
+// literal written after its mint), so the fallback walk this clause extends must decline it.
+fn poke3(p: Vec3, vs: vector<Vec3>) -> float {
+  q = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+  q.x = p.x;
+  vs[0].z = p.z * 2.0;
+  vs[0]?.z + p.z + q.x
+}
+
+fn main() {
+  // c1: from (1,2,3), d (10,20,30): to = (11,2,3), mid = (11,22,33) → sum 66 ≤ 100 → mid.
+  r1 = step(vec3(1.0, 2.0, 3.0), vec3(10.0, 20.0, 30.0));
+  println("c1 {r1.x} {r1.y} {r1.z}");
+  assert(r1.x == 11.0 && r1.y == 22.0 && r1.z == 33.0, "c1");
+  // c1b: d (100,0,0): to = (101,2,3), mid = (101,2,3), sum 106 > 100 → to.
+  r1b = step(vec3(1.0, 2.0, 3.0), vec3(100.0, 0.0, 0.0));
+  println("c1b {r1b.x} {r1b.y} {r1b.z}");
+  assert(r1b.x == 101.0 && r1b.y == 2.0 && r1b.z == 3.0, "c1b");
+  // c2: p (1,2,3), k 2: pos (2,4,6) → 2 + 40 + 600 + 3 = 645.
+  r2 = nudge(vec3(1.0, 2.0, 3.0), 2.0);
+  println("c2 {r2}");
+  assert(r2 == 645.0, "c2");
+  // c3: a (1,1,1), b (5,7,9): far (4,6,8), sum 18 / 2 = 9.
+  r3 = mid(vec3(1.0, 1.0, 1.0), vec3(5.0, 7.0, 9.0));
+  println("c3 {r3}");
+  assert(r3 == 9.0, "c3");
+  // c4: p (1,2,3), t (0,0,0): t becomes (2,2,0); answer 1 + 2 = 3.
+  t = vec3(0.0, 0.0, 0.0);
+  r4 = hold(vec3(1.0, 2.0, 3.0), t);
+  println("c4 {r4} {t.x} {t.y} {t.z}");
+  assert(r4 == 3.0 && t.x == 2.0 && t.y == 2.0 && t.z == 0.0, "c4");
+  // c4b: t2 (5,6,7) as BOTH p and target: target.x = 6, p reads it back: 6 + 6 = 12.
+  t2 = vec3(5.0, 6.0, 7.0);
+  r4b = hold2(t2, t2);
+  println("c4b {r4b} {t2.x}");
+  assert(r4b == 12.0 && t2.x == 6.0, "c4b");
+  // c5b: vs2 [(1,2,3)], p = vs2[0]: z becomes 6, p reads it: 6 + 6 = 12.
+  vs2: vector<Vec3> = [vec3(1.0, 2.0, 3.0)];
+  r5b = poke2(vs2[0]?, vs2);
+  println("c5b {r5b} {vs2[0]?.z}");
+  assert(r5b == 12.0 && vs2[0]?.z == 6.0, "c5b");
+  // c5c: vs3 [(1,2,3)], p = vs3[0]: z becomes 6, p reads it: 6 + 6 + q.x 1 = 13.
+  vs3: vector<Vec3> = [vec3(1.0, 2.0, 3.0)];
+  r5c = poke3(vs3[0]?, vs3);
+  println("c5c {r5c} {vs3[0]?.z}");
+  assert(r5c == 13.0 && vs3[0]?.z == 6.0, "c5c");
+  // c5: vs [(0,0,0)], p (1,2,3): vs[0].z = 6; answer 6 + 1 = 7.
+  vs: vector<Vec3> = [vec3(0.0, 0.0, 0.0)];
+  r5 = poke(vec3(1.0, 2.0, 3.0), vs);
+  println("c5 {r5} {vs[0]?.z}");
+  assert(r5 == 7.0 && vs[0]?.z == 6.0, "c5");
+  // 200 steps: from advances by (1, 0, 0) each round — no store minted per round on native.
+  acc = vec3(0.0, 0.0, 0.0);
+  for i in 0..200 { acc = step(acc, vec3(1.0, 0.0, 0.0)); }
+  println("loop {acc.x} {acc.y} {acc.z}");
+  assert(acc.x == 200.0 && acc.y == 0.0 && acc.z == 0.0, "loop");
+}

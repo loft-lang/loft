@@ -61,9 +61,10 @@ fn m4(n: integer) -> vector<P3> {
 fn c4() { r = m4(3); e = r[1]?; println("c4 {e.a} {e.b} {e.c} {e.d ?? -9.0}"); }
 
 // c5 — the element expression is a BORROW-returning callee: its lift carries an
-// `OpDatabase` arm (an allocation off the allow-list), so the LOOP declines and the group
-// keeps its templates — c12's class in V-s.  Values right; the OpCopyRecord delivery arm
-// under fusion is c2's guard.  DECLINES.
+// `OpDatabase` arm — a null-discharge buffer's mint, which `(R-Callee)` reads with the
+// header hoist's own allowances since the smooth work (a fresh store moves nothing), so the
+// LOOP hoists and the append fuses; the OpCopyRecord delivery arm under fusion is c2's
+// guard.  FUSES.
 fn first_of(v: const vector<Pt>) -> Pt { v[0]? }
 fn m5(src: const vector<Pt>, n: integer) -> vector<Pt> {
   out: vector<Pt> = [];
