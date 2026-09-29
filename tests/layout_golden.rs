@@ -584,3 +584,61 @@ fn a_changed_placement_token_refuses_the_store() {
         "the refusal must route through the store's corruption path so the reader is told"
     );
 }
+
+/// @C125 `@FR-O-One-Kind` — every heap-reaching value is carried as a `DbRef`, on BOTH
+/// backends: the interpreter's stack slot is `size_of::<DbRef>()` and the native generator's
+/// Rust type is `DbRef`.
+///
+/// The store is the one object kind: identity is the store (`DbRef.store_nr`), and a free
+/// releases a store.  An optimisation may change what a store's bytes ARE — a foreign span
+/// (@PLN174), a hash-entry arena inside the store (@PLN135) — and every read routine then
+/// serves it unchanged, because the handle is still a `DbRef`.  What it may not do is add a
+/// second kind of object with its own identity and release (an `ArenaRef { arena, slot }`):
+/// that needs a second representation, and this is where one would first show.  A new heap
+/// type former joins the list below or fails `rust_type`'s arm here.
+#[test]
+fn every_heap_value_is_carried_as_a_dbref() {
+    use loft::data::{Context, Deps, Type};
+    let keys = vec![("k".to_string(), true)];
+    let heap = [
+        ("reference", Type::Reference(1, Deps::none())),
+        (
+            "vector",
+            Type::Vector(
+                Box::new(Type::Integer(loft::data::IntegerSpec::wide())),
+                Deps::none(),
+            ),
+        ),
+        ("sorted", Type::Sorted(1, keys.clone(), Deps::none())),
+        ("index", Type::Index(1, keys.clone(), Deps::none())),
+        ("hash", Type::Hash(1, vec!["k".to_string()], Deps::none())),
+        ("radix", Type::Radix(1, vec!["k".to_string()], Deps::none())),
+        ("trie", Type::Trie(1, "k".to_string(), Deps::none())),
+        ("struct-enum", Type::Enum(1, true, Deps::none())),
+        (
+            "iterator",
+            Type::Iterator(
+                Box::new(Type::Integer(loft::data::IntegerSpec::wide())),
+                Box::new(Type::Null),
+            ),
+        ),
+    ];
+    let dbref = std::mem::size_of::<loft::keys::DbRef>();
+    for (name, tp) in &heap {
+        assert_eq!(
+            loft::data::element_stack_size(tp),
+            dbref,
+            "{name}: the interpreter carries a heap value as one DbRef (@FR-O-One-Kind)"
+        );
+        for ctx in [Context::Variable, Context::Argument] {
+            assert_eq!(
+                loft::generation::rust_type(tp, &ctx),
+                "DbRef",
+                "{name}: native carries a heap value as one DbRef (@FR-O-One-Kind)"
+            );
+        }
+    }
+    // An optional heap value is the same handle holding the null sentinel, not a second shape.
+    let opt = Type::Optional(Box::new(Type::Reference(1, Deps::none())));
+    assert_eq!(loft::data::element_stack_size(&opt), dbref);
+}

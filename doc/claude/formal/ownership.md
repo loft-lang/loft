@@ -170,6 +170,17 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 carries a view.  It keeps its record, since the boundary that
                 materialises a tuple writes FIELDS and a reference is not one.  A
                 declined view is a copy, never a stale read.
+  (O-One-Kind)  THE STORE IS THE ONE KIND OF HEAP OBJECT.  Every value that reaches the
+                heap is a `DbRef` naming a store: identity is the store, and a free
+                releases a store (`Stores::free`), on both backends.  An optimisation may
+                change what a store's BYTES are — a foreign span over bytes the program
+                does not own (@PLN174), a hash-entry arena inside the store (@PLN135) — or
+                remove a temporary store outright (R-ValueRecord, O-ViewField, R-Place,
+                R-InPlaceLiteral, R-ElemFirst) or reuse one per call site.  It may not add
+                an object with an identity or a release of its own.  The admission test is
+                reuse: a variant that every existing read routine serves unchanged is a
+                store; one that needs its own reads, or its own handle, is a second kind
+                (C125).
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural

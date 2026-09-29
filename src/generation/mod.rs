@@ -1842,6 +1842,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Enum(_, true, _)
         | Type::Index(_, _, _)
         // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (C125).
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.

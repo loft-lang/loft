@@ -971,6 +971,10 @@ kind becomes hard to reason about and so impossible to verify.
 **Revisit when.** Temporaries that cannot be removed or reused cost more than a few percent,
 measured on the release binary with `perf`.  Decided 2026-09-17 —
 [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
+**Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md) (owner,
+2026-09-29: a foreign-data view that still presents a store, @PLN174, is the model working — every
+read routine served it unchanged); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
+(a heap value is one `DbRef` on both backends — a second kind needs a second representation).
 **Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
 
 ## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set

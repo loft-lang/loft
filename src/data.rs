@@ -3763,6 +3763,7 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Enum(_, true, _)
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (C125).
         // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
         // member of one overlapped its neighbours.
         | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
