@@ -488,7 +488,9 @@ python3 scripts/doc_history_report.py <doc.md>   # the lines it flagged, and why
 
 It is a REPORT, not a gate, and it has to be: whether a date is timeline or contract is a
 judgement — *"`@F7` shipped in 1.1"* is a compatibility FACT that belongs in the contract — and
-a gate over a judgement gets satisfied rather than obeyed.  Two rules make the split hold:
+a gate over a judgement gets satisfied rather than obeyed.  It is VISIBLE on the PR that adds
+one: the advisory `doc-timeline` job turns red (`doc_lint.py --fail-on timeline`) without
+blocking the merge, and a line that is meant carries `<!-- doc-lint: ok -->`.  Two rules make the split hold:
 
 - **The latest state stays in the contract doc.**  A reader must not have to open the companion
   to learn that two deviations are open.  Keep the count and one line per open item; move the

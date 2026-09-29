@@ -11,6 +11,9 @@ One implementation, three callers:
     python3 scripts/doc_lint.py --gate --since <base> --changed
                                                          the PR check: a change may not ADD a
                                                          gated finding
+    python3 scripts/doc_lint.py --since <base> --changed --fail-on timeline
+                                                         the ADVISORY PR job: red when a change
+                                                         adds a timeline finding, never a gate
     python3 scripts/doc_lint.py --all [--baseline F]     the report behind `make docs-lint`
     python3 scripts/doc_lint.py --all --write-baseline F re-pin that report's baseline
     python3 scripts/doc_lint.py --hook                   the PostToolUse hook: a tool call on
@@ -348,6 +351,9 @@ def main(argv):
     ap.add_argument("--since", metavar="REV", help="report only findings REV's version lacks")
     ap.add_argument("--changed", action="store_true", help="lint the files changed since --since")
     ap.add_argument("--gate", action="store_true", help="exit 1 when a gated finding is new")
+    ap.add_argument("--fail-on", metavar="RULES", default="",
+                    help="comma-separated report rules: exit 1 when one is new (a red step that "
+                         "does not gate — the advisory CI job)")
     ap.add_argument("--all", action="store_true", help="every tracked file in scope")
     ap.add_argument("--baseline", metavar="FILE", help="with --all: print the delta against FILE")
     ap.add_argument("--write-baseline", metavar="FILE", help="with --all: write FILE")
@@ -374,11 +380,19 @@ def main(argv):
         return report(findings, a.baseline, a.write_baseline)
     for p, n, rule, msg, _ in findings:
         print(f"{p}:{n}: {rule}: {msg}")
+    fail_on = {r for r in a.fail_on.split(",") if r}
+    added = [(p, n, r) for p, n, r, _, _ in findings if r in fail_on]
+    if added:
+        print(f"\ndoc_lint: this change adds {len(added)} {'/'.join(sorted(fail_on))} "
+              "finding(s).  A contract doc states what holds now; a date, a measurement, a "
+              "finished item or how a thing came to be goes to the doc's `<doc>-history.md` "
+              "companion (DOC_QUALITY § Maintainer docs 4, the doc-quality skill).  A line "
+              "that is meant carries `<!-- doc-lint: ok -->`.", file=sys.stderr)
     if a.gate and any(r in GATED for _, _, r, _, _ in findings):
         print("\ndoc_lint: this change adds a gated finding (stamp, history, two-h1, or a file "
               "crossing the size ceiling).\nThe rule set is doc/claude/DOC_CONTRACT.md.", file=sys.stderr)
         return 1
-    return 0
+    return 1 if added else 0
 
 
 def counts(findings):
