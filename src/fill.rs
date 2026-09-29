@@ -353,6 +353,12 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     call_ref_store,
     bind_fn_ref_result,
     coroutine_retain,
+    int_v_v,
+    int_v_c,
+    cmp_int_v_v,
+    cmp_int_v_c,
+    int_v_v_put,
+    int_v_c_put,
 ];
 
 /// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
@@ -684,6 +690,12 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCallRefStore",
     "OpBindFnRefResult",
     "OpCoroutineRetain",
+    "OpIntVV",
+    "OpIntVC",
+    "OpCmpIntVV",
+    "OpCmpIntVC",
+    "OpIntVVPut",
+    "OpIntVCPut",
 ];
 
 fn goto(s: &mut State) {
@@ -3283,4 +3295,58 @@ fn coroutine_retain(s: &mut State) {
     let v_gen = s.get_stack::<DbRef>();
     let new_value = s.coroutine_retain(v_gen);
     s.put_stack(new_value);
+}
+
+fn int_v_v(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let new_value = ops::fused_int(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+    s.put_stack(new_value);
+}
+
+fn int_v_c(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let new_value = ops::fused_int(v_kind, s.get_var::<i64>(v_a), v_c);
+    s.put_stack(new_value);
+}
+
+fn cmp_int_v_v(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let new_value = ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+    s.put_stack(new_value);
+}
+
+fn cmp_int_v_c(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let new_value = ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), v_c);
+    s.put_stack(new_value);
+}
+
+fn int_v_v_put(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_dst = s.code::<u16>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    {
+        let r = ops::fused_int(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+        s.put_var(v_dst, r);
+    }
+}
+
+fn int_v_c_put(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_dst = s.code::<u16>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    {
+        let r = ops::fused_int(v_kind, s.get_var::<i64>(v_a), v_c);
+        s.put_var(v_dst, r);
+    }
 }

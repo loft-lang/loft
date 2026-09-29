@@ -1180,6 +1180,26 @@ fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
 // the handle.  Declared last, so it renumbers no earlier operator.
 fn OpCoroutineRetain(gen: reference) -> reference;
 #rust"s.coroutine_retain(@gen)"
+// Interpreter superinstructions: an integer operator whose operands are frame locals
+// (`V`) or a literal (`C`), read in place instead of pushed first, optionally stored
+// straight into a local (`Put`).  Emitted only by the bytecode generator's operand fusion
+// (`State::fused_int_call`), never by the parser, so `--native` never meets them.  `kind`
+// picks the operator (`ops::fused`); the arms are the unfused operators' own functions.
+// Operand positions are relative to the stack top when the op starts, as `OpVarInt`'s is,
+// and `dst` as `OpPutInt`'s would be after the result's push.  Declared last, so they
+// renumber no earlier operator.
+fn OpIntVV(kind: const u8, a: const u16, b: const u16) -> integer;
+#rust"ops::fused_int(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b))"
+fn OpIntVC(kind: const u8, a: const u16, c: const integer) -> integer;
+#rust"ops::fused_int(@kind, s.get_var::<i64>(@a), @c)"
+fn OpCmpIntVV(kind: const u8, a: const u16, b: const u16) -> boolean;
+#rust"ops::fused_cmp(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b))"
+fn OpCmpIntVC(kind: const u8, a: const u16, c: const integer) -> boolean;
+#rust"ops::fused_cmp(@kind, s.get_var::<i64>(@a), @c)"
+fn OpIntVVPut(kind: const u8, dst: const u16, a: const u16, b: const u16);
+#rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), s.get_var::<i64>(@b)); s.put_var(@dst, r); }}"
+fn OpIntVCPut(kind: const u8, dst: const u16, a: const u16, c: const integer);
+#rust"{{ let r = ops::fused_int(@kind, s.get_var::<i64>(@a), @c); s.put_var(@dst, r); }}"
 
 // ── Path helpers (moved from 03_text.loft so they're available
 //    before file-I/O code that wants to compose them) ─────────

@@ -25,6 +25,12 @@
 //! The per-op hook rides the debugger branch the sampler already uses (`State::debug_check`),
 //! so an unarmed interpreter pays nothing for it.
 //!
+//! `LOFT_OP_NGRAMS=<file>` (with `LOFT_OP_CENSUS`) also counts the runs of two to four
+//! operators that execute one after the other in one function — the candidates for a
+//! superinstruction.  A run is dynamic, so one that continues past a jump is not adjacent
+//! in the bytecode; the file therefore keeps only runs whose control operators (a goto, a
+//! call, a return, an iteration step) come last, which are exactly the adjacent ones.
+//!
 //! Output, written when the run ends: a `# bytes: counted|not counted` line, then
 //! `line<TAB>function<TAB>operator<TAB>count<TAB>copy<TAB>relocate<TAB>text`.  Only the thread that runs `main` is counted: a `par` worker's ops
 //! are not in the file.  Read by `scripts/interp_gap.py`.
@@ -65,6 +71,39 @@ struct Census {
     moved_at_last: [u64; 3],
     /// The call from the entry function the current callee chain hangs under, and its line.
     site: Option<(u32, u32)>,
+    /// `LOFT_OP_NGRAMS`: the last three operators of the current function, newest last,
+    /// and how many of them are valid; the run restarts when the function changes.
+    window: [u16; 3],
+    window_len: usize,
+    window_fn: u32,
+    /// Packed n-gram (`n` in the top bits, then up to four 10-bit opcodes) → count.
+    ngrams: HashMap<u64, u64>,
+}
+
+fn ngram_target() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        std::env::var("LOFT_OP_NGRAMS")
+            .ok()
+            .filter(|p| !p.is_empty())
+    })
+    .as_deref()
+}
+
+fn pack(ops: &[u16]) -> u64 {
+    ops.iter().fold(ops.len() as u64, |key, &op| {
+        (key << 10) | u64::from(op & 0x3ff)
+    })
+}
+
+fn unpack(mut key: u64) -> Vec<u16> {
+    let mut ops = Vec::new();
+    while key >= 1 << 10 {
+        ops.push((key & 0x3ff) as u16);
+        key >>= 10;
+    }
+    ops.reverse();
+    ops
 }
 
 struct Row {
@@ -173,7 +212,70 @@ pub fn step(line: u32, function: u32, opcode: u16) {
         let cur = c.cur;
         c.rows[cur].count[op] += 1;
         c.last = Some((cur, op));
+        if ngram_target().is_some() {
+            if c.window_fn != function {
+                c.window_fn = function;
+                c.window_len = 0;
+            }
+            let mut seq = [0u16; 4];
+            let have = c.window_len;
+            seq[..have].copy_from_slice(&c.window[3 - have..]);
+            seq[have] = opcode;
+            for n in 2..=have + 1 {
+                *c.ngrams.entry(pack(&seq[have + 1 - n..=have])).or_insert(0) += 1;
+            }
+            c.window.rotate_left(1);
+            c.window[2] = opcode;
+            c.window_len = (have + 1).min(3);
+        }
     });
+}
+
+/// Is `name` an operator after which the next one executed need not be the next in the
+/// bytecode?
+fn is_control(name: &str) -> bool {
+    [
+        "OpGoto",
+        "OpCall",
+        "OpStaticCall",
+        "OpReturn",
+        "OpIterate",
+        "OpStep",
+        "OpCoroutine",
+        "OpParallel",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
+}
+
+fn write_ngrams(data: &crate::data::Data) {
+    let Some(path) = ngram_target() else { return };
+    let name = |op: u16| {
+        data.operator_name(op)
+            .map_or_else(|| format!("op#{op}"), str::to_owned)
+    };
+    let mut rows: Vec<(u64, String)> = CENSUS.with_borrow(|c| {
+        c.ngrams
+            .iter()
+            .filter_map(|(&key, &n)| {
+                let ops = unpack(key);
+                let names: Vec<String> = ops.iter().map(|&o| name(o)).collect();
+                // A control op anywhere but last means the run crossed a jump.
+                if names[..names.len() - 1].iter().any(|n| is_control(n)) {
+                    return None;
+                }
+                Some((n, format!("{}\t{}", names.len(), names.join(" "))))
+            })
+            .collect()
+    });
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut out = String::from("# count<TAB>n<TAB>operators\n");
+    for (n, row) in rows {
+        let _ = writeln!(out, "{n}\t{row}");
+    }
+    if let Err(e) = std::fs::write(path, out) {
+        crate::loft_eprintln!("loft: cannot write the op n-grams to '{path}': {e}");
+    }
 }
 
 /// Write the census to `LOFT_OP_CENSUS`, one line per (segment, function, operator).
@@ -213,4 +315,5 @@ pub fn write(data: &crate::data::Data) {
     if let Err(e) = std::fs::write(path, out) {
         crate::loft_eprintln!("loft: cannot write the op census to '{path}': {e}");
     }
+    write_ngrams(data);
 }

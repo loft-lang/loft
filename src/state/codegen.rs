@@ -4265,6 +4265,10 @@ impl State {
              (@FR-G-Mono)",
             stack.data.def(op).name()
         );
+        if let Some(f) = fusable_int(stack, op, parameters) {
+            self.emit_fused_int(stack, &f, None);
+            return stack.data.def(op).returned().clone();
+        }
         let mut tps = Vec::new();
         let mut last = 0;
         let mut was_stack = u16::MAX;
@@ -4838,6 +4842,46 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// Emit a fused integer operator (see [`fusable_int`]): the result pushed, or with
+    /// `dst` stored straight into that local.  Every operand position is taken at the stack
+    /// height the op starts at — no operand is pushed first — and `dst` is the position an
+    /// `OpPutInt` would carry after the result's push, which is how `put_var` addresses it.
+    fn emit_fused_int(&mut self, stack: &mut Stack, f: &FusedInt, dst: Option<u16>) {
+        let at = self.code_pos;
+        let a = stack.var_pos(f.a);
+        let dst_pos = dst.map(|d| stack.position + stack.step(8) - stack.function.stack(d));
+        let name = match (f.compare, f.b, dst.is_some()) {
+            (false, FusedOperand::Var(_), false) => "OpIntVV",
+            (false, FusedOperand::Const(_), false) => "OpIntVC",
+            (true, FusedOperand::Var(_), false) => "OpCmpIntVV",
+            (true, FusedOperand::Const(_), false) => "OpCmpIntVC",
+            (false, FusedOperand::Var(_), true) => "OpIntVVPut",
+            (false, FusedOperand::Const(_), true) => "OpIntVCPut",
+            (true, _, true) => unreachable!("a comparison is never stored by operand fusion"),
+        };
+        let b = match f.b {
+            FusedOperand::Var(v) => Some(stack.var_pos(v)),
+            FusedOperand::Const(_) => None,
+        };
+        stack.add_op(name, self);
+        self.code_add(f.kind);
+        if let Some(d) = dst_pos {
+            self.code_add(d);
+        }
+        self.code_add(a);
+        match f.b {
+            FusedOperand::Var(_) => self.code_add(b.expect("a local operand has a position")),
+            FusedOperand::Const(c) => self.code_add(c),
+        }
+        // The reads, where the debugger's reference ranges look for them: inside this
+        // instruction, one byte each, so neither overwrites the store target a Set keyed at
+        // `at` (the unfused first read landed on `at` and replaced it).
+        self.vars.insert(at + 1, f.a);
+        if let FusedOperand::Var(v) = f.b {
+            self.vars.insert(at + 2, v);
+        }
+    }
+
     pub(super) fn generate_call_ref(
         &mut self,
         stack: &mut Stack,
@@ -5773,6 +5817,18 @@ impl State {
             return;
         }
         let stack_before = stack.position;
+        // Operand fusion's store half: `x = a op c` in one op.  The same predicate as the
+        // `OpPutInt` selection below (a plain integer slot, not a linked narrow one), so the
+        // fused put writes exactly the slot that op would have.
+        if matches!(stack.function.tp(var).base(), Type::Integer(_))
+            && stack.function.linked_narrow_slot(var).is_none()
+            && let Value::Call(op, args) = value.unspan()
+            && let Some(f) = fusable_int(stack, *op, args)
+            && !f.compare
+        {
+            self.emit_fused_int(stack, &f, Some(var));
+            return;
+        }
         // A fn-ref slot is the PAIR (8 B d_nr + 12 B closure DbRef), and the put-op chosen
         // below pops all twenty for a `Function` slot.  A non-capturing source — a bare
         // `dbl`, or a lambda that captures nothing — lowers to the lone d_nr and pushes
@@ -6051,6 +6107,78 @@ impl State {
 
 /// Check if a Value is a divergent expression (return/break/continue)
 /// that never produces a value at the join point.
+/// A fused integer op's second operand.
+#[derive(Clone, Copy)]
+enum FusedOperand {
+    Var(u16),
+    Const(i64),
+}
+
+/// An integer operator whose operands can be read in place (`OpIntVV` and its siblings).
+struct FusedInt {
+    compare: bool,
+    kind: u8,
+    a: u16,
+    b: FusedOperand,
+}
+
+/// `LOFT_NO_FUSE=1` — emit every integer operator with its operands pushed first, as before
+/// operand fusion.  The first bisect step for an interpreter-only wrong answer, and the
+/// switch the fusion's A/B runs against (both forms must print the same).
+fn fusion_enabled() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_FUSE").is_none())
+}
+
+/// Can `op(params)` be emitted as one fused integer op?  Yes when `op` is one of the integer
+/// operators the fused ops carry (`ops::fused`), the first operand is a plain integer local
+/// and the second is one too or an integer literal.  A plain local is one `generate_var`
+/// reads with `OpVarInt` — an allocated integer slot that is not a linked narrow one — so the
+/// fused op reads the same eight bytes that op would.  Every other shape answers `None` and
+/// is emitted as before: a literal first operand, a nullable or narrow-linked operand, any
+/// other operator.  That is always correct, because the unfused form is the reference.
+fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
+    use crate::ops::fused;
+    if params.len() != 2 || !fusion_enabled() {
+        return None;
+    }
+    let (compare, kind) = match stack.data.def(op).name() {
+        "OpAddInt" => (false, fused::ADD),
+        "OpMinInt" => (false, fused::MIN),
+        "OpMulInt" => (false, fused::MUL),
+        "OpLandInt" => (false, fused::LAND),
+        "OpLorInt" => (false, fused::LOR),
+        "OpEorInt" => (false, fused::EOR),
+        "OpEqInt" => (true, fused::EQ),
+        "OpNeInt" => (true, fused::NE),
+        "OpLtInt" => (true, fused::LT),
+        "OpLeInt" => (true, fused::LE),
+        _ => return None,
+    };
+    let local = |v: &Value| -> Option<u16> {
+        let Value::Var(v) = v.unspan() else {
+            return None;
+        };
+        let v = *v;
+        (matches!(stack.function.tp(v), Type::Integer(_))
+            && stack.function.linked_narrow_slot(v).is_none()
+            && stack.function.is_stack_allocated(v)
+            && stack.function.stack(v) <= stack.position)
+            .then_some(v)
+    };
+    let a = local(&params[0])?;
+    let b = match params[1].unspan() {
+        Value::Int(c) => FusedOperand::Const(i64::from(*c)),
+        Value::Long(c) => FusedOperand::Const(*c),
+        other => FusedOperand::Var(local(other)?),
+    };
+    Some(FusedInt {
+        compare,
+        kind,
+        a,
+        b,
+    })
+}
+
 fn is_divergent(node: IrNode) -> bool {
     match node.kind() {
         ValueType::Return | ValueType::Break | ValueType::Continue => true,

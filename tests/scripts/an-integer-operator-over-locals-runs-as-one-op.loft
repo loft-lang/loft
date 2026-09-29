@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An integer operator whose operands are frame locals or a literal runs as ONE interpreter op.
+//
+// The bytecode generator fuses `a op b` and `a op 7` — and `x = a op 7`, the store included —
+// into a single op that reads its operands in place instead of pushing them first
+// (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`).  Each fused
+// op calls the unfused operator's own function, so what can go wrong is WHERE its operands
+// come from: every position is taken at the stack height the op starts at, where the unfused
+// second read was taken eight bytes higher, and a fused store addresses its target as the
+// `OpPutInt` after the push would have.  A position off by one slot reads a neighbouring
+// local, so each cell uses operands whose neighbours hold different values.
+//
+// Covered: every fused operator on two locals and on a local and a literal, negative values,
+// a literal wider than 32 bits, the same local on both sides, a store into one of its own
+// operands (`i = i + 1`), a store into a third local, and an overflow's null carried through
+// a fused op.  `LOFT_NO_FUSE=1` emits the unfused form; both must pass, and so must
+// `--native`, which never sees a fused op.
+//
+// @falsified-at: pending
+
+fn arith(a: integer, b: integer) -> text {
+  x = a + b;
+  y = a - b;
+  z = a * b;
+  w = a & b;
+  o = a | b;
+  e = a ^ b;
+  p = a + 7;
+  q = a - 7;
+  r = a * 7;
+  s = a & 6;
+  t = a | 8;
+  u = a ^ 5;
+  "{x} {y} {z} {w} {o} {e} {p} {q} {r} {s} {t} {u}"
+}
+
+fn compare(a: integer, b: integer) -> text {
+  "{a == b} {a != b} {a < b} {a <= b} {a == 3} {a != 3} {a < 3} {a <= 3}"
+}
+
+fn test_arith_positive() {
+  // 12 + 10, 12 - 10, 12 * 10, 1100 & 1010, 1100 | 1010, 1100 ^ 1010; then with 7, 6, 8, 5.
+  assert(arith(12, 10) == "22 2 120 8 14 6 19 5 84 4 12 9", "fused arithmetic over locals");
+}
+
+fn test_arith_negative() {
+  // -5 is ...11111011: & 011 = 3, | 011 = -5, ^ 011 = ...11111000 = -8;
+  // & 0110 = 0010 = 2, | 1000 = -5, ^ 0101 = ...11111110 = -2.
+  assert(arith(-5, 3) == "-2 -8 -15 3 -5 -8 2 -12 -35 2 -5 -2", "fused arithmetic, negative");
+}
+
+fn test_compare() {
+  assert(compare(3, 3) == "true false false true true false false true", "equal operands");
+  assert(compare(2, 3) == "false true true true false true true true", "smaller first");
+  assert(compare(4, 3) == "false true false false false true false false", "larger first");
+}
+
+fn test_wide_literal_and_same_local() {
+  a = 21;
+  x = a + 5000000000;
+  y = a * a;
+  assert(x == 5000000021, "a literal wider than 32 bits");
+  assert(y == 441, "the same local on both sides");
+}
+
+fn test_store_into_an_operand() {
+  // `i = i + 1` stores into its own operand; `s = s + i` into its own with a second local.
+  i = 0;
+  s = 0;
+  while i < 10 {
+    s = s + i;
+    i = i + 1;
+  }
+  assert(i == 10, "the counter counts");
+  assert(s == 45, "0 + 1 + … + 9");
+}
+
+fn test_store_into_a_third_local() {
+  a = 6;
+  b = 7;
+  k = 1000;
+  m = 2000;
+  assert(k + m == 3000, "both start as plain values");
+  k = a * b;
+  m = a - 100;
+  assert(k == 42, "a store of a local product");
+  assert(m == -94, "a store of a local minus a literal");
+  assert(a == 6 && b == 7, "the operands are untouched");
+}
+
+fn test_overflow_null_flows_through() {
+  big = 9223372036854775807;
+  c = 0;
+  d = 5;
+  assert(c == 0 && d == 5, "both start as plain values");
+  c = big + 1;
+  d = c + 1;
+  assert(!c, "an overflow is null");
+  assert(!d, "null plus one is null");
+}
