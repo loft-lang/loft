@@ -6361,7 +6361,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         // the EMPTY vector (loft#1739).
                         #[allow(clippy::cast_possible_wrap)]
                         let absent = Value::Int(crate::keys::DbRef::ABSENT_REC as i32);
-                        let is_null = self.cl("OpVectorIsNull", &[p.clone()]);
+                        let is_null = self.cl("OpVectorIsNull", std::slice::from_ref(p));
                         let mark = self.cl("OpSetInt4", &[Value::Var(elm), Value::Int(0), absent]);
                         ls.push(v_if(is_null, mark, copy));
                     } else {
