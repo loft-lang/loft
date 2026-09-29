@@ -1,6 +1,6 @@
 [package]
 name = "loft"
-version = "2026.9.0"
+version = "2026.10.0"
 edition = "2024"
 # The oldest stable `--native` is proven on: the nightly `toolchain-matrix` runs the suite
 # under it (`msrv` leg), because a user one stable behind is the common case and `--native`
