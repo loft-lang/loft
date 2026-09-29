@@ -8368,6 +8368,12 @@ pub fn text_from_bytes(bytes: const vector<u8>) -> text
 Build a text from the raw UTF-8 bytes of a vector\<u8\> — the inverse of byte\_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell "empty input" from "invalid bytes" apart.
 
 ```rust
+pub fn text_from_byte_range(bytes: const vector<u8>, lo: integer, hi: integer) -> text
+```
+
+The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder that has found a text's span writes instead of `text\_from\_bytes(bytes\[lo..hi\])`, (its own name: a native is dispatched by name, so an arity overload cannot be one) whose slice is a fresh vector (`(Slice-Value)`) built only to be read once.  The bounds clamp to the buffer as a slice's do; a reversed or empty range is "".
+
+```rust
 pub fn chr(cp: integer) -> text
 ```
 

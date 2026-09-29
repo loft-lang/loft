@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 //! `(R-ExitVector)` — a LOCAL VECTOR returned inside the exit literal is built in the
 //! return buffer's store.
 //!
