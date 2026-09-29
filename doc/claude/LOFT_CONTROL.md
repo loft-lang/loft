@@ -296,6 +296,11 @@ match shape {
 }
 ```
 
+`Rect { width: w, height }` binds `width` as `w` — a bare lowercase name after a field is a
+binding under that name, even when a variable of that name is in scope (`@FR-P-Point`).  A
+literal, a range or `_` in that position tests the field instead (`Circle { radius: 0 }`,
+`Circle { radius: 1..4 }`).
+
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:
 

@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A FIELD PATTERN'S NAME BINDS UNDER THAT NAME (`@FR-P-Point`, `@FR-M-Total`).  A struct or variant
+// field may itself be a pattern, and a bare name is a binding — total, like the shorthand
+// `{ radius }`, only under the name written: `Circle { radius: r }` binds `r`.  The sub-pattern
+// was read as a VALUE, so with a variable `r` in scope the arm compared against it and fell to `_`
+// for any other radius (a quietly wrong arm), and without one it refused the program ("Unknown
+// variable 'r'").  A literal, a range, `_` and a variant keep their sub-pattern meaning; only the
+// plain lowercase name followed by `,` or `}` binds.  Values are hand-computed.
+//
+// @falsified-at: PENDING
+
+enum Color { Red, Green }
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { radius: integer }, Rect { w: integer, h: integer }, Named { name: text, c: Color }, Holder { p: Pt } }
+
+fn kind(s: Shape, r: integer) -> text {
+  k = match s { Circle { radius: r } => "c{r}", _ => "other" };
+  "{k}/{r}"
+}
+fn scaled(s: Shape) -> integer { match s { Circle { radius: q } => q * 10, _ => -1 } }
+fn label(s: Shape) -> text { match s { Named { name: n, c: k } => "{n}/{k}", _ => "-" } }
+fn total(s: Shape) -> integer { match s { Holder { p: pt } => pt.x + pt.y, _ => -1 } }
+fn sized(s: Shape) -> text { match s { Circle { radius: 4 } => "four", Circle { radius: 1..4 } => "small", Circle { radius: _ } => "big", _ => "-" } }
+fn mixed(s: Shape) -> integer { match s { Rect { w: a, h } => a * 100 + h, _ => -1 } }
+fn either(s: Shape) -> integer { match s { Circle { radius: v }, Rect { w: v } => v, _ => -1 } }
+
+fn main() {
+  c4: Shape = Circle { radius: 4 };
+  c5: Shape = Circle { radius: 5 };
+  // The arm binds a new `r`; the parameter `r` it shadows is untouched after the match.
+  assert(kind(c4, 4) == "c4/4", "same radius: {kind(c4, 4)}");
+  assert(kind(c5, 4) == "c5/4", "another radius binds too: {kind(c5, 4)}");
+  c7: Shape = Circle { radius: 7 };
+  r12: Shape = Rect { w: 1, h: 2 };
+  assert(scaled(c7) == 70 && scaled(r12) == -1, "no name in scope: {scaled(c7)} {scaled(r12)}");
+  nm: Shape = Named { name: "ab", c: Green };
+  assert(label(nm) == "ab/Green", "text and enum fields: {label(nm)}");
+  hd: Shape = Holder { p: Pt { x: 3, y: 9 } };
+  assert(total(hd) == 12, "a record field: {total(hd)}");
+  c2: Shape = Circle { radius: 2 };
+  c9: Shape = Circle { radius: 9 };
+  assert("{sized(c4)} {sized(c2)} {sized(c9)}" == "four small big", "literal, range, wildcard");
+  r38: Shape = Rect { w: 3, h: 8 };
+  assert(mixed(r38) == 308, "renamed beside shorthand: {mixed(r38)}");
+  c11: Shape = Circle { radius: 11 };
+  r121: Shape = Rect { w: 12, h: 1 };
+  assert(either(c11) == 11 && either(r121) == 12, "multi-pattern capture: {either(c11)} {either(r121)}");
+  v: vector<Shape> = [Circle { radius: 13 }, Rect { w: 1, h: 1 }];
+  t = match v { [Circle { radius: rr }, ..] => rr, _ => -1 };
+  assert(t == 13, "slice element: {t}");
+  println("ok");
+}

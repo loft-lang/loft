@@ -7526,7 +7526,38 @@ impl Parser {
                 Some((attr_idx, field_type)) => {
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
-                        if let Some(cond) = self.parse_field_sub_pattern(
+                        // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
+                        // binding under that name (`Circle { radius: r }`), total like the
+                        // shorthand `{ radius }`, and never a comparison with a variable of that
+                        // name in scope.  Read through as a value, it compared against an outer
+                        // `r` (a silent wrong arm) or refused an unknown one.  Only the plain
+                        // name followed by `,` / `}` — `r..5`, `_`, a variant and a literal keep
+                        // their sub-pattern meaning.
+                        let named = matches!(
+                            &self.lexer.peek().has,
+                            LexItem::Identifier(id) if Self::is_binding_name(id)
+                        );
+                        let mut rename = None;
+                        if named {
+                            let link = self.lexer.link();
+                            let name = self.lexer.has_identifier().unwrap_or_default();
+                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+                                rename = Some(name);
+                            } else {
+                                self.lexer.revert(link);
+                            }
+                        }
+                        if let Some(bind_name) = rename {
+                            self.bind_match_field_capture(
+                                variant_def_nr,
+                                attr_idx,
+                                &bind_name,
+                                &field_type,
+                                subject_val,
+                                arm_stmts,
+                                name_aliases,
+                            );
+                        } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_read,
                             &field_type,
                             arm_stmts,
@@ -7565,6 +7596,15 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+    }
+
+    /// A lowercase identifier other than `_` — the spelling that BINDS in a pattern.
+    fn is_binding_name(name: &str) -> bool {
+        name != "_"
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
     }
 
     /// The discriminant integer for `variant_def_nr` (a variant of enum `e_nr`).
@@ -9698,35 +9738,55 @@ impl Parser {
                     // condition (the caller ANDs it into the branch's own guard).  A
                     // sub-pattern that BINDS a name binds a fresh variable the shared arm body
                     // never reads, so that one is refused by name rather than read wrongly.
+                    // A plain lowercase NAME as the sub-pattern is a RENAME (`w: v`): it binds
+                    // the capture under that name, and the shared arm body reads it like a
+                    // shorthand capture of the first pattern's name.
+                    let mut capture = field_name.clone();
                     if self.lexer.has_token(":") {
-                        let field_read =
-                            self.get_field(variant_def_nr, attr_idx, subject_val.clone());
-                        let mut sub_binds: Vec<Value> = Vec::new();
-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
-                        if let Some(c) = self.parse_field_sub_pattern(
-                            field_read,
-                            &field_type,
-                            &mut sub_binds,
-                            conds,
-                            &mut aliases,
+                        let mut renamed = false;
+                        if matches!(
+                            &self.lexer.peek().has,
+                            LexItem::Identifier(id) if Self::is_binding_name(id)
                         ) {
-                            conds.push(c);
+                            let link = self.lexer.link();
+                            let name = self.lexer.has_identifier().unwrap_or_default();
+                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+                                capture = name;
+                                renamed = true;
+                            } else {
+                                self.lexer.revert(link);
+                            }
                         }
-                        self.join_later_sub_pattern_captures(
-                            &mut aliases,
-                            &mut sub_binds,
-                            shared,
-                            stmts,
-                            &mut bound,
-                        );
-                        self.pattern_binds_pending.append(&mut aliases);
-                        if !self.lexer.has_token(",") {
-                            break;
+                        if !renamed {
+                            let field_read =
+                                self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                            let mut sub_binds: Vec<Value> = Vec::new();
+                            let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                            if let Some(c) = self.parse_field_sub_pattern(
+                                field_read,
+                                &field_type,
+                                &mut sub_binds,
+                                conds,
+                                &mut aliases,
+                            ) {
+                                conds.push(c);
+                            }
+                            self.join_later_sub_pattern_captures(
+                                &mut aliases,
+                                &mut sub_binds,
+                                shared,
+                                stmts,
+                                &mut bound,
+                            );
+                            self.pattern_binds_pending.append(&mut aliases);
+                            if !self.lexer.has_token(",") {
+                                break;
+                            }
+                            continue;
                         }
-                        continue;
                     }
-                    if let Some((var_nr, shared_ty)) = shared.get(&field_name).cloned() {
-                        let ok = self.shared_slot_accepts(&field_name, &field_type, &shared_ty);
+                    if let Some((var_nr, shared_ty)) = shared.get(&capture).cloned() {
+                        let ok = self.shared_slot_accepts(&capture, &field_type, &shared_ty);
                         // Skip the assignment into the shared slot on a confirmed
                         // type mismatch — a `text`→`integer` store is incoherent and
                         // the arm never runs (compile fails).  First pass still binds
@@ -9739,12 +9799,12 @@ impl Parser {
                             );
                             stmts.push(v_set(var_nr, field_read));
                         }
-                        bound.insert(field_name.clone());
+                        bound.insert(capture.clone());
                     } else {
                         let v_nr = self.bind_match_field_capture(
                             variant_def_nr,
                             attr_idx,
-                            &field_name,
+                            &capture,
                             &field_type,
                             subject_val,
                             stmts,
@@ -9752,8 +9812,8 @@ impl Parser {
                         );
                         if v_nr != u16::MAX {
                             let tp = self.vars.tp(v_nr).clone();
-                            shared.insert(field_name.clone(), (v_nr, tp));
-                            bound.insert(field_name.clone());
+                            shared.insert(capture.clone(), (v_nr, tp));
+                            bound.insert(capture.clone());
                         }
                     }
                 }
