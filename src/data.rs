@@ -12577,10 +12577,19 @@ impl Data {
     /// first-bind and rebind arms — so they cannot disagree about which pairs copy; the
     /// native emitter asks only that both sides be records (`Type::heap_def_nr`), and
     /// this is the widest pair the checker lets reach it.
+    ///
+    /// And the NARROWING a variant cast proves (`@FR-N-Cast`, @C131): `s as Circle` lowers to
+    /// `if s is Circle { s } else { … }`, so a `Circle` binding meets the whole `Shape` local
+    /// only on the path whose discriminant test holds, and a bind there copies like any other.
+    /// Declining it left a RE-BIND (`bl = X; bl = s as Circle`, sunk into the arm as a plain
+    /// `bl = s`) on the alias path, so a write through `bl` reached `s` on both backends.  The
+    /// cast's own `??` hoist is not a bind that copies; `Function::record_copy_source` declines
+    /// it by what it is (`is_overwritten_view`) before this pair is asked.
     #[must_use]
     pub fn copies_as(&self, dst: u32, src: u32) -> bool {
         dst == src
             || (matches!(self.def_type(src), DefType::EnumValue) && self.def(src).parent == dst)
+            || (matches!(self.def_type(dst), DefType::EnumValue) && self.def(dst).parent == src)
     }
 
     #[must_use]

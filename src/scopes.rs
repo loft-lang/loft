@@ -3255,14 +3255,20 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
 /// One home for the two sites that ask it about the same copy: the bind itself, and a
 /// reassignment written out per arm, which strips its arm tails before the first arm reads the
 /// binding's type.
-fn var_copy_owns(function: &Function, v: u16, src: u16) -> bool {
+///
+/// Which record pairs copy is `Data::copies_as`'s question, as at every other site that decides
+/// the copy: the same def, a variant widened into its enum, or the narrowing a variant cast
+/// proves.  Asked as `d_nr == src_d`, `bl = if q is Circle { q as Circle } else { … }`
+/// re-bound over an owned `bl` kept the join's borrow of `q`, and the interpreter's re-bind
+/// then aliased it where native copied.
+fn var_copy_owns(function: &Function, data: &Data, v: u16, src: u16) -> bool {
     let (Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _)) = function.tp(v).base() else {
         return false;
     };
     let (Type::Reference(src_d, _) | Type::Enum(src_d, true, _)) = function.tp(src).base() else {
         return false;
     };
-    d_nr == src_d && !function.is_captured(v) && !function.is_skip_free(v)
+    data.copies_as(*d_nr, *src_d) && !function.is_captured(v) && !function.is_skip_free(v)
 }
 
 /// The `(destination, source)` pairs of whole-value copies written inside a branch ARM.
@@ -6056,7 +6062,7 @@ fn rewrite_written_out(
                 let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, data, true);
                 if stmt.is_some() {
                     for src in branch_tail_vars(val) {
-                        if var_copy_owns(vars, *t, src) {
+                        if var_copy_owns(vars, data, *t, src) {
                             vars.make_independent(*t, src);
                         }
                     }
@@ -7351,31 +7357,31 @@ fn whole_value_hoists_in(code: &Value, function: &Function, data: &Data) -> Hash
             _ => None,
         }
     }
-    let mut seen: HashMap<u16, bool> = HashMap::default();
-    code.walk(&mut |n| {
-        if let Value::Set(v, rhs) = n.unspan()
-            && is_discharge_hoist(function, *v)
-        {
-            let whole = tails(rhs, function, data);
-            let e = seen.entry(*v).or_insert(true);
-            // A `None` bind disqualifies; a bind that is only null neither makes nor breaks it.
-            *e = *e && whole.is_some();
-        }
-    });
-    // At least one bind must be a local: a hoist bound only to null holds no value to copy.
-    let mut has_local: HashSet<u16> = HashSet::default();
+    // The hoists with a whole local on some path, then minus any with a bind that is neither a
+    // local nor null.  In this order the set stays unallocated for the (usual) function whose
+    // hoists hold no whole local, which is every hoist in the stdlib (`frontend_counts`).
+    let mut whole: HashSet<u16> = HashSet::default();
     code.walk(&mut |n| {
         if let Value::Set(v, rhs) = n.unspan()
             && is_discharge_hoist(function, *v)
             && tails(rhs, function, data) == Some(true)
         {
-            has_local.insert(*v);
+            whole.insert(*v);
         }
     });
-    seen.into_iter()
-        .filter(|&(v, whole)| whole && has_local.contains(&v))
-        .map(|(v, _)| v)
-        .collect()
+    if whole.is_empty() {
+        return whole;
+    }
+    // A `None` bind disqualifies; a bind that is only null neither makes nor breaks it.
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && whole.contains(v)
+            && tails(rhs, function, data).is_none()
+        {
+            whole.remove(v);
+        }
+    });
+    whole
 }
 
 /// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
@@ -12465,7 +12471,7 @@ impl Scopes<'_> {
                 self.per_path_pairs.insert((v, src));
                 if stopped == src {
                     self.mint_handoff_flag(function, src);
-                    if var_copy_owns(function, v, src) {
+                    if var_copy_owns(function, data, v, src) {
                         function.make_independent(v, src);
                     }
                 } else {
@@ -13601,7 +13607,7 @@ impl Scopes<'_> {
         // typed it with once the branch was written out per arm, and the per-arm copies
         // then read as borrows: an alias on both backends, where the dense twin copied.
         if let Value::Var(src) = unspanned_value
-            && var_copy_owns(function, v, *src)
+            && var_copy_owns(function, data, v, *src)
         {
             // @PLN130 F1 — this strip is LOAD-BEARING FOR NATIVE, which is why the obvious
             // narrowing does not work.  Skipping it when both sides are borrows fixes the
@@ -20274,8 +20280,9 @@ impl Scopes<'_> {
                 // lift `t = S{…}; t = (if c { s } else { null }) ?? d` aliased `s` (loft#1752).
                 // An owner-typed binding keeps the runtime copy it already gets.
                 // @FR-O-Proxy asks copy — chooses whether this arm copies; authorises no free.
-                let whole_into_view =
-                    self.whole_value_hoists.contains(x) && !function.tp(bound).depend().is_empty();
+                let whole_into_view = (self.whole_value_hoists.contains(x)
+                    || !function.is_compiler_generated(*x))
+                    && !function.tp(bound).depend().is_empty();
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
                     && !whole_into_view

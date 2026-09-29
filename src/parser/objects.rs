@@ -813,7 +813,12 @@ impl Parser {
                 // has been seen.  `v = obj.field(n)` is a PROJECTION (@FR-H-View: the local
                 // aliases the place, and freeing it is the owner's business), `v = obj[i]`
                 // and `v = obj#attr` likewise; none of them is a whole-value bind, so none
-                // is this arm's to make independent.
+                // is this arm's to make independent.  Nor is `v = obj as V`: the CAST decides
+                // what the bind receives — a variant cast answers the default on a miss
+                // (@C131) — and typing the source as the destination here, before `as` is
+                // read, turned `c = s as Circle` on a `Rect` into an identity cast that read
+                // the `Rect`'s bytes as a `Circle`.  The copy of a hit is the scope pass's
+                // (`var_copy_owns`, through `Data::copies_as`).
                 //
                 // Taking it anyway cost the receiver its dep: the arm returns the source's
                 // type WITHOUT deps, so a method call's receiver reached `call_dependencies`
@@ -824,7 +829,8 @@ impl Parser {
                 // never fired: the same bind, typed two ways, one pass apart.
                 if !(self.lexer.peek_token(".")
                     || self.lexer.peek_token("[")
-                    || self.lexer.peek_token("#"))
+                    || self.lexer.peek_token("#")
+                    || self.lexer.peek_token("as"))
                     && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)

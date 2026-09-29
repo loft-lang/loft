@@ -11,11 +11,12 @@
 // true.  On native a hit also leaked the record it was deep-copied into.  The refusals (a provable miss, a variant with no default) are the sibling file.
 // Values are hand-computed.
 //
-// @falsified-at: f298fb423 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-at: 339dd1956 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/c131-a-cast-to-a-variant-answers-the-variant.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
-// CHANNEL: the first assertion — on the control tree a miss answers null, not the default.
-// HOLDS: leak, panic and free-refusal are clean on both trees (the native leak of a hit was
-//   fixed with the copy gate, 90b744034).
+// CHANNEL: the first re-bind cell on both backends — on the control `rb = rs as Circle` over an
+//   owned `rb` aliases `rs` (42).  The miss-is-the-default cells were falsified at f298fb423.
+// HOLDS: leak, panic and free-refusal are clean on both trees; the cells before the re-bind pass
+//   on the control too, so the assertion channel is the only one that moves.
 
 struct Pt { x: integer, y: integer }
 enum Shape { Circle { radius: integer, tag: text, at: Pt }, Rect { w: integer, h: integer } }
@@ -60,6 +61,27 @@ fn main() {
   mc = m as Circle;
   mc.radius = 30;
   assert((m as Circle?).radius == 3 && mc.radius == 30, "the cast of a local is a copy");
+  // The same cast RE-BINDING a destination that already owns a record copies too — spelled
+  // bare, checked, and as the branch the unchecked form lowers to.  Each aliased the local on
+  // at least one backend: the pair `Circle ⟵ Shape` was not one `Data::copies_as` admitted.
+  rs: Shape = Circle { radius: 1, tag: "r", at: Pt { x: 0, y: 0 } };
+  rb = Circle { radius: 5, tag: "b", at: Pt { x: 0, y: 0 } };
+  println("{rb.radius}");
+  rb = rs as Circle;
+  rb.radius = 42;
+  assert((rs as Circle?).radius == 1 && rb.radius == 42, "a re-bound cast of a local is a copy: {(rs as Circle?).radius}");
+  if rs is Circle {
+    rc = Circle { radius: 6, tag: "c", at: Pt { x: 0, y: 0 } };
+    println("{rc.radius}");
+    rc = rs as Circle;
+    rc.radius = 43;
+    assert((rs as Circle?).radius == 1 && rc.radius == 43, "a checked re-bound cast is a copy: {(rs as Circle?).radius}");
+  }
+  rd = Circle { radius: 7, tag: "d", at: Pt { x: 0, y: 0 } };
+  println("{rd.radius}");
+  rd = if rs is Circle { rs as Circle } else { Circle { radius: 8, tag: "", at: Pt { x: 0, y: 0 } } };
+  rd.radius = 44;
+  assert((rs as Circle?).radius == 1 && rd.radius == 44, "a re-bound branch of a cast is a copy: {(rs as Circle?).radius}");
   code = Code { code: [Circle { radius: 4, tag: "c", at: Pt { x: 0, y: 0 } }, Rect { w: 1, h: 1 }] };
   i = 0;
   if i < len(code.code) {
