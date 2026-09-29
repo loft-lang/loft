@@ -95,12 +95,39 @@ fn decode_rgba8(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
 
 struct DiffReport {
     max_abs: u32,
+    /// The largest channel difference once each pixel may match any gold pixel within one
+    /// pixel of it: two software rasterizers place a thin line's edge a pixel apart, while
+    /// missing or wrong CONTENT has no gold pixel near it that matches.
+    max_abs_shifted: u32,
     mean_abs: f64,
     differing_pixels: u64,
     total_pixels: u64,
 }
 
-fn compare_rgba(a: &[u8], b: &[u8]) -> DiffReport {
+/// The largest channel difference between pixel `i` of `a` and the closest pixel of `b` in its
+/// 3x3 neighbourhood (`w` pixels per row).
+fn shifted_diff(a: &[u8], b: &[u8], w: usize, i: usize) -> u32 {
+    let h = a.len() / 4 / w;
+    let (x, y) = ((i % w) as isize, (i / w) as isize);
+    let mut best = u32::MAX;
+    for dy in -1..=1isize {
+        for dx in -1..=1isize {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
+                continue;
+            }
+            let j = (ny as usize * w + nx as usize) * 4;
+            let d = (0..4)
+                .map(|c| u32::from(a[i * 4 + c].abs_diff(b[j + c])))
+                .max()
+                .unwrap_or(0);
+            best = best.min(d);
+        }
+    }
+    best
+}
+
+fn compare_rgba(a: &[u8], b: &[u8], w: usize) -> DiffReport {
     assert_eq!(a.len(), b.len(), "rgba buffers have different lengths");
     let mut max_abs = 0u32;
     let mut sum_abs = 0u64;
@@ -121,8 +148,20 @@ fn compare_rgba(a: &[u8], b: &[u8]) -> DiffReport {
     }
     let total_pixels = (a.len() / 4) as u64;
     let channel_count = a.len() as f64;
+    let max_abs_shifted = if max_abs == 0 {
+        0
+    } else {
+        // Both directions: every actual pixel near a matching gold pixel AND every gold pixel
+        // near a matching actual one — one way only, a MISSING thin stroke passes, because
+        // each blank pixel where it should be has a blank gold neighbour.
+        (0..total_pixels as usize)
+            .map(|i| shifted_diff(a, b, w, i).max(shifted_diff(b, a, w, i)))
+            .max()
+            .unwrap_or(0)
+    };
     DiffReport {
         max_abs,
+        max_abs_shifted,
         mean_abs: sum_abs as f64 / channel_count,
         differing_pixels,
         total_pixels,
@@ -228,15 +267,50 @@ fn crystal_editor_gl_matches_gold() {
         ));
         return;
     }
-    let diff = compare_rgba(&actual, &expected);
+    let diff = compare_rgba(&actual, &expected, aw as usize);
     let (max_abs, mean_abs) = (16u32, 2.0f64);
+    // The one-pixel measure, not the raw one: the gold is compared on whichever Mesa llvmpipe
+    // the host has, and two versions place a thin line's edge a pixel apart (876 of 1e6 pixels
+    // at 220 on the CI runner, none here).  The mean stays over the raw difference.
     assert!(
-        diff.max_abs <= max_abs && diff.mean_abs <= mean_abs,
-        "crystal GL gold mismatch:\n  max_abs={} (limit {max_abs})\n  mean_abs={:.4} (limit {mean_abs})\n  \
+        diff.max_abs_shifted <= max_abs && diff.mean_abs <= mean_abs,
+        "crystal GL gold mismatch:\n  max_abs={} (within one pixel: {}, limit {max_abs})\n  mean_abs={:.4} (limit {mean_abs})\n  \
          differing={}/{} pixels\n  to accept: UPDATE_GOLD=1 cargo test --test crystal_editor_gold",
         diff.max_abs,
+        diff.max_abs_shifted,
         diff.mean_abs,
         diff.differing_pixels,
         diff.total_pixels
+    );
+}
+
+/// The comparator forgives a thin line drawn one pixel over and nothing else: the same stroke
+/// shifted by a pixel passes, and a stroke that is missing or moved further fails.
+#[test]
+fn a_one_pixel_shift_is_forgiven_and_missing_content_is_not() {
+    let (w, h) = (20usize, 20usize);
+    let blank = vec![0u8; w * h * 4];
+    let stroke = |x0: usize| {
+        let mut img = blank.clone();
+        for y in 5..15 {
+            let i = (y * w + x0) * 4;
+            img[i..i + 4].copy_from_slice(&[230, 230, 240, 255]);
+        }
+        img
+    };
+    let gold = stroke(10);
+    let shifted = compare_rgba(&stroke(11), &gold, w);
+    assert!(
+        shifted.max_abs > 16 && shifted.max_abs_shifted == 0,
+        "a one-pixel shift: raw {} shifted {}",
+        shifted.max_abs,
+        shifted.max_abs_shifted
+    );
+    let missing = compare_rgba(&blank, &gold, w);
+    assert!(missing.max_abs_shifted > 16, "a missing stroke must fail");
+    let moved = compare_rgba(&stroke(14), &gold, w);
+    assert!(
+        moved.max_abs_shifted > 16,
+        "a stroke moved four pixels must fail"
     );
 }

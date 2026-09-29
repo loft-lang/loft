@@ -854,6 +854,17 @@ jobs:
           path: target/nextest/ci/junit.xml
           retention-days: 14
           if-no-files-found: ignore
+      # The GL gold's own screenshot, when the test step went red: the gold is compared on the
+      # runner's Mesa, and a mismatch reported only as pixel counts cannot be told apart from a
+      # rendering regression without the picture.
+      - name: Keep the GL gold screenshot
+        if: ${{ failure() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: crystal-editor-gl-${{ matrix.shard || 'full' }}
+          path: /tmp/crystal_editor_gold.png
+          retention-days: 14
+          if-no-files-found: ignore
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
