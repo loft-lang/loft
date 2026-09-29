@@ -170,6 +170,12 @@ make sweep-scratch                       # reclaim loft's temp scratch (dead-pro
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
                                          #   NATIVE corpus with a code-shaped message
+scripts/join.py run [SRC …]              # JOIN sibling branches: survey what this tree lacks
+                                         #   (by content, not ancestry), pick source by source,
+                                         #   re-derive every artefact in scripts/derived_
+                                         #   artefacts.json, verify — stops at each decision.
+                                         #   Steps one by one: survey/apply/rederive/verify/
+                                         #   guards — JOINING.md § The script
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>

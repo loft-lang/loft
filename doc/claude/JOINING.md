@@ -13,11 +13,42 @@ task.  Each rule below was measured on a join; the incidents are in
 place: [DEVELOPMENT.md § Stay close to `main`](DEVELOPMENT.md#stay-close-to-main--rebase-rigorously).
 
 ## Contents
+- [The script](#the-script)
 - [Does this tree already have that change?](#does-this-tree-already-have-that-change)
 - [Rebasing onto a squash that carried your commits](#rebasing-onto-a-squash-that-carried-your-commits)
 - [Joining a sibling checkout](#joining-a-sibling-checkout)
 - [Resolving a conflict](#resolving-a-conflict)
 - [Verifying a join](#verifying-a-join)
+
+## The script
+
+`scripts/join.py` is the mechanical half of this page; the judgment below stays yours.
+
+```bash
+scripts/join.py survey [SRC …]   # per source, per commit: pick NEW/PARTIAL, skip the rest
+scripts/join.py apply            # cherry-pick source by source, `cargo check` after each
+scripts/join.py rederive         # re-measure every derived artefact on the union (--commit)
+scripts/join.py verify           # the cheap checks a gate stops on: pre-flight, clippy ×2, …
+scripts/join.py guards           # the tests/scripts guards the join brought in, both backends
+scripts/join.py run [SRC …]      # all five, stopping at the first decision; then the gate
+```
+
+A SRC is a ref or `name=<sha>`; with none, every `origin/*` branch that moved in the last two
+days and has commits this tree lacks.  The survey classes each commit by the ladder below, in
+this order: `DERIVED` (it touches only derived artefacts), `DUP` (an earlier source carries its
+subject), `HERE` (its diff applies in reverse to this tree, file by file), `SUBJECT` (this
+branch has a commit of that subject — a sibling's pick of our own work, resolved against its
+tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP` (a `wip` /
+`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), else `NEW`,
+or `PARTIAL` when only some of its files are here.
+
+`apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
+and in an append-only changelog (both sides); a conflict in anything else STOPS with the file
+named, and `apply` resumes after your `git cherry-pick --continue`.  `rederive` reads its list
+from `scripts/derived_artefacts.json` — each artefact's paths, the inputs that make it stale,
+its writer and its check — and refuses to re-pin a count that GREW beyond the growth each
+source pinned on its own tree, naming the source or, for the `@FR-N-Shape` ratchet, the new
+opaque shape tests.  A new derived artefact is one entry in that file.
 
 ## Does this tree already have that change?
 
@@ -86,9 +117,8 @@ cannot force; establish whose ref is stale before reporting overwritten work.
 - **A number both sides changed is a MEASUREMENT, not a merge.**  An audit row or a site census
   holds two true numbers, and neither is the merged tree's.  Resolve to either side to unblock,
   keep a list, and re-run every instrument once at the end in one commit, so the baseline in
-  the diff is the receipt: `ir_walker_audit.py optional --write-ratchet` (`make
-  optional-ratchet`), `o_proxy_check.py`, `rule_tags.py check`, `make surface-gen`,
-  `scripts/wasm_bundle_stamp.sh`.
+  the diff is the receipt: `scripts/join.py rederive` runs every artefact in
+  `scripts/derived_artefacts.json`, and `scripts/join.py verify` the checks beside them.
 - **`git show --cc` cannot audit a join.**  A combined diff prints only lines that differ from
   BOTH parents, so a conflict resolved by taking one side wholesale — the commonest resolution
   — appears nowhere in it.  Recompute the merge instead: `git merge-tree --write-tree <p1> <p2>`
