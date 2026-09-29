@@ -51,8 +51,8 @@ What it does, and why each part is there:
   frequency ramp); every later one does not.
 - **Samples each lane `--samples` times (7), the lanes interleaved**, so drift lands on both.
 - **Pins the process to the fastest core** where `taskset` exists.  On a hybrid CPU an
-  unpinned run moves between core kinds, a ±10 % swing by itself.  The threaded bench gets
-  one thread of each of the four fastest cores.
+  unpinned run moves between core kinds, a ±10 % swing by itself.  A threaded bench — one whose `bench.loft` declares
+  `// bench-threads: N` (§ The row protocol) — gets one thread of each of the N fastest cores.
 - **Reports the median, the spread (interquartile range, % of the median), and the ratio
   with its RANGE** — native's first quartile over the reference's third, and the reverse.
   The verdict reads the range: `ok` only when all of it is inside `--bar` (2.0), `OVER` only
@@ -65,12 +65,19 @@ What it does, and why each part is there:
   than `--build-mem-reserve-gb` (3) available — and only then measured, one program at a
   time on the quiet machine.  A program that does not build is listed at the end (exit 1)
   and the others are still measured.
-- **Measures `--measure-jobs` programs at once (1).**  Above 1, each program is pinned to its
-  own cores of the machine's FASTEST tier (a hybrid CPU's efficiency cores never measure: a
-  ratio taken there does not compare), a program waits for free cores, and its rows print
-  together in the batch's order.  They still share cache, memory bandwidth and turbo budget,
-  so a value above 1 is a trade of accuracy for time — the value is recorded in the run's
-  metadata (`measure_jobs`) so a parallel run is never mistaken for a serial one.
+- **Measures `--measure-jobs` programs at once (3).**  Each is pinned to its own cores of the
+  machine's FASTEST tier (a hybrid CPU's efficiency cores never measure: a ratio taken there
+  does not compare), waits while too few are free, and prints its rows together in the
+  batch's order.  A THREADED program is always measured alone: it waits for the others to
+  finish and nothing starts beside it.  Measured 2026-09-29 on 86 routines (the cache- and
+  memory-bound lanes 09, 10, 13–18 and four library benches): at 2, 3, 4 and 6 at once the
+  median ratio moved 0.6–0.8 % from a serial run and the 90th percentile 3.0–4.2 % —
+  inside the 0.8 % / 5.5 % that two SERIAL runs differ by — while the wall time fell from
+  234 s to 121, 89, 74 and 68 s.  3 is the default: most of the saving, and half the fast
+  cores left free.  The rows that did move were the noisy and coarse ones, which move
+  between serial runs too, and `16_consumer_shapes` as a whole, which read about 35 %
+  faster against its twin in one parallel run — a lane that may depend on WHICH core it
+  lands on.  The value is recorded in the run's metadata (`measure_jobs`).
 - **Records what each build step cost**: wall-clock and CPU seconds and peak memory, per
   program and step (`native-emit`, `native-rustc`, `rust-rustc`, a package's
   `native-release`), printed as it lands and written by `--build-tsv`; the portal keeps them
@@ -148,6 +155,11 @@ routine    iters    us    ns_op    px    ns_px    hash
 processes (`ns_px` the time per item), and `hash` the result of ONE canonical op, in hex.
 A last line `time: <ms>ms sink=<n>` carries the folded results, so no backend can drop the
 work as unused.
+
+A bench whose routines run on more than one thread says how many in a header comment of its
+`bench.loft` — `// bench-threads: 4` — and `stats.py` pins it to that many cores and measures
+it alone.  Undeclared is one thread, pinned to one core: `19_stdlib_par`'s four threads ran on
+a single core until it declared them.
 
 Four rules keep a row LIKE-FOR-LIKE, and a bench that breaks one measures something else:
 
