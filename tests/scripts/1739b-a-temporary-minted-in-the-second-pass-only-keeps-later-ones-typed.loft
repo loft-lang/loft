@@ -7,12 +7,15 @@
 // whole-vector copy mint their element temp in pass 2 only, so every later number names a
 // different site in each pass.  Pass 2's `_elm_5` then met pass 1's `_elm_5` at another element
 // type, and a correct program was refused: "Variable '_elm_5' cannot change type from
-// vector<integer> to vector<vector<integer>>".  A minted temp takes pass 2's type on a conflict,
-// as a `__` temp already did — pass 1's code is discarded, so its type is not a fact.
+// vector<integer> to vector<vector<integer>>".  An ELEMENT temp now takes pass 2's type when the
+// two passes disagree on its SHAPE (`Function::unique`) — pass 1's code is discarded, so its type
+// is not a fact.  Only that family: a capture temp mints one site twice and reads pass 1's type.
 //
 // Each cell mints in pass 2, then builds a literal whose element temps have a DIFFERENT type.
 //
-// @falsified-at: PENDING
+// @falsified-at: c532b0c26 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1739b-a-temporary-minted-in-the-second-pass-only-keeps-later-ones-typed.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the refusal — the control tree does not compile this program.
 
 fn main() {
   v: vector<vector<integer>> = [[1, 2], [3]];
