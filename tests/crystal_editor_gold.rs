@@ -40,9 +40,12 @@ fn loft_bin() -> PathBuf {
 /// a path that left this repository with the graphics library.  Every run then
 /// skipped at that first line — CI's included, although CI installs Xvfb and
 /// Mesa for this test alone — and the demo stopped compiling unnoticed.
+///
+/// Unset, empty or `0` means NOT required: ci.yml sets the variable on every OS and gives it a
+/// value only on Linux (`runner.os == 'Linux' && '1' || ''`), where Xvfb is installed.
 fn skip(reason: &str) {
     assert!(
-        std::env::var_os("LOFT_REQUIRE_GL_GOLD").is_none_or(|v| v == "0"),
+        std::env::var_os("LOFT_REQUIRE_GL_GOLD").is_none_or(|v| v.is_empty() || v == "0"),
         "crystal GL gold did not run, and LOFT_REQUIRE_GL_GOLD says it must: {reason}"
     );
     eprintln!("skipping crystal GL gold: {reason}");
