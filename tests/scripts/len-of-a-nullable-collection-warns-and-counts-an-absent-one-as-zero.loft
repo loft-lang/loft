@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Store` at `len`'s parameter, for every collection kind: a `<kind>?` handed to `len`
+// WARNS, once, and the call counts — the present collection its elements, the absent one 0.
+//
+// A `vector<…>?` did that.  The keyed kinds did not, three ways.  `hash`, `sorted`,
+// `spatial` and `trie` were warned by the store face and then REFUSED by a second verdict
+// ("expected hash, got hash<E[k]>?"), because the rule mapping a keyed value to the stdlib's
+// generic parameter matched the bare shape only.  `index` has its own `len` route, which
+// matched the bare shape and answered "Unknown function len".  And once admitted, the
+// absent `hash`, `spatial`, `trie` and `index` panicked in a store accessor: their counts
+// indexed a store before testing the null, where `length_vector` tests it first.
+//
+// Each fn carries exactly one report; each value is hand-computed (two elements, then 0).
+struct E { k: integer, v: integer }
+struct T { k: text, v: integer }
+
+// @EXPECT_WARNING: a nullable `vector<E>?` is stored into parameter 1 of `len`
+fn n_vector(o: vector<E>?) -> integer { len(o) }
+// @EXPECT_WARNING: a nullable `hash<E[k]>?` is stored into parameter 1 of `len`
+fn n_hash(o: hash<E[k]>?) -> integer { len(o) }
+// @EXPECT_WARNING: a nullable `sorted<E[k]>?` is stored into parameter 1 of `len`
+fn n_sorted(o: sorted<E[k]>?) -> integer { len(o) }
+// @EXPECT_WARNING: a nullable `index<E[k]>?` is stored into parameter 1 of `len`
+fn n_index(o: index<E[k]>?) -> integer { len(o) }
+// @EXPECT_WARNING: a nullable `spatial<E[k]>?` is stored into parameter 1 of `len`
+fn n_spatial(o: spatial<E[k]>?) -> integer { len(o) }
+// @EXPECT_WARNING: a nullable `trie<T[k]>?` is stored into parameter 1 of `len`
+fn n_trie(o: trie<T[k]>?) -> integer { len(o) }
+
+fn main() {
+  v: vector<E> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  h: hash<E[k]> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  s: sorted<E[k]> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  i: index<E[k]> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  p: spatial<E[k]> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  t: trie<T[k]> = [T { k: "ab", v: 2 }, T { k: "cd", v: 4 }];
+  assert(n_vector(v) == 2 && n_vector(null) == 0, "vector: {n_vector(v)} {n_vector(null)}");
+  assert(n_hash(h) == 2 && n_hash(null) == 0, "hash: {n_hash(h)} {n_hash(null)}");
+  assert(n_sorted(s) == 2 && n_sorted(null) == 0, "sorted: {n_sorted(s)} {n_sorted(null)}");
+  assert(n_index(i) == 2 && n_index(null) == 0, "index: {n_index(i)} {n_index(null)}");
+  assert(n_spatial(p) == 2 && n_spatial(null) == 0, "spatial: {n_spatial(p)} {n_spatial(null)}");
+  assert(n_trie(t) == 2 && n_trie(null) == 0, "trie: {n_trie(t)} {n_trie(null)}");
+  println("len of a nullable collection counts at every kind");
+}

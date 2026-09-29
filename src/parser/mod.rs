@@ -6598,14 +6598,19 @@ impl Parser {
             // compatible.  Used for stdlib helpers like `len(both: sorted)`.
             if let Type::Reference(r, _) = should {
                 let r = *r;
+                // Through the value's `?`: whether a keyed collection may be absent is
+                // `@FR-N-Store`'s question, which `convert`'s junction has already asked and
+                // warned about before this is reached, and it says nothing about which generic
+                // parameter the collection is.  Matching the bare shape only refused
+                // `len(h)` on a `hash<…>?` with a second verdict — after the warning — where a
+                // `vector<…>?` warns and compiles.
+                let (keyed, _) = test_type.peel_optional();
                 let bare = (r == self.data.def_nr("sorted")
-                    && matches!(test_type, Type::Sorted(_, _, _)))
-                    || (r == self.data.def_nr("hash") && matches!(test_type, Type::Hash(_, _, _)))
-                    || (r == self.data.def_nr("index")
-                        && matches!(test_type, Type::Index(_, _, _)))
-                    || (r == self.data.def_nr("spatial")
-                        && matches!(test_type, Type::Radix(_, _, _)))
-                    || (r == self.data.def_nr("trie") && matches!(test_type, Type::Trie(_, _, _)));
+                    && matches!(keyed, Type::Sorted(_, _, _)))
+                    || (r == self.data.def_nr("hash") && matches!(keyed, Type::Hash(_, _, _)))
+                    || (r == self.data.def_nr("index") && matches!(keyed, Type::Index(_, _, _)))
+                    || (r == self.data.def_nr("spatial") && matches!(keyed, Type::Radix(_, _, _)))
+                    || (r == self.data.def_nr("trie") && matches!(keyed, Type::Trie(_, _, _)));
                 if bare {
                     return true;
                 }
@@ -7108,7 +7113,7 @@ impl Parser {
         } else if name == "len"
             && types.len() == 1
             && named_args.is_empty()
-            && matches!(*recv, Type::Index(_, _, _))
+            && matches!(recv.peel_optional().0, Type::Index(_, _, _))
         {
             // P192: `len(ix)` for `ix: index<T[key]>`.  Dispatched
             // here (not via stdlib overload) because the runtime
@@ -7121,11 +7126,20 @@ impl Parser {
             // fall through standard dispatch to the existing
             // `Unknown function len` error message which lists the
             // method-style alternative.
-            let known = self.get_type(recv);
+            //
+            // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
+            // "Unknown function len".  This route bypasses `convert`, so it asks
+            // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+            let (base, absent) = recv.peel_optional();
+            let base = base.clone();
+            let known = self.get_type(&base);
             let op_d_nr = self.data.def_nr("OpLengthIndex");
             if known != u16::MAX && op_d_nr != u32::MAX {
                 let fields = self.database.fields(known);
                 let mut args = list.to_vec();
+                if absent && let Some(first) = args.first_mut() {
+                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
+                }
                 args.push(Value::Int(i32::from(fields)));
                 *code = Value::Call(op_d_nr, args);
                 return crate::data::I64.clone();
