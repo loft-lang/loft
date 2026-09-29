@@ -23,7 +23,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c3", 1, 0),     // another type at the same offset
     ("n_c4", 0, 0),     // a callee writes the field
     ("n_c5", 0, 0),     // an alias writes it
-    ("n_c6", 0, 0),     // the view is rebound
+    ("n_c6", 0, 1), // the view is rebound (no scalar); since the discharge SET allowance
+    // (2026-09-29) the loop keeps pts' header — the `?` fallback's text write is the buffer's own
     ("n_c7", 0, 1),     // an element write of the same type at the offset (pts keeps its header)
     ("n_c8", 1, 0),     // the inner loop only
     ("n_c9", 1, 0), // a growing write that is a fusable PUSH hoists since § V-q: x0 kept, px takes a push header (`__ph_`, not counted here)

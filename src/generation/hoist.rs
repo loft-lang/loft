@@ -1730,9 +1730,12 @@ fn body_writes(
                 // `@FR-R-InPlace`'s copy clause — every field of the destination is written,
                 // whichever record of that type it is.
                 set.whole.insert(tp);
-            } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
-                // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
-                // off ITS type could observe that, and the buffer's view is rebound per use.
+            } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data)
+                .or_else(|| discharge_buffer_set(name, args, Some(vars), data))
+            {
+                // § V-ad — the discharge buffer is re-initialised whole, and its fallback's
+                // fields written; only a scalar hoisted off ITS type could observe that, and
+                // the buffer's view is rebound per use.
                 set.own.insert(tp);
             } else if matches!(name, "OpDatabase" | "OpDatabaseNP")
                 && let Some(Value::Var(b)) = args.first().map(Value::unspan)
@@ -6045,6 +6048,33 @@ fn null_buffer_alloc(
     plain_record_type(data, vars.tp(*b))
 }
 
+/// § V-ad's discharge buffer, WRITTEN: a set of any kind (`OpSet*` — a text field's
+/// `OpSetText` included, which is not an in-place scalar set) whose target is the pass-2
+/// discharge buffer `null_buffer_alloc` admits the mint of.  The buffer's store is private
+/// to its site — only the site's `__ncc_N` temp reaches it, rebound per use — so a write
+/// into it moves nothing a header, base or address describes, in the caller's loop and in
+/// an admitted callee alike; the fallback record's text field (`Sequence { …, q_name: "" }`)
+/// was the one op keeping `frame_of` a writing callee.  Answers the buffer's record type.
+/// Enforces `@FR-R-InPlace` (the hidden-buffer allowance) and `@FR-R-Callee`.
+fn discharge_buffer_set(
+    name: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+    data: &Data,
+) -> Option<u16> {
+    if !name.starts_with("OpSet") || !crate::keys::null_buffer_hoist_enabled() {
+        return None;
+    }
+    let vars = vars?;
+    let Some(Value::Var(b)) = args.first().map(Value::unspan) else {
+        return None;
+    };
+    if *b >= vars.count() || !vars.name(*b).starts_with("__ref_p2_") {
+        return None;
+    }
+    plain_record_type(data, vars.tp(*b))
+}
+
 fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
     let Some(vars) = vars else { return false };
     RECORD_FREE_OPS.contains(&name)
@@ -6065,6 +6095,7 @@ fn callee_allowance(
     owned: Option<&HoistOwned>,
 ) -> bool {
     null_buffer_alloc(name, args, Some(vars), data).is_some()
+        || discharge_buffer_set(name, args, Some(vars), data).is_some()
         || lazy_buffer_mint(name, args, Some(vars))
         || (crate::keys::retbuf_hoist_enabled() && frees_a_record(name, args, Some(vars)))
         || dead_buffer_op(name, args, owned)
@@ -6160,6 +6191,7 @@ fn blocks_header_hoist(
                 && (dead_buffer_op(data.def(*d).name(), args, owned)
                     || own_retbuf_mint
                     || null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
+                    || discharge_buffer_set(data.def(*d).name(), args, vars, data).is_some()
                     || lazy_buffer_mint(data.def(*d).name(), args, vars)
                     || (tiers.rebound_movers
                         && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
