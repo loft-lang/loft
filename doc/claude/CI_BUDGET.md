@@ -407,23 +407,6 @@ corrupt `target/debug/incremental`, a full disk — **and FAILED with a count is
 distinction was re-derived from error text three times in one evening before it went into the
 line.
 
-**Kill a background sweep by its PARENT, and the parent is not named after the work.**
-`scripts/valgrind-sweep.sh` runs its memchecks under `xargs -P N`, so killing every
-`valgrind.bin` just lets the `xargs` start the next batch, and a `pkill -f valgrind` never
-matches the process that owns the queue.  Worse, if the launching shell is gone the `xargs` is
-reparented to init, so it survives being aimed at through its own session.  Find it with
-`ps -eo pid,ppid,pgid,cmd | grep "[v]algrind"` and kill the PPID the children share.  The
-general shape: a name-based kill can only find processes whose name you already know, and a
-work queue's parent shares no name with its work.
-
-**A background gate whose SUBJECT keeps moving measures nothing, and nothing in the foreground
-says so.**  A valgrind sweep left running against `target/release/loft` while that binary was
-rebuilt five times for an unrelated fix produced 250 rows of results about no particular build.
-The rule — do not rebuild while a gate runs — is easy to hold for a foreground command and easy
-to forget for one that is already detached, which is exactly when it costs the most.  Pin a long
-sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
-main checkout stays free to iterate.
-
 **A gate makes its own room.**  A full disk fails the NATIVE corpus with `FAIL
 unknown-mode` after `low space` lines and the linker with `cannot find lib<dep>.rlib`, both of
 which read as code faults; every gate therefore runs `scripts/disk_headroom.sh` first, which
