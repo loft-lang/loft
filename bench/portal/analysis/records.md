@@ -541,4 +541,7 @@ its noise).  What the row still pays:
 `vector_append`'s growth (the twin's `Vec` pays it too), the prefill of the eight fields
 the tuple then overwrites (`OpNewRecord` with prefill — `(R-CompleteWrite)` does not see the
 tuple delivery's writes, which sit in one block statement the coverage walk does not enter),
-and the `add_triangle` half.  The prefill is the next unit, and it is codegen's.
+and the `add_triangle` half.  **The prefill went the same day** (`(R-CompleteWrite)`, a
+whole-record copy into a heap-free element covers the type): **1.22 → 0.94 ms per op
+(7.1× → 5.4×)**.  What is left is the growth, the two `add_triangle` writes and the
+trigonometry the twin also pays.

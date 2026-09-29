@@ -9,6 +9,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A whole-record copy into an appended element is a complete write (2026-09-29)
+
+`hoist::group_covers_type` (`@FR-R-CompleteWrite`) broke at the first statement that was not
+an `OpSet*` on the element, so a value parameter appended whole — `self.vertices += [av]`,
+delivered as one `OpCopyRecord(av, elm, tp)` — kept `OpNewRecord`'s prefill of the eight
+fields the copy then overwrote.  A whole-record copy INTO the element now covers the type
+when the element owns no heap; a heap-owning element keeps the prefill, because the copy's
+fresh-destination path (`COPY_FRESH_DEST`) trusts the zeroed handles the prefill wrote.
+`add_vertex` mints with `OpNewRecordNP`; mesh3d's `sphere` 1.22 → 0.94 ms per op (7.1× →
+5.4× of Rust) here, same hash; the census gains `R-CompleteWrite` in twelve programs.  Cells
+c9 (heap-free, skips) and c10 (a text field, keeps) of the V-y cells; pin
+`tests/complete_write.rs`.
 ### A hoisted loop asks a store's lock once, not once per element (2026-09-29)
 
 d2f0e9733 made every write route consult `@FR-H-WriteLocked`, the `--native` hoisted writers

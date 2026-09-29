@@ -320,7 +320,7 @@
 17_consumer_moros_dryopea	-	R-Base	27
 17_consumer_moros_dryopea	-	R-CharWalk	10
 17_consumer_moros_dryopea	-	R-Compact	2
-17_consumer_moros_dryopea	-	R-CompleteWrite	32
+17_consumer_moros_dryopea	-	R-CompleteWrite	33
 17_consumer_moros_dryopea	-	R-Counter	36
 17_consumer_moros_dryopea	-	R-FormatAppend	1
 17_consumer_moros_dryopea	-	R-GuardFree	10
@@ -508,7 +508,7 @@ drawing	a03cd8e5a	R-Base	146
 drawing	a03cd8e5a	R-BoundedNest	4
 drawing	a03cd8e5a	R-Callee	10
 drawing	a03cd8e5a	R-CharWalk	10
-drawing	a03cd8e5a	R-CompleteWrite	117
+drawing	a03cd8e5a	R-CompleteWrite	121
 drawing	a03cd8e5a	R-CopyView	2
 drawing	a03cd8e5a	R-Counter	164
 drawing	a03cd8e5a	R-ElemFirst	9
@@ -602,7 +602,7 @@ game_protocol	a354cc08e	R-WorkBuffer	1
 game_protocol	a354cc08e	R-Wrapper	9
 glb	68545089b	R-Base	20
 glb	68545089b	R-CharWalk	10
-glb	68545089b	R-CompleteWrite	11
+glb	68545089b	R-CompleteWrite	12
 glb	68545089b	R-Counter	26
 glb	68545089b	R-FormatAppend	36
 glb	68545089b	R-GuardFree	8
@@ -631,7 +631,7 @@ graphics	a03cd8e5a	R-Base	62
 graphics	a03cd8e5a	R-BoundedNest	4
 graphics	a03cd8e5a	R-Callee	12
 graphics	a03cd8e5a	R-CharWalk	10
-graphics	a03cd8e5a	R-CompleteWrite	41
+graphics	a03cd8e5a	R-CompleteWrite	42
 graphics	a03cd8e5a	R-CopyView	2
 graphics	a03cd8e5a	R-Counter	85
 graphics	a03cd8e5a	R-Fill	2
@@ -724,7 +724,7 @@ hex_body	46120aa09	R-Wrapper	39
 hex_draw	46120aa09	R-Base	197
 hex_draw	46120aa09	R-Callee	4
 hex_draw	46120aa09	R-CharWalk	10
-hex_draw	46120aa09	R-CompleteWrite	78
+hex_draw	46120aa09	R-CompleteWrite	79
 hex_draw	46120aa09	R-Counter	330
 hex_draw	46120aa09	R-FormatAppend	1
 hex_draw	46120aa09	R-GuardFree	6
@@ -808,7 +808,7 @@ hex_field	46120aa09	R-Wrapper	24
 hex_fit	46120aa09	R-Base	289
 hex_fit	46120aa09	R-Callee	4
 hex_fit	46120aa09	R-CharWalk	10
-hex_fit	46120aa09	R-CompleteWrite	152
+hex_fit	46120aa09	R-CompleteWrite	153
 hex_fit	46120aa09	R-Counter	545
 hex_fit	46120aa09	R-FormatAppend	1
 hex_fit	46120aa09	R-GroupPush	4
@@ -957,7 +957,7 @@ hex_recover	46120aa09	R-Wrapper	145
 hex_roof	46120aa09	R-Base	140
 hex_roof	46120aa09	R-Callee	6
 hex_roof	46120aa09	R-CharWalk	10
-hex_roof	46120aa09	R-CompleteWrite	42
+hex_roof	46120aa09	R-CompleteWrite	43
 hex_roof	46120aa09	R-Counter	260
 hex_roof	46120aa09	R-FormatAppend	1
 hex_roof	46120aa09	R-GuardFree	7
@@ -1070,7 +1070,7 @@ hex_way	46120aa09	R-WorkBuffer	5
 hex_way	46120aa09	R-Wrapper	36
 hex_world	46120aa09	R-Base	18
 hex_world	46120aa09	R-CharWalk	10
-hex_world	46120aa09	R-CompleteWrite	7
+hex_world	46120aa09	R-CompleteWrite	8
 hex_world	46120aa09	R-Counter	17
 hex_world	46120aa09	R-FormatAppend	1
 hex_world	46120aa09	R-GuardFree	6
@@ -1128,7 +1128,7 @@ markdown	841d1ca10	R-View	4
 markdown	841d1ca10	R-Wrapper	9
 mesh3d	68545089b	R-Base	13
 mesh3d	68545089b	R-CharWalk	10
-mesh3d	68545089b	R-CompleteWrite	9
+mesh3d	68545089b	R-CompleteWrite	10
 mesh3d	68545089b	R-Counter	27
 mesh3d	68545089b	R-FormatAppend	1
 mesh3d	68545089b	R-GuardFree	9
@@ -1273,7 +1273,7 @@ stage	a03cd8e5a	R-Base	78
 stage	a03cd8e5a	R-BoundedNest	4
 stage	a03cd8e5a	R-Callee	15
 stage	a03cd8e5a	R-CharWalk	12
-stage	a03cd8e5a	R-CompleteWrite	60
+stage	a03cd8e5a	R-CompleteWrite	64
 stage	a03cd8e5a	R-CopyView	2
 stage	a03cd8e5a	R-Counter	98
 stage	a03cd8e5a	R-Fill	2
@@ -1312,7 +1312,7 @@ text2d	a03cd8e5a	R-Base	64
 text2d	a03cd8e5a	R-BoundedNest	4
 text2d	a03cd8e5a	R-Callee	5
 text2d	a03cd8e5a	R-CharWalk	18
-text2d	a03cd8e5a	R-CompleteWrite	42
+text2d	a03cd8e5a	R-CompleteWrite	43
 text2d	a03cd8e5a	R-Const	3
 text2d	a03cd8e5a	R-Const/fn	2
 text2d	a03cd8e5a	R-CopyView	2
@@ -1372,7 +1372,7 @@ time	5b154444e	R-Wrapper	8
 tween	a03cd8e5a	R-Base	13
 tween	a03cd8e5a	R-Callee	4
 tween	a03cd8e5a	R-CharWalk	10
-tween	a03cd8e5a	R-CompleteWrite	6
+tween	a03cd8e5a	R-CompleteWrite	8
 tween	a03cd8e5a	R-Counter	16
 tween	a03cd8e5a	R-FormatAppend	1
 tween	a03cd8e5a	R-GroupPush	1
@@ -1415,7 +1415,7 @@ web	a354cc08e	R-WorkBuffer	1
 web	a354cc08e	R-Wrapper	11
 zttext	a66adaf18	R-Base	73
 zttext	a66adaf18	R-CharWalk	18
-zttext	a66adaf18	R-CompleteWrite	203
+zttext	a66adaf18	R-CompleteWrite	216
 zttext	a66adaf18	R-Counter	137
 zttext	a66adaf18	R-FormatAppend	10
 zttext	a66adaf18	R-GroupPush	30

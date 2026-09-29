@@ -8263,6 +8263,17 @@ fn group_covers_type(
                         && data.def(*d).name() == "OpGetField"
                         && matches!(cargs.first().map(Value::unspan),
                             Some(Value::Var(u)) if *u == target)) => {}
+            // A WHOLE-record copy into the element (`self.items += [p]`, `p` a value of the
+            // element type delivered field by field) writes every field: it covers the type
+            // when the element owns no heap.  A heap-owning element keeps the prefill — the
+            // copy's fresh-destination path trusts the zeroed handles the prefill wrote.
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpCopyRecord"
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == target) =>
+            {
+                return !stores.owns_heap(tp);
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
                 if name.starts_with("OpSet")

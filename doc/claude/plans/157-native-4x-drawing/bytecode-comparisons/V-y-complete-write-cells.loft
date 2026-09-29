@@ -6,8 +6,10 @@
 // is redundant BY CONSTRUCTION for such a group.  The native emitter proves coverage
 // per site — every field position of the type is written by the group's contiguous
 // `OpSet*`s, the variant TAG included (`OpSetEnum` at 0) — and calls the no-prefill
-// twin (`OpDatabaseNP` / `OpNewRecordNP`).  An uncovered field (a nested struct
-// arriving by `OpCopyRecord`, a vector field bound by `vector_add`) keeps the prefill.
+// twin (`OpDatabaseNP` / `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the
+// element itself covers every field when the element owns no heap (c9, 2026-09-29); an
+// uncovered field (a nested struct arriving by `OpCopyRecord` into a FIELD, a vector
+// field bound by `vector_add`) and a heap-owning element's copy (c10) keep the prefill.
 //
 // The interpreter keeps the prefill everywhere and is the VALUES oracle.
 // Switch: LOFT_NO_COMPLETE_WRITE=1 keeps the prefill on native.
@@ -17,6 +19,10 @@ struct S { name: text, k: integer }
 enum E { A { x: integer }, B { y: float } }
 struct N { inner: integer }
 struct O { n: N, z: integer }
+struct P3 { x: float, y: float, z: float }
+struct Box3 { ps: vector<P3> }
+struct NT { name: text, k: integer }
+struct Bag2 { ns: vector<NT> }
 
 // c1 — every field named, minted per iteration: the prefill walk is skipped and every
 // value is exactly the write's.
@@ -95,4 +101,41 @@ fn c8() {
   println("c8 {len(outn)} {nulls} {t}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); }
+// c9 — a value of the element type appended whole (`b.ps += [p]`, the library idiom in a
+// method): the delivery is ONE `OpCopyRecord` into the element, which writes every field —
+// the element owns no heap, so the mint skips the prefill.
+fn add_p(b: Box3, p: P3) {
+  b.ps += [p];
+}
+
+fn c9() {
+  b = Box3 { ps: [] };
+  for i in 0..3 {
+    add_p(b, P3 { x: i as float, y: 1.5, z: 0.25 });
+  }
+  t = 0.0;
+  for p in b.ps {
+    t += p.x + p.y + p.z;
+  }
+  println("c9 {t} {len(b.ps)}");
+}
+
+// c10 — the same delivery of an element that OWNS heap (a text): the copy's
+// fresh-destination path relies on the zeroed handle the prefill writes, so it stays.
+fn add_n(b: Bag2, n: NT) {
+  b.ns += [n];
+}
+
+fn c10() {
+  b = Bag2 { ns: [] };
+  for i in 0..3 {
+    add_n(b, NT { name: "ab{i}", k: i * 10 });
+  }
+  t = 0;
+  for n in b.ns {
+    t += len(n.name) + n.k;
+  }
+  println("c10 {t} {len(b.ns)}");
+}
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); }
