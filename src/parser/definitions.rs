@@ -6844,7 +6844,12 @@ impl Parser {
         }
         let d_nr = self.context;
         if self.first_pass {
-            self.data.set_returned(d_nr, a_type.clone());
+            // loft#1758, `@FR-F-Ret` — a lifetime-bearing tuple is returned BOXED, exactly as a
+            // declared `-> (text, integer)` is: handed back bare, a text member viewed a record
+            // the minted frame freed on exit.  The caller unboxes it where the default becomes
+            // the argument (`add_defaults`), as it does for `f(k, mk(k))`.
+            let returned = self.boxed_tuple_return(a_type.clone());
+            self.data.set_returned(d_nr, returned);
         }
         self.vars
             .append(&mut self.data.definitions[d_nr as usize].variables);

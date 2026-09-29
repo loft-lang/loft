@@ -91,7 +91,9 @@ arguments already in hand.  The compiler either replays the default's expression
 function that takes them — which one is an implementation choice, and neither may change the
 answer.  Guarded by `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
 values) and `a-match-default-over-records-compiles.loft` (a lowered default well-formed where its
-argument is).  A text-carrying tuple default that is lowered does not compile natively: loft#1758.
+argument is), and `1758-a-text-tuple-default-answers-what-its-argument-would.loft` (a lowered default
+returning a lifetime-bearing tuple is boxed like a declared one and unboxed where it becomes the
+argument, `@FR-F-Ret`).
 
 ### The call binds parameters and yields the return value
 

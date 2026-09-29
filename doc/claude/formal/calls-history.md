@@ -28,6 +28,20 @@ list, and does not descend into a replacement (the caller's expression, whose va
 caller's).  Guard `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft`.
 Found walking `(T-Syn)`: a parameter default is the one place pass 1's TREE is replayed.
 
+### D-call-27 — OPENED AND CLOSED (2026-09-30): a lowered text-tuple default did not answer what its argument would (loft#1758)
+
+A default that needs a temporary is lowered into a minted function (`default_value_fn`), and that
+function returned a lifetime-bearing tuple BARE, where every declared `-> (text, integer)` is
+returned as the boxed `__tuple<…>` record (`@FR-F-Ret`, `boxed_tuple_return`).  Its text member
+viewed a record the minted frame freed on exit: `--native` refused the call (`(String, i64)` for a
+`(&str, i64)` parameter) and the interpreter answered `null` members — for `t: (text, integer) =
+mk(k)`, with no diagnostic.  The register read `OPEN: 0` over it; the deviation was named in the
+chapter's prose only.  **Fix.**  The minted function's return is boxed as a declaration's is, and
+`add_defaults` converts the boxed result to the parameter's tuple where the default becomes the
+argument — `convert`'s stored-tuple arm, the one an explicit `f(k, mk(k))` takes.  Guard
+`tests/scripts/1758-a-text-tuple-default-answers-what-its-argument-would.loft` (nine cells, both
+backends; a literal member replayed in place is the control).
+
 ### D-call-26 — OPENED AND CLOSED (2026-09-29): a record `match` default was refused with an internal temporary's name
 
 A default that needs a temporary is lowered into a minted function, and pass 2 re-types that

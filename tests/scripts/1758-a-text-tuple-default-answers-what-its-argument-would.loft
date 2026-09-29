@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1758, `@FR-F-Default` — a default whose tuple carries a `text` (or any lifetime-bearing
+// member) answers what the same expression written as the argument would.  A default that needs a
+// temporary is lowered into a minted function, and that function returned the tuple BARE while
+// every declared `-> (text, integer)` is returned boxed (`@FR-F-Ret`): the text member viewed a
+// record the minted frame freed on exit.  `--native` refused to compile the call (`(String, i64)`
+// where the parameter takes `(&str, i64)`), and the interpreter answered `null` members — for a
+// call default (`= mk(k)`) with no diagnostic at all.  Replayed in place (a literal member) the
+// default was always right, and is the control here.
+//
+// Cells: a formatted member, a `match`, an `if`, a call to a declared text-tuple function, a
+// literal member (control), a method default reading `self`, a loop, a struct FIELD default, and
+// the same parameter given explicitly.
+
+fn fmt_d(k: integer, t: (text, integer) = ("v{k}", k)) -> text { "{t.0},{t.1}" }
+fn match_d(k: integer, t: (integer, text) = match k { 1 => (7, "a"), _ => (k, "b") }) -> text { "{t.0}{t.1}" }
+fn if_d(k: integer, t: (text, integer) = if k > 1 { ("a", k) } else { ("b", 0) }) -> text { "{t.0}{t.1}" }
+fn mk(k: integer) -> (text, integer) { ("m{k}", k) }
+fn call_d(k: integer, t: (text, integer) = mk(k)) -> text { "{t.0}:{t.1}" }
+fn literal_d(k: integer, t: (integer, text) = (k, "d")) -> text { "{t.0}{t.1}" }
+
+struct S { n: integer }
+fn m(self: S, t: (text, integer) = ("n{self.n}", 1)) -> text { "{t.0}-{t.1}" }
+
+struct R { n: integer, t: (text, integer) = ("w{1 + 1}", 2) }
+
+fn main() {
+  assert("{fmt_d(1)} {fmt_d(5)}" == "v1,1 v5,5", "formatted member: {fmt_d(1)} {fmt_d(5)}");
+  assert("{match_d(1)} {match_d(5)}" == "7a 5b", "match default: {match_d(1)} {match_d(5)}");
+  assert("{if_d(2)} {if_d(1)}" == "a2 b0", "if default: {if_d(2)} {if_d(1)}");
+  assert("{call_d(3)} {call_d(4)}" == "m3:3 m4:4", "call default: {call_d(3)} {call_d(4)}");
+  assert("{literal_d(3)} {literal_d(4)}" == "3d 4d", "literal member: {literal_d(3)} {literal_d(4)}");
+  a = S { n: 4 };
+  b = S { n: 9 };
+  assert("{a.m()} {b.m()}" == "n4-1 n9-1", "method default: {a.m()} {b.m()}");
+  s = "";
+  for i in 0..5 { s += fmt_d(i); s += ";"; }
+  assert(s == "v0,0;v1,1;v2,2;v3,3;v4,4;", "in a loop: {s}");
+  r = R { n: 1 };
+  assert("{r.t.0},{r.t.1}" == "w2,2", "field default: {r.t.0},{r.t.1}");
+  assert(fmt_d(1, ("x", 1)) == "x,1", "explicit argument: {fmt_d(1, ("x", 1))}");
+}

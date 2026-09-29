@@ -17164,6 +17164,20 @@ impl Parser {
                         }
                         substituted = Value::Call(d, inner);
                     }
+                    // loft#1758, `@FR-F-Default` — the default answers what the same expression
+                    // written as the argument would, and a call returning a lifetime-bearing
+                    // tuple hands back the BOXED `__tuple<…>` record (`boxed_tuple_return`).
+                    // An argument written by hand is unboxed on its way into a tuple parameter
+                    // (`convert`'s stored-tuple arm); a default's call has to take the same
+                    // conversion, or the callee reads the record's DbRef as its tuple — `null`
+                    // members on the interpreter, a type error under `--native`.
+                    if matches!(tp, Type::Tuple(_))
+                        && matches!(all_types[a_nr], Type::Reference(_, _))
+                    {
+                        let boxed = all_types[a_nr].clone();
+                        self.convert(&mut substituted, &boxed, &tp);
+                        all_types[a_nr] = tp.clone();
+                    }
                     actual[a_nr] = substituted;
                 }
             }
