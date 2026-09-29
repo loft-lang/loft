@@ -6235,9 +6235,10 @@ impl Parser {
             // single-pattern arm the next token is `=>` or `if`; a `,` before the
             // arrow is otherwise a parse error, so this collection is purely
             // additive and leaves every existing path untouched.  Each listed
-            // pattern binds the SAME captures (D-simple) into the shared slots the
-            // first pattern established above; whichever variant matches assigns
-            // those slots from ITS OWN offsets and the one arm body reads them.
+            // pattern binds its captures into shared slots — the first pattern's
+            // above, plus one per name a later pattern adds — whichever variant
+            // matches assigns those slots from ITS OWN offsets, and the one arm body
+            // reads them.  A name some pattern lacks is `τ?` (`@FR-P-Alt-Diff`).
             // Emitted as one `if disc==Vi { binds_i; body }` branch per pattern —
             // identical to hand-expanding into separate single-pattern arms.
             let mut multi_branches: Vec<(i32, Vec<Value>, Vec<Value>)> = Vec::new();
@@ -6245,7 +6246,7 @@ impl Parser {
             // them can take the marks back (`@FR-M-Total`: a guarded arm covers nothing).
             let mut multi_covered: Vec<u32> = Vec::new();
             if self.lexer.peek_token(",") && valid_enum && e_nr != u32::MAX {
-                let shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
+                let mut shared: std::collections::HashMap<String, (u16, Type)> = name_aliases
                     .iter()
                     .filter_map(|(name, _)| {
                         let vn = self.vars.var(name);
@@ -6253,6 +6254,7 @@ impl Parser {
                     })
                     .collect();
                 let first_names: HashSet<String> = shared.keys().cloned().collect();
+                let mut branch_names: Vec<HashSet<String>> = Vec::new();
                 while self.lexer.has_token(",") {
                     if self.lexer.peek_token("=>") || self.lexer.peek_token("}") {
                         break; // dangling comma / trailing arm separator
@@ -6299,22 +6301,15 @@ impl Parser {
                             ev,
                             &vname,
                             &subject_val,
-                            &shared,
+                            &mut shared,
                             &mut stmts_i,
                             &mut conds_i,
+                            &mut name_aliases,
                         )
                     } else {
                         HashSet::new()
                     };
-                    if !self.first_pass && names_i != first_names {
-                        let want: Vec<String> = first_names.iter().cloned().collect();
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "multi-pattern arm: every listed pattern must bind the same captures ({})",
-                            want.join(", ")
-                        );
-                    }
+                    branch_names.push(names_i);
                     // Union coverage (M-Total): each listed total pattern counts
                     // toward exhaustiveness, exactly like the `|` or-pattern arm.
                     // A pattern with a field sub-pattern can fail on its field, so, like a
@@ -6323,6 +6318,33 @@ impl Parser {
                         multi_covered.push(ev);
                     }
                     multi_branches.push((disc, stmts_i, conds_i));
+                }
+                // `@FR-P-Multi` is `@FR-P-Alt` at arm granularity, so `@FR-P-Alt-Diff` holds: a
+                // name some listed pattern does not bind is `τ?`, and reads null when that
+                // pattern matched.  Each pattern's bindings are its own statements, so the
+                // null goes into the statements of every pattern that lacks the name.
+                let mut partial: Vec<(String, u16, Type)> = shared
+                    .iter()
+                    .filter(|(name, _)| {
+                        !first_names.contains(*name)
+                            || branch_names.iter().any(|b| !b.contains(*name))
+                    })
+                    .map(|(name, (v_nr, tp))| (name.clone(), *v_nr, tp.clone()))
+                    .collect();
+                partial.sort_by_key(|(_, v_nr, _)| *v_nr);
+                for (name, v_nr, tp) in partial {
+                    let opt = Type::optional(tp);
+                    self.vars.set_type(v_nr, opt.clone());
+                    if !first_names.contains(&name) {
+                        arm_stmts.push(v_set(v_nr, self.null(&opt)));
+                    }
+                    for (names_i, (_, stmts_i, _)) in
+                        branch_names.iter().zip(multi_branches.iter_mut())
+                    {
+                        if !names_i.contains(&name) {
+                            stmts_i.push(v_set(v_nr, self.null(&opt)));
+                        }
+                    }
                 }
             }
 
@@ -7361,97 +7383,15 @@ impl Parser {
                             field_conditions.push(cond);
                         }
                     } else {
-                        let v_nr = self.create_unique(&format!("mv_{field_name}"), &field_type);
-                        // The binding's VALUE reads through a nullable slot's tag; the
-                        // ORIGIN recorded below stays the slot's own read, since a write
-                        // resolved back to the field (`resolved_group_write`) is spelled
-                        // against the field.
-                        let bound =
-                            self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
-                        if v_nr != u16::MAX {
-                            self.vars.defined(v_nr);
-                            // loft#1160 — remember which field this binding projects, so a
-                            // write spelled through it can take the field path and reach the
-                            // linked group the field belongs to.
-                            self.vars.mv_field_origin.insert(
-                                v_nr,
-                                (
-                                    field_read.clone(),
-                                    Type::Reference(variant_def_nr, Deps::none()),
-                                ),
-                            );
-                            arm_stmts.push(v_set(v_nr, bound));
-                            let old = self.vars.set_name(&field_name, v_nr);
-                            name_aliases.push((field_name.clone(), old));
-                            // B5 remaining half (2026-04-14): a HEAP match-arm
-                            // binding is a field extraction from the subject —
-                            // the subject owns the store and the binding is a
-                            // borrowed view (a DbRef pointing into the subject's
-                            // record).  Emitting OpFreeRef for it at function
-                            // exit would decrement a store the binding doesn't
-                            // own; worse, if the arm wasn't taken the slot is
-                            // never assigned and the free reads garbage bytes as
-                            // a DbRef (observed as out-of-bounds store_nr ≈ 4621
-                            // in `p54_b5_recursive_struct_enum`).  Mark it
-                            // `skip_free` so scope cleanup leaves it alone in
-                            // both the taken and not-taken arms.
-                            //
-                            // @PLN85 Class B — but a TEXT payload binding is
-                            // NOT a borrow: `_mv_<f> = OpGetText(subj, off)` is
-                            // typed plain `text` (an OWNED copy), and it is
-                            // default-initialised to `""` at block entry — so
-                            // freeing it is correct (it owns an allocation) AND
-                            // safe in the not-taken arm (`OpFreeText("")` is a
-                            // no-op, no garbage read).  Leaving it `skip_free`
-                            // leaked the copy 1/call whenever a text-payload arm
-                            // was taken (the whole p54 struct-enum / json-match
-                            // family).  So skip_free HEAP bindings only; let a
-                            // text binding free through normal scope cleanup.
-                            if matches!(field_type.base(), Type::Text(_)) {
-                                self.record_text_payload_view(v_nr, &field_read);
-                            } else {
-                                self.vars.set_skip_free(v_nr);
-                            }
-                            // #429: the binding is a BORROWED VIEW of the
-                            // subject, so its TYPE must record that borrow —
-                            // otherwise a value derived from it and returned
-                            // (`CMap { entries } => { r = entries[..]; return r }`)
-                            // breaks the borrow chain at the binding: `ref_return`
-                            // walks `r` → `entries` → <this binding> and stops (the
-                            // binding has empty deps), never reaching the subject
-                            // parameter, so the fn is mis-classified OWNED and the
-                            // caller whole-store-frees the subject's record (#429
-                            // interp-vs-native divergence).  Give a HEAP
-                            // (DbRef-carrying) binding a frame dep on the subject's
-                            // source var so the chain reaches the parameter — exactly
-                            // the `["src"]` dep a `b = subj.field` bind already
-                            // carries.  Scalars hold no DbRef, so they need no borrow
-                            // dep (the `_mv_value` integer binding stays dep-free).
-                            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
-                            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
-                            // base type, as `mark_slice_element_view` asks it.
-                            if matches!(
-                                field_type.base(),
-                                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-                            ) && let Some(src) = self.match_borrow_source(subject_val)
-                            {
-                                if crate::env_once!(std::env::var_os("LOFT_MV_DEP_TRACE").is_some())
-                                {
-                                    eprintln!(
-                                        "[mv-dep] fn={} pass{} binding={}({}) src={}({})",
-                                        self.data.def(self.context).name(),
-                                        u8::from(!self.first_pass) + 1,
-                                        self.vars.name(v_nr),
-                                        v_nr,
-                                        self.vars.name(src),
-                                        src,
-                                    );
-                                }
-                                let bound_tp =
-                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
-                                self.vars.set_type(v_nr, bound_tp);
-                            }
-                        }
+                        self.bind_match_field_capture(
+                            variant_def_nr,
+                            attr_idx,
+                            &field_name,
+                            &field_type,
+                            subject_val,
+                            arm_stmts,
+                            name_aliases,
+                        );
                     }
                 }
                 None => {
@@ -9510,6 +9450,113 @@ impl Parser {
         }
     }
 
+    /// One field capture of a struct-enum pattern: a fresh `mv_<field>` slot bound to the
+    /// field's value, named `field_name` for the arm body (the old binding goes to
+    /// `name_aliases` for the arm's end to restore), with the free and borrow marks a
+    /// field view needs.  Returns the slot, `u16::MAX` when none could be made.
+    #[allow(clippy::too_many_arguments)]
+    fn bind_match_field_capture(
+        &mut self,
+        variant_def_nr: u32,
+        attr_idx: usize,
+        field_name: &str,
+        field_type: &Type,
+        subject_val: &Value,
+        arm_stmts: &mut Vec<Value>,
+        name_aliases: &mut Vec<(String, Option<u16>)>,
+    ) -> u16 {
+        let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+        let v_nr = self.create_unique(&format!("mv_{field_name}"), field_type);
+        // The binding's VALUE reads through a nullable slot's tag; the
+        // ORIGIN recorded below stays the slot's own read, since a write
+        // resolved back to the field (`resolved_group_write`) is spelled
+        // against the field.
+        let bound = self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
+        if v_nr != u16::MAX {
+            self.vars.defined(v_nr);
+            // loft#1160 — remember which field this binding projects, so a
+            // write spelled through it can take the field path and reach the
+            // linked group the field belongs to.
+            self.vars.mv_field_origin.insert(
+                v_nr,
+                (
+                    field_read.clone(),
+                    Type::Reference(variant_def_nr, Deps::none()),
+                ),
+            );
+            arm_stmts.push(v_set(v_nr, bound));
+            let old = self.vars.set_name(field_name, v_nr);
+            name_aliases.push((field_name.to_string(), old));
+            // B5 remaining half (2026-04-14): a HEAP match-arm
+            // binding is a field extraction from the subject —
+            // the subject owns the store and the binding is a
+            // borrowed view (a DbRef pointing into the subject's
+            // record).  Emitting OpFreeRef for it at function
+            // exit would decrement a store the binding doesn't
+            // own; worse, if the arm wasn't taken the slot is
+            // never assigned and the free reads garbage bytes as
+            // a DbRef (observed as out-of-bounds store_nr ≈ 4621
+            // in `p54_b5_recursive_struct_enum`).  Mark it
+            // `skip_free` so scope cleanup leaves it alone in
+            // both the taken and not-taken arms.
+            //
+            // @PLN85 Class B — but a TEXT payload binding is
+            // NOT a borrow: `_mv_<f> = OpGetText(subj, off)` is
+            // typed plain `text` (an OWNED copy), and it is
+            // default-initialised to `""` at block entry — so
+            // freeing it is correct (it owns an allocation) AND
+            // safe in the not-taken arm (`OpFreeText("")` is a
+            // no-op, no garbage read).  Leaving it `skip_free`
+            // leaked the copy 1/call whenever a text-payload arm
+            // was taken (the whole p54 struct-enum / json-match
+            // family).  So skip_free HEAP bindings only; let a
+            // text binding free through normal scope cleanup.
+            if matches!(field_type.base(), Type::Text(_)) {
+                self.record_text_payload_view(v_nr, &field_read);
+            } else {
+                self.vars.set_skip_free(v_nr);
+            }
+            // #429: the binding is a BORROWED VIEW of the
+            // subject, so its TYPE must record that borrow —
+            // otherwise a value derived from it and returned
+            // (`CMap { entries } => { r = entries[..]; return r }`)
+            // breaks the borrow chain at the binding: `ref_return`
+            // walks `r` → `entries` → <this binding> and stops (the
+            // binding has empty deps), never reaching the subject
+            // parameter, so the fn is mis-classified OWNED and the
+            // caller whole-store-frees the subject's record (#429
+            // interp-vs-native divergence).  Give a HEAP
+            // (DbRef-carrying) binding a frame dep on the subject's
+            // source var so the chain reaches the parameter — exactly
+            // the `["src"]` dep a `b = subj.field` bind already
+            // carries.  Scalars hold no DbRef, so they need no borrow
+            // dep (the `_mv_value` integer binding stays dep-free).
+            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
+            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
+            // base type, as `mark_slice_element_view` asks it.
+            if matches!(
+                field_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            ) && let Some(src) = self.match_borrow_source(subject_val)
+            {
+                if crate::env_once!(std::env::var_os("LOFT_MV_DEP_TRACE").is_some()) {
+                    eprintln!(
+                        "[mv-dep] fn={} pass{} binding={}({}) src={}({})",
+                        self.data.def(self.context).name(),
+                        u8::from(!self.first_pass) + 1,
+                        self.vars.name(v_nr),
+                        v_nr,
+                        self.vars.name(src),
+                        src,
+                    );
+                }
+                let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
+                self.vars.set_type(v_nr, bound_tp);
+            }
+        }
+        v_nr
+    }
+
     /// @PLN35 Phase 3 (P-Multi) — parse the `{ field, … }` bindings of a NON-FIRST
     /// pattern in a comma-separated multi-pattern arm, REUSING the first pattern's
     /// capture slots (`shared`: name → (var, type)).  Whichever listed pattern
@@ -9517,19 +9564,20 @@ impl Parser {
     /// single arm body reads them — so a heap capture inherits the first pattern's
     /// `skip_free` + borrow-dep markings on the shared var for free.
     ///
-    /// D-simple (P3): every pattern must bind the SAME names at a compatible type.
-    /// A field here the first pattern lacks (partial overlap → `option<T>`) or a
-    /// type that does not unify is a static error, deferred to Phase 4.  Returns
-    /// the set of shared names this pattern bound so the caller can require the
-    /// sets to match.
+    /// `@FR-P-Alt-Same` — a name several patterns bind must bind at a compatible type.  A
+    /// name no earlier pattern bound gets a slot of its own here, added to `shared` (its old
+    /// binding to `name_aliases`); the caller makes every name some pattern lacks `τ?`
+    /// (`@FR-P-Alt-Diff`).  Returns the names this pattern bound.
+    #[allow(clippy::too_many_arguments)]
     fn parse_multi_pattern_extra_bindings(
         &mut self,
         variant_def_nr: u32,
         pattern_name: &str,
         subject_val: &Value,
-        shared: &std::collections::HashMap<String, (u16, Type)>,
+        shared: &mut std::collections::HashMap<String, (u16, Type)>,
         stmts: &mut Vec<Value>,
         conds: &mut Vec<Value>,
+        name_aliases: &mut Vec<(String, Option<u16>)>,
     ) -> HashSet<String> {
         let mut bound: HashSet<String> = HashSet::new();
         self.lexer.token("{");
@@ -9563,15 +9611,42 @@ impl Parser {
                         ) {
                             conds.push(c);
                         }
-                        if (!aliases.is_empty() || !sub_binds.is_empty()) && !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "a capture inside `{field_name}`'s sub-pattern in a later pattern of a \
-                                 multi-pattern arm is not visible to the arm's body — capture it in \
-                                 the first pattern, or give this pattern an arm of its own"
-                            );
+                        // Its captures join the arm's names like a field capture: a name no
+                        // earlier pattern bound is a new shared slot (`τ?` by the caller); a name
+                        // one did is copied into that slot, which keeps the name.
+                        stmts.append(&mut sub_binds);
+                        let mut copied: HashSet<String> = HashSet::new();
+                        for (name, _) in &aliases {
+                            let v_nr = self.vars.var(name);
+                            if v_nr == u16::MAX {
+                                continue;
+                            }
+                            let tp = self.vars.tp(v_nr).clone();
+                            if let Some((slot, slot_ty)) = shared.get(name).cloned() {
+                                let slot_ty = match slot_ty {
+                                    Type::Optional(inner) => *inner,
+                                    other => other,
+                                };
+                                if !self.first_pass && !match_arm_types_unify(&slot_ty, &tp) {
+                                    diagnostic!(
+                                        self.lexer,
+                                        Level::Error,
+                                        "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
+                                        name,
+                                        tp.source_name(&self.data),
+                                        slot_ty.source_name(&self.data)
+                                    );
+                                }
+                                stmts.push(v_set(slot, Value::Var(v_nr)));
+                                self.vars.set_name(name, slot);
+                                copied.insert(name.clone());
+                            } else {
+                                shared.insert(name.clone(), (v_nr, tp));
+                            }
+                            bound.insert(name.clone());
                         }
+                        // A copied name names its slot again, so its re-point needs no undoing.
+                        aliases.retain(|(name, _)| !copied.contains(name));
                         self.pattern_binds_pending.append(&mut aliases);
                         if !self.lexer.has_token(",") {
                             break;
@@ -9588,8 +9663,18 @@ impl Parser {
                                 self.tagged_pointer_type(tp)
                                     .map_or_else(|| tp.clone(), |(_, p)| p)
                             };
+                            // A slot a partial name made `τ?` (`@FR-P-Alt-Diff`, the caller) is
+                            // still `τ` to the patterns that bind it — pass 2 sees pass 1's widening.
+                            let slot_ty = match shared_ty {
+                                Type::Optional(inner)
+                                    if !matches!(field_type, Type::Optional(_)) =>
+                                {
+                                    inner.as_ref()
+                                }
+                                other => other,
+                            };
                             let ok =
-                                match_arm_types_unify(&bound_ty(shared_ty), &bound_ty(&field_type));
+                                match_arm_types_unify(&bound_ty(slot_ty), &bound_ty(&field_type));
                             if !ok && !self.first_pass {
                                 diagnostic!(
                                     self.lexer,
@@ -9597,7 +9682,7 @@ impl Parser {
                                     "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
                                     field_name,
                                     field_type.source_name(&self.data),
-                                    shared_ty.source_name(&self.data)
+                                    slot_ty.source_name(&self.data)
                                 );
                             }
                             // Skip the assignment into the shared slot on a confirmed
@@ -9615,13 +9700,19 @@ impl Parser {
                             bound.insert(field_name.clone());
                         }
                         None => {
-                            if !self.first_pass {
-                                diagnostic!(
-                                    self.lexer,
-                                    Level::Error,
-                                    "multi-pattern arm: capture '{}' is bound by this pattern but not by the first — every listed pattern binds the same names; bind it in each, or give this pattern an arm of its own",
-                                    field_name
-                                );
+                            let v_nr = self.bind_match_field_capture(
+                                variant_def_nr,
+                                attr_idx,
+                                &field_name,
+                                &field_type,
+                                subject_val,
+                                stmts,
+                                name_aliases,
+                            );
+                            if v_nr != u16::MAX {
+                                let tp = self.vars.tp(v_nr).clone();
+                                shared.insert(field_name.clone(), (v_nr, tp));
+                                bound.insert(field_name.clone());
                             }
                         }
                     }

@@ -269,8 +269,8 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **4** — `D-match-10` to `D-match-13`, each a refusal of a program the pattern rules
-define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-9`,
+OPEN: **3** — `D-match-11` to `D-match-13`, each a refusal of a program the pattern rules
+define, found by the 2026-09-29 rule-led walk of those rules along with `D-match-7` to `-10`,
 which it closed.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
 `D-match-4` closed 2026-09-12.
 
@@ -280,7 +280,7 @@ alternation, a capture a later pattern alone binds, a heap field under a repetit
 a scalar repetition, an iterator of tuples.  Every one was a refusal, none a wrong answer, and
 every one said *"not yet supported"* or named a plan phase, which is how the register read
 `OPEN: 0` over them: a refusal worded as pending work was never entered as a deviation.  The
-open four now say what holds and what to write instead.
+open ones now say what holds and what to write instead.
 
 - **D-match-13 — OPEN (loft#1737).** A `match` over an `iterator<(τ, …)>` is refused and must be
   collected first, where the iterator-input rule materialises its subject whatever the element
@@ -295,10 +295,13 @@ open four now say what holds and what to write instead.
   `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) is refused, because each
   inner store must be copied into the fresh vector (`(H-Alloc)`).  The workaround the message
   names — capture the elements, `(g: Grp)*` — is exact.
-- **D-match-10 — OPEN (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm granularity, so a capture
-  only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when another pattern matched —
-  as a single-element alternation already answers.  Refused, because the first pattern's shared
-  slots exist before a later pattern shows the name is partial.
+- **D-match-10 — OPENED AND CLOSED 2026-09-29 (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm
+  granularity, so a capture only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when
+  another pattern matched — as a single-element alternation already answered.  It was refused,
+  and so was a capture inside a later pattern's field sub-pattern (`D-match-8`'s refusal).  A
+  name a later pattern adds now gets a shared slot of its own, every pattern that lacks a name
+  stores null into it, and a name some pattern lacks is typed `τ?` before the arm body is
+  parsed.  Guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`.
 - **D-match-9 — OPENED AND CLOSED 2026-09-29.** `(G-Pat-Prec)`'s own example, `a:V | b:W`, did
   not parse: an alternation branch was read as a variant name and failed on the `:`.  A branch's
   capture now joins the alternation's capture unification as a whole-element entry, typed by
@@ -306,8 +309,8 @@ open four now say what holds and what to write instead.
   `tests/scripts/an-alternation-branch-may-capture-the-element-it-matched.loft`.
 - **D-match-8 — OPENED AND CLOSED 2026-09-29.** `(P-Point)` lets a field be a pattern; in a
   multi-pattern arm that was refused in the first listed pattern and failed to parse in a later
-  one.  Each listed pattern's sub-patterns are now its own branch condition; a sub-pattern in a
-  later pattern that BINDS a name is refused by name, since the shared body never reads it.
+  one.  Each listed pattern's sub-patterns are now its own branch condition.  A sub-pattern in a
+  later pattern that BINDS a name was refused by name; `D-match-10` made that name `τ?`.
   Guard `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
 - **D-match-7 — OPENED AND CLOSED 2026-09-29.** `(P-Guard)` × `(P-Multi)`: a guard on a
   multi-pattern arm was refused.  Each listed pattern's arm now carries it beside its own

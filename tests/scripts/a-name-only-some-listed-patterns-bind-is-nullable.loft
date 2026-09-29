@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-P-Multi` is `@FR-P-Alt` at arm granularity, so `@FR-P-Alt-Diff` holds for it: a name only
+// some listed patterns of `pat_a, pat_b => body` bind is `τ?`, null when a pattern that does not
+// bind it matched — what a single-element alternation `[(Ra { u } | Rb { w })]` already answered.
+// The arm was refused ("bound by this pattern but not by the first"), and so was a capture inside
+// a LATER pattern's field sub-pattern (loft#1734).
+//
+// Every cell prints a distinctive value for the name that is absent, so an absent capture that
+// arrived holding the previous branch's value, a default, or garbage reads differently from null.
+//
+// Axes this file MOVES:  which pattern binds the name (first only / later only / some of three),
+//                        the capture's kind (integer, text, struct, vector, plain enum), where it
+//                        comes from (a field, a later pattern's sub-pattern, both), a guard reading
+//                        it, repeated calls (a stale slot), a same-named outer local.
+// Axes it HOLDS FIXED:   a struct-enum subject passed as a parameter.
+
+struct P { x: integer, y: integer }
+enum Sub { Sp { x: integer }, Sq { y: text } }
+enum Rec {
+  Ra { u: integer },
+  Rb { w: integer },
+  Rc { u: integer, w: integer },
+  Rd { t: text },
+  Rp { p: P, tag: text },
+  Rl { items: vector<integer>, tag: text },
+  Rn { tag: text },
+  Rs { i: Sub, k: integer },
+  Ry { y: text },
+}
+
+fn both(r: Rec) -> integer { match r { Ra { u }, Rb { w } => (u ?? 100) * 1000 + (w ?? 7), _ => -1 } }
+fn three(r: Rec) -> text { match r { Ra { u }, Rb { w }, Rc { u, w } => "{u}/{w}", _ => "x" } }
+fn gap(r: Rec) -> text { match r { Ra { u }, Rb, Rc { u } => "{u == null}:{u ?? -5}", _ => "x" } }
+fn texts(r: Rec) -> text { match r { Rd { t }, Ra { u } => "{t ?? \"-\"}|{u ?? -1}", _ => "x" } }
+fn guarded(r: Rec) -> boolean { match r { Ra { u }, Rb { w } if (u ?? 0) + (w ?? 0) > 5 => true, _ => false } }
+fn heap(r: Rec) -> text {
+  match r {
+    Rp { p, tag }, Rl { items, tag }, Rn { tag } => {
+      a = if p == null { -1 } else { p.x * 10 + p.y };
+      b = if items == null { -1 } else { len(items) * 100 + items[1] };
+      "{tag}:{a}:{b}"
+    },
+    _ => "x",
+  }
+}
+fn sub(r: Rec) -> text { match r { Ra { u }, Rs { i: Sp { x }, k } => "{u ?? -1}:{x ?? -2}:{k ?? -3}", _ => "o" } }
+fn shared_sub(r: Rec) -> text { match r { Ry { y }, Rs { i: Sq { y } } => "[{y}]", _ => "o" } }
+fn later_sub(r: Rec) -> text { match r { Rs { i: Sp { x } }, Ra { u }, Rs { i: Sq { y } } => "{x ?? 0}|{u ?? 0}|{y ?? \"-\"}", _ => "o" } }
+
+fn test_a_name_the_other_pattern_lacks_reads_null() {
+  got = "{both(Ra { u: 3 })} {both(Rb { w: 4 })} {both(Rc { u: 1, w: 2 })}";
+  assert(got == "3007 100004 -1", "two partial names: {got}");
+  got = "{three(Ra { u: 3 })} {three(Rb { w: 4 })} {three(Rc { u: 1, w: 2 })}";
+  assert(got == "3/null null/4 1/2", "three patterns: {got}");
+  got = "{gap(Ra { u: 9 })} {gap(Rb { w: 2 })} {gap(Rc { u: 5, w: 6 })}";
+  assert(got == "false:9 true:-5 false:5", "a pattern binding nothing: {got}");
+  got = "{texts(Rd { t: \"hi\" })} {texts(Ra { u: 9 })}";
+  assert(got == "hi|-1 -|9", "a text capture: {got}");
+}
+
+fn test_a_guard_reads_the_nullable_names() {
+  got = "{guarded(Ra { u: 9 })} {guarded(Rb { w: 2 })} {guarded(Rb { w: 6 })} {guarded(Rc { u: 9, w: 9 })}";
+  assert(got == "true false true false", "guard: {got}");
+}
+
+fn test_heap_captures_read_null_in_the_pattern_that_lacks_them() {
+  for n in 0..3 {
+    got = "{heap(Rp { p: P { x: 4, y: n }, tag: \"pt\" })} {heap(Rl { items: [7, 8 + n, 9], tag: \"ls\" })} {heap(Rn { tag: \"nm\" })}";
+    want = "pt:{40 + n}:-1 ls:-1:{308 + n} nm:-1:-1";
+    assert(got == want, "heap {n}: {got}");
+  }
+}
+
+fn test_a_later_patterns_sub_pattern_may_capture() {
+  got = "{sub(Ra { u: 3 })} {sub(Rs { i: Sp { x: 7 }, k: 2 })} {sub(Rs { i: Sq { y: \"b\" }, k: 3 })}";
+  assert(got == "3:-2:-3 -1:7:2 o", "sub-pattern capture: {got}");
+  got = "{shared_sub(Ry { y: \"a\" })} {shared_sub(Rs { i: Sq { y: \"b\" }, k: 0 })} {shared_sub(Ra { u: 1 })}";
+  assert(got == "[a] [b] o", "a sub-pattern capture every pattern binds: {got}");
+  got = "{later_sub(Rs { i: Sp { x: 5 }, k: 0 })} {later_sub(Ra { u: 6 })} {later_sub(Rs { i: Sq { y: \"q\" }, k: 0 })}";
+  assert(got == "5|0|- 0|6|- 0|0|q", "sub-pattern captures in first and third: {got}");
+}
+
+fn test_the_names_end_with_the_arm() {
+  u = 555;
+  w = "outer";
+  got = "{both(Rb { w: 1 })}";
+  r = match Ra { u: 2 } { Ra { u }, Rb { w } => "{u}", _ => "x" };
+  assert("{got} {r} {u} {w}" == "100001 2 555 outer", "outer names: {got} {r} {u} {w}");
+}
