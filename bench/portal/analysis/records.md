@@ -526,3 +526,19 @@ pushes through the header per vertex, against a Rust twin that reads a struct an
 `Vec<f32>` — the `(R-RecPtr)` remainder for a nullable view whose store is the parameter's.
 The record-field half (`Mat4 { m: [16 floats] }`, `mat4_mul` 38.6×) is still the
 representation clause and stays open.
+
+## `sphere` (2026-09-29) — the append's runtime dispatch, not its writes
+
+Profiled alone (`perf`, the scratch driver over mesh3d by path): `record_new` 10 %,
+`record_finish` 8 %, `nullable_field_parent` 8.4 % and `nullable_some_variant` 6.8 % (a
+`__nullable<` NAME test, twice per append), `insert_record` 4.4 %, `link_siblings` 4.5 % and
+`settle_displaced` 3.6 % over empty lists — 27 % of the row in the runtime's general
+record dispatch for `self.vertices += [av]`, which the emitter had already reduced to eight
+`rec_set`s through the element's address.  The bare-vector short path (§ V-k) never reached a
+FIELD.  It does now (BOTH backends, `LOFT_NO_PLAIN_FIELD_APPEND`): **1.70 → 1.22 ms per op
+(10.0× → 7.1×)**, same hash; the interpreter shares the path (0.22 → 0.20 s for twenty spheres, inside
+its noise).  What the row still pays:
+`vector_append`'s growth (the twin's `Vec` pays it too), the prefill of the eight fields
+the tuple then overwrites (`OpNewRecord` with prefill — `(R-CompleteWrite)` does not see the
+tuple delivery's writes, which sit in one block statement the coverage walk does not enter),
+and the `add_triangle` half.  The prefill is the next unit, and it is codegen's.
