@@ -452,7 +452,14 @@ def citations_in(dirs, exts):
     for d in dirs:
         for ext in exts:
             for path in glob.glob(os.path.join(d, "**/*" + ext), recursive=True):
-                for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
+                # A running gate or test creates and deletes scratch files under these trees,
+                # so a path listed a moment ago may be gone: skip it, as a file that never
+                # existed would be, rather than crash the report (measured beside a live gate).
+                try:
+                    lines = open(path, encoding="utf-8", errors="replace").readlines()
+                except (FileNotFoundError, IsADirectoryError):
+                    continue
+                for n, line in enumerate(lines, 1):
                     for tag in CITE.findall(line):
                         out[tag].append((_rel(path), n))
     return out
