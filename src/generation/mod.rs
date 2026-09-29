@@ -7243,10 +7243,6 @@ extern crate loft;"
         }
     }
 
-    /// Use this to emit only the `init` body that registers all types.
-    /// Sorting by `known_type` ensures the runtime recreates type IDs in the same order
-    /// as the compile-time database, keeping field indices consistent.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-E-Eq`, @C91 — replay [`crate::database::Field::target`] in the generated `init()`:
     /// the known type each stored `reference<T>` field names, so content `==` follows it on
     /// `--native` exactly as in the interpreter.  `init()` registers every type in the
@@ -7268,6 +7264,10 @@ extern crate loft;"
         Ok(())
     }
 
+    /// Use this to emit only the `init` body that registers all types.
+    /// Sorting by `known_type` ensures the runtime recreates type IDs in the same order
+    /// as the compile-time database, keeping field indices consistent.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_init(&mut self, w: &mut dyn Write, from: u32, till: u32) -> std::io::Result<()> {
         // Base types are pre-registered by `Stores::new()` with fixed indices
         // 0..=6 (integer, long, single, float, boolean, text, character — see

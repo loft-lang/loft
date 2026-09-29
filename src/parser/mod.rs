@@ -9058,8 +9058,7 @@ impl Parser {
             let concrete = bindings
                 .iter()
                 .find(|(h, _)| *h as i32 == holder)
-                .map(|(_, t)| t.clone())
-                .unwrap_or(Type::Unknown(0));
+                .map_or(Type::Unknown(0), |(_, t)| t.clone());
             let tp = match concrete.peel_link() {
                 Type::Reference(v, _) if self.data.is_value_struct(*v) => {
                     Some(self.data.def(*v).known_type())
@@ -9636,8 +9635,8 @@ impl Parser {
     }
 
     /// Does content `==` cover the type `concrete_nr` names — a struct (a `value struct`
-    /// included), a struct-enum or one of its variants, a vector, a keyed collection?  `(G-Sat-Eq)` admits such a
-    /// type for an `OpEq` bound it declares no operator for.
+    /// included), a struct-enum or one of its variants, a vector, a keyed collection?
+    /// `(G-Sat-Eq)` admits such a type for an `OpEq` bound it declares no operator for.
     fn content_comparable(&self, concrete_nr: u32) -> bool {
         let name = self.data.def(concrete_nr).name();
         match self.data.def_type(concrete_nr) {
@@ -15229,7 +15228,8 @@ impl Parser {
     /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
     /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
     /// operand types and the kind whose answer the content `==` changes.  Silent on a test
-    /// against the `null` literal, which asks presence and keeps its answer.  `scripts/eq_census.sh` collects it.
+    /// against the `null` literal, which asks presence and keeps its answer.
+    /// `scripts/eq_census.sh` collects it.
     fn trace_eq_identity(&self, code: &Value, op: &str, types: &[Type]) {
         let Value::Call(nr, _) = code else {
             return;
