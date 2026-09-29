@@ -28,3 +28,13 @@
   and every one is within 3× — `parse` 2.73×, `fronds` 2.23×, `smooth` 2.14× (a ~400 ns
   reference, flagged coarse), the rest at or under 1.80× — and the median over the fourteen is
   1.48×.
+
+## D-perf-2 — the measurement it opened on
+
+Measured 2026-09-29 by `make perf-portal` at 639aaa2c3 (every in-repo lane and every library bench
+with a Rust twin, hash-validated under (Perf-Like)): 205 routines, median 2.79×, 140 over 3×, 29 of
+them at 10× or more — `pluginabi` `check_request` 59.9×, `mesh3d` `mat4_mul` 39.0× and
+`mesh_to_floats` 32.1×, `cbor` `encode_bytes` 31.7×.  The per-routine rows are
+`bench/portal/results/<host>.tsv`, whose git history `make perf-trend` reads.  Marked not resolvable
+in a release by the owner the same day, for the 2026-10 release.
+

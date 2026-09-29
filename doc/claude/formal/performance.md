@@ -137,12 +137,12 @@ different matter and `(Perf-Like)`'s.
 
 OPEN: **1**
 
-- **D-perf-2 (OPEN, loft#1743, @PLN158)** — violates (Perf-Weight): the shipped routines as a population
-  are over both bars.  Measured 2026-09-29 by `make perf-portal` at 639aaa2c3 (every in-repo lane
-  and every library bench with a Rust twin, hash-validated under (Perf-Like)): 205 routines,
-  median 2.79×, 140 over 3×, 29 of them at 10× or more — `pluginabi` `check_request` 59.9×,
-  `mesh3d` `mat4_mul` 39.0× and `mesh_to_floats` 32.1×, `cbor` `encode_bytes` 31.7×.  The
-  table and its classes are [PERF_PORTAL.md](../PERF_PORTAL.md); the per-routine row is
-  `bench/portal/results/<host>.tsv`, whose git history `make perf-trend` reads.  The entry
-  closes when the portal's population meets both bars; `drawing`, the first library judged
-  (D-perf-1, now in [performance-history.md](performance-history.md)), already does.
+- **D-perf-2 (OPEN, loft#1743, @PLN158) — not resolvable in a release** (owner, 2026-09-29) —
+  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  The bar spans
+  every public routine of the stdlib and of every shipped library, and the routines over it fall
+  into mechanism classes whose cures are engine work measured in cycles (@PLN158, the native
+  optimisation stream), so no single release can close it; each routine that crosses the bar is
+  fixed on its own, and the release reads the position instead (`M-perf-pass`, `make
+  perf-portal`, [PERF_PORTAL.md](../PERF_PORTAL.md)).  The entry closes when the portal's
+  population meets both bars; `drawing`, the first library judged, already does (D-perf-1, in
+  [performance-history.md](performance-history.md)).

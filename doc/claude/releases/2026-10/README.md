@@ -35,7 +35,7 @@ a feature set.
 | row | state | what it needs |
 |---|---|---|
 | `A-ci` | ❌ | the GitHub gate on `b4eddae08`: P310 and the browser pack fail on `mesh3d` under C98 (the library republish), the feature catalogue (fixed, `4f6270f70`), the optional ratchet (re-pinned), fixture drift for gridmesh/time/assets (advisory, the same republish) |
-| `A-deviations` | ❌ | D-perf-1 (loft#1570): `smooth` at 2.67× on 157-native-4x, not re-measured on the union |
+| `A-deviations` | ❌ | D-types-17 (loft#1742).  D-perf-1 closed with loft#1570; its successor D-perf-2 (loft#1743, the Perf-Weight bars over all 205 routines: median 2.79×, 140 over 3×) is marked **not resolvable in a release** — owner, 2026-09-29 — and read per release through `M-perf-pass` |
 | `A-pdf-version` | ❌ | needs the version bump (release window) |
 | `A-release-gate` | ❓ | after the tree settles — every commit resets it |
 | `M-file-split` | open | a pure-move PR — the owner opens PRs |
