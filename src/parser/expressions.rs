@@ -1001,16 +1001,19 @@ impl Parser {
     fn own_fresh_bind_sites(&mut self, node: &mut Value, owners: &mut Vec<u16>) {
         // `@FR-N-Shape`: `vector<τ>?` is the same store as `vector<τ>`, so both types are PEELED
         // — a nullable local or a nullable native result leaked exactly as the dense one did.
-        // `depend` and `with_deps` see through the wrapper themselves.
+        // `deps_ref` and `with_deps` see through the wrapper themselves.
         if let Value::Set(p, rhs) = node
             && let Value::Call(d, _) = rhs.unspan()
             && !self.vars.is_argument(*p)
             && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
             && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
-            && let returned = self.data.def(*d).returned().clone()
-            && let Type::Vector(elm, deps) = returned.base()
-            && deps.is_empty()
+            && matches!(self.data.def(*d).returned().base(), Type::Vector(_, deps) if deps.is_empty())
         {
+            // Cloned only here, where the rewrite fires: the checks above run for every bind.
+            let returned = self.data.def(*d).returned().clone();
+            let Type::Vector(elm, _) = returned.base() else {
+                return;
+            };
             let w = self
                 .vars
                 .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
