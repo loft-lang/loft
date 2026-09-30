@@ -246,7 +246,9 @@ impl Parser {
                     let nm = self.data.def(*d).name();
                     Some(nm["__nullable<".len()..nm.len() - 1].to_string())
                 }
-                Type::Reference(d, _) | Type::Enum(d, _, _) => Some(self.data.def(*d).name().to_string()),
+                Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                    Some(self.data.def(*d).name().to_string())
+                }
                 _ => None,
             };
             if let Some(type_name) = type_name {
