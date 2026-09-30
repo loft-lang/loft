@@ -2282,8 +2282,9 @@ pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
 }
 #builtin
 
-// LOOP KERNEL (@PLN180): `acc` plus every element of `v`, with the integer add's null and
-// overflow rules — the whole loop in one call on both backends (`src/loop_kernels.rs`).
+// Returns `acc` plus every element of `v`, with integer addition's rules: a null element
+// or an overflow makes the result null.  This is the loop `sum(v, acc)` runs over an
+// integer vector, done in one call; `sum` uses it on its own.
 pub fn vector_sum_int(v: const vector<integer>, acc: integer) -> integer;
 
 // Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not
