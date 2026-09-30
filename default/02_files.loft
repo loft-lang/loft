@@ -184,22 +184,10 @@ pub fn lines(self: const File) -> vector<text> fs#read {
 // --- Text ---
 /// Splits self on every occurrence of separator and returns the parts as a vector.
 /// Use to parse CSV lines or space-separated tokens.
-
-pub fn split(self: text, separator: character) -> vector<text> {
-  result = [];
-  p = 0;
-  for c in self {
-    if c == separator {
-      result += [self[p..c#index]];
-      p = c#next;
-    }
-  }
-  // Always append the trailing segment when the input is non-empty, including
-  // the case where no separator was found at all.  Without this, "hello".split(',')
-  // returned [] instead of ["hello"].  An empty input returns [] (no segments).
-  if self.len() > 0 { result += [self[p..self.size()]]; }
-  result
-}
+/// Every separator ends a part, so a trailing separator leaves an empty last part
+/// ("a,".split(',') is ["a", ""]); an empty text has no parts at all.
+pub fn split(self: text, separator: character) -> vector<text>;
+#rust"{{ let __sep: char = @separator; stores.split_char(@self, __sep) }}"
 #pure
 /// Split on a multi-character text separator.  `"a, b, c".split_text(", ")`
 /// returns `["a", "b", "c"]`.  Edge cases:

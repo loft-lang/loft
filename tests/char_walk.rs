@@ -57,7 +57,7 @@ const NULL_EACH: &str = "!= loft::state::STRING_NULL) as u8) != 1) as u8) == 1 {
 
 /// (function, character walks in it, of which take the fast step, of which ask the null
 /// test once).  A walk that does not ask it once asks it per iteration.
-const EXPECTED: [(&str, usize, usize, usize); 9] = [
+const EXPECTED: [(&str, usize, usize, usize); 8] = [
     ("n_trace", 1, 1, 1),
     ("n_w5", 1, 1, 1),
     // The body grows / rebinds the walked local.  The walk takes its source once, into a
@@ -70,8 +70,8 @@ const EXPECTED: [(&str, usize, usize, usize); 9] = [
     // 2026-09-23) and walked as the variable that local is: fast step, null test hoisted.
     ("n_w10", 2, 2, 2),
     ("n_w11", 1, 1, 1),
-    // The standard library's own walk, which `split` is built on.
-    ("t_4text_split", 1, 1, 1),
+    // The standard library's `split` walked its text here until it became a loop kernel
+    // (@PLN180 § Kernels): its walk is Rust now, and the cells above are the rule's.
 ];
 
 #[test]
