@@ -12,7 +12,8 @@
 //
 // @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
 // Hand-sabotaged 2026-09-30: writing a materialised site's fields from the wrong tuple element
-// (index 0 for every field) fails `appended`, `stored` and `joined` on both backends.
+// (index 0 for every field) fails `appended` — the first cell that materialises — on both
+// backends, reading 1 where 2 is owed.
 
 struct V2 { x: float, y: float }
 struct V3 { x: float, y: float, z: float }
