@@ -2422,7 +2422,10 @@ line in `Output::output_function`'s prelude.
                  half loses the inline at every call site, and the whole fast path
                  pays a call for a compare and a load.  `#[inline(never)]` on the
                  cold half is load-bearing, not a hint: without it rustc folds the
-                 halves back together.
+                 halves back together.  So is `#[cold]`: it is the branch weight
+                 that keeps the fast path's test a plain branch — without it LLVM
+                 may turn that test into flag arithmetic paid on every element,
+                 and which form it picks then moves with unrelated code nearby.
 ```
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the

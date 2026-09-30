@@ -34,6 +34,16 @@ this is where it is written down.
 
 ## Attempts and closures
 
+- **2026-09-30 — `(R-Cold)`'s `#[cold]` half (823989c77).**  `get_elem_hoisted_cold`,
+  `text_elem_cold` and `vec_set_hoisted_cold` carried `#[inline(never)]` without `#[cold]`.
+  LLVM then weighed the out-of-range branch evenly and, once 7be88b9d4 (@PLN174 F1–F3) added
+  never-taken foreign-record branches to `Store::read`/`addr`/`valid`/`elem_base`/`bytes_of`,
+  if-converted bench 10's per-element bounds test into `setns`/`setb`/`cmpb`/`jne`: 25 % more
+  instructions, 10_sort 2.82x -> 3.71x of its Rust twin (the release candidate's ratio-gate
+  red).  Removing the five branches one at a time moved nothing but `valid` (3.35x); all five
+  restored 2.82x — the signature of a threshold, not of one cost.  Adding `#[cold]`:
+  instructions 1.359e9 -> 1.170e9, ratio 3.74x -> 2.78x on the candidate.
+
 - **D-rw-1 — a user one-op function inlined as a stdlib wrapper (2026-09-09, CLOSED).**  The
   recogniser asked the body's SHAPE and not the definition's ORIGIN.  Found by the GitHub
   gate's wasm live-dispatch probe on the rebased tree; the local curated set never runs it.
