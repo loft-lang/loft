@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-R-LazySplit` — the EMISSION pins.  A `for piece in text.split(c)` loop iterates
-//! `codegen_runtime::lazy_split` and never calls `t_4text_split`; a parameter nothing
+//! `codegen_runtime::lazy_split` and never calls the `split` kernel; a parameter nothing
 //! writes is borrowed and every other source is iterated as a copy; the buffer the call
 //! would have filled is never minted; a variable separator, a `rev` and a generator keep
 //! the vector; `LOFT_NO_LAZY_SPLIT=1` restores the vector everywhere.  The guard
@@ -90,7 +90,7 @@ fn a_loop_over_a_split_iterates_the_text_and_builds_no_vector() {
             "{name}: each lazy loop reads its piece from the iterator"
         );
         assert!(
-            !b.contains("t_4text_split("),
+            !b.contains("split_char("),
             "{name}: no vector is built for a lazy loop"
         );
     }
@@ -150,7 +150,7 @@ fn a_variable_separator_a_rev_and_a_generator_keep_the_vector() {
     // s17 is a filtered loop (lazy) and a `rev` over a split (the vector).
     let s17 = body(&rust, "n_s17");
     assert_eq!(
-        (count(s17, "lazy_split("), count(s17, "t_4text_split(")),
+        (count(s17, "lazy_split("), count(s17, "split_char(")),
         (1, 1),
         "s17: the filter is lazy, the `rev` keeps its vector"
     );
@@ -163,7 +163,7 @@ fn a_variable_separator_a_rev_and_a_generator_keep_the_vector() {
     // discharge, which is not the plain bind, and keeps it.
     let s21 = body(&rust, "n_opt_shape");
     assert_eq!(
-        (count(s21, "lazy_split("), count(s21, "t_4text_split(")),
+        (count(s21, "lazy_split("), count(s21, "split_char(")),
         (1, 1),
         "opt_shape: the discharged VECTOR keeps its vector"
     );

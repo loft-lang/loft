@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-R-SplitTable` — the EMISSION pins.  A `parts = text.split(c)` bound to a local
 //! and then only `len`'d, indexed or walked collects its pieces as `Vec<&str>` at the bind
-//! and never calls `t_4text_split`; a parameter nothing writes is borrowed and every other
+//! and never calls the `split` kernel; a parameter nothing writes is borrowed and every other
 //! source is copied at the bind; the walk's loop variable is a borrowed `&str`; the raising
 //! and the nullable element read take their own getters; the buffer the call would have
 //! filled is never minted; a returned, appended, written, handed-away, copied or rebound
@@ -79,7 +79,7 @@ fn a_split_bound_to_a_name_is_a_table_and_builds_no_vector() {
         ("n_s6", 1),
         ("n_s7", 1),
         ("n_grow", 1),
-        ("n_s9", 3),
+        ("n_s9", 4),
         ("n_s10", 1),
         ("n_head", 1),
         ("n_s12", 2),
@@ -121,7 +121,7 @@ fn a_split_bound_to_a_name_is_a_table_and_builds_no_vector() {
         "n_s21",
     ] {
         assert!(
-            !body(&rust, name).contains("t_4text_split("),
+            !body(&rust, name).contains("split_char("),
             "{name}: no vector is built for a table"
         );
     }
@@ -171,7 +171,7 @@ fn every_reader_answers_from_the_table() {
     assert!(
         count(s12, ": Vec<&str> = ") == 2
             && s12.contains("split_table_get(&__st_0, (var_k__index) as i64)")
-            && s12.contains("split_table_get(&__st_2, (var_k__index) as i64)"),
+            && s12.contains("split_table_get(&__st_1, (var_k__index) as i64)"),
         "s12: two tables, the walk of one indexing the other"
     );
 }
@@ -230,8 +230,9 @@ fn an_unwritten_parameter_is_borrowed_and_any_other_source_is_a_copy() {
         );
     }
     // A local written after the bind, a by-reference text the function writes, and the
-    // expression sources of s9 (a field, a call, a format string) are each copied once.
-    for (name, copies) in [("n_s7", 1), ("n_grow", 1), ("n_s9", 3), ("n_s10", 1)] {
+    // expression sources of s9 (a field, a call, a literal under a slice, a format string) are
+    // each copied once.
+    for (name, copies) in [("n_s7", 1), ("n_grow", 1), ("n_s9", 4), ("n_s10", 1)] {
         let b = body(&rust, name);
         assert_eq!(
             count(b, "let __st_src_"),
@@ -248,16 +249,17 @@ fn an_unwritten_parameter_is_borrowed_and_any_other_source_is_a_copy() {
 #[test]
 fn the_buffer_of_a_table_is_never_minted() {
     let rust = emit("buffer", &[]);
+    // `split` is a kernel (@PLN180): the call takes no buffer, so there is none to mint, and
+    // the table builds no vector either.
     let table = body(&rust, "n_indexed");
     assert!(
-        table.contains("let mut var___ref_1: DbRef = DbRef::NULL;")
-            && !table.contains("OpDatabase("),
-        "indexed: the split's buffer stays the null sentinel"
+        !table.contains("OpDatabase(") && !table.contains("split_char("),
+        "indexed: the table mints nothing and builds no vector"
     );
     let kept = emit("buffer_off", &[("LOFT_NO_SPLIT_TABLE", "1")]);
     assert!(
-        body(&kept, "n_indexed").contains("var___ref_1 = OpDatabase("),
-        "indexed: with the switch set the buffer is minted for the call"
+        body(&kept, "n_indexed").contains("split_char("),
+        "indexed: with the switch set the kernel builds the vector"
     );
 }
 
@@ -274,7 +276,7 @@ fn every_other_use_keeps_the_vector() {
     ] {
         let b = body(&rust, name);
         assert_eq!(
-            (count(b, "t_4text_split("), count(b, TABLE)),
+            (count(b, "split_char("), count(b, TABLE)),
             (kept, 0),
             "{name}: every declined bind keeps its vector"
         );
@@ -283,20 +285,22 @@ fn every_other_use_keeps_the_vector() {
     // walks of a table.
     let s18 = body(&rust, "n_s18");
     assert_eq!(
-        (count(s18, "t_4text_split("), count(s18, TABLE)),
+        (count(s18, "split_char("), count(s18, TABLE)),
         (1, 2),
         "s18: a separator that is not a constant keeps the vector; `rev` and a filter walk the table"
     );
-    // s9's slice of a split reads the vector through another op.
+    // s9's slice of a split: the slice names its subject once, and a native call's fresh
+    // result is OWNED by that name (`@FR-O-Owner`), so the named split is a bind the table
+    // answers — its length and its element reads — and builds no vector.
     assert_eq!(
-        count(body(&rust, "n_s9"), "t_4text_split("),
-        1,
-        "s9: the sliced split keeps its vector"
+        count(body(&rust, "n_s9"), "split_char("),
+        0,
+        "s9: the sliced split is a table too"
     );
     // A generator's table would live on the state machine; it keeps the vector.  Its
     // functions are emitted under the generator's own names, so the check is over the
     // whole file: exactly the binds counted above are tables, and `pieces` is not one.
-    let admitted = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1 + 2 + 1 + 1 + 1 + 2 + 1;
+    let admitted = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 2 + 1 + 1 + 1 + 2 + 1;
     assert_eq!(
         count(&rust, ").collect() /* @FR-R-SplitTable */"),
         admitted,
