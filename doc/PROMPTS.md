@@ -1,7 +1,7 @@
 # Working with Claude — Prompts and Practices
 
 This document covers two things: how to work effectively with Claude in this codebase,
-and when to use each of the prepared prompts in `prompts.txt`.
+and when to use each of the prepared prompts in § Prompts guide below.
 
 ---
 
@@ -15,7 +15,7 @@ and when to use each of the prepared prompts in `prompts.txt`.
   - [What Claude does well in this codebase](#what-claude-does-well-in-this-codebase)
   - [What to watch for](#what-to-watch-for)
   - [Keeping sessions from going in circles](#keeping-sessions-from-going-in-circles)
-- [Prompts Guide — `prompts.txt`](#prompts-guide--promptstxt)
+- [Prompts guide](#prompts-guide)
   - [Session start](#session-start)
   - [Often — documentation health](#often--documentation-health)
   - [Session — active development](#session--active-development)
@@ -125,7 +125,7 @@ implementation of the fix is wrong.
 
 ---
 
-## Prompts Guide — `prompts.txt`
+## Prompts guide
 
 A reference for when to use each prompt, what each achieves, and where to be careful.
 

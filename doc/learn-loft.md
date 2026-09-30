@@ -6,7 +6,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # Learn loft in 30 minutes
 
 A guided tour for first-time loft users.  Read top-to-bottom; every
-code block is taken from `examples/` and is verified to run.
+code block runs as shown, and `examples/` holds the longer versions.
 
 **Prerequisites:** the `loft` binary on your `PATH`.  See the
 project [README](../README.md) for install instructions.
@@ -42,8 +42,8 @@ can try the same two lines in the browser [playground](playground.html) without
 installing anything.
 
 Once a program grows past a handful of statements you give it functions, and
-those *are* typed — that step is covered in §5.  A file with a `fn main` is
-compiled exactly as it always was:
+those *are* typed — that step is covered in §3.  A file with a `fn main`
+runs `main`:
 
 ```loft
 fn main() {
@@ -77,14 +77,16 @@ fn main() {
 
   // The compiler refuses incompatible reassignments at parse time.
   // Uncommenting the next line yields:
-  //   error: cannot assign text to variable of type integer
+  //   error: Variable 'age' cannot change type from integer to text
   // age = "thirty";
-  assert(age == 30, "age");
+  assert(age == 30 && is_admin && pi > 3.0, "types");
+  print("{name} is {age}\n");
 }
 ```
 
 `assert(condition, message)` is the canonical "did this hold?" probe.
-Use it freely — it disappears in release builds with no overhead.
+It stays active in every build, `--native-release` included: a failed
+assert stops the program with its message.
 
 Loft has primitive types: `integer` (i64), `boolean`, `float` (f64),
 `single` (f32), `character` (Unicode codepoint), `text` (UTF-8
@@ -116,8 +118,8 @@ Things to notice:
 - **Return type after `->`**, like Rust.  Omit it for void functions.
 - **Last expression is the return value** — no `return` keyword
   needed for the trailing value.  Use `return value;` to exit early.
-- **Default arguments** with `name: T = default`.  Order matters; all
-  optional args must come last.
+- **Default arguments** with `name: T = default`.  A call may leave
+  out a trailing argument that has a default.
 
 ---
 
@@ -177,13 +179,13 @@ fn main() {
   // Escape sequences: \n \t \\ \" \0
   print("Line one\nLine two\n");
 
-  // Length and slicing.
+  // Length in characters.
   print("len = {len(msg)}\n");
 }
 ```
 
-Loft text is **UTF-8 internally**.  `len` returns bytes, not visible
-characters — be careful with multi-byte content like emoji.  See
+Loft text is **UTF-8 internally**.  `len` counts characters (Unicode
+code points), not bytes: `len("héllo")` is 5.  See
 [STDLIB.md § Text](claude/STDLIB.md) for the full string API.
 
 ---
@@ -192,7 +194,7 @@ characters — be careful with multi-byte content like emoji.  See
 
 ```loft
 struct Word {
-  text: text not null,
+  text: text,
   count: integer,
 }
 
@@ -203,13 +205,12 @@ fn main() {
     print("{f}\n");
   }
 
-  // Hash: O(1) lookup by a key field.
-  // Both views share the same records — no copying.
-  words: hash<Word[text]> = {};
-  for label in ["apple", "banana", "apple"] {
-    words += Word { text: label, count: 1 };
+  // Hash: O(1) lookup by a key field.  The empty collection is `[]`.
+  words: hash<Word[text]> = [];
+  for label in ["apple", "banana", "cherry"] {
+    words += [Word { text: label, count: len(label) }];
   }
-  print("Hash lookup of 'apple': {words[\"apple\"].text}\n");
+  print("Hash lookup of 'banana': count {words[\"banana\"].count}\n");
 }
 ```
 
@@ -306,28 +307,28 @@ you which one.
 
 ```loft
 fn main() {
-  path = "/tmp/loft_walkthrough.txt";
+  path = "{temp_dir() ?? "."}/loft_walkthrough.txt";
   // Open + write (creates the file if absent).
   f = file(path);
   f.write("first line\nsecond line\n");
 
-  // Read it back.
-  contents = file(path).content();
+  // Read it back.  `content()` is null when the file cannot be read.
+  contents = file(path).content() ?? "";
   print("read {len(contents)} bytes:\n{contents}");
 }
 ```
 
 (See `examples/files.loft` for a fuller version with line counting.)
 
-For JSON, loft has a built-in `json` library:
+JSON is built in — no `use` needed.  `json_parse` returns a
+`JsonValue` tree:
 
 ```loft
-use json;
-
 fn main() {
-  // Parse JSON into a Value tree, walk by field name.
-  v = json.parse("{\"name\": \"loft\", \"version\": \"0.8.5\"}");
-  print("name = {v[\"name\"].text()}\n");
+  // Parse JSON into a JsonValue tree, walk it by field name.
+  // A backtick string needs no \" escapes; `{{` / `}}` are literal braces.
+  v = json_parse(`{{"name": "loft", "version": "2026.10.0"}}`);
+  print("name = {v.field(\"name\").as_text()}\n");
 }
 ```
 
@@ -354,17 +355,21 @@ You've seen the language surface.  Pick one of:
   what the rendering library can do.
 - **Try the parallel surface** — loft makes parallelism a one-line
   addition: `for s in items par(r = work(s), 4) { ... }` runs the
-  worker on 4 threads.  See [STDLIB_RUNTIME.md § Parallel] and
-  `examples/structs.loft` for a starter.
+  worker on 4 threads.  See
+  [STDLIB_RUNTIME.md § Parallel](claude/STDLIB_RUNTIME.md#parallel).
 - **Set up your editor** — see
   [editors/vscode/](../editors/vscode) for the VS Code extension
   with syntax highlighting + snippets.  TextMate grammar at
   [syntaxes/loft.tmLanguage.json](../syntaxes/loft.tmLanguage.json)
   works in Sublime Text and any TextMate-compatible editor.
-- **Step through native code** — `loft --native --native-debug
-  yourprog.loft` produces a debug binary that GDB / LLDB can step
-  through.  Variable names are rust-internal (`var_x`); proper
-  source mapping is planned for 0.8.6.
+- **Debug a program** — `loft debug yourprog.loft:12` stops at line
+  12 of your source; you read and change the live variables, then
+  step ([DEBUG.md](claude/DEBUG.md)).  For the native backend,
+  `loft --native-debug yourprog.loft` compiles with DWARF debug info
+  for GDB / LLDB and keeps the generated Rust on disk.  Variable
+  names there are Rust-side (`var_x`); a `// loft:<file>:<line>`
+  comment above each function and statement maps the Rust back to
+  your source.
 - **Ask questions** — open an issue at
   <https://github.com/loft-lang/loft/issues>.
 
