@@ -11,6 +11,10 @@
 // The values are asserted too, so a cure that sliced a different store would fail; the loop cell
 // makes the leak count grow with the evaluations rather than stand at one.  The last cell is the
 // control that was right before: a slice of a loft function's result.
+//
+// @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
+// @falsified-by: tests/falsified/a-slice-of-a-fresh-native-result-frees-it.patch — interpret leaked
+//   kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r += ["q3"]; r }

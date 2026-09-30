@@ -21,6 +21,12 @@
 // raw, and the caller took the literal's store as its answer while freeing only its buffer.
 //
 // The last cell is the control that was right before: a local filled in place.
+//
+// @falsified-at: 12c5ea1a4 — native leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-returned-vector-bound-from-a-native-call-frees-it.patch — native
+//   leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a backend-divergence guard — only
+//   one side can move)
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 
