@@ -78,6 +78,19 @@ admitted, written as `phase<TAB>function<TAB>rule<TAB>count`. The phase is `nati
 generator (the interpreter never gets that form), `ir` for the scope pass (both backends)
 and `parse` for everything earlier. The per-function totals equal the per-rule census.
 
+**`LOFT_OP_NGRAMS=<file>`** (with `LOFT_OP_CENSUS`) counts the runs of two to four operators
+that execute one after the other within a function, keeping only runs whose control operators
+come last — the statically adjacent ones, which a superinstruction can fuse.
+
+**`LOFT_STORE_CENSUS=<file>`** counts the work a run does on its stores, on EITHER backend:
+stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
+copies and text writes move.  Each `ticks()` call appends one line (the clock value, then the
+counters so far), so the work between two calls is the difference of two lines — a bench
+routine's timed loop sits between two of them on both backends.  The counters sit in store
+code the native runtime shares, so they are compiled only with `--features op-census`, and a
+native program measured this way must link an rlib built with it (PERFORMANCE.md § Store
+work).
+
 `make interp-gap` (`scripts/interp_gap.py`) joins the two with a `stats.py` timing of both
 backends ([bench/README.md § Interpreter against native](../../bench/README.md)).
 

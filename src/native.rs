@@ -2688,6 +2688,7 @@ fn n_ticks(stores: &mut Stores, stack: &mut DbRef) {
         return;
     }
     let micros = stores.start_time.elapsed().as_micros() as i64;
+    crate::store_census::at_ticks(micros);
     stores.put(stack, micros);
 }
 

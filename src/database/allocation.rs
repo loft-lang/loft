@@ -798,6 +798,7 @@ impl Stores {
         self.clear_free_bit(slot);
         // @PLN101 Slice 0 — the true heap metric: a store slot just went live.
         self.stores_allocated += 1;
+        crate::store_census::note(crate::store_census::Work::StoreNew, 1);
         // @PLN105 leak provenance — stamp the currently-executing op position so a
         // leaked store's allocation site is attributable for EVERY path (reuse/copy
         // included), not only `OpDatabase`. Read before the mutable slot borrow.
@@ -1292,6 +1293,7 @@ impl Stores {
             store.reclaim_tail();
         }
         store.free = true;
+        crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {

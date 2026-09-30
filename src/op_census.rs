@@ -160,6 +160,15 @@ pub fn armed() -> bool {
 #[cfg(feature = "op-census")]
 #[inline]
 pub fn moved(route: Moved, bytes: usize) {
+    use crate::store_census::{Work, note};
+    match route {
+        Moved::Copy => note(Work::CopyBytes, bytes as u64),
+        Moved::Text => note(Work::TextBytes, bytes as u64),
+        Moved::Relocate => {
+            note(Work::Relocate, 1);
+            note(Work::RelocateBytes, bytes as u64);
+        }
+    }
     if ARMED.load(Ordering::Relaxed) {
         count_moved(route, bytes);
     }

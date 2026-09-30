@@ -1421,23 +1421,16 @@ pub fn reassemble_function(
             .get(&name)
             .ok_or_else(|| format!("jump to undefined label :{name}"))?;
         let delta = target as i64 - (pos + width) as i64;
-        let bytes: [u8; 4] = match width {
-            1 => [
-                i8::try_from(delta).map_err(|_| format!("jump :{name} out of i8 range"))? as u8,
-                0,
-                0,
-                0,
-            ],
-            2 => {
-                let [lo, hi] = i16::try_from(delta)
-                    .map_err(|_| format!("jump :{name} out of i16 range"))?
-                    .to_le_bytes();
-                [lo, hi, 0, 0]
-            }
-            _ => i32::try_from(delta)
-                .map_err(|_| format!("jump :{name} out of i32 range"))?
-                .to_le_bytes(),
+        let fits = match width {
+            1 => i8::try_from(delta).is_ok(),
+            2 => i16::try_from(delta).is_ok(),
+            _ => i32::try_from(delta).is_ok(),
         };
+        if !fits {
+            return Err(format!("jump :{name} out of i{} range", width * 8));
+        }
+        // Little-endian, so the first `width` bytes of the i32 are the narrower value.
+        let bytes = (delta as i32).to_le_bytes();
         for (k, b) in bytes.iter().take(width).enumerate() {
             if let Some(slot) = out.get_mut(pos + k) {
                 *slot = *b;

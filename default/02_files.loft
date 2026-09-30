@@ -1231,7 +1231,7 @@ fn OpVecSetInt(vec: const u16, size: const u16, idx: const u16, fld: const u16, 
 // The end test of `for x in v`: jump unless `len(v) <= index`, as the unfused test plus
 // `OpGotoFalseWord` does; `step` last, patched by `gen_if` like every compare-and-jump.
 fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
-#rust"if !(i64::from(vector::length_vector(&s.get_var::<DbRef>(@vec), &s.database.allocations)) <= s.get_var::<i64>(@idx)) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
+#rust"if i64::from(vector::length_vector(&s.get_var::<DbRef>(@vec), &s.database.allocations)) > s.get_var::<i64>(@idx) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 
 // ── Path helpers (moved from 03_text.loft so they're available
 //    before file-I/O code that wants to compose them) ─────────

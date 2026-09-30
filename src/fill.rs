@@ -3465,10 +3465,10 @@ fn vec_end_jump(s: &mut State) {
     let v_vec = s.code::<u16>();
     let v_idx = s.code::<u16>();
     let v_step = s.code::<i32>();
-    if !(i64::from(vector::length_vector(
+    if i64::from(vector::length_vector(
         &s.get_var::<DbRef>(v_vec),
         &s.database.allocations,
-    )) <= s.get_var::<i64>(v_idx))
+    )) > s.get_var::<i64>(v_idx)
     {
         s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
     }

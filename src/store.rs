@@ -1491,6 +1491,7 @@ impl Store {
     /// # Arguments
     /// * `size` - The requested record size in 8 byte words
     pub fn claim(&mut self, size: u32) -> u32 {
+        crate::store_census::note(crate::store_census::Work::Claim, 1);
         if self.read_only {
             return self.claim_discarded(size);
         }
@@ -1713,6 +1714,7 @@ impl Store {
         if claim >= req_size {
             return rec;
         }
+        crate::store_census::note(crate::store_census::Work::Grow, 1);
         let next = rec + claim as u32;
         if next < self.size {
             let next_size = self.read::<i32>(next, 0);
@@ -1800,6 +1802,7 @@ impl Store {
     }
 
     pub fn delete(&mut self, rec: u32) {
+        crate::store_census::note(crate::store_census::Work::Delete, 1);
         // `read_only` is IMMUTABILITY — CONST_STORE, workers, the user-facing
         // `d#lock` tripwire — so nothing in the store may change, deletes included.
         //

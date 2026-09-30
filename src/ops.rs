@@ -742,7 +742,7 @@ pub mod fused {
 }
 
 /// The arithmetic `kind` of a fused op applied to `v1` and `v2` (`OpAddInt` … `OpEorInt`).
-#[inline(always)]
+#[inline]
 #[must_use]
 pub fn fused_int(kind: u8, v1: i64, v2: i64) -> i64 {
     match kind {
@@ -756,7 +756,7 @@ pub fn fused_int(kind: u8, v1: i64, v2: i64) -> i64 {
 }
 
 /// The comparison `kind` of a fused op applied to `v1` and `v2` (`OpEqInt` … `OpLeInt`).
-#[inline(always)]
+#[inline]
 #[must_use]
 pub fn fused_cmp(kind: u8, v1: i64, v2: i64) -> bool {
     match kind {

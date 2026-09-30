@@ -312,6 +312,7 @@ pub mod spent;
 pub mod stack_census;
 pub mod stack_verify;
 pub mod stdlib_ops;
+pub mod store_census;
 // `net::fetch_bytes` (behind `store_load_url*`) exists exactly where `load_url`
 // does: a native `registry` build, or the browser (`--html`) target.
 pub mod host;

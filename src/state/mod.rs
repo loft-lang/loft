@@ -2576,6 +2576,9 @@ impl State {
     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
     /// release library), corrupting the heap.  Cheap in the common case:
     /// one comparison against the cached `stack_cap_bytes`.
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub(crate) fn ensure_stack(&mut self, extra: u32) {
         // Highest byte offset a write at the current top may touch:
@@ -2606,6 +2609,9 @@ impl State {
     /// The address of stack byte `off` (relative to the stack record's field base), for the
     /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
     /// `ensure_stack`, a read lies below `stack_pos`.
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     fn stack_slot(&self, off: u32) -> *mut u8 {
         let store = &self.database.allocations[self.stack_cur.store_nr as usize];
@@ -2843,6 +2849,9 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
         assert!(
@@ -2969,7 +2978,7 @@ impl State {
                     // @PLN118 arc E — the READING op is the one currently dispatching (this
                     // pop happens inside its handler); `last_context` holds its opcode byte.
                     let (_rpc, read_op, _fd) = crate::crash_report::last_context();
-                    let read_op_str = op_name(u16::from(read_op));
+                    let read_op_str = op_name(read_op);
                     // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
                     // copy reading a stale SUB-reference: the copy is incomplete and the source
                     // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
@@ -3068,6 +3077,9 @@ impl State {
         )
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
         // get_var reads T at (stack_pos - pos); pos > stack_pos would underflow.
@@ -3141,19 +3153,11 @@ impl State {
         let ty = std::any::type_name::<T>();
         match state {
             SlotState::Unwritten => {
-                crate::stack_verify::report_uninit(what, ty, at, width, pc, line, u16::from(op));
+                crate::stack_verify::report_uninit(what, ty, at, width, pc, line, op);
             }
             SlotState::Mismatch { wrote } => {
                 crate::stack_verify::report_mismatch(
-                    what,
-                    ty,
-                    at,
-                    width,
-                    wrote,
-                    false,
-                    pc,
-                    line,
-                    u16::from(op),
+                    what, ty, at, width, wrote, false, pc, line, op,
                 );
             }
             SlotState::Stale => {
@@ -3164,7 +3168,7 @@ impl State {
                     .read::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + at)
                     .rec;
                 let _ = abs;
-                crate::stack_verify::report_stale(what, ty, at, rec, pc, line, u16::from(op));
+                crate::stack_verify::report_stale(what, ty, at, rec, pc, line, op);
             }
             SlotState::Partial | SlotState::Written => {}
         }
@@ -3238,6 +3242,9 @@ impl State {
         )
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn put_var<T: 'static>(&mut self, pos: u16, value: T) {
         // @PLAN53 cluster 2 / S4: the value's footprint on the stack is its
@@ -3246,7 +3253,7 @@ impl State {
         let step = self.stack_step(size_of::<T>() as u32);
         if self.fast_stack {
             let slot = self.stack_slot(self.stack_pos + step - u32::from(pos));
-            debug_assert!(slot.align_offset(std::mem::align_of::<T>()) == 0);
+            debug_assert_eq!(slot.align_offset(std::mem::align_of::<T>()), 0);
             // SAFETY: a frame slot, inside the stack record and aligned (the stack is 8-aligned
             // and every slot a multiple of 8); assigned like `addr_mut`'s reference is.
             unsafe { *slot.cast::<T>() = value };
@@ -3371,12 +3378,15 @@ impl State {
         ) = db;
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn put_stack<T: 'static>(&mut self, val: T) {
         if self.fast_stack {
             self.ensure_stack(self.stack_step(size_of::<T>() as u32));
             let slot = self.stack_slot(self.stack_pos);
-            debug_assert!(slot.align_offset(std::mem::align_of::<T>()) == 0);
+            debug_assert_eq!(slot.align_offset(std::mem::align_of::<T>()), 0);
             // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
             unsafe { *slot.cast::<T>() = val };
             self.stack_pos += self.stack_step(size_of::<T>() as u32);
@@ -6010,7 +6020,7 @@ impl State {
     /// the library are in this process.  Neither side can see the whole chain, so the
     /// two halves are joined here — the library's innermost-first, then the caller's —
     /// which is what makes a placed fault read exactly like an in-process one.
-    #[inline(always)]
+    #[inline]
     fn note_runtime_error_halt(&mut self) {
         if self.database.runtime_error.is_some() {
             self.attach_halt_frames();
@@ -6377,7 +6387,7 @@ impl State {
         // Handed over as a CLOSURE, because "once per process" is the whole licence
         // for the leak and this runs once per PROGRAM (loft#820).
         crate::crash_report::set_op_names(|| {
-            (0..=u16::from(u8::MAX))
+            (0..OPERATORS.len() as u16)
                 .map(|op| {
                     data.operator_name(op)
                         .map_or("", |n| &*Box::leak(n.to_owned().into_boxed_str()))
@@ -6507,7 +6517,7 @@ impl State {
         // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
         // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
         // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
-        let lean = !(reload_on
+        let lean_loop = !(reload_on
             || census_on
             || verify_on
             || alloc_paths_on
@@ -6517,19 +6527,19 @@ impl State {
             || cfg!(debug_assertions)
             || cfg!(feature = "stack_align_guard"));
         crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
-        if lean {
+        if lean_loop {
             while self.code_pos < bytecode_len && self.debug.is_none() {
                 let op_pos_rt = self.code_pos;
                 self.database.alloc_pc = op_pos_rt;
                 let op = self.code::<u8>();
-                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, op, fn_d_nr);
-                if op == 255 {
-                    let ext = self.code::<u8>();
-                    OPERATORS[255 + usize::from(ext)](self);
+                let opcode = if op == 255 {
+                    255 + u16::from(self.code::<u8>())
                 } else {
-                    OPERATORS[op as usize](self);
-                }
+                    u16::from(op)
+                };
+                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
+                OPERATORS[usize::from(opcode)](self);
                 if self.database.frame_yield {
                     return;
                 }
@@ -6581,8 +6591,15 @@ impl State {
             // subsequent SIGSEGV/SIGABRT prints the crash location.
             // Cheap: one thread-local store per op.
             {
+                // The full opcode: a two-byte one's second byte is next in the stream, and is
+                // read for real below.
+                let opcode = if op == 255 {
+                    255 + u16::from(self.bytecode[self.code_pos as usize])
+                } else {
+                    u16::from(op)
+                };
                 let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, op, fn_d_nr);
+                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
             }
             #[cfg(debug_assertions)]
             {

@@ -2901,7 +2901,9 @@ pub fn n_ticks(cell: &std::cell::UnsafeCell<Stores>) -> i64 {
     if let Some(fake) = fake_clock_env("LOFT_FAKE_TICKS_US") {
         return fake;
     }
-    stores.start_time.elapsed().as_micros() as i64
+    let micros = stores.start_time.elapsed().as_micros() as i64;
+    crate::store_census::at_ticks(micros);
+    micros
 }
 
 /// Bytecode equivalent: `n_ticks` in `src/native.rs`.  Gated on
