@@ -5465,7 +5465,7 @@ impl Parser {
 
     /// Bring a CONDITION to `boolean` — the `if` / `while` position, where LOFT.md
     /// § Conversions promises the coercion for every type: *"`false` and null are falsy;
-    /// integer `i32::MIN` is falsy; every other value is truthy"*.
+    /// an `integer` holding its null, `i64::MIN`, is falsy; every other value is truthy"*.
     ///
     /// Separate from [`convert`](Parser::convert) because the promise is about this
     /// POSITION, not about the pair of types: passing a `vector` where a `boolean`

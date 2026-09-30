@@ -616,7 +616,7 @@ pub fn warn_copies_enabled() -> bool {
 /// test cannot fail.  `LOFT_NO_CONSTANT_CONDITION` opts out.  One cached env read.
 ///
 /// Scalars are deliberately outside it: their absent value is IN-BAND and reachable from a
-/// non-optional declaration (`LOFT.md` § Conversions — *"integer `i32::MIN` is falsy"*), so
+/// non-optional declaration (`LOFT.md` § Conversions — *"an `integer` holding its null, `i64::MIN`, is falsy"*), so
 /// `if d` on a plain `integer` is a real two-state test.  See
 /// `Parser::warn_constant_condition`.
 #[must_use]

@@ -5159,7 +5159,7 @@ impl Parser {
     /// `@FR-E-Truthy-1` — a truthiness position whose subject cannot be absent is CONSTANT.
     ///
     /// `LOFT.md` § Conversions states the language's rule — *"`false` and null are falsy;
-    /// integer `i32::MIN` is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
+    /// an `integer` holding its null, `i64::MIN`, is falsy; every other value is truthy"* — and the formal `(E-Truthy)`
     /// records only the `null` half.  The behaviour is documented and is NOT changing here: the
     /// silence at the call site was the defect, because the shape reads to a programmer as a
     /// test.  What is constant is a HEAP value that cannot be absent: `if v` on a non-optional
@@ -5195,7 +5195,7 @@ impl Parser {
         // variable is a `Reference` to its def, so there is no variant to exclude by name.
         // HEAP kinds only, and the exclusion is measured rather than cautious.  A SCALAR's
         // absent value is IN-BAND and reachable from a non-optional declaration — `LOFT.md`
-        // § Conversions: *"integer `i32::MIN` is falsy"* — so `if d` on a plain `integer` is a
+        // § Conversions: *"an `integer` holding its null, `i64::MIN`, is falsy"* — so `if d` on a plain `integer` is a
         // genuine two-state test, not a constant: measured on both backends, an `integer`
         // holding `i64::MIN` takes the ELSE branch.  A heap value has no such in-band value;
         // it is falsy exactly when it is null (`heap-value-as-a-condition.loft`), and a
