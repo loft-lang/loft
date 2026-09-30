@@ -3355,8 +3355,8 @@ use #count instead"
                 Level::Error,
                 "loop variable '{src_id}' shadows a local named '{src_id}' — \
                  rename the loop variable (e.g. loop_{src_id}) or drop the \
-                 outer `{src_id}` if it was a dead placeholder; loft does \
-                 not block-scope loop variables"
+                 outer `{src_id}` if it was a dead placeholder; a loop \
+                 variable cannot reuse the name of a local still in scope"
             );
         }
         if id != "_"
@@ -4970,7 +4970,18 @@ use #count instead"
         // `b` → `OpGetVector(results, idx)`.  build_parallel_for_ir
         // performs the actual Var→accessor rewrite after body parse,
         // once `idx_var` exists.
-        let elem_var_nr = self.create_var(elem_var, &elem_tp);
+        // loft#1802 — the element is this loop's variable, created the way a sequential
+        // loop's is: keyed by the LOOP (`<name>#bind`, loft#915), not by the name.  Reused
+        // by name, pass 2's first `par` loop over `e` was handed whichever slot pass 1 left
+        // `e` pointing at — the LAST loop's — so two `par` loops in a row shared one binding.
+        let elem_var_nr = self.create_loop_var(elem_var, &elem_tp);
+        // It ends with its body as a sequential loop's does (@FR-B-Scope).  Unrecorded, a
+        // later `for e` read the par loop's `e` as "a local named 'e'" and refused as a
+        // shadow; loft#1717 is the same mark for the unrolled `#fields` walk.
+        self.vars.served_as_loop_var(elem_var_nr);
+        // …and it is BOUND in the loop's body block, so the name is free again after the
+        // loop's `}` — `e = 7` after the loop is a new binding, as after a plain `for`.
+        self.pending_loop_binders.push(elem_var_nr);
         // The body reads the name the program wrote; point it at this loop's binding
         // and leave it there, the same as the sequential form (loft#915).
         if elem_var != src_elem_var {
@@ -5019,6 +5030,8 @@ use #count instead"
                             .enumerate()
                             .map(|(i, name)| {
                                 let var = self.create_var(name, &elem_types[i]);
+                                self.vars.served_as_loop_var(var);
+                                self.pending_loop_binders.push(var);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
                                 var

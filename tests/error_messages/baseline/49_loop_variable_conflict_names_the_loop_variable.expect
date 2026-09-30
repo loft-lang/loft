@@ -1,7 +1,7 @@
 ==== exit: 1 ====
 ==== stdout ====
 ==== stderr ====
-error: loop variable 'p' shadows a local named 'p' — rename the loop variable (e.g. loop_p) or drop the outer `p` if it was a dead placeholder; loft does not block-scope loop variables
+error: loop variable 'p' shadows a local named 'p' — rename the loop variable (e.g. loop_p) or drop the outer `p` if it was a dead placeholder; a loop variable cannot reuse the name of a local still in scope
   --> <cases>/49_loop_variable_conflict_names_the_loop_variable.loft:25:16
    |
 25 |   for p in hb { hs = hs + p.0; }

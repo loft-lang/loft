@@ -1212,7 +1212,7 @@ fn shadow_different_type() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          shadow_different_type:4:17",
     );
 }
@@ -1235,7 +1235,7 @@ fn shadow_same_type_ok() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          shadow_same_type_ok:4:17",
     );
 }
@@ -2380,7 +2380,7 @@ fn c61_local_shadow_rejected() {
     .error(
         "loop variable 'x' shadows a local named 'x' — rename the loop \
          variable (e.g. loop_x) or drop the outer `x` if it was a dead \
-         placeholder; loft does not block-scope loop variables at \
+         placeholder; a loop variable cannot reuse the name of a local still in scope at \
          c61_local_shadow_rejected:3:18",
     );
 }

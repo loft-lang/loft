@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `par` LOOP'S VARIABLE ENDS WITH ITS LOOP, AS A `for` LOOP'S DOES (loft#1802, @FR-B-Scope).
+// Three faults, one binding.  The par element was created by NAME, so pass 2's first `par`
+// loop over `e` was handed whichever slot pass 1 left `e` pointing at — the last loop's —
+// and two `par` loops shared one variable (loft#915 is why a `for` keys its variable by the
+// loop).  It was never marked as a loop's variable, so a later `for e` was refused as
+// shadowing "a local named 'e'".  And it was never bound in the body's block, so the name
+// did not end at the loop's `}`.  A DESTRUCTURING `par` loop, the fourth cell, stopped the
+// compiler outright: its worker wrapper is minted on pass 2 only, and the two-pass check did
+// not know it (the `code!` harness does not run that check, so its tests stayed green).
+//
+// @falsified-at: PENDING
+
+struct E { k: integer }
+fn ev(e: E) -> integer { e.k * 2 }
+fn add(a: integer, b: integer) -> integer { a + b }
+
+fn main() {
+  v = [E { k: 1 }, E { k: 2 }];
+  // Two `par` loops over the same name, then a plain `for`, then a rebind of the name.
+  s = 0;
+  for e in v par(b = ev(e), 1) { s += b; }
+  for e in v par(b = ev(e), 2) { s += b * 10; }
+  for e in v { s += e.k * 100; }
+  e = 7;
+  // (2 + 4) + (2 + 4) * 10 + (1 + 2) * 100 = 366, and `e` is a new integer binding.
+  assert(s == 366, "sum over the three loops: {s}");
+  assert(e == 7, "the name is free after the loops: {e}");
+  // A destructuring `par` loop, then a plain loop reusing one of its names.
+  pairs = [(1, 2), (3, 4)];
+  t = 0;
+  for (a, b) in pairs par(r = add(a, b), 2) { t += r; }
+  for a in [10, 20] { t += a; }
+  // (1 + 2) + (3 + 4) + 10 + 20 = 40.
+  assert(t == 40, "destructuring par, then a plain loop: {t}");
+  println("1802 ok");
+}

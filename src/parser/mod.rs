@@ -3328,6 +3328,15 @@ impl Parser {
             // derived from it) and has its append shape: name-keyed, idempotent, at the end.
             let lazy_struct_instance =
                 matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
+            // The eighth: a DESTRUCTURING `par` loop's worker wrapper,
+            // `__par_destructure_w_<line>_<col>_<worker>` — pass-2-only by design (pass 1
+            // answers with the user's worker; `parse_destructure_par_worker` mints the wrapper
+            // once the tuple's element types and offsets are final), minted once per loop site
+            // and appended at the end.  Unrecognised, every `for (a, b) in v par(…)` stopped
+            // the compiler with this assertion on both backends, while the `code!` harness,
+            // which does not run H5, kept its tests green (loft#1802's matrix).
+            let lazy_par_wrapper =
+                matches!(dt, DefType::Function) && name.starts_with("__par_destructure_w_");
             assert!(
                 lazy_wrapper
                     || lazy_instantiation
@@ -3335,7 +3344,8 @@ impl Parser {
                     || lazy_tuple
                     || lazy_dispatcher
                     || lazy_lambda_instance
-                    || lazy_struct_instance,
+                    || lazy_struct_instance
+                    || lazy_par_wrapper,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})\n{}",
