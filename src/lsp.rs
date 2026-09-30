@@ -31,7 +31,7 @@ fn load_stdlib(p: &mut Parser, stdlib_dir: &str) {
     // The stdlib prelude (STD_SOURCE) must be registered before the user buffer,
     // or every stdlib symbol reads as undefined — both paths do that first.
     if !crate::startup_cache::warm_load_stdlib(p, stdlib_dir) {
-        let _ = p.parse_dir(stdlib_dir, true, false);
+        let _ = p.parse_stdlib(stdlib_dir);
         crate::startup_cache::save_stdlib_cache(p, stdlib_dir);
     }
 }

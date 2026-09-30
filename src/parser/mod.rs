@@ -3952,6 +3952,29 @@ impl Parser {
         Ok(())
     }
 
+    /// Load the standard library from `dir`, or — when there is no such directory — from
+    /// the sources this binary embeds (loft#1801).  A binary copied onto the PATH or
+    /// installed by `cargo install` has no `default/` beside it, but it carries the stdlib
+    /// it was built from (`stdlib_sources`, the same text the browser build and `loft
+    /// search` read), and that text cannot mismatch its dispatch table.  A directory that
+    /// exists is read and checked exactly as [`Self::parse_dir`] does.
+    /// # Errors
+    /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
+    pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
+        if std::path::Path::new(dir).is_dir() {
+            return self.parse_dir(dir, true, false);
+        }
+        for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
+            if !self.parse_source(content, name, true) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("the embedded standard library `{name}` does not parse"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// [`Self::parse_dir`] WITHOUT the stdlib check, for the one caller that must read a
     /// `default/` the dispatch table does not match yet: the `src/fill.rs` generator, whose
     /// job is to repair exactly that mismatch.  Checked, it refused the parse and the cure

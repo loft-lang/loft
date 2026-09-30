@@ -1795,7 +1795,7 @@ impl ReplSession {
     /// Returns the I/O error if the stdlib directory cannot be read.
     pub fn new(stdlib_dir: &str) -> std::io::Result<Self> {
         let mut parser = Parser::new();
-        parser.parse_dir(stdlib_dir, true, false)?;
+        parser.parse_stdlib(stdlib_dir)?;
         Ok(Self {
             parser,
             stdlib_dir: stdlib_dir.to_string(),
@@ -2101,7 +2101,7 @@ impl ReplSession {
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
         let mut parser = Parser::new();
         parser.lib_dirs = lib_dirs;
-        parser.parse_dir(&self.stdlib_dir, true, false)?;
+        parser.parse_stdlib(&self.stdlib_dir)?;
         self.parser = parser;
         Ok(self.load_program_str(&src, path))
     }
@@ -2164,7 +2164,7 @@ impl ReplSession {
                 parser.lib_dirs.push(d.clone());
             }
         }
-        parser.parse_dir(&self.stdlib_dir, true, false)?;
+        parser.parse_stdlib(&self.stdlib_dir)?;
         let pre_diag = parser.diagnostics.entries().len();
         let parse_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             parser.parse(&abs, false);

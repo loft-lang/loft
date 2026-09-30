@@ -184,7 +184,7 @@ impl Program {
     /// parse / compile.
     pub fn from_source_with_stdlib(source: &str, stdlib_dir: &str) -> Result<Program, LoftError> {
         let mut p = parser::Parser::new();
-        p.parse_dir(stdlib_dir, true, false)
+        p.parse_stdlib(stdlib_dir)
             .map_err(|e| LoftError::Parse(format!("cannot read stdlib at {stdlib_dir}: {e}")))?;
         p.parse_str(source, "<host>", false);
         scopes::check(&mut p.data, &mut p.database);
@@ -210,13 +210,12 @@ impl Program {
         stdlib_dir: &std::path::Path,
     ) -> Result<Program, LoftError> {
         let mut p = parser::Parser::new();
-        p.parse_dir(&stdlib_dir.to_string_lossy(), true, false)
-            .map_err(|e| {
-                LoftError::Parse(format!(
-                    "cannot read stdlib at {}: {e}",
-                    stdlib_dir.display()
-                ))
-            })?;
+        p.parse_stdlib(&stdlib_dir.to_string_lossy()).map_err(|e| {
+            LoftError::Parse(format!(
+                "cannot read stdlib at {}: {e}",
+                stdlib_dir.display()
+            ))
+        })?;
         let src = pkg_dir.join("src");
         let dir = if src.is_dir() {
             src

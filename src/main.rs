@@ -3967,7 +3967,7 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
     // Load default definitions so types are known.
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
     // Collect #native declarations.
@@ -5463,7 +5463,7 @@ fn api_surface_of(
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     let abs_str = abs.to_string_lossy().to_string();
     p.parse(&abs_str, false);
     if p.diagnostics.level() >= loft::diagnostics::Level::Error {
@@ -6602,7 +6602,7 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     if let Some(src_dir) = entry.parent() {
         p.lib_dirs.push(src_dir.to_string_lossy().to_string());
     }
-    let _ = p.parse_dir(&default_str, true, false);
+    let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
     let roots = ss::program_roots(&p.data);
@@ -7263,6 +7263,9 @@ fn main() {
     let mut i = 0;
     let mut file_name = String::new();
     let mut dir = project_dir();
+    // Whether `--path` named the stdlib's directory: then a missing `default/` is the
+    // reader's typo to hear about, not a cue to use the embedded stdlib (loft#1801).
+    let mut path_given = false;
     let mut project: Option<String> = None;
     let mut lib_dirs: Vec<String> = Vec::new();
     let mut log_conf: Option<String> = None;
@@ -7422,6 +7425,7 @@ fn main() {
             return;
         } else if a == "--path" {
             dir.clone_from(&argv[i]);
+            path_given = true;
             i += 1;
         } else if a == "--project" {
             project = Some(argv[i].clone());
@@ -9274,7 +9278,19 @@ fn main() {
         // file lands in the program's drift manifest; otherwise use the D2b
         // stdlib cache.
         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
-        if !stdlib_warm {
+        // loft#1801 — a binary with no `default/` beside it (copied onto the PATH, or
+        // installed by `cargo install`) still carries the stdlib it was built from: the
+        // same `include_str!` sources the browser build and `loft search` read.  Parsed
+        // from there it cannot mismatch this binary's dispatch table, so a MISSING
+        // directory is not an error.  A directory that is there but refused (a parse
+        // error, a `default/` from another build) still is, below.
+        let default_missing = !stdlib_warm && !path_given && !default_dir.is_dir();
+        if default_missing {
+            if let Err(e) = p.parse_stdlib(&default_str) {
+                eprintln!("loft: {e}");
+                std::process::exit(1);
+            }
+        } else if !stdlib_warm {
             if let Err(e) = p.parse_dir(&default_str, true, false) {
                 if e.kind() == std::io::ErrorKind::InvalidData {
                     // The library was found and read, and refused: a parse error in it,

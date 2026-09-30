@@ -165,8 +165,7 @@ pub fn run(filename: &str, opts: &Options) -> std::io::Result<()> {
     } else {
         format!("{}default", opts.install_dir)
     };
-    p.parse_dir(&default_dir, true, false)
-        .expect("parse default/ stdlib");
+    p.parse_stdlib(&default_dir).expect("parse default/ stdlib");
     let start_def = p.data.definitions();
     p.parse(&abs_file, false);
     if !p.diagnostics.is_empty() {

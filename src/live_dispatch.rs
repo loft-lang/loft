@@ -129,7 +129,7 @@ fn bootstrap(fn_names: &'static [&'static str]) -> Result<Stores, String> {
         .map_err(|_| "LOFT_LIVE_SRC not set (run through the loft driver)".to_string())?;
     let stdlib = std::env::var("LOFT_LIVE_STDLIB").unwrap_or_else(|_| "default".to_string());
     let mut p = Box::new(crate::parser::Parser::new());
-    p.parse_dir(&stdlib, true, false)
+    p.parse_stdlib(&stdlib)
         .map_err(|e| format!("stdlib `{stdlib}`: {e}"))?;
     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
         p.lib_dirs = libs
