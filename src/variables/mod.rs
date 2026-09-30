@@ -2475,8 +2475,8 @@ impl Function {
 
     /// The name the `for` loop now being parsed binds its variable under (loft#915).
     ///
-    /// A loop variable stays a function-scoped local — `i` after the loop still reads the
-    /// value the loop left, which programs rely on — but each LOOP gets its own binding,
+    /// A loop variable is scoped to its loop's body — `i` after the loop is
+    /// `local-out-of-scope` (LOFT.md, the `for` loop) — and each LOOP gets its own binding,
     /// so a second loop may spell one name at a different element type instead of
     /// re-typing the first loop's slot.  That is also what keeps loft#690 fixed by
     /// construction rather than by diagnostic: the second loop can no longer inherit the

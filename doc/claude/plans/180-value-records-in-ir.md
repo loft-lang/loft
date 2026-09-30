@@ -60,6 +60,25 @@ are in `map_get_hex` (a record VIEW into the map: native's view-leaf rule, @PLN1
 `floor_y_at`; `slope_path_with_undo`'s are in functions this pass declines.  Both are the
 next candidates.
 
+## Kernels
+
+Native avoids a loop's per-element cost by calling a runtime KERNEL for the whole loop
+(`vector::sum_blocks_i64` for `sum`, `lazy_split` for a line walk).  The interpreter, running
+the same loop element by element, was 200–360× slower there — a cost no opcode trimming
+closes, since native spends under a nanosecond per element.  A kernel is therefore exposed as
+an ORDINARY stdlib function — declared without a loft body, one Rust body in
+`src/loop_kernels.rs`, reached by the interpreter through its single native-call operator
+(`OpStaticCall`, a row in `native::FUNCTIONS`) and by `--native` through `codegen_runtime` — so
+new kernels add functions, never opcodes (owner, 2026-09-30).  A scope-pass rule replaces a
+loop a kernel covers by one call, on both backends.
+
+| kernel | replaces | interp before → after | native |
+|---|---|--:|--:|
+| `vector_sum_int` | `acc = acc + v[i]` over `0..v.len()` (stdlib `sum` over integers) | 1,174,380 → 4,830 ns/op | 4,300 ns/op |
+
+Next, from the routines past the 100× cliff: `find` / `contains` (`str::find`), a split step
+for `split_walk` (361×, needs a text slice on the interpreter's stack), char and byte walks.
+
 ## Design
 
 **One admission.** The candidates are exactly what `generation::hoist::value_records`
