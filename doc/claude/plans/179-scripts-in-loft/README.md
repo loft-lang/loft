@@ -243,6 +243,17 @@ language comparison the owner asked for, made of tools that are used every day r
 of samples written to be compared, and readable as a scoreboard: how many scripts loft
 replaces with no reason left, today.
 
+## A script's name — no extension, a `#!` line (owner's question 2026-09-30; works today)
+
+`loft` runs a file with no extension, the lexer skips a first `#!` line, `#cwd` may follow
+it, and `#!/usr/bin/env -S loft --interpret` carries a flag.  So a ported script is a bare
+executable invoked as the bash one was, and **a port is a swap under the same name**: the
+Makefile line, the workflow step and the hook that call `scripts/idx` do not change when
+`idx` stops being bash, and the twin compares two files that differ in their first line.
+Six bare executables exist already, which the census classifies by their `#!` line.  To
+carry: a gate that finds loft sources by `*.loft` (the formatter, the fence checks) must
+learn the `#!` line, and Windows has no shebang — a caller there spells `loft scripts/idx`.
+
 ## Execution modes — evaluated in [`MODES.md`](MODES.md)
 
 The dual mode the owner asked for (2026-09-30) is loft's steady state already: one source,
@@ -252,8 +263,8 @@ is the store and CI warms it.  **The rule: a script runs interpreted; a script w
 has stopped changing runs optimised** — loft measures the age of the hash on two clocks
 (first seen, last git change), the run count and the last interpreted duration, and when a
 script has earned it (a day old, ≥ 100 ms, run twice) builds the release binary detached
-after the run, so the next run takes it.  `#mode` pins the exceptions; the twin runs both
-modes so promotion can never change an answer; and a TEST is never subject to it — a
+after the run, so the next run takes it.  the flag in a script's `#!` line pins the
+exceptions; the twin runs both modes so promotion can never change an answer; and a TEST is never subject to it — a
 backend flag or a test context (`LOFT_MODE_POLICY=off`, set by every runner) switches the
 policy and its bookkeeping off.
 
