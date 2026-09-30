@@ -16,7 +16,7 @@
 //
 // @falsified-at: none — it guards a fold no earlier build has, so no control fails it.
 //   Falsified instead by planted defects, 2026-10-01: folding NUL as well fails
-//   `test_nul`; folding to `cp + 1` fails all four tests.
+//   `test_nul`; folding to `cp + 1` fails the other three (`'\0'` never folds).
 
 fn classify(s: text) -> integer {
   k = s[0];
