@@ -18793,3 +18793,47 @@ fn a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash() {
     code!("fn f(k: integer) -> (integer, text, Hexz) { (k, \"a\", Hexz { q: 1 }) }")
         .error("Undefined type Hexz — did you mean 'text'? at a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash:1:42");
 }
+
+/// A tuple RETURN naming a struct declared LATER in the file is refused with its cure, and
+/// one naming an UNDEFINED type is reported as undefined — neither is an internal compiler
+/// error.  Boxing the heap-carrying return asked `tuple_def` for a record it cannot build
+/// while a member is unresolved; its `u32::MAX` became the return type, the between-passes
+/// check never saw a tuple to judge, and the first read of the result dereferenced no
+/// definition (2026.9.0 crashed on both, and on dryopea's `r3_run` under C98).
+#[test]
+fn a_boxed_tuple_return_with_a_later_member_is_refused_with_its_cure() {
+    code!(
+        "fn f(k: integer) -> (integer, text, Qz) { (k, \"a\", Qz { q: k * 2 }) }
+fn g() -> integer { t = f(3); t.0 }
+struct Qz { q: integer }"
+    )
+    .error(
+        "`f` returns a tuple containing `Qz`, which is declared later in the file — move the \
+declaration of `Qz` above `f`. A tuple RETURN has to know at its declaration whether it carries \
+heap storage, and it cannot ask a type that does not exist yet; every other use of a \
+forward-declared type in a tuple (a local, a vector element, a struct field, a parameter) works \
+at a_boxed_tuple_return_with_a_later_member_is_refused_with_its_cure:1:20",
+    );
+}
+
+#[test]
+fn a_boxed_tuple_return_with_an_undefined_member_is_reported_when_bound() {
+    code!("fn f(k: integer) -> (integer, text, Hexz) { (k, \"a\", Hexz { q: 1 }) }
+fn g() -> integer { t = f(3); t.0 }")
+    .error("Undefined type Hexz — did you mean 'text'? at a_boxed_tuple_return_with_an_undefined_member_is_reported_when_bound:1:42");
+}
+
+/// Walking a vector literal of an UNDEFINED struct reports the undefined name, and stops at
+/// the record that cannot be built — never an internal compiler error from the `for`.
+#[test]
+fn a_for_over_a_literal_of_an_undefined_struct_reports_the_name() {
+    code!("fn g() -> integer {
+    hs = [Hexz { q: 3 }, Hexz { q: 4 }];
+    n = 0;
+    for h in hs { n += h.q; }
+    n
+}")
+    .error("unknown type 'Hexz' — did you mean 'text'? at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:11")
+    .error("unknown type 'Hexz' — did you mean 'text'? at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:26")
+    .fatal("cannot build this record — its type never resolved at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:40");
+}

@@ -639,6 +639,14 @@ impl Parser {
                 Type::Vector(vtp, dep) => {
                     let i = Value::Var(iter_var);
                     let vec_tp = self.data.type_def_nr(vtp);
+                    if vec_tp == u32::MAX {
+                        // The element type names no definition — an undefined struct in the
+                        // literal the vector came from (`[Hexz { … }]`), whose own site has
+                        // reported it.  There is nothing to walk; asking the def is what made
+                        // this an internal compiler error.  `parse_for` knows not to add a
+                        // second report.
+                        return Value::Null;
+                    }
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
                     // A type variable's element names its variable (@PLN165 C2).
@@ -3953,7 +3961,15 @@ use #count instead"
                 // right sentence followed by two about the parser's own state (loft#1453).
                 // The fallback itself stays: the case its comment below names is real and
                 // reports nothing of its own.
-                if self.lexer.diagnostics().error_count() == errors_before_iterable {
+                //
+                // A vector whose ELEMENT names no definition has said what is wrong with it
+                // too, only earlier: at the literal it was built from (`[Hexz { … }]`), in
+                // another statement, so the count above cannot see it.
+                let element_undefined = matches!(&in_type, Type::Vector(e, _)
+                    if self.data.type_def_nr(e) == u32::MAX);
+                if self.lexer.diagnostics().error_count() == errors_before_iterable
+                    && !element_undefined
+                {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
