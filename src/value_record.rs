@@ -121,7 +121,10 @@ impl Ops {
     }
 
     fn get_op(&self, kind: Kind) -> u32 {
-        self.get.iter().find(|(_, k)| *k == kind).map_or(u32::MAX, |(d, _)| *d)
+        self.get
+            .iter()
+            .find(|(_, k)| *k == kind)
+            .map_or(u32::MAX, |(d, _)| *d)
     }
 
     fn set_kind(&self, op: u32) -> Option<Kind> {
@@ -431,7 +434,8 @@ fn is_header(n: &Value, buf: u16, ops: &Ops) -> bool {
         match c {
             Value::Call(op, args) => {
                 if *op == ops.database {
-                    mints |= matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
+                    mints |=
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
                 } else if *op != ops.ref_is_null && *op != ops.bool_from_ref {
                     clean = false;
                 }
@@ -628,7 +632,11 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
             plan.carriers.insert(p, record);
         } else {
             if trace() {
-                eprintln!("[ir-valuerec] {}: parameter `{}` declines", def.name(), vars.name(p));
+                eprintln!(
+                    "[ir-valuerec] {}: parameter `{}` declines",
+                    def.name(),
+                    vars.name(p)
+                );
             }
             v.bad_params.insert((d, idx));
         }
@@ -668,7 +676,9 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
         } else if !reads_fit(l, record) || !handed_fits(l, record) {
             Some("a read or hand-on of another shape")
         } else if !s.fids.iter().all(|&(a, b)| {
-            binds.iter().any(|(_, r)| r.is_some_and(|r| pairs(a, b, r, l)))
+            binds
+                .iter()
+                .any(|(_, r)| r.is_some_and(|r| pairs(a, b, r, l)))
                 || (a != l && b != l)
         }) {
             Some("a free against another buffer")
@@ -680,7 +690,11 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
         if let Some(why) = why
             && trace()
         {
-            eprintln!("[ir-valuerec] {}: local `{}` declines: {why}", def.name(), vars.name(l));
+            eprintln!(
+                "[ir-valuerec] {}: local `{}` declines: {why}",
+                def.name(),
+                vars.name(l)
+            );
         }
         let ok = why.is_none();
         if ok {
@@ -974,10 +988,7 @@ fn literals_to_tuples(
         for v in &mut values {
             literals_to_tuples(v, buf, layout, ops, vars);
         }
-        let in_order = offsets
-            .iter()
-            .zip(&layout.fields)
-            .all(|(o, (f, _))| o == f);
+        let in_order = offsets.iter().zip(&layout.fields).all(|(o, (f, _))| o == f);
         *n = if in_order {
             Value::Tuple(values)
         } else {
@@ -990,7 +1001,11 @@ fn literals_to_tuples(
                 temps.insert(*off, t);
             }
             stmts.push(Value::Tuple(
-                layout.fields.iter().map(|(o, _)| Value::Var(temps[o])).collect(),
+                layout
+                    .fields
+                    .iter()
+                    .map(|(o, _)| Value::Var(temps[o]))
+                    .collect(),
             ));
             Value::Block(Box::new(Block {
                 name: "Tuple",
