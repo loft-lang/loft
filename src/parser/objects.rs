@@ -4012,8 +4012,20 @@ impl Parser {
         if *data != Value::Null && !Self::is_repeatable_place(&self.data, data) {
             let named = self.vars.work_refs(subject_tp, &mut self.lexer);
             if named != u16::MAX {
-                self.vars.set_skip_free(named);
-                self.vars.mark_inline_ref(named);
+                // …unless nothing else keeps it.  A CALL whose result carries no deps hands
+                // back a FRESH store — a native `arguments()`, the `split` kernel — which no
+                // caller buffer holds, so the name is its only owner, exactly as the bind
+                // `x = arguments()` owns it (@FR-O-Owner).  Borrowing there leaked the whole
+                // subject on both backends.  A loft function's result arrives in its caller
+                // buffer (an `inline_container` block, not a bare call) and a discharge
+                // default in its work-ref, and both keep the release.
+                let fresh = matches!(data.unspan(), Value::Call(..))
+                    && subject_tp.depend().is_empty()
+                    && !matches!(subject_tp, Type::Text(_));
+                if !fresh {
+                    self.vars.set_skip_free(named);
+                    self.vars.mark_inline_ref(named);
+                }
                 iter_prelude.push(v_set(named, data.clone()));
                 *data = Value::Var(named);
             }
