@@ -6,7 +6,7 @@ fix: the library's own next increment (its README § roadmap): `replace` / `repl
 ref: 
 probe: 011.probe.loft
 expect: refused
-checked: 23155096
+checked: 02cc37e78
 holds: yes
 
 `regex` 0.3.3 ships `search`, `matches`, `split_on` and their qualified twins. A Python script that pulls a value OUT of a match — `IGNORE.match(line).group(1)` for the reason text, `re.match(r"fn (\w+)", ...)` for a name, `ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), s)` for an unescape — has to re-find the span by hand after `matches` says there is one, which is the same work twice and the drift the regex was there to prevent.
