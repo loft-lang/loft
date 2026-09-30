@@ -308,7 +308,11 @@ fn the_store_census_drops() {
         // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
         // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
         // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
-        (183, 295, 159, 261),
+        // `text.split` became a kernel (@PLN180): its result vector is built by
+        // `Stores::split_char`, not by an `OpDatabase` in a loft body, so the six `split` calls
+        // of cell r25 leave the interpreter's count in both columns (six `vector<text>` headers,
+        // `db_tp=42 size=4`).  Native never minted them (`R-LazySplit`).
+        (177, 289, 159, 261),
         "mints (interpret on, off, native on, off)"
     );
 }
