@@ -252,6 +252,17 @@ The record, and every closed deviation, are in the companion
   the re-ask goes through `possible_with_signature`, the resolver monomorphisation already uses,
   so the two cannot disagree about which definition a signature names.  Oracle:
   `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
+- **The parameter LIST is part of the signature (`G-Sat`)** — a member of the right arity whose
+  parameters are other types does not satisfy the bound: `fn OpMin(self: W, o: integer)` alone
+  leaves `W` short of `Subtractable`, refused as *"'OpMin' takes 'integer' where the interface
+  declares 'W'"*.  Each parameter is compared by its type definition after `[Self ↦ C]`; a
+  nullable parameter takes its dense type, a variant and its enum take each other, and a
+  parameter typed by the interface's own associated type, or by a type variable, asks nothing.
+  Where the name carries an overload set, the member that takes the list is the one satisfying
+  it and the one the monomorph binds (`Data::overload_with_params` answers both).  An `OpEq`
+  that does not take `(Self, Self)` is not the type's own `==`, so `(G-Sat-Eq)` admits the type
+  by content, as the concrete `a == b` compares it.  Oracle:
+  `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
 - **No dynamic dispatch (`G-Scope`)** — `x: Sizable = Box{…}` is rejected; an interface names a
   generic bound, never a variable's type.
 - **A header binds its OWN variable (`G-Gen`)** — `fn one<T: HasSize1>(x: T)` beside

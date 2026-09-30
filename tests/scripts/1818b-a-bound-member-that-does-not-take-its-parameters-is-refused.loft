@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BOUND MEMBER THAT DOES NOT TAKE ITS PARAMETERS IS REFUSED (loft#1818, @FR-G-Sat).
+// `(G-Sat)` judges a member against `[Self ↦ C](p̄ -> R)`, the parameter LIST included.  A
+// member of the bound's arity whose parameters are other types satisfied the bound, and the
+// monomorph handed each one a `W` record: `d(w, w)` answered `w.x` minus the record read as
+// an integer, `l(w, w)` took a SIGSEGV and `s(w)` a panic on the interpreter, and rustc
+// refused the native source.  The refusal names the parameter and the type the interface
+// declares.  The accepting half is `1818-a-bound-is-satisfied-only-by-a-member-that-takes-
+// its-parameters.loft`.
+//
+// @falsified-at: bb9a31dea — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1818b-a-bound-member-that-does-not-take-its-parameters-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 1/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: expect — the control compiles all three instances without a diagnostic.
+//   WITNESS: on the control, `d(w, w)` over `W { x: 7 }` answers `-3`-shaped garbage (the
+//   record read as the `integer` parameter) and `l(w, w)` ends in SIGSEGV at `OpLengthText`.
+//   HOLDS: leak and panic are equal on both trees.
+
+struct W { x: integer }
+fn OpMin(self: W, o: integer) -> W { W { x: self.x - o } }
+fn OpLt(self: W, o: text) -> boolean { self.x < len(o) }
+fn scale(self: W, factor: text) -> integer { self.x * len(factor) }
+fn d<T: Subtractable>(a: T, b: T) -> T { a - b }
+fn l<T: Ordered>(a: T, b: T) -> boolean { a < b }
+fn s<T: Scalable>(a: T) -> integer { a.scale(3) }
+
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Subtractable': 'OpMin' takes 'integer' where the interface declares 'W'
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Ordered': 'OpLt' takes 'text' where the interface declares 'W'
+// @EXPECT_ERROR: 'W' does not satisfy interface 'Scalable': 'scale' takes 'text' where the interface declares 'integer'
+fn uses() {
+  w = W { x: 7 };
+  assert(d(w, w).x == 0, "unreachable");
+  assert(l(w, w), "unreachable");
+  assert(s(w) == 21, "unreachable");
+}

@@ -7535,15 +7535,28 @@ impl Data {
     /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
     /// every position whose wanted type is concrete (a type variable or an unknown there asks
     /// nothing)?
+    ///
+    /// A parameter that is itself a type variable (a template member) asks nothing either; and
+    /// a variant and its enum fit each other, the one widening the enum lattice has
+    /// (`@FR-C-Var`), in whichever direction the receiver's lookup crossed it.
     #[must_use]
     pub fn params_fit(&self, d_nr: u32, params: &[Type]) -> bool {
         let have = self.visible_params(d_nr);
-        have.len() == params.len()
-            && have.iter().zip(params).all(|(h, w)| {
-                w.is_unknown()
-                    || self.mentions_type_var(w)
-                    || self.type_def_nr(h) == self.type_def_nr(w)
-            })
+        have.len() == params.len() && have.iter().zip(params).all(|(h, w)| self.param_fits(h, w))
+    }
+
+    /// One position of [`Self::params_fit`]: does the declared parameter `have` take the
+    /// wanted type `want`?
+    #[must_use]
+    pub fn param_fits(&self, have: &Type, want: &Type) -> bool {
+        if want.is_unknown() || self.mentions_type_var(want) || self.mentions_type_var(have) {
+            return true;
+        }
+        let (h, w) = (self.type_def_nr(have), self.type_def_nr(want));
+        let variant_of = |v: u32, e: u32| {
+            v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e
+        };
+        h == w || variant_of(h, w) || variant_of(w, h)
     }
 
     /// The member of `start`'s overload set whose visible parameters are `params`

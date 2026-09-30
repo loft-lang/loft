@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A BOUND IS SATISFIED ONLY BY A MEMBER THAT TAKES ITS PARAMETERS (loft#1818, @FR-G-Sat).
+// `(G-Sat)` judges a member against `[Self ↦ C](p̄ -> R)`, and `p̄` is a parameter list, not a
+// count.  A type whose only `OpMin` was `OpMin(self: W, o: integer)` satisfied `Subtractable`,
+// and the monomorph handed the `integer` parameter a record: `-3` on the interpreter, a
+// SIGSEGV for `<` over a `text` parameter, a panic for `scale` over one, rustc refusing the
+// native source.  Those are refused now, naming the parameter
+// (`1818b-a-bound-member-that-does-not-take-its-parameters-is-refused.loft`).
+// This file holds the other half: every satisfaction that was correct stays accepted, and an
+// `OpEq` that does not take `(Self, Self)` leaves the type to `(G-Sat-Eq)`'s content `==`,
+// as the concrete `a == b` does.
+//
+// Axes this file MOVES:  the bound (Ordered · Equatable · Addable · Numeric · Subtractable ·
+//                        Scalable · Printable), the implementor (a builtin number · `text` ·
+//                        `boolean` · a struct · a `value struct` · a struct-enum), the parameter
+//                        spelling (`Self` · `Self?` · a non-Self type the interface declares),
+//                        an overload set where one member fits, and an `OpEq` that does not.
+// Axes it HOLDS FIXED:   the bound is on a free generic's own `T`.
+//
+// @falsified-at: bb9a31dea — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter, exit on native (rustc refuses the control's source).
+//   WITNESS: on the control `same(w7, w7b)` over `OpEq(self: W, o: integer)` answers false
+//   where the concrete `w7 == w7b` answers true (the monomorph called the integer member with
+//   a record); every other cell answers the same on both trees.
+//   HOLDS: leak and panic are equal on both trees.
+
+struct V { x: integer }
+fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
+fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn OpMin(self: V) -> V { V { x: 0 - self.x } }
+fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
+fn OpLt(self: V, o: V) -> boolean { self.x < o.x }
+fn scale(self: V, factor: integer) -> integer { self.x * factor }
+fn to_text(self: V) -> text { "V{self.x}" }
+
+// A nullable parameter takes a dense argument (`(N-Intro)`).
+value struct P { x: integer }
+fn OpMin(self: P, o: P?) -> P { P { x: self.x - (o.x ?? 0) } }
+fn OpLt(self: P, o: P?) -> boolean { self.x < (o.x ?? 0) }
+
+// One member of the set takes `(Self, Self)`; the other is declared first.
+struct S { x: integer }
+fn OpAdd(self: S, o: integer) -> S { S { x: self.x + o * 10 } }
+fn OpAdd(self: S, o: S) -> S { S { x: self.x + o.x } }
+
+// An `OpEq` that takes an integer only: `==` on two `W` compares content.
+struct W { x: integer }
+fn OpEq(self: W, o: integer) -> boolean { self.x == o }
+
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn OpLt(self: Sh, _o: Sh) -> boolean { match self { Ci { r } => r < 5, _ => false } }
+fn mk(n: integer) -> Sh { if n == 1 { Ci { r: 1 } } else { Sq { s: 2 } } }
+
+fn less<T: Ordered>(a: T, b: T) -> boolean { a < b }
+fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
+fn plus<T: Addable>(a: T, b: T) -> T { a + b }
+fn diff<T: Subtractable>(a: T, b: T) -> T { a - b }
+fn mul_neg<T: Numeric>(a: T, b: T) -> T { -(a * b) }
+fn scaled<T: Scalable>(a: T) -> integer { a.scale(3) }
+fn shown<T: Printable>(a: T) -> text { a.to_text() }
+
+fn main() {
+  // Builtins, through their own operators.
+  assert(plus(7, 3) == 10 && diff(7, 3) == 4 && mul_neg(7, 3) == -21, "integer");
+  assert(plus(7.5, 3.25) == 10.75 && less(3.25, 7.5), "float");
+  assert(less("ab", "cd") && same("ab", "ab") && !same(true, false), "text / boolean");
+  // A struct whose members take `(Self, Self)`, and a non-Self parameter the interface declares.
+  a = V { x: 7 };
+  b = V { x: 3 };
+  assert(plus(a, b).x == 10 && diff(a, b).x == 4 && mul_neg(a, b).x == -21, "V arithmetic");
+  assert(less(b, a) && !less(a, b), "V <");
+  assert(scaled(a) == 21 && shown(a) == "V7", "V scale / to_text");
+  // `Self?` parameters: 7 - 3 = 4, 3 < 7.
+  p = P { x: 7 };
+  q = P { x: 3 };
+  assert(diff(p, q).x == 4 && less(q, p), "P over Self? parameters");
+  // The member of the set that takes `(S, S)`: 7 + 3 = 10, not 7 + 3*10.
+  assert(plus(S { x: 7 }, S { x: 3 }).x == 10, "S set: {plus(S { x: 7 }, S { x: 3 }).x}");
+  // Content `==` for W, in the generic and at the concrete site alike.
+  w7 = W { x: 7 };
+  w7b = W { x: 7 };
+  w3 = W { x: 3 };
+  assert(w7 == w7b && !(w7 == w3), "concrete W == by content");
+  assert(same(w7, w7b), "generic W == by content, as the concrete site");
+  assert(!same(w7, w3), "generic W == by content: 7 against 3");
+  // A struct-enum's own `<`: Ci { r: 1 } answers 1 < 5.
+  assert(less(mk(1), mk(2)) && !less(mk(2), mk(1)), "Sh <");
+}

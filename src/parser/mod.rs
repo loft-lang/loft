@@ -10190,8 +10190,30 @@ impl Parser {
                     .possible_with_signature(&method_suffix, want, &concrete_type)
                     .unwrap_or(u32::MAX);
             }
+            // `@FR-G-Sat` — the signature is `[Self ↦ C](p̄ -> R)`, and `p̄` is a parameter LIST,
+            // not a count.  A member of the right arity whose parameters are other types does
+            // not take the call the bound promises: `OpMin(self: W, o: integer)` satisfied
+            // `Subtractable`, and the monomorph handed the `integer` parameter a record —
+            // `-3` on the interpreter, a SIGSEGV or a panic for `<` over `text` and `scale`
+            // over `text`, rustc refusing the native source (loft#1818).  A member of the
+            // name's overload set that does take it is the one the monomorph binds
+            // (`re_resolve_call` asks `Data::overload_with_params`, the same question).
+            let mut misfit = None;
+            if found != u32::MAX {
+                let params = self.bound_params_at(child_nr, &concrete_type);
+                if !self.data.params_fit(found, &params) {
+                    if let Some(member) = self.data.overload_with_params(&method_suffix, &params) {
+                        found = member;
+                    } else {
+                        misfit = self.param_misfit(found, &params, &method_suffix);
+                        found = u32::MAX;
+                    }
+                }
+            }
             // `(G-Sat-Eq)`, @C91 — every type satisfies `==`: one with no `OpEq` of its own is
-            // compared by content, which the monomorph lowers (`content_eq_pending`).
+            // compared by content, which the monomorph lowers (`content_eq_pending`).  An
+            // `OpEq` that does not take `(Self, Self)` is not its own for this purpose: the
+            // concrete `a == b` compares such a type by content too.
             if found == u32::MAX
                 && method_suffix == "OpEq"
                 && want == 2
@@ -10199,7 +10221,9 @@ impl Parser {
             {
                 continue;
             }
-            if found == u32::MAX {
+            if let Some(msg) = misfit {
+                out.push(msg);
+            } else if found == u32::MAX {
                 out.push(format!("missing {method_suffix}"));
             } else if let Some(msg) =
                 self.return_type_mismatch(child_nr, found, concrete_nr, &method_suffix)
@@ -10383,6 +10407,55 @@ impl Parser {
     ///
     /// `Self` in the interface's return substitutes to the concrete type first,
     /// so `fn mk(self: Self) -> Self` against `fn mk(self: A) -> A` agrees.
+    /// The visible parameter types an interface member `iface_method` declares, at the
+    /// implementor `concrete` (`[Self ↦ C]`).  A parameter typed by one of the interface's own
+    /// ASSOCIATED types (`Self.X`) stands for whatever companion the implementor supplies, so
+    /// it answers `Unknown` and asks nothing — as [`Self::return_type_mismatch`] leaves such a
+    /// return unchecked.
+    fn bound_params_at(&self, iface_method: u32, concrete: &Type) -> Vec<Type> {
+        let self_nr = self.data.def_nr("Self");
+        let iface = self.data.def(iface_method).parent;
+        self.data
+            .def(iface_method)
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden)
+            .map(|a| {
+                let t = if self_nr == u32::MAX {
+                    a.typedef.clone()
+                } else {
+                    Self::substitute_type(a.typedef.clone(), self_nr, concrete)
+                };
+                match t.base() {
+                    Type::Reference(d, _)
+                        if iface != u32::MAX
+                            && self.data.def(*d).parent == iface
+                            && matches!(self.data.def_type(*d), DefType::Struct) =>
+                    {
+                        Type::Unknown(0)
+                    }
+                    _ => t,
+                }
+            })
+            .collect()
+    }
+
+    /// The `(G-Sat)` refusal for a member whose parameter list does not take `params`: the
+    /// first position that does not, named as the author wrote both types.
+    fn param_misfit(&self, found: u32, params: &[Type], method: &str) -> Option<String> {
+        let have = self.data.visible_params(found);
+        have.iter()
+            .zip(params)
+            .find(|(h, w)| !self.data.param_fits(h, w))
+            .map(|(h, w)| {
+                format!(
+                    "'{method}' takes '{}' where the interface declares '{}'",
+                    h.source_name(&self.data),
+                    w.source_name(&self.data)
+                )
+            })
+    }
+
     fn return_type_mismatch(
         &self,
         iface_method: u32,
@@ -10713,7 +10786,8 @@ impl Parser {
             // first: over `OpMin(self: V, o: integer)` declared before `OpMin(self: V, o: V)`,
             // `diff<T: Subtractable>(a, b)` at `V` bound the integer member and passed it a
             // record (loft#1817).  The stub's own parameters, at this instance, name the member.
-            if data.has_overload_set(fn_name) {
+            let eq_stub = Data::is_bound_stub_for(def.name(), "OpEq", 2);
+            if eq_stub || data.has_overload_set(fn_name) {
                 let params: Vec<Type> = def
                     .attributes()
                     .iter()
@@ -10724,10 +10798,16 @@ impl Parser {
                             .clone()
                     })
                     .collect();
-                if !data.params_fit(resolved, &params)
-                    && let Some(by_params) = data.overload_with_params(fn_name, &params)
-                {
-                    resolved = by_params;
+                if !data.params_fit(resolved, &params) {
+                    if let Some(by_params) = data.overload_with_params(fn_name, &params) {
+                        resolved = by_params;
+                    } else if eq_stub {
+                        // `(G-Sat-Eq)`: an `OpEq` that does not take `(Self, Self)` is not the
+                        // type's own `==`, and `satisfaction_failures` admitted the type for
+                        // its CONTENT comparison — which the caller lowers for a stub left as
+                        // it is, as the concrete `a == b` does (loft#1818).
+                        return d_nr;
+                    }
                 }
             }
         }
