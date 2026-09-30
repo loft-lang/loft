@@ -984,8 +984,19 @@ fn cache_ttl() -> std::time::Duration {
 /// @PLN11 Arc N / N1 — mark a cached file as used *now* (touch-on-use): bumps its
 /// modification time so the idle-TTL GC keeps it.  Best-effort (no-op if the file
 /// is missing / unopenable).
+///
+/// The handle is opened for WRITE only on Windows, where `SetFileTime` needs it.  On Unix
+/// `futimens` works on a read-only descriptor, and the files touched here are cached
+/// executables and loaded cdylibs: a write handle on a Mach-O another process is running
+/// is what macOS's code-signing checks act on (a cached native test binary was killed by
+/// a signal on its first run after this took a write handle everywhere).
 pub fn touch_now(path: &std::path::Path) {
-    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    if cfg!(windows) {
+        open.write(true);
+    }
+    if let Ok(f) = open.open(path) {
         let _ = f.set_modified(std::time::SystemTime::now());
     }
 }
