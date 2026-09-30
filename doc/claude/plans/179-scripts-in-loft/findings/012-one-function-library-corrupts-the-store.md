@@ -1,12 +1,12 @@
-# A small pure-loft library under `~/.loft/lib` corrupts the store on its first call
+# A library cdylib built against a stale `libloft.rlib` loads into a newer binary and corrupts the store
 axis: behaviour
 met-by: the `script` library (strand 8), the first time `tests/dump_ignored_tests` loaded it
 status: open
-fix: loft#1776 — a load-time layout or table sized from the library's definitions; until it closes, the ports that would use `script` carry a marked local copy of the helper and fold it back
+fix: loft#1776 — a build identity the generated cdylib carries and the loader compares with the running binary (mismatch rebuilds or refuses, never loads); until then, rebuild the rlib and reinstall as one unit after every join (`make check-rlib` is the by-hand pre-flight)
 ref: loft#1776
 probe: 
 expect: 
 checked: 
 holds: unprobed
 
-A one-method package (`pub fn literals(self: text) -> vector<text>`, a three-line body) placed under `~/.loft/lib/script/` crashes the interpreter on its first call — `Store access out of bounds … the reference is corrupt`, or `realloc(): invalid next size` — deterministically, while the same method with a longer body, or with an unrelated second function beside it, runs; the shape of the whole file decides, not the function called. `regex` and `arguments` under the same directory are fine. `--native` fails earlier with `cannot find function cr_call_site` in the generated Rust. A probe needs a library on disk, so this one is re-measured by hand against the issue.
+First read as "a one-function package corrupts the store on its first call" (`Store access out of bounds … the reference is corrupt`, or `realloc(): invalid next size`), with the crash flipping on what else the file held. The real boundary is the binary: `cargo build --bin loft` after a join left the installed `libloft.rlib` and prefix behind, every pure-loft library under `~/.loft/lib` was auto-compiled against that stale rlib, and the cdylib was dlopen'ed into the newer interpreter. Reinstalling binary and rlib as one unit and clearing `native-auto/` makes the exact repro pass on every backend, `LOFT_REQUIRE_NATIVE=1` included. What the language lacks is the check: nothing compares the pair at build or at load, and the failure is silent corruption rather than a refusal. A probe would need two builds on disk, so this one is re-measured by hand against the issue.
