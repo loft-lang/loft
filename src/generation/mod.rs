@@ -3851,15 +3851,22 @@ impl Output<'_> {
     }
 
     /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
-    /// innermost enclosing loop that holds BOTH the vector's header and its element base.
-    /// The base is bound only in a loop that grows no store, so the vector's length is the
-    /// one the end's prelude took, on every round.  `None` everywhere else.
+    /// header the innermost loop holding the vector's element BASE derived that base from —
+    /// its own, or one an enclosing frame holds (an outer loop's, or the function's
+    /// `(R-Header)` header of a parameter the function leaves as it found it).  The base is
+    /// bound only in a loop that grows no store, so for that loop's extent the vector's
+    /// length is the one the end's prelude took, on every round.  Asking for header and base
+    /// in ONE frame declined every loop whose header an enclosing frame holds, and so the
+    /// function clause switched the bound clause off for the loops it covered.  `None`
+    /// everywhere else.
     pub(super) fn range_end_header(&self, var: u16) -> Option<String> {
         let path = self.range_end_lengths.get(&var)?;
-        (0..self.vec_bases.len().min(self.vec_headers.len()))
+        let base_level = (0..self.vec_bases.len())
             .rev()
-            .find(|&i| self.vec_bases[i].contains_key(path))
-            .and_then(|i| self.vec_headers[i].get(path).cloned())
+            .find(|&i| self.vec_bases[i].contains_key(path))?;
+        (0..=base_level.min(self.vec_headers.len().checked_sub(1)?))
+            .rev()
+            .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
