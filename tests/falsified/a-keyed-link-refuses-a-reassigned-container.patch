@@ -1,0 +1,108 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 44cdbcd59..82ead8d4c 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -6421,18 +6421,6 @@ use a separate collection or add after the loop"
+             }
+             return Type::Void;
+         }
+-        // @FR-H-Materialise — the view the branch below declines to copy is recorded, so the
+-        // scope pass opens it in the disturbance walk and copies it with `OpReplaceKeyed` where
+-        // its container is reassigned, grown or shrunk while it is live.  Left unrecorded, the
+-        // same programs panicked (`hash`, `sorted`, `index`) or read garbage (`trie`).
+-        if keyed_kt.is_some()
+-            && crate::parser::vectors::is_keyed(&s_type)
+-            && !matches!(code, Value::Insert(_) | Value::Null)
+-            && !amp_collection_bind
+-            && self.keyed_projection_views(code, var_nr)
+-        {
+-            self.vars.keyed_views.insert(var_nr);
+-        }
+         if let Some(kt) = keyed_kt
+             && crate::parser::vectors::is_keyed(&s_type)
+             && !matches!(code, Value::Insert(_) | Value::Null)
+diff --git b/src/scopes.rs a/src/scopes.rs
+index e04aa6ea2..893f071eb 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -645,16 +645,13 @@ fn mirrored_binding(b: &Block) -> Option<u16> {
+     }
+ }
+ 
+-/// Is `v` a VIEW of a keyed collection that the materialise can copy with `OpReplaceKeyed`?
+-/// Two kinds: a `match`/`is` payload binding of a keyed field (`(B-View)`, the parser marks
+-/// it never-free as one), and a plain bind of a keyed projection the parser recorded as a
+-/// view (`Function::keyed_views`, `(B-View-Depth)`, loft#1759).  A one-level projection off an
+-/// owned base copies at the bind (`(B-Copy)`) and is neither.  Widening the view walk's type
+-/// list alone was measured unsound — the naming and the copy have to land together — which
+-/// is why both kinds are admitted through this one test, read by the walk and the copy alike.
++/// Is `v` a `match`/`is` payload binding of a KEYED collection field — a view of its subject
++/// (`(B-View)`, the parser marks it never-free as one) that the materialise can copy with
++/// `OpReplaceKeyed`?  Asked of the payload binding only: a keyed PROJECTION bound off an owned
++/// base already copies at the bind (`(B-View-Base)`), and widening the view walk's type list
++/// alone was measured unsound (the naming and the copy have to land together).
+ fn keyed_payload_view(function: &Function, v: u16) -> bool {
+-    crate::parser::vectors::is_keyed(function.tp(v))
+-        && (function.is_overwritten_view(v) || function.keyed_views.contains(&v))
++    crate::parser::vectors::is_keyed(function.tp(v)) && function.is_overwritten_view(v)
+ }
+ 
+ /// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
+@@ -2248,14 +2245,7 @@ impl ViewWalk<'_> {
+                 ) || is_place_link(self.function, *v)
+                     || self.function.text_payload_views.contains(v)
+                     || self.function.group_write_views.contains_key(v)
+-                    || keyed_payload_view(self.function, *v)
+-                    // A keyed `&` link (`a = &o.h`) is a view on the same terms as the vector
+-                    // one, and was never opened here, so reassigning `o` left it following the
+-                    // NEW value where `(B-Ref-Reshape)` refuses the program (loft#1759).  The
+-                    // refusal reads `is_amp_container_link` too; the materialise does not copy
+-                    // it — it is not a `keyed_views` binding.
+-                    || (crate::parser::vectors::is_keyed(self.function.tp(*v))
+-                        && self.function.is_amp_container_link(*v)))
++                    || keyed_payload_view(self.function, *v))
+             {
+                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
+                 // local inside a nested block gives a view that outlives the block, and
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 9fb9dd88d..8453450f9 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -434,13 +434,6 @@ pub struct Function {
+     /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
+     /// parsing.
+     pub text_payload_views: std::collections::HashSet<u16>,
+-    /// The locals a plain bind made a VIEW of a keyed collection PROJECTION (`g = n.inn.h`,
+-    /// `g = vs[0].h` — `(B-View-Depth)`, loft#1759).  The disturbance walk opens each like a
+-    /// keyed payload view, and where its container is disturbed while it is still used the
+-    /// scope pass copies it with `OpReplaceKeyed` (`(H-Materialise)`).  A `&` link is not
+-    /// here: it is refused at the disturbance, never copied.  Carried like
+-    /// `text_payload_views`.
+-    pub keyed_views: std::collections::HashSet<u16>,
+     /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
+     /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
+     /// collection type the binding's own spelling passes.  The field spelling does not name the
+@@ -731,7 +724,6 @@ impl Function {
+             mv_field_origin: HashMap::new(),
+             tuphold_origin: HashMap::new(),
+             text_payload_views: std::collections::HashSet::new(),
+-            keyed_views: std::collections::HashSet::new(),
+             group_write_views: HashMap::new(),
+             tuple_backings: HashMap::new(),
+             tuple_backings_seen: std::collections::HashSet::new(),
+@@ -924,7 +916,6 @@ impl Function {
+         self.tuphold_origin.clone_from(&other.tuphold_origin);
+         self.text_payload_views
+             .clone_from(&other.text_payload_views);
+-        self.keyed_views.clone_from(&other.keyed_views);
+         self.group_write_views.clone_from(&other.group_write_views);
+         // CARRIED for the same reason, and read by the same pass.
+         self.tuple_backings.clear();
+@@ -1021,7 +1012,6 @@ impl Function {
+             // off the copy it works on, long after parsing.
+             tuphold_origin: other.tuphold_origin.clone(),
+             text_payload_views: other.text_payload_views.clone(),
+-            keyed_views: other.keyed_views.clone(),
+             group_write_views: other.group_write_views.clone(),
+             tuple_backings: other.tuple_backings.clone(),
+             tuple_backings_seen: std::collections::HashSet::new(),

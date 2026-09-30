@@ -11,6 +11,13 @@
 //
 // Axes this file MOVES:  the kind (vector + five keyed), depth (one level, nested).
 // Axes it HOLDS FIXED:   the disturbance is a reassignment of the local root.
+//
+// @falsified-at: bec7b20ef — interpret exit 1 -> 0, interpret expectations FAIL/12 -> 12/12 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/12 -> 12/12 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-keyed-link-refuses-a-reassigned-container.patch — interpret exit 1 -> 0, interpret expectations FAIL/12 -> 12/12 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/12 -> 12/12 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations on both backends — on the control the ten keyed refusals are
+//   missing and the two vector ones are emitted (counted from the diagnostics themselves,
+//   not the runner's "expected error never emitted" echo, which quotes the expected text).
+// HOLDS: asserts, leak, panic and refusals are equal on both trees and both backends.
 
 struct Rv { id: integer }
 struct Row { id: integer }

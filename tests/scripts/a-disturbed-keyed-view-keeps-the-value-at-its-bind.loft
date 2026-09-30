@@ -18,6 +18,14 @@
 // Axes it HOLDS FIXED:   the view is nested or through an element; one record before the
 //                        write; the holder is a local.  The `&` link's refusal is the sibling
 //                        file, a-keyed-link-refuses-a-reassigned-container.loft.
+//
+// @falsified-at: bec7b20ef — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-disturbed-keyed-view-keeps-the-value-at-its-bind.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+//   CHANNEL: exit and asserts on both backends, and the panic on native.  On the control the
+//   five keyed tests fail: `hash`, `sorted` and `index` panic before their assertion (the
+//   interpreter reports a panic as the test's failure, so its assertion count is the two that
+//   answered wrong — `trie` 1268 records, `spatial` 2); the vector test passes.
+// HOLDS: leak, refusals and expectations are equal on both trees and both backends.
 
 struct Rv { id: integer }
 struct Row { id: integer }
