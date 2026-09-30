@@ -75,6 +75,11 @@ slice found.
 | 3 | Tuple PARAMETERS: a by-value or const parameter of an admitted type, and a local handed to one (`blocked(from, to_x)` in the probe). | open |
 | 4 | Materialisation: a record is built where one is owed (a field or element store, a library boundary), so one such site no longer declines the whole function. | open |
 
+`resolve_move`, the row that motivated the plan, needs slice 3 and an INLINE sub-record.
+Its `vec3(…)` locals are handed to `move_blocked`, and `MoveResult` holds a `Vec3`, which
+slice 1's flat-record gate declines.  So slice 3 comes before slice 2, and nested layouts
+(native's `layout_into` already flattens them) belong in slice 3.
+
 After this plan, the same move applies to the push family (R-Push, R-PushFill, R-PushRec,
 R-Mint), then R-TextBorrow.  Those are separate plans.
 
