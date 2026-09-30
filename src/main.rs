@@ -9689,9 +9689,13 @@ fn main() {
     // browser build has no bridge dispatcher.  Declines on its own when the program's type
     // table does not start with the standard library's (`compiled_stdlib::mark`).
     if !native_mode && html_out.is_none() {
+        let t = std::time::Instant::now();
         let n = loft::compiled_stdlib::mark(&mut p.data, &p.database, &default_str);
         if loft::keys::env_set("LOFT_TIMING") {
-            eprintln!("compiled stdlib: {n} function(s) dispatched to their compiled bodies");
+            eprintln!(
+                "compiled stdlib: {n} function(s) dispatched to their compiled bodies ({} us)",
+                t.elapsed().as_micros()
+            );
         }
     }
     // @PLN119 arc A — mark each process-placed library's routable functions

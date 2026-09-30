@@ -14468,9 +14468,7 @@ impl Parser {
         fn walk(op: &Value, v: u16, this: &Parser) -> bool {
             match op.unspan() {
                 Value::Set(w, rhs) if *w == v => fresh_call(rhs, this),
-                Value::Loop(bl) | Value::Block(bl) => {
-                    bl.operators.iter().any(|o| walk(o, v, this))
-                }
+                Value::Loop(bl) | Value::Block(bl) => bl.operators.iter().any(|o| walk(o, v, this)),
                 Value::If(_, t, f) => walk(t, v, this) || walk(f, v, this),
                 Value::Insert(ops) => ops.iter().any(|o| walk(o, v, this)),
                 _ => false,

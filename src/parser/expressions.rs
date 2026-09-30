@@ -1011,10 +1011,9 @@ impl Parser {
             && let Type::Vector(elm, deps) = returned.base()
             && deps.is_empty()
         {
-            let w = self.vars.work_refs_p2(
-                &Type::Vector(elm.clone(), Deps::none()),
-                &mut self.lexer,
-            );
+            let w = self
+                .vars
+                .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
             let owned = returned.with_deps(&Deps::frame1(w));
             let call = std::mem::replace(rhs.as_mut(), Value::Null);
             **rhs = crate::data::v_block(

@@ -24,8 +24,10 @@
 use crate::data::{Data, Value};
 use crate::database::Stores;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 #[path = "compiled_stdlib_gen.rs"]
+#[rustfmt::skip]
 #[allow(warnings, clippy::all, clippy::pedantic)]
 mod generated;
 
@@ -144,11 +146,12 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
          pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[\n",
     );
     for (name, sym) in &bridges {
-        out.push_str(&format!("    ({name:?}, {sym:?}, {sym}),\n"));
+        let _ = writeln!(out, "    ({name:?}, {sym:?}, {sym}),");
     }
     out.push_str("];\n");
     let n = stores.types.len();
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "\n/// The standard library's type table this was generated against: its length and \
          fingerprint.\npub(crate) const PREFIX_TYPES: usize = {n};\n\
          pub(crate) const PREFIX_FINGERPRINT: u64 = {};\n\
@@ -156,7 +159,7 @@ pub fn generate(data: &Data, stores: &Stores, sources: &[(String, String)]) -> S
          pub(crate) const SOURCE_HASH: u64 = {};\n",
         prefix_fingerprint(stores, n).unwrap_or(0),
         source_hash(sources)
-    ));
+    );
     out
 }
 
@@ -188,8 +191,7 @@ pub fn mark(data: &mut Data, stores: &Stores, default_dir: &str) -> usize {
         || generated::BRIDGES.is_empty()
         || prefix_fingerprint(stores, generated::PREFIX_TYPES)
             != Some(generated::PREFIX_FINGERPRINT)
-        || source_hash(&crate::cache::collect_stdlib_sources(default_dir))
-            != generated::SOURCE_HASH
+        || source_hash(&crate::cache::collect_stdlib_sources(default_dir)) != generated::SOURCE_HASH
     {
         return 0;
     }
