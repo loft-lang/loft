@@ -1,0 +1,18 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index b9f17af9b..a77cee8a9 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -7289,13 +7289,8 @@ use a separate collection or add after the loop"
+     /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
+     /// args and may be re-evaluated freely; a place addressing sub-expression that
+     /// reaches a user call must be bound once (compound-assign place-once, C92).
+-    ///
+-    /// A WRITE is non-idempotent too, call or no call: `w[{c += 1; c}] -= 1` holds no user
+-    /// call, and without this arm the block ran for the read and again for the write — the
+-    /// value read from `w[2]` landed in `w[1]`, on both backends (loft#1825).
+     pub(crate) fn ir_has_user_call(&self, v: &Value) -> bool {
+         match v {
+-            Value::Set(_, _) => true,
+             Value::Call(d, args) => {
+                 !self.data.def(*d).name.starts_with("Op")
+                     || args.iter().any(|a| self.ir_has_user_call(a))

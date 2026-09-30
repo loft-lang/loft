@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COMPOUND PLACE WITH A SIDE-EFFECTING INDEX IS ADDRESSED ONCE (loft#1825, C92,
+// @FR-E-Asgn-Compound).  `place op= e` evaluates the place's addressing sub-expressions exactly
+// once.  The once-only hoist fired only for an index that CALLS a function, so an index block
+// that writes — `w[{c += 1; c}] -= 1` — ran for the read and again for the write: the value
+// read from `w[2]` landed in `w[1]` and `c` ended at 2, on both backends and in silence.  A
+// write inside the addressing is non-idempotent exactly as a call is.
+//
+// Axes this file MOVES:  the element (integer · float · a struct's field · a whole record via a
+// user operator · a nested vector, both indices), a `?` discharge on the place, and a plain
+// variable index (the unhoisted case, unchanged).
+// Axes it HOLDS FIXED:   the writing sub-expression is a block `{c += 1; c}`; the call form is
+// `tests/scripts/pln102-f2-place-once.loft`.
+//
+// @falsified-at: 388726ad0 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1825-a-compound-place-with-a-side-effecting-index-is-addressed-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: asserts on both backends (the first cell fails and stops the run).
+//   WITNESS: measured cell by cell on the control (interpreter): `[10,29,30] 2`,
+//   `[1.5,4.5,3.5] 2`, `14 4 1`, `50 45 1`, `[[1,null],[3,4]] 1 2`, `5 null 3` — every
+//   writing index ran twice; the plain index answered `[10,19,60]` on both trees.
+//   HOLDS: leak and panic are equal on both trees.
+
+struct Q { x: integer, y: integer }
+struct V { x: integer }
+fn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }
+fn pick(n: integer) -> integer? { if n > 0 { n } else { null } }
+
+fn main() {
+  w = [10, 20, 30];
+  c = 0;
+  w[{c += 1; c}] -= 1;
+  assert("{w}" == "[10,19,30]" && c == 1, "integer element: {w} {c}");
+  f = [1.5, 2.5, 3.5];
+  c = 0;
+  f[{c += 1; c}] += 1;
+  assert("{f}" == "[1.5,3.5,3.5]" && c == 1, "float element: {f} {c}");
+  ps = [Q { x: 1, y: 2 }, Q { x: 3, y: 4 }];
+  c = -1;
+  ps[{c += 1; c}].y += 10;
+  assert(ps[0].y == 12 && ps[1].y == 4 && c == 0, "field of an element: {ps[0].y} {ps[1].y} {c}");
+  vs = [V { x: 50 }, V { x: 60 }];
+  c = -1;
+  vs[{c += 1; c}] -= 5;
+  assert(vs[0].x == 45 && vs[1].x == 60 && c == 0, "record element: {vs[0].x} {vs[1].x} {c}");
+  m = [[1, 2], [3, 4]];
+  i = -1;
+  j = 0;
+  m[{i += 1; i}][{j += 1; j}] += 100;
+  assert("{m}" == "[[1,102],[3,4]]" && i == 0 && j == 1, "nested: {m} {i} {j}");
+  n = [pick(0), pick(5), pick(7)];
+  c = 0;
+  n[{c += 1; c}]? += 1;
+  assert(n[1] == 6 && n[2] == 7 && c == 1, "through a discharge: {n[1]} {n[2]} {c}");
+  k = [10, 20, 30];
+  c = 1;
+  k[c] -= 1;
+  k[c + 1] *= 2;
+  assert("{k}" == "[10,19,60]", "a plain index: {k}");
+}
