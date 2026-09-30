@@ -118,6 +118,12 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     if ops.sum_int == u32::MAX {
         return;
     }
+    // Asked of the body as it stands, without a copy: most functions hold no reduction, and a
+    // copy of every body cost the front end ~27,000 allocations on the medium corpus.
+    let code = &data.definitions[d_nr as usize].code;
+    if !contains_reduction(code, code, &ops) {
+        return;
+    }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let whole = code.clone();
     let mut fired = 0;
@@ -125,6 +131,42 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
         crate::rewrite_census::fired("R-KernelSum", fired);
+    }
+}
+
+/// Does `n` hold a loop [`reduction`] admits?
+fn contains_reduction(n: &Value, whole: &Value, ops: &Ops) -> bool {
+    if reduction(n, whole, ops).is_some() {
+        return true;
+    }
+    let mut found = false;
+    each_child(n, &mut |c| {
+        found = found || contains_reduction(c, whole, ops)
+    });
+    found
+}
+
+/// Call `f` on each direct child of `n`.
+fn each_child<'a>(n: &'a Value, f: &mut impl FnMut(&'a Value)) {
+    match n {
+        Value::Span(s) => f(&s.1),
+        Value::Call(_, a)
+        | Value::CallRef(_, a)
+        | Value::Insert(a)
+        | Value::Tuple(a)
+        | Value::Parallel(a) => a.iter().for_each(f),
+        Value::Block(b) | Value::Loop(b) => b.operators.iter().for_each(f),
+        Value::Set(_, x)
+        | Value::Return(x)
+        | Value::Drop(x)
+        | Value::Yield(x)
+        | Value::TuplePut(_, _, x) => f(x),
+        Value::If(a, b, c) | Value::Iter(_, a, b, c) => {
+            f(a);
+            f(b);
+            f(c);
+        }
+        _ => {}
     }
 }
 
