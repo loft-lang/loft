@@ -876,3 +876,20 @@ walks 11 %, `store_mut` 4 %, the vector header and push path 6 %, the text paylo
 
 What remains of the list: the placed buffer's prefill (item 4), the match copies in
 `pa_get`/`pa_text` (item 5), text payloads as spans (item 6).
+
+**Order from here (owner, 2026-09-30): prevent objects before making them cheaper.**  The
+lazy phase and the enum arm stay; they make a store's lifecycle cheaper, and that work comes
+back later.  But for a record the program never needed, a cheaper free only speeds up what
+the compiler should not have made.  So the next units remove objects, in this order:
+
+1. **A heap-owning record crossing a call as a value** (`(R-ValueRecord)` extended to records
+   with one heap field): `Decoded { value, next, ok }` answered as a tuple whose payload is a
+   handle, so a decode claims once for the tree and not once per node.  This is the "item 1" of
+   the six structural problems and the only lever the ledger prices at 3×.
+2. **A unit variant written into an enum field in place**: one tag byte, where today each
+   `ok: false` exit mints a store, copies it into the field and frees it.
+3. **`decode`'s orphaned caller buffer**: two store cycles per check that place nothing.
+4. **The match copies in `pa_get` / `pa_text`**: a read-only arm binds a view.
+
+Store efficiency (the placed buffer's prefill, `owned_walk`'s per-field `Vec`) resumes once
+these stop producing the objects it would speed up.
