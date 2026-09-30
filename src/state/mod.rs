@@ -270,8 +270,9 @@ pub struct State {
     /// build, so each keeps its own path.
     pub(crate) fast_stack: bool,
     /// Codegen only: the character walks of the function being generated
-    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
-    pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
+    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep` — found on the
+    /// first character local a block assigns, since most functions have none.
+    pub(crate) walk_steps: Option<Vec<crate::generation::hoist::CharWalk>>,
     /// Locals whose only write a fused op of the function being generated took over, so
     /// the slot they were given is never written (a character walk's result temp, which
     /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
@@ -701,7 +702,7 @@ impl State {
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
-            walk_steps: Vec::new(),
+            walk_steps: None,
             fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
@@ -7640,7 +7641,7 @@ impl State {
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
-            walk_steps: Vec::new(),
+            walk_steps: None,
             fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,

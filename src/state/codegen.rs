@@ -230,13 +230,7 @@ impl State {
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
-        self.walk_steps = if fusion_enabled() {
-            crate::generation::hoist::char_walks(data, def_nr)
-                .into_values()
-                .collect()
-        } else {
-            Vec::new()
-        };
+        self.walk_steps = None;
         // @PLN11 G2/M6 — read the body's SHAPE (null / empty-block) from the
         // persistent store when present, so these last native body reads are
         // also store-backed; else from the native graph.
@@ -4865,15 +4859,7 @@ impl State {
     /// (`OpNot(OpConvBoolFromText(T))`) as `OpTextNullJump`, `size(T) <= index` as
     /// `OpTextEndJump`.  Answers where the jump's displacement sits, or `None` — emitting
     /// nothing — for any other test.
-    fn emit_text_end_test(&mut self, test: IrNode, stack: &mut Stack) -> Option<u32> {
-        if !fusion_enabled() || test.kind() != ValueType::Call {
-            return None;
-        }
-        let args: Vec<Value> = test
-            .call_args()
-            .iter()
-            .map(|a| a.to_owned_value())
-            .collect();
+    fn emit_text_end_test(&mut self, name: &str, args: &[Value], stack: &mut Stack) -> Option<u32> {
         let inner = |v: &Value, name: &str| -> Option<u16> {
             let Value::Call(op, a) = v.unspan() else {
                 return None;
@@ -4882,7 +4868,7 @@ impl State {
             (stack.data.def(*op).name() == name).then_some(())?;
             text_local(stack, t)
         };
-        let (src, idx) = match (stack.data.def(test.call_to()).name(), &args[..]) {
+        let (src, idx) = match (name, args) {
             ("OpNot", [b]) => (inner(b, "OpConvBoolFromText")?, None),
             ("OpLeInt", [size, i]) => (inner(size, "OpSizeText")?, Some(int_local(stack, i)?)),
             _ => return None,
@@ -4977,7 +4963,15 @@ impl State {
     /// before it stores, which grows the stack, and this op pushes nothing.  Any other state
     /// answers `false`, and the block is emitted as before.
     fn emit_walk_step(&mut self, stack: &mut Stack, c: u16) -> bool {
-        let Some(w) = self.walk_steps.iter().find(|w| w.loop_var == c).cloned() else {
+        if !fusion_enabled() || !matches!(stack.function.tp(c).base(), Type::Character) {
+            return false;
+        }
+        let walks = self.walk_steps.get_or_insert_with(|| {
+            crate::generation::hoist::char_walks(stack.data, stack.def_nr)
+                .into_values()
+                .collect()
+        });
+        let Some(w) = walks.iter().find(|w| w.loop_var == c).cloned() else {
             return false;
         };
         let f = &stack.function;
@@ -5023,22 +5017,15 @@ impl State {
     /// is the test followed by `OpGotoFalseWord`.  Both end in the displacement, so the patch
     /// is the same.
     fn gen_if_test(&mut self, test: IrNode, stack: &mut Stack) -> u32 {
-        let fused = if test.kind() == ValueType::Call {
-            let args: Vec<Value> = test
-                .call_args()
-                .iter()
-                .map(|a| a.to_owned_value())
-                .collect();
-            fusable_int(stack, test.call_to(), &args).filter(|f| f.compare)
-        } else {
-            None
-        };
-        if let Some(code_step) = self.emit_text_end_test(test, stack) {
-            return code_step;
-        }
-        let le_args: Vec<Value> = if test.kind() == ValueType::Call
-            && stack.data.def(test.call_to()).name() == "OpLeInt"
-        {
+        // The arguments are materialised once, and only for an operator one of the fused
+        // tests below can take: an `if` over anything else pays nothing for them.
+        let op = (test.kind() == ValueType::Call).then(|| test.call_to());
+        let name = op.map_or("", |op| stack.data.def(op).name());
+        let args: Vec<Value> = if fusion_enabled()
+            && matches!(
+                name,
+                "OpEqInt" | "OpNeInt" | "OpLtInt" | "OpLeInt" | "OpNot"
+            ) {
             test.call_args()
                 .iter()
                 .map(|a| a.to_owned_value())
@@ -5046,8 +5033,15 @@ impl State {
         } else {
             Vec::new()
         };
-        if fusion_enabled()
-            && let [len, idx] = &le_args[..]
+        let fused = op
+            .filter(|_| !args.is_empty())
+            .and_then(|op| fusable_int(stack, op, &args))
+            .filter(|f| f.compare);
+        if let Some(code_step) = self.emit_text_end_test(name, &args, stack) {
+            return code_step;
+        }
+        if name == "OpLeInt"
+            && let [len, idx] = &args[..]
             && let Value::Call(len_op, len_args) = len.unspan()
             && stack.data.def(*len_op).name() == "OpLengthVector"
             && let [vec] = &len_args[..]
