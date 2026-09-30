@@ -767,3 +767,35 @@ Beside the row, measured as a CEILING and kept in scratch (`cbor.patch`, `plugin
 a reader that skips instead of decoding puts the row at 5.3× against a scanning twin, 1.97×
 against the tree twin.  It is not the answer; it is what the compiler is measured against.
 
+## Built (2026-09-30) — a lifted call result adopts like a named bind
+
+Item 1 of the list above.  `pa_text(pa_decode(frame), "op")` lifts the inner call into a
+`__lift_1` temp, and the temp is null-initialised in the function prologue (`lift_vars`) — so
+its one bind read as a REBIND, and a rebind of a record from a callee whose return carries its
+buffer's dep (`pa_decode` returns the local it copied out of `d`) takes the copy protocol on
+both backends: a store minted for the copy, `OpCopyRecord` over the whole tree, the callee's
+store freed.  `d = pa_decode(frame); pa_text(d, "op")` never paid that: a named first bind
+adopts the callee's minted store (`(O-Move)`, @PLN164 B1) with the buffer's free guarded by
+identity.
+
+The fix is one home for both spellings: `Scopes::lift_set` binds every record-lift temp, marks
+its bind after the prologue's null-init as its first (`deferred_first_bind`, the fact both
+backends' bind arms already read) and pairs the call's buffer through `pair_call_buffers` —
+`scan_set`'s pairing block, extracted byte-identically — so the buffer's free is
+`OpFreeRefIfDistinct(__ref_1, __lift_1)` exactly as the named bind's is.  The stdlib's one such
+site (`exists` lifting `file(path)`) moves with it.
+
+**Measured** (this box, `--native-release`, the check driver's 40 rounds of 2 048 checks, seven
+interleaved runs each): 0.38 s → 0.34 s, −11 % (the profile's `OpCopyRecord` share was 13.9 %).
+Per cell of the guard (`tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft`,
+`LOFT_ALLOC_REPORT=1`, stores per call): the lifted form 3 → 2 (the named control's 2), a lift in
+a loop of three 9 → 4, two lifts in one call 6 → 4, the early-return shape 3 → 2; a fresh
+(dep-empty) callee and a lift inside a `??` block were already at the named cost.
+`tests/lift_adopt.rs` pins the count on both backends, the IR shape, and the switch
+(`LOFT_NO_ADOPT_FIRST_BIND=1` restores the copy).  Falsified by sabotage: without the mark the
+copy is back and the loop cell answers wrong on `--native`; without the pairing every check
+stays green (the buffer holds the null sentinel today) and only the IR pin reads.
+
+What remains of the list is unchanged in order: `(R-ReturnField)` for `pa_decode`'s own copy
+(`v = d.value; return v`), the arena buffer, the placed buffer's prefill, the match copies, and
+the text-as-span language change.
