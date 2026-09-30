@@ -40,8 +40,8 @@
 struct U1009 { a: u8, b: u16, c: i8 }
 struct L1009 { b: integer limit(0, 255) }
 
-// @FTR-043 — a width type's bounds: enforced at the declaration and in storage, absent on a
-// local reached by `+=`
+// @FTR-043 — a width type's bounds: enforced at the declaration and in storage, and a local
+// reached by `+=` takes the default
 fn main() {
   // Sizes: one, two and four bytes, and a struct is their packed sum.
   assert(sizeof(u8) == 1, "sizeof(u8) = {sizeof(u8)}, want 1");

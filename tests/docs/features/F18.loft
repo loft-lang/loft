@@ -7,8 +7,14 @@ struct Account {
 fn describe(acct: const Account) -> text {
     "balance is {acct.balance}"
 }
+fn with_interest(acct: const Account) -> integer {
+    copy = acct;                    // a local copy may be changed
+    copy.balance = copy.balance + 25;
+    copy.balance
+}
 fn main() {
     a = Account { balance: 500 };
     println(describe(a));           // balance is 500
+    println("{with_interest(a)}");  // 525
     println("still {a.balance}");   // still 500
 }

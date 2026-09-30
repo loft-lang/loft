@@ -6,13 +6,13 @@ enum Entity {
     IceWall { thickness: integer },
     Crate { weight: integer }
 }
-fn hit(f: Fireball, w: IceWall) -> text {
+fn hit(_f: Fireball, _w: IceWall) -> text {
     "fire melts the wall"
 }
-fn hit(f: Fireball, c: Crate) -> text {
+fn hit(_f: Fireball, _c: Crate) -> text {
     "fire burns the crate"
 }
-fn hit(a: Entity, b: Entity) -> text {
+fn hit(_a: Entity, _b: Entity) -> text {
     "they bump"
 }
 fn main() {

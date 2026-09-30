@@ -18,4 +18,10 @@ fn main() {
     for x in c {
         println("{x}");   // 3, then 2, then 1
     }
+    println("c.n is still {c.n}");   // c.n is still 3 — the loop walked a copy
+    x = next(c);
+    while x != null {
+        x = next(c);      // consumes `c` itself
+    }
+    println("c.n is now {c.n}");     // c.n is now 0
 }

@@ -8,8 +8,15 @@ enum Shape {
 fn area(self: Circle) -> float { 3.14 * self.radius * self.radius }
 fn area(self: Rect) -> float { self.width * self.height }
 fn main() {
-    c = Circle { radius: 2.0 };
-    r = Rect { width: 3.0, height: 4.0 };
-    println("circle={c.area()} rect={r.area()}");
-    // circle=12.56 rect=12
+    shapes: vector<Shape> = [
+        Shape::Circle { radius: 2.0 },
+        Shape::Rect { width: 3.0, height: 4.0 }
+    ];
+    for s in shapes {
+        println("area={s.area()}");      // area=12.56, then area=12
+        match s {
+            Circle { radius } => println("a circle of radius {radius}"),
+            Rect { width, height } => println("a {width} by {height} rectangle")
+        }
+    }
 }
