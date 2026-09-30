@@ -60,36 +60,27 @@ are in `map_get_hex` (a record VIEW into the map: native's view-leaf rule, @PLN1
 `floor_y_at`; `slope_path_with_undo`'s are in functions this pass declines.  Both are the
 next candidates.
 
-## Kernels
+## Kernels — a stop-gap, not the method
 
-Native avoids a loop's per-element cost by calling a runtime KERNEL for the whole loop
-(`vector::sum_blocks_i64` for `sum`, `lazy_split` for a line walk).  The interpreter, running
-the same loop element by element, was 200–360× slower there — a cost no opcode trimming
-closes, since native spends under a nanosecond per element.  A kernel is therefore exposed as
-an ORDINARY stdlib function — declared without a loft body, one Rust body in
-`src/loop_kernels.rs`, reached by the interpreter through its single native-call operator
-(`OpStaticCall`, a row in `native::FUNCTIONS`) and by `--native` through `codegen_runtime` — so
-new kernels add functions, never opcodes (owner, 2026-09-30).  A scope-pass rule replaces a
-loop a kernel covers by one call, on both backends.
+Native avoids a loop's per-element cost; the interpreter, running the same loop element by
+element, was 200–360× slower on some routines.  A KERNEL (one Rust body both backends call as an
+ordinary function, never an opcode) closes such a gap for one name.  Kernels are a stop-gap and
+must never dominate: the preferred fix makes the LOFT code fast, because that fixes every loop
+of the same shape, users' own included, and optimisation work here slightly favours it (owner,
+2026-09-30).  Every kernel, why it exists and when it goes, is in the register,
+[KERNELS.md](../KERNELS.md); `make kernel-ratio` measures each against its loft body on both
+backends.  Today: `vector_sum_int` (the `sum` reduction), `split`, and `text_lines` under
+`File.lines()`.
 
-| kernel | replaces | interp before → after | native |
-|---|---|--:|--:|
-| `vector_sum_int` | `acc = acc + v[i]` over `0..v.len()` (stdlib `sum` over integers) | 1,174,380 → 4,830 ns/op | 4,300 ns/op |
-| `split` (`Stores::split_char`) | the stdlib `split`'s per-character loft loop | split 1.83 ms → 46 µs, split_walk 2.15 ms → 43 µs | unchanged (native's R-LazySplit / R-SplitTable read the kernel form) |
-| `text_lines` (private, under `File.lines()`) | the stdlib `lines`'s per-character loft loop | see the ports below | — |
-
-A stdlib kernel that is not itself the public name stays private (`fn`, not `pub fn`): the
-direction of the stdlib is out, not in ([@PLN179 strand 8](179-scripts-in-loft/README.md)).
-
-**Where the next kernels come from: the @PLN179 script ports.** @PLN179 ports the project's
-own scripts to loft, each a twin run beside its original (`make script-twin`), and scores
-every port on performance against the original ([SCOREBOARD.md](179-scripts-in-loft/SCOREBOARD.md)).
-Those ports are REAL interpreter workloads — a script runs interpreted by default (MODES.md)
-— so they are the corpus this plan optimises alongside the bench routines: a port slower than
-its original with a profile naming one stdlib loop is a kernel candidate, and its scoreboard
-row is the measurement.  `LOFT_PROFILE=1` on the port finds the loop; the finding in
-[REASONS.md](179-scripts-in-loft/REASONS.md) records it (finding 013 is `split` + `lines`, the
-two kernels above).
+**Where the work comes from: the @PLN179 script ports.** @PLN179 ports the project's own
+scripts to loft, each a twin run beside its original (`make script-twin`), and scores every port
+on performance against the original ([SCOREBOARD.md](179-scripts-in-loft/SCOREBOARD.md)).  Those
+ports are REAL interpreter workloads (a script runs interpreted by default, MODES.md), so they
+are the corpus this plan optimises alongside the bench routines.  `LOFT_PROFILE=1` on a slow
+port names the loop; the finding in [REASONS.md](179-scripts-in-loft/REASONS.md) records it.
+The first question is then what makes that LOFT code slow on the interpreter; a kernel follows
+only on the register's admission list.  Finding 013 was answered with two kernels before this
+rule was written down, and both carry a removal trigger.
 
 Measured on the two ports finding 013 names (interpreted, this box, same bytes out as the
 original on every run; Python is the original):
@@ -99,9 +90,11 @@ original on every run; Python is the original):
 | `tests/dump_ignored_tests` (584k lines through `lines()`) | 0.22 s | 3.67 s | 0.62 s | — |
 | `scripts/opl_points` (200k OPL lines through `split`) | 0.31 s | 4.13 s | 1.79 s | the per-field loop in `main` (62 %, `x = field[1..]` its top line) and the hand-written `%hex%` unescape (30 %) |
 
-Next, from the routines past the 100× cliff and the ports' profiles: `find` / `contains`
-(`str::find`), a split step for `split_walk` (361×, needs a text slice on the interpreter's
-stack), char and byte walks, and whatever the next slow port names.
+Next, in that order: the interpreter's per-character text walk and the slice appended to a
+vector (it is `opl_points`' own remaining cost, every script's text loop, and the trigger that
+retires the `split` and `text_lines` kernels); then a reduction the interpreter runs as one
+operation whatever its spelling (retires `vector_sum_int`; a program's `for x in v { r = r + x
+}` still pays over 150×); then whatever the next slow port names.
 
 ## Design
 

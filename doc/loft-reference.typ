@@ -8491,12 +8491,6 @@ pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U
 Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.
 
 ```rust
-pub fn vector_sum_int(v: const vector<integer>, acc: integer) -> integer
-```
-
-Returns `acc` plus every element of `v`, with integer addition's rules: a null element or an overflow makes the result null.  This is the loop `sum(v, acc)` runs over an integer vector, done in one call; `sum` uses it on its own.
-
-```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 

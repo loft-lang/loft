@@ -64,10 +64,6 @@
 <p>Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn vector_sum_int(v: const vector&lt;integer&gt;, acc: integer) -&gt; integer</code></pre>
-<p>Returns `acc` plus every element of `v`, with integer addition's rules: a null element or an overflow makes the result null.  This is the loop `sum(v, acc)` runs over an integer vector, done in one call; `sum` uses it on its own.</p>
-</div>
-<div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`.</p>
 </div>

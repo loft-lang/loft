@@ -1,0 +1,101 @@
+#!/usr/bin/env -S loft --interpret
+// The removal check of the kernel register (doc/claude/KERNELS.md): every kernel against the loft
+// body it stands in for, on the same input, best of 5, on the backend this runs on.  A kernel is a
+// stop-gap for loft code the backend cannot yet run fast; the ratio says how far it still is, and
+// a kernel whose loft body comes within the register's bar there is due to be removed there.
+//
+//     make kernel-ratio               (both backends: `--interpret` and `--native-release`)
+//
+// Each row also checks that the two answer the same, so the loft body stays an oracle for the
+// kernel as well as its measure.
+
+// `split`'s loft body before it became a kernel (default/02_files.loft at 12c5ea1a4).
+fn split_by_hand(s: text, separator: character) -> vector<text> {
+  result: vector<text> = [];
+  p = 0;
+  for c in s {
+    if c == separator {
+      result += [s[p..c#index]];
+      p = c#next;
+    }
+  }
+  if s.len() > 0 { result += [s[p..s.size()]]; }
+  result
+}
+
+// `lines`' loft body before it became a kernel, over text already read.
+fn lines_by_hand(c: text) -> vector<text> {
+  result: vector<text> = [];
+  p = 0;
+  prev_cr = false;
+  for ch in c {
+    if ch == '\n' {
+      e = ch#index;
+      if prev_cr { result += [c[p..e - 1]]; } else { result += [c[p..e]]; }
+      p = ch#next;
+    }
+    prev_cr = ch == '\r';
+  }
+  if p < c.size() { result += [c[p..c.size()]]; }
+  result
+}
+
+// A reduction written the way a program writes one; the kernel's rewrite does not match it.
+fn sum_by_hand(v: const vector<integer>) -> integer {
+  r = 0;
+  for x in v { r = r + x; }
+  r
+}
+
+// 2x: the kernel stays while the loft body is more than twice as slow (the register states why).
+BAR = 2;
+RUNS = 5;
+
+fn row(name: text, kernel_us: integer, loft_us: integer) {
+  // The ratio in tenths, printed with one decimal: 1.4x and 1.9x are different answers here.
+  tenths = if kernel_us > 0 { loft_us * 10 / kernel_us } else { 0 };
+  verdict = if loft_us <= kernel_us * BAR { "DUE for removal" } else { "keep" };
+  println("{name:<15} kernel {kernel_us:>8} us   loft body {loft_us:>9} us   {tenths / 10:>4}.{tenths % 10}x   {verdict}");
+}
+
+fn main() {
+  csv = "";
+  for i in 0..20000 { csv += "f{i},x,yy,"; }
+  text_in = "";
+  for i in 0..20000 { text_in += "line {i} of the text\r\n"; }
+  nums: vector<integer> = [];
+  for i in 0..200000 { nums += [i % 1000]; }
+
+  println("kernel register — each kernel against its loft body, best of {RUNS}; bar {BAR}x");
+
+  best_k = 0; best_l = 0;
+  for r in 0..RUNS {
+    t0 = ticks(); a = csv.split(','); t1 = ticks(); b = split_by_hand(csv, ','); t2 = ticks();
+    assert(len(a) == len(b) && a[len(a) - 2] == b[len(b) - 2], "split: the kernel and its loft body disagree");
+    if r == 0 || t1 - t0 < best_k { best_k = t1 - t0; }
+    if r == 0 || t2 - t1 < best_l { best_l = t2 - t1; }
+  }
+  row("split", best_k, best_l);
+
+  f = file("kernel_ratio_lines.txt");
+  f.write(text_in);
+  best_k = 0; best_l = 0;
+  for r in 0..RUNS {
+    t0 = ticks(); a = file("kernel_ratio_lines.txt").lines(); t1 = ticks();
+    b = lines_by_hand(file("kernel_ratio_lines.txt").content() ?? ""); t2 = ticks();
+    assert(len(a) == len(b) && a[len(a) - 1] == b[len(b) - 1], "lines: the kernel and its loft body disagree");
+    if r == 0 || t1 - t0 < best_k { best_k = t1 - t0; }
+    if r == 0 || t2 - t1 < best_l { best_l = t2 - t1; }
+  }
+  delete("kernel_ratio_lines.txt");
+  row("text_lines", best_k, best_l);
+
+  best_k = 0; best_l = 0;
+  for r in 0..RUNS {
+    t0 = ticks(); a = sum(nums, 0); t1 = ticks(); b = sum_by_hand(nums); t2 = ticks();
+    assert(a == b, "vector_sum_int: the kernel and its loft body disagree: {a} {b}");
+    if r == 0 || t1 - t0 < best_k { best_k = t1 - t0; }
+    if r == 0 || t2 - t1 < best_l { best_l = t2 - t1; }
+  }
+  row("vector_sum_int", best_k, best_l);
+}
