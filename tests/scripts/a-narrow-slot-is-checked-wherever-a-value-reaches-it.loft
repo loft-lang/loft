@@ -21,11 +21,10 @@
 //   - the tuple member `(1, 300)` into a `u8?` member now takes its 300 from `rt`, a value the
 //     compiler cannot fold, so it still pins the RUN-TIME answer (null);
 //   - the nullable FIELD DEFAULTS `a: u8? = 300`, `b: Lim? = 12`, `e: u16? = 70000` are refused
-//     — pinned by tests/parse_errors.rs
-//     `a_nullable_narrow_field_default_that_cannot_fit_is_refused` — and here hold in-range
-//     edges (254, 10, 65534), which still meet the field's conversion and must survive it.
-//     A field default has no run-time spelling to route them through: a nullable narrow
-//     field's default that calls a function does not parse, and one reading `$` is refused.
+//     as constants — pinned by tests/parse_errors.rs
+//     `a_nullable_narrow_field_default_that_cannot_fit_is_refused` — and here take the same
+//     values from `rt`, declared below the struct, so each still meets the field's checked
+//     narrowing at RUN TIME and reads null.
 //
 // Axes this file MOVES:  how the value reaches the slot (tuple literal: local / argument / return
 //                        / field / vector element / nested; `??` default: constant / narrow var /
@@ -40,7 +39,7 @@
 
 type Lim = integer limit(0, 10);
 struct F { f: u8 }
-struct D { a: u8? = 254, b: Lim? = 10, c: Lim = 4, d: u8 = 200, e: u16? = 65534 }
+struct D { a: u8? = rt(300), b: Lim? = rt(12), c: Lim = 4, d: u8 = 200, e: u16? = rt(70000) }
 struct H { t: (integer, u8) }
 
 fn g(n: integer) -> integer? { if n > 0 { n * 100 } else { null } }
@@ -78,5 +77,5 @@ fn test_a_coalesce_default_is_stored_into_the_slot() {
 fn test_a_field_default_meets_its_field() {
   s = D {};
   got = "{s.a} {s.b} {s.c} {s.d} {s.e}";
-  assert(got == "254 10 4 200 65534", "field defaults: {got}");
+  assert(got == "null null 4 200 null", "field defaults: {got}");
 }
