@@ -5645,3 +5645,45 @@ fn test() {
     // the parameter default
     .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:3:19");
 }
+
+// loft#1796 — `@FR-N-Reserve` through a JOIN: the constant a nullable narrow slot cannot hold
+// is refused wherever the value that reaches the slot can BE that constant — an arm of an `if`
+// or a `match` (at any depth: an arm of an arm, an `else if`, an arm whose block ends in it)
+// and the default of a `??` (in a chain, or an `if` standing as the default).  Each store is
+// refused once, naming its first constant that does not fit; the fitting shapes beside them
+// compile (tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft).
+#[test]
+fn a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join() {
+    code!(
+        "fn g(n: integer) -> integer? { if n > 0 { n } else { null } }
+fn test() {
+  c = len(\"ab\") > 1;
+  k = len(\"a\");
+  a: u8? = if c { 255 } else { 3 };
+  b: u8? = if !c { 1 } else if k == 2 { 2 } else { -1 };
+  d: u8? = if c { if k == 1 { 400 } else { 5 } } else { 6 };
+  e: u8? = match k { 1 => 300, _ => 2 };
+  f: u8? = match k { 1 => { k += 1; 256 }, _ => 2 };
+  h: u8? = g(0) ?? 300;
+  i: u8? = g(0) ?? g(-1) ?? 999;
+  j: i8? = g(0) ?? (if c { 7 } else { -128 });
+  assert(\"{a}{b}{d}{e}{f}{h}{i}{j}\" == \"\", \"\");
+}"
+    )
+    // an `if`'s then arm
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:5:36")
+    // an `else if` chain's last arm
+    .error("-1 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:6:57")
+    // an arm of an arm
+    .error("400 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:7:61")
+    // a `match` arm
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:8:41")
+    // a `match` arm whose block ends in it
+    .error("256 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:9:53")
+    // a `??` default
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:10:24")
+    // a `??` chain's last default
+    .error("999 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:11:33")
+    // an `if` standing as a `??` default, into an `i8?`
+    .error("-128 does not fit `i8?` — a nullable i8 holds -127..=127 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `i8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:12:47");
+}

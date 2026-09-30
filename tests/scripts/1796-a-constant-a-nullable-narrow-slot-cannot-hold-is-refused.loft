@@ -3,7 +3,8 @@
 // be stored as null, which is never what the author wrote, so it is refused at compile time the
 // way its non-null twin refuses a constant that does not fit (C80's compile-time valve) — in
 // every position that stores into such a slot: a local, a reassignment, a struct literal field,
-// a vector literal element, a call argument and a return (loft#1796).  What stays: an in-range
+// a vector literal element, a call argument and a return (loft#1796) — and through a JOIN, as
+// an arm of an `if` / `match` or the default of a `??`, at any depth.  What stays: an in-range
 // constant, `null` itself, an author's own `300 as u8?` (asking for the checked cast is asking
 // for the null), a RUNTIME value outside the range (null, by design), and a wider slot (`u16?`
 // holds 255).
@@ -19,6 +20,9 @@
 struct R { b: u8?, s: i8? }
 
 fn f(p: u8?) -> boolean { p == null }
+fn f2(n: integer) -> integer? { if n > 0 { n } else { null } }
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
 
 fn main() {
   x: u8? = 254;
@@ -37,5 +41,26 @@ fn main() {
   assert(y == null, "a runtime value outside the range is null, by design");
   w: u16? = 255;
   assert(w == 255, "a wider slot holds 255: {w}");
+  // Through a JOIN (the arms of an `if` / `match`, the default of a `??`): every constant leaf
+  // that fits compiles and is the value, and an out-of-range one that arrives at RUN TIME is
+  // null beside a fitting constant in the same expression.  The refused spellings are
+  // tests/parse_errors.rs `…_refused_through_a_join`.
+  t = len("ab") > 1;
+  k = len("a");
+  j1: u8? = if t { 254 } else { 0 };
+  j2: u8? = if !t { 254 } else { 0 };
+  j3: u8? = if !t { 1 } else if k == 1 { 2 } else { 3 };
+  j4: u8? = if t { if k == 2 { 250 } else { 251 } } else { 252 };
+  j5: u8? = match k { 1 => 253, _ => 0 };
+  j6: u8? = match k { 1 => { k += 1; 249 }, _ => 0 };
+  j7: u8? = f2(0) ?? 254;
+  j8: u8? = f2(0) ?? f2(-1) ?? 248;
+  j9: u8? = f2(0) ?? (if t { 247 } else { 0 });
+  jr: u8? = if t { rt(300) } else { 3 };
+  jd: u8? = f2(0) ?? rt(999);
+  js: i8? = f2(0) ?? (if !t { 7 } else { rt(-128) });
+  jn: u8? = if t { null } else { 3 };
+  got = "{j1} {j2} {j3} {j4} {j5} {j6} {j7} {j8} {j9} {jr} {jd} {js} {jn}";
+  assert(got == "254 0 2 251 253 249 254 248 247 null null null null", "joins: {got}");
   println("ok");
 }

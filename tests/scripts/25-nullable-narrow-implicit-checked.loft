@@ -6,6 +6,9 @@
 // is allowed precisely because the target is nullable (the null documents that overflow is
 // expected). A NON-NULL narrow target (`u8`) is unchanged and still requires an explicit `as`
 // (its reject case lives in 102-expected-errors.loft). Both-backend guard.
+// Since loft#1796 a CONSTANT arm that cannot fit (`if b { 300 } else { null }` into a `u8?`) is
+// refused at compile time (tests/parse_errors.rs `…_refused_through_a_join`), so the overflow
+// cell takes its 300 from `rt`, which the compiler cannot fold: the run-time narrowing it pins.
 fn if_arm(b: boolean) -> u8? {
   if b { 200 } else { null }
 } // bare-literal if-arm, no `as`
@@ -16,8 +19,10 @@ fn from_intopt(b: boolean) -> u8? {
   g(b)
 } // integer? source into u8?
 fn overflows(b: boolean) -> u8? {
-  if b { 300 } else { null }
-} // out-of-u8-range arm → null
+  if b { rt(300) } else { null }
+} // out-of-u8-range arm, at run time → null
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
 
 fn main() {
   assert(if_arm(true) == 200, "if_arm(true)={if_arm(true)}");

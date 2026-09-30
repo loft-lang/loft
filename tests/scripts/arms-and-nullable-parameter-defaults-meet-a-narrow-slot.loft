@@ -27,6 +27,8 @@
 // (`a_nullable_narrow_field_default_that_cannot_fit_is_refused` holds the parameter default
 // beside the field's).  Those three defaults now take their value from `rt`, which the compiler
 // cannot fold, so each still pins the RUN-TIME answer: a default that does not fit reads null.
+// The same holds for an ARM: `o: u8? = if c { 255 } else { 3 }` is refused (tests/parse_errors.rs
+// `…_refused_through_a_join`), so the `o` cell takes its 255 from `rt` and still reads null.
 
 type Lim = integer limit(0, 10);
 enum K { Ka, Kb, Kc }
@@ -49,7 +51,7 @@ fn test_arms_that_all_fit_are_a_fitting_value() {
   y: u8 = if m == 1 { 1 } else if m == 3 { 250 } else { 3 };
   z: u8 = match k { Ka => 9, Kb => 255, Kc => 0 };
   w: u8 = if c { assert(m > 0, "m"); 17 } else { 3 };
-  o: u8? = if c { 255 } else { 3 };
+  o: u8? = if c { rt(255) } else { 3 };
   got = "{x} {y} {z} {w} {o}";
   assert(got == "200 250 255 17 null", "arms: {got}");
 }

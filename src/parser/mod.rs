@@ -5103,20 +5103,8 @@ impl Parser {
         if spec.forced_size.is_none() && (spec.is_wide_template() || spec.is_signed32_template()) {
             return None;
         }
-        let n = match code.unspan() {
-            Value::Int(n) => i64::from(*n),
-            Value::Long(n) => *n,
-            Value::Null => return None,
-            other => match crate::const_eval::const_eval(other, &self.data) {
-                Some(Value::Int(n)) => i64::from(n),
-                Some(Value::Long(n)) => n,
-                _ => return None,
-            },
-        };
         let (lo, hi) = (i64::from(spec.usable_min(true)), spec.usable_max(true));
-        if n >= lo && n <= hi {
-            return None;
-        }
+        let n = self.unfitting_stored_constant(code, lo, hi)?;
         // A range that fills a fixed width gives up one code to its null; a `limit` range
         // widens instead and keeps every value, so its non-null twin holds no more than it.
         if lo > i64::from(spec.min) || hi < spec.max {
@@ -5137,6 +5125,43 @@ impl Parser {
             "{n} does not fit `{name}?` — it holds {lo}..={hi}, so this constant would be stored \
              as null.  Use a wider type"
         ))
+    }
+
+    /// The first constant a value can reach its slot as that lies outside `lo..=hi`: the value
+    /// itself when it is one, and otherwise every leaf a JOIN can deliver — each arm of a value
+    /// `if` or `match`, the default of a `??` (whose lowering is an `if` or a block ending in
+    /// one), and a value block's answer.  Asked by the nullable narrow refusal, so a constant
+    /// that cannot fit is refused however it reaches the slot (`if c { 255 } else { 3 }`,
+    /// `g() ?? 300`); a leaf that is not a constant — the `??` subject, a call, a variable — is
+    /// no constant to judge.  Every store into such a slot asks, so it allocates nothing.
+    fn unfitting_stored_constant(&self, code: &Value, lo: i64, hi: i64) -> Option<i64> {
+        let n = match code.unspan() {
+            Value::Int(n) => i64::from(*n),
+            Value::Long(n) => *n,
+            Value::Null => return None,
+            Value::If(_, then, other) => {
+                return self
+                    .unfitting_stored_constant(then, lo, hi)
+                    .or_else(|| self.unfitting_stored_constant(other, lo, hi));
+            }
+            Value::Block(bl) => {
+                return bl
+                    .operators
+                    .last()
+                    .and_then(|last| self.unfitting_stored_constant(last, lo, hi));
+            }
+            // Only an operator folds (`-1`, `200 + 100`, `255 as u8?`); a call to a function
+            // is no constant, and asking `const_eval` about one allocates for its arguments.
+            Value::Call(op, _) if self.data.def(*op).name.starts_with("Op") => {
+                match crate::const_eval::const_eval(code, &self.data) {
+                    Some(Value::Int(n)) => i64::from(n),
+                    Some(Value::Long(n)) => n,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        (n < lo || n > hi).then_some(n)
     }
 
     /// Report [`Self::nullable_narrow_constant_refusal`]'s message once per source position.

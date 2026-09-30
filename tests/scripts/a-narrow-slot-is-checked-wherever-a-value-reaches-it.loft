@@ -24,7 +24,9 @@
 //     as constants — pinned by tests/parse_errors.rs
 //     `a_nullable_narrow_field_default_that_cannot_fit_is_refused` — and here take the same
 //     values from `rt`, declared below the struct, so each still meets the field's checked
-//     narrowing at RUN TIME and reads null.
+//     narrowing at RUN TIME and reads null;
+//   - the `??` default `o: u8? = g(0) ?? 300` is refused as a constant (tests/parse_errors.rs
+//     `…_refused_through_a_join`) and takes its 300 from `rt`, so it still reads null.
 //
 // Axes this file MOVES:  how the value reaches the slot (tuple literal: local / argument / return
 //                        / field / vector element / nested; `??` default: constant / narrow var /
@@ -69,7 +71,7 @@ fn test_a_coalesce_default_is_stored_into_the_slot() {
   e: u8 = g(3) ?? 7;
   f: u8 = g(0) ?? g(3) ?? 6;
   h: u8 = g(3) ?? g(2) ?? 6;
-  o: u8? = g(0) ?? 300;
+  o: u8? = g(0) ?? rt(300);
   got = "{a} {b} {c} {d} {e} {f} {h} {o}";
   assert(got == "7 100 9 44 7 6 200 null", "coalesce defaults: {got}");
 }
