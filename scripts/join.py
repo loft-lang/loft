@@ -256,7 +256,7 @@ def cmd_survey(args):
                 r = classify(c, registry, env, scheduled)
                 # A checkpoint its author has not verified ends what this join takes from the
                 # source: the commits after it may build on it.
-                if r["class"] in ("NEW", "PARTIAL") and re.match(
+                if r["class"] in ("NEW", "PARTIAL") and not args.take_wip and re.match(
                         r"(?i)(wip\b|fixup!|squash!)", r["subject"]):
                     r["class"] = wip = "WIP"
                 if r["class"] in ("NEW", "PARTIAL") and r["subject"] in ours:
@@ -768,6 +768,8 @@ def main():
         p.add_argument("--base", default="origin/main")
         p.add_argument("--days", type=int, default=2)
         p.add_argument("--verbose", action="store_true", help="list skipped commits too")
+        p.add_argument("--take-wip", action="store_true",
+                       help="take a source's `wip` checkpoints too (the owner's call, per join)")
 
     common(sub.add_parser("survey"))
     p = sub.add_parser("apply")
