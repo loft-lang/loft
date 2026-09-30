@@ -409,7 +409,10 @@ def cmd_apply(args):
             print(f"  {pending['sha'][:9]} resolved by hand — continuing")
     for s in plan["sources"]:
         todo = [r for r in s["commits"] if r["class"] in ("NEW", "PARTIAL") and not r.get("done")]
-        if not todo and s.get("checked"):
+        picked_any = any(r["class"] in ("NEW", "PARTIAL") for r in s["commits"])
+        if not todo and (s.get("checked") or not picked_any):
+            # Nothing of this source's was taken: the tree is what the previous check saw.
+            s["checked"] = True
             continue
         if todo:
             print(f"== {s['name']}: picking {len(todo)}")
