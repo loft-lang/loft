@@ -9,6 +9,11 @@ One row per reason a port MET to prefer Python or bash over loft — recorded wh
 guessed, struck only when the port that met it re-measures green on that axis
 ([README § The bar](README.md)).  `OPEN` is the plan's headline number.
 
+**This table is the hand-kept SEED.**  The register's home is the tracker: each row
+becomes an issue carrying an `axis:` label (LABELS.md § axis), and from then on
+`make script-reasons` renders this file from those issues and nothing here is edited by
+hand.  A row below that has no issue number is one not yet filed.
+
 **OPEN: 9**
 
 | # | met by | axis | the reason | the fix it needs | status |
