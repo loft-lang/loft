@@ -20351,13 +20351,9 @@ impl Parser {
                 if !self.first_pass {
                     // A struct-enum value: its size is its VARIANT's, known at runtime — a
                     // nullable one's too, when a value is there (`hm[k].s`).  An ABSENT one
-                    // holds no variant and keeps its type's static size, as it always has:
-                    // what `sizeof` of an absent variant should answer is not settled.
-                    let absent = if matches!(tp, Type::Optional(_)) {
-                        self.packed_size(&tp, u32::MAX)
-                    } else {
-                        0
-                    };
+                    // holds no variant, so F45's general rule answers: the size of its TYPE,
+                    // as `sizeof(Shape)` does, in every position (owner ruling, loft#1822).
+                    let absent = self.packed_size(&tp, u32::MAX);
                     *val = self.variant_size(drop, enum_nr, absent);
                 }
             } else if matches!(tp.base(), Type::Tuple(_)) || self.data.type_elm(&tp) != u32::MAX {
@@ -20390,7 +20386,7 @@ impl Parser {
     /// of a struct, of a hash entry or of a vector element sized its CONTAINER (4, 56, 40, 8)
     /// (loft#1822).  The value is evaluated once, into the discriminant; each variant's size
     /// is known here, so the answer is a chain over it; an absent value (discriminant 0, no
-    /// variant) answers `absent`.
+    /// variant) answers `absent`, its type's size.
     fn variant_size(&mut self, value: Value, enum_nr: u32, absent: i32) -> Value {
         let d = self.create_unique("sizeof_disc", &I32);
         self.vars.defined(d);

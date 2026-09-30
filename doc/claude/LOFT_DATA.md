@@ -673,6 +673,7 @@ field or vector element. For range-constrained integer types (`u8`, `u16`, etc.)
 is the packed size (1 or 2 bytes), not the stack slot size. `sizeof(expr)` answers
 `sizeof` of the expression's type — a `u8` local or field is 1, a `vector` local 4 —
 except a struct-enum value, whose size is computed at runtime from the variant it holds.
+An absent struct-enum value holds no variant and sizes as its type, like `sizeof(Shape)`.
 
 Catalogue: @F45; guards: `tests/scripts/89-sizeof.loft`,
 `tests/scripts/1779-sizeof-of-an-expression-is-sizeof-of-its-type.loft`,
