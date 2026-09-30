@@ -563,9 +563,10 @@ fn compile_native_job(
         // hit (not recompiled) run after run, so without this its mtime
         // would freeze at first-compile time and an age-based reaper would
         // delete exactly the entries the cache most wants to keep warm.
-        let now = std::time::SystemTime::now();
-        let _ = std::fs::File::open(&job.binary).and_then(|f| f.set_modified(now));
-        let _ = std::fs::File::open(&job.key_file).and_then(|f| f.set_modified(now));
+        // `touch_now` opens for WRITE: a read-only handle's `set_modified` is refused on
+        // Windows, and the error was discarded, so the bump silently did nothing there.
+        loft::cache::touch_now(&job.binary);
+        loft::cache::touch_now(&job.key_file);
         return Ok(true);
     }
     // Preflight (Layer 2): never start a compile that could overflow a

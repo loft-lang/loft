@@ -746,7 +746,14 @@ mod reclaim_tests {
             let p = dir.join(name);
             std::fs::write(&p, b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
-            std::fs::File::open(&p).unwrap().set_modified(t).unwrap();
+            // Open for WRITE before set_modified: Windows `SetFileTime` needs write access
+            // (Unix `futimens` works on a read-only fd), as `cache::touch_now` does.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
             p
         };
         let stale_bin = old("loft_native_a_bin");
