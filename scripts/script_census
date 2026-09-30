@@ -17,6 +17,7 @@
 //   T2  needs only regex / TOML / json / argparse — after strand 3 closes those gaps
 //   T5  runs a program of its own choosing (`"$@"`, `exec`, a command held in a
 //       variable, a `$LOFT` binary) — strand 4's `run`, before any tool library
+//   T7  imports a sibling script as a module — ported after that one
 //   T8  a shell FRAGMENT another script `source`s — not a program; ported when its
 //       last consumer is
 // `bench/*/bench.py` are the Python REFERENCE programs the benchmarks compare loft
@@ -262,6 +263,7 @@ fn tranche_of(lang: text, name: text, t: vector<text>, m: vector<text>) -> text 
   if lang == "loft" { return "T0"; }
   if never(name) { return "T9"; }
   if has(t, "run") { return "T5"; }
+  if has(m, "sibling") { return "T7"; }
   if has(t, "cargo") || has(t, "rustc") { return "T4"; }
   if has(t, "git") || has(t, "gh") || has(t, "curl") { return "T3"; }
   if has(m, "re") || has(m, "tomllib") || has(m, "toml") || has(m, "json") || has(m, "argparse")
@@ -290,6 +292,10 @@ fn classify(path: text) -> Row {
       for mod in ["re", "json", "tomllib", "toml", "argparse", "subprocess"] {
         if has(w, mod) { m = add_unique(m, mod); }
       }
+      // `import x` / `from x import` where x.py sits beside this script: a sibling module.
+      second = "";
+      if len(w) > 1 { second = w[1] ?? ""; }
+      if second != "" && is_file(path.dir() + "/" + second + ".py") { m = add_unique(m, "sibling"); }
     }
     if is_gate(lang, line) { gate = true; }
     if is_write(lang, line) { writes = true; }
@@ -391,6 +397,7 @@ fn main() {
   print_tranche(rows, "T3", "needs git / gh / curl — strand 4, typed git + github");
   print_tranche(rows, "T4", "needs cargo / rustc — strand 4, typed cargo");
   print_tranche(rows, "T5", "runs a program of its own choosing — strand 4's `run` first");
+  print_tranche(rows, "T7", "imports a sibling script as a module — ported after that one");
   print_tranche(rows, "T8", "a shell fragment another script sources — not a program");
   print_tranche(rows, "T9", "stays as it is unless the owner says otherwise");
 }

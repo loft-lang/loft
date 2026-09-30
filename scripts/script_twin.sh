@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # @PLN179 strand 2 — the twin: does a port leave the same world as the script it replaces?
 #
-#   scripts/script_twin.sh [--files DIR [--by-content] | --tracked DIR] [--runs N] ORIG PORT [-- ARG...]
+#   scripts/script_twin.sh [--files DIR [--by-content] | --tracked DIR] [--stdin FILE] [--runs N] ORIG PORT [-- ARG...]
 #   scripts/script_twin.sh --self-test
 #
 # Runs ORIG and PORT from the repository root with the same ARGs and compares four
@@ -11,7 +11,8 @@
 # names, for a script whose numbering follows an unordered `find`.  --tracked DIR is for a
 # GENERATOR whose output is committed: each side regenerates into DIR and the channel is
 # what `git` then sees there — a clean tree on both sides means both wrote the committed
-# bytes, and a diff names the side that did not.  --runs N times each
+# bytes, and a diff names the side that did not.  --stdin FILE feeds both sides the same
+# input, for a filter script.  --runs N times each
 # side N times and reports the best wall clock, so the performance verdict is beside the
 # behaviour one.  Exit 0 when every channel agrees, 1 on a divergence, 2 on usage.
 #
@@ -21,12 +22,13 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-files_dir=""; by_content=0; runs=1; tracked_dir=""
+files_dir=""; by_content=0; runs=1; tracked_dir=""; stdin_file=/dev/null
 while [ $# -gt 0 ]; do
   case "$1" in
     --files) files_dir="$2"; shift 2 ;;
     --by-content) by_content=1; shift ;;
     --tracked) tracked_dir="$2"; shift 2 ;;
+    --stdin) stdin_file="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --self-test) exec bash "$0" --run-self-test ;;
     --run-self-test) self_test=1; shift ;;
@@ -78,7 +80,7 @@ run_side() {
     [ -n "$files_dir" ] && rm -rf "$files_dir"
     local s e ms
     s=$(date +%s%N)
-    "$script" "$@" > "$work/$side.out" 2> "$work/$side.err"
+    "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
     echo $? > "$work/$side.exit"
     e=$(date +%s%N)
     ms=$(( (e - s) / 1000000 ))

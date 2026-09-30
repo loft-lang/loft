@@ -6,7 +6,7 @@ fix: `exit(code)` in the stdlib — a primitive only the runtime can answer, whi
 ref: 
 probe: 009.probe.loft
 expect: refused
-checked: 03b3e836
+checked: 23155096
 holds: yes
 
 no `exit(code)`: `set -e`'s "stop with status 1 on the first unreadable file" is an `assert`, whose stderr and status are loft's, not the script's
