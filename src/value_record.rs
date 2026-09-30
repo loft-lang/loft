@@ -755,19 +755,12 @@ fn rewrite_callee(data: &mut Data, ops: &Ops, d: u32, c: &Callee) {
 
 fn literals_to_tuples(n: &mut Value, buf: u16, schema: &HashMap<i32, Kind>, ops: &Ops) {
     let n = n.unspan_mut();
-    if literal_fill(n, buf, schema, ops).is_some() {
-        let Value::Block(b) = std::mem::replace(n, Value::Null) else {
-            unreachable!()
-        };
-        let mut values = Vec::new();
-        for o in b.operators {
-            if let Value::Call(op, mut args) = o.unspan().clone()
-                && ops.set_kind(op).is_some()
-                && let Some(mut v) = args.pop()
-            {
-                literals_to_tuples(&mut v, buf, schema, ops);
-                values.push(v);
-            }
+    // The values come from the SAME `literal_fill` the admission read the order off, so the
+    // tuple and every `TupleGet` index agree by construction.
+    if let Some(fill) = literal_fill(n, buf, schema, ops) {
+        let mut values: Vec<Value> = fill.values.into_iter().cloned().collect();
+        for v in &mut values {
+            literals_to_tuples(v, buf, schema, ops);
         }
         *n = Value::Tuple(values);
         return;
