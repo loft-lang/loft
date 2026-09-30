@@ -426,6 +426,7 @@ pub mod lockfile;
 pub mod log_config;
 pub mod logger;
 pub mod manifest;
+pub mod compiled_stdlib;
 pub mod native_gate;
 pub mod native_lib;
 #[cfg(feature = "registry")]
