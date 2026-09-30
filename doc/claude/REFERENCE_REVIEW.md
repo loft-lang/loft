@@ -832,7 +832,7 @@ differently and only a cell could ever have caught the claim.
 
 | chapter source | reviewed through | commit |
 |---|---|---|
-| `default` | 2026-09-30 | `e40c64c46` |
+| `default` | 2026-09-30 | `ebef30d34` |
 | `doc/00-vs-python.html` | 2026-09-30 | `e40c64c46` |
 | `doc/00-vs-rust.html` | 2026-09-30 | `e40c64c46` |
 | `doc/install.html` | 2026-09-03 | `b1ccf0e9` |
