@@ -3,18 +3,20 @@
 
 | language | files | lines |
 |---|---|---|
-| Python | 96 | 28319 |
-| bash | 145 | 18593 |
-| loft (under scripts/) | 5 | — |
+| Python | 96 | 28321 |
+| bash | 145 | 18602 |
+| loft (under scripts/) | 7 | — |
 
-Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **36575**.
+Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **36586**.
 
-## T0 — already loft — the twin harness's first subjects (5 files, 827 lines)
+## T0 — already loft — the twin harness's first subjects (7 files, 1151 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
 | `scripts/build-gallery-examples.loft` | loft | 113 |  |  |  | report |
 | `scripts/build-playground-examples.loft` | loft | 176 |  |  |  | report |
+| `scripts/opl_points` | loft | 97 |  |  | script | report |
+| `scripts/rule_predicate_audit` | loft | 227 |  |  | script | report |
 | `scripts/script_census` | loft | 403 |  |  | make | report |
 | `scripts/script_reasons` | loft | 111 |  |  | make | report |
 | `scripts/wasm_bundle_stamp` | loft | 24 |  |  | make | report |
@@ -38,7 +40,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `tests/wasm/coi-server.py` | py | 44 |  |  | make,script | writes |
 | `tests/wasm/html-plain-server.py` | py | 38 |  |  | script | writes |
 
-## T2 — needs only regex / TOML / json / argparse — after strand 3 closes those gaps (77 files, 12445 lines)
+## T2 — needs only regex / TOML / json / argparse — after strand 3 closes those gaps (77 files, 12447 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
@@ -98,13 +100,13 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/null_census_sweep.sh` | sh | 23 | grep sed |  |  | report |
 | `scripts/nullable_road.py` | py | 318 | grep | argparse re subprocess | make | gate+writes |
 | `scripts/o_proxy_check.py` | py | 563 |  | re | make,script | gate |
-| `scripts/opl_points.py` | py | 71 |  | re |  | gate |
+| `scripts/opl_points.py` | py | 71 |  | re | script | gate |
 | `scripts/probe-matrix` | sh | 193 | grep sed |  | script | gate+writes |
 | `scripts/probe_leg_report.sh` | sh | 49 | sed grep |  | ci | writes |
 | `scripts/registry_matrix_versions.py` | py | 148 |  | json re | make,ci | gate |
 | `scripts/repeat-test.sh` | sh | 129 | sed grep |  |  | gate |
 | `scripts/revalidate_matrix.py` | py | 270 |  | json re subprocess tomllib | make,ci,script | gate |
-| `scripts/rule_predicate_audit.py` | py | 86 |  | re | script | gate |
+| `scripts/rule_predicate_audit.py` | py | 88 |  | re | script | gate |
 | `scripts/setup-test-databases.sh` | sh | 104 | grep |  |  | report |
 | `scripts/steering_rate.py` | py | 184 |  | argparse json |  | gate |
 | `scripts/switch_ab.sh` | sh | 177 | sed awk grep |  | ci | gate+writes |
@@ -207,7 +209,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/test_speed.py` | py | 536 | rustc git cargo | argparse re subprocess | make,script | gate+writes |
 | `scripts/test_speed_gate.py` | py | 210 | gh cargo | json re subprocess | make,ci,script | gate+writes |
 
-## T5 — runs a program of its own choosing — strand 4's `run` first (58 files, 9390 lines)
+## T5 — runs a program of its own choosing — strand 4's `run` first (58 files, 9399 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
@@ -257,7 +259,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/registry_validate.sh` | sh | 162 | git grep rustc awk run cargo |  | ci,script | writes |
 | `scripts/release-gate.sh` | sh | 88 | run sed git gh |  | make | gate |
 | `scripts/revalidate_libs_local.sh` | sh | 296 | run sed git python3 grep awk |  | ci,script | gate+writes |
-| `scripts/script_recheck.sh` | sh | 62 | git sed grep run |  | script | writes |
+| `scripts/script_recheck.sh` | sh | 71 | git sed grep run |  | script | writes |
 | `scripts/script_twin.sh` | sh | 119 | run sed git grep |  | make | gate+writes |
 | `scripts/sweep_scratch.sh` | sh | 127 | sed git run |  | make,script | report |
 | `scripts/test-timing-runner.sh` | sh | 47 | run awk |  |  | gate+writes |
