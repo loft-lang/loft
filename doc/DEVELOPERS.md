@@ -47,8 +47,9 @@ reject it before implementation starts.
    use is a correctness-class defect for the language itself.
 
 3. **Performant at scale.** Allocation, collection lookups, and parallel execution
-   must stay efficient as data grows. New features must not regress existing
-   benchmarks by more than 5%.
+   must stay efficient as data grows. A change may not make any benchmark routine
+   15% or more slower: `make perf-check` measures each routine against its recorded
+   baseline before a compiler change is committed, and fails on such a slowdown.
 
 4. **Architecturally clean.** The compiler and runtime must remain free of technical
    debt that makes the next feature hard to add. Code quality is a first-class concern.

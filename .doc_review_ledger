@@ -129,6 +129,7 @@ doc/DEVELOPERS.md#From contract 1 (the 1.0 freeze)	8557fcfb4fcaf90f73dd961ef2921
 doc/DEVELOPERS.md#Full test suite	991d4b5d50c2191ffefe1815fbd868d40800f0d753e9d58547d5a17618d1e214	2026.10.0
 doc/DEVELOPERS.md#How the Pipeline Works	5bd220a1ee82b09f903a8c1e465c7ebd9b926451c88edcb4044be8695bbf4a02	2026.10.0
 doc/DEVELOPERS.md#Known Caveats by Subsystem	927aca54a181f330bf951d9bebbe0fb7a46e7af0e5ca982bf37935d4e0b0548a	2026.10.0
+doc/DEVELOPERS.md#Language Goals — the north star	97685387ef062c44ad90032b8f49394de38e0e3bb46f413a8595c48f75d28bde	2026.10.0
 doc/DEVELOPERS.md#Operator numbering	c04bb4a91edf41deb2785517f7c58a163961b4478f9a8304b5870b07cca408d9	2026.10.0
 doc/DEVELOPERS.md#Out of scope	3052042d444b9e9c4b6337cd94e90875c3d8f9eca8ed8848d89c34353426360a	2026.10.0
 doc/DEVELOPERS.md#Quality Requirements	a51ec0ba3865e8589e2a6bc646bc08a7e5032305845e638a4047c15fe1d49316	2026.10.0
@@ -255,7 +256,7 @@ tests/docs/28-tuples.loft#(intro)	10453006a611322dce8f51208a7ba8ee2d3da41f817b09
 tests/docs/29-match.loft#(intro)	4e9e523be95035068bdcfbe98f9391e64cee12cd993e315f3e3d78700c8be987	2026.10.0
 tests/docs/30-formatting.loft#(intro)	a6ca27778eb92dd5fe6110684eae2deef7ac15e3cbb7789430890408c79c5160	2026.10.0
 tests/docs/31-ref-forward.loft#(intro)	165ba6272d7a393d3cea63ee11f04870aa30d5f83f96a7d451bd00bf74b6dadf	2026.10.0
-tests/docs/33-features.loft#(intro)	abf8fd6b3ae96006114280de2755857567f79307920d76a042d22c249f43717a	2026.10.0
+tests/docs/33-features.loft#(intro)	0212741ce05b618e0e17943786d2096e21c77cb461ff4d6bce52b47986782099	2026.10.0
 tests/docs/34-running.loft#(intro)	58b272b166e474d9cbe1033caed3bdf6f7077c58da0031e290bbd71533d07b31	2026.10.0
 tests/docs/35-testing.loft#(intro)	d73972c0f9a4bbce4b40d7414189c59e2bfa29e2fdaf40b1769770dc6910238e	2026.10.0
 tests/docs/36-debugging.loft#(intro)	d4934902584aef7f2276240059bb58cdca328051a6086ee2f56a3599fe1d600f	2026.10.0
