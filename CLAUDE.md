@@ -647,7 +647,7 @@ repositioning from one-game project to distribution ·
 [LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md).
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
-`loft-test` · `loft-codegen` · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
+`loft-test` · `loft-codegen` · `loft-optimize` (making code faster, both backends) · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
 `design-protocol` (rigor) · `doc-quality` · `draw` ([DRAWING.md](doc/claude/DRAWING.md), the method it follows) · `loft-plan-workflow`.
 
 ## Environment switches
