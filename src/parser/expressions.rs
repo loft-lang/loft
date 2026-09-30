@@ -5926,6 +5926,7 @@ use a separate collection or add after the loop"
         {
             s_type = target;
         }
+        self.own_fresh_rebind(to, code, &mut s_type, op);
         // `(E-Asgn-Compound)` — a compound write stores `v₁ op v₂`, never the right side itself,
         // so the right side's type says nothing about the place's.  Retyping the variable to it
         // refused `f += 1` on a `float` as a change "from float to integer" and `a -= 1` over
@@ -7233,6 +7234,51 @@ use a separate collection or add after the loop"
             }
         }
         Type::Void
+    }
+
+    /// A vector local that BORROWS its store — the literal `p = ["z"]` makes it a view of the
+    /// record `__vdb_N` owns — rebound to a call that hands back a FRESH store (`p =
+    /// s.split(',')`, `p = arguments()`): that store gets an owner, a work-ref, and `p` views
+    /// it.  Adopting it bare left nobody to release it — `p`'s type still named `__vdb_N`, so
+    /// neither the rebind's displacement free nor the scope-exit sweep counted `p` as its
+    /// owner — and it leaked once per evaluation on both backends, unbounded in a loop.
+    /// @FR-O-Owner: every store has exactly one owner.  A loft function's result is already
+    /// delivered this way, into the caller buffer its call mints; this gives a native
+    /// result the same shape.
+    ///
+    /// Pass 2 only (`work_refs_p2`), because the dep list it reads is only complete then.  An
+    /// OWNED local (empty deps) is not taken: it adopts the store itself, and its rebind frees
+    /// the one it displaces.  A bare `Call` with a dep-free vector type is the fresh-store
+    /// proxy the bind reads too; a projection or a view carries its source in its deps.
+    fn own_fresh_rebind(&mut self, to: &Value, code: &mut Value, s_type: &mut Type, op: &str) {
+        if op != "=" || self.first_pass {
+            return;
+        }
+        let Value::Var(v) = to.unspan() else {
+            return;
+        };
+        let v = *v;
+        let Type::Vector(elm, deps) = s_type.clone() else {
+            return;
+        };
+        if !deps.is_empty()
+            || self.vars.is_argument(v)
+            || !matches!(self.vars.tp(v), Type::Vector(_, d) if !d.is_empty())
+            || !matches!(code.unspan(), Value::Call(..))
+        {
+            return;
+        }
+        let w = self
+            .vars
+            .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
+        let owned = Type::Vector(elm, Deps::frame1(w));
+        let call = std::mem::replace(code, Value::Null);
+        *code = crate::data::v_block(
+            vec![crate::data::v_set(w, call), Value::Var(w)],
+            owned.clone(),
+            "owned_fresh_rebind",
+        );
+        *s_type = owned;
     }
 
     /// @PLN25 E2/E3 — rewrite a nullable struct ELEMENT type `Reference(S)` to the
