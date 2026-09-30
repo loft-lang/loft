@@ -29,6 +29,8 @@
 //   A compare-and-jump testing the wrong comparison (`kind ^ 1`) fails three.
 //   A walk step of one byte whatever the character's width fails `test_char_walk`.  Only
 //   since the per-character count and rebuild: the separator counts alone passed it.
+//   `OpVecSetInt` with its local positions taken after the value's push (the defect its
+//   first build had, which crashed the probe) fails `test_vector_elements`.
 
 fn arith(a: integer, b: integer) -> text {
   x = a + b;
