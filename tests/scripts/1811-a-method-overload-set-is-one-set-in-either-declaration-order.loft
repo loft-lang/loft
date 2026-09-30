@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1811 — a `self` overload set on one receiver is the same set whatever order its
+// members are declared in.
+//
+// `Disp-Key` (@PLN162) keys a second member by its FULL parameter spelling while the first
+// keeps the receiver key `t_<recv>_<name>`.  A member whose parameters are the receiver alone
+// spells its full key AS that receiver key, so declared after a longer member it collided with
+// it and was refused as a redefinition ("Cannot redefine 'OpMin'", plus a syntax-error
+// cascade) — while declared first it compiled.  Now the longer incumbent moves to its own full
+// spelling (where pass 2's `get_fn` asks for a longer method first) and relabels in the set.
+//
+// Axes this file MOVES:  the position of the receiver-only member (last · middle · first, the
+//                        control), the number of arities (two · three), the name kind (an
+//                        operator · a plain method), the receiver (a struct · an enum's
+//                        variants, dispatched through the enum), and the spelling (method ·
+//                        call · operator).
+// Axes it HOLDS FIXED:   dense receivers; integer and struct results.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, native exit 1 -> 0.
+//   CHANNEL: exit on both backends — the control refuses the file at its first collision:
+//   "Cannot redefine 'OpMin' (already defined at …)", "cannot redefine method `OpMin` on
+//   `V`" and a "Syntax error: unexpected '->'" cascade.  Each of `f`, `g` and `area` alone is
+//   refused the same way on the control (measured with the others removed).
+//   HOLDS: `h`, declared receiver-only first, answers the same on both trees.
+
+struct V { x: integer }
+fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn OpMin(self: V) -> V { V { x: 0 - self.x } }
+
+struct P { x: integer }
+fn f(self: P, a: integer, b: integer) -> integer { self.x + a + b }
+fn f(self: P, a: integer) -> integer { self.x * a }
+fn f(self: P) -> integer { self.x }
+fn g(self: P, a: integer) -> integer { self.x * a + 1 }
+fn g(self: P) -> integer { self.x + 1 }
+fn g(self: P, a: integer, b: integer) -> integer { self.x + a + b + 1 }
+fn h(self: P) -> integer { self.x + 2 }
+fn h(self: P, a: integer) -> integer { self.x * a + 2 }
+
+enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }
+fn area(self: Circle, k: integer) -> integer { self.r * k }
+fn area(self: Circle) -> integer { self.r * 3 }
+fn area(self: Rect) -> integer { self.w * self.h }
+fn area(self: Rect, k: integer) -> integer { self.w * self.h * k }
+
+fn main() {
+  a = V { x: 3 };
+  b = V { x: 1 };
+  c = a - b;
+  d = -a;
+  assert(c.x == 2 && d.x == -3, "operator, binary declared first: {c.x} {d.x}");
+  p = P { x: 5 };
+  fs = "{p.f()} {p.f(3)} {p.f(3, 4)} {f(p)} {f(p, 3)} {f(p, 3, 4)}";
+  assert(fs == "5 15 12 5 15 12", "three arities, longest first: {fs}");
+  gs = "{p.g()} {p.g(3)} {p.g(3, 4)} {g(p)} {g(p, 3)} {g(p, 3, 4)}";
+  assert(gs == "6 16 13 6 16 13", "receiver-only in the middle: {gs}");
+  hs = "{p.h()} {p.h(3)} {h(p)} {h(p, 3)}";
+  assert(hs == "7 17 7 17", "receiver-only first (control): {hs}");
+  ci: Shape = Circle { r: 2 };
+  re: Shape = Rect { w: 3, h: 4 };
+  ars = "{ci.area()} {ci.area(10)} {re.area()} {re.area(10)} {area(ci)} {area(re, 2)}";
+  assert(ars == "6 20 12 120 6 24", "through the enum: {ars}");
+}

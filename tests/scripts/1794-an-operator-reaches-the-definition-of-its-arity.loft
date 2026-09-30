@@ -18,7 +18,7 @@
 //                        nested expression), the arity (binary · unary · both in one
 //                        expression), the site (concrete · bounded generic · bound over a
 //                        builtin), and a type with the BINARY member only.
-// Axes it HOLDS FIXED:   declaration order unary-first (binary-first is loft#1811, a refusal).
+// Axes it HOLDS FIXED:   declaration order unary-first (binary-first is loft#1811's file).
 // A type with ONE arity used at the other is refused, naming the operator the author wrote —
 // `tests/parse_errors.rs::an_operator_at_an_arity_its_type_lacks_is_refused`.
 //

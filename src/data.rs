@@ -8350,12 +8350,20 @@ impl Data {
             return;
         }
         let label = if self.def(incumbent).name.starts_with("t_") {
-            // A method keeps its `t_<sig0>_<name>` key; its label is that receiver spelling.
-            self.def(incumbent)
+            // A method keeps its `t_<sig0>_<name>` key; its label is that receiver spelling —
+            // unless it was moved to its FULL spelling to make room for a receiver-only
+            // overload (loft#1811), whose label the receiver spelling then is.
+            let receiver = self
+                .def(incumbent)
                 .attributes
                 .first()
                 .and_then(|a| self.type_spelling(&a.typedef))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            if self.def(incumbent).name == Self::mangle_method(&receiver, fn_name) {
+                receiver
+            } else {
+                self.def_full_spelling(incumbent).unwrap_or(receiver)
+            }
         } else {
             let Some(full) = self.def_full_spelling(incumbent) else {
                 return;
@@ -8371,6 +8379,28 @@ impl Data {
         let a_nr = self.add_attribute(lexer, main, &label, Type::Routine(incumbent));
         self.definitions[main as usize].attributes[a_nr].mutable = false;
         self.definitions[main as usize].attributes[a_nr].constant = true;
+    }
+
+    /// Rename the label `member` carries in `fn_name`'s overload set to `label` — nothing when
+    /// it is no member yet (loft#1811).
+    fn relabel_overload(&mut self, fn_name: &str, member: u32, label: &str) {
+        let main = self.def_nr(fn_name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return;
+        }
+        let Some(a_nr) = self
+            .def(main)
+            .attributes
+            .iter()
+            .position(|a| matches!(a.typedef.base(), Type::Routine(r) if *r == member))
+        else {
+            return;
+        };
+        let old = self.def(main).attributes[a_nr].name.clone();
+        let def = &mut self.definitions[main as usize];
+        def.attr_names.remove(&old);
+        def.attr_names.insert(label.to_string(), a_nr);
+        def.attributes[a_nr].name = label.to_string();
     }
 
     /// The refusal of a definition whose name `winner` already holds.  A program's function
@@ -9077,6 +9107,26 @@ impl Data {
             } else {
                 Self::mangle_free_overload(&full, fn_name)
             };
+            // A newcomer whose parameters are the receiver ALONE spells its full key as the
+            // receiver key the incumbent method holds — `OpMin(self: V)` after
+            // `OpMin(self: V, o: V)`.  The incumbent then moves to ITS full spelling, where
+            // `get_fn` looks for a longer method first on pass 2, and the newcomer takes the
+            // receiver key it would have held declared first: both orders make one set
+            // (loft#1811).  The receiver slot keeps the incumbent — membership, not choice.
+            if (is_self || is_both) && own(self, &key) == d_nr && key == self.def(d_nr).name {
+                if let Some(inc_full) = self.def_full_spelling(d_nr) {
+                    let moved = Self::mangle_method(&inc_full, fn_name);
+                    if own(self, &moved) == u32::MAX {
+                        let src = self.def(d_nr).source;
+                        self.def_names.remove(&key, src);
+                        self.def_names.insert(&moved, src, d_nr);
+                        self.definitions[d_nr as usize].name = moved;
+                        // Already a member (a third definition): its label in the set was the
+                        // receiver spelling the newcomer is about to take, so it moves too.
+                        self.relabel_overload(fn_name, d_nr, &inc_full);
+                    }
+                }
+            }
             if own(self, &key) == u32::MAX {
                 self.admit_overload_set(lexer, fn_name, d_nr);
                 name = key;
