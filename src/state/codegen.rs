@@ -6316,10 +6316,10 @@ fn fusion_enabled() -> bool {
 /// Can `op(params)` be emitted as one fused integer op?  Yes when `op` is one of the integer
 /// operators the fused ops carry (`ops::fused`), the first operand is a plain integer local
 /// and the second is one too or an integer literal.  A plain local is one `generate_var`
-/// reads with `OpVarInt` — an allocated integer slot that is not a linked narrow one — so the
-/// fused op reads the same eight bytes that op would.  Every other shape answers `None` and
-/// is emitted as before: a literal first operand, a nullable or narrow-linked operand, any
-/// other operator.  That is always correct, because the unfused form is the reference.
+/// reads with `OpVarInt` ([`int_local`]) — an allocated integer slot that is not a linked
+/// narrow one — so the fused op reads the same eight bytes that op would.  Every other shape
+/// answers `None` and is emitted as before: a literal first operand, a narrow-linked operand,
+/// any other operator.  That is always correct, because the unfused form is the reference.
 fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
     use crate::ops::fused;
     if params.len() != 2 || !fusion_enabled() {
@@ -6338,22 +6338,11 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
         "OpLeInt" => (true, fused::LE),
         _ => return None,
     };
-    let local = |v: &Value| -> Option<u16> {
-        let Value::Var(v) = v.unspan() else {
-            return None;
-        };
-        let v = *v;
-        (matches!(stack.function.tp(v), Type::Integer(_))
-            && stack.function.linked_narrow_slot(v).is_none()
-            && stack.function.is_stack_allocated(v)
-            && stack.function.stack(v) <= stack.position)
-            .then_some(v)
-    };
-    let a = local(&params[0])?;
+    let a = int_local(stack, &params[0])?;
     let b = match params[1].unspan() {
         Value::Int(c) => FusedOperand::Const(i64::from(*c)),
         Value::Long(c) => FusedOperand::Const(*c),
-        other => FusedOperand::Var(local(other)?),
+        other => FusedOperand::Var(int_local(stack, other)?),
     };
     Some(FusedInt {
         compare,
@@ -6363,26 +6352,27 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
     })
 }
 
-/// A plain integer local — one `generate_var` reads with `OpVarInt` (see [`fusable_int`]).
+/// A plain integer local: one `generate_var` reads with `OpVarInt`, which it decides on the
+/// PEELED type, so an `integer?` local (same storage, same op) is one too.
 fn int_local(stack: &Stack, v: &Value) -> Option<u16> {
     let Value::Var(v) = v.unspan() else {
         return None;
     };
     let v = *v;
-    (matches!(stack.function.tp(v), Type::Integer(_))
+    (matches!(stack.function.tp(v).base(), Type::Integer(_))
         && stack.function.linked_narrow_slot(v).is_none()
         && stack.function.is_stack_allocated(v)
         && stack.function.stack(v) <= stack.position)
         .then_some(v)
 }
 
-/// A vector local — one `generate_var` reads with `OpVarVector`.
+/// A vector local: one `generate_var` reads with `OpVarVector`, decided on the peeled type.
 fn vector_local(stack: &Stack, v: &Value) -> Option<u16> {
     let Value::Var(v) = v.unspan() else {
         return None;
     };
     let v = *v;
-    (matches!(stack.function.tp(v), Type::Vector(_, _))
+    (matches!(stack.function.tp(v).base(), Type::Vector(_, _))
         && stack.function.is_stack_allocated(v)
         && stack.function.stack(v) <= stack.position)
         .then_some(v)
