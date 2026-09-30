@@ -2812,6 +2812,12 @@ script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (A
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
 
+.PHONY: compiled-stdlib
+compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
+	@cargo test --release --test compiled_stdlib regen_compiled_stdlib -- --ignored --nocapture > /dev/null 2>&1
+	@cargo build --release --bin loft -q
+	@echo "src/compiled_stdlib_gen.rs regenerated and built"
+
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)
 	@cargo build --release --bin loft -q

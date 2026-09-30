@@ -9684,6 +9684,16 @@ fn main() {
             }
         }
     }
+    // @PLN181 — the standard library's compiled loft bodies, routed like a `use`d library's
+    // (C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
+    // browser build has no bridge dispatcher.  Declines on its own when the program's type
+    // table does not start with the standard library's (`compiled_stdlib::mark`).
+    if !native_mode && html_out.is_none() {
+        let n = loft::compiled_stdlib::mark(&mut p.data, &p.database, &default_str);
+        if loft::keys::env_set("LOFT_TIMING") {
+            eprintln!("compiled stdlib: {n} function(s) dispatched to their compiled bodies");
+        }
+    }
     // @PLN119 arc A — mark each process-placed library's routable functions
     // BEFORE `byte_code`, so their calls compile to `OpStaticCall` and get a
     // stub the worker dispatcher can take over. A function whose signature the
