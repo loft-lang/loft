@@ -6,13 +6,18 @@
 // `LOFT_NO_IR_VALUE_RECORD=1` restores the record form and must answer identically.
 //
 // @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
-// Hand-sabotaged 2026-09-30: dropping a path's own offset when a read goes through an inline
-// sub-record (`place_of` answering the base variable at 0) reads `pos.x` for `w.at.pos.y`
-// and fails `two levels` on both backends.
+// Hand-sabotaged 2026-09-30: a read through an inline sub-record that drops the path's own
+// offset (the rewrite indexing the tuple by the last offset alone) reads `t.a.y` for `t.b.y`
+// and fails `two sub-records` on both backends.  Two findings from the attempt: every other
+// cell's sub-record sits at offset 0, so a lost offset moves no read there — `Two` puts one
+// at 24; and the same defect planted in the SHARED path helper declined the function instead
+// (its literal no longer covered the record), which answers right — a read-path plant has to
+// go where only reads go.
 
 struct V3 { x: float, y: float, z: float }
 struct Move { pos: V3, vy: float, on: boolean }
 struct Wrap { tag: integer, at: Move }
+struct Two { a: V3, b: V3 }
 struct Log { seq: vector<integer> }
 
 fn mk3(a: float) -> V3 { V3 { x: a, y: a * 2.0, z: a * 3.0 } }
@@ -35,6 +40,9 @@ fn ordered(log: Log) -> Move {
   Move { on: tick(log, 1) == 1, vy: tick(log, 2) as float, pos: V3 { x: tick(log, 3) as float, y: 0.0, z: tick(log, 4) as float } }
 }
 
+// Two sub-records: one of them sits at a non-zero offset whichever way the schema orders them.
+fn two(a: float) -> Two { Two { a: mk3(a), b: mk3(a + 1.0) } }
+
 // Two levels: a record holding a record holding a record.
 fn wrapped(a: float) -> Wrap { Wrap { tag: 7, at: direct(a) } }
 
@@ -56,6 +64,10 @@ fn main() {
   o = ordered(log);
   assert("{log.seq}" == "[1,2,3,4]", "fill order: {log.seq}");
   assert(o.on && o.vy == 2.0 && o.pos.x == 3.0 && o.pos.z == 4.0, "out-of-order nested: {o.vy} {o.pos.x}");
+
+  // two(1): a = (1, 2, 3), b = (2, 4, 6).
+  t = two(1.0);
+  assert(t.a.y == 2.0 && t.b.y == 4.0 && t.b.z == 6.0, "two sub-records: {t.a.y} {t.b.y}");
 
   // Two levels: wrapped(5).at.pos.y = 6, tag 7.
   w = wrapped(5.0);
