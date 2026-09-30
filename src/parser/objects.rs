@@ -3095,14 +3095,7 @@ impl Parser {
                         has: h,
                         position: _pos,
                     } = self.lexer.peek().clone();
-                    if match h {
-                        LexItem::Token(st) | LexItem::Identifier(st) => {
-                            let s: &str = &st;
-                            !SKIP_WIDTH.contains(&s) && crate::parser::radix_for(s).is_none()
-                        }
-                        LexItem::Integer(_, _) | LexItem::Float(..) => true,
-                        _ => false,
-                    } {
+                    if self.starts_format_width(&h) {
                         // @FR-F-Spec — a leading zero on the WIDTH is the zero-pad flag.
                         // Both literal spellings carry it: `{n:08}` lexes as an Integer and
                         // the dotted `{f:08.2}` — the only spelling that gives a width and a
@@ -3544,6 +3537,43 @@ impl Parser {
         }
     }
 
+    /// Does the item ahead, after a spec's fill and flags, start its WIDTH — read as code — or
+    /// is it the radix letter (or nothing) that closes the spec?  One predicate for the two
+    /// readers of the grammar, `parse_string` and `skip_format_spec_ahead`: the answer picks
+    /// the lexer mode the closing `}` is read in, so the two must never disagree.
+    ///
+    /// A NAME is a width only when it names a value — a variable or capture in scope, a
+    /// constant, a function.  `{42:B}` read `B` as a variable and reported *"Unknown variable
+    /// 'B'"* plus an upper-case-local advice, where the author wrote a radix letter in the
+    /// wrong case (loft#1805); a name that resolves to nothing is left to `get_radix`, which
+    /// says the spec is unknown.  Pass 1 keeps it a width: it is silent about unknown names,
+    /// and has not yet met a variable declared further down.
+    fn starts_format_width(&self, item: &LexItem) -> bool {
+        match item {
+            LexItem::Token(s) => {
+                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(s).is_none()
+            }
+            LexItem::Identifier(s) => {
+                !SKIP_WIDTH.contains(&s.as_str())
+                    && crate::parser::radix_for(s).is_none()
+                    && (self.first_pass
+                        || self.names_a_variable(s)
+                        || self.capture_context.iter().any(|(n, _)| n == s)
+                        || self.data.def_nr(s) != u32::MAX
+                        || self.data.def_nr(&format!("n_{s}")) != u32::MAX)
+            }
+            LexItem::Integer(_, _) | LexItem::Float(..) => true,
+            _ => false,
+        }
+    }
+
+    /// Does `name` name a variable with a value — not merely an entry pass 1 left behind for
+    /// a name it could not resolve (the table keeps one, typed unknown)?
+    fn names_a_variable(&self, name: &str) -> bool {
+        let v = self.vars.var(name);
+        v != u16::MAX && self.vars.is_defined(v) && !self.vars.tp(v).is_unknown()
+    }
+
     /// Read the radix letter closing a `{x:…}` spec, defaulting to decimal when the spec
     /// has none.  The letter set lives in [`crate::parser::radix_for`], which the width
     /// decision above consults too, so the two cannot drift apart.
@@ -3554,7 +3584,21 @@ impl Parser {
         if let Some(radix) = crate::parser::radix_for(&id) {
             radix
         } else {
-            diagnostic!(self.lexer, Level::Error, "Unexpected formatting type: {id}");
+            // Name the letters, and the one meant when only its case is wrong (`B` for `b`):
+            // a name that could have been a width reaches here too (loft#1805).
+            let lower = id.to_lowercase();
+            let meant = if lower != id && crate::parser::radix_for(&lower).is_some() {
+                format!(" — the spec is lower-case `{lower}`")
+            } else {
+                String::new()
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{id}` is not a format spec{meant}.  The specs are `d` (decimal), `b` (binary), `o` (octal), \
+                 `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an optional width — a \
+                 number, or a variable in scope"
+            );
             10
         }
     }
@@ -3670,13 +3714,7 @@ impl Parser {
         }
         let mut flags = OUTPUT_DEFAULT;
         self.string_states(&mut flags);
-        let width = match self.lexer.peek().has.clone() {
-            LexItem::Token(s) | LexItem::Identifier(s) => {
-                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(&s).is_none()
-            }
-            LexItem::Integer(_, _) | LexItem::Float(..) => true,
-            _ => false,
-        };
+        let width = self.starts_format_width(&self.lexer.peek().has.clone());
         if width {
             self.lexer.set_mode(Mode::Code);
         }

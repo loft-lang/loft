@@ -5561,3 +5561,25 @@ fn a_narrowing_cast_refusal_spells_cures_that_parse() {
              `(<value> & 255) as u8` at a_narrowing_cast_refusal_spells_cures_that_parse:3:19",
     );
 }
+
+// A radix letter in the wrong case is a format spec error naming the letter meant, not an
+// unknown variable with an upper-case-local advice beside it.
+#[test]
+fn an_upper_case_radix_is_an_unknown_spec() {
+    code!("fn test() {\n  println(\"{42:B}\");\n}").error(
+        "`B` is not a format spec — the spec is lower-case `b`.  The specs are `d` (decimal), \
+         `b` (binary), `o` (octal), `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an \
+         optional width — a number, or a variable in scope at an_upper_case_radix_is_an_unknown_spec:2:19",
+    );
+}
+
+// A name that is neither a spec nor a value in scope says so; a variable still supplies a width.
+#[test]
+fn an_unknown_name_in_a_format_spec_is_an_unknown_spec() {
+    code!("fn test() {\n  println(\"{42:hex}\");\n}").error(
+        "`hex` is not a format spec.  The specs are `d` (decimal), `b` (binary), `o` (octal), \
+         `x` / `X` (hex), `e` (exponent) and `j` (JSON), after an optional width — a number, or \
+         a variable in scope at an_unknown_name_in_a_format_spec_is_an_unknown_spec:2:21",
+    );
+    code!("fn test() {\n  w = 5;\n  assert(\"{42:w}\" == \"   42\", \"a variable width\");\n}");
+}
