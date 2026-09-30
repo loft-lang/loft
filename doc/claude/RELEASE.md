@@ -30,7 +30,7 @@ A release is gated on **stability, not a fixed feature set**: if the bug count i
 at the month boundary, the release slips and the branch keeps stabilising.  When a cycle
 ships, the next month's branch starts fresh from the new `main` tip.  A cycle's theme is
 written in its `releases/<cycle>/README.md`; what work is in scope during a cycle is
-[ROADMAP.md § Feature freeze](ROADMAP.md#feature-freeze--heading-into-the-2026-07-cycle-added-2026-06-07).
+[ROADMAP.md § Scope during a cycle](ROADMAP.md#scope-during-a-cycle--the-warm-feature-freeze).
 
 ### Documentation validation — required for EVERY release
 
