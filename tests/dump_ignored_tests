@@ -1,0 +1,87 @@
+#!/usr/bin/env -S loft --interpret
+// Regenerate tests/ignored_tests.baseline from EVERY test in the tree.
+// Usage: tests/dump_ignored_tests > tests/ignored_tests.baseline
+// The loft twin of tests/dump_ignored_tests.py (@PLN179 strand 3): the same lines, the
+// same order, byte for byte.  Paths are relative to the repository root.
+#cwd
+use regex;
+
+// The `#[ignore = "..."]` and `#[cfg_attr(<cfg>, ignore = "...")]` attribute shapes, and
+// the bare `#[ignore]` ones, anchored at the line's start as the originals' `re.match` is.
+IGNORE = "^\\s*#\\[(cfg_attr\\([^,]+,\\s*)?ignore\\s*=\\s*\".+\"\\s*\\)?\\]";
+BARE = "^\\s*#\\[(cfg_attr\\([^,]+,\\s*)?ignore\\s*\\)?\\]";
+FN = "^\\s*(pub(\\([^)]*\\))?\\s+)?fn \\w+\\s*[(<]";
+
+// A local walk: the `script` library's `walk` is what belongs here, and loading that
+// library corrupts the store today (loft#1776) — fold back to `"src".walk(".rs")` when it
+// closes.
+fn walk(dir: text, suffix: text) -> vector<text> {
+  out: vector<text> = [];
+  if !is_dir(dir) { return out; }
+  for f in file(dir).files() {
+    if is_symlink(f.path) { continue; }
+    if f.format == Format.Directory { out += walk(f.path, suffix); }
+    else if f.path.ends_with(suffix) { out += [f.path]; }
+  }
+  out
+}
+
+struct Entry { key: text }
+struct Out { rows: sorted<Entry[key]> }
+
+// The reason inside `ignore = "..."`: from the first `"` to the last, as the greedy
+// `(.+)` group takes it, with the Rust test's own unescape mirrored.
+fn reason_of(line: text) -> text {
+  a = line.find("\"") ?? 0;
+  b = line.rfind("\"") ?? 0;
+  r = line[a + 1..b];
+  r.replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
+// The name in `fn name(` / `fn name<`.
+fn fn_name(line: text) -> text {
+  at = (line.find("fn ") ?? 0) + 3;
+  rest = line[at..];
+  end = rest.size();
+  for i in 0..rest.size() {
+    c = rest[i];
+    if c == '(' || c == '<' || c == ' ' { end = i; break; }
+  }
+  rest[0..end]
+}
+
+fn scan(path: text, out: Out) {
+  lines = file(path).lines();
+  for i in 0..len(lines) {
+    line = lines[i];
+    reason = "";
+    if line.matches(IGNORE) { reason = reason_of(line); }
+    else if !line.matches(BARE) { continue; }
+    stop = i + 10;
+    if stop > len(lines) { stop = len(lines); }
+    for j in i + 1..stop {
+      if lines[j].matches(FN) {
+        out.rows += [Entry { key: "{path}::{fn_name(lines[j])}\t{reason}" }];
+        break;
+      }
+    }
+  }
+}
+
+fn main() {
+  out = Out { rows: [] };
+  for p in walk("tests", ".rs") { if p.dir() == "tests" { scan(p, out); } }
+  for p in walk("src", ".rs") { scan(p, out); }
+  print("# Baseline of every `#[ignore = \"...\"]` and `#[cfg_attr(<cfg>, ignore = \"...\")]` in\n");
+  print("# tests/*.rs and src/**/*.rs.  One `<file>::<test_name>\\t<reason>` pair per line,\n");
+  print("# sorted; the file is part of the key because two `src/` tests share a bare name.\n");
+  print("# Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on\n");
+  print("# any drift.  A drift typically means one of:\n");
+  print("#   - an ignored test just got its fix landed (un-ignore it + delete its line here)\n");
+  print("#   - a new ignored test landed (add its line here, with the reason it carries)\n");
+  print("#   - the reason message changed (update the line here)\n");
+  print("# `make release-checklist`'s A-ignores reads this file, so a test ignored WITHOUT a\n");
+  print("# reason is a release finding, not just a lint.\n");
+  print("# Regenerate with: `python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline`\n");
+  for e in out.rows { print("{e.key}\n"); }
+}

@@ -10,6 +10,7 @@
 #   refused-line:N    the probe is refused, but the diagnostic does NOT point at line N
 #   crash             the probe dies with a signal (the defect is still there)
 #   startup-over:MS   `loft --interpret` of a hello takes more than MS ms, best of 5
+#   over:MS           the probe itself takes more than MS ms interpreted, best of 5
 # After each probe the driver rewrites the finding's `checked:` (the loft commit) and
 # `holds:` (yes | no) lines.  A finding whose probe says `no` is the one to look at: the
 # reason it recorded no longer measures, so it is fixed, or the probe needs a new name.
@@ -52,6 +53,14 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
       done
       [ "$best" -gt "$bar" ] && holds=yes
       printf '  %s: start-up %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
+    over:*)
+      bar=${expect#over:}; best=""
+      for i in 1 2 3 4 5; do
+        s=$(date +%s%N); "$loft" --interpret "$dir/$probe" > /dev/null 2>&1; e=$(date +%s%N); ms=$(( (e - s) / 1000000 ))
+        [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
+      done
+      [ "$best" -gt "$bar" ] && holds=yes
+      printf '  %s: %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
     *) echo "script_recheck: $f: unknown expect '$expect'" >&2; continue ;;
   esac
   sed -i "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/" "$f"
