@@ -5464,3 +5464,19 @@ fn statements_after_a_return_do_not_make_the_body_fall_off() {
              statements_after_a_return_do_not_make_the_body_fall_off:1:31",
     );
 }
+
+// Replacing a vector while a `&` link into it is live is refused as a REPLACEMENT: the refill
+// is carried by appends, and the refusal named them ("cannot grow `v`").
+#[test]
+fn replacing_a_container_under_a_live_link_says_replace() {
+    code!(
+        "struct R { n: integer }\n\
+         fn test() {\n  v = [R { n: 1 }, R { n: 2 }];\n  c = &v[0];\n  v = [R { n: 5 }];\n  println(\"{c.n}\");\n}"
+    )
+    .error(
+        "cannot give `v` a new value while `c` references a place inside it — `c` names an \
+         element of the value `v` held before, so a write through `c` would no longer reach `v`. \
+         Move it after the last use of `c`, or bind without `&` to work on a copy at \
+         replacing_a_container_under_a_live_link_says_replace:5:1",
+    );
+}

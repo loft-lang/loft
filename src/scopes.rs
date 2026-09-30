@@ -1330,6 +1330,24 @@ struct Disturbance {
     /// The container the view names — carried so a diagnostic can name it without re-deriving
     /// the view→container mapping from a frame that has since closed.
     container: u16,
+    /// A `Grown` that is the REFILL of a whole-value assignment, `v = [R { n: 5 }]`: a
+    /// vector local is given its new value as a `Set` of a fresh store followed by the appends
+    /// that fill it, so the disturbance a view sees is the append.  The cause stays `Grown`,
+    /// because that is what decides which bindings survive; this only picks the SENTENCE —
+    /// "cannot grow `v`" named an act the line does not perform.
+    replaced: bool,
+}
+
+impl Disturbance {
+    /// The cause as the AUTHOR reads it: a refill after a whole-value assignment is a
+    /// replacement, whatever mechanism carried it (`Disturbance::replaced`).
+    fn reported_cause(&self) -> ViewCause {
+        if self.replaced {
+            ViewCause::Reassigned
+        } else {
+            self.cause
+        }
+    }
 }
 
 /// Record `d` for `view`, keeping [`ViewCause::Reshaped`] when both apply.
@@ -1817,6 +1835,12 @@ struct ViewWalk<'a> {
     /// The source line of the statement being walked, tracked from the `Value::Line` markers
     /// a block interleaves with its operators — the only line information the IR carries.
     line: u32,
+    /// The collection variable the CURRENT statement gave a whole new value — read by the
+    /// growth that fills it, which is a replacement to the author (`Disturbance::replaced`).
+    /// Cleared at every `Line` marker, the statement boundary the parser leaves even between
+    /// statements on one source line.  One slot, not a set: a statement replaces one
+    /// collection local, and the front end's allocation pin counts every walk.
+    rebound: Option<u16>,
 }
 
 impl ViewWalk<'_> {
@@ -1849,6 +1873,7 @@ impl ViewWalk<'_> {
             database,
             cleared: HashSet::default(),
             line: start_line,
+            rebound: None,
         };
         walk.walk_block(std::slice::from_ref(code));
         walk.out
@@ -1858,6 +1883,7 @@ impl ViewWalk<'_> {
         for stmt in stmts {
             if let Value::Line(n) = stmt.unspan() {
                 self.line = *n;
+                self.rebound = None;
             }
             self.walk_stmt(stmt);
         }
@@ -1980,6 +2006,20 @@ impl ViewWalk<'_> {
 
     /// Shake for everything `stmt` disturbs, at any depth inside it.
     fn disturb(&mut self, stmt: &Value) {
+        if let Value::Set(v, _) = stmt.unspan()
+            && !self.function.is_compiler_generated(*v)
+            && matches!(
+                self.function.tp(*v).peel_link(),
+                Type::Vector(..)
+                    | Type::Hash(..)
+                    | Type::Index(..)
+                    | Type::Sorted(..)
+                    | Type::Radix(..)
+                    | Type::Trie(..)
+            )
+        {
+            self.rebound = Some(*v);
+        }
         self.shake_places_keyed(
             &reshaped_containers(stmt, self.data, self.function),
             ViewCause::Reshaped,
@@ -2460,6 +2500,9 @@ impl ViewWalk<'_> {
                 line: self.line,
                 via,
                 container,
+                replaced: cause == ViewCause::Grown
+                    && via.is_none()
+                    && self.rebound == Some(container),
             };
             record_cause(&mut self.shaken, view, d);
         }
@@ -2897,6 +2940,13 @@ fn def_reshape_refusals(
                 format!(
                     "a removal renumbers the remaining elements, so a write through \
                      `{view_name}` would no longer reach the element it names"
+                ),
+            ),
+            ViewCause::Grown if d.replaced => (
+                format!("give `{container}` a new value"),
+                format!(
+                    "`{view_name}` names an element of the value `{container}` held before, \
+                     so a write through `{view_name}` would no longer reach `{container}`"
                 ),
             ),
             ViewCause::Grown => (
@@ -11825,7 +11875,13 @@ impl Scopes<'_> {
                     let cname = function.name(cause.container).to_string();
                     let fname = data.def(self.d_nr).original_name();
                     let via = disturbance_via(data, &cause);
-                    report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+                    report_materialised_view(
+                        cause.reported_cause(),
+                        &vname,
+                        &cname,
+                        &fname,
+                        via.as_deref(),
+                    );
                 }
                 Value::Null
             }
@@ -13603,7 +13659,13 @@ impl Scopes<'_> {
             // they are different, and only one of them was reassigned.
             let cname = function.name(cause.container).to_string();
             let via = disturbance_via(data, &cause);
-            report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+            report_materialised_view(
+                cause.reported_cause(),
+                &vname,
+                &cname,
+                &fname,
+                via.as_deref(),
+            );
         }
         // Companion to the !adopts_fresh_store (deep-copy) branch above for the
         // var-to-var deep-copy path.  When `Set(v, Var(src))` and
@@ -13680,7 +13742,7 @@ impl Scopes<'_> {
             {
                 let via = disturbance_via(data, &cause);
                 report_materialised_view(
-                    cause.cause,
+                    cause.reported_cause(),
                     function.name(v),
                     function.name(cause.container),
                     &data.def(self.d_nr).original_name(),

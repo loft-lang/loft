@@ -6057,6 +6057,7 @@ pub fn warn_variant_overwritten(
                 bound: HashSet::default(),
                 stale: false,
                 at: def.position.clone(),
+                written_at: None,
                 hits: Vec::new(),
             };
             w.walk(arm);
@@ -6166,11 +6167,27 @@ struct VariantWatch<'a> {
     /// The nearest source position seen, so the report lands on the READ rather than on the
     /// function — a warning a reader cannot locate is a warning they cannot act on.
     at: crate::lexer::Position,
+    /// Where the overwrite was — the fallback for a read that carries no position of its own.
+    /// An arm's TAIL value (`Full { v } => { o.inner = Empty {…}; v }`) is not a statement,
+    /// so no span wraps it, and the nearest position left was the FUNCTION's: the warning
+    /// pointed at `fn main() {`.  The write is inside the arm and names the subject the
+    /// message names, so it is the next best place to look.
+    written_at: Option<crate::lexer::Position>,
     hits: Vec<(u16, crate::lexer::Position)>,
 }
 
 impl VariantWatch<'_> {
     fn walk(&mut self, node: &Value) {
+        // A block interleaves `Line` markers with its statements, and they are the only
+        // position most statements carry: a marker moves the position for the SIBLINGS after
+        // it, so it is not restored here — the enclosing node's own restore ends its reach.
+        if let Value::Line(n) = node.unspan() {
+            if *n != self.at.line {
+                self.at.line = *n;
+                self.at.pos = 1;
+            }
+            return;
+        }
         let outer = self.at.clone();
         if let Some(p) = node.span_pos() {
             self.at = p.clone();
@@ -6198,7 +6215,12 @@ impl VariantWatch<'_> {
                 return;
             }
             Value::Var(v) if self.stale && self.bound.contains(v) => {
-                self.hits.push((*v, self.at.clone()));
+                // A position no nearer than the write's own, when the read has none.
+                let at = match &self.written_at {
+                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => w.clone(),
+                    _ => self.at.clone(),
+                };
+                self.hits.push((*v, at));
             }
             Value::Call(d, args) if self.data.def(*d).name() == "OpSetEnum" => {
                 if let (Some(p), Some(Value::Enum(m, _))) = (
@@ -6209,6 +6231,9 @@ impl VariantWatch<'_> {
                     && i32::from(*m) != self.tag
                 {
                     self.stale = true;
+                    if self.written_at.is_none() {
+                        self.written_at = Some(self.at.clone());
+                    }
                 }
             }
             _ => {}
