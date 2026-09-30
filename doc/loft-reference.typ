@@ -8371,7 +8371,7 @@ Build a text from the raw UTF-8 bytes of a vector\<u8\> — the inverse of byte\
 pub fn text_from_byte_range(bytes: const vector<u8>, lo: integer, hi: integer) -> text
 ```
 
-The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder that has found a text's span writes instead of `text\_from\_bytes(bytes\[lo..hi\])`, (its own name: a native is dispatched by name, so an arity overload cannot be one) whose slice is a fresh vector (`(Slice-Value)`) built only to be read once.  The bounds clamp to the buffer as a slice's do; a reversed or empty range is "".
+The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder that has found a text's span writes instead of `text\_from\_bytes(bytes\[lo..hi\])`, whose slice is a fresh vector (`(Slice-Value)`) built to be read once.  The bounds are the slice's (a negative one counts from the end; both clamp); a reversed or empty range, or invalid UTF-8, is "".  Its own name, not an overload: a native is dispatched by name.
 
 ```rust
 pub fn chr(cp: integer) -> text
