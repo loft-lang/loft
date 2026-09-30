@@ -1724,6 +1724,61 @@ impl Parser {
                 };
             }
         }
+        // `(E-Asgn-Compound)` at a RECORD place — a field or an element holding a struct or a
+        // struct-enum — composes `v₁ op v₂` and writes it through the place exactly as `=`
+        // writes a record there: a copy INTO the place.  The generic seam below answers a
+        // field's `OpGetField` read with the composed value itself, which writes nothing, so
+        // `h.v -= 1` left `h.v` unchanged and `h.v -= V { x: 3 }` stored the operand's bytes
+        // (`3` for `50 - 3`), and an element was refused "Cannot assign to attribute on type
+        // 'OpGetVector'" (loft#1819).  A `&`-linked local names a place too (loft#1376), so
+        // `q = &vs[1]; q -= 2` writes the element rather than re-pointing `q`.
+        //
+        // The place is read once and written once, so its addressing must run ONCE (C92): a
+        // place whose address calls a function (`vs[next(c)] -= 1`) is bound to a `_place`
+        // view first — the element's own record, which both the read and the copy reach.
+        if op != "="
+            && matches!(
+                f_type.base(),
+                Type::Enum(_, true, _) | Type::Reference(_, _)
+            )
+            && match to.unspan() {
+                Value::Var(v) => self.vars.is_amp_link(*v),
+                _ => true,
+            }
+        {
+            let mut setup = Vec::new();
+            let place = if !self.first_pass
+                && !matches!(to.unspan(), Value::Var(_))
+                && self.ir_has_user_call(to)
+            {
+                let held = self.create_unique("_place", &f_type.base().clone());
+                setup.push(v_set(held, to.clone()));
+                Value::Var(held)
+            } else {
+                to.clone()
+            };
+            let (composed, tp) = self.compute_op_code(op, &place, val, f_type, src_tp);
+            if self.first_pass || !matches!(tp.base(), Type::Reference(_, _) | Type::Enum(..)) {
+                if !self.first_pass {
+                    self.check_compound_result(op, f_type, src_tp, &tp);
+                }
+                return composed;
+            }
+            self.check_compound_result(op, f_type, src_tp, &tp);
+            if setup.is_empty()
+                && let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {
+                    p.copy_ref(&t, &composed, f_type.base())
+                })
+            {
+                return Value::Insert(ops);
+            }
+            let write = self.copy_ref(&place, &composed, f_type.base());
+            if setup.is_empty() {
+                return write;
+            }
+            setup.push(write);
+            return Value::Insert(setup);
+        }
         // @PLN25 index flip — an element WRITE `v[i] = h` is an lvalue slot, not a nullable
         // read: under the flip `v[i]` types `Optional(Reference/Enum)`, but the slot itself
         // holds the base record, so a whole-element assign is still a `copy_ref` (OpCopyRecord).
@@ -2034,7 +2089,10 @@ impl Parser {
         // inner OpGetVector) — identical to how plain enums are handled.  The old
         // special-case here destructured the two-level OpEqInt(OpGetByte(…)) read
         // shape and is obsolete (it mis-read the single-level OpGetBoolean shape).
-        let mut code = self.compute_op_code(op, to, val, f_type);
+        let (mut code, composed) = self.compute_op_code(op, to, val, f_type, src_tp);
+        if op != "=" && !self.first_pass {
+            self.check_compound_result(op, f_type, src_tp, &composed);
+        }
         // loft#1009 — a COMPOUND assignment into a bounded integer slot had no range check
         // of any kind, so `l: u8 = 250; l += 10;` answered 260 and `b: u8 = 5; b -= 10;`
         // answered -5.  The written-out form (`l = l + 10`) is refused at compile time, so

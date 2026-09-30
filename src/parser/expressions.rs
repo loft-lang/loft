@@ -3924,6 +3924,24 @@ use a separate collection or add after the loop"
         // an ended SCALAR binding that retype is the refusal this split exists to lift, so
         // it starts from nothing.  A heap or text binding keeps building in place, which is
         // what a same-type rebind compiles to today.
+        //
+        // `(E-Asgn-Compound)` — a COMPOUND write to a record place reads the place as `v₁` and
+        // the right side as `v₂`, so the right side is a value of its own and is never built
+        // into the place: `a -= V { x: 3 }` built the literal over `a` and answered `3` for
+        // `50 - 3`, on a local, a field and an element alike (loft#1819).  A collection's
+        // `+=` keeps building in place, which is how it appends.
+        let place_tp = match f_type {
+            Type::RefVar(inner) => inner.as_ref(),
+            other => other,
+        };
+        let compound_record = op != "="
+            && matches!(
+                place_tp.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            );
+        if compound_record {
+            *code = Value::Null;
+        }
         let build_into =
             if ended_bind == Some(var_nr) && crate::data::is_scalar(self.vars.tp(var_nr).base()) {
                 if matches!(code.unspan(), Value::Var(v) if *v == var_nr) {
@@ -5776,7 +5794,44 @@ use a separate collection or add after the loop"
         {
             s_type = target;
         }
-        self.change_var(to, &s_type);
+        // `(E-Asgn-Compound)` — a compound write stores `v₁ op v₂`, never the right side itself,
+        // so the right side's type says nothing about the place's.  Retyping the variable to it
+        // refused `f += 1` on a `float` as a change "from float to integer" and `a -= 1` over
+        // `OpMin(self: V, o: integer)` as one "from V to integer" (loft#1819); the composed
+        // value is judged against the place in `towards_set` instead.  A record place never
+        // takes the right side's type, even an equal one: its DEPS would make `a -= b` a
+        // borrow of `b`, and `a` would no longer free the record it owns.  A collection or a
+        // text place keeps this seam: its `+=` appends, and its element type may be decided
+        // here.
+        let place_tp = match f_type {
+            Type::RefVar(inner) => inner.as_ref(),
+            other => other,
+        };
+        let compound_keeps_place = op != "="
+            && matches!(
+                place_tp.base(),
+                Type::Integer(_)
+                    | Type::Float
+                    | Type::Single
+                    | Type::Boolean
+                    | Type::Character
+                    | Type::Reference(_, _)
+                    | Type::Enum(_, _, _)
+            )
+            && (matches!(
+                place_tp.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            ) || !matches!(
+                (place_tp.base(), s_type.base()),
+                (Type::Integer(_), Type::Integer(_))
+                    | (Type::Float, Type::Float)
+                    | (Type::Single, Type::Single)
+                    | (Type::Boolean, Type::Boolean)
+                    | (Type::Character, Type::Character)
+            ));
+        if !compound_keeps_place {
+            self.change_var(to, &s_type);
+        }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
         // failure for an advisory lint, a false warning is not.
@@ -8519,6 +8574,67 @@ use a separate collection or add after the loop"
         let cast_alias = self.last_cast_alias;
         self.last_cast_alias = u32::MAX;
         *code = self.write_to_file(file_v, rhs_code, &rhs_type, cast_alias);
+    }
+
+    /// `(E-Asgn-Compound)` step 5 writes the composed `v₁ op v₂` through the place, so the
+    /// value the operator answers must be one the place holds (loft#1819).  `i += 1.5` on an
+    /// `integer` composes a `float`, and the place keeps its type: the refusal names the three
+    /// types, where the variable seam used to name the RIGHT side's type as a type change the
+    /// place would make.  An integer of another width is the range guard's question, not
+    /// this one, and a composition that failed was reported where the operator was resolved.
+    pub(crate) fn check_compound_result(
+        &mut self,
+        op: &str,
+        place: &Type,
+        rhs: &Type,
+        composed: &Type,
+    ) {
+        let place = match place {
+            Type::RefVar(inner) => inner.as_ref(),
+            other => other,
+        };
+        if composed.is_unknown()
+            || place.is_unknown()
+            || rhs.is_unknown()
+            || matches!(
+                composed.base(),
+                Type::Null | Type::Never | Type::Void | Type::Unknown(_)
+            )
+        {
+            return;
+        }
+        let (c, p) = (composed.base(), place.base());
+        let fits = match (c, p) {
+            (Type::Integer(_), Type::Integer(_))
+            | (Type::Float, Type::Float)
+            | (Type::Single, Type::Single)
+            | (Type::Boolean, Type::Boolean)
+            | (Type::Character, Type::Character) => true,
+            (Type::Reference(a, _), Type::Reference(b, _))
+            | (Type::Enum(a, _, _), Type::Enum(b, _, _)) => a == b,
+            _ => {
+                self.data.key_identity(c).is_some()
+                    && self.data.key_identity(c) == self.data.key_identity(p)
+            }
+        };
+        if !fits {
+            let (p_name, r_name, c_name) = (
+                place.source_name(&self.data),
+                rhs.source_name(&self.data),
+                composed.source_name(&self.data),
+            );
+            let cure = if crate::data::is_scalar(p) {
+                format!("write it out and convert the result (`x = (x {op} e) as {p_name}`)")
+            } else {
+                format!("declare the operator on {p_name} to return {p_name}")
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{op}=` on {p_name} with {r_name} computes {c_name}, which the {p_name} place \
+                 cannot hold; {cure}"
+            );
+        }
     }
 
     /// Plan-22 phase 02d-v — extract the boxed-scalar `v_nr`

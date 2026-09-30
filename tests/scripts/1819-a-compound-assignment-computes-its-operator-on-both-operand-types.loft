@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COMPOUND ASSIGNMENT COMPUTES ITS OPERATOR ON BOTH OPERAND TYPES (loft#1819,
+// @FR-E-Asgn-Compound).  `place op= e` is `v₁ op v₂` written back through the place, with the
+// operator resolved on the place's type and the right side's OWN type, as the plain `op` is.
+// Four things did not hold:
+//   - the right side was typed as the place's type, so `p.f += 1` on a `float` field handed
+//     `OpAddFloat` the integer's bits (1.5 stayed 1.5; rustc refused the native source), and
+//     `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`;
+//   - a local was retyped to the right side's type, so `f += 1` on a `float` was refused as a
+//     change "from float to integer";
+//   - a struct literal on the right was built INTO the place, so `a -= V { x: 3 }` answered 3;
+//   - a record FIELD or ELEMENT place was never written: `h.v -= mk(8)` left `h.v` unchanged.
+// A composed type the place cannot hold is refused naming all three types; that half lives in
+// `1819b-a-compound-result-the-place-cannot-hold-is-refused.loft`.
+//
+// Axes this file MOVES:  the place (a local · a `&` parameter · a struct field · a nested field ·
+//                        a vector element · a hash element · a `&` link to an element), the place
+//                        type (float · single · integer · a struct · a `value struct` · a
+//                        struct-enum · `V?`), the right side (a literal of another type · a local
+//                        · a struct literal · a call returning a record), the operator (`+=` `-=`
+//                        `*=` `/=` `%=`), an address that calls a function (evaluated once), and
+//                        repetition in a loop (leak).
+// Axes it HOLDS FIXED:   `text` and collection `+=` (they append; `t += "b"`, `v += [2]` here
+//                        only as a no-regression check).
+//
+// @falsified-at: d53ec702c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1819-a-compound-assignment-computes-its-operator-on-both-operand-types.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses this file at compile time
+//   ("Variable 'f' cannot change type from float to integer").
+//   WITNESS: measured cell by cell on the control, `r.f += 1` on a float field leaves 1.5,
+//   `a -= V { x: 3 }` on a V of 50 answers 3 (not 47), and
+//   `h.v -= mk(8)` leaves `h.v` at 50 — each with no diagnostic.
+//   HOLDS: leak and panic are equal on both trees (the loop cells run 100 compound writes
+//   of records and leave no store behind).
+
+struct V { x: integer }
+fn OpMin(self: V, o: integer) -> V { V { x: self.x - o * 10 } }
+fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
+fn OpAdd(self: V, o: integer) -> V { V { x: self.x + o } }
+fn mk(n: integer) -> V { V { x: n } }
+fn maybe(n: integer) -> V? { if n > 0 { V { x: n } } else { null } }
+
+value struct P { x: integer, y: integer }
+fn OpAdd(self: P, o: integer) -> P { P { x: self.x + o, y: self.y + o } }
+fn OpAdd(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
+
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn OpAdd(self: Sh, o: integer) -> Sh {
+  match self { Ci { r } => Ci { r: r + o }, Sq { s } => Sq { s: s + o * 2 } }
+}
+fn val(s: Sh) -> integer { match s { Ci { r } => r, Sq { s } => s } }
+
+struct Rec { f: float, n: integer, v: V, p: P, sh: Sh }
+struct Outer { r: Rec }
+struct Kv { k: text, x: integer }
+fn OpMin(self: Kv, o: integer) -> Kv { Kv { k: self.k, x: self.x - o } }
+struct Ctr { n: integer }
+fn next(c: Ctr) -> integer { c.n += 1; c.n }
+fn bump(x: &float) { x += 1; }
+
+fn main() {
+  // Numbers: 1.5 + 1 = 2.5; 3*2 = 6, 6/4 = 1.5, 1.5 - 1 = 0.5; single 1.5 + 1 = 2.5;
+  // (5 + 2) * 3 - 1 = 20, 20 / 4 = 5, 5 % 3 = 2; 1.5 + 2 = 3.5, 3.5 * 2 = 7.
+  f = 1.5;
+  f += 1;
+  assert(f == 2.5, "float += integer: {f}");
+  g = 3.0;
+  g *= 2;
+  g /= 4;
+  g -= 1;
+  assert(g == 0.5, "float *= /= -= integer: {g}");
+  s = 1.5f;
+  s += 1;
+  assert(s == 2.5f, "single += integer: {s}");
+  i = 5;
+  i += 2;
+  i *= 3;
+  i -= 1;
+  i /= 4;
+  i %= 3;
+  assert(i == 2, "integer chain: {i}");
+  h = 1.5;
+  k = 2;
+  h += k;
+  h *= k;
+  assert(h == 7.0, "float += an integer local: {h}");
+  b = 1.5;
+  bump(b);
+  assert(b == 2.5, "through a & parameter: {b}");
+  // Fields and elements of number type: 1.5 + 1 = 2.5, * 2 = 5; 2 + 1 = 3.
+  r = Rec { f: 1.5, n: 2, v: V { x: 50 }, p: P { x: 5, y: 6 }, sh: Sq { s: 3 } };
+  r.f += 1;
+  r.f *= 2;
+  r.n += 1;
+  assert(r.f == 5.0 && r.n == 3, "number fields: {r.f} {r.n}");
+  fs = [1.5, 2.5];
+  fs[0] += 1;
+  assert("{fs}" == "[2.5,2.5]", "float element: {fs}");
+  // A user operator on its second operand's type, on a local: 50 - 1*10 = 40, 40 - 3 = 37.
+  a = V { x: 50 };
+  a -= 1;
+  a -= V { x: 3 };
+  assert(a.x == 37, "V -= integer, V -= literal: {a.x}");
+  a -= mk(7);
+  assert(a.x == 30, "V -= a call: {a.x}");
+  m = maybe(9);
+  m -= 4;
+  assert(m.x == -31, "V? -= integer: 9 - 40 = {m.x}");
+  // Record places: 50 - 1*10 = 40, 40 - 8 = 32; nested 32 - 2*10 = 12.
+  r.v -= 1;
+  r.v -= mk(8);
+  assert(r.v.x == 32, "record field: {r.v.x}");
+  o = Outer { r: Rec { f: 0.0, n: 0, v: V { x: 32 }, p: P { x: 0, y: 0 }, sh: Ci { r: 0 } } };
+  o.r.v -= 2;
+  assert(o.r.v.x == 12, "nested field: {o.r.v.x}");
+  // A value struct: (1,2) + 10 = (11,12), + (100,200) = (111,212); field (5,6) + 1 + (1,1).
+  p = P { x: 1, y: 2 };
+  p += 10;
+  p += P { x: 100, y: 200 };
+  r.p += 1;
+  r.p += P { x: 1, y: 1 };
+  assert(p.x == 111 && p.y == 212 && r.p.x == 7 && r.p.y == 8, "value struct");
+  // A struct-enum: Ci 1 + 5 = 6; the field Sq 3 + 2*2 = 7.
+  e: Sh = Ci { r: 1 };
+  e += 5;
+  r.sh += 2;
+  assert(val(e) == 6 && val(r.sh) == 7, "struct-enum: {val(e)} {val(r.sh)}");
+  // Elements whose address calls a function: `next` runs ONCE per statement.
+  c = Ctr { n: -1 };
+  vs = [V { x: 50 }, V { x: 60 }];
+  vs[next(c)] -= 1;
+  assert(vs[0].x == 40 && vs[1].x == 60 && c.n == 0, "record element: {vs[0].x} {vs[1].x} {c.n}");
+  ws = [1.5, 2.5, 3.5];
+  ws[next(c)] += 1;
+  assert("{ws}" == "[1.5,3.5,3.5]" && c.n == 1, "float element: {ws} {c.n}");
+  q = &vs[1];
+  q -= 2;
+  assert(vs[1].x == 40, "through a & link to an element: {vs[1].x}");
+  kv: hash<Kv[k]> = [Kv { k: "a", x: 10 }, Kv { k: "b", x: 20 }];
+  kv["b"] -= 5;
+  assert(kv["a"].x == 10 && kv["b"].x == 15 && len(kv) == 2, "hash element");
+  // Repeated in a loop: 100 × (1 + 2) = 300; 100 × (1 + 1) = 200; 100 × 3 = 300.
+  t = V { x: 0 };
+  hv = Rec { f: 0.0, n: 0, v: V { x: 0 }, p: P { x: 0, y: 0 }, sh: Ci { r: 0 } };
+  es = [V { x: 0 }];
+  for n in 0..100 {
+    t += V { x: 1 };
+    t += 2;
+    hv.v += V { x: 1 };
+    hv.v += 1;
+    es[0] += V { x: 3 };
+  }
+  assert(t.x == 300 && hv.v.x == 200 && es[0].x == 300, "loop: {t.x} {hv.v.x} {es[0].x}");
+  // No regression: text and vector `+=` append.
+  txt = "a";
+  txt += "b";
+  vec = [1];
+  vec += [2];
+  assert(txt == "ab" && "{vec}" == "[1,2]", "append");
+}

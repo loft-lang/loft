@@ -597,6 +597,18 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn a_compound_operator_no_overload_takes_is_refused() {
+    // loft#1819 — a compound assignment resolves its operator on the place's type and the
+    // right side's OWN type, so a right side no overload takes is refused naming both, and
+    // naming the operator as written.  Before, the right side was typed as the place's type:
+    // *"No matching operator 'Min' on 'V' and 'V'"*.
+    code!(
+        "struct V { x: integer }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nfn test() { a = V { x: 5 }; a -= \"t\"; assert(a.x == 5, \"u\"); }"
+    )
+    .error("No matching operator '-=' on 'V' and 'text' at a_compound_operator_no_overload_takes_is_refused:3:37");
+}
+
+#[test]
 fn an_operator_no_overload_takes_is_refused() {
     // loft#1817 — an operator reaches every member of its overload set (`@FR-F-Recv`), and a
     // second operand NO member takes is still refused naming both operand types, in either

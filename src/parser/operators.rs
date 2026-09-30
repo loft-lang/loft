@@ -1159,22 +1159,57 @@ impl Parser {
 
     /** Mutate current code when it reads a value into writing it. This is needed for assignments.
      */
+    ///
+    /// `(E-Asgn-Compound)` step 4 — `place op= e` computes `v₁ op v₂` by `(E-Op)`, so the
+    /// operator is resolved on the PLACE's type and the RIGHT side's own type `src_tp`, exactly
+    /// as the plain `place op e` is.  Typing both operands as the place's type claimed the
+    /// right side was something it is not: `p.f += 1` on a `float` field handed `OpAddFloat`
+    /// the integer's bits (`1.5` unchanged on the interpreter, rustc refusing the native
+    /// source), and `a -= 1` over `OpMin(self: V, o: integer)` looked for `OpMin(V, V)`
+    /// (loft#1819).  Answers the composed value and its type; the caller judges the type
+    /// against the place.
     pub(crate) fn compute_op_code(
         &mut self,
         op: &str,
         to: &Value,
         val: &Value,
         f_type: &Type,
-    ) -> Value {
+        src_tp: &Type,
+    ) -> (Value, Type) {
         if op == "=" {
-            val.clone()
-        } else if op == ">" {
-            self.op("Lt", val.clone(), to.clone(), f_type.clone())
-        } else if op == ">=" {
-            self.op("Le", val.clone(), to.clone(), f_type.clone())
-        } else {
-            self.op(rename(op), to.clone(), val.clone(), f_type.clone())
+            return (val.clone(), src_tp.clone());
         }
+        let (name, operands, types) = if op == ">" {
+            (
+                "Lt",
+                [val.clone(), to.clone()],
+                [src_tp.clone(), f_type.clone()],
+            )
+        } else if op == ">=" {
+            (
+                "Le",
+                [val.clone(), to.clone()],
+                [src_tp.clone(), f_type.clone()],
+            )
+        } else {
+            (
+                rename(op),
+                [to.clone(), val.clone()],
+                [f_type.clone(), src_tp.clone()],
+            )
+        };
+        // A refusal names the operator the author wrote, `-=`, not the internal `Min`.
+        let spelled = match op {
+            "+" => "+=",
+            "-" => "-=",
+            "*" => "*=",
+            "/" => "/=",
+            "%" => "%=",
+            other => other,
+        };
+        let mut code = Value::Null;
+        let tp = self.call_op_as(&mut code, name, spelled, &operands, &types);
+        (code, tp)
     }
 
     /// Dispatch an `OpGetX` getter name to the corresponding `OpSetX` setter call.
