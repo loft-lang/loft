@@ -1824,6 +1824,26 @@ use a separate collection or add after the loop"
         {
             return VecBind::NotABind;
         }
+        self.collection_bind_source(code, var_nr)
+    }
+
+    /// Is this keyed bind's source a PROJECTION that `@FR-B-View-Depth` / `@FR-B-View-Base`
+    /// make a view — a field read or a tuple member that `collection_bind_source` does not
+    /// answer as a copy?  Only projections are asked: a call or a branch is a value of its
+    /// own, whatever the classifier says about it.
+    fn keyed_projection_views(&self, code: &Value, var_nr: u16) -> bool {
+        let projection = matches!(code.unspan(), Value::TupleGet(_, _))
+            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpGetField"));
+        projection && matches!(self.collection_bind_source(code, var_nr), VecBind::NotABind)
+    }
+
+    /// `@FR-B-Copy` vs `@FR-B-View` / `@FR-B-View-Base` / `@FR-B-View-Depth` for a bind of a
+    /// whole COLLECTION, asked of its source alone — one home for the vector and the keyed
+    /// kinds, whose answers are the same rule.  A whole variable (a capture, a constant read)
+    /// and a one-level projection off an OWNED record or tuple copy; every other projection —
+    /// a nested field read, a read through an element, a read off a borrowed base — is a view
+    /// (`NotABind`), as is every shape that is not a projection at all.
+    fn collection_bind_source(&self, code: &Value, var_nr: u16) -> VecBind {
         // The bare-Var test is deliberately NOT unspanned (a Span-wrapped RHS
         // lowers elsewhere); the field-read and self-assign tests are.
         //
@@ -6409,6 +6429,12 @@ use a separate collection or add after the loop"
             // the source survives (it is this branch's `make_independent` that strips it),
             // which is exactly the non-owning shape the vector twin already has.
             && !amp_collection_bind
+            // @FR-B-View-Depth / @FR-B-View-Base — a PROJECTION the vector twin reads as a view
+            // (a nested field read, a read through an element, a read off a borrowed base)
+            // is a view for the keyed kinds too, and takes the same handle share.  Deep-copied
+            // here, `g = n.inn.h; n.inn.h += [r]` left `g` one record short (loft#1759).  A
+            // call, a branch and a whole variable are not projections and keep the copy.
+            && !self.keyed_projection_views(code, var_nr)
         {
             // `s = s` self-assign — emit nothing rather than clear+recopy
             // off the same storage.

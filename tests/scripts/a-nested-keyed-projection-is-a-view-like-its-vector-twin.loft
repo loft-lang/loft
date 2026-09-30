@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NESTED KEYED PROJECTION IS A VIEW, LIKE ITS VECTOR TWIN (`@FR-B-View-Depth`,
+// `@FR-B-View-Base`, loft#1759).  A bind from a nested field read, a read through an element, or
+// a projection off a by-value parameter names the place, whatever the element type — so a
+// record added through the source is seen through the binding, and one added through the
+// binding reaches the source.  All five keyed kinds deep-copied instead, while `vector` viewed.
+// A one-level projection off an OWNED record still copies (`@FR-B-Copy`) — the control cell.
+//
+// Cells: kind (hash, sorted, index, spatial, trie) × shape (depth 2, depth 3, through an
+// element, field-element-field, off a by-value parameter, one-level owned).
+
+struct Rh { id: integer }
+struct Rs { id: integer }
+struct Ri { id: integer }
+struct Pt { x: integer, y: integer }
+struct Tw { k: text }
+struct In { h: hash<Rh[id]>, s: sorted<Rs[id]>, i: index<Ri[id]>, sp: spatial<Pt[x, y]>, t: trie<Tw[k]>, n: integer }
+struct Mid { inn: In, m: integer }
+struct Top { mid: Mid }
+struct Hold { ins: vector<In> }
+
+fn fresh() -> In {
+  In { h: [Rh { id: 1 }], s: [Rs { id: 1 }], i: [Ri { id: 1 }], sp: [Pt { x: 1, y: 1 }],
+       t: [Tw { k: "a" }], n: 0 }
+}
+
+// Off a by-value parameter: each view sees the record added through the parameter.
+fn byval(m: Mid) -> integer {
+  gh = m.inn.h; m.inn.h += [Rh { id: 7 }];
+  gs = m.inn.s; m.inn.s += [Rs { id: 7 }];
+  gi = m.inn.i; m.inn.i += [Ri { id: 7 }];
+  gp = m.inn.sp; m.inn.sp += [Pt { x: 7, y: 7 }];
+  gt = m.inn.t; m.inn.t += [Tw { k: "z" }];
+  len(gh) * 10000 + len(gs) * 1000 + len(gi) * 100 + len(gp) * 10 + len(gt)
+}
+
+fn main() {
+  n = Mid { inn: fresh(), m: 0 };
+  gh = n.inn.h; n.inn.h += [Rh { id: 2 }];
+  gs = n.inn.s; n.inn.s += [Rs { id: 2 }];
+  gi = n.inn.i; n.inn.i += [Ri { id: 2 }];
+  gp = n.inn.sp; n.inn.sp += [Pt { x: 2, y: 2 }];
+  gt = n.inn.t; n.inn.t += [Tw { k: "b" }];
+  assert(len(gh) == 2 && len(gs) == 2 && len(gi) == 2 && len(gp) == 2 && len(gt) == 2,
+         "depth 2: {len(gh)} {len(gs)} {len(gi)} {len(gp)} {len(gt)}");
+  assert(gh[2].id == 2 && gs[2].id == 2 && gi[2].id == 2, "the added record is found through the view");
+  gh += [Rh { id: 3 }];
+  gt += [Tw { k: "c" }];
+  assert(len(n.inn.h) == 3 && len(n.inn.t) == 3, "a write through the view reaches the source");
+
+  t = Top { mid: Mid { inn: fresh(), m: 0 } };
+  th = t.mid.inn.h; t.mid.inn.h += [Rh { id: 2 }];
+  ts = t.mid.inn.s; t.mid.inn.s += [Rs { id: 2 }];
+  assert(len(th) == 2 && len(ts) == 2, "depth 3: {len(th)} {len(ts)}");
+
+  vs = [fresh()];
+  vh = vs[0].h; vs[0].h += [Rh { id: 2 }];
+  vi = vs[0].i; vs[0].i += [Ri { id: 2 }];
+  assert(len(vh) == 2 && len(vi) == 2, "through an element: {len(vh)} {len(vi)}");
+
+  hd = Hold { ins: [fresh()] };
+  fh = hd.ins[0].h; hd.ins[0].h += [Rh { id: 2 }];
+  fp = hd.ins[0].sp; hd.ins[0].sp += [Pt { x: 2, y: 2 }];
+  assert(len(fh) == 2 && len(fp) == 2, "field-element-field: {len(fh)} {len(fp)}");
+
+  assert(byval(Mid { inn: fresh(), m: 0 }) == 22222, "off a by-value parameter");
+
+  // The control: one level off an OWNED record copies.
+  o = fresh();
+  oh = o.h; o.h += [Rh { id: 2 }];
+  os = o.s; o.s += [Rs { id: 2 }];
+  ot = o.t; o.t += [Tw { k: "b" }];
+  assert(len(oh) == 1 && len(os) == 1 && len(ot) == 1 && len(o.h) == 2, "one level off an owned record copies");
+}
