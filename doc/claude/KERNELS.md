@@ -5,11 +5,12 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Kernels — the register
 
-A **kernel** is one Rust body that stands in for a loop loft code would otherwise run: a
-standard-library function whose work is done in Rust, reached on the interpreter through its
-single native-call operator (`OpStaticCall`, a row in `native::FUNCTIONS`) and on `--native`
-through `codegen_runtime` or a `#rust` template.  Never an opcode.  Every kernel that exists is
-listed here, with why it exists and when it goes.
+A **kernel** is one Rust body that stands in for a loop loft code would otherwise run.  It is
+spelled with the mechanism loft already has for calling Rust: a body-less standard-library
+declaration with a `#rust` template, which `--native` inlines, plus the interpreter's adapter
+(a row in `native::FUNCTIONS`, reached through its one native-call operator `OpStaticCall`).
+Never an opcode, and never a new mechanism.  Every kernel that exists is listed here, with why
+it exists and when it goes.
 
 ## The rule
 
@@ -26,15 +27,24 @@ its own code can be: measured below, the compiled loft bodies of `split` and `li
 1.5× of their kernels already.  In the long run loft needs no kernels.  Each one exists only
 for a gap the INTERPRETER (or, for `sum`, the code generator) has not closed yet.
 
+**Kernels live only in the standard library** (the owner's rule).  Outside it, hand-written
+Rust stays sparse: a library writes its loops in loft, and a `use`d library is compiled for an
+interpreted script anyway
+([C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
+`src/native_lib.rs`).  A library's `#native` Rust is for what loft cannot express (an OS or a
+foreign API), never for speed.
+
 **A kernel earns its keep, or it does not stay.**  To be admitted:
 
 1. A profile of a real workload names one standard-library loop as dominant: a @PLN179 script
    port's `LOFT_PROFILE=1`, or a bench routine past the interpreter's 100× cliff.
 2. The general fix (making that loft code fast) is named, and is not reachable soon.
-3. It adds no public surface: it is private, or it sits under a name that already exists.
-4. A guard compares it with the loft body it replaced on both backends, and its plant has run
+3. It stays in the standard library: a loop that belongs in a library (loft over primitives,
+   @PLN179 strand 8) moves there and is written in loft, never kernelled.
+4. It adds no public surface: it is private, or it sits under a name that already exists.
+5. A guard compares it with the loft body it replaced on both backends, and its plant has run
    (the guard went red with the kernel sabotaged).
-5. It has a row in `scripts/kernel_ratio` and an entry below, with its removal trigger.
+6. It has a row in `scripts/kernel_ratio` and an entry below, with its removal trigger.
 
 **When one goes.**  `make kernel-ratio` times every kernel against its loft body on the same
 input, best of 5, on both backends, and checks that the two answer the same.  A kernel is
@@ -53,9 +63,7 @@ backends, the loft body returns, the kernel's Rust and its adapters go, and its 
 Loft body ÷ kernel, best of 5, on this project's perf box; `make kernel-ratio` is the current
 answer, and this table is re-measured whenever an entry changes.  Native is due for both
 text kernels: rustc already runs their loft bodies close to the kernel, so on native they are
-kept only because one declaration serves both backends.  A function whose loft body native
-compiles and whose kernel only the interpreter calls would remove them there.  That needs a
-declaration form the language does not have; see § Open.
+kept only because one declaration serves both backends.
 
 ## The kernels
 
@@ -114,10 +122,13 @@ declaration form the language does not have; see § Open.
 
 ## Open
 
-- **An interpreter-only kernel.**  Native already runs the text kernels' loft bodies within 2×.
-  A declaration that gives a function a loft body for native and a kernel for the interpreter
-  would retire both native uses today and leave the interpreter's as the only stop-gap.  It is
-  a language surface, so under the feature freeze it waits for the owner.
+- **The interpreter adapter is written by hand.**  `--native` runs a kernel's `#rust` template
+  directly, but the interpreter needs its own adapter in `src/native.rs` (196 such rows for
+  the standard library's `#rust` functions, the three kernels among them).  Operators already
+  avoid this: `make fill` generates the interpreter's side from the same template
+  (`src/create.rs::generate_code_into`, kept current by `tests/issues.rs::fill_rs_up_to_date`).
+  Extending that generator to body-less functions would make a kernel exactly one `#rust` line
+  and retire the hand-written adapters with it.
 
 ## Removed
 
