@@ -272,7 +272,11 @@ files for `hash`, 194 `sorted`, 149 `index`, 76 `spatial`, 67 `trie`, and in the
 published libraries by none of them.  So `spatial` and `trie` are the first candidates —
 self-contained, used by tests and (to measure) the games — and `vector`, `hash`, `sorted`
 and `index` are the store's spine that lazy stores, reflection and the SQL derivation are
-built on, and stay.
+built on, and go last.  **The owner's direction (2026-09-30): not a priority, but eventually
+every kind leaves the base language, and the syntax stays** — `spatial<T[x, y]>` keeps
+reading as it does, defined through a flexible kind construct a bundle supplies rather than
+by the parser knowing the word.  The design home is @PLN91 strand 3; this plan only measures
+what the kinds weigh and who uses them.
 
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
