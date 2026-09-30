@@ -32,7 +32,30 @@ ships, the next month's branch starts fresh from the new `main` tip.  A cycle's 
 written in its `releases/<cycle>/README.md`; what work is in scope during a cycle is
 [ROADMAP.md § Feature freeze](ROADMAP.md#feature-freeze--heading-into-the-2026-07-cycle-added-2026-06-07).
 
-### Monthly documentation review (by hand) — libraries + feature catalogue
+### Documentation validation — required for EVERY release
+
+**No release is tagged until its documentation has been validated against the build it ships,
+in all three parts** (owner).  The checklist row `M-doc-validation` blocks the tag until it is
+ticked with the evidence of each part:
+
+1. **Library documentation** — every library that owes a review or moved since its
+   watermark has been read and its watermark bumped:
+   `make libcatalogue && make libraries-review` reads clean
+   ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md)).
+2. **User documentation** — the stdlib reference, the guides, the comparison pages and the
+   generated HTML: `cargo run --bin gendoc` leaves no diff (the pages match their sources),
+   `scripts/doc_review.py` reads every section cleared, and its sign-offs are committed in
+   `.doc_review_ledger`, so the next release starts from them (§ 0 below).
+3. **Feature catalogue** — `make features-review SINCE=<previous release tag>` lists every
+   `@F` entry whose citing source moved since the last release; each is re-read against the
+   build (every limitation, "not supported" and "planned" claim probed on both backends, the
+   stated outputs hand-checked) and its issue corrected where it is stale; every feature
+   example runs on both backends; and `index/features.json` matches the live tracker
+   (`make features-fetch` leaves no diff).  The previous release tag IS the feature half's
+   watermark.
+
+A structural aid reading clean is not the validation: the aids say what moved, the reads say
+whether it is still TRUE.  The rest of this section is the method for part 1.
 
 Each cycle, before tagging, run the **documentation review** —
 [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md). The automated
@@ -45,13 +68,13 @@ The pass has two halves, and each starts with an aid that bounds the reading:
 
 ```bash
 make libcatalogue && make libraries-review   # which libraries owe a review / moved
-make features-review SINCE=<watermark>       # the @F catalogue's gaps + worklist
+make features-review SINCE=<previous tag>    # the @F catalogue's gaps + worklist
 ```
 
-Both are **reports, never release blockers** — they say what is structurally
-missing and what actually moved, and stop there; whether a doc is still *true* and
-whether an example is still the *clearest* are judgements they deliberately do not
-make. Per-library watermarks bound the library half (libraries publish on their own
+The two aids are **reports** — they say what is structurally missing and what actually
+moved, and stop there; whether a doc is still *true* and whether an example is still the
+*clearest* are judgements they deliberately do not make, and those judgements are what
+`M-doc-validation` requires. Per-library watermarks bound the library half (libraries publish on their own
 cadence — § What forces a release — so one global ref would mean nothing across
 thirty-four packages); a single cycle watermark bounds the feature half. A quiet
 month is a five-minute pass. Fix XS drift on the spot; bump the watermark; route M+
@@ -409,8 +432,9 @@ reference, the guide pages, the comparison/perf pages, and the **flags & routine
 (the `make help` block and CLI flags).  It is built to neither
 **gloss** (the tool visits every unit — page, example, symbol, claim — so nothing is
 skimmed) nor be **diff-scoped** (every check runs over the WHOLE corpus, so a stale
-remark from any past release surfaces now, not only what this release touched).  Run
-it every release to *see* the state and fix what's cheap — it never blocks the tag.
+remark from any past release surfaces now, not only what this release touched).  It is
+part 2 of the release's **documentation validation** (§ Documentation validation —
+required for EVERY release): every section cleared and signed off before the tag.
 Check definitions: [API_SURFACE.md § S7](API_SURFACE.md).
 
 | # | Check | Command | Status |
@@ -677,7 +701,7 @@ run of every nightly against HEAD's commit, measured), the dependency audit (`A-
 (`A-consumers`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
-per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, `M-file-split`, and
+per-release work (`M-doc-validation`, `M-monthly-bugs`, `M-close-plans`, `M-file-split`, and
 `M-perf-pass` — the performance read over loft AND its libraries; @PLN158 grows it
 into per-routine benches with industry reference twins).  `A-deviations` blocks a release on
 any open formal deviation a release can resolve: each has a tracking issue, and the only ones

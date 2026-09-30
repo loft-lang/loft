@@ -481,7 +481,7 @@ tagged / exempt / deferred / TODO.
 
 The automated gate only sees a citation that *dangles* or *duplicates* — staleness
 (still resolves, no longer matches the code) and quality (valid but no longer the
-clearest) are caught by the monthly by-hand pass in
+clearest) are caught by the per-release by-hand pass in
 [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md).
 
 ### 2b. Never leave a capability in the fixture only

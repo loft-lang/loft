@@ -624,7 +624,7 @@ mechanism classes are still producing bugs + whether last cycle's keystone actua
 class; the pass converts ONE rising class into ONE generalization — a report, never a gate) ·
 [.github/LABELS.md](.github/LABELS.md) · [RELEASE.md](doc/claude/RELEASE.md) (the process; start here) ·
 [RELEASE_PUBLISH.md](doc/claude/RELEASE_PUBLISH.md) (tagging, bundles, the registry entry) · [releases/](doc/claude/releases/README.md) (one directory
-per cycle: its state write-up and its committed checklist evidence) · [LIBRARY_DOC_REVIEW.md](doc/claude/LIBRARY_DOC_REVIEW.md) (the monthly by-hand doc review, both
+per cycle: its state write-up and its committed checklist evidence) · [LIBRARY_DOC_REVIEW.md](doc/claude/LIBRARY_DOC_REVIEW.md) (the per-release by-hand doc review, both
 halves: `make libraries-review` says which libraries owe a review or have moved since their
 watermark, `make features-review` does the same for the `@F` catalogue, `scripts/doc-review.sh
 --since` drills into one library's functions — all three REPORT, none gates) ·

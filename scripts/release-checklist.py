@@ -1436,14 +1436,21 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "may pick another than the worklist's first",
             cadence="mid",
         ),
+        # Required for every release (owner, RELEASE.md § Documentation validation): the three
+        # parts are READ, not merely reported — a blocker, never a report row.
         Item(
-            "M-monthly-docs",
-            "Monthly by-hand documentation review",
-            "make libraries-review && make features-review",
-            "which libraries owe a review or moved since their watermark — the "
-            "monthly cadence makes this a per-release step",
+            "M-doc-validation",
+            "Documentation validated against this build: libraries, user docs, feature catalogue",
+            "make libcatalogue && make libraries-review; cargo run --bin gendoc (no diff) && "
+            "scripts/doc_review.py; make features-review SINCE=<previous tag> && "
+            "make features-fetch (no diff)",
+            "all three parts done: every library owing a review read and its watermark bumped; "
+            "every user-doc section cleared with its sign-off committed in .doc_review_ledger and "
+            "the generated pages matching their sources; every @F entry moved since the previous "
+            "release re-read with its claims probed on both backends, every feature example "
+            "running, and index/features.json matching the tracker.  Tick with the evidence of "
+            "each part as the note",
             cadence="mid pre",
-            report=True,
         ),
         Item(
             "M-monthly-bugs",
