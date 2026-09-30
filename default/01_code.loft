@@ -439,8 +439,10 @@ pub fn sqrt(self: single) -> single? {
 }
 #pure
 
+// `log` in base 10 or 2 takes the dedicated routine: `x.log(b)` is a ratio of natural
+// logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
-#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f32::NAN }}"
+#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b == 10.0 {{ @v1.log10() }} else if __b == 2.0 {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f32::NAN }}"
 // Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 // Use instead of atan when you have separate x/y components.
 pub fn atan2(self: single, v2: single) -> single {
@@ -582,8 +584,10 @@ pub fn sqrt(self: float) -> float? {
 }
 #pure
 
+// `log` in base 10 or 2 takes the dedicated routine: `x.log(b)` is a ratio of natural
+// logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Float(fn_id: const i8, v1: float, v2: float) -> float;
-#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f64::NAN }}"
+#rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b == 10.0 {{ @v1.log10() }} else if __b == 2.0 {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f64::NAN }}"
 // Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 // Use instead of atan when you have separate x/y components.
 pub fn atan2(self: float, v2: float) -> float {

@@ -1323,7 +1323,16 @@ fn math_func2_single(s: &mut State) {
     let v_v1 = s.get_stack::<f32>();
     let new_value = match v_fn_id {
         0 => v_v1.atan2(v_v2),
-        1 => v_v1.log(v_v2),
+        1 => {
+            let __b = v_v2;
+            if __b == 10.0 {
+                v_v1.log10()
+            } else if __b == 2.0 {
+                v_v1.log2()
+            } else {
+                v_v1.log(__b)
+            }
+        }
         _ => f32::NAN,
     };
     s.put_stack(new_value);
@@ -1442,7 +1451,16 @@ fn math_func2_float(s: &mut State) {
     let v_v1 = s.get_stack::<f64>();
     let new_value = match v_fn_id {
         0 => v_v1.atan2(v_v2),
-        1 => v_v1.log(v_v2),
+        1 => {
+            let __b = v_v2;
+            if __b == 10.0 {
+                v_v1.log10()
+            } else if __b == 2.0 {
+                v_v1.log2()
+            } else {
+                v_v1.log(__b)
+            }
+        }
         _ => f64::NAN,
     };
     s.put_stack(new_value);
