@@ -8108,6 +8108,14 @@ impl Parser {
         }
         let elems = elems.clone();
         let synthetic_d_nr = self.data.tuple_def(&mut self.lexer, &elems);
+        // No record while a member is unresolved (`Data::tuple_def`).  The return stays the
+        // tuple it was declared as, which is what the between-passes check reads: a member
+        // declared later in the file is refused there with its cure, an undefined one is
+        // reported as undefined.  Boxed as `Reference(u32::MAX)` it reached neither, and the
+        // first read of the result dereferenced no definition — an internal compiler error.
+        if synthetic_d_nr == u32::MAX {
+            return result;
+        }
         Type::Reference(synthetic_d_nr, crate::data::Deps::none())
     }
 }
