@@ -827,9 +827,12 @@ compile error naming the reservation. Use `assert(cond, "message")`, and do not 
 
 ## Builtin names — shadowing rules (@PLN22 Phase 2)
 
-- **Definitions CAN shadow a stdlib/library name.**  `enum E`, `struct File`,
-  `pub PI = 3` are legal even though the stdlib has `E`/`File`/`PI`; your name wins
-  bare resolution and `std::Name` still reaches the original.
+- **Definitions CAN shadow a stdlib name.**  `enum E`, `struct File`,
+  `pub PI = 3;` are legal even though the stdlib has `E`/`File`/`PI`; your name wins
+  bare resolution and `std::Name` still reaches the original.  A LIBRARY name is
+  different: one brought in by `use lib::*;` cannot be redefined ("Cannot redefine"),
+  while a bare `use lib;` leaves the unqualified name free (`lib::name` reaches the
+  library's).
 - **Built-in TYPE-KEYWORDS are reserved** — you cannot define `struct integer`,
   `enum vector`, etc. (it errors: "conflicts with a type").  Reserved: `integer`,
   `float`, `single`, `text`, `boolean`, `character`, `vector`, `hash`, `sorted`,
