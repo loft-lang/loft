@@ -10,6 +10,11 @@
 //
 // Cells: kind (hash, sorted, index, spatial, trie) × shape (depth 2, depth 3, through an
 // element, field-element-field, off a by-value parameter, one-level owned).
+//
+// @falsified-at: 1d31ea77a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nested-keyed-projection-is-a-view-like-its-vector-twin.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: asserts — the control deep-copies every view cell, so the depth-2 lengths read 1.
+// HOLDS: every assert on both backends, with no store leaked on either.
 
 struct Rh { id: integer }
 struct Rs { id: integer }
