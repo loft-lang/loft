@@ -1,0 +1,68 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 0cf89ede4..1ec714fac 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -20346,19 +20346,13 @@ impl Parser {
+             let mut drop = Value::Null;
+             self.lexer.revert(lnk);
+             let tp = self.expression(&mut drop);
+-            if let Type::Enum(enum_nr, true, _) = *tp.base() {
++            if matches!(tp, Type::Enum(_, true, _)) {
+                 found = true;
+                 if !self.first_pass {
+-                    // A struct-enum value: its size is its VARIANT's, known at runtime — a
+-                    // nullable one's too, when a value is there (`hm[k].s`).  An ABSENT one
+-                    // holds no variant and keeps its type's static size, as it always has:
+-                    // what `sizeof` of an absent variant should answer is not settled.
+-                    let absent = if matches!(tp, Type::Optional(_)) {
+-                        self.packed_size(&tp, u32::MAX)
+-                    } else {
+-                        0
+-                    };
+-                    *val = self.variant_size(drop, enum_nr, absent);
++                    // A struct-enum value: its size is its VARIANT's, known at runtime.  A
++                    // NULLABLE one keeps its type's static size, as it always has — what a
++                    // `sizeof` of an absent variant should answer is not settled.
++                    *val = self.cl("OpSizeofRef", &[drop]);
+                 }
+             } else if matches!(tp.base(), Type::Tuple(_)) || self.data.type_elm(&tp) != u32::MAX {
+                 found = true;
+@@ -20382,38 +20376,6 @@ impl Parser {
+         I32.clone()
+     }
+ 
+-    /// `sizeof` of a struct-enum value: the size of the variant it holds (@F45).
+-    ///
+-    /// The variant is read from the value's DISCRIMINANT — the byte `is` and `match` test,
+-    /// `OpGetEnum(v, 0)` — so the answer is right wherever the value sits.  Reading the record
+-    /// header instead answered for a standalone record only: an element of a vector, a field
+-    /// of a struct, of a hash entry or of a vector element sized its CONTAINER (4, 56, 40, 8)
+-    /// (loft#1822).  The value is evaluated once, into the discriminant; each variant's size
+-    /// is known here, so the answer is a chain over it; an absent value (discriminant 0, no
+-    /// variant) answers `absent`.
+-    fn variant_size(&mut self, value: Value, enum_nr: u32, absent: i32) -> Value {
+-        let d = self.create_unique("sizeof_disc", &I32);
+-        self.vars.defined(d);
+-        let get_enum = self.cl("OpGetEnum", &[value, Value::Int(0)]);
+-        let disc = self.cl("OpConvIntFromEnum", &[get_enum]);
+-        let variants: Vec<u32> = self
+-            .data
+-            .children_of(enum_nr)
+-            .filter(|&c| self.data.def_type(c) == DefType::EnumValue)
+-            .collect();
+-        let mut chain = Value::Int(absent);
+-        for c in variants.into_iter().rev() {
+-            let nr = match self.data.def(c).attributes().first().map(|a| &a.value) {
+-                Some(Value::Enum(nr, _)) => i32::from(*nr),
+-                _ => continue,
+-            };
+-            let size = i32::from(self.database.size(self.data.def(c).known_type()));
+-            let test = self.cl("OpEqInt", &[Value::Var(d), Value::Int(nr)]);
+-            chain = v_if(test, Value::Int(size), chain);
+-        }
+-        v_block(vec![v_set(d, disc), chain], I32.clone(), "sizeof variant")
+-    }
+-
+     /// The packed size `tp` takes as a struct field or vector element — THE size `sizeof`
+     /// answers, for a type spelled and for an expression's type alike (@F45).  `alias` is the
+     /// def of a spelled type name (`i32`, `vector`), whose declared `size(N)` wins; an
