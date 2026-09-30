@@ -14434,6 +14434,48 @@ impl Parser {
         l.iter().any(|op| walk(op, v, false, self))
     }
 
+    /// Is the vector local `v` bound, ANYWHERE in the body, from a call that cannot be handed a
+    /// buffer at all — one returning a vector with no `__ref_N` among its arguments, which is a
+    /// native (`arguments()`, `s.split(',')`, `j.keys()`) handing back a FRESH store?  The
+    /// collapse that makes a straight-line rebind fill the buffer hands the call `v` itself as
+    /// its buffer; such a call has no buffer to hand, so the bind points `v` at the fresh store
+    /// and a local renamed onto the return buffer answers a store its caller never handed in —
+    /// loft#1599's leak, reached on the straight line.  Measured: `fn r() -> vector<text> { p =
+    /// arguments(); p }` leaked one store per call on both backends (the interpreter hid it
+    /// while the callee's unguarded free of the caller's buffer let the fresh store reuse that
+    /// number, and leaked as soon as the right-hand side allocated first).
+    ///
+    /// The verdict must be the same on both passes, and is: a stdlib native is complete on
+    /// both, and a loft function returning a vector is handed a buffer on every pass it is
+    /// known on (the buffer is reserved at signature time); one declared later has no known
+    /// return type on pass 1 and a buffer on pass 2, so neither pass asks about it.
+    fn var_bound_from_fresh_call(&self, l: &[Value], v: u16) -> bool {
+        fn fresh_call(rhs: &Value, this: &Parser) -> bool {
+            let Value::Call(d, args) = rhs.unspan() else {
+                return false;
+            };
+            let def = this.data.def(*d);
+            !def.name.starts_with("Op")
+                && matches!(def.returned().base(), Type::Vector(_, _))
+                && !args.iter().any(|a| {
+                    matches!(a.unspan(), Value::Var(b)
+                        if this.vars.name(*b).starts_with("__ref_"))
+                })
+        }
+        fn walk(op: &Value, v: u16, this: &Parser) -> bool {
+            match op.unspan() {
+                Value::Set(w, rhs) if *w == v => fresh_call(rhs, this),
+                Value::Loop(bl) | Value::Block(bl) => {
+                    bl.operators.iter().any(|o| walk(o, v, this))
+                }
+                Value::If(_, t, f) => walk(t, v, this) || walk(f, v, this),
+                Value::Insert(ops) => ops.iter().any(|o| walk(o, v, this)),
+                _ => false,
+            }
+        }
+        l.iter().any(|op| walk(op, v, self))
+    }
+
     fn var_bound_to_branch(l: &[Value], v: u16) -> bool {
         fn rhs_is_branch(node: &Value) -> bool {
             match node.unspan() {
@@ -17551,6 +17593,7 @@ impl Parser {
         let bound_to_vector_join = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
             && (Self::var_bound_to_branch(body, v)
                 || self.var_call_rebound_nested(body, v)
+                || self.var_bound_from_fresh_call(body, v)
                 || self
                     .branch_sunk_vectors
                     .contains(&(self.context, n.to_string())));
