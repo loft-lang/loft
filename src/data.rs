@@ -2703,6 +2703,9 @@ impl Type {
                 Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
                 _ => bound.clone(),
             },
+            // `T?` at a nullable bound is that bound, not `τ??` (@FR-N-Idem, loft#1771): the
+            // wrapper is rebuilt through its idempotent former, which `map_children` is not.
+            Type::Optional(inner) => Type::optional(inner.substitute(holder, bound)),
             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
         }
     }
@@ -2714,9 +2717,7 @@ impl Type {
     #[must_use]
     pub fn substitute_simultaneous(self, bindings: &[(u32, Type)]) -> Type {
         match self {
-            Type::Optional(inner) => {
-                Type::Optional(Box::new(inner.substitute_simultaneous(bindings)))
-            }
+            Type::Optional(inner) => Type::optional(inner.substitute_simultaneous(bindings)),
             Type::Reference(h, _) | Type::Enum(h, _, _)
                 if bindings.iter().any(|(x, _)| *x == h) =>
             {

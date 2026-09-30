@@ -12315,11 +12315,19 @@ impl Parser {
     /// empty collection whose construction has to be parsed in the position it lands in
     /// (a standalone `[]` leaks).  Here that position IS this parse, so the same
     /// sub-parse route serves both.
+    ///
+    /// `build_default` takes the already-peeled non-null base, and `concrete` is `T` as the
+    /// monomorph bound it — nullable when the call site's `T` was (`sum(v: vector<integer?>)`
+    /// binds `T = integer?`).  `x?` at `x: T?` discharges to the default of that base
+    /// (`(N-Default)` over `T? = integer?` by `@FR-N-Idem`): `0`, not a record built for
+    /// `integer?` (loft#1771).
     fn monomorph_default(&mut self, concrete: &Type) -> Option<(Value, Type)> {
-        if crate::parser::vectors::is_collection(concrete) {
-            return Some(self.subparse_default("[]", concrete));
+        let (base, _) = concrete.peel_optional();
+        let base = base.clone();
+        if crate::parser::vectors::is_collection(&base) {
+            return Some(self.subparse_default("[]", &base));
         }
-        self.build_default(concrete)
+        self.build_default(&base)
     }
 
     /// P241 fix (2026-05-11) — slice 2: integer-only.  POST-PASS that
