@@ -9280,7 +9280,7 @@ One call frame in the stack trace.
 pub fn stack_trace() -> vector<StackFrame>
 ```
 
-Return the current call stack as a vector of frames, outermost first. Each frame's `variables` field holds the frame's parameters and live local variables (typed via `ArgValue`).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack.  Under `--native` a frame's `variables` is empty: a compiled frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).
+Return the current call stack as a vector of frames, outermost first. Each frame's `variables` holds its parameters and live locals, `arguments` the parameters alone (typed via `ArgValue`).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack.  Under `--native` both lists are empty: a compiled frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).
 ```loft fn debug\_dump() { for frame in stack\_trace() { println("{frame.function}:{frame.line}"); for v in frame.variables { println("  {v.name} = {v.value}"); } } } ```
 
 == Coroutines

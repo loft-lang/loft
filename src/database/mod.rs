@@ -96,6 +96,8 @@ pub struct VarSnapshot {
     pub name: String,
     pub type_name: String,
     pub value: VarValueSnapshot,
+    /// A parameter of the frame's function: it also lands in `StackFrame.arguments`.
+    pub is_argument: bool,
 }
 
 /// Owned snapshot of a variable's typed runtime value.  Mirrors the loft

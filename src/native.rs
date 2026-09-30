@@ -2716,6 +2716,7 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
     let sf_size = u32::from(stores.size(sf_elm));
     let var_elm = stores.name("VarInfo");
     let var_size = u32::from(stores.size(var_elm));
+    let arg_size = u32::from(stores.size(stores.name("ArgInfo")));
     // look up every field position from the schema instead of hard-coding
     // byte offsets.  If a future edit to `default/04_stacktrace.loft` reorders
     // fields, renames them, or changes their type sizes, the lookups update
@@ -2761,8 +2762,25 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
             .store_mut(&vec)
             .set_u32_raw(elm.rec, elm.pos + vars_field_pos, 0);
 
-        // TR1.4: build vector<VarInfo> for this frame from the snapshot.
+        // TR1.4: build vector<VarInfo> for this frame from the snapshot, and the frame's
+        // PARAMETERS as `arguments` (loft#1806): the same snapshot entries, and `ArgInfo` is
+        // `VarInfo`'s layout (name, type_name, value), so one writer serves both.  Native
+        // frames carry no snapshot, so both stay empty there (STACKTRACE.md ST-6).
         if let Some(frame_vars) = vars_snapshot.get(frame_idx) {
+            let params: Vec<crate::database::VarSnapshot> = frame_vars
+                .iter()
+                .filter(|v| v.is_argument)
+                .cloned()
+                .collect();
+            populate_frame_variables(
+                stores,
+                &vec,
+                elm.rec,
+                elm.pos + arguments_pos,
+                arg_size,
+                &params,
+                "ArgInfo",
+            );
             populate_frame_variables(
                 stores,
                 &vec,
@@ -2770,6 +2788,7 @@ fn n_stack_trace(stores: &mut Stores, stack: &mut DbRef) {
                 elm.pos + vars_field_pos,
                 var_size,
                 frame_vars,
+                "VarInfo",
             );
         }
         crate::vector::vector_finish(&vec, &mut stores.allocations);
@@ -3433,11 +3452,13 @@ fn populate_frame_variables(
     vars_field_abs: u32,
     var_elm_size: u32,
     frame_vars: &[crate::database::VarSnapshot],
+    elem: &str,
 ) {
     if frame_vars.is_empty() {
         return;
     }
-    let var_elm = stores.name("VarInfo");
+    // `VarInfo` for `variables`, `ArgInfo` for `arguments` — the same three fields.
+    let var_elm = stores.name(elem);
     // Allocate the inner vector record for this frame's variables.
     let vec_words = ((frame_vars.len() as u32) * var_elm_size + 15) / 8 + 1;
     let inner_rec = stores.store_mut(sf_vec).claim(vec_words.max(1));
@@ -3463,9 +3484,9 @@ fn populate_frame_variables(
         );
         p
     };
-    let name_pos = lookup(var_elm, "VarInfo", "name");
-    let type_pos = lookup(var_elm, "VarInfo", "type_name");
-    let val_pos = lookup(var_elm, "VarInfo", "value");
+    let name_pos = lookup(var_elm, elem, "name");
+    let type_pos = lookup(var_elm, elem, "type_name");
+    let val_pos = lookup(var_elm, elem, "value");
 
     // ArgValue variant types (resolve once).
     let bool_tp = stores.name("BoolVal");
