@@ -499,7 +499,7 @@ impl Parser {
         // `Reference(__nullable<S>)` for a KEYED par (hash/sorted/index): `materialise_keyed_for_par`
         // builds the temp vector with `Reference(content_d)` element refs.  Both need the wrapper
         // so the worker reads the dense-`S` payload, not the element's discriminant @0.
-        let elem_enum_d = match elem_tp {
+        let elem_enum_d = match elem_tp.base() {
             Type::Enum(d, true, _) => Some(*d),
             Type::Reference(d, _) if self.data.def(*d).name().starts_with("__nullable<") => {
                 Some(*d)
