@@ -56,16 +56,27 @@ The last row is the number a hook or a per-file CI step pays on every call; wher
 query vocabulary (`src/git_query.rs`, @I117, @PLN119 arc F).
 
 **What it lacks, and the doctrine that decides how each gap closes:** no TOML reader, no
-explicit `exit(code)`, no typed access to `cargo`, `gh`, `rustc`, `jq`, `curl` — and no
-general `run(cmd, args)`, by decision ([@PLN119 § Why not a subprocess
-primitive](../119-out-of-process-libraries/README.md)): an external command lives INSIDE a
-vetted library that names the questions and builds the argv itself.  So this plan never asks
-for a subprocess primitive.  Each tool the scripts lean on gets the `lib/git` treatment or
-disappears: `jq` is `json_parse`; `curl` and `gh` are HTTP against a JSON API, which the
-`web` library already speaks, so a pure-loft `github` library needs no native at all;
-`rustc` is only ever reached through `cargo` or loft's own build phase; `cargo` is the one
-tool that earns a native in the `git_query.rs` shape (`metadata`, `build`, `test`, each a
-closed query).
+explicit `exit(code)`, and no way to run a program.  Until 2026-09-30 the last was by
+decision ([@PLN119 § Why not a subprocess
+primitive](../119-out-of-process-libraries/README.md)): an external command lived INSIDE a
+vetted library that built the argv itself.  **The owner reversed that on 2026-09-30: loft
+may run a subprocess, under two rules** that keep what @PLN119 was protecting —
+
+1. **A value can never become syntax.**  The command is a TYPED FORMAT STRING in the
+   @PLN124 shape the SQL layer already uses (`lit` + `hole_…`, [LOFT.md § String
+   formatting](../../LOFT.md)): the author's bytes are split into argv words, an
+   interpolated value is ONE argv word exactly as given, and no shell is ever between loft
+   and `execve`.  `c: Command = "git log -n {n} -- {path}"` cannot be injected, by
+   construction rather than by an escaping rule.
+2. **A stream is never left without a reader.**  `run` drains stdout and stderr
+   concurrently and feeds stdin beside them, so a child that fills one pipe while loft reads
+   the other can never deadlock — the classic `subprocess.communicate` failure that every
+   hand-rolled pipe loop reproduces.  The caller sees results, never file descriptors.
+
+With that, `jq` is `json_parse`, and `gh`, `git`, `cargo`, `rustc` and `curl` are run as the
+originals run them — which is also what makes a port twin-able against its original byte
+for byte.  `lib/git`'s closed query vocabulary stays as a library, rewritten over `run` and
+twinned against its natives.
 
 ## The one invariant, and the harness that checks it
 
@@ -141,18 +152,41 @@ scripts read TOML; loft parses `loft.toml` in Rust today and exposes nothing), *
 `STDLIB.md`), and whatever the `regex` library turns out not to cover.  Each gap is a fix or
 a library with its own test, never a workaround in the port.
 
-### Strand 4 — Typed tool interfaces (M, one tool per phase, one consumer each)
+### Strand 4 — `Command` + `run`: a subprocess under the two rules (S–M, owner-directed 2026-09-30)
 
-| tool | route | first consumer |
-|---|---|---|
-| `jq` | `json_parse` — nothing to build | the smallest `jq`-only bash script |
-| `curl` / `gh` | `github` library, pure loft over `web` (issues, labels, PRs, workflow runs, releases — the vocabulary the 58 scripts actually use, measured by strand 1) | `work-issues.sh` (`make work`) |
-| `git` | `lib/git`, extended query by query | the first `git`-reading report script |
-| `cargo` | a native in the `git_query.rs` shape: `metadata`, `build`, `test` as closed queries | `check-rlib` or `rewrite_census.py` |
-| `rustc` | never direct — through `cargo` or `loft --native` | — |
+**4a — the `Command` type (S).**  A stdlib struct that opts into typed format strings:
+`lit` splits the author's bytes into words on whitespace (a quoted span in the literal stays
+one word); `hole_text` / `hole_int` / `hole_float` / `hole_boolean` append ONE argv word —
+never split, never quoted, joined onto the open word when the literal touches it
+(`--format={fmt}` is one word); `hole_text` with `null` omits the word, so an optional flag
+composes without an `if`.  Two typed holes carry the cases the argv rule alone does not
+cover, the way `SqlIdent` does for a table name: `args(v: vector<text>)` splices a list, and
+**a value that begins with `-` is refused unless it came through `flag(v)`** — because an
+option is syntax too (@PLN119's `git -c core.sshCommand=…` point survives the reversal as a
+hole type rather than a closed vocabulary).  Gate: a matrix of literal/hole compositions
+against the argv each must produce, hand-computed, on both backends.
 
-Every interface lands with its recording mode (strand 2's rule) and with its first consumer
-ported and twinned; an interface nobody calls is green by construction and is not a phase.
+**4b — `run` (S–M).**  `run(c: Command) -> Run { code, stdout, stderr }` with both pipes
+drained concurrently and stdin closed; `run(c, input: text)` feeds stdin beside them;
+`run_lines(c)` streams stdout by line while stderr is still drained; `c#timeout` bounds it
+with `LOFT_TIMEOUT`'s kill-after-grace semantics; a `Streams.Inherit` option passes a
+tool's output straight through for the cases a user watches (`cargo build`).  A capability
+group `process#run` so a sandboxed script cannot run anything ungranted (SANDBOX.md S1);
+unavailable on `--html` and WASI, recorded so by `make surface-gen`.  Gate: the deadlock
+probe — a child that writes 1 MiB to stderr while the parent reads stdout — passes on both
+backends; the same probe against `subprocess.Popen(...).stdout.read()` hangs, which is the
+"prove the harness can fail" half.
+
+**4c — recording (S).**  `LOFT_RUN_RECORD=<dir>` records each `run` by its argv and
+input, and `LOFT_RUN_REPLAY=<dir>` answers from the recording — inside `run`, so every port
+is twin-able offline without a per-tool shim.  The Python side reads the same directory
+through one small shim.
+
+**4d — the tools, in the order the work list ranks them.**  `git` first (`lib/git` rewritten
+over `run`, twinned against its natives, which then retire); `gh` and `cargo` as the
+originals call them; `curl` through the `web` library where the script already speaks
+JSON.  Each lands with its first consumer ported and twinned; an interface nobody calls is
+green by construction and is not a phase.
 
 ### Strand 5 — Tranches by caller class (M–L, repeating)
 
@@ -194,7 +228,7 @@ then fixes, on four questions:
 4. **The client half in loft.**  A script that drives a `--rpc` session (the debugger
    automations, today Python and bash — the census lists them) needs the envelope typed:
    an `rpc` library over `json_parse` / `to_json` with `request(req) -> Reply` and an event
-   stream, the same shape the `github` client of strand 4 takes.  Its first consumer is the
+   stream, spawning the server through strand 4's `run` with stdin fed and both pipes read.  Its first consumer is the
    smallest `--rpc` driver in the work list, twinned.
 
 ### Strand 6 — The comparison yield (S, continuous)
@@ -220,10 +254,14 @@ that ships value; 1 and 2 are the instruments and are cheap.
 1. **Replace or accompany?**  Recommendation: replace after the shadow period, with the
    original kept under `tests/comparisons/scripts/` (strand 6).  Two live copies of one
    tool drift; one copy plus a gated twin does not.
-2. **Where does the `github` vocabulary stop?**  `gh` is used for issues, labels, PRs,
-   workflow runs, releases and `api` calls; strand 1 measures which, and the library carries
-   only those.  A script needing an endpoint outside it extends the library, never calls
-   `web` directly from the script.
+2. **`gh` as a command, or a `github` library over `web`?**  With `run`, calling `gh` as
+   the originals do is the cheaper port and the exact twin; a pure-loft REST client is the
+   better library.  Recommendation: `gh` for the ports, the library only if a consumer
+   outside this repo asks for one.
+2b. **Where the process surface lives.**  Recommendation: `Command` and `run` in the stdlib
+   (`default/02_files.loft`, natives in the binary like `git_query.rs`), not a registry
+   library — a script is the shape loft wants to be boring in, and a stdlib builtin is what
+   `make surface-gen` and the sandbox allowlist already know how to gate.
 3. **The ratchet as a gate.**  Recommendation: from strand 1, `make ci` fails when a NEW
    `.py`/`.sh` appears under `scripts/` without a `# why-not-loft: <gap>` line naming the
    gap that stopped it being loft — the line is a finding for strand 3/4, and the
@@ -231,7 +269,8 @@ that ships value; 1 and 2 are the instruments and are cheap.
 
 ## Cross-arc dependencies
 
-- @PLN119 — the typed-library doctrine and `lib/git` as the shape for `cargo`.
+- @PLN119 — the typed-library doctrine strand 4 reverses under two rules; `lib/git` is its first twin.
+- @PLN124 — typed format strings (`lit` + `hole_…`), the mechanism `Command` opts into; @PLN23's `SqlText` is the worked example.
 - @PLN142 — a user-local install, which is what a hook needs before a build exists.
 - @PLN102 arc E — `behavior_golden`'s four-channel comparison; the twin is its per-script form.
 - @PLN52 — stdlib fast start; the 75 ms start-up row is re-measured against it in strand 1.

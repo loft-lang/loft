@@ -41,6 +41,13 @@ them.
 
 ## Why not a subprocess primitive
 
+> **Superseded 2026-09-30 (owner):** loft MAY run a subprocess — [@PLN179 strand
+> 4](../179-scripts-in-loft/README.md) — under two rules that keep what this section
+> protects: the command is a typed format string (@PLN124), so a value can never become
+> syntax, and `run` drains every stream, so a child can never deadlock the caller.  The
+> argument below is kept as the record of why a `{stdout, stderr, code}` triple alone was
+> declined, and the closed-vocabulary `lib/git` stays as the first library twinned over `run`.
+
 `run(cmd, args)` is a *second, weaker interface* beside the one loft already has.
 The library interface carries typed signatures, structs, enums, vectors, tuples,
 methods, coroutines, effects and capability admission; a `{stdout, stderr, code}`

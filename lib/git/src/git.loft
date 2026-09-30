@@ -4,11 +4,12 @@
 // @PLN119 arc F — git, as the typed interface loft already has rather than as a
 // second one.
 //
-// loft declines a general `run(cmd, args)` (@PLN119 § Why not a subprocess
-// primitive; no `C` entry records it): it hands
-// back bytes and an exit status, and every caller then re-parses text loft
-// already knows how to type.  So the external command lives in here, behind
-// `log()` and `changed()`, and the `execve` is an implementation detail.  The
+// When this was written loft had no way to run a program and declined one
+// (@PLN119 § Why not a subprocess primitive): a `{stdout, stderr, code}` triple
+// hands back bytes every caller re-parses.  So the external command lives in
+// here, behind `log()` and `changed()`, and the `execve` is an implementation
+// detail.  @PLN179 strand 4 adds `run` over a typed `Command`; this library is
+// its first twin subject, and keeps its closed vocabulary either way.  The
 // mechanics are in the loft binary (`src/git_query.rs`); this file is the
 // meaning.
 //
