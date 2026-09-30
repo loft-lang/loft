@@ -11,11 +11,17 @@ use std::process::Command;
 const CELLS: &str = "tests/scripts/a-length-bound-reads-the-held-header.loft";
 
 /// Per function: the loop tests against a range-end local with the rewrite ON, then OFF.
+// Since `(R-Header)`'s function clause (2026-09-30) a parameter read twice or more outside any
+// loop holds ONE header from entry, and a loop over it reads its end off that header
+// (`var__range_end_1 = i64::from(__vh_1.len)`): the range-end local is then a plain `i64`
+// read once, and the substitution has nothing left to buy, so `n_update` and `n_square_sum`
+// keep their two local tests with the rewrite on — the pin reads them against that header,
+// not against a runtime lookup.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_update", 0, 2),       // in place, growth-free
-    ("n_doubled", 0, 2),      // through a field path
-    ("n_square_sum", 0, 2),   // nested, the header held by the outer loop
-    ("n_grows", 1, 1),        // pushes onto v: grows, keeps its local
+    ("n_update", 2, 2), // in place, growth-free — the function clause holds the header
+    ("n_doubled", 0, 2), // through a field path
+    ("n_square_sum", 2, 2), // nested — the function clause holds the header
+    ("n_grows", 1, 1),  // pushes onto v: grows, keeps its local
     ("n_into_other", 0, 1), // pushes onto ANOTHER vector: since `@FR-R-Base`'s growth clause it holds v's base and reads the header
     ("n_empty_sum", 0, 1),  // growth-free
     ("n_all_but_last", 1, 1), // an end that is not a plain length

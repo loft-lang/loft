@@ -854,7 +854,7 @@ impl Scopes<'_> {
             && let Value::Call(_, args) = unspanned_value
         {
             for arg in args {
-                let arg_var = match arg {
+                let arg_var = match arg.unspan() {
                     Value::Var(av) => Some(*av),
                     Value::Set(av, _) => Some(*av),
                     _ => None,
@@ -970,6 +970,16 @@ impl Scopes<'_> {
             && crate::use_analysis::adopts_minted_at_bind(data, function, tmp, unspanned)
         {
             function.mark_deferred_first_bind(tmp);
+            // A temp a copy CONSUMES (`keep += [mk(i)]`: the element copy's source-free bit
+            // releases the temp's store, `mark_lift_handoff`) has no free of its own to guard,
+            // so the buffer is not paired: pairing it in a loop enrolls it in the record-buffer
+            // pool (`reuse_record_buffers` reads `witness_buffer`), and the consuming copy then
+            // released the pooled store every turn — `164-forward-tuple`'s q6 read a freed
+            // record on both backends.  Unpaired, the buffer stays null and the callee mints
+            // per call, which the copy releases: the shape the named form has had all along.
+            if self.drop_transferred.contains(&tmp) || self.free_transferred.contains(&tmp) {
+                return v_set(tmp, value);
+            }
             self.pair_call_buffers(
                 tmp,
                 unspanned,

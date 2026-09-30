@@ -1558,6 +1558,15 @@ pub fn exit_vector_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
 }
 
+/// `LOFT_NO_RETURN_FIELD=1` (scope pass, BOTH backends): the returned field of an owned local
+/// keeps the parser's copy into a minted return buffer instead of handing the local's store
+/// over at the field's position — the before-half of `(R-ReturnField)`'s A/B, and the first
+/// bisect step for a wrong or freed record out of a callee that returns a field of a local.
+pub fn return_field_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RETURN_FIELD"))
+}
+
 /// `LOFT_HOIST_VERIFY=1` read at RUNTIME, for the store operations whose same-store
 /// dispatch has no emitter-chosen verify flag (`Stores::move_vector`).
 pub fn hoist_verify() -> bool {

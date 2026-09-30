@@ -799,3 +799,28 @@ stays green (the buffer holds the null sentinel today) and only the IR pin reads
 What remains of the list is unchanged in order: `(R-ReturnField)` for `pa_decode`'s own copy
 (`v = d.value; return v`), the arena buffer, the placed buffer's prefill, the match copies, and
 the text-as-span language change.
+
+## Built (2026-09-30) — `(R-ReturnField)`: the returned field of an owned local hands its store over
+
+Item 2 of the list.  `pa_decode`'s `v = d.value; return v` was a `materialized_view_return`
+exit: the return buffer minted, the CborValue tree deep-copied into it, `d` freed — the
+loft#425 workaround's copy, 15 % of the profile in `OpCopyRecord`.  `return_field.rs` (run in
+the scope pass after the exit vector) rewrites that exit into a hand-over when the copy's
+source is a field path rooted at an owned record local (or a local view of one), the returned
+record owns heap, and everything between the copy and the return is a free: the mint, the copy
+and the root's own free go, the exit returns the field's address into the root's store, and
+every other store free in the exit is re-witnessed against the root — the buffer a pooled loop
+root adopted (r12) and an alias's owner (r5) are skipped, a distinct buffer is freed as before.
+The caller is not consulted: it adopts with the witnessed free or copies with the source freed
+exactly as for any buffer-carrying return.
+
+**Measured** (this box, `--native-release`, the check driver's 40 rounds, seven interleaved
+runs): 0.34 s → 0.33 s, on top of item 1's 0.38 → 0.34.  In the guard's cells
+(`LOFT_ALLOC_REPORT=1` / `LOFT_COPY_DUMP=1`, stores and copies per call): `return p.a` 1
+copy → 0; the struct-enum wrapper (r9, `pa_decode`'s shape) 4 stores → 2; a pooled caller loop
+(r7) stays at 1 store, its copy gone.  Reach: seven corpus files (the return-field guards of
+`85-*` and `h9`, one nested-literal root in `h12`), no stdlib function.  The `avoidable-copy`
+advice on `return p.b` beside a second exit (r6) goes silent with the copy.
+
+What remains, in order: the arena buffer (item 3), the placed buffer's prefill (item 4), the
+match copies in `pa_get`/`pa_text` (item 5), text payloads as spans (item 6).

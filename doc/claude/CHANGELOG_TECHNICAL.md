@@ -10,6 +10,46 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-ReturnField)` and the lifted bind that adopts — pluginabi's `check_request` copies nothing (2026-09-30)
+
+Items 1 and 2 of `bench/portal/analysis/records.md` § check_request on the library as
+written.  **The lift** (`Scopes::lift_set`): a call result the argument scan lifts into a
+`__lift_N` temp (`pa_text(pa_decode(frame), "op")`) is null-initialised in the prologue, so its
+one bind read as a REBIND and took the copy protocol on both backends where the named spelling
+adopts (`@FR-O-Move`, @PLN164 B1); the bind after the prologue's null-init is now marked the
+temp's first (`deferred_first_bind`) and the call's buffer paired for the identity-guarded free
+through `pair_call_buffers` — `scan_set`'s pairing block, extracted byte-identically.  Guard
+`tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft`, pin `tests/lift_adopt.rs`;
+two exact-count census pins re-measured (`adopt_first_bind`, `adopt_buffer_reuse`).  **The
+return field** (`return_field.rs`, new, run after the exit vector; `@FR-R-ReturnField`): the
+parser's `materialized_view_return` exit over the function's own buffer — mint the buffer, copy
+a field path of an owned record local (or a local view of one) into it, free the local — is
+rewritten into a hand-over: the mint, the copy and the root's own free go, the exit returns the
+field's address into the root's store, and every other store free in the exit is re-witnessed
+against the ROOT (a pooled `__ref_N` the root adopted, an alias `q = p`: skipped; a distinct
+buffer: freed as before).  Admitted only where the returned record owns heap (a scalar-only
+record is the native value form's), the block renamed `return_field_handover` so the value
+form's reader and the copy census see no copy.  Guard
+`tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft` (r1–r13, both
+backends, every store falsifier), pin `tests/return_field.rs`; the rule reaches seven corpus
+files and no stdlib function.  Falsified by sabotage: without the re-witnessing the pooled loop
+root answers wrong on both backends; with the root freed plainly, native panics in the
+allocator.  Measured on the check driver (`--native-release`, 40 rounds of 2 048 checks, seven
+interleaved runs): 0.38 s → 0.34 s with the lift, → 0.33 s with both; stores per call in the
+guards' cells: the lifted form 3 → 2, a lift in a loop of three 9 → 4, the struct-enum field
+return 4 → 2; the copy census of `return p.a` 1 → 0.  Switches `LOFT_NO_ADOPT_FIRST_BIND`
+(the existing one, covering the lift) and `LOFT_NO_RETURN_FIELD`; `LOFT_TRACE_PLACE=1` names
+each admission and decline (`[return-field]`).  Found by the suite and fixed in the same
+arc: a lifted temp a COPY consumes (`keep += [mk(i)]` in a loop — the element copy's
+source-free bit releases its store) must not pair its buffer, because the pairing enrolls
+the buffer in the record-buffer pool and the consuming copy then released the pooled store
+every turn (`164-forward-tuple`'s q6 read a freed record on both backends); the temp still
+adopts, its buffer stays null.  Two derived rows re-measured on the way: the range-end
+header pin (`n_update`, `n_square_sum` keep their local tests since `(R-Header)`'s function
+clause holds the header their ends are read from) and the front-end allocation pin (+365 per
+compile on linux-release, of which nine are this arc's pairing entries; the rest predate it —
+the builtin and the header clause landed after the last pin).
+
 ### `(R-Header)`'s function clause — a parameter's header bound once at entry (2026-09-30)
 
 A function reading a vector parameter outside any loop paid the runtime's vector lookup at

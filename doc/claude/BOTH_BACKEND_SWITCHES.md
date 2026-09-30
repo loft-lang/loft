@@ -78,6 +78,22 @@ tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_
 guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
+**`LOFT_NO_RETURN_FIELD=1`** (`(R-ReturnField)`, `@FR-R-ReturnField`, decided in the scope
+pass after the exit vector, BOTH backends) keeps the parser's copy at an exit that returns a
+FIELD of an owned record local (`p = mk(n); return p.a`, or `v = p.a; return v`): the return
+buffer minted, the field deep-copied into it, the local freed.  With it off, the exit hands
+the local's store over at the field's position (`return OpGetField(p, …)` in a
+`return_field_handover` block), the root's own free goes, and every other store free in the
+exit is witnessed against the root — a pooled `__ref_N` the root adopted or an alias `q = p`
+is then skipped, a distinct buffer freed as before.  It is the first bisect step for a wrong
+or freed record out of a callee that returns a field of a local, and for a caller reading a
+store that was released under it; `LOFT_TRACE_PLACE=1` names each admission
+(`[return-field]`) and each decline (a parameter's or a view's field, an element, a returned
+record that owns no heap — the native value form's to answer — a statement in the exit that
+is not a free, a buffer that is not the function's own).  Measured on pluginabi's
+`check_request` driver (`--native-release`, this box): 0.34 s → 0.33 s per 40 rounds; the
+copy census of `return p.a` 1 → 0 per call.
+
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
 scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
 of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS

@@ -317,6 +317,14 @@ decoders, which read the head of a value a byte at a time, are where it shows.
 copying the part out first: what a decoder writes once it has found where a text starts and
 ends, instead of `text_from_bytes(bytes[lo..hi])`.
 
+**Returning a field of a local, or passing a call's result straight into another call, no
+longer copies the record.**  `d = decode(bytes); return d.value` used to copy the value into
+a fresh record for the caller and free the one it came from; now the caller is handed the
+record as it stands.  And `check(decode(bytes))` — a call whose result goes straight into
+another call — used to copy that result once more where `d = decode(bytes); check(d)` did
+not; the two spellings now cost the same.  Nothing in your code changes;
+`LOFT_NO_RETURN_FIELD=1` and `LOFT_NO_ADOPT_FIRST_BIND=1` restore the copies.
+
 **A function that builds a vector and returns it inside a record copies nothing on the way
 out.**  `items: vector<T> = []; …; return Out { items: items }` used to build the vector in a
 store of its own and copy every element into the result; now it is built where the result
