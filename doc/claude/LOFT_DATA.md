@@ -663,15 +663,20 @@ sizeof(integer)    // 8
 sizeof(u8)         // 1 (packed field size)
 sizeof(u16)        // 2
 sizeof(MyStruct)   // sum of packed field sizes
+sizeof(vector<T>)  // 4 — every collection field is one record pointer
+sizeof((u8, u8))   // 2 — a tuple is packed as a struct with those members
 sizeof(my_var)     // size of the variable's type
 ```
 
 `sizeof(TYPE)` returns the packed byte size used when the type is stored as a struct
 field or vector element. For range-constrained integer types (`u8`, `u16`, etc.) this
-is the packed size (1 or 2 bytes), not the stack slot size. For polymorphic enums and
-references, the size is computed at runtime from the actual variant.
+is the packed size (1 or 2 bytes), not the stack slot size. `sizeof(expr)` answers
+`sizeof` of the expression's type — a `u8` local or field is 1, a `vector` local 4 —
+except a struct-enum value, whose size is computed at runtime from the variant it holds.
 
-Catalogue: @F45; guard: `tests/scripts/89-sizeof.loft`.
+Catalogue: @F45; guards: `tests/scripts/89-sizeof.loft`,
+`tests/scripts/1779-sizeof-of-an-expression-is-sizeof-of-its-type.loft`,
+`tests/scripts/1781-sizeof-and-type-name-read-a-tuple-type.loft`.
 
 ---
 

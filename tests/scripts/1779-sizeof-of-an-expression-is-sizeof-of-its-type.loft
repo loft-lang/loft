@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1779 — `sizeof(expr)` is `sizeof(<the expression's type>)`, for every type
+// (@F45, LOFT_DATA.md § Sizeof: "sizeof(my_var) — size of the variable's type", and
+// sizeof(TYPE) is the packed size the type takes as a struct field or vector element).
+//
+// The TYPE spelling asked the alias's declared `size(N)`, then the packed integer width, then
+// the database size; the EXPRESSION spelling asked only the database size of `type_elm` —
+// the ELEMENT def: plain `integer` for every narrow integer (a `u8` local read 8), the
+// element for a vector (a `vector<Pt>` read 16, the element's size), and `reference` for a
+// keyed collection (read 0).  Now one routine (`Parser::packed_size`) answers both.
+//
+// Axes this file MOVES:  the type kind (integer · each narrow width · a nullable narrow ·
+//                        float · single · boolean · character · text · plain enum · struct ·
+//                        vector of struct / narrow / integer · hash · sorted · index · spatial
+//                        · trie), where the value sits (a local · a parameter · a field
+//                        projection · a vector element · a function result), and the spelling
+//                        (the type · the expression) — every cell asserts the two EQUAL and
+//                        equal to the hand-computed width.
+// Axes it HOLDS FIXED:   no struct-enum value (sized at runtime by its variant, unchanged);
+//                        tuples are 1781's file.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native
+//   exit 134 -> 0, native 3 assertion failures -> 0.
+//   CHANNEL: asserts on both backends — every test function fails on the control, at its first
+//   narrow or collection cell: `u8: 8 vs 1`, `fields: 8 8 8`, `vector<Pt>: 16`.
+//   HOLDS: the wide cells (integer, float, text, struct) answer the same on both trees.
+
+struct Pt { x: integer, y: integer }
+struct P { a: u8, b: u16, c: i32 }
+struct K { k: integer, t: text }
+enum Col { Red, Green }
+
+fn narrow(v: u16) -> integer { sizeof(v) }
+fn give() -> u16 { 7 }
+
+fn test_scalars() {
+  a = 1;
+  x: u8 = 3;
+  y: u16 = 4;
+  z: i32 = 5;
+  w: i8 = -1;
+  q: i16 = -2;
+  n: u8? = null;
+  f = 1.5;
+  sg = 1.5f;
+  b = true;
+  c = 'x';
+  t = "hi";
+  e = Col.Green;
+  assert(sizeof(a) == sizeof(integer) && sizeof(a) == 8, "integer: {sizeof(a)}");
+  assert(sizeof(x) == sizeof(u8) && sizeof(x) == 1, "u8: {sizeof(x)} vs {sizeof(u8)}");
+  assert(sizeof(y) == sizeof(u16) && sizeof(y) == 2, "u16: {sizeof(y)}");
+  assert(sizeof(z) == sizeof(i32) && sizeof(z) == 4, "i32: {sizeof(z)}");
+  assert(sizeof(w) == sizeof(i8) && sizeof(w) == 1, "i8: {sizeof(w)}");
+  assert(sizeof(q) == sizeof(i16) && sizeof(q) == 2, "i16: {sizeof(q)}");
+  assert(sizeof(n) == sizeof(u8?) && sizeof(n) == 1, "u8?: {sizeof(n)}");
+  assert(sizeof(f) == sizeof(float) && sizeof(f) == 8, "float: {sizeof(f)}");
+  assert(sizeof(sg) == sizeof(single) && sizeof(sg) == 4, "single: {sizeof(sg)}");
+  assert(sizeof(b) == sizeof(boolean) && sizeof(b) == 1, "boolean: {sizeof(b)}");
+  assert(sizeof(c) == sizeof(character) && sizeof(c) == 4, "character: {sizeof(c)}");
+  assert(sizeof(t) == sizeof(text) && sizeof(t) == 4, "text: {sizeof(t)}");
+  assert(sizeof(e) == sizeof(Col) && sizeof(e) == 1, "plain enum: {sizeof(e)}");
+}
+
+fn test_positions() {
+  p = P { a: 1, b: 2, c: 3 };
+  assert(sizeof(p.a) == 1 && sizeof(p.b) == 2 && sizeof(p.c) == 4, "fields: {sizeof(p.a)} {sizeof(p.b)} {sizeof(p.c)}");
+  assert(sizeof(p) == sizeof(P) && sizeof(P) == 7, "struct: {sizeof(p)} {sizeof(P)}");
+  assert(narrow(9) == 2, "parameter: {narrow(9)}");
+  assert(sizeof(give()) == 2, "function result: {sizeof(give())}");
+  v: vector<u8> = [1, 2];
+  assert(sizeof(v[0]) == 1, "narrow element: {sizeof(v[0])}");
+  pt = Pt { x: 1, y: 2 };
+  assert(sizeof(pt) == sizeof(Pt) && sizeof(Pt) == 16, "struct local: {sizeof(pt)}");
+}
+
+fn test_collections() {
+  vp: vector<Pt> = [Pt { x: 1, y: 2 }];
+  vu: vector<u8> = [1];
+  vi = [1, 2];
+  h: hash<K[k]> = [];
+  so: sorted<K[k]> = [];
+  ix: index<K[k]> = [];
+  sp: spatial<K[k]> = [];
+  tr: trie<K[t]> = [];
+  assert(sizeof(vp) == sizeof(vector<Pt>) && sizeof(vp) == 4, "vector<Pt>: {sizeof(vp)}");
+  assert(sizeof(vu) == sizeof(vector<u8>) && sizeof(vu) == 4, "vector<u8>: {sizeof(vu)}");
+  assert(sizeof(vi) == sizeof(vector<integer>) && sizeof(vi) == 4, "vector<integer>: {sizeof(vi)}");
+  assert(sizeof(h) == sizeof(hash<K[k]>) && sizeof(h) == 4, "hash: {sizeof(h)}");
+  assert(sizeof(so) == sizeof(sorted<K[k]>) && sizeof(so) == 4, "sorted: {sizeof(so)}");
+  assert(sizeof(ix) == sizeof(index<K[k]>) && sizeof(ix) == 4, "index: {sizeof(ix)}");
+  assert(sizeof(sp) == sizeof(spatial<K[k]>) && sizeof(sp) == 4, "spatial: {sizeof(sp)}");
+  assert(sizeof(tr) == sizeof(trie<K[t]>) && sizeof(tr) == 4, "trie: {sizeof(tr)}");
+}

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1781 — `sizeof` answers for a tuple, and `sizeof` / `type_name` read a parenthesised
+// tuple TYPE as a type.
+//
+// A tuple is storable (a `vector<(τ, τ)>` element, a struct field), and `(L-Tuple)` stores it
+// as the synthetic `__tuple<…>` struct packed as a struct is — so `sizeof((integer, text))` is
+// that struct's size, the same number a struct with those members answers, and a tuple
+// VARIABLE answers its type's (@F45).  `sizeof(t)` was refused as "Expect a variable or type
+// after sizeof" for a variable, and `type_name((integer, text))` parsed the spelling as a
+// tuple of null VALUES and rendered "(null, null)".
+//
+// Axes this file MOVES:  the spelling (a tuple variable · the tuple type · a nested tuple
+//                        type), the member widths (wide · narrow · mixed · nested), and the
+//                        oracle (the struct twin with the same members, hand-computed).
+// Axes it HOLDS FIXED:   two-member tuples at the top level; a parenthesised non-tuple
+//                        (`(a)`, `(a + 1)`) stays an expression.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, native exit 134 -> 0.
+//   CHANNEL: exit on both backends — the control refuses this file at compile time with
+//   "Expect a variable or type after sizeof" for `sizeof(t)` and `sizeof((integer, text))`.
+//   HOLDS: the struct twins answer 12 / 2 / 10 on both trees.
+
+struct IT { a: integer, b: text }
+struct UU { a: u8, b: u8 }
+struct NI { a: u8, b: u8, c: integer }
+
+fn test_tuple_sizes() {
+  t = (1, "a");
+  x: u8 = 1;
+  u = (x, x);
+  a = 2;
+  assert(sizeof(IT) == 12 && sizeof(UU) == 2 && sizeof(NI) == 10, "twins");
+  assert(sizeof(t) == 12, "tuple variable: {sizeof(t)}");
+  assert(sizeof((integer, text)) == sizeof(IT), "tuple type: {sizeof((integer, text))}");
+  assert(sizeof(u) == 2 && sizeof((u8, u8)) == sizeof(UU), "narrow: {sizeof(u)} {sizeof((u8, u8))}");
+  assert(sizeof(((u8, u8), integer)) == sizeof(NI), "nested: {sizeof(((u8, u8), integer))}");
+  assert(sizeof((a)) == 8 && sizeof((a + 1)) == 8, "parenthesised expressions");
+  assert(sizeof((a, a)) == 16, "a tuple of variables: {sizeof((a, a))}");
+}
+
+fn test_tuple_type_name() {
+  t = (1, "a");
+  assert(type_name((integer, text)) == "(integer, text)", "type_name of the type: {type_name((integer, text))}");
+  assert(type_name(t) == type_name((integer, text)), "type_name of a variable");
+}

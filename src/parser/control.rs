@@ -20223,10 +20223,23 @@ impl Parser {
     }
 
     // <size> ::= ( <type> | <var> ) ')'
+    /// `sizeof(TYPE)` and `sizeof(expr)` — @F45, `LOFT_DATA.md` § Sizeof: the packed size a
+    /// type takes as a struct field or vector element, and for an expression the size of ITS
+    /// type.  Both spellings ask [`Self::packed_size`], so they cannot answer apart; only a
+    /// struct-enum VALUE is sized at runtime, by the variant it holds.
     pub(crate) fn parse_size(&mut self, val: &mut Value) -> Type {
         let mut found = false;
         let lnk = self.lexer.link();
-        if let Some(id) = self.lexer.has_identifier() {
+        if self.paren_type_ahead() {
+            // `sizeof((integer, text))` — a tuple TYPE, which the expression parser would read
+            // as a tuple of null values (loft#1781).
+            found = true;
+            if let Some(tp) = self.parse_type_full(u32::MAX, false)
+                && !self.first_pass
+            {
+                *val = Value::Int(self.packed_size(&tp, u32::MAX));
+            }
+        } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
@@ -20245,23 +20258,9 @@ impl Parser {
                 } else if let Some(tp) = self.parse_type(u32::MAX, &id, false) {
                     found = true;
                     if !self.first_pass {
-                        // Post-2c: prefer the alias's forced size(N) annotation.
-                        // `d_nr` (local above) is the def_nr of the alias the user
-                        // typed — e.g. i32 — not the base integer it collapses to
-                        // via type_elm.  Only forced_size on the alias applies.
-                        let forced = self.data.forced_size(d_nr);
-                        let packed = tp.size(false);
-                        *val = if let Some(n) = forced {
-                            Value::Int(i32::from(n))
-                        } else if packed > 0 {
-                            // Range-constrained integer: use packed field size
-                            Value::Int(i32::from(packed))
-                        } else {
-                            Value::Int(i32::from(
-                                self.database
-                                    .size(self.data.def(self.data.type_elm(&tp)).known_type()),
-                            ))
-                        };
+                        // `d_nr` is the def of the name the user typed — the alias `i32`, not
+                        // the `integer` it collapses to — so its forced `size(N)` applies.
+                        *val = Value::Int(self.packed_size(&tp, d_nr));
                     }
                 }
             }
@@ -20270,17 +20269,22 @@ impl Parser {
             let mut drop = Value::Null;
             self.lexer.revert(lnk);
             let tp = self.expression(&mut drop);
-            let e_tp = self.data.type_elm(&tp);
-            if e_tp != u32::MAX {
+            if matches!(tp, Type::Enum(_, true, _)) {
                 found = true;
-                if matches!(tp, Type::Enum(_, true, _) | Type::Reference(_, _)) && !self.first_pass
-                {
-                    // Polymorphic enum or reference: size depends on runtime variant.
+                if !self.first_pass {
+                    // A struct-enum value: its size is its VARIANT's, known at runtime.  A
+                    // NULLABLE one keeps its type's static size, as it always has — what a
+                    // `sizeof` of an absent variant should answer is not settled.
                     *val = self.cl("OpSizeofRef", &[drop]);
-                } else {
-                    *val = Value::Int(i32::from(
-                        self.database.size(self.data.def(e_tp).known_type()),
-                    ));
+                }
+            } else if matches!(tp.base(), Type::Tuple(_)) || self.data.type_elm(&tp) != u32::MAX {
+                found = true;
+                if !self.first_pass {
+                    // The expression's TYPE, sized exactly as its spelling would be — a narrow
+                    // integer is its packed width, a collection its 4-byte field, a tuple its
+                    // stored `__tuple<…>` record.  Sized by `type_elm` instead, a `u8` read 8,
+                    // a `vector<Point>` its element's size and a keyed collection 0 (loft#1779).
+                    *val = Value::Int(self.packed_size(&tp, u32::MAX));
                 }
             }
         }
@@ -20295,6 +20299,107 @@ impl Parser {
         I32.clone()
     }
 
+    /// The packed size `tp` takes as a struct field or vector element — THE size `sizeof`
+    /// answers, for a type spelled and for an expression's type alike (@F45).  `alias` is the
+    /// def of a spelled type name (`i32`, `vector`), whose declared `size(N)` wins; an
+    /// expression passes `u32::MAX` and a collection then asks its kind's def the same way.
+    fn packed_size(&mut self, tp: &Type, alias: u32) -> i32 {
+        if let Some(n) = self.data.forced_size(alias) {
+            return i32::from(n);
+        }
+        match tp.base() {
+            Type::Integer(spec) => {
+                if let Some(n) = spec.forced_size {
+                    return i32::from(n.get());
+                }
+                let packed = tp.size(false);
+                if packed > 0 {
+                    return i32::from(packed);
+                }
+            }
+            Type::Vector(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Hash(..)
+            | Type::Radix(..)
+            | Type::Trie(..) => {
+                // Every collection field is one 4-byte record pointer.  `vector`, `sorted`,
+                // `index` and `hash` declare it (`type vector size(4)`); `spatial` and `trie`
+                // are bare forward declarations, so they take the `vector` declaration's.
+                let own = self.data.forced_size(self.data.type_def_nr(tp));
+                if let Some(n) = own.or_else(|| self.data.forced_size(self.data.def_nr("vector"))) {
+                    return i32::from(n);
+                }
+            }
+            Type::Tuple(elems) => {
+                // `(L-Tuple)`: a stored tuple is the synthetic `__tuple<…>` struct, packed as a
+                // struct is.  Registered on both passes (idempotent), as a tuple type in any
+                // declaration registers it, so the first pass's layout covers it.
+                let elems = elems.clone();
+                let d = self.data.tuple_def(&mut self.lexer, &elems);
+                if d == u32::MAX {
+                    return 0;
+                }
+                crate::typedef::lay_out_late(&mut self.data, &mut self.database, d);
+                return i32::from(self.database.size(self.data.def(d).known_type()));
+            }
+            _ => {}
+        }
+        i32::from(
+            self.database
+                .size(self.data.def(self.data.type_elm(tp)).known_type()),
+        )
+    }
+
+    /// Does a parenthesised tuple TYPE follow — `(integer, text)` — rather than an expression?
+    /// True when the first element is a declared type and no variable in scope (the question
+    /// the bare-name branch of `sizeof` / `type_name` answers for an unparenthesised name), or
+    /// itself such a tuple, AND a `,` follows it inside the parentheses: `(Point)` and `(a)`
+    /// stay expressions.  The lexer is left where it was.
+    fn paren_type_ahead(&mut self) -> bool {
+        if !self.lexer.peek_token("(") {
+            return false;
+        }
+        let lnk = self.lexer.link();
+        self.lexer.has_token("(");
+        let first_is_type = if self.lexer.peek_token("(") {
+            self.paren_type_ahead()
+        } else {
+            self.lexer.has_identifier().is_some_and(|id| {
+                let d_nr = self.data.def_nr(&id);
+                self.vars.var(&id) == u16::MAX
+                    && d_nr != u32::MAX
+                    && matches!(
+                        self.data.def_type(d_nr),
+                        DefType::Type | DefType::Struct | DefType::Enum | DefType::Vector
+                    )
+            })
+        };
+        let mut comma = false;
+        if first_is_type {
+            let mut depth = 1;
+            loop {
+                if self.lexer.has_token("(") {
+                    depth += 1;
+                } else if self.lexer.has_token(")") {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                } else if depth == 1 && self.lexer.has_token(",") {
+                    comma = true;
+                    break;
+                } else if self.lexer.peek().has == LexItem::None {
+                    break;
+                } else {
+                    self.lexer.cont();
+                }
+            }
+        }
+        self.lexer.revert(lnk);
+        first_is_type && comma
+    }
+
     /// `type_name(expr)` — compile-time intrinsic that returns the static type
     /// of `expr` as a text constant.  Works on both type names and expressions:
     /// `type_name(integer)`, `type_name(my_var)`, `type_name(1 + 2)`.
@@ -20302,7 +20407,16 @@ impl Parser {
         // Try parsing as a type name first (like sizeof does).
         let mut found = false;
         let lnk = self.lexer.link();
-        if let Some(id) = self.lexer.has_identifier() {
+        if self.paren_type_ahead() {
+            // `type_name((integer, text))` — a tuple TYPE; read as an expression it was a tuple
+            // of null values and rendered `(null, null)` (loft#1781).
+            found = true;
+            if let Some(tp) = self.parse_type_full(u32::MAX, false)
+                && !self.first_pass
+            {
+                *val = Value::Text(self.data.type_name_str(&tp));
+            }
+        } else if let Some(id) = self.lexer.has_identifier() {
             let d_nr = self.data.def_nr(&id);
             if d_nr != u32::MAX && self.data.def_type(d_nr) != DefType::EnumValue {
                 if !self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
