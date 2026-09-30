@@ -781,9 +781,17 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     let other_dir = other_root.join("target").join("release");
     std::fs::create_dir_all(&other_dir).unwrap();
     let other = other_dir.join(real.file_name().unwrap());
-    // A later mtime than the original's, even on a coarse-grained filesystem.
+    // A later mtime than the original's, even on a coarse-grained filesystem.  Set on the
+    // copy explicitly: macOS `fs::copy` clones the file (`clonefile`) and keeps the
+    // original's timestamps, so there the copy carried the SAME mtime, the same identity,
+    // and adopted the artifact — the test's premise, not the product, failed.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     std::fs::copy(&real, &other).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&other)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
+        .expect("give the copy its own modification time");
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
