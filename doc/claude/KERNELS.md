@@ -27,9 +27,15 @@ its own code can be: measured below, the compiled loft bodies of `split` and `li
 1.5× of their kernels already.  In the long run loft needs no kernels.  Each one exists only
 for a gap the INTERPRETER (or, for `sum`, the code generator) has not closed yet.
 
-**Kernels live only in the standard library** (the owner's rule).  Outside it, hand-written
-Rust stays sparse: a library writes its loops in loft, and a `use`d library is compiled for an
-interpreted script anyway
+**Every kernel is to be removed, and the standard library is to be compiled like any other
+library** (the owner's rule).  A `use`d library is already compiled for an interpreted script
+(C71, below), so its loops run as compiled loft; the standard library will run the same way,
+and then an interpreted script calls a kernel's compiled LOFT body just as a native program
+does.  The Rust version of a routine is replaced by loft as soon as that is viable.
+
+**Until then, kernels live only in the standard library** (the owner's rule).  Outside it,
+hand-written Rust stays sparse: a library writes its loops in loft, and a `use`d library is
+compiled for an interpreted script anyway
 ([C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
 `src/native_lib.rs`).  A library's `#native` Rust is for what loft cannot express (an OS or a
 foreign API), never for speed.
@@ -53,6 +59,11 @@ the kernel buys less than the gap every user loop of the same shape still pays, 
 hides that gap from the measurements that should drive the general fix.  When it is due on both
 backends, the loft body returns, the kernel's Rust and its adapters go, and its entry moves to
 § Removed with the measurement.
+
+**Once the standard library is compiled like a library, the native column decides alone**: the
+interpreter then runs the same compiled loft body a native program does, so the interpreted
+ratio measures nothing the kernel buys.  By the table below, `split` and `text_lines` are due
+the moment it lands; `vector_sum_int` waits for the code generator's reduction.
 
 | kernel | interpreted | `--native-release` |
 |---|--:|--:|
@@ -122,6 +133,17 @@ kept only because one declaration serves both backends.
 
 ## Open
 
+- **The standard library compiled like any other library** — the route that retires the
+  kernels.  C71 already compiles a `use`d library for an interpreted script and dispatches its
+  functions through the shared-store bridge (`src/native_gate.rs`, `src/native_lib.rs`).  What
+  differs for the standard library: it must need no rustc on the user's machine (`--interpret`
+  never runs one), so its artifact is built with loft itself, once per loft version, and ships
+  with the binary.  That is possible where a library's is not: a library's artifact is keyed on
+  the calling program's WHOLE type layout (`type_layout_fingerprint`), one build per distinct
+  program, while the standard library's types register before any program's, so one layout
+  serves every program.  The artifact is still verified against the running program's type
+  table before use (as a library artifact is), and a mismatch runs the loft body interpreted:
+  slower, never wrong.
 - **The interpreter adapter is written by hand.**  `--native` runs a kernel's `#rust` template
   directly, but the interpreter needs its own adapter in `src/native.rs` (196 such rows for
   the standard library's `#rust` functions, the three kernels among them).  Operators already
