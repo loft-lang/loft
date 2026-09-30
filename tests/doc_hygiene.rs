@@ -3579,11 +3579,13 @@ fn the_generated_pages_match_their_sources() {
                 stack.push(path);
                 continue;
             }
+            // `git ls-files` spells every path with `/`; a Windows path joins with `\`, so
+            // without this every generated page read as untracked there.
             let rel = path
                 .strip_prefix(&copy)
                 .expect("inside the copy")
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             if !tracked_set.contains(rel.as_str()) && !registry_derived(&rel) {
                 drift.push(format!("{rel} is generated but not committed"));
             }
