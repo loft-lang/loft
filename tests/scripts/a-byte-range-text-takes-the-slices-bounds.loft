@@ -13,6 +13,13 @@
 //                        and an empty range, a range cutting a multi-byte character, an
 //                        empty buffer.
 // Axes it HOLDS FIXED:   one nine-byte buffer holding one two-byte character.
+//
+// @falsified-at: 40d86be3e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-byte-range-text-takes-the-slices-bounds.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: asserts on both backends — the negative-bound test fails on the control (native
+//   counts it twice); the other-bounds test passes there, which is its job: the slice's other
+//   bounds were right and must stay right.
+// HOLDS: leak, panic, refusals and expectations are equal on both trees and both backends.
 
 fn same(b: vector<u8>, lo: integer, hi: integer) -> boolean {
   text_from_byte_range(b, lo, hi) == text_from_bytes(b[lo..hi])
