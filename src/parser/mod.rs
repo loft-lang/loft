@@ -4843,11 +4843,18 @@ impl Parser {
 
     /// Does a value of `is_type` meet `should` through the implicit checked narrowing?  A
     /// question of the two TYPES alone, so pass 1 — which converts nothing — can ask it too.
+    ///
+    /// It asks the implicit-STORE test, not range containment: this is a store, and
+    /// `integer` → `i32` is the one narrowing containment cannot see (loft#931).  Asking
+    /// containment left `i32?` outside `(I-Narrow-Opt)` alone of every width — its local
+    /// kept `5000000000`, its field answered a `??` fallback where every other width
+    /// answers null, and its return was refused with `?? <value>`, a cure a nullable slot
+    /// cannot take (loft#1812).
     pub(crate) fn takes_checked_narrow(is_type: &Type, should: &Type) -> bool {
         let Type::Optional(inner) = should else {
             return false;
         };
-        Self::is_narrowing_int(is_type.base(), inner.base())
+        Self::is_narrowing_int_store(is_type.base(), inner.base())
     }
 
     /// Does converting a `from` value to `to` change its representation — a numeric widening
