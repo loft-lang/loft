@@ -643,6 +643,27 @@ follow-up, so it is not tracked here.
 Understanding the interpreter's execution model is prerequisite to every performance design
 below.
 
+### Why the interpreter is optimised at all
+
+`--native` is the optimisation TARGET: shipped programs run compiled, through LLVM.  The
+interpreter runs the same program while it is being DEVELOPED and DEBUGGED, and its job is that
+a program does not fall off a speed cliff there.  So it gains on the back of native: a rule
+native already proves (a record it never builds, a move it never makes) is moved into the IR
+phase, where both backends read it (@PLN180 moved R-ValueRecord and R-ValueLocal).  Two
+consequences:
+
+- A change that makes the interpreter faster and native slower is wrong.  Check native's
+  signatures and rewrites before and after, because an IR rewrite can take away a shape a native
+  rule relied on.  @PLN180's first materialisation step turned three forwarding functions back
+  into record returns on native, and the fix was to support the forward in the IR.
+- Interpreter-only machinery (operand fusion, the lean loop) comes second to moving a native
+  rule into the IR.
+
+The bar is measured, not felt: the per-routine ratio of the OPTIMISED interpreter to OPTIMISED
+native code, in real time (`make interp-gap`).  A cliff is about **100×**.  A routine above it
+is the work queue.  Faster is wanted everywhere, and no change may make any routine's ratio
+worse.
+
 ### What to optimise: the data that leaves the cache
 
 The interpreter's own bookkeeping — dispatch, stack slots, operand decoding — runs on a hot

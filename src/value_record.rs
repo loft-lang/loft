@@ -97,6 +97,10 @@ struct Ops {
     database: u32,
     ref_is_null: u32,
     bool_from_ref: u32,
+    copy_record: u32,
+    get_field: u32,
+    ref_alias: u32,
+    distinct_store: u32,
 }
 
 impl Ops {
@@ -113,6 +117,10 @@ impl Ops {
             database: data.def_nr("OpDatabase"),
             ref_is_null: data.def_nr("OpRefIsNull"),
             bool_from_ref: data.def_nr("OpConvBoolFromRef"),
+            copy_record: data.def_nr("OpCopyRecord"),
+            get_field: data.def_nr("OpGetField"),
+            ref_alias: data.def_nr("OpRefAlias"),
+            distinct_store: data.def_nr("OpDistinctStore"),
         }
     }
 
@@ -127,6 +135,13 @@ impl Ops {
             .map_or(u32::MAX, |(d, _)| *d)
     }
 
+    fn set_op(&self, kind: Kind) -> u32 {
+        self.set
+            .iter()
+            .find(|(_, k)| *k == kind)
+            .map_or(u32::MAX, |(d, _)| *d)
+    }
+
     fn set_kind(&self, op: u32) -> Option<Kind> {
         self.set.iter().find(|(d, _)| *d == op).map(|(_, k)| *k)
     }
@@ -135,6 +150,8 @@ impl Ops {
 /// A flat record's tuple: its fields in SCHEMA order, `(byte offset, kind)`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Layout {
+    /// The record's runtime type, what an `OpCopyRecord` of it names.
+    tp: u16,
     fields: Vec<(i32, Kind)>,
 }
 
@@ -156,10 +173,16 @@ impl Layout {
 }
 
 /// An admitted callee: its record and its buffer parameter.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Callee {
     record: u32,
     buf: u16,
+    /// The record type the function returned before the rewrite, which a site that
+    /// materialises the tuple still answers.
+    ret: Type,
+    /// The locals a FORWARD returns: bound from a call built in this function's own buffer,
+    /// they must carry the callee's tuple for this function to return one.
+    forwards: HashSet<u16>,
 }
 
 /// What the pass works from: the admitted functions and parameters and the layouts of the
@@ -167,6 +190,9 @@ struct Callee {
 struct World {
     ops: Ops,
     layouts: HashMap<u32, Layout>,
+    /// Per record, a literal's opening test and the buffer it names: what a site that
+    /// materialises runs on its own buffer.
+    headers: HashMap<u32, (Value, u16)>,
     cands: HashMap<u32, Callee>,
     /// `(function, attribute index)` → the record the parameter carries.
     params: HashMap<(u32, usize), u32>,
@@ -185,14 +211,22 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     let mut w = World {
         ops: Ops::new(data),
         layouts: HashMap::default(),
+        headers: HashMap::default(),
         cands: HashMap::default(),
         params: HashMap::default(),
     };
     for (&d, &tp) in &vr.fns {
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {
+            if let Some(h) = first_header(data.def(d).code(), c.buf, &w.layouts[&c.record], &w.ops)
+            {
+                w.headers.entry(c.record).or_insert((h, c.buf));
+            }
             w.cands.insert(d, c);
         }
     }
+    // A site materialises with its record's literal header; a record no admitted literal
+    // builds has none, and its functions keep their records.
+    w.cands.retain(|_, c| w.headers.contains_key(&c.record));
     for (&d, ps) in &vr.params {
         for (&idx, &tp) in ps {
             if let Some(record) = param_shape(data, stores, &mut w.layouts, d, idx, tp) {
@@ -217,7 +251,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             bad_fns.extend(verdict.bad_fns);
             bad_params.extend(verdict.bad_params);
             called.extend(verdict.called);
-            if !plan.carriers.is_empty() || plan.reads_at_call {
+            if !plan.carriers.is_empty() || plan.reads_at_call || plan.materialises {
                 plans.push((f, plan));
             }
         }
@@ -239,7 +273,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         touched.insert(f);
     }
     for (&d, c) in &w.cands {
-        rewrite_callee(data, &w, d, *c);
+        rewrite_callee(data, &w, d, c);
         touched.insert(d);
     }
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
@@ -268,10 +302,12 @@ fn callee_shape(
     if def.pub_visible || def.def_type != DefType::Function {
         return None;
     }
-    if def.attributes.last()?.name != "__retbuf" {
+    // The return buffer is the LAST attribute, so dropping it moves no other parameter.
+    let idx = def.hidden_return_buffer_attr()?;
+    if idx + 1 != def.attributes.len() {
         return None;
     }
-    let buf = def.variables.var("__retbuf");
+    let buf = def.variables.var(&def.attributes[idx].name);
     if buf == u16::MAX || !def.variables.is_argument(buf) {
         return None;
     }
@@ -279,13 +315,18 @@ fn callee_shape(
         return None;
     };
     let layout = flat_layout(data, stores, *record, tp)?;
-    if !literals_only(def.code(), buf, &layout, ops, true) {
+    let mut sh = BodyShape::default();
+    if !body_shape(def.code(), buf, &layout, ops, true, &mut sh)
+        || !sh.returned.is_subset(&sh.bound)
+    {
         return None;
     }
     layouts.insert(*record, layout);
     Some(Callee {
         record: *record,
         buf,
+        ret: def.returned().clone(),
+        forwards: sh.returned,
     })
 }
 
@@ -316,6 +357,28 @@ fn param_shape(
     Some(*record)
 }
 
+/// The opening test of the first literal built into `buf`.
+fn first_header(n: &Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Value> {
+    let n = n.unspan();
+    if literal_fill(n, buf, layout, ops).is_some()
+        && let Value::Block(b) = n
+    {
+        return b
+            .operators
+            .iter()
+            .map(Value::unspan)
+            .find(|o| !matches!(o, Value::Line(_)))
+            .cloned();
+    }
+    let mut found = None;
+    each_child(n, &mut |c| {
+        if found.is_none() {
+            found = first_header(c, buf, layout, ops);
+        }
+    });
+    found
+}
+
 /// The record's tuple, when it has two or more fields and every one is a scalar a tuple
 /// carries at the width the field stores it.
 fn flat_layout(data: &Data, stores: &Stores, record: u32, tp: u16) -> Option<Layout> {
@@ -341,38 +404,96 @@ fn flat_layout(data: &Data, stores: &Stores, record: u32, tp: u16) -> Option<Lay
     out.sort_unstable_by_key(|(o, _)| *o);
     // A loft tuple has two or more elements: a one-element `Type::Tuple` has no spelling,
     // and `--native` renders it as the bare scalar its `.0` reads cannot index.
-    (out.len() >= 2).then_some(Layout { fields: out })
+    (out.len() >= 2).then_some(Layout { tp, fields: out })
 }
 
-/// Does every mention of `buf` in `n` sit inside an object literal in a result position?
-/// `tail` says `n` is the value the function returns.
-fn literals_only(n: &Value, buf: u16, layout: &Layout, ops: &Ops, tail: bool) -> bool {
+/// What a body does with its return buffer, beyond the object literals it fills.
+#[derive(Default)]
+struct BodyShape {
+    /// Locals bound from a call handed the buffer — a FORWARD's bind.
+    bound: HashSet<u16>,
+    /// Locals in a result position: each must be one of `bound`.
+    returned: HashSet<u16>,
+}
+
+/// Does `n` use the return buffer `buf` only the ways the tuple form can drop?  A RESULT
+/// position (`tail`: a `return`, the body's last value) is an object literal filling every
+/// field, or a local bound from a call handed `buf` (a forward, `return g(…)` lowered).
+/// Elsewhere `buf` appears only as such a call's last argument, in the witness a forward
+/// keeps of it (`w = OpRefAlias(buf)`) and in the guarded free of it
+/// (`if OpDistinctStore(buf, w) OpFreeRefIfDistinct(buf, …)`).  Anything else in a result
+/// position — a view of a record, a branch — declines: the tuple form has no spelling for it
+/// here.
+fn body_shape(
+    n: &Value,
+    buf: u16,
+    layout: &Layout,
+    ops: &Ops,
+    tail: bool,
+    sh: &mut BodyShape,
+) -> bool {
     let n = n.unspan();
     if let Some(fill) = literal_fill(n, buf, layout, ops) {
         return tail
             && fill
                 .values
                 .iter()
-                .all(|v| !mentions(v, buf) && literals_only(v, buf, layout, ops, false));
+                .all(|v| !mentions(v, buf) && body_shape(v, buf, layout, ops, false, sh));
     }
     match n {
-        Value::Var(v) => *v != buf,
-        Value::Return(v) => literals_only(v, buf, layout, ops, true),
+        Value::Return(v) => body_shape(v, buf, layout, ops, true, sh),
         Value::Block(b) => {
             let last = b.operators.len().saturating_sub(1);
             b.operators
                 .iter()
                 .enumerate()
-                .all(|(i, op)| literals_only(op, buf, layout, ops, tail && i == last))
+                .all(|(i, op)| body_shape(op, buf, layout, ops, tail && i == last, sh))
         }
+        // A forward's local — or the buffer itself, which a one-buffer chain
+        // (`buf = g(…, buf); buf`) rebinds to the call's result.
+        Value::Var(l) if tail => {
+            sh.returned.insert(*l);
+            true
+        }
+        _ if tail => false,
+        Value::Set(l, inner)
+            if let Value::Call(_, args) = inner.unspan()
+                && matches!(args.last().map(Value::unspan), Some(Value::Var(b)) if *b == buf) =>
+        {
+            sh.bound.insert(*l);
+            args[..args.len() - 1]
+                .iter()
+                .all(|a| !mentions(a, buf) && body_shape(a, buf, layout, ops, false, sh))
+        }
+        Value::Set(_, inner)
+            if matches!(inner.unspan(), Value::Call(op, args) if *op == ops.ref_alias
+                && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(b) if *b == buf))) =>
+        {
+            true
+        }
+        Value::If(cond, ..) if is_buffer_guard(n, cond, buf, ops) => true,
         _ => {
             let mut ok = true;
             each_child(n, &mut |c| {
-                ok = ok && literals_only(c, buf, layout, ops, false);
+                ok = ok && body_shape(c, buf, layout, ops, false, sh);
             });
             ok && !names_var(n, buf)
         }
     }
+}
+
+/// `if OpDistinctStore(buf, w) OpFreeRefIfDistinct(buf, …) else null` — the free a forward
+/// guards by the witness it keeps of its buffer.
+fn is_buffer_guard(n: &Value, cond: &Value, buf: u16, ops: &Ops) -> bool {
+    let is_buf = |a: &Value| matches!(a.unspan(), Value::Var(b) if *b == buf);
+    let Value::If(_, then, other) = n else {
+        return false;
+    };
+    matches!(cond.unspan(), Value::Call(op, args) if *op == ops.distinct_store
+        && args.first().is_some_and(is_buf))
+        && matches!(then.unspan(), Value::Call(op, args) if *op == ops.free_if_distinct
+            && args.first().is_some_and(is_buf))
+        && matches!(other.unspan(), Value::Null)
 }
 
 /// An object literal built into `buf`: the field offsets and values in the order it writes
@@ -551,6 +672,9 @@ struct Plan {
     /// Some admitted parameter is handed a plain record local, whose fields the rewrite
     /// reads into a tuple at the call.
     reads_at_call: bool,
+    /// Some call of an admitted function is no carrier's bind, so its tuple is written
+    /// into the buffer the site passes.
+    materialises: bool,
 }
 
 /// What one walk of a function decided against the admitted sets.
@@ -573,16 +697,26 @@ struct Scan {
     handed: Vec<(u16, u32, usize)>,
     /// Statement `OpFreeRef(variable)`.
     frees: HashSet<u16>,
-    /// Statement `OpFreeRefIfDistinct(a, b)`.
+    /// Statement `OpFreeRefIfDistinct(placeholder, witness)`: frees the placeholder's store
+    /// unless the witness names it.
     fids: Vec<(u16, u16)>,
+    /// Variables the function returns: `return x`, or `x` as the body's last value.
+    returns: HashSet<u16>,
+    /// Statement `w = OpRefAlias(buffer)`: `(w, buffer)` — the witness a forward keeps.
+    aliases: Vec<(u16, u16)>,
+    /// Statement `if OpDistinctStore(buffer, w) OpFreeRefIfDistinct(buffer, …)`, by buffer.
+    guards: Vec<u16>,
+    /// Statement `OpCopyRecord(variable, place, tp)`: `(variable, tp, place is pure)`.
+    copies: Vec<(u16, u16, bool)>,
     /// Statement `variable = null`.
     null_inits: Vec<u16>,
     /// Statement `if OpRefIsNull(buffer) { OpDatabase(buffer, tp) }` — a hoisted buffer.
     mints: Vec<u16>,
     /// Every other mention, by variable.
     other: HashSet<u16>,
-    /// Admitted functions called somewhere that is not a bind.
-    unbound_calls: HashSet<u32>,
+    /// Admitted functions called with a buffer that is no variable: no carrier and no
+    /// materialisation can serve that site.
+    unservable: HashSet<u32>,
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
@@ -592,9 +726,23 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
     let def = data.def(f);
     let vars = &def.variables;
     let mut s = Scan::default();
-    scan(def.code(), false, w, &mut s);
+    match def.code().unspan() {
+        Value::Block(b) => {
+            let last = b.operators.len().saturating_sub(1);
+            for (i, op) in b.operators.iter().enumerate() {
+                if i == last
+                    && let Value::Var(x) = op.unspan()
+                {
+                    s.returns.insert(*x);
+                } else {
+                    scan(op, true, w, &mut s);
+                }
+            }
+        }
+        code => scan(code, false, w, &mut s),
+    }
     let mut v = Verdict {
-        bad_fns: s.unbound_calls.clone(),
+        bad_fns: s.unservable.clone(),
         bad_params: s.unserved.clone(),
         called: s.called.clone(),
     };
@@ -614,6 +762,15 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
             .all(|(_, off, kind)| layout.kind_at(*off) == Some(*kind))
     };
     let depended = |x: u16| (0..vars.count()).any(|y| vars.tp(y).depend().contains(&x));
+    // Every copy of `x` into a place is one of its record into a place the rewrite may name
+    // once per field.
+    let copies_fit = |x: u16, record: u32| {
+        let tp = w.layouts[&record].tp;
+        s.copies
+            .iter()
+            .filter(|(c, _, _)| *c == x)
+            .all(|(_, t, pure)| *t == tp && *pure)
+    };
     // The admitted parameters of `f` itself.
     for (&(d, idx), &record) in &w.params {
         if d != f {
@@ -621,10 +778,12 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
         }
         let p = vars.var(&def.attributes[idx].name);
         let ok = !s.other.contains(&p)
+            && !s.returns.contains(&p)
             && !s.null_inits.contains(&p)
             && !s.frees.contains(&p)
             && !s.binds.iter().any(|(l, _, _)| *l == p)
             && !s.fids.iter().any(|&(a, b)| a == p || b == p)
+            && copies_fit(p, record)
             && reads_fit(p, record)
             && handed_fits(p, record)
             && !depended(p);
@@ -654,34 +813,45 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
     }
     for (&l, binds) in &by_local {
         let record = w.cands[&binds[0].0].record;
+        // A FORWARD's local is built in this function's own buffer, the one parameter a
+        // bind may name — and only while this function returns the tuple too.
+        let own = w
+            .cands
+            .get(&f)
+            .filter(|c| c.forwards.contains(&l))
+            .map(|c| c.buf);
         let buffer_ok = binds.iter().all(|(d, r)| {
             w.cands[d].record == record
                 && r.is_some_and(|r| {
-                    buffer_uses[&r] == 1
+                    let forward = own == Some(r);
+                    (buffer_uses[&r] == 1 || r == l)
                         && !s.other.contains(&r)
-                        && !vars.is_argument(r)
-                        && s.fids
-                            .iter()
-                            .all(|&(a, b)| (a != r && b != r) || pairs(a, b, r, l))
+                        && (forward || !vars.is_argument(r))
+                        && (forward
+                            || (!s.guards.contains(&r) && !s.aliases.iter().any(|(_, b)| *b == r)))
+                        && s.fids.iter().all(|&(a, b)| b != r || a == l)
                 })
         });
         let why = if !buffer_ok {
             Some("a bind's buffer")
+        } else if s.returns.contains(&l) && own.is_none() {
+            Some("returned by a function that keeps its record")
         } else if s.other.contains(&l) {
             Some("a mention that is no read, hand-on, bind or free")
-        } else if vars.is_argument(l) || vars.is_captured(l) {
+        } else if (vars.is_argument(l) && own != Some(l)) || vars.is_captured(l) {
             Some("a parameter or a capture")
         } else if !matches!(vars.tp(l).peel_link(), Type::Reference(rd, _) if *rd == record) {
             Some("its type")
         } else if !reads_fit(l, record) || !handed_fits(l, record) {
             Some("a read or hand-on of another shape")
-        } else if !s.fids.iter().all(|&(a, b)| {
-            binds
-                .iter()
-                .any(|(_, r)| r.is_some_and(|r| pairs(a, b, r, l)))
-                || (a != l && b != l)
-        }) {
-            Some("a free against another buffer")
+        } else if !copies_fit(l, record) {
+            Some("a copy into a place it cannot name per field")
+        } else if !s
+            .fids
+            .iter()
+            .all(|&(a, b)| b != l || binds.iter().any(|(_, r)| *r == Some(a)))
+        {
+            Some("a free it only witnesses")
         } else if depended(l) {
             Some("another variable depends on it")
         } else {
@@ -697,12 +867,26 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
             );
         }
         let ok = why.is_none();
+        // A local that cannot carry the tuple keeps its record: its binds MATERIALISE the
+        // tuple into the buffer they pass, and the callee still returns a tuple everywhere.
         if ok {
             plan.carriers.insert(l, record);
             plan.buffers.extend(binds.iter().filter_map(|(_, r)| *r));
-        } else {
-            v.bad_fns.extend(binds.iter().map(|(d, _)| *d));
         }
+    }
+    plan.materialises = s.called.iter().any(|d| w.cands.contains_key(d));
+    // A forward returns its local: a local that cannot carry the tuple leaves nothing to
+    // return one with, so the function keeps its record (and the bind materialises).
+    if let Some(c) = w.cands.get(&f)
+        && !c.forwards.iter().all(|l| plan.carriers.contains_key(l))
+    {
+        if trace() {
+            eprintln!(
+                "[ir-valuerec] {}: a forwarded local cannot carry the tuple",
+                def.name()
+            );
+        }
+        v.bad_fns.insert(f);
     }
     // What is handed to an admitted parameter and is no carrier: a plain local of the
     // parameter's record has its fields read into a tuple at the call; anything else
@@ -721,10 +905,13 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
     (plan, v)
 }
 
-/// Does the free `OpFreeRefIfDistinct(a, b)` pair buffer `r` with local `v`, in either
-/// argument order (the loop-hoisted form swaps them)?
-fn pairs(a: u16, b: u16, r: u16, v: u16) -> bool {
-    (a == r && b == v) || (a == v && b == r)
+/// May `place` be evaluated once per field — variables, constants and field projections,
+/// nothing that calls or writes?
+fn pure_place(place: &Value, ops: &Ops) -> bool {
+    !place.any_node(&mut |n| {
+        !matches!(n, Value::Var(_) | Value::Int(_) | Value::Span(_))
+            && !matches!(n, Value::Call(op, _) if *op == ops.get_field)
+    })
 }
 
 /// The arguments of a call of `d`: one handed to an admitted parameter is recorded as
@@ -742,6 +929,27 @@ fn scan_args(d: u32, args: &[Value], w: &World, s: &mut Scan) {
     }
 }
 
+/// A value in a RESULT position: a variable there is returned, and a block's last value is
+/// still the result.
+fn scan_result(n: &Value, w: &World, s: &mut Scan) {
+    match n.unspan() {
+        Value::Var(x) => {
+            s.returns.insert(*x);
+        }
+        Value::Block(b) => {
+            let last = b.operators.len().saturating_sub(1);
+            for (i, op) in b.operators.iter().enumerate() {
+                if i == last {
+                    scan_result(op, w, s);
+                } else {
+                    scan(op, true, w, s);
+                }
+            }
+        }
+        other => scan(other, false, w, s),
+    }
+}
+
 fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     let ops = &w.ops;
     let n = n.unspan();
@@ -755,12 +963,24 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                     _ => None,
                 };
                 s.binds.push((*v, *d, r));
+                if r.is_none() {
+                    s.unservable.insert(*d);
+                }
                 s.called.insert(*d);
                 scan_args(*d, &args[..args.len().saturating_sub(1)], w, s);
                 return;
             }
             if stmt && matches!(inner.unspan(), Value::Null) {
                 s.null_inits.push(*v);
+                return;
+            }
+            if stmt
+                && let Value::Call(op, args) = inner.unspan()
+                && *op == ops.ref_alias
+                && let [a] = args.as_slice()
+                && let Value::Var(b) = a.unspan()
+            {
+                s.aliases.push((*v, *b));
                 return;
             }
             s.other.insert(*v);
@@ -790,12 +1010,24 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 s.fids.push((*a, *b));
                 return;
             }
+            if stmt
+                && *op == ops.copy_record
+                && let [src, dst, Value::Int(tp)] = args.as_slice()
+                && let Value::Var(v) = src.unspan()
+            {
+                s.copies.push((*v, *tp as u16, pure_place(dst, ops)));
+                scan(dst, false, w, s);
+                return;
+            }
             s.called.insert(*op);
-            if w.cands.contains_key(op) {
-                s.unbound_calls.insert(*op);
+            if w.cands.contains_key(op)
+                && !matches!(args.last().map(Value::unspan), Some(Value::Var(_)))
+            {
+                s.unservable.insert(*op);
             }
             scan_args(*op, args, w, s);
         }
+        Value::Return(x) => scan_result(x, w, s),
         Value::Block(b) | Value::Loop(b) => {
             for op in &b.operators {
                 scan(op, true, w, s);
@@ -805,6 +1037,14 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
             for op in list {
                 scan(op, true, w, s);
             }
+        }
+        Value::If(cond, ..)
+            if stmt
+                && let Value::Call(_, args) = cond.unspan()
+                && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                && is_buffer_guard(n, cond, *b, ops) =>
+        {
+            s.guards.push(*b);
         }
         Value::If(cond, ..)
             if stmt
@@ -834,7 +1074,17 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
 fn rewrite_function(data: &mut Data, w: &World, f: u32, plan: &Plan) {
     let def = &mut data.definitions[f as usize];
     let mut code = std::mem::replace(&mut def.code, Value::Null);
-    rewrite_uses(&mut code, w, plan, &def.variables);
+    let scope = match code.unspan() {
+        Value::Block(b) => b.scope,
+        _ => 1,
+    };
+    let mut rw = Rewrite {
+        w,
+        plan,
+        vars: &mut def.variables,
+        scope,
+    };
+    rw.uses(&mut code);
     def.code = code;
     for (v, record) in &plan.carriers {
         def.variables.set_type(*v, w.layouts[record].tuple_type());
@@ -851,14 +1101,25 @@ fn rewrite_function(data: &mut Data, w: &World, f: u32, plan: &Plan) {
 fn dropped(n: &Value, ops: &Ops, plan: &Plan) -> bool {
     let carried = |v: &u16| plan.carriers.contains_key(v) || plan.buffers.contains(v);
     match n.unspan() {
-        Value::Set(r, inner) => plan.buffers.contains(r) && matches!(inner.unspan(), Value::Null),
-        Value::Call(op, args) if *op == ops.free_ref || *op == ops.free_if_distinct => args
-            .iter()
-            .any(|a| matches!(a.unspan(), Value::Var(v) if carried(v))),
+        Value::Set(r, inner) if matches!(inner.unspan(), Value::Null) => plan.buffers.contains(r),
+        // The PLACEHOLDER is what a free releases; a carrier or its buffer holds no store.
+        Value::Call(op, args) if *op == ops.free_ref || *op == ops.free_if_distinct => {
+            matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if carried(v))
+        }
+        Value::Set(_, inner)
+            if matches!(inner.unspan(), Value::Call(op, args) if *op == ops.ref_alias
+                && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(b) if plan.buffers.contains(b)))) =>
+        {
+            true
+        }
         Value::If(cond, ..) => match cond.unspan() {
             Value::Call(op, args) if *op == ops.ref_is_null => {
                 matches!(args.as_slice(), [Value::Var(r)] if plan.buffers.contains(r)
                     && is_header(n.unspan(), *r, ops))
+            }
+            Value::Call(_, args) => {
+                matches!(args.first().map(Value::unspan), Some(Value::Var(b)) if plan.buffers.contains(b)
+                    && is_buffer_guard(n.unspan(), cond, *b, ops))
             }
             _ => false,
         },
@@ -866,58 +1127,151 @@ fn dropped(n: &Value, ops: &Ops, plan: &Plan) -> bool {
     }
 }
 
-fn rewrite_uses(n: &mut Value, w: &World, plan: &Plan, vars: &crate::variables::Function) {
-    let ops = &w.ops;
-    let n = n.unspan_mut();
-    match n {
-        Value::Set(v, inner) if plan.carriers.contains_key(v) => {
-            // A carrier's null init reads, field by field, what a field read of a null
-            // record answers — so a read before the first bind is unchanged.
-            if matches!(inner.unspan(), Value::Null) {
-                **inner = null_tuple(&w.layouts[&plan.carriers[v]]);
-                return;
-            }
-            if let Value::Call(_, args) = inner.unspan_mut() {
-                args.pop();
-            }
-            rewrite_uses(inner, w, plan, vars);
-        }
-        Value::Call(op, args) => {
-            if ops.get_kind(*op).is_some()
-                && let [target, Value::Int(off)] = args.as_slice()
-                && let Value::Var(v) = target.unspan()
-                && let Some(record) = plan.carriers.get(v)
-                && let Some(i) = w.layouts[record].index_of(*off)
-            {
-                *n = Value::TupleGet(*v, i);
-                return;
-            }
-            let d = *op;
-            for (i, a) in args.iter_mut().enumerate() {
-                if let Some(record) = w.params.get(&(d, i))
-                    && let Value::Var(x) = a.unspan()
-                    && !plan.carriers.contains_key(x)
-                {
-                    *a = read_into_tuple(*x, &w.layouts[record], ops);
-                    continue;
+/// One function's rewrite: the admitted world, its plan, and its variables (a site that
+/// materialises adds a temporary to them).
+struct Rewrite<'a> {
+    w: &'a World,
+    plan: &'a Plan,
+    vars: &'a mut crate::variables::Function,
+    /// The body's own scope, for the temporaries.
+    scope: u16,
+}
+
+impl Rewrite<'_> {
+    fn uses(&mut self, n: &mut Value) {
+        let (w, plan) = (self.w, self.plan);
+        let ops = &w.ops;
+        let n = n.unspan_mut();
+        match n {
+            Value::Set(v, inner) if plan.carriers.contains_key(v) => {
+                // A carrier's null init reads, field by field, what a field read of a null
+                // record answers — so a read before the first bind is unchanged.
+                if matches!(inner.unspan(), Value::Null) {
+                    **inner = null_tuple(&w.layouts[&plan.carriers[v]]);
+                    return;
                 }
-                rewrite_uses(a, w, plan, vars);
+                if let Value::Call(d, args) = inner.unspan_mut() {
+                    args.pop();
+                    let d = *d;
+                    self.args(d, args);
+                }
             }
-        }
-        Value::Block(b) | Value::Loop(b) => {
-            b.operators.retain(|o| !dropped(o, ops, plan));
-            for o in &mut b.operators {
-                rewrite_uses(o, w, plan, vars);
+            Value::Call(op, args) => {
+                if ops.get_kind(*op).is_some()
+                    && let [target, Value::Int(off)] = args.as_slice()
+                    && let Value::Var(v) = target.unspan()
+                    && let Some(record) = plan.carriers.get(v)
+                    && let Some(i) = w.layouts[record].index_of(*off)
+                {
+                    *n = Value::TupleGet(*v, i);
+                    return;
+                }
+                let d = *op;
+                self.args(d, args);
+                if let Some(c) = w.cands.get(&d) {
+                    *n = self.materialise(d, c, std::mem::take(args));
+                }
             }
+            Value::Block(b) | Value::Loop(b) => self.statements(&mut b.operators),
+            Value::Insert(list) => self.statements(list),
+            _ => each_child_mut(n, &mut |c| self.uses(c)),
         }
-        Value::Insert(list) => {
-            list.retain(|o| !dropped(o, ops, plan));
-            for o in list {
-                rewrite_uses(o, w, plan, vars);
-            }
-        }
-        _ => each_child_mut(n, &mut |c| rewrite_uses(c, w, plan, vars)),
     }
+
+    /// A statement list: the statements the tuple form no longer needs leave, a carrier
+    /// copied into a place becomes that place's field writes IN the list — where a literal
+    /// the copy fills reads them as its own writes — and the rest are rewritten.
+    fn statements(&mut self, list: &mut Vec<Value>) {
+        let (w, plan) = (self.w, self.plan);
+        let old = std::mem::take(list);
+        for mut o in old {
+            if dropped(&o, &w.ops, plan) {
+                continue;
+            }
+            if let Value::Call(op, args) = o.unspan()
+                && *op == w.ops.copy_record
+                && let [src, dst, _] = args.as_slice()
+                && let Value::Var(v) = src.unspan()
+                && let Some(record) = plan.carriers.get(v)
+            {
+                let v = *v;
+                let mut place = dst.clone();
+                self.uses(&mut place);
+                list.extend(write_fields(&w.layouts[record], &place, v, &w.ops));
+                continue;
+            }
+            self.uses(&mut o);
+            list.push(o);
+        }
+    }
+
+    /// The arguments of a call of `d`: a plain record local handed to an admitted parameter
+    /// is read into a tuple at the call; every other argument is rewritten as a value.
+    fn args(&mut self, d: u32, args: &mut [Value]) {
+        let w = self.w;
+        for (i, a) in args.iter_mut().enumerate() {
+            if let Some(record) = w.params.get(&(d, i))
+                && let Value::Var(x) = a.unspan()
+                && !self.plan.carriers.contains_key(x)
+            {
+                *a = read_into_tuple(*x, &w.layouts[record], &w.ops);
+                continue;
+            }
+            self.uses(a);
+        }
+    }
+
+    /// A call of admitted `d` where no carrier takes its tuple — the record is owed.  The
+    /// site keeps its buffer and does there what the callee's literal did: the tuple is
+    /// bound to a temporary, the callee's opening test mints a record into the buffer when
+    /// it holds none, each field is set from the tuple, and the buffer is the value.  So
+    /// one such site costs what it cost before and no longer declines the function.
+    fn materialise(&mut self, d: u32, c: &Callee, mut args: Vec<Value>) -> Value {
+        let ops = &self.w.ops;
+        let layout = &self.w.layouts[&c.record];
+        let Some(Value::Var(buf)) = args.pop().map(|a| a.unspan().clone()) else {
+            unreachable!("an unservable site declines its callee")
+        };
+        let t = self.vars.add_unique("vr", &layout.tuple_type(), self.scope);
+        let (header, hbuf) = &self.w.headers[&c.record];
+        let mut header = header.clone();
+        rename_var(&mut header, *hbuf, buf);
+        let mut ops_list = vec![Value::Set(t, Box::new(Value::Call(d, args))), header];
+        ops_list.extend(write_fields(layout, &Value::Var(buf), t, ops));
+        ops_list.push(Value::Var(buf));
+        crate::data::v_block(ops_list, c.ret.clone(), "Materialise")
+    }
+}
+
+/// `OpSetX(place, off, t.i)` for every field: tuple `t` written into the record at `place`.
+fn write_fields(layout: &Layout, place: &Value, t: u16, ops: &Ops) -> Vec<Value> {
+    layout
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, (off, k))| {
+            Value::Call(
+                ops.set_op(*k),
+                vec![
+                    place.clone(),
+                    Value::Int(*off),
+                    Value::TupleGet(t, i as u16),
+                ],
+            )
+        })
+        .collect()
+}
+
+/// Every `Var(from)` in `n` becomes `Var(to)` — the callee's header, read on the caller's
+/// buffer.  The header mentions its buffer only as a `Var` ([`is_header`]).
+fn rename_var(n: &mut Value, from: u16, to: u16) {
+    if let Value::Var(v) = n
+        && *v == from
+    {
+        *v = to;
+        return;
+    }
+    each_child_mut(n, &mut |c| rename_var(c, from, to));
 }
 
 /// The tuple a null record reads as: each field's null — `i64::MIN`, NaN, `false`.
@@ -950,7 +1304,7 @@ fn read_into_tuple(x: u16, layout: &Layout, ops: &Ops) -> Value {
     )
 }
 
-fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: Callee) {
+fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: &Callee) {
     let layout = &w.layouts[&c.record];
     let tuple = layout.tuple_type();
     let old = data.def(d).returned().clone();
@@ -958,14 +1312,52 @@ fn rewrite_callee(data: &mut Data, w: &World, d: u32, c: Callee) {
     let mut code = std::mem::replace(&mut def.code, Value::Null);
     literals_to_tuples(&mut code, c.buf, layout, &w.ops, &mut def.variables);
     def.code = code;
-    if let Value::Block(b) = def.code.unspan_mut()
-        && b.result == old
+    retype_results(&mut def.code, c.record, &old, &tuple);
+    // A one-buffer chain made the buffer itself the forward's local.  As a parameter it was
+    // declared by the signature; as a local it is declared by its first bind, which sits in
+    // a branch — so it is bound to the null tuple first, at the body's own level.
+    if c.forwards.contains(&c.buf)
+        && let Value::Block(b) = def.code.unspan_mut()
     {
-        b.result = tuple.clone();
+        b.operators
+            .insert(0, Value::Set(c.buf, Box::new(null_tuple(layout))));
     }
     def.returned = tuple;
     def.attributes.pop();
     def.variables.drop_argument(c.buf);
+}
+
+/// The blocks in RESULT positions — the body, a returned block and their tails — are typed
+/// by the record the function returned (possibly with the buffer as its dep); they now
+/// answer the tuple.  A block elsewhere keeps its type: a local record of the same type is
+/// no result.
+fn retype_results(n: &mut Value, record: u32, old: &Type, tuple: &Type) {
+    match n.unspan_mut() {
+        Value::Block(b) => {
+            if b.result == *old
+                || matches!(b.result.peel_link(), Type::Reference(r, _) if *r == record)
+            {
+                b.result = tuple.clone();
+            }
+            for op in &mut b.operators {
+                retype_returns(op, record, old, tuple);
+            }
+            if let Some(last) = b.operators.last_mut() {
+                retype_results(last, record, old, tuple);
+            }
+        }
+        Value::Return(x) => retype_results(x, record, old, tuple),
+        _ => {}
+    }
+}
+
+/// Every `return` below `n` — outside a nested function there is none — delivers the result.
+fn retype_returns(n: &mut Value, record: u32, old: &Type, tuple: &Type) {
+    if let Value::Return(x) = n.unspan_mut() {
+        retype_results(x, record, old, tuple);
+        return;
+    }
+    each_child_mut(n, &mut |c| retype_returns(c, record, old, tuple));
 }
 
 /// Every literal built into `buf` becomes its tuple, in SCHEMA order.  A literal written in

@@ -1,0 +1,77 @@
+// @PLN180 (`@FR-R-ValueRecord`, decided in the IR phase) — the shapes that let ONE
+// tuple-returning function serve every caller:
+//
+// - a FORWARD returns another admitted function's tuple (`return mk(…)` lowered, and the
+//   one-buffer chain that rebinds the buffer itself in each early return), so it returns a
+//   tuple too;
+// - a site that OWES a record — an element appended, a field stored, a branch joining a
+//   record — MATERIALISES the tuple into the buffer it passes, and the callee stays a tuple
+//   for every other caller;
+// - a tuple copied into an inline sub-record of a literal is that literal's field writes.
+// `LOFT_NO_IR_VALUE_RECORD=1` restores the record form and must answer identically.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: writing a materialised site's fields from the wrong tuple element
+// (index 0 for every field) fails `appended`, `stored` and `joined` on both backends.
+
+struct V2 { x: float, y: float }
+struct V3 { x: float, y: float, z: float }
+struct Holder { p: V3, tag: integer }
+struct Move { pos: V3, vy: float, on: boolean }
+
+fn mk3(a: float) -> V3 { V3 { x: a, y: a * 2.0, z: a * 3.0 } }
+fn v2(a: float, b: float) -> V2 { V2 { x: a, y: b } }
+
+// A forward: its body only hands mk3's tuple on.
+fn fwd(a: float) -> V3 {
+  b = a + 1.0;
+  mk3(b)
+}
+
+// A one-buffer chain: every exit returns a call built in the function's own buffer.
+fn corner(i: integer) -> V2 {
+  if i == 0 { return v2(0.0, 1.0); }
+  if i == 1 { return v2(2.0, 0.5); }
+  v2(-2.0, -1.0)
+}
+
+// A literal with an inline sub-record filled from a tuple.
+fn step(a: float, grounded: boolean) -> Move { Move { pos: mk3(a), vy: a * 0.5, on: grounded } }
+
+fn main() {
+  // Forward: mk3(3) = (3, 6, 9).
+  f = fwd(2.0);
+  assert(f.x + f.y + f.z == 18.0, "forwarded: {f.x} {f.y} {f.z}");
+
+  // One-buffer chain: (0 + 1) + (2 + 0.5) + (-2 - 1) = 0.5.
+  c = 0.0;
+  for i in 0..3 {
+    cn = corner(i);
+    c += cn.x + cn.y;
+  }
+  assert(c == 0.5, "one-buffer chain: {c}");
+
+  // Owed as an element: (1, 2, 3) then (2, 4, 6).
+  vs: vector<V3> = [];
+  vs += [mk3(1.0)];
+  vs += [mk3(2.0)];
+  assert(vs[0].y == 2.0 && vs[1].z == 6.0, "appended: {vs[0].y} {vs[1].z}");
+
+  // Owed in a field.
+  o = Holder { p: V3 { x: 0.0, y: 0.0, z: 0.0 }, tag: 1 };
+  o.p = mk3(5.0);
+  assert(o.p.x == 5.0 && o.p.y == 10.0 && o.p.z == 15.0 && o.tag == 1, "stored: {o.p.y}");
+
+  // Owed at a branch join with a record: (1 + 2) then (7 + 0).
+  q = V3 { x: 7.0, y: 0.0, z: 0.0 };
+  e = 0.0;
+  for k in 0..2 {
+    p = if k == 0 { mk3(1.0) } else { q };
+    e += p.x + p.y;
+  }
+  assert(e == 10.0, "joined: {e}");
+
+  // Copied into an inline sub-record: pos = (4, 8, 12), vy = 2.
+  m = step(4.0, true);
+  assert(m.pos.x == 4.0 && m.pos.y == 8.0 && m.pos.z == 12.0 && m.vy == 2.0 && m.on, "sub-record: {m.pos.y} {m.vy}");
+}
