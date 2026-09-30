@@ -749,6 +749,127 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     let _ = std::fs::remove_dir_all(native_auto);
 }
 
+/// loft#1776 — an auto-native library artifact belongs to the `loft` EXECUTABLE that
+/// built it, not just to the `libloft.rlib` it linked.  The artifact is that binary's
+/// generated code, called through that binary's store layout; keyed on the rlib alone, an
+/// installed `loft` upgraded without its rlib adopted the previous binary's artifact and
+/// corrupted the store on the first call.
+///
+/// Two copies of ONE build — same bytes, same rlib, same stdlib, differing only in the
+/// executable's own identity (its mtime) — run one program over one private library.  The
+/// second must build an artifact of its own rather than adopt the first one's.  The copy is
+/// laid out as a `target/<profile>/` tree so it finds the very same `deps/libloft.rlib` and
+/// `default/`: exactly the "same rlib, different executable" shape of the report.
+#[test]
+fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
+    if Command::new("rustc").arg("--version").output().is_err() {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_1776_exe_{pid}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["mathnative"]);
+    let native_auto = lib.join("mathnative/native-auto");
+
+    // The second executable: a byte copy in its own `target/release/`, beside a link to
+    // the real `deps/` (the rlib both find) and a project root that links `default/`.
+    let real = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    let real_dir = real.parent().unwrap();
+    let other_root = tmp.join("other");
+    let other_dir = other_root.join("target").join("release");
+    std::fs::create_dir_all(&other_dir).unwrap();
+    let other = other_dir.join(real.file_name().unwrap());
+    // A later mtime than the original's, even on a coarse-grained filesystem.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::copy(&real, &other).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
+        std::os::unix::fs::symlink(
+            std::fs::canonicalize("default").unwrap(),
+            other_root.join("default"),
+        )
+        .unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        eprintln!("skip: the second-executable layout needs symlinks");
+        let _ = std::fs::remove_dir_all(&tmp);
+        return;
+    }
+
+    let prog = tmp.join("p.loft");
+    std::fs::write(
+        &prog,
+        "use mathnative::*;\nfn main() { println(\"{double(21)}\"); }\n",
+    )
+    .unwrap();
+    let run = |exe: &std::path::Path| {
+        Command::new(exe)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run a loft binary")
+    };
+    let sos = || -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = std::fs::read_dir(&native_auto)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.extension()
+                            .is_some_and(|e| e == "so" || e == "dylib" || e == "dll")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+
+    let first = run(&real);
+    assert!(
+        first.status.success() && String::from_utf8_lossy(&first.stdout).contains("42"),
+        "the first executable runs the library: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let after_first = sos();
+    assert_eq!(
+        after_first.len(),
+        1,
+        "the first executable built one artifact"
+    );
+
+    // CONTROL: the same executable again adopts its own artifact.
+    assert!(run(&real).status.success(), "control run succeeds");
+    assert_eq!(
+        sos(),
+        after_first,
+        "CONTROL FAILED: the same executable rebuilt its own artifact, so this test cannot \
+         tell an identity miss from churn"
+    );
+
+    let second = run(&other);
+    assert!(
+        second.status.success() && String::from_utf8_lossy(&second.stdout).contains("42"),
+        "the second executable runs the library: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let after_second = sos();
+    assert_eq!(
+        after_second.len(),
+        2,
+        "a different loft executable adopted the first one's artifact instead of building \
+         its own — the code in it is another binary's (loft#1776)"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// loft#739 — a `hash<T[key]>` over a LIBRARY-IMPORTED struct shifted the
 /// native program's type-id table, so every id baked into the emitted ops from
 /// that point on named a different type than the compiler meant.
