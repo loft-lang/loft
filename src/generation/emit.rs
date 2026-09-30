@@ -1959,7 +1959,11 @@ impl Output<'_> {
     ///
     /// PLAN52 cluster IV (heap-typed value-block `??`): probes 21 / 22 /
     /// 23 / 36 / 40 / 41 / 50.
-    fn output_test_predicate(&mut self, w: &mut dyn Write, test: &Value) -> std::io::Result<()> {
+    pub(super) fn output_test_predicate(
+        &mut self,
+        w: &mut dyn Write,
+        test: &Value,
+    ) -> std::io::Result<()> {
         let heap_dbref = matches!(
             self.infer_type(IrNode::Native(test)),
             Some(
@@ -1999,7 +2003,7 @@ impl Output<'_> {
     /// are still live inside the arm, and the two cannot collide — both are keyed on the
     /// node's address.  The counter is wound back before the arm is emitted, exactly as the
     /// statement site winds it back, so the emit walk regenerates the names the bindings carry.
-    fn open_arm_pre_evals(
+    pub(super) fn open_arm_pre_evals(
         &mut self,
         w: &mut dyn Write,
         arm: &Value,
@@ -2024,7 +2028,7 @@ impl Output<'_> {
     /// Close what [`Self::open_arm_pre_evals`] opened: the statement's map is the active one
     /// again, and the counter stands where the arm's collection left it, so the sibling arm's
     /// names continue rather than repeat.
-    fn close_arm_pre_evals(
+    pub(super) fn close_arm_pre_evals(
         &mut self,
         state: Option<(std::collections::HashMap<usize, String>, u32)>,
     ) {

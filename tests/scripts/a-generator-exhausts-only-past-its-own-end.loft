@@ -119,11 +119,10 @@ fn the_natural_while_loop_reads_one_value_too_many() {
 
 // --- Laziness: one slice per advance, and none before the first ---------------------------
 //
-// Both cells below use the shape that is lazy on BOTH backends: a loop whose body ends in one
-// unconditional `yield`. That is deliberate, not incidental. A statement after the yield, or a
-// yield inside an `if`, still runs the whole loop eagerly on --native — measured, 1000 body
-// steps where the interpreter does 5, with the values agreeing throughout. COROUTINE.md tracks
-// the remaining shapes as CL-9, so pinning them here would pin a known gap rather than a rule.
+// Both cells below use a loop whose body ends in one unconditional `yield`, the shape that was
+// lazy on BOTH backends first.  The other loop shapes — a yield inside an `if`, two per path, a
+// nested loop — are lazy on --native since loft#1798, and their slice-per-advance order is
+// `a-generator-resumes-at-the-yield-it-suspended-at`'s to pin.
 
 fn each_advance_runs_exactly_one_more_slice() {
   t = Trace { steps: 0 };

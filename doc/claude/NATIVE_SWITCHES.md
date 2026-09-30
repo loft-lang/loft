@@ -285,6 +285,17 @@ stale field, a leak or a double free out of a record literal in a loop on native
 where the local is copied, returned, captured, appended, handed to a callee whose return
 borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
 
+## Generators
+
+**`LOFT_NO_REDESCENT=1`** (loft#1798, default-ON, generation time) sends every generator loop
+that RE-DESCENT would lower lazily back to the eager buffer — the whole loop runs in the
+factory before the first value is handed out — and is the first bisect step for a native-only
+wrong answer, leak or rustc error out of a generator loop whose yields are not all on one
+straight line (COROUTINE_LAZY_YIELDS.md § Re-descent).  The values must not move; the order of
+side effects does, which is the point.  `LOFT_TRACE_REDESCENT=1` names each generator that
+still runs eagerly with the switch off, and why: a `yield` inside an expression re-descent
+cannot hoist, or a carried local no struct field can hold.
+
 ## Counted push loops
 
 **`LOFT_NO_PUSH_FILL=1`** (@PLN157 § V-am, `@FR-R-PushFill`, default-ON, generation time)

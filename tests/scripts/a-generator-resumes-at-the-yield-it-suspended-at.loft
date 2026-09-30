@@ -1,0 +1,242 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-G-Next` — an advance runs the generator from the yield that suspended it up to the NEXT
+// yield, and no further — for the loop shapes one rotated loop cannot express (loft#1798): two
+// yields on one path, a statement after a yield inside its arm, a yield inside a nested loop, a
+// `continue` beside a yield, a loop over another generator, several yields under a top-level
+// `if`, and a yield inside a value or an operand.  --native ran each of them to its end into a
+// buffer before the consumer saw a value: the values agreed with the interpreter and the side
+// effects did not (`p0 p1 g0 g10 g1 g11` where the interpreter traces `p0 g0 g10 p1 g1 g11`),
+// and an endless one never handed out a value at all.
+//
+// They are now RE-DESCENDED: the body is emitted as the Rust loops and branches it is, a
+// suspending yield records its number, and the next advance re-enters from the top, skipping
+// what already ran, until it reaches that yield (COROUTINE.md § CL-9).
+//
+// Each generator stamps its own steps into a shared trace and the consumer stamps `g<v>`, so a
+// trace reads the interleaving directly.  Every expected trace is derived by hand from the rule
+// — one advance, one slice — not copied from a run.
+//
+// Axes this file MOVES: the shape (nested `for`, `continue` before and after the yield, a
+//                       `break` out of an inner loop, two yields per path, a statement after a
+//                       yield in a `match` arm, a loop over a generator, a top-level `if`, a
+//                       yield in an `if` value / a block value / an operand / a call argument),
+//                       the loop (`for` over a range, a vector, a text, a generator; `while`),
+//                       the yielded kind (integer, text, float, boolean), a local carried
+//                       across two yields (integer, text, vector), and abandonment.
+// Axes it HOLDS FIXED:  the consumer is a `for` or `next`; record and tuple yields are
+//                       `a-record-yielded-from-a-loop-is-handed-over-lazily.loft`'s.
+//
+// @falsified-at: 9986ae132 — native 8 of 8 functions fail -> 0 (hand-measured with the control
+//   build's binary, under `ulimit -v`); the interpreter INERT (expected for a backend-divergence
+//   guard — only one side can move).
+//   CHANNEL: assertions, native — each trace reads the eager order (every `p` before the first
+//     `g`), and the abandoned generator counts all its steps where the consumer asked for three.
+//   ARMED: nothing.
+//   WITNESS: on 9986ae132 `nested1798b` traces `a0 b0 b1 z0 a1 b0 b1 z1 g0 g1 g10 g11 ` where
+//     this file wants `a0 b0 g0 b1 g1 z0 a1 b0 g10 b1 g11 z1 `.
+//   HOLDS: every VALUE agrees on both trees and both backends; no leak or panic.
+
+struct Tr1798b { s: text }
+struct Steps1798b { n: integer }
+enum Sh1798b { Ci, Sq, Tri }
+
+fn nested1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for r in 0..2 { t.s += "a{r} "; for c in 0..2 { t.s += "b{c} "; yield r * 10 + c; } t.s += "z{r} "; }
+}
+
+fn nested_if1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for r in 0..2 { for c in 0..3 { t.s += "p{r}{c} "; if (r + c) % 2 == 0 { yield r * 10 + c; } } }
+}
+
+fn inner_break1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for r in 0..2 { for c in 0..5 { t.s += "p{r}{c} "; yield c; if c == 1 { break; } } t.s += "e{r} "; }
+}
+
+fn cont_before1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..5 { t.s += "p{i} "; if i % 2 == 1 { continue; } yield i; t.s += "r{i} "; }
+}
+
+fn cont_after1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..4 { t.s += "p{i} "; yield i; if i == 1 { continue; } t.s += "r{i} "; }
+}
+
+fn two1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  i = 0;
+  while i < 20 { i += 1; t.s += "p{i} "; yield i; t.s += "m{i} "; yield -i; }
+}
+
+fn arm_rest1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..4 {
+    t.s += "p{i} ";
+    match i % 2 { 0 => { yield i; t.s += "x{i} "; yield i + 100; }, _ => { t.s += "o{i} "; } }
+    t.s += "r{i} ";
+  }
+}
+
+fn enum_arms1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for s in [Sh1798b.Ci, Sh1798b.Sq, Sh1798b.Tri] {
+    t.s += "p ";
+    match s { Ci => { yield 1; yield 11; }, Sq => { t.s += "sq "; }, Tri => { yield 3; } }
+    t.s += "r ";
+  }
+}
+
+fn top_if1798b(t: reference<Tr1798b>, c: boolean) -> iterator<integer> {
+  t.s += "s ";
+  if c { yield 1; t.s += "m "; yield 2; } else { yield 3; }
+  t.s += "e ";
+  yield 4;
+}
+
+fn sub1798b() -> iterator<integer> { for i in 0..3 { yield i; } }
+
+fn over_gen1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for x in sub1798b() { t.s += "p{x} "; if x != 1 { yield x; yield x + 50; } }
+  yield 99;
+}
+
+fn over_vec1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  v = [1, 5, 2];
+  for x in v { t.s += "p{x} "; if x > 1 { yield x; yield x * 10; } }
+}
+
+fn over_text1798b(t: reference<Tr1798b>) -> iterator<text> {
+  for c in "abc" { t.s += "p "; if c != 'b' { yield "{c}"; yield "{c}{c}"; } }
+}
+
+fn carried1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..2 { k = i * 2; s = "s{i}"; v = [i]; yield k; v += [9]; t.s += "{s}:{k}:{len(v)} "; yield k + 1; }
+}
+
+fn floats1798b() -> iterator<float> { for i in 0..3 { if i != 1 { yield i * 0.5; yield i * 1.5; } } }
+
+fn bools1798b() -> iterator<boolean> { for i in 0..3 { yield i == 1; if i == 2 { yield true; } } }
+
+fn if_value1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..3 { x = if i != 1 { yield i; i * 10 } else { 7 }; t.s += "x{x} "; }
+}
+
+fn block_value1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..2 { x = { t.s += "p{i} "; yield i; i + 100 }; t.s += "x{x} "; }
+}
+
+fn operand1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  x = 0;
+  for i in 0..2 { x += { yield i; 5 }; t.s += "x{x} "; }
+}
+
+fn f1798b(a: integer, b: integer) -> integer { a * 100 + b }
+
+fn argument1798b(t: reference<Tr1798b>) -> iterator<integer> {
+  for i in 0..2 { y = f1798b(i, { yield i; 7 }); t.s += "y{y} "; }
+}
+
+fn long1798b(st: reference<Steps1798b>) -> iterator<integer> {
+  for r in 0..1000 { for c in 0..1000 { st.n += 1; yield r * 1000 + c; yield -1; } }
+}
+
+fn traced1798b(g: iterator<integer>, t: reference<Tr1798b>) {
+  for v in g { t.s += "g{v} "; }
+}
+
+fn test_a_nested_loop_hands_over_before_the_next_inner_iteration() {
+  t = Tr1798b { s: "" };
+  traced1798b(nested1798b(t), t);
+  assert(t.s == "a0 b0 g0 b1 g1 z0 a1 b0 g10 b1 g11 z1 ", "nested for: {t.s}");
+  u = Tr1798b { s: "" };
+  traced1798b(nested_if1798b(u), u);
+  assert(u.s == "p00 g0 p01 p02 g2 p10 p11 g11 p12 ", "nested conditional: {u.s}");
+  b = Tr1798b { s: "" };
+  traced1798b(inner_break1798b(b), b);
+  assert(b.s == "p00 g0 p01 g1 e0 p10 g0 p11 g1 e1 ", "break out of the inner loop: {b.s}");
+}
+
+fn test_a_continue_beside_a_yield() {
+  t = Tr1798b { s: "" };
+  traced1798b(cont_before1798b(t), t);
+  assert(t.s == "p0 g0 r0 p1 p2 g2 r2 p3 p4 g4 r4 ", "continue before the yield: {t.s}");
+  u = Tr1798b { s: "" };
+  traced1798b(cont_after1798b(u), u);
+  assert(u.s == "p0 g0 r0 p1 g1 p2 g2 r2 p3 g3 r3 ", "continue after the yield: {u.s}");
+}
+
+fn test_two_yields_on_one_path_and_a_statement_after_a_yield_in_its_arm() {
+  t = Tr1798b { s: "" };
+  n = 0;
+  for v in two1798b(t) { t.s += "g{v} "; n += 1; if n == 5 { break; } }
+  assert(t.s == "p1 g1 m1 g-1 p2 g2 m2 g-2 p3 g3 ", "two yields in a while, abandoned: {t.s}");
+  a = Tr1798b { s: "" };
+  traced1798b(arm_rest1798b(a), a);
+  assert(a.s == "p0 g0 x0 g100 r0 p1 o1 r1 p2 g2 x2 g102 r2 p3 o3 r3 ", "match arm: {a.s}");
+  e = Tr1798b { s: "" };
+  traced1798b(enum_arms1798b(e), e);
+  assert(e.s == "p g1 g11 r p sq r p g3 r ", "enum arms: {e.s}");
+}
+
+fn test_a_top_level_if_holding_several_yields() {
+  t = Tr1798b { s: "" };
+  traced1798b(top_if1798b(t, true), t);
+  assert(t.s == "s g1 m g2 e g4 ", "then arm: {t.s}");
+  f = Tr1798b { s: "" };
+  traced1798b(top_if1798b(f, false), f);
+  assert(f.s == "s g3 e g4 ", "else arm: {f.s}");
+}
+
+fn test_loops_over_a_generator_a_vector_and_a_text() {
+  t = Tr1798b { s: "" };
+  traced1798b(over_gen1798b(t), t);
+  assert(t.s == "p0 g0 g50 p1 p2 g2 g52 g99 ", "over a generator: {t.s}");
+  a = Tr1798b { s: "" };
+  for v in over_gen1798b(a) { a.s += "g{v} "; if v == 50 { break; } }
+  assert(a.s == "p0 g0 g50 ", "over a generator, abandoned: {a.s}");
+  u = Tr1798b { s: "" };
+  traced1798b(over_vec1798b(u), u);
+  assert(u.s == "p1 p5 g5 g50 p2 g2 g20 ", "over a vector: {u.s}");
+  w = Tr1798b { s: "" };
+  for v in over_text1798b(w) { w.s += "g{v} "; }
+  assert(w.s == "p ga gaa p p gc gcc ", "over a text: {w.s}");
+}
+
+fn test_locals_carried_across_two_yields_and_other_kinds() {
+  t = Tr1798b { s: "" };
+  traced1798b(carried1798b(t), t);
+  assert(t.s == "g0 s0:0:2 g1 g2 s1:2:2 g3 ", "integer, text and vector locals: {t.s}");
+  f = "";
+  for v in floats1798b() { f += "{v} "; }
+  assert(f == "0 0 1 3 ", "floats: {f}");
+  b = "";
+  for v in bools1798b() { b += "{v} "; }
+  assert(b == "false true false true ", "booleans: {b}");
+}
+
+fn test_a_yield_inside_a_value_or_an_operand() {
+  t = Tr1798b { s: "" };
+  traced1798b(if_value1798b(t), t);
+  assert(t.s == "g0 x0 x7 g2 x20 ", "an if value: {t.s}");
+  b = Tr1798b { s: "" };
+  traced1798b(block_value1798b(b), b);
+  assert(b.s == "p0 g0 x100 p1 g1 x101 ", "a block value: {b.s}");
+  o = Tr1798b { s: "" };
+  traced1798b(operand1798b(o), o);
+  assert(o.s == "g0 x5 g1 x10 ", "an operand: {o.s}");
+  a = Tr1798b { s: "" };
+  traced1798b(argument1798b(a), a);
+  assert(a.s == "g0 y7 g1 y107 ", "a call argument: {a.s}");
+}
+
+// Every generator here is FINITE on purpose, as in `1586-…`: an eager regression then fails an
+// order assertion or the STEP count instead of filling memory the way an endless loop's buffer
+// would.
+fn test_an_abandoned_nested_generator_does_no_work_past_its_consumer() {
+  st = Steps1798b { n: 0 };
+  got = "";
+  n = 0;
+  for v in long1798b(st) {
+    got += "{v} ";
+    n += 1;
+    if n == 5 { break; }
+  }
+  assert(got == "0 -1 1 -1 2 " && st.n == 3, "abandoned after five values: {got} / {st.n} steps");
+}

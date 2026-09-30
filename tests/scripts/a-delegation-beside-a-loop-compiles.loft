@@ -71,8 +71,12 @@ fn after_a_lazy_loop_with_a_resume_slice() -> iterator<integer> {
   yield from dl_two();
 }
 
+// Since loft#1798 a loop whose yields are statements is re-descended lazily, so the loop that
+// keeps this generator EAGER yields inside an expression behind a `text` operand — the shape
+// re-descent declines — and still produces 0,0,1,1.
 fn after_an_eager_loop() -> iterator<integer> {
-  for i in 0..2 { yield i; yield i; }
+  s = "";
+  for i in 0..2 { s = s + { yield i; "x" }; yield i; }
   yield from dl_two();
 }
 

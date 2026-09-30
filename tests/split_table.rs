@@ -47,7 +47,14 @@ fn body<'a>(rust: &'a str, name: &str) -> &'a str {
         .find(&format!("\nfn {name}("))
         .unwrap_or_else(|| panic!("{name} was not emitted"));
     let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
+    // The next top-level ITEM ends the body, not only the next function: a generator is a
+    // `struct` and an `impl` before its factory `fn`, and its state machine may hold the very
+    // calls a neighbour's count is asking about.
+    let end = ["\nfn ", "\nstruct ", "\nimpl "]
+        .iter()
+        .filter_map(|item| rest[3..].find(item))
+        .min()
+        .map_or(rest.len(), |i| i + 3);
     &rest[..end]
 }
 

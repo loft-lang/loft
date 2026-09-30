@@ -1493,6 +1493,13 @@ impl Value {
     /// fn-ref forms.
     #[must_use]
     pub fn names_var_here(&self, v: u16) -> bool {
+        self.var_named_here() == Some(v)
+    }
+
+    /// The variable THIS node names, if any — the same arm list, answered as the variable
+    /// rather than asked about one, for a walk that collects every variable a subtree names.
+    #[must_use]
+    pub fn var_named_here(&self) -> Option<u16> {
         match self {
             Value::Var(x)
             | Value::Set(x, _)
@@ -1500,9 +1507,9 @@ impl Value {
             | Value::TuplePut(x, _, _)
             | Value::FnRefDnr(x)
             | Value::CallRef(x, _)
-            | Value::Iter(x, _, _, _) => *x == v,
-            Value::FnRef(_, w, _) => *w == v,
-            _ => false,
+            | Value::Iter(x, _, _, _)
+            | Value::FnRef(_, x, _) => Some(*x),
+            _ => None,
         }
     }
 
