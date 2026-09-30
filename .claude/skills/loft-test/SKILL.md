@@ -339,8 +339,11 @@ closed/historical archive; the legacy `P###` ids survive only as references).
    you'll ever fix — code paths warm, repro at hand: fix it + pin a regression.  File
    only when you are NOT fixing it now (it blocks the task, or it's M+/needs design).
 2. **When you file → `gh issue create`** (the `bug_report` template): a minimal
-   reproducer (expected vs observed per backend), `sev:` + `area:` labels, and a
-   **verified** `wa:*` workaround.  Not a PROBLEMS.md row.
+   reproducer (expected vs observed per backend), `sev:` + `area:` labels, a
+   **verified** `wa:*` workaround, a `hit-by:` label (`hit-by:loft` for your own find), and
+   `silent-wrong` when the program answers wrong with nothing said.  The title names the
+   target, never a measurement ([ISSUE_TRACKING.md](../../../doc/claude/ISSUE_TRACKING.md)).
+   Not a PROBLEMS.md row.
 3. **Do NOT file** for: clippy / formatter complaints (fix in-branch, note the commit);
    or a bug you fix in the SAME change (the
    fix + regression test ARE the record — close it with `Fixes #NNN`, don't also file).

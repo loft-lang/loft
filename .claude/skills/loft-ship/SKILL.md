@@ -51,7 +51,9 @@ finding, not a licence for a native "fast pass"
 ([formal/performance.md](../../../doc/claude/formal/performance.md) `(Perf-Cure)`; the
 per-release measurement against an industry-language twin is `(Perf-Weight)`, read across every
 shipped library with `make perf-portal`; the drawing library's `bench/` is the model). `#native` is for a real host capability, and a native
-rewrite for speed is a per-routine edge case with its reason recorded.
+rewrite for speed is a per-routine edge case with its reason recorded.  So is a faster
+spelling IN loft: it comes after the code generation, and reaches the library only as an
+API an `advice` names (`(Perf-Teach)`).
 
 ## The workflow
 

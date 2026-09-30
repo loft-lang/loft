@@ -101,8 +101,9 @@ ENV_RE = re.compile(r"\b(LOFT_[A-Z][A-Z0-9_]+)\b")
 PLACEHOLDER_SEG = re.compile(r"^(NN+|x{1,2}|foo|bar|my_[a-z_]*)(\.[a-z]+)?$")
 
 # Files a skill may legitimately cite that are BUILT on demand and git-ignored by
-# design, so their absence from a checkout says nothing (@PLN112 for LIBRARIES.md).
-KNOWN_GENERATED = {"doc/claude/LIBRARIES.md"}
+# design, so their absence from a checkout says nothing (@PLN112 for LIBRARIES.md; a
+# debug-build test run writes `tests/dumps`).
+KNOWN_GENERATED = {"doc/claude/LIBRARIES.md", "tests/dumps"}
 
 # A bare umbrella directory is not a SOURCE: citing `doc/claude` in prose tracks the
 # whole doc tree, so every doc commit — including this review's own watermark commit —

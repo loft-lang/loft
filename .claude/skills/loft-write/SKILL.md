@@ -15,7 +15,9 @@ loft version and keep it: a routine that measures slow is an ENGINE finding (or 
 algorithm fix here, in loft) — never a cue to shadow readable code with an optimized
 "fast pass" or a native rewrite; that escape hatch is a per-routine edge case with its
 reason recorded ([formal/performance.md](../../../doc/claude/formal/performance.md)
-`(Perf-Cure)`).
+`(Perf-Cure)`).  A faster LOFT spelling is the last resort too: first the code generation
+for the code as written, and a rewrite only as an API an `advice` names to users
+(`(Perf-Teach)`).
 
 ---
 
