@@ -728,6 +728,53 @@ pub fn write_native_artifact_fingerprint(profile_dir: &std::path::Path, fp: u64)
     }
 }
 
+/// How many loft builds one wasm runtime rlib stays stamped for.
+const RUNTIME_FPS_KEPT: usize = 4;
+
+/// Is the wasm runtime rlib in `profile_dir` current for the loft build `fp`?
+///
+/// The runtime rlib is compiled from loft's SOURCES and links nothing of the running
+/// binary, so every loft build of one source tree can use it — a release and a debug
+/// binary alike.  Its sidecar therefore holds a SET of fingerprints, not one: stamped
+/// with one, the release and the debug binary each read the other's stamp as stale, and
+/// every alternation took the global build lock for a cargo no-op — behind other tests'
+/// native builds, minutes per call on a CI runner.  A package cdylib links the host rlib
+/// and keeps the single stamp ([`native_artifact_fingerprint_matches`]).
+#[must_use]
+pub fn runtime_fingerprint_matches(profile_dir: &std::path::Path, fp: u64) -> bool {
+    fp == 0
+        || std::fs::read_to_string(fp_sidecar(profile_dir))
+            .is_ok_and(|s| s.split_whitespace().any(|t| t.parse::<u64>() == Ok(fp)))
+}
+
+/// Stamp the wasm runtime rlib in `profile_dir` as current for `fp` after cargo ran.
+///
+/// `rebuilt` says whether cargo actually changed the rlib.  A rebuild describes a new
+/// source tree, so the set restarts at `fp` alone; a no-op confirms the rlib already
+/// matches the tree, so `fp` joins the builds it serves (the most recent
+/// [`RUNTIME_FPS_KEPT`]).
+pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt: bool) {
+    if fp == 0 {
+        return;
+    }
+    let mut fps: Vec<u64> = if rebuilt {
+        Vec::new()
+    } else {
+        std::fs::read_to_string(fp_sidecar(profile_dir))
+            .map(|s| {
+                s.split_whitespace()
+                    .filter_map(|t| t.parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    fps.retain(|&f| f != fp);
+    fps.push(fp);
+    let keep = fps.len().saturating_sub(RUNTIME_FPS_KEPT);
+    let text: Vec<String> = fps[keep..].iter().map(u64::to_string).collect();
+    let _ = std::fs::write(fp_sidecar(profile_dir), text.join(" "));
+}
+
 /// The fingerprint a native artifact dir was stamped with, if any — the
 /// visibility companion to [`native_artifact_fingerprint_matches`] (which only
 /// returns a bool).  Extends the loud-fallback theme: when a cached cdylib is
@@ -1285,6 +1332,37 @@ mod tests {
         let [first, second] = rlib_candidates(exe_dir);
         assert_eq!(first, exe_dir.join("deps").join("libloft.rlib"));
         assert_eq!(second, exe_dir.join("libloft.rlib"));
+    }
+
+    /// The wasm runtime rlib serves every loft build of one source tree: a release and a
+    /// debug binary alternating keep both stamps (no lock, no cargo per call), a real
+    /// rebuild forgets the builds that no longer match, and the set stays bounded.
+    #[test]
+    fn a_runtime_rlib_is_stamped_for_every_build_it_serves() {
+        let dir = std::env::temp_dir().join(format!("loft_runtime_fp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The single-number sidecar every older loft wrote still reads.
+        write_native_artifact_fingerprint(&dir, 11);
+        assert!(runtime_fingerprint_matches(&dir, 11));
+        assert!(!runtime_fingerprint_matches(&dir, 22));
+        // A cargo no-op for build 22: both builds are current.
+        stamp_runtime_fingerprint(&dir, 22, false);
+        assert!(runtime_fingerprint_matches(&dir, 11) && runtime_fingerprint_matches(&dir, 22));
+        // A real rebuild for build 33: only 33.
+        stamp_runtime_fingerprint(&dir, 33, true);
+        assert!(runtime_fingerprint_matches(&dir, 33));
+        assert!(!runtime_fingerprint_matches(&dir, 11) && !runtime_fingerprint_matches(&dir, 22));
+        // Bounded: the oldest falls out after RUNTIME_FPS_KEPT.
+        for fp in 40..40 + RUNTIME_FPS_KEPT as u64 {
+            stamp_runtime_fingerprint(&dir, fp, false);
+        }
+        assert!(!runtime_fingerprint_matches(&dir, 33));
+        assert!(runtime_fingerprint_matches(
+            &dir,
+            40 + RUNTIME_FPS_KEPT as u64 - 1
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
