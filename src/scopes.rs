@@ -142,6 +142,33 @@ pub(crate) use returns::return_has_null_arm;
 use value_struct::value_struct_copy;
 pub(crate) use view_walk::link_set_repoints;
 
+/// What a bind of a call result is, as `scan_set` decides it — the four facts
+/// [`Scopes::pair_call_buffers`] reads to choose which of the call's buffers to pair with the
+/// destination and how.
+#[derive(Clone, Copy)]
+struct BindShape {
+    /// Whose store the destination takes.
+    adopts: Adopts,
+    /// The destination is a `&` parameter the result is published through.
+    publishes_through_ref: bool,
+    /// The destination is a vector (aliased to the work-ref, never copied).
+    vector_shaped: bool,
+}
+
+/// Whose store a call result's destination takes — the two adopting cases exclude each other
+/// (`adopts_minted_at_bind` answers only for a callee that does NOT adopt fresh).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Adopts {
+    /// The callee's return is dep-empty: it mints its own store rather than filling the one
+    /// it was handed (`Definition::return_adopts_fresh_store`).
+    Fresh,
+    /// The callee returns the local it promoted onto its buffer and the destination adopts
+    /// that store (`use_analysis::adopts_minted_at_bind`).
+    Minted,
+    /// Neither: the destination copies, or aliases a work-ref.
+    Neither,
+}
+
 struct Scopes<'s> {
     /// The store-type registry — read for the element type a vector COPY op names
     /// (`OpReplaceVector`'s third argument), which only the registry can answer for a

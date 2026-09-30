@@ -135,7 +135,7 @@ impl Scopes<'_> {
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
                 let call = std::mem::replace(m, Value::Var(tmp));
-                preamble.push(v_set(tmp, call));
+                preamble.push(self.lift_set(tmp, call, function, data));
                 lifted = true;
             } else if matches!(m.unspan(), Value::Tuple(_)) {
                 let mut inner = match m.unspan() {
@@ -396,7 +396,7 @@ impl Scopes<'_> {
                     {
                         let tmp = self.new_lift_var(function, &tp);
                         self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
-                        preamble.push(v_set(tmp, final_val));
+                        preamble.push(self.lift_set(tmp, final_val, function, data));
                         ls.push(Value::Var(tmp));
                     } else {
                         ls.push(final_val);
@@ -424,7 +424,7 @@ impl Scopes<'_> {
                     preamble.extend(it);
                     let tmp = self.new_lift_var(function, &tp);
                     self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
-                    preamble.push(v_set(tmp, call));
+                    preamble.push(self.lift_set(tmp, call, function, data));
                     ls.push(Value::Var(tmp));
                 } else {
                     ls.push(Value::Insert(ops));
@@ -443,7 +443,7 @@ impl Scopes<'_> {
                 // the dep is empty (owned).
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
-                preamble.push(v_set(tmp, scanned));
+                preamble.push(self.lift_set(tmp, scanned, function, data));
                 ls.push(Value::Var(tmp));
             } else if let Value::Call(g_nr, _) = scanned.unspan()
                 // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.

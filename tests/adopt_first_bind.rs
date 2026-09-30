@@ -187,7 +187,10 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // arm became the scope (`@FR-B-Scope`, loft#1600, 2026-09-23; it read 139 before): c11's
     // `k = build(d - 1)` is its arm's local, a first bind, where the pre-init that used to stand in
     // front of the `if` made it a rebind that copies — one mint for each of the five activations
-    // with `d > 0`.
+    // with `d > 0`.  2026-09-30: a LIFTED call result adopts the callee's minted store as a
+    // named bind does (`Scopes::lift_set`, `tests/lift_adopt.rs`), so the copy's store per
+    // lifted minted call goes in the ON arm alone (the switch restores it): 98 → 86 on the
+    // interpreter, 91 → 85 on native; the OFF arms unchanged.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -196,11 +199,11 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (98, 134), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (86, 134), "interpret mints (on, off)");
     let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (91, 127), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (85, 127), "native mints (on, off)");
 }

@@ -305,7 +305,10 @@ fn the_store_census_drops() {
         (i_on, i_off, n_on, n_off),
         // 2026-09-29: `(R-ExitVector)` claims four local vectors' wrappers in their return
         // buffers' stores (four mints fewer on each backend, same on and off the pool).
-        (190, 299, 166, 265),
+        // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
+        // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
+        // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
+        (183, 295, 159, 261),
         "mints (interpret on, off, native on, off)"
     );
 }
