@@ -69,10 +69,10 @@ struck only when the port that met it re-measures green on that axis.
 | files that shell out to `gh` / `git` / `cargo` / `rustc` / `jq` / `curl` | 58 / 42 / 37 / 26 / 12 / 9 |
 | Python files using `re` / `json` / TOML / `argparse` / `subprocess` | 48 / 31 / 37 / 24 / 40 |
 | **files needing neither a subprocess nor a regex** | **5** (813 lines): `doc_review.py`, `api_lint.py`, `install_claude_hooks.py`, `registry_schema_gate.sh`, `browser/coop_server.py` |
-| start-up, `println("hi")`, warm, this box | loft (release) 75–80 ms · `python3 -c` 13 ms |
+| start-up, `println("hi")`, installed binary, idle box | `--interpret` 15–22 ms · default (native, warm) 32–37 ms · `python3 -c` 15–19 ms · bash 5 ms — the from-source binary reads 78–84 ms because its program cache is off (PERFORMANCE.md rule 4) |
 
-The last row is the number a hook or a per-file CI step pays on every call; where it goes
-(the `default/*.loft` load, after @PLN52) is measured in strand 1, not assumed.
+The last row is the number a hook or a per-file CI step pays on every call: interpreted,
+loft is at Python's bar today; the warm native path is not yet (REASONS.md row 1).
 
 **What loft has today for a script:** file I/O and `list_dir`, `json_parse`, `arguments()`,
 `env_variable(s)`, stdin as `host_input`, `eprintln`, `assert`/`panic` (a non-zero exit),
@@ -242,6 +242,15 @@ numbers (lines, start-up, run time), and the open `REASONS.md` rows it still car
 language comparison the owner asked for, made of tools that are used every day rather than
 of samples written to be compared, and readable as a scoreboard: how many scripts loft
 replaces with no reason left, today.
+
+## Execution modes — evaluated in [`MODES.md`](MODES.md)
+
+The dual mode the owner asked for (2026-09-30) is loft's steady state already: one source,
+`--interpret` / `--native` (default, cached by source hash) / `--native-release`.  The
+compiled version is never stored in git (3.5 GB a generation, stale weekly); the source-keyed
+cache is the store, CI warms it, a hook interprets, and the twin decides per script which
+mode it declares — short scripts opt out, long ones opt up, through a `#mode` directive
+that is a gap for strand 3.
 
 ## Phase ordering
 
