@@ -140,34 +140,8 @@ fn contains_reduction(n: &Value, whole: &Value, ops: &Ops) -> bool {
         return true;
     }
     let mut found = false;
-    each_child(n, &mut |c| {
-        found = found || contains_reduction(c, whole, ops)
-    });
+    n.for_each_child(&mut |c| found = found || contains_reduction(c, whole, ops));
     found
-}
-
-/// Call `f` on each direct child of `n`.
-fn each_child<'a>(n: &'a Value, f: &mut impl FnMut(&'a Value)) {
-    match n {
-        Value::Span(s) => f(&s.1),
-        Value::Call(_, a)
-        | Value::CallRef(_, a)
-        | Value::Insert(a)
-        | Value::Tuple(a)
-        | Value::Parallel(a) => a.iter().for_each(f),
-        Value::Block(b) | Value::Loop(b) => b.operators.iter().for_each(f),
-        Value::Set(_, x)
-        | Value::Return(x)
-        | Value::Drop(x)
-        | Value::Yield(x)
-        | Value::TuplePut(_, _, x) => f(x),
-        Value::If(a, b, c) | Value::Iter(_, a, b, c) => {
-            f(a);
-            f(b);
-            f(c);
-        }
-        _ => {}
-    }
 }
 
 fn replace_loops(n: &mut Value, whole: &Value, ops: &Ops, fired: &mut usize) {
@@ -176,7 +150,7 @@ fn replace_loops(n: &mut Value, whole: &Value, ops: &Ops, fired: &mut usize) {
         *fired += 1;
         return;
     }
-    each_child_mut(n, &mut |c| replace_loops(c, whole, ops, fired));
+    n.for_each_child_mut(&mut |c| replace_loops(c, whole, ops, fired));
 }
 
 /// The kernel call that answers the loop `n`, when `n` is the admitted reduction shape.
@@ -215,8 +189,8 @@ fn reduction(n: &Value, whole: &Value, ops: &Ops) -> Option<Value> {
     let Value::Loop(body) = lp else {
         return None;
     };
-    let lstmts = statements(&body.operators);
-    let [set_i, inner] = lstmts.as_slice() else {
+    let loop_stmts = statements(&body.operators);
+    let [set_i, inner] = loop_stmts.as_slice() else {
         return None;
     };
     let Value::Set(i, iter) = set_i else {
@@ -228,8 +202,8 @@ fn reduction(n: &Value, whole: &Value, ops: &Ops) -> Option<Value> {
     let Value::Block(inner) = inner else {
         return None;
     };
-    let istmts = statements(&inner.operators);
-    let [add] = istmts.as_slice() else {
+    let body_stmts = statements(&inner.operators);
+    let [add] = body_stmts.as_slice() else {
         return None;
     };
     let acc = accumulates(add, *v, *i, ops)?;
@@ -258,54 +232,55 @@ fn statements(list: &[Value]) -> Vec<&Value> {
 
 /// `{#Iter idx = idx + 1; if end <= idx break; idx}` — the step of `for i in 0..end`.
 fn is_counting_step(iter: &Value, idx: u16, end: u16, ops: &Ops) -> bool {
-    let Value::Block(b) = iter.unspan() else {
+    let Value::Block(block) = iter.unspan() else {
         return false;
     };
-    let s = statements(&b.operators);
-    let [inc, test, answer] = s.as_slice() else {
+    let steps = statements(&block.operators);
+    let [inc, test, answer] = steps.as_slice() else {
         return false;
     };
-    let is_var = |n: &Value, v: u16| matches!(n.unspan(), Value::Var(x) if *x == v);
-    let inc_ok = matches!(inc, Value::Set(x, e) if *x == idx
-        && matches!(e.unspan(), Value::Call(op, a) if *op == ops.add_int
-            && matches!(a.as_slice(), [l, r] if is_var(l, idx) && matches!(r.unspan(), Value::Int(1)))));
-    let test_ok = matches!(test, Value::If(c, t, e)
-        if matches!(c.unspan(), Value::Call(op, a) if *op == ops.le_int
-            && matches!(a.as_slice(), [l, r] if is_var(l, end) && is_var(r, idx)))
-        && matches!(t.unspan(), Value::Break(0))
-        && matches!(e.unspan(), Value::Null));
+    let is_var = |node: &Value, var: u16| matches!(node.unspan(), Value::Var(x) if *x == var);
+    let inc_ok = matches!(inc, Value::Set(target, sum) if *target == idx
+        && matches!(sum.unspan(), Value::Call(op, args) if *op == ops.add_int
+            && matches!(args.as_slice(), [lhs, rhs]
+                if is_var(lhs, idx) && matches!(rhs.unspan(), Value::Int(1)))));
+    let test_ok = matches!(test, Value::If(cond, then, other)
+        if matches!(cond.unspan(), Value::Call(op, args) if *op == ops.le_int
+            && matches!(args.as_slice(), [lhs, rhs] if is_var(lhs, end) && is_var(rhs, idx)))
+        && matches!(then.unspan(), Value::Break(0))
+        && matches!(other.unspan(), Value::Null));
     inc_ok && test_ok && is_var(answer, idx)
 }
 
 /// `acc = acc + v[i]` with `v[i]` an 8-byte integer element: the accumulator.
-fn accumulates(add: &Value, v: u16, i: u16, ops: &Ops) -> Option<u16> {
-    let Value::Set(acc, e) = add else {
+fn accumulates(add: &Value, vector: u16, index: u16, ops: &Ops) -> Option<u16> {
+    let Value::Set(acc, sum) = add else {
         return None;
     };
-    let Value::Call(op, a) = e.unspan() else {
+    let Value::Call(op, args) = sum.unspan() else {
         return None;
     };
-    let [l, r] = a.as_slice() else {
+    let [lhs, rhs] = args.as_slice() else {
         return None;
     };
-    if *op != ops.add_int || !matches!(l.unspan(), Value::Var(x) if x == acc) {
+    if *op != ops.add_int || !matches!(lhs.unspan(), Value::Var(x) if x == acc) {
         return None;
     }
-    let Value::Call(get, ga) = r.unspan() else {
+    let Value::Call(get, get_args) = rhs.unspan() else {
         return None;
     };
-    let [elem, Value::Int(0)] = ga.as_slice() else {
+    let [elem, Value::Int(0)] = get_args.as_slice() else {
         return None;
     };
-    let Value::Call(gv, va) = elem.unspan() else {
+    let Value::Call(get_vec, vec_args) = elem.unspan() else {
         return None;
     };
     let ok = *get == ops.get_int
-        && *gv == ops.get_vector
-        && matches!(va.as_slice(), [vv, Value::Int(8), ii]
-            if matches!(vv.unspan(), Value::Var(x) if *x == v)
-            && matches!(ii.unspan(), Value::Var(x) if *x == i));
-    (ok && *acc != v && *acc != i).then_some(*acc)
+        && *get_vec == ops.get_vector
+        && matches!(vec_args.as_slice(), [on, Value::Int(8), at]
+            if matches!(on.unspan(), Value::Var(x) if *x == vector)
+            && matches!(at.unspan(), Value::Var(x) if *x == index));
+    (ok && *acc != vector && *acc != index).then_some(*acc)
 }
 
 /// How many nodes of `n` name variable `v`, in any spelling.
@@ -318,28 +293,4 @@ fn count(n: &Value, v: u16) -> usize {
         false
     });
     c
-}
-
-/// Call `f` on each direct child of `n`, mutably.
-fn each_child_mut(n: &mut Value, f: &mut impl FnMut(&mut Value)) {
-    match n {
-        Value::Span(s) => f(&mut s.1),
-        Value::Call(_, a)
-        | Value::CallRef(_, a)
-        | Value::Insert(a)
-        | Value::Tuple(a)
-        | Value::Parallel(a) => a.iter_mut().for_each(f),
-        Value::Block(b) | Value::Loop(b) => b.operators.iter_mut().for_each(f),
-        Value::Set(_, x)
-        | Value::Return(x)
-        | Value::Drop(x)
-        | Value::Yield(x)
-        | Value::TuplePut(_, _, x) => f(x),
-        Value::If(a, b, c) | Value::Iter(_, a, b, c) => {
-            f(a);
-            f(b);
-            f(c);
-        }
-        _ => {}
-    }
 }

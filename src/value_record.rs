@@ -211,6 +211,10 @@ struct World {
 
 /// Rewrite every admitted function, parameter and call site; answers how many functions
 /// and parameters now carry a tuple.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the program: admit, twin, rewrite"
+)]
 pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     if disabled() || data.open_world {
         return 0;
@@ -581,7 +585,7 @@ fn body_shape(
         Value::If(cond, ..) if is_buffer_guard(n, cond, buf, ops) => true,
         _ => {
             let mut ok = true;
-            each_child(n, &mut |c| {
+            n.for_each_child(&mut |c| {
                 ok = ok && body_shape(c, buf, layout, ops, false, sh);
             });
             ok && !names_var(n, buf)
@@ -798,54 +802,6 @@ pub(crate) fn names_var(n: &Value, v: u16) -> bool {
     }
 }
 
-/// Call `f` on each direct child of `n`.
-fn each_child<'a>(n: &'a Value, f: &mut impl FnMut(&'a Value)) {
-    match n {
-        Value::Span(s) => f(&s.1),
-        Value::Call(_, a)
-        | Value::CallRef(_, a)
-        | Value::Insert(a)
-        | Value::Tuple(a)
-        | Value::Parallel(a) => a.iter().for_each(f),
-        Value::Block(b) | Value::Loop(b) => b.operators.iter().for_each(f),
-        Value::Set(_, x)
-        | Value::Return(x)
-        | Value::Drop(x)
-        | Value::Yield(x)
-        | Value::TuplePut(_, _, x) => f(x),
-        Value::If(a, b, c) | Value::Iter(_, a, b, c) => {
-            f(a);
-            f(b);
-            f(c);
-        }
-        _ => {}
-    }
-}
-
-/// Call `f` on each direct child of `n`, mutably.
-fn each_child_mut(n: &mut Value, f: &mut impl FnMut(&mut Value)) {
-    match n {
-        Value::Span(s) => f(&mut s.1),
-        Value::Call(_, a)
-        | Value::CallRef(_, a)
-        | Value::Insert(a)
-        | Value::Tuple(a)
-        | Value::Parallel(a) => a.iter_mut().for_each(f),
-        Value::Block(b) | Value::Loop(b) => b.operators.iter_mut().for_each(f),
-        Value::Set(_, x)
-        | Value::Return(x)
-        | Value::Drop(x)
-        | Value::Yield(x)
-        | Value::TuplePut(_, _, x) => f(x),
-        Value::If(a, b, c) | Value::Iter(_, a, b, c) => {
-            f(a);
-            f(b);
-            f(c);
-        }
-        _ => {}
-    }
-}
-
 /// What one function's rewrite needs.
 #[derive(Default)]
 struct Plan {
@@ -907,6 +863,14 @@ struct Scan {
 /// The plan for function `f`'s body, and what it decides against the admitted sets.
 /// `tuple` says `f` itself returns the tuple — the only case a forward's local, built in
 /// `f`'s own buffer, may carry it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one verdict per carrier shape, in one place"
+)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "n/v/d/s/w name the node, variable, definition, scan and world throughout this module"
+)]
 fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict) {
     let def = data.def(f);
     let vars = &def.variables;
@@ -1150,6 +1114,14 @@ fn scan_result(n: &Value, w: &World, s: &mut Scan) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per IR node kind the scan reads"
+)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "n/v/d/s/w name the node, variable, definition, scan and world throughout this module"
+)]
 fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     let ops = &w.ops;
     let n = n.unspan();
@@ -1263,7 +1235,7 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
             {
                 s.other.insert(*x);
             }
-            each_child(n, &mut |c| scan(c, false, w, s));
+            n.for_each_child(&mut |c| scan(c, false, w, s));
         }
     }
 }
@@ -1361,7 +1333,7 @@ impl Rewrite<'_> {
             }
             Value::Block(b) | Value::Loop(b) => self.statements(&mut b.operators),
             Value::Insert(list) => self.statements(list),
-            _ => each_child_mut(n, &mut |c| self.uses(c)),
+            _ => n.for_each_child_mut(&mut |c| self.uses(c)),
         }
     }
 
@@ -1511,7 +1483,7 @@ fn retype_returns(n: &mut Value, record: u32, old: &Type, tuple: &Type) {
         retype_results(x, record, old, tuple);
         return;
     }
-    each_child_mut(n, &mut |c| retype_returns(c, record, old, tuple));
+    n.for_each_child_mut(&mut |c| retype_returns(c, record, old, tuple));
 }
 
 /// Every literal built into `buf` becomes its tuple, in SCHEMA order.  The statements run
@@ -1529,7 +1501,7 @@ fn literals_to_tuples(
 ) {
     let n = n.unspan_mut();
     let Some(lit) = literal(n, buf, layout, ops) else {
-        each_child_mut(n, &mut |c| literals_to_tuples(c, buf, layout, ops, vars));
+        n.for_each_child_mut(&mut |c| literals_to_tuples(c, buf, layout, ops, vars));
         return;
     };
     let schema: Vec<i32> = layout.fields.iter().map(|(o, _)| *o).collect();
