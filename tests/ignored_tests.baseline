@@ -27,6 +27,7 @@ src/spatial.rs::bench_queries	benchmark — run with --release --ignored --nocap
 src/trie_db.rs::prefix_query_page_span	measurement — run with --release --lib --ignored --nocapture
 src/trie_db.rs::record_placement	measurement — run with --release --lib --ignored --nocapture
 src/trie_db.rs::warm_cache_session	measurement — run with --release --lib --ignored --nocapture
+tests/compiled_stdlib.rs::regen_compiled_stdlib	maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`
 tests/differential_oracle.rs::oracle_corpus_agrees_across_backends	differential oracle — runs nightly in ci.yml's `test` job (the Differential oracle step); by hand: --test differential_oracle -- --ignored
 tests/format_width_is_bounded.rs::a_positive_width_still_pads	no `ulimit -v` on Windows; the cap is the guard
 tests/format_width_is_bounded.rs::a_width_below_zero_pads_nothing	no `ulimit -v` on Windows; the cap is the guard
