@@ -1,0 +1,25 @@
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 9a87d8d58..8d8a1ac8a 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -3822,19 +3822,7 @@ impl Parser {
+         // O8.5: capture range bounds for const-unroll detection.
+         self.last_range_from = Some(expr.clone());
+         let mut till = Value::Null;
+-        // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
+-        // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
+-        // sliced, a `{` right after the `..` is the loop's body, never a bound — read as
+-        // the bound, it made the body an expression (`break` "outside a loop") and compared
+-        // the counter with its value.  Lowered as `a..=MAX`: `(I-RangeIncl)` already stops
+-        // exactly after the type's maximum, so the counter never has to overflow.
+-        if *data == Value::Null && !incl && self.lexer.peek_token("{") {
+-            incl = true;
+-            till = Value::Long(i64::MAX);
+-        }
+-        let mut till_tp = if till != Value::Null {
+-            crate::data::I64.clone()
+-        } else if self.lexer.peek_token("]") {
++        let mut till_tp = if self.lexer.peek_token("]") {
+             till = if *data == Value::Null {
+                 Value::Int(i32::MAX)
+             } else {

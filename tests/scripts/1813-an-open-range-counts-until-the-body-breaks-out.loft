@@ -9,7 +9,10 @@
 // `i32::MAX`, and at the type's maximum it stops after yielding that value instead of
 // overflowing — `(I-RangeIncl)`'s exact stop, which is how it is lowered.
 //
-// @falsified-at: PENDING
+// @falsified-at: 5f5cabed2 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1813-an-open-range-counts-until-the-body-breaks-out.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control tree refuses the first open range ("Cannot break outside a loop").
+// HOLDS: leak and panic are equal on both trees.
 
 fn first_square_over(limit: integer) -> integer {
   for i in 1.. {
