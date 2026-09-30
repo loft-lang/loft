@@ -677,7 +677,11 @@ impl Lexer {
                 } else if let Some(line_result) = self.lines.next() {
                     match line_result {
                         Ok(ln) => {
+                            // A `#!` first line is skipped, and still COUNTED: without
+                            // the increment every diagnostic in a bare script named the
+                            // line above the one the editor shows (@PLN179 finding 007).
                             if self.position.line == 0 && ln.starts_with("#!/") {
+                                self.position.line += 1;
                                 continue;
                             }
                             self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
