@@ -17,6 +17,11 @@
 // @falsified-at: dd1e05b07 — scored by hand on the leak-oracle channel (make falsify does not
 // arm it): LOFT_OWN_ORACLE=check-leak --interpret RED n_fillp, n_local_sum, n_bag -> 0 REDs;
 // values ok 3 18 3 1 150 on both trees and both backends.
+// CHANNEL: the ownership oracle's leak scan (`LOFT_OWN_ORACLE=check-leak --interpret <this>`,
+//   stderr `RED …: leak __ref_1`) — the dead record lives inside a store that is still
+//   freed, so exit code, assertions and the store-count leak check cannot move.
+// HOLDS: values, exit, panic and the store-count leak check are clean on both trees and both
+//   backends; LOFT_POISON=1 and LOFT_STRICT_STORES=1 runs are clean here.
 struct Val { n: integer, tag: text }
 struct Wrap { value: Val, next: integer, ok: boolean }
 struct Bag { items: vector<Val>, count: integer }
