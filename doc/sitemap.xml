@@ -198,22 +198,33 @@
   <url><loc>https://loft-lang.org/loft/report.html</loc></url>
   <url><loc>https://loft-lang.org/loft/roadmap.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-assertions-that-report-both-sides.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-binary-file-i-o.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-collections.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-coroutines.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-environment.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-exp-ln-log2-log10.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-field-iteration-support-types.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-file-system.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-files-and-directories.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-interfaces.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-json-building-values.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-json-reading-values.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-json-the-struct-bridge.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-json.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-lazy-stores.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-math.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-memory-diagnostics.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-min-max-clamp.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-optional-c-libraries.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-output-and-diagnostics.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-paged-store-loading.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-path-helpers.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-persistent-stores.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-random.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-stack-traces.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-system-directories.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-text-bytes-and-code-points.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/stdlib-text-case-and-classification.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-text.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-time.html</loc></url>
   <url><loc>https://loft-lang.org/loft/stdlib-type-reflection.html</loc></url>

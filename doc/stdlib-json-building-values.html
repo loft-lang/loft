@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSON: building values — Loft, a programming language for small browser games</title>
+  <meta name="description" content="">
+<link rel="canonical" href="https://loft-lang.org/loft/stdlib-json-building-values.html">
+<meta property="og:title" content="JSON: building values — Loft, a programming language for small browser games">
+<meta property="og:description" content="">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/stdlib-json-building-values.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="JSON: building values — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <span class="cur">JSON: building values</span> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>JSON: building values</h1>
+<article>
+<div class="item">
+<pre><code>pub fn to_json(self: const JsonValue) -&gt; text</code></pre>
+<p>Render a JsonValue to canonical RFC 8259 JSON text.  Every variant serialises; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `&quot;`, `\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn to_json_pretty(self: const JsonValue) -&gt; text</code></pre>
+<p>`to_json_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `[]` / `{}` (no newline padding).  Primitives are byte-identical to `to_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`&quot;k&quot;: v`). Useful for golden-file tests and log output.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_null() -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JNull` variant. Useful in test fixtures and reply-construction code that needs a known-null JsonValue without going through `json_parse(&quot;null&quot;)`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_bool(v: boolean) -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JBool` variant carrying the supplied boolean payload.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_number(v: float?) -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JNumber` variant carrying the supplied float payload.  Non-finite inputs (float null = NaN, or ±Inf) produce `JNull` with a diagnostic in `json_errors()` — mirrors the RFC 8259 constraint that JSON numbers must be finite.  The parameter is `float?` because handling a null/NaN input IS its contract (→ `JNull`); a finite `float` passes as a non-null value into the nullable slot as usual.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_string(v: text) -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_array(items: const vector&lt;JsonValue&gt;) -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref_to_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.</p>
+</div>
+<div class="item">
+<pre><code>pub fn json_object(fields: const vector&lt;JsonField&gt;) -&gt; JsonValue</code></pre>
+<p>Build a JsonValue set to the `JObject` variant carrying the supplied fields.  Each field's value deep-copies via the same `dbref_to_parsed` walker as `json_array`, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

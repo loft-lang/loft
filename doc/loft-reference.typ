@@ -41,7 +41,7 @@ Loft is a lightweight scripting language with null safety, built-in parallel exe
 
 === Prerequisites
 
-Building from source requires the Rust toolchain. loft is an edition-2024 crate, so that means *Rust 1.85 or later* — the same version `--native` needs to compile your programs. Install it from rustup.rs if you do not already have it:
+Building from source requires the Rust toolchain. loft is an edition-2024 crate, so that means *Rust 1.96 or later* — the same version `--native` needs to compile your programs. Install it from rustup.rs if you do not already have it:
 
 ```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -49,29 +49,26 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 === Install from source
 
-The quickest way to get the `loft` binary on your PATH:
-
-```
-cargo install --git https://github.com/loft-lang/loft --bin loft
-```
-
-This compiles loft in release mode and places the binary in `~/.cargo/bin/`, which is already on your PATH if you used rustup.
-
-=== Build locally
-
-Clone the repository and build with Cargo:
+Clone the repository and install it into `~/.local`, with no root needed:
 
 ```
 git clone https://github.com/loft-lang/loft
 cd loft
+make install-user
+```
+
+This puts the `loft` binary in `~/.local/bin/` and the standard library it loads at runtime in `~/.local/share/loft/`, and tells you if `~/.local/bin` is not on your PATH. `make install` installs system-wide under `/usr/local` instead.
+
+=== Build locally
+
+To run loft from the checkout without installing it:
+
+```
 cargo build --release
+./target/release/loft --version
 ```
 
-The binary is at `target/release/loft`. Copy it anywhere on your PATH, for example:
-
-```
-cp target/release/loft ~/.local/bin/
-```
+The binary at `target/release/loft` finds the standard library in the checkout's `default/` directory. Copying the binary on its own elsewhere leaves that library behind; use `make install-user`, or pass `--path <checkout>`.
 
 === Verify the installation
 
@@ -127,7 +124,7 @@ Run `loft --help` for the full list. The most commonly used flags are:
 
 === Running your program as a native binary
 
-`loft myprogram.loft` already compiles through `rustc` when it can find it, and interprets when it cannot — you do not have to choose, and the answer is the same either way. Compiling takes a few seconds the first time and then runs 20–50× faster than interpreting (see Performance for the measured table). Ask for one on purpose when you want to:
+`loft myprogram.loft` already compiles through `rustc` when it can find it, and interprets when it cannot — you do not have to choose, and the answer is the same either way. Compiling takes a few seconds the first time and then runs compute-heavy code many times faster than interpreting (Performance measures native against hand-written Rust). Ask for one on purpose when you want to:
 
 ```
 loft --native myprogram.loft
@@ -136,11 +133,11 @@ loft --native myprogram.loft
 To see the generated Rust code without running it:
 
 ```
-loft --native-emit myprogram.rs
+loft --native-emit myprogram.rs myprogram.loft
 cat myprogram.rs
 ```
 
-This needs `rustc` on your PATH — the same Rust 1.85 or later you built loft with. If it is not found, loft says so and interprets instead, which is why a downloaded release always interprets.
+Native runs need `rustc` on your PATH — the same Rust you built loft with. Without it, `--native` says so and interprets instead. A downloaded release carries no native runtime, so it always interprets.
 
 === Standard library
 
@@ -169,8 +166,8 @@ loft ships its own editor support, so you do not need to pretend `.loft` is Rust
 
 - *VS Code* — the extension in `editors/vscode/` of the repository gives syntax highlighting, snippets, and Run buttons for the interpreted (F5) and native (Ctrl+F5) paths. Build and install it with `cd editors/vscode && npm install && vsce package && code --install-extension loft-0.1.0.vsix`. It is not on the marketplace yet.
 - *Any LSP editor* — `loft-lsp` is a language server built from this repository (`cargo build --release --bin loft-lsp`). It answers diagnostics, completion, go-to-definition, references, hover, document symbols, semantic tokens, inlay hints, rename and formatting over stdio. `loft-dap` is the matching debug adapter.
-- *Vim / Neovim* — point your LSP client at the `loft-lsp` binary for `*.loft` files.
-- *Any editor* — the Web IDE (in progress) provides syntax highlighting and navigation in the browser.
+- *Vim / Neovim* — `editors/nvim/` adds filetype detection and syntax highlighting; point your LSP client at the `loft-lsp` binary for `*.loft` files.
+- *In the browser* — the playground runs loft with nothing installed.
 
 === Next steps
 
@@ -198,7 +195,7 @@ x += 1;
 let y = 42;     // immutable by default; compiler-enforced
 ```
 
-Upside Less boilerplate. No need to decide upfront whether a variable will be mutated. Variables are mutable by default, so refactoring is frictionless. Use const to say a value must not change — the compiler refuses every write it forbids.
+Upside Less boilerplate. No need to decide upfront whether a variable is mutable. Variables are mutable by default, so refactoring is frictionless. Use const to say a value must not change — the compiler refuses every write it forbids.
 
 Downside Immutability is opt-in, not the default. Rust makes variables immutable unless you write mut, so every binding is protected for free; in loft only the ones you mark const are.
 
@@ -230,7 +227,7 @@ Downside The absence is in the type, as in Rust, but nothing forces you to disch
 
 ```rust
 // a plain collection parameter is already shared — the append reaches the caller
-fn push_two(v: &vector<integer>) {
+fn push_two(v: vector<integer>) {
     v += [1, 2];  // caller sees the change
 }
 // const: read-only (a write through it is a compile error)
@@ -322,7 +319,7 @@ for x in items.iter().filter(|&&x| x > 0) {
 
 Upside Reads like natural language. No closure syntax, no double-reference in the filter predicate. v\#remove inside a filtered loop also safely removes the current element while iterating — something that requires careful index management in Rust.
 
-Downside The inline if filter is limited to the loop it lives in. For multi-stage pipelines, loft now offers map(v, fn f), filter(v, fn pred), and reduce(v, fn f, init) as composable higher-order functions — see section 11. Rust's lazy iterator chain (.filter().map().take\_while()) avoids intermediate allocations; loft's higher-order functions allocate a new vector at each stage.
+Downside The inline if filter is limited to the loop it lives in. For multi-stage pipelines, loft offers map(v, f), filter(v, pred), and reduce(v, init, f) as composable higher-order functions — see section 11. Rust's lazy iterator chain (.filter().map().take\_while()) avoids intermediate allocations; loft's higher-order functions allocate a new vector at each stage.
 
 === Loop attributes: \#first, \#count, \#index
 
@@ -461,7 +458,7 @@ fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
 }
 ```
 
-Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (move vs borrow), no Fn/FnMut/FnOnce trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (fn name) are compile-checked.
+Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes (move vs borrow), no Fn/FnMut/FnOnce trait bounds, and no lifetime annotations. The compiler picks the mode from the type: a scalar or text is copied at definition time, a struct or collection is shared with the enclosing scope, and a scalar the closure writes to is shared as well, so an accumulator needs no declaration. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (a bare name: map(v, double)) are compile-checked.
 
 Downside You do not choose the capture mode, so a case Rust expresses by picking one has no spelling here. Three limits have no Rust counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a closure cannot write a captured &integer or &text parameter (it holds a copy), and a scalar the closure writes to may be captured by only one closure — the cure for the last two is a local the closure updates, or state held in a struct and captured.
 
@@ -605,7 +602,7 @@ u.age = <span class="kw">None</span>  <span class="cm"># allowed at runtime; myp
 
 Upside Nullability is part of the type and readable at a glance, and the default is the safe one: a field is non-null unless it says ?, so absence is something you opt INTO. No Optional\[T\] wrapping is needed; the comparison v == null is natural, and ?? supplies a fallback at the point of use.
 
-Downside The default is the safe one — a field is non-null unless its type says ? — but nothing forces you to discharge a nullable at the point of use, and writing null into a non-null slot is a warning rather than a refusal. Python with mypy and Optional\[T\] annotation gives static guarantees that loft's runtime checks do not.
+Downside The default is the safe one — a field is non-null unless its type says ? — but nothing forces you to discharge a nullable at the point of use, and writing null into a non-null slot is a warning rather than a refusal. Python with mypy and an Optional\[T\] annotation reports that write as an error, where loft only warns.
 
 === Structs vs classes and dicts
 
@@ -741,7 +738,7 @@ nums:   vector<integer> = [1, 2, 3];
 lookup: hash<Entry[key]> = [];
 lookup += [Entry { key: "key", value: "value" }];
 scores: sorted<Score[user]> = [];
-scores += [Score { user: "ann", points: 95 }];  // O(log n) keyed insert
+scores += [Score { user: "ann", points: 95 }];  // keyed insert: binary search, kept in key order
 
 // Element type is enforced at compile time:
 // nums += ["x"];  // compile error: expected integer
@@ -762,7 +759,7 @@ nums.<span class="fn-call">append</span>(<span class="st">"x"</span>)           
 
 Upside All collection types — vector, hash, and sorted map — are built in; no extra import or install needed. Element types are checked at compile time. The same \[\] indexing syntax works on all three. for x in v if pred(x) { v\#remove; } safely removes the current element while iterating — something Python requires careful index management for.
 
-Downside Python's built-in dict and list are among the most heavily optimised data structures in any scripting runtime. Python also has set and frozenset (no loft equivalent), ordered insertion semantics on dict (Python 3.7+), and an enormously expressive comprehension syntax (\[x\*2 for x in v if x \> 0\]). Loft's map() / filter() / reduce() higher-order functions allocate a new vector at each stage, while Python's generators are lazy and allocation-free until consumed.
+Downside Python's built-in dict and list are among the most heavily optimised data structures in any scripting runtime. Python also has set and frozenset (no loft equivalent), and ordered insertion semantics on dict (Python 3.7+), where a loft hash iterates in key order. Loft has comprehensions too (\[for x in v if x \> 0 { x \* 2 }\]), but they and the map() / filter() / reduce() higher-order functions build a whole vector at each stage, while Python's generators are lazy and allocation-free until consumed.
 
 === Closures — same-scope capture works
 
@@ -794,9 +791,9 @@ evens   = <span class="bi">list</span>(<span class="bi">filter</span>(<span clas
 shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> nums]
 ```
 
-Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's nonlocal does. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (fn name) are compile-checked. Higher-order functions (map, filter, reduce) accept both lambdas and fn-refs.
+Upside Capture works for every type — scalars, text, structs and every collection kind — with no capture modes and no scope surprises. The compiler picks the mode from the type, so an accumulator needs no declaration the way Python's nonlocal does. Both long-form (fn(x: integer) -\> integer { x \* 2 }) and short-form (|x| { x \* 2 }) lambdas are supported. Named function references (a bare name: map(v, double)) are compile-checked. Higher-order functions (map, filter, reduce) accept both lambdas and fn-refs.
 
-Downside You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured &integer or &text parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. Python's list comprehensions (\[x + offset for x in v\]) are shorter than map(v, fn(x) { x + offset }).
+Downside You do not choose the capture mode, and it is not the same for every type. A scalar or text the lambda only READS is copied at definition time, so a later mutation of the original does not reach it — where Python closes over the name and would see the new value. Structs and collections share the way Python does, and so does a scalar the lambda writes to. Three limits have no Python counterpart: a capturing closure cannot be stored in a collection (a struct field holds one fine), a lambda cannot write a captured &integer or &text parameter (it holds a copy), and a scalar the lambda writes to may be captured by only one lambda. A comprehension is the short form in both languages: \[for x in v { x + offset }\] in loft, \[x + offset for x in v\] in Python.
 
 === No exception handling — file errors use FileResult
 
@@ -858,9 +855,9 @@ if !move("a.txt", "b.txt").ok() { print("rename failed\n"); }
     <span class="bi">print</span>(<span class="st">"is a directory"</span>)
 ```
 
-Upside File errors are represented as a typed FileResult enum — Ok, NotFound, PermissionDenied, IsDirectory, Other — so every failure case is named and exhaustively matchable. No accidental exception swallowing, no hidden exit paths, no stack-unwinding overhead. The control flow of every loft function is straightforward to read.
+Upside File errors are represented as a typed FileResult enum — Ok, NotFound, PermissionDenied, IsDirectory, NotEmpty, Other — so every failure case is named and exhaustively matchable. No accidental exception swallowing, no hidden exit paths, no stack-unwinding overhead. The control flow of every loft function is straightforward to read.
 
-Downside Logic errors (assert, panic) abort the entire program — there is no try/except to catch them. Python's exception hierarchy supports retry logic, cleanup via finally, and graceful degradation from arbitrary errors anywhere in the call stack — patterns that are not expressible in loft today.
+Downside Logic errors (assert, panic) abort the entire program — there is no try/except to catch them. Python's exception hierarchy supports retry logic, cleanup via finally, and graceful degradation from arbitrary errors anywhere in the call stack — patterns that are not expressible in loft.
 
 === Built-in parallel for-loops — par(...)
 
@@ -974,7 +971,7 @@ Downside No \*args or \*\*kwargs — variadic dispatch must use a vector paramet
 
 Upside The interpreter is a single self-contained binary with the standard library inside, so a program that needs nothing else deploys by copying one file, with no virtual environment. What it does need, loft.toml declares and loft install fetches from a signed registry. The built-in library covers text manipulation, math, file I/O, typed collections, parallel execution, and a full lexer/parser framework; image handling is the registry's imaging package.
 
-Downside Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single pip install. For these domains, loft is the wrong tool today.
+Downside Python's ecosystem is its defining advantage. NumPy, pandas, scikit-learn, TensorFlow, requests, Flask, SQLAlchemy, pytest, and hundreds of thousands of other packages are not available to loft programs, whose registry holds a few dozen — games and graphics first, with web, crypto, regex and markdown beside them. Data science, and most integration and protocol work, still means writing what Python gets from a single pip install. For these domains, loft is the wrong tool.
 
 === Exponentiation with \*\* or pow(); ^ is XOR
 
@@ -1210,7 +1207,7 @@ A slice 's\[start..end\]' gives you the bytes from 'start' up to but not includi
   assert(s[3..] == "DE", "Open-ended sub-string");
 ```
 
-A negative end index counts backwards from the end of the text. '-1' means "stop one byte before the very last byte". Combined with a start offset this lets you trim a known suffix without knowing the exact length.
+A negative end index counts backwards from the end of the text. '-1' means "stop before the last byte". Combined with a start offset this lets you trim a known suffix without knowing the exact length.
 
 ```rust
   txt = "12😊🙃45";
@@ -1244,7 +1241,7 @@ A 'for' loop over a text value visits one character at a time, even when charact
 
 === Searching inside text
 
-These built-in functions answer common "does this text contain…?" questions. 'starts\_with' and 'ends\_with' check the boundaries. 'find' returns the byte offset of the first match, or null if not found. 'contains' is true if the needle appears anywhere in the text. All positions are byte offsets, consistent with 'len()' and slicing.
+These built-in functions answer common "does this text contain…?" questions. 'starts\_with' and 'ends\_with' check the boundaries. 'find' returns the byte offset of the first match, or null if not found. 'contains' is true if the needle appears anywhere in the text. All positions are byte offsets, consistent with 'size()' and slicing.
 
 ```rust
   assert("something".starts_with("some"), "starts_with");
@@ -1309,7 +1306,7 @@ pow(base, exp) as integer?           // the number, or null
 (pow(base, exp) ?? 0.0) as integer   // your own default instead
 ```
 
-A bare 'as integer' is refused ("cannot cast a possibly-null `float?` to the non-null `integer`"). It does compile when BOTH arguments are literals, and that is the one shape which does not generalise — write the '?' and it works wherever the base is a variable, which is everywhere real.
+A bare 'as integer' is refused ("cannot cast a possibly-null `float?` to the non-null `integer`") unless loft can prove the power is defined: a whole-number constant exponent, or a base it knows is not negative. That proof depends on the arguments, so it does not generalise — write the '?' and it works for any arguments.
 
 ```rust
   assert(1 + 2 * 4 == 9, "Multiplication before addition");
@@ -1319,7 +1316,7 @@ A bare 'as integer' is refused ("cannot cast a possibly-null `float?` to the non
   assert(105 % 100 == 5, "Modulus (remainder)");
 ```
 
-Raised from a VARIABLE base on purpose: the literal-only spelling is exactly the one that stops compiling the moment a reader puts their own number in it.
+Written with the '?' on purpose: it keeps compiling whatever numbers a reader puts in.
 
 ```rust
   pw_base = 2.0;
@@ -1402,7 +1399,7 @@ Hexadecimal literals in source code accept both lower and upper case digits.
 
 === Large integers
 
-Because 'integer' is 64-bit, values far past the old 2-billion limit work directly — no separate type is needed. Arithmetic, comparisons, and the format specifiers above all behave the same at these magnitudes.
+Because 'integer' is 64-bit, values far past the 32-bit limit of 2 billion work directly — no separate type is needed. Arithmetic, comparisons, and the format specifiers above all behave the same at these magnitudes.
 
 ```rust
   big = 1000000000 * 5;
@@ -1430,7 +1427,7 @@ A sized integer ('u8', 'i16', a field declared 'integer limit(0, 255)') has a sm
 
 = Boolean
 
-A boolean value is either 'true' or 'false'. Booleans appear naturally wherever you make a decision: in 'if' conditions, loop filters, and comparisons. Loft adds a third state called 'null' — meaning "no value" — which behaves like false whenever a boolean is expected.
+A boolean value is either 'true' or 'false'. Booleans appear naturally wherever you make a decision: in 'if' conditions, loop filters, and comparisons. Declared as 'boolean?', a boolean gets a third state called 'null' — meaning "no value" — and any null behaves like false whenever a boolean is expected.
 
 This design means you rarely need to write a separate null-check: '!x' is true both when x is false and when x is null.
 
@@ -1458,7 +1455,7 @@ A comparison produces a boolean result directly. '!' flips a boolean: true → f
 
 === Null in boolean context
 
-Division by zero (and other failed operations) produce null when defended with `?? null` (or `if result != null { ... }` after the assignment).  Null in a boolean context is treated as false, so '!' is true.  This lets you write guard clauses without a separate null-check syntax:
+Division by zero (and other failed operations) produce null. Null in a boolean context is treated as false, so '!' is true.  This lets you write guard clauses without a separate null-check syntax:
 
 ```
 if !result { ... handle missing value ... }
@@ -1487,7 +1484,7 @@ While 'and'/'or' work on true/false values, bitwise operators work on the indivi
 '>>' — shift bits right N positions (÷2^N)
 ```
 
-Tip: '&' binds less tightly than comparison operators. Use parentheses when you mix bitwise and comparison expressions in the same condition.
+Tip: '&' binds more tightly than comparison operators, so 'x & 15 == 8' reads as '(x & 15) == 8'. Parentheses make that grouping visible to a reader when you mix bitwise and comparison expressions.
 
 ```rust
   assert((0x0f & 0xa8) == 8, "Bitwise AND: keeps only bits in both");
@@ -1507,7 +1504,7 @@ Tip: '&' binds less tightly than comparison operators. Use parentheses when you 
 
 === Formatting booleans
 
-Booleans can be embedded in a format string like any other value. The '^' alignment specifier centres the value in a field of given width. '\<' aligns left, '\>' aligns right (right-alignment is the default).
+Booleans can be embedded in a format string like any other value. The '^' alignment specifier centres the value in a field of given width. '\<' aligns left, '\>' aligns right (a boolean aligns left by default, like text).
 
 ```rust
   assert("1{true:^7}2" == "1 true  2", "Centred boolean in field of width 7");
@@ -1631,7 +1628,7 @@ Put a colon after the value inside '{...}' to control how it looks. '{value:widt
   assert(abs(-2.5) == 2.5, "Absolute value of float");
 ```
 
-'round()' picks the nearest whole number (0.5 rounds up). 'ceil()' always rounds up to the next whole number, even for 2.01. 'floor()' always rounds down to the previous whole number, even for 2.99. All three give back a float, not an integer — so 3.0, not 3.
+'round()' picks the nearest whole number; a half rounds away from zero (2.5 → 3, -2.5 → -3). 'ceil()' always rounds up to the next whole number, even for 2.01. 'floor()' always rounds down to the previous whole number, even for 2.99. All three give back a float, not an integer — so 3.0, not 3.
 
 ```rust
   assert(round(2.6) == 3.0, "round up");
@@ -1684,7 +1681,7 @@ fn connect(host: text, port: integer = 8080, tls: boolean = true) -> text {
 
 === Reference Parameters and Defaults
 
-A function with no '-\> type' is called for its side effects, not its result. Adding '&' before a parameter type makes it a reference: the function receives a direct link to the caller's variable and can read or write it. Without '&', Loft copies the value in, so changes inside the function stay local. Default values (written '= value' after the type) are substituted when the caller omits that argument.
+A function with no '-\> type' is called for its side effects, not its result. Adding '&' before a parameter type makes it a reference: the function receives a direct link to the caller's variable and can read or write it. Without '&', a number, boolean or text is copied in, so reassigning it inside the function stays local. A struct or vector parameter still shares its contents with the caller: a field or element write inside the function reaches the caller too. Default values (written '= value' after the type) are substituted when the caller omits that argument.
 
 ```rust
 fn add(a:  & integer, b: integer, c: integer = 0) {
@@ -2029,7 +2026,7 @@ Here we keep only multiples of 3 by removing everything else. Note: you cannot a
 
 === Slicing
 
-A slice gives you a window into part of a vector without copying it. 'v\[a..b\]' contains elements at positions a, a+1, ..., b-1 (b is excluded). 'v\[a..\]'  goes from position a to the very last element. 'v\[..b\]'  goes from the beginning up to (but not including) position b.
+A slice gives you part of a vector as a new vector. 'v\[a..b\]' contains elements at positions a, a+1, ..., b-1 (b is excluded). 'v\[a..\]'  goes from position a to the very last element. 'v\[..b\]'  goes from the beginning up to (but not including) position b.
 
 ```rust
   pows =[1, 2, 4, 8, 16];
@@ -2083,7 +2080,7 @@ You can fill a vector with many copies of the same value using '; count' syntax:
 [SomeStruct { field: value }; 16]
 ```
 
-This creates 16 identical copies in one expression. See 08-struct.loft for examples.
+This creates 16 identical copies in one expression. See the Struct page for examples.
 
 === Passing vectors to functions
 
@@ -2097,7 +2094,7 @@ fn replace_all(v: &vector<integer>) { v = [7, 7]; }   // caller sees the new vec
 
 So '&' means "I may replace this", not "I may add to it".
 
-A SLICE is a different thing again. 'v\[2..5\]' builds a FRESH vector holding copies of those elements, so writing to the slice does not reach the original. A slice is also not accepted where a 'vector\<T\>' parameter is expected — bind it to a variable first, and remember you are then working on a copy.
+A SLICE is a different thing again. 'v\[2..5\]' builds a FRESH vector holding copies of those elements, so writing to the slice does not reach the original. A slice passes directly where a 'vector\<T\>' parameter is expected ('total(v\[1..3\])'); the function then works on that copy.
 
 ```rust
   passed: vector<integer> = [1, 2, 3];
@@ -2168,9 +2165,9 @@ struct Product {
 
 === Field Constraints
 
-You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback ('over ?? 0'), the checked cast 'as integer(0, 255)?' (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you ('narrow-fallback'). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
+You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback ('over ?? 0'), the checked cast 'as u8?' (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you ('narrow-fallback'). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
 
-You may meet 'not null' on a field in older code. It has no effect — a type is non-null by default now — and the compiler advises removing it.
+You may meet 'not null' on a field in older code. It has no effect — a type is non-null by default — and the compiler advises removing it.
 
 ```rust
 struct Colour {
@@ -2681,7 +2678,7 @@ Character literals work in match arms.
 
 = Sorted
 
-A 'sorted' collection holds records in order by one or more fields you choose as the sort criteria (called "key fields"). You can look up a record by those fields instantly and iterate all records in that order. The collection stays sorted as you add new elements — no manual sorting needed. Declare the key fields inside angle brackets: 'field' sorts A→Z / 0→9 (ascending), '-field' sorts Z→A / 9→0 (descending).
+A 'sorted' collection holds records in order by one or more fields you choose as the sort criteria (called "key fields"). You can look up a record by those fields instantly and iterate all records in that order. The collection stays sorted as you add new elements — no manual sorting needed. Name the key fields in square brackets after the record type, as in 'sorted\<Elm\[-key\]\>': 'field' sorts A→Z / 0→9 (ascending), '-field' sorts Z→A / 9→0 (descending).
 
 ```rust
 struct Elm {
@@ -2839,7 +2836,7 @@ no-op; does not panic
   assert(sum3 == 40, "Sum after key removal: {sum3}");
 ```
 
-Note: '\#index' works on a sorted collection — it is a sequential counter that advances one per visited element (see the loop above). It is only 'index\<T\>' collections that reject '\#index' — use '\#count' there instead (see 11-index).
+Note: '\#index' works on a sorted collection — it is a sequential counter that advances one per visited element (see the loop above). It is only 'index\<T\>' collections that reject '\#index' — use '\#count' there instead (see the Index page).
 
 === Iterating a Key Range
 
@@ -2957,7 +2954,7 @@ filling and finding values
 
 = Index
 
-An 'index' lets you find records instantly by key and iterate over ranges of keys in order. It supports multi-part keys: you can sort by a primary key and break ties with a secondary key. Declare the key fields inside angle brackets: 'field' sorts ascending, '-field' descending.
+An 'index' lets you find records instantly by key and iterate over ranges of keys in order. It supports multi-part keys: you can sort by a primary key and break ties with a secondary key. Name the key fields in square brackets after the record type, as in 'index\<Elm\[nr, -key\]\>': 'field' sorts ascending, '-field' descending.
 
 Two keyed collections over the SAME element type are two ROUTES to one set of records, not two collections. Give records to either one and both see them; write through one and the other reads the change; remove through one and it is gone from both. That is the point of declaring a second one — a second way in, by a different key — and loft says so if a literal fills both ('linked-group-double-fill'), because then one record set ends up holding everything they were given.
 
@@ -3043,7 +3040,7 @@ Elements matched: (83, Three, 3), (83, Four, 4), (83, Five, 5)
 
 === Loop Helpers: \#first and \#count
 
-'r\#first' is true for the very first element visited. 'r\#count' is a running counter starting at 0. Note: \#index is not meaningful on index collections — use \#count instead.
+'r\#first' is true for the very first element visited. 'r\#count' is a running counter starting at 0. Note: '\#index' is a compile error on index collections — use '\#count' instead.
 
 ```rust
   first_nr = 0;
@@ -3588,7 +3585,7 @@ collections (sorted/hash/index), and integer ranges with
 'integer limit(min, max)' — in parameter, field, and return position
 ```
 
-It reads an index expression ('v\[0\]'), the null-coalescing operator ('a ?? 0') and a formatted string literal ('"v={n}"') as the compiler does, so a validator built on this accepts what the compiler accepts.
+It reads an index expression ('v\[0\]'), the null-coalescing operator ('a ?? 0') and a formatted string literal ('"v={n}"') as the compiler does. Constructs outside this list — 'while', 'match' and lambdas among them — are reported as errors, so a validator built on it rejects valid Loft that uses them.
 
 ```rust
 use parser;
@@ -3829,7 +3826,7 @@ The `loft.toml` manifest carries the whole package declaration — name, version
 
 ```
 [package]
-loft = ">=1.0"        minimum interpreter version required
+loft = ">=2026.10"    the oldest loft release that can load it
 ```
 
 ```
@@ -3837,7 +3834,7 @@ loft = ">=1.0"        minimum interpreter version required
 entry = "src/mylib.loft"   override the default entry path
 ```
 
-If the interpreter version is below the stated minimum, loading the library produces a fatal compile error describing the version mismatch. If no manifest is present, the default entry `src/\<name\>.loft` is used.
+If the running loft is older than the stated minimum, loading the library produces a fatal compile error describing the version mismatch. If no manifest is present, the default entry `src/\<name\>.loft` is used.
 
 === Wildcard and Selective Imports
 
@@ -3853,7 +3850,7 @@ Taking only what you name is the stronger position, because it makes you immune 
 
 \*\*`pub` decides the bare spelling.\*\* Only `pub` definitions come in bare or can be named by an import; the rest are still reachable as `lib::name`. A library therefore has no hidden half — `pub` says which names are ready to be written without ceremony, not which ones exist.
 
-\*\*Native extensions.\*\* A library can be pure `.loft`, or ship a Rust crate beside it: declare `\[library\] native = "..."` in `loft.toml` and loft builds and links it for you. See PACKAGES.md for the build + binding model.
+\*\*Native extensions.\*\* A library can be pure `.loft`, or ship a Rust crate beside it: declare `\[library\] native = "..."` in `loft.toml` and loft builds and links it for you. See doc/claude/PACKAGES.md in the loft repository for the build + binding model.
 
 ```rust
 }
@@ -4366,10 +4363,10 @@ Without a log.conf these calls do nothing — the tests below pass even though n
 When a 'log.conf' is present with 'level = info', the four calls above produce entries like this in 'log.txt':
 
 ```
-2026-09-01T08:35:38.971Z INFO   /home/you/app/app.loft:3  starting up
-2026-09-01T08:35:38.971Z WARN   /home/you/app/app.loft:4  this is a warning
-2026-09-01T08:35:38.971Z ERROR  /home/you/app/app.loft:5  something went wrong
-2026-09-01T08:35:38.971Z FATAL  /home/you/app/app.loft:6  critical failure
+2026-09-01T08:35:38.971Z INFO   app.loft:3  starting up
+2026-09-01T08:35:38.971Z WARN   app.loft:4  this is a warning
+2026-09-01T08:35:38.971Z ERROR  app.loft:5  something went wrong
+2026-09-01T08:35:38.971Z FATAL  app.loft:6  critical failure
 ```
 
 Each line contains: a UTC timestamp to the millisecond, the severity level, the source file and line number, then the message. This makes it easy to search the file for errors or trace back to the exact line that produced a message. The file path is written the way a `\[levels\]` key addresses it: relative to the project root inside a project, the bare file name for a script. A true assert never logs anything — it is only the false case that logs.
@@ -4420,7 +4417,7 @@ Use 'now()' when you want to know WHEN something happened: timestamps, log entri
 These two are the whole clock surface: there is no year, month or weekday in the standard library, and no formatting. That is deliberate — calendar arithmetic is a large, opinionated subject — and it is a package away:
 
 ```
-use time;
+use time::*;
 fn main() {
     ms = now();
     println(format_iso(ms));                    // 2026-09-01T09:03:58Z
@@ -4496,7 +4493,7 @@ seconds = now() / 1000
 Seed the random number generator with the current time. The generator is in the 'random' package rather than the standard library, so the import is part of the pattern — without it the name does not resolve:
 
 ```
-use random;
+use random::(rand_seed);
 rand_seed(now())
 ```
 
@@ -4670,7 +4667,7 @@ All bitwise operators (AND, OR, XOR, shift) work correctly with zero. Zero is th
 
 === Float null compares uniformly with every other scalar
 
-Floats store null as `NaN` internally, but null COMPARISON is uniform with every other scalar type: `null == null` is TRUE, null is not equal to any real value, and null orders as the low extreme. Detect a null float with `f == null` (or `!f` / `f ?? default`) — NOT the old `f != f` trick, which no longer works now that `null == null` is true. Both the defended and the undefended division yield null and continue (C80 / E-Uncomp — see tests/scripts/184-i333-div-zero-null-continues.loft); the undefended site additionally reports a warning.
+Floats store null as `NaN` internally, but null COMPARISON is uniform with every other scalar type: `null == null` is TRUE, null is not equal to any real value, and null orders as the low extreme. Detect a null float with `f == null` (or `!f` / `f ?? default`) — NOT the `f != f` trick from other languages, which never fires here because `null == null` is true. Both the defended and the undefended division yield null and the program continues; the undefended site also writes a warning to the log.
 
 ```rust
   bad = 0.0 / 0.0 ?? null;
@@ -5824,7 +5821,7 @@ Squares via for loop with index tracking.
 
 'counted' is asked for a thousand values and the loop breaks after six. Its step counter shows the body ran six times, not a thousand — the work for the values nobody asked for was never done.
 
-⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included.  Other shapes — a yield inside an 'if' or 'match', two yields in one iteration, a nested loop, a 'continue', a yield of a struct, vector or tuple — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep the yield out of an 'if' in a generator loop, or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
+⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included.  Other shapes — a yield inside an 'if' or 'match', two yields in one iteration, a nested loop, a 'continue', a yield of a struct, vector or tuple — run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep the yield out of an 'if' in a generator loop, or do not put observable work in a generator body.
 
 ```rust
   trace = Trace { steps: 0 };
@@ -5945,7 +5942,7 @@ Tuple elements can be reassigned like ordinary variables.
 
 === Tuples as function parameters
 
-Pass a tuple to a function by value (a copy) or by reference. A value parameter gets its own copy — changes inside the function do not affect the caller. A reference parameter ('&') gives the function a direct link to the caller's tuple so it can modify individual elements in place. A '&' tuple holds scalar elements only.
+Pass a tuple to a function by value (a copy) or by reference. A value parameter gets its own copy — changes inside the function do not affect the caller. A reference parameter ('&') gives the function a direct link to the caller's tuple so it can modify individual elements in place, text elements included.
 
 === Returning tuples
 
@@ -6062,7 +6059,7 @@ A tuple element may itself be a tuple.
 
 === Tuples as reference parameters (swap in place)
 
-A '&' tuple holds scalar elements only.  '&(text, …)' is refused when you compile, naming the element type — text lives on the heap, and a reference tuple has nowhere to put it.
+'swap\_ints' exchanges the caller's two elements through its '&' parameter.
 
 ```rust
   pair = (3, 7);
@@ -6221,7 +6218,7 @@ Circle { radius } — binds the 'radius' field to a local variable
 Rect { w, h }     — binds both 'w' and 'h'
 ```
 
-The variable names must match the field names exactly.
+In this short form the variable names must match the field names exactly; write `Circle { radius: r }` to bind the field under another name.
 
 ```rust
   shape = Rect { w: 3, h: 4 };
@@ -6592,7 +6589,7 @@ A base is a property of an integer, so asking for one anywhere else is a compile
 
 === Float precision
 
-`.N` after the colon fixes the number of decimal places.  Only `float` and `single` have decimal places, so `.N` on any other type is a compile error: `{7:.2}` says "a precision has no effect on integer".  That matters because the mistake is easy to make and used to be silent — a `price` you thought was a float is an integer, and `{price:.2}` rendered no decimals at all.
+`.N` after the colon fixes the number of decimal places.  Only `float` and `single` have decimal places, so `.N` on any other type is a compile error: `{7:.2}` says "a precision has no effect on integer".  That matters because the mistake is easy to make — a `price` you thought was a float is an integer, and `{price:.2}` would otherwise render no decimals at all.
 
 ```rust
   assert("{3.125:.1}" == "3.1", "1 decimal place");
@@ -6741,7 +6738,7 @@ Each kind goes to its own method, so the type sees the real type.
   assert(q3.shape() == "<id=>< name=>[7][ada]", "an integer hole calls hole_int");
 ```
 
-The type is taken from an annotated binding or a struct-literal field.  A call argument and a return position do NOT target — `db.db\_rows("… {name}")` is an ordinary text and reports `expected Query, got text` — so route through a local:
+The type is taken from an annotated binding, a struct-literal field or the function's declared return type.  A call argument does NOT target — `db.db\_rows("… {name}")` is an ordinary text and reports `expected Query, got text` — so route through a local:
 
 ```
   q: SqlText = "SELECT id FROM users WHERE name = {name}";
@@ -7092,6 +7089,7 @@ Started by hand like that, the REPL remembers your session: the values you bound
 
 ```
   loft
+  loft REPL — :help for commands, :quit to exit
   restored 2 statement(s) from last session
   loft>
 ```
@@ -7494,6 +7492,7 @@ Inside the package, 'loft check' compiles everything and reports problems:
 
 ```
   $ cd greeter && loft check
+  loft build: src/greeter.loft → target(s): native
   loft build: building `native` (Native) …
   ok
   loft build: `native` ✓
@@ -7503,7 +7502,7 @@ A package that is only a library has no program to start, so there is nothing to
 
 === Coverage — what the tests did not reach
 
-After the result, 'loft test' tells you which of your functions no test ever entered. The 'sums' package next door has two functions and a test for one of them, so it names the other:
+Just above its result line, 'loft test' tells you which of your functions no test ever entered. The 'sums' package next door has two functions and a test for one of them, so it names the other:
 
 ```
   $ cd sums && loft test
@@ -7602,7 +7601,7 @@ fn nth_prime(n: integer) -> integer {
 
 === Text goes in, and text comes back
 
-`vowels("your name here")` counts the vowels in whatever you type, and `shout("your name here")` hands the text back changed.  A text answer arrives quoted — `shout("hi")` shows `"HI"` — which is how you can tell an empty text from nothing at all.
+`vowels("your name here")` counts the vowels in whatever you type, and `shout("your name here")` hands the text back changed.  A text answer arrives quoted — `shout("hi")` shows `"HI!"` — which is how you can tell an empty text from nothing at all.
 
 ```rust
 fn shout(s: text) -> text {
@@ -7660,7 +7659,7 @@ fn walk_to(limit: integer) -> integer {
 
 === When the panel says `\<unavailable\>`
 
-Every value shape answers now — a number, a character, a boolean, a text, a vector, a struct.  `\<unavailable\>` is what you get when the expression itself cannot be compiled where the program is paused: a typo, a name that is not in scope there, an unfinished expression.  It is the panel declining to guess rather than a value it could not carry, so read it as "say that again" and not as "this shape is not supported".  One `\<unavailable\>` does not end the session; the next expression is evaluated normally.
+Every value shape answers — a number, a character, a boolean, a text, a vector, a struct.  `\<unavailable\>` is what you get when the expression itself cannot be compiled where the program is paused: a typo, a name that is not in scope there, an unfinished expression.  It is the panel declining to guess rather than a value it could not carry, so read it as "say that again" and not as "this shape is not supported".  One `\<unavailable\>` does not end the session; the next expression is evaluated normally.
 
 ```rust
 fn main() {
@@ -7703,7 +7702,7 @@ fib(1..4) is 1 + 1 + 2 + 3.
 pub type boolean size(1)
 ```
 
-Primitive types built into lav. True or false value.
+Primitive types built into loft. True or false value.
 
 ```rust
 pub type integer size(8)
@@ -7770,7 +7769,7 @@ pub type i32 = integer size(4)
 pub type u32 = integer limit(0, 4294967294) size(4)
 ```
 
-4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`.  Stored as Parts::Int so the in-memory representation is signed i32; values in the upper half (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but read back as negative i64s in expressions.  For full 0..2^32-1 values needed in expression-time arithmetic, declare the field / variable as plain `integer` (8-byte) instead — `u32` is for the file / wire-format use cases (magic numbers, counts, tick fields) where the byte width is the load-bearing property.
+4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2) reads back as the same positive integer.  `u32` is for file / wire-format fields (magic numbers, counts, tick fields) where the byte width is the load-bearing property; plain `integer` holds the whole 0..2^32-1 range and more.
 
 == Interfaces
 
@@ -7809,7 +7808,7 @@ pub interface Numeric {
 ```
 
 Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
+Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
 
 ```rust
 pub interface Subtractable {
@@ -7818,7 +7817,7 @@ pub interface Subtractable {
 ```
 
 Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.
+A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type satisfies one of the two: it can define `OpMin` at one arity only (a second definition is refused as a redefinition), as pinned by `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 
 ```rust
 pub interface Scalable {
@@ -7826,7 +7825,7 @@ pub interface Scalable {
 }
 ```
 
-Types that support integer scaling via a `scale` method. Uses a method (not `op \*`) because a `\<T: Numeric + Scalable\>` would then need two signatures of one name from ONE bound set, which is refused. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
+Types that support integer scaling via a `scale` method. Uses a method (not `op \*`): inside a `\<T: Numeric + …\>` body, `\*` already means Numeric's `Self \* Self`, so `x \* 2` there is refused ("operator '\*' requires a concrete type") even when another bound declares `op \* (self: Self, f: integer)`. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
 
 ```rust
 pub interface Printable {
@@ -7838,17 +7837,7 @@ Types that can be converted to text via a `to\_text` method. User types satisfy 
 
 == Math
 
-Functions for numeric computation. All trigonometric functions work in radians. Both single and float variants exist for every function — choose single for speed, float for precision. Integer operations The declared-RANGE guard, applied to the VALUE at a store into a slot that declares one (`integer limit(lo, hi)`, a narrow width).  A value outside `lo..=hi` takes the slot's DEFAULT — `dflt` is the lowest value in range, or the null sentinel where the slot admits null — and reports it, rather than being wrapped, aliased, or dropped.
-
-It guards the VALUE rather than the store, which is what lets one op reach both a FIELD and a VARIABLE: a variable has no store op to carry the range, and that is why a declared range on a local went unenforced entirely.
-
-A null passes straight through: whether a null may land in this slot is `(N-Store)`'s question, answered at compile time, and substituting `lo` for it here would quietly invent a value the program never computed.
-
-Emitted only where the value is NOT provably in range, so ordinary in-range code pays nothing (`parser::expressions::range\_guard`). \@FR-E-Uncomp-NN — the collapse: a value that does not fit the target's declared range takes the type's DEFAULT, and the sentinel is a value that does not fit either.
-
-Whether the sentinel is a legal ANSWER depends on the target, and `dflt` already carries that fact: `uncomputable\_default` sets it to `i64::MIN` exactly when the slot can read back null (a nullable target, or `i32`/`i64` whose spare code is the bottom one) and to the type's default otherwise.  So a sentinel is passed through where null is representable and collapsed to the default where it is not — `u8`/`i8`/`u16`/`i16` fill their width and `u32`'s spare is at the top, which no non-null read tests for.
-
-The sentinel arm is SILENT on purpose.  It is not a fault of this store: the operation that produced the sentinel reported at its own site, and reporting again would name `-9223372036854775808` as a value outside the range, which is not a number the program ever computed.
+Functions for numeric computation. All trigonometric functions work in radians. Both single and float variants exist for every floating-point function — choose single for speed, float for precision.
 
 ```rust
 pub fn abs(self: integer) -> integer
@@ -7890,13 +7879,13 @@ Tangent. Use for slopes and perspective projection.
 pub fn acos(self: single) -> single?
 ```
 
-Arc cosine. Returns the angle (in radians) whose cosine is v.
+Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside \[-1, 1\].
 
 ```rust
 pub fn asin(self: single) -> single?
 ```
 
-Arc sine. Returns the angle whose sine is v.
+Arc sine. Returns the angle whose sine is the value; null outside \[-1, 1\].
 
 ```rust
 pub fn atan(self: single) -> single
@@ -7926,25 +7915,25 @@ Round to the nearest integer value (half rounds away from zero).
 pub fn sqrt(self: single) -> single?
 ```
 
-Square root. Use for distances and normalization.
+Square root. Use for distances and normalization. Null for a negative value.
 
 ```rust
 pub fn atan2(self: single, v2: single) -> single
 ```
 
-Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
+Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2. Use instead of atan when you have separate x/y components.
 
 ```rust
 pub fn log(self: single, v2: single) -> single?
 ```
 
-Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
+Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).
 
 ```rust
 pub fn pow(self: single, v2: single) -> single?
 ```
 
-Raises base to the power exp. Use for exponential growth curves and scaling.
+Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer is not a real number (`pow(-8.0, 0.5)`). Use for exponential growth curves and scaling.
 
 ```rust
 pub fn abs(self: float) -> float
@@ -7986,13 +7975,13 @@ Tangent. Use for slopes and perspective projection.
 pub fn acos(self: float) -> float?
 ```
 
-Arc cosine. Returns the angle (in radians) whose cosine is v.
+Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside \[-1, 1\].
 
 ```rust
 pub fn asin(self: float) -> float?
 ```
 
-Arc sine. Returns the angle whose sine is v.
+Arc sine. Returns the angle whose sine is the value; null outside \[-1, 1\].
 
 ```rust
 pub fn atan(self: float) -> float
@@ -8022,25 +8011,25 @@ Round to the nearest integer value (half rounds away from zero).
 pub fn sqrt(self: float) -> float?
 ```
 
-Square root. Use for distances and normalization.
+Square root. Use for distances and normalization. Null for a negative value.
 
 ```rust
 pub fn atan2(self: float, v2: float) -> float
 ```
 
-Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
+Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2. Use instead of atan when you have separate x/y components.
 
 ```rust
 pub fn log(self: float, v2: float) -> float?
 ```
 
-Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
+Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0. Use for converting between scales (e.g., decibels).
 
 ```rust
 pub fn pow(self: float, v2: float) -> float?
 ```
 
-Raises base to the power exp. Use for exponential growth curves and scaling.
+Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer is not a real number (`pow(-8.0, 0.5)`). Use for exponential growth curves and scaling.
 
 == exp / ln / log2 / log10
 
@@ -8193,13 +8182,12 @@ pub fn split_text(self: text, separator: text) -> vector<text>
 ```
 
 Split on a multi-character text separator.  `"a, b, c".split\_text(", ")` returns `\["a", "b", "c"\]`.  Edge cases: - empty self → empty result - empty separator → returns `\[self\]` unchanged (no infinite-split) - separator never matches → returns `\[self\]` - separator at start / end → produces empty boundary entries
-Named `split\_text` (not an overload of `split`) because loft does not overload by non-self parameter type.
 
 ```rust
 pub fn starts_with_at(self: text, pos: integer, prefix: text) -> boolean
 ```
 
-Functions for searching, transforming, and classifying text and character values. Character classification functions return true only if every character in the text satisfies the condition. The single-character variants test one code point. (`starts\_with` / `ends\_with` moved to `02\_files.loft` so the path helpers there can call them; both still available as `text.starts\_with` / `text.ends\_with`.) Returns true if self contains `prefix` starting at byte position `pos`.  Sugar over `self\[pos..pos + prefix.size()\] == prefix` for the common "is this token at this offset?" pattern in scanners / parsers.  Returns false (not an error) when pos + prefix.size() exceeds self.size() — same shape as `starts\_with` for the "prefix too long for input" case.
+Functions for searching, transforming, and classifying text and character values. Character classification functions return true only if every character in the text satisfies the condition. The single-character variants test one code point. Returns true if self contains `prefix` starting at byte position `pos`.  Sugar over `self\[pos..pos + prefix.size()\] == prefix` for the common "is this token at this offset?" pattern in scanners / parsers.  Returns false (not an error) when pos + prefix.size() exceeds self.size() — same shape as `starts\_with` for the "prefix too long for input" case.
 Faster than comparing characters one at a time for a known prefix at `pos`.
 
 ```rust
@@ -8215,7 +8203,7 @@ Negative bounds count from the end, as a byte slice's do (`char\_slice(-2, n)` i
 pub fn trim(self: text) -> text[self]
 ```
 
-(Path helpers `dir` / `basename` / `join` / `resolve` moved to `02\_files.loft` § Path helpers, so they're available before `03\_text.loft` loads — same call shape, same `pub fn` signatures.) Removes leading and trailing whitespace. Use when processing user input or file content.
+Removes leading and trailing whitespace. Use when processing user input or file content.
 
 ```rust
 pub fn trim_start(self: text) -> text[self]
@@ -8245,7 +8233,7 @@ Returns the byte index of the last occurrence of value, or null if not found. Us
 pub fn contains(self: text, value: text) -> boolean
 ```
 
-Returns true if value appears anywhere in self. `s.contains(v)` == `s.find(v) != null` — `find` returns the position, `contains` is its found?/not-found? projection.  NOT superseded: `contains` is the clearer idiom for a membership test (a boolean predicate), and folding it onto `find` (below) is an implementation detail, not a reason to steer callers away from it.
+Returns true if value appears anywhere in self. `s.contains(v)` is `s.find(v) != null`: `find` answers the position, `contains` only whether there is one — the clearer spelling for a membership test.
 
 ```rust
 pub fn replace(self: text, value: text, with: text) -> text
@@ -8253,135 +8241,9 @@ pub fn replace(self: text, value: text, with: text) -> text
 
 Returns a copy of self with every occurrence of value replaced by with.
 
-```rust
-pub fn to_lowercase(self: text) -> text
-```
-
-Returns a lowercase copy. Use for case-insensitive comparisons.
-
-```rust
-pub fn to_uppercase(self: text) -> text
-```
-
-Returns an uppercase copy.
-
-```rust
-pub fn is_lowercase(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are lowercase letters.
-
-```rust
-pub fn is_lowercase(self: character) -> boolean
-```
-
-True if the character is a lowercase letter.
-
-```rust
-pub fn is_uppercase(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are uppercase letters.
-
-```rust
-pub fn is_uppercase(self: character) -> boolean
-```
-
-True if the character is an uppercase letter.
-
-```rust
-pub fn is_numeric(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are numeric digits (Unicode numeric, not just ASCII 0–9).
-
-```rust
-pub fn is_numeric(self: character) -> boolean
-```
-
-True if the character is a numeric digit.
-
-```rust
-pub fn is_alphanumeric(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are letters or digits. Use to validate identifiers or tokens.
-
-```rust
-pub fn is_alphanumeric(self: character) -> boolean
-```
-
-True if the character is a letter or digit.
-
-```rust
-pub fn is_alphabetic(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are alphabetic.
-
-```rust
-pub fn is_alphabetic(self: character) -> boolean
-```
-
-True if the character is alphabetic.
-
-```rust
-pub fn is_whitespace(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are whitespace. Use to detect blank lines.
-
-```rust
-pub fn is_whitespace(self: character) -> boolean
-```
-
-True if the character is whitespace.
-
-```rust
-pub fn is_control(self: text) -> boolean
-```
-
-True if the text is non-empty and all characters are control characters.
-
-```rust
-pub fn is_control(self: character) -> boolean
-```
-
-True if the character is a control character.
-
-```rust
-pub fn join(self: const vector<text>, sep: text) -> text
-```
-
-Joins parts with sep between each consecutive pair. Returns "" for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.
-
-```rust
-pub fn byte_at(self: text, i: integer) -> integer
-```
-
-Return the BYTE at position `i` (0..len) as integer 0-255, or 0 for out-of-bounds.  Unlike `text\[i\]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte\_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text\[i\]` for pure-ASCII checks.
-
-```rust
-pub fn text_from_bytes(bytes: const vector<u8>) -> text
-```
-
-Build a text from the raw UTF-8 bytes of a vector\<u8\> — the inverse of byte\_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell "empty input" from "invalid bytes" apart.
-
-```rust
-pub fn text_from_byte_range(bytes: const vector<u8>, lo: integer, hi: integer) -> text
-```
-
-The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder that has found a text's span writes instead of `text\_from\_bytes(bytes\[lo..hi\])`, whose slice is a fresh vector (`(Slice-Value)`) built to be read once.  The bounds are the slice's (a negative one counts from the end; both clamp); a reversed or empty range, or invalid UTF-8, is "".  Its own name, not an overload: a native is dispatched by name.
-
-```rust
-pub fn chr(cp: integer) -> text
-```
-
-Build a one-character text from a Unicode CODE POINT — the inverse of the `ch as integer` that text iteration already gives you, and the code-point twin of text\_from\_bytes' byte route.  Use when you have a number and need the character it names: decoding an escape (`\\u{...}`, an HTML entity), walking a code-point table, or reassembling text a code point at a time. chr(65)      "A"     chr(233)    "é" chr(20013)   "中"    chr(128512) "😀" A code point that names no character answers the EMPTY text, never a crash: a surrogate (D800-DFFF), anything past U+10FFFF, a negative number — and also 0, because `character` uses 0 as its null and text iteration stops there, so a NUL built here could not be read back.  If you need an embedded NUL, go through the byte route: `text\_from\_bytes(\[0\])` carries one.
-
 == Collections
 
-Operations on vector\<T\> — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value
+Operations on vector\<T\> — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. A vector or struct passed to a function is passed by reference: the callee's appends and element writes reach the caller.  Binding one to a new local (`w = v`) copies it.
 
 ```rust
 pub fn len(self: const vector) -> integer
@@ -8425,7 +8287,7 @@ Panics with message if test is false. Use to verify invariants during developmen
 pub fn panic(message: text, file: text, line: integer)
 ```
 
-Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry instead of aborting. The file and line are injected by the compiler; do not pass them manually.
+Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.
 
 ```rust
 pub fn log_info(message: text, file: text, line: integer)
@@ -8553,7 +8415,7 @@ Fold the elements into one value, left to right, from `init`: `reduce(v, init, f
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 
-Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum\_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.
+Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum\_of(v)` == `sum(v, 0)`.
 
 ```rust
 pub interface Walkable {
@@ -8627,7 +8489,7 @@ Represents a single struct field during compile-time iteration.
 pub fn to_text(self: integer) -> text
 ```
 
-Built-in `to\_text` impls so primitives satisfy `Printable` automatically.  Placed after every OpFormat\* / OpAppend\* declaration above so format-string interpolation in the bodies can resolve to the relevant built-in.  Without these impls, Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
+Converts an integer to its decimal text. Built-in types define `to\_text` so they satisfy the `Printable` interface (used by `print`, format strings, …).
 
 ```rust
 pub fn to_text(self: float) -> text
@@ -8661,7 +8523,7 @@ Returns the text unchanged — the identity case, so `text` satisfies `Printable
 
 == File System
 
-Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. An environment variable as a name/value pair. Capability groups — the fs/env split a sandbox profile grants via `fs\#read` / `fs\#update` / `env\#read`; the functions below link in their signature.
+Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. Capability groups — the fs/env split a sandbox profile grants via `fs\#read` / `fs\#update` / `env\#read`; the functions below link in their signature.
 
 ```rust
 pub struct EnvVariable {
@@ -8734,31 +8596,33 @@ Reads the entire file as a UTF-8 text value. Use for small configuration files o
 pub fn lines(self: const File) -> vector<text> fs#read
 ```
 
-Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
+Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
+
+== Files and directories
 
 ```rust
 pub fn path_sep() -> character
 ```
 
-Returns the platform path separator character: '\\' on Windows, '/' elsewhere. Detected once at startup from the runtime filesystem.
+Returns the platform path separator character: '\\' on Windows, '/' elsewhere. Detected once at startup from the runtime filesystem, and fixed for the lifetime of the process.
 
 ```rust
 pub fn file(path: text) -> File fs#read
 ```
 
-\#impure(host\_io): reads a host-detected constant.  It is fixed for the lifetime of a process, but the runtime caches it inside Stores, so the access is observable and the function cannot be \#pure. Use as the entry point for all file I/O. A relative path resolves against the program's own directory, so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
+Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way.
 
 ```rust
 pub fn exists(path: text) -> boolean fs#read
 ```
 
-Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `\#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `\[sandbox\]` profile grants or withholds.
+Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `\#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `\[sandbox\]` profile grants or withholds.
 
 ```rust
 pub fn exists(self: const File) -> boolean fs#read
 ```
 
-Filesystem stat (via file()); par-safe. Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj): a `self` first parameter gives a function both call spellings, the method one and the free one.
+Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj): a `self` first parameter gives a function both call spellings, the method one and the free one.
 
 ```rust
 pub fn delete(path: text) -> FileResult fs#update
@@ -8770,19 +8634,19 @@ Use to remove a file after processing or as a cleanup step. Returns FileResult.O
 pub fn move(from: text, to: text) -> FileResult fs#update
 ```
 
-Par-safe filesystem write; the host bridge serialises mutations. Use to rename or relocate a file.  The destination must not already exist (FileResult.Other if it does), and a missing source is FileResult.NotFound. Neither path is confined to the project directory.
+Use to rename or relocate a file.  The destination must not already exist (FileResult.Other if it does), and a missing source is FileResult.NotFound. Neither path is confined to the project directory.
 
 ```rust
 pub fn mkdir(path: text) -> FileResult fs#update
 ```
 
-Create a single directory level; the parent must already exist. FileResult.Other when the directory is already there.  There is no counterpart that REMOVES a directory.
+Create a single directory level; the parent must already exist (FileResult.NotFound when it does not).  FileResult.Other when the directory is already there.  rmdir() removes an empty directory again.
 
 ```rust
 pub fn mkdir_all(path: text) -> FileResult fs#update
 ```
 
-Create a directory and all missing parents (like Unix mkdir -p). Idempotent: a directory that already exists is FileResult.Ok, which is what makes it safe on the way into a run.  There is no counterpart that REMOVES a directory.
+Create a directory and all missing parents (like Unix mkdir -p). Idempotent: a directory that already exists is FileResult.Ok, which is what makes it safe on the way into a run.  rmdir() removes an empty directory again.
 
 ```rust
 pub fn rmdir(path: text) -> FileResult fs#update
@@ -8815,6 +8679,20 @@ pub fn list_dir(path: text) -> vector<text> ?fs#read
 Lists the entry NAMES of directory `path` (base names, not full paths), sorted.  A MISSING / non-directory path lists as NULL (distinct from an EMPTY directory, `\[\]`); discharge with `?? \[\]` to keep the old shape. Use to enumerate a directory; join with `path` to build full child paths.
 
 ```rust
+pub fn files(self: const File) -> vector<File> fs#read
+```
+
+Returns the entries inside a directory, sorted by path — the same order as `list\_dir`, so an index into either listing means the same entry. The File must have format == Format.Directory; anything else lists as `\[\]` (where `list\_dir` answers null, because it has no format to check first). Use to iterate over all files in a folder.
+
+```rust
+pub fn write(self: File, v: text) -> FileResult fs#update
+```
+
+Writes v as UTF-8 text to the file, overwriting existing content.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
+
+== Binary file I/O
+
+```rust
 pub fn read_bytes(path: text) -> vector<u8> ?fs#read
 ```
 
@@ -8836,7 +8714,37 @@ Writes `bytes` to file `path`, truncating any existing content.  Returns true on
 pub fn mtime(path: text) -> integer fs#read
 ```
 
-Truncate or extend the file to exactly `size` bytes. Truncating removes bytes beyond `size`; extending fills with null bytes. Returns FileResult.NotFound if the file does not exist; FileResult.IsDirectory if the path is a directory; FileResult.Other if size is negative. Modification time of `path` as Unix epoch SECONDS (integer — same i64 representation as file.size).  Returns 0 on missing file / IO error / pre-epoch dates — caller treats 0 as "unknown" (matches scan.sh's `stat -c %Y || echo 0` fallback). Takes a path string rather than a File handle so the native + interp dispatch both use the same `n\_mtime` registration. Use for date-window filters: convert the returned seconds to YYYY-MM-DD and compare lexicographically against `ymd\_days\_ago(N)`.
+Modification time of `path` as Unix epoch SECONDS (integer — same i64 representation as file.size).  Returns 0 on missing file / IO error / pre-epoch dates — treat 0 as "unknown". Use for date-window filters: convert the returned seconds to YYYY-MM-DD and compare lexicographically against `ymd\_days\_ago(N)`.
+
+```rust
+pub fn set_file_size(self: File, size: integer) -> FileResult fs#update
+```
+
+Truncates or extends the file to `size` bytes; extending fills with zero bytes. Returns FileResult.Ok, FileResult.NotFound when the file does not exist, FileResult.IsDirectory for a directory, and FileResult.Other for a negative `size` or a failed OS call.
+
+```rust
+pub fn seek(self: File, pos: integer) -> boolean fs#update
+```
+
+Moves the read/write position to `pos` bytes from the start, for random access into a binary file: read an index, jump to the record it names, read that.
+Equivalent to `self\#next = pos`, the operator form.
+Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, or a negative `pos`.  A seek before the first read or write is remembered and applies to it.  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.
+
+```rust
+pub fn position(self: const File) -> integer
+```
+
+The current read/write position in bytes, i.e. where the next read or write will land.  The read side of \[seek\]; `self\#next` is the operator form.
+Distinct from `self\#index`, which is where the LAST read STARTED — after `x = f\#read as i32` on a fresh file, `position` is 4 and `f\#index` is 0.
+A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make "not opened" indistinguishable from "at the start".  Discharge with `?? 0` when the distinction does not matter.
+
+```rust
+pub fn sync(self: File) -> boolean fs#update
+```
+
+Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.
+
+== Persistent stores
 
 ```rust
 pub fn store_durable_check(path: text) -> boolean fs#read
@@ -8858,11 +8766,11 @@ pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update
 
 "The collection IS the file."  Re-root the Store backing the given reference at a file path so mutations are durable via mmap without any explicit save/load loop.
 Works for any store-rooted collection — `hash`, `sorted`, `ordered`, `index` (each keyed local/field is a dedicated Store).  `hash` carries its bucket seed in its own record and `sorted`/`ordered`/`index` are comparison-based (no per-process state), so the persisted image is portable: a different process (a restart, or a remote reader) both iterates AND key-looks-up correctly.  A reference that is NOT its own Store root fails soft (returns `false`), same as any I/O error.
-First call on a path that does NOT yet exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.
+First call on a path that does NOT exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.
 Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout differs from `r`'s type — a struct gained, lost or changed a field — the bind is refused (`false`, with the difference on stderr), exactly as `store\_load` refuses it.  The file, its `.dschema` and `r` are left untouched.
 Both modes return `true` on success, `false` on any I/O / format / layout error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).
 Typical dryopea-style pattern: pw = PaintedWorld { painted: \[\] }   // painted's declared type is hash\<PaintedHex\[q, r\]\> store\_persist\_bind(pw.painted, "dryopea\_world.store") // …mutations to pw.painted now hit mmap'd bytes… `r` is any store-rooted collection — `hash`, `sorted`, `index`, `spatial`. A bare `reference` parameter accepts them all.
-It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.
+It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.
 
 ```rust
 pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update
@@ -8923,18 +8831,18 @@ Content is untouched and every reference into the collection stays valid: nothin
 It pays when records are written IN KEY ORDER and not returned to. A generator that keeps many records open at once leaves the store scattered with free blocks (measured: 3 691 against 10 for the same data written in order) and the allocator then keeps re-reading them, so the same call gives back 1.0x instead of 20x. If your build streams in cell order, this is close to free; if it does not, sort it first and this is the reason to.
 Not `store\_reclaim`, which gives back the FILE's unused TAIL and changes its size. This changes only what is resident, and never the file's length. Not a durability barrier either — it asks for writeback to START; `store\_durable\_seal` is what promises the bytes have landed.
 
+== Lazy stores
+
 ```rust
 pub fn store_bind_lazy(local: reference, source: text) -> boolean
 ```
 
-Working-set load: fetch ONE integer-keyed entry from a persisted HASH image into the empty local hash `local`, reading only the pages the lookup touches — not the whole file. The bounded-fetch counterpart of `store\_load`, for when `local` should hold only the entries actually asked for (a phone pulling the few map tiles a route needs from a large block). `path` is a local file or an `http(s)://` URL served with `Range`, on every target including the browser (`--html`), where the fetch goes through the same bridge `store\_load\_url\_trusted` uses. Returns false when the key is absent, the file is unreadable, or the collection is not an integer-keyed hash.
-The entry's own fields are RELOCATED into the local store, so `text`, nested structs and flat vectors all come across; only a `vector\<text\>` or a `vector\<vector\>` is refused (its element pointers would dangle), and a refusal says so on stderr rather than looking like an absent key. tiles: hash\<Tile\[id\]\> = \[\] store\_load\_key(tiles, "block.store", 42)   // tiles now holds entry 42 only
 Bind a COLLECTION to a lazy source. After this, a lookup that MISSES fetches that one entry and inserts it, so the next lookup is an ordinary resident hit; a lookup that hits never leaves the process. The collection is therefore automatically the cached data set — there is no separate cache.
 Per COLLECTION, not per store: `persons` and `companies` are different sources, and two collections of one type can bind differently. Binding replaces, and may be done before the collection holds anything.
 `source` is either an IMAGE — what `store\_load\_key` accepts: a local `.store` file or an `http(s)://` URL served with Range — or a DATABASE, named by a driver prefix. Returns false for a null collection. persons: hash\<Person\[id\]\> = \[\] store\_bind\_lazy(persons, "people.store") p = persons\[42\]        // fetches exactly entry 42, then holds it
 `sqlite:\<path\>` binds to a table instead, and the query is DERIVED from the collection's own type: the table is the element type's name lowercased, the columns are its fields, and the `WHERE` is the collection's key. Nothing is written down twice. persons: hash\<Person\[id\]\> = \[\]              // struct Person { id: integer, name: text } store\_bind\_lazy(persons, "sqlite:people.db") p = persons\[42\]        // SELECT "id","name" FROM "person" WHERE "id" = 42
 Read-only, and the connection enforces it. A binding that cannot be served — a field that is not a column, a collection whose KIND the source cannot read — is REFUSED rather than served wrongly, and says so through `store\_lazy\_error`. sqlite is opened on the first fault, so a program that binds no database loads nothing.
-FALSE means the binding was not made, and it is worth checking. A `.store` IMAGE is read a page at a time, which only a `hash` or a `trie` supports: a `sorted`, `index` or `spatial` bound to one is refused HERE, at the call that is wrong, rather than answering `null` at every later lookup. Those kinds load whole — `store\_load` / `store\_load\_url\_trusted` carry all of them. A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. if !store\_bind\_lazy(tiles, "tiles.store") { store\_load(tiles, "tiles.store");     // whole-image, every kind }
+FALSE means the binding was not made, and it is worth checking. A `.store` IMAGE is read a page at a time, which only a `hash`, a `trie` or a `spatial` supports: a `sorted` or `index` bound to one is refused HERE, at the call that is wrong, rather than answering `null` at every later lookup. Those kinds load whole — `store\_load` / `store\_load\_url\_trusted` carry all of them. A DATABASE source judges its own schema on the first fault instead, since what it can serve is a fact about the other end. if !store\_bind\_lazy(tiles, "tiles.store") { store\_load(tiles, "tiles.store");     // whole-image, every kind }
 
 ```rust
 pub fn store_lazy_query(local: reference, condition: text) -> integer
@@ -8986,11 +8894,14 @@ The writing end of the channel `store\_lazy\_error` reads. A driver written in l
 fn lazy\_fetch(coll: hash\<Person\[id\]\>, source: text, key\_int: integer, key\_text: text) -\> integer { if !db.db\_open(source) { store\_lazy\_fail(coll, "cannot open {source}: {db.db\_last\_error()}"); return 0; } .. }
 Sticky and counted exactly like a Rust source's failure: the FIRST reason is kept, every failure is counted, and only `store\_lazy\_clear` clears them.
 
+== Paged store loading
+
 ```rust
 pub fn store_load_key(local: reference, path: text, key: integer) -> boolean fs#read
 ```
 
-Fetch ONE integer-keyed entry from a persisted collection image into `local`, reading only the pages the lookup touches. The singular of `store\_load\_keys` and the integer form of `store\_load\_key\_text`; returns false when the key is absent or the image cannot serve this collection. tiles: hash\<Tile\[id\]\> = \[\] store\_load\_key(tiles, "block.store", 42)
+Working-set load: fetch ONE integer-keyed entry from a persisted HASH image into the empty local hash `local`, reading only the pages the lookup touches — not the whole file. The bounded-fetch counterpart of `store\_load`, for when `local` should hold only the entries actually asked for (a phone pulling the few map tiles a route needs from a large block). The singular of `store\_load\_keys` and the integer form of `store\_load\_key\_text`. `path` is a local file or an `http(s)://` URL served with `Range`, on every target including the browser (`--html`), where the fetch goes through the same bridge `store\_load\_url\_trusted` uses. Returns false when the key is absent, the file is unreadable, or the collection is not an integer-keyed hash.
+The entry's own fields are RELOCATED into the local store, so `text`, nested structs and flat vectors all come across; only a `vector\<text\>` or a `vector\<vector\>` is refused (its element pointers would dangle), and a refusal says so on stderr rather than looking like an absent key. tiles: hash\<Tile\[id\]\> = \[\] store\_load\_key(tiles, "block.store", 42)   // tiles now holds entry 42 only
 
 ```rust
 pub fn store_load_key_text(local: reference, path: text, key: text) -> boolean fs#read
@@ -9032,46 +8943,6 @@ pub fn store_load_range(local: reference, path: text, lo: integer, hi: integer) 
 
 Range form: fetch every entry whose integer key is in \[lo, hi\] from a persisted `sorted\<T\[k\]\>` into `local`, reading only the pages the range walk touches — the ordered-collection counterpart of `store\_load\_keys` (a phone pulling the corridor of map tiles a route crosses). Returns the count loaded. tiles: sorted\<Tile\[tkey\]\> = \[\] store\_load\_range(tiles, "block.store", lo\_cell, hi\_cell)
 
-```rust
-pub fn set_file_size(self: File, size: integer) -> FileResult fs#update
-```
-
-Truncates or extends the file to `size` bytes. Returns FileResult.Ok, or an error variant (IsDirectory / NotFound / Other).
-
-```rust
-pub fn seek(self: File, pos: integer) -> boolean fs#update
-```
-
-Moves the read/write position to `pos` bytes from the start, for random access into a binary file: read an index, jump to the record it names, read that.
-Equivalent to `self\#next = pos`, which is the operator form and has always worked; this is the NAME the operation was already documented under, and a consumer who reached for it (three call forms, all of them this one) concluded random access was unsupported and restructured their file format around it.
-Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, a negative `pos`, or a file the process has not yet read from or written to (the OS handle is opened by the first I/O, so seeking before it exists has nothing to move).  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.
-
-```rust
-pub fn position(self: const File) -> integer
-```
-
-The current read/write position in bytes, i.e. where the next read or write will land.  The read side of \[seek\]; `self\#next` is the operator form.
-Distinct from `self\#index`, which is where the LAST read STARTED — after `x = f\#read as i32` on a fresh file, `position` is 4 and `f\#index` is 0.
-A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make "not opened" indistinguishable from "at the start".  Discharge with `?? 0` when the distinction does not matter.
-
-```rust
-pub fn sync(self: File) -> boolean fs#update
-```
-
-Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.
-
-```rust
-pub fn files(self: const File) -> vector<File> fs#read
-```
-
-Returns the entries inside a directory, sorted by path — the same order as `list\_dir`, so an index into either listing means the same entry. The File must have format == Format.Directory; anything else lists as `\[\]` (where `list\_dir` answers null, because it has no format to check first). Use to iterate over all files in a folder.
-
-```rust
-pub fn write(self: File, v: text) -> FileResult fs#update
-```
-
-Writes v as UTF-8 text to the file, overwriting existing content.  Returns FileResult.Ok on success and FileResult.Other on an OS write failure (disk full, permission denied, a bad path) — a failed write is OBSERVABLE, not silently swallowed.  Discarding callers (`f.write(s)` as a statement) are unaffected; check with `f.write(s).ok()` or match the result.
-
 == Environment
 
 ```rust
@@ -9102,7 +8973,7 @@ Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`. Use for 
 pub fn directory(v: text = "") -> text
 ```
 
-Returns the current working directory, optionally with v appended as a subpath. Use to construct absolute paths relative to where the program was launched.
+Returns the current working directory, optionally with v appended as a subpath. loft sets the working directory to the program's own directory, so this is that directory — unless the file declares `\#cwd`, which keeps the directory the program was launched from.
 
 ```rust
 pub fn user_directory(v: text = "") -> text
@@ -9114,7 +8985,7 @@ Returns the current user's home directory, optionally with v appended. Use for s
 pub fn program_directory(v: text = "") -> text
 ```
 
-Returns the directory containing the running executable, optionally with v appended. Use to locate assets bundled alongside the program.
+Returns the directory containing the running executable, optionally with v appended. Use to locate assets shipped beside a compiled program.  Under the interpreter the executable is the `loft` binary itself, and a `--native` run executes from a temporary build directory, so neither names the script's directory — use `source\_dir()` for that.
 
 ```rust
 pub fn source_dir() -> text
@@ -9134,7 +9005,7 @@ A library the program never declared answers false.
 
 == System directories
 
-Where this machine keeps temporary files, the user's home, and the per-user config, cache and data directories — each answering "" where the platform has no such place.
+Where this machine keeps temporary files and loft's per-user cache — each answering null on a target with no filesystem (the browser).  The host input and output channels live here too.
 
 ```rust
 pub fn temp_dir() -> text?env#read
@@ -9185,16 +9056,13 @@ pub fn store_memory() -> text
 
 Returns a multi-line snapshot of all LIVE stores' internal memory utilisation: total capacity vs actual claimed data vs free space, record + free-block counts, mergeable adjacent-free pairs (free neighbours that should have coalesced), and the largest stores by capacity with their creation site (`bc:\<pos\>` — a bytecode position on the interpreter; 0 on --native) and type name.  Use to watch memory growth in a running program.
 
-== Vector operations
-
-Reordering a vector in place: `reverse(v)` turns it end for end and `sort(v)` puts it in ascending order.
+== Path helpers
 
 ```rust
 pub fn starts_with(self: text, value: text) -> boolean
 ```
 
-── Path helpers (moved from 03\_text.loft so they're available before file-I/O code that wants to compose them) ─────────
-loft treats paths as plain text; this group adds the most-needed path operations (dir\_of / basename / resolve\_relative) as methods on text. Pure-loft, slash-separated; Windows backslash normalisation is out of scope. `starts\_with` / `ends\_with` are dependencies of `join` / `resolve` so they also live here (was 03\_text.loft). Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).
+Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).
 
 ```rust
 pub fn ends_with(self: text, value: text) -> boolean
@@ -9206,7 +9074,7 @@ Returns true if self ends with value. Use for suffix matching (e.g., file extens
 pub fn dir(self: text) -> text
 ```
 
-Directory part of a path — strips the trailing `/\<segment\>`. "doc/claude/PROBLEMS.md".dir() → "doc/claude" "CLAUDE.md".dir()              → ""   (no `/`) "/etc/passwd".dir()            → "/etc" "".dir()                        → ""
+Directory part of a path — strips the trailing `/\<segment\>`. Paths are plain slash-separated text: a `\\` is not a separator here, on any platform. "doc/claude/PROBLEMS.md".dir() → "doc/claude" "CLAUDE.md".dir()              → ""   (no `/`) "/etc/passwd".dir()            → "/etc" "".dir()                        → ""
 
 ```rust
 pub fn basename(self: text) -> text
@@ -9225,6 +9093,136 @@ pub fn resolve(self: text, target: text) -> text
 ```
 
 Resolve `target` against `self` (where self is a base directory). Strips leading `./` repeatedly; each `../` segment trims the last component from `self`.  Mirrors scan.loft's `resolve\_link\_path`. "doc/claude".resolve("../README.md")     → "doc/README.md" "doc/claude".resolve("./PROBLEMS.md")    → "doc/claude/PROBLEMS.md" "a/b/c".resolve("../../x")               → "a/x" "".resolve("foo")                        → "foo"
+
+== Text: case and classification
+
+```rust
+pub fn to_lowercase(self: text) -> text
+```
+
+Returns a lowercase copy. Use for case-insensitive comparisons.
+
+```rust
+pub fn to_uppercase(self: text) -> text
+```
+
+Returns an uppercase copy.
+
+```rust
+pub fn is_lowercase(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are lowercase letters.
+
+```rust
+pub fn is_lowercase(self: character) -> boolean
+```
+
+True if the character is a lowercase letter.
+
+```rust
+pub fn is_uppercase(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are uppercase letters.
+
+```rust
+pub fn is_uppercase(self: character) -> boolean
+```
+
+True if the character is an uppercase letter.
+
+```rust
+pub fn is_numeric(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are numeric digits (Unicode numeric, not just ASCII 0–9).
+
+```rust
+pub fn is_numeric(self: character) -> boolean
+```
+
+True if the character is a numeric digit.
+
+```rust
+pub fn is_alphanumeric(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are letters or digits. Use to validate identifiers or tokens.
+
+```rust
+pub fn is_alphanumeric(self: character) -> boolean
+```
+
+True if the character is a letter or digit.
+
+```rust
+pub fn is_alphabetic(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are alphabetic.
+
+```rust
+pub fn is_alphabetic(self: character) -> boolean
+```
+
+True if the character is alphabetic.
+
+```rust
+pub fn is_whitespace(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are whitespace. Use to detect blank lines.
+
+```rust
+pub fn is_whitespace(self: character) -> boolean
+```
+
+True if the character is whitespace.
+
+```rust
+pub fn is_control(self: text) -> boolean
+```
+
+True if the text is non-empty and all characters are control characters.
+
+```rust
+pub fn is_control(self: character) -> boolean
+```
+
+True if the character is a control character.
+
+```rust
+pub fn join(self: const vector<text>, sep: text) -> text
+```
+
+Joins parts with sep between each consecutive pair. Returns "" for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.
+
+== Text: bytes and code points
+
+```rust
+pub fn byte_at(self: text, i: integer) -> integer
+```
+
+Return the BYTE at position `i` (0 up to `size()`) as integer 0-255, or 0 for out-of-bounds; a negative `i` counts from the end, as a slice bound does (`byte\_at(-1)` is the last byte).  Unlike `text\[i\]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte\_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text\[i\]` for pure-ASCII checks.
+
+```rust
+pub fn text_from_bytes(bytes: const vector<u8>) -> text
+```
+
+Build a text from the raw UTF-8 bytes of a vector\<u8\> — the inverse of byte\_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell "empty input" from "invalid bytes" apart.
+
+```rust
+pub fn text_from_byte_range(bytes: const vector<u8>, lo: integer, hi: integer) -> text
+```
+
+The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder that has found a text's span writes instead of `text\_from\_bytes(bytes\[lo..hi\])`, whose slice is a fresh vector (`(Slice-Value)`) built to be read once.  The bounds are the slice's (a negative one counts from the end; both clamp); a reversed or empty range, or invalid UTF-8, is "".  Its own name, not an overload: a native is dispatched by name.
+
+```rust
+pub fn chr(cp: integer) -> text
+```
+
+Build a one-character text from a Unicode CODE POINT — the inverse of the `ch as integer` that text iteration already gives you, and the code-point twin of text\_from\_bytes' byte route.  Use when you have a number and need the character it names: decoding an escape (`\\u{...}`, an HTML entity), walking a code-point table, or reassembling text a code point at a time. chr(65)      "A"     chr(233)    "é" chr(20013)   "中"    chr(128512) "😀" A code point that names no character answers the EMPTY text, never a crash: a surrogate (D800-DFFF), anything past U+10FFFF, a negative number — and also 0, because `character` uses 0 as its null and text iteration stops there, so a NUL built here could not be read back.  If you need an embedded NUL, go through the byte route: `text\_from\_bytes(\[0\])` carries one.
 
 == Stack traces
 
@@ -9264,7 +9262,7 @@ pub struct VarInfo {
 }
 ```
 
-One local variable in a stack frame (populated only by stack\_trace\_full).
+One local variable or parameter in a stack frame (see `stack\_trace`).
 
 ```rust
 pub struct StackFrame {
@@ -9282,7 +9280,7 @@ One call frame in the stack trace.
 pub fn stack_trace() -> vector<StackFrame>
 ```
 
-Return the current call stack as a vector of frames, outermost first. TR1.4: Each frame's `variables` field is populated with the live local variables at that frame's call site (typed via `ArgValue`).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack:
+Return the current call stack as a vector of frames, outermost first. Each frame's `variables` field holds the frame's parameters and live local variables (typed via `ArgValue`).  Use this to inspect not only the current function's variables but also the variables of any function further up the call stack.  Under `--native` a frame's `variables` is empty: a compiled frame has no reader for its locals (STACKTRACE.md § Known Limitations, ST-6).
 ```loft fn debug\_dump() { for frame in stack\_trace() { println("{frame.function}:{frame.line}"); for v in frame.variables { println("  {v.name} = {v.value}"); } } } ```
 
 == Coroutines
@@ -9312,7 +9310,7 @@ pub enum JsonValue {
 }
 ```
 
-Typed union of JSON values.  The discriminant (1..6) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus `JInteger` for an integer-shaped number preserved to an exact `integer` (i64).
+Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus `JInteger` for an integer-shaped number preserved to an exact `integer` (i64).
 `JInteger` MUST stay the LAST variant: the store discriminant it gets (7) is hard-coded as `JV\_DISCR\_INT` in `src/native.rs`, and the existing variants' discriminants (1–6) must not shift.
 
 ```rust
@@ -9322,26 +9320,28 @@ pub struct JsonField {
 }
 ```
 
-One field of a `JObject`.  Stored as a `vector\<JsonField\>` rather than a `hash\<JsonField\[name\]\>` in step 2 — the hash form is a 0.9.0 follow-up once hash iteration and nested struct-enum-in-hash layouts are exercised end-to-end.  Linear scan is fine for the object sizes typical in configuration / API responses.
+One field of a `JObject`.  A `JObject` keeps its fields as a `vector\<JsonField\>` in source order, so a lookup by name is a linear scan — fine for the object sizes typical in configuration / API responses.
 
 ```rust
 pub fn json_parse(raw: text) -> JsonValue
 ```
 
-Parse JSON text into a `JsonValue` tree.  Malformed input returns `JNull`; the error trail is accessible via `json\_errors()`.  All six variants materialise (primitives, arrays, objects, nested containers); the entire tree lives in one store and frees as one unit when the root `DbRef` leaves scope.
+Parse JSON text into a `JsonValue` tree.  Malformed input returns `JNull`; the error trail is accessible via `json\_errors()`.  Every variant materialises (primitives, arrays, objects, nested containers); the entire tree lives in one store and frees as one unit when the root `DbRef` leaves scope.
 ```loft match json\_parse(raw) { JObject { fields } =\> for f in fields { handle(f) }, JArray  { items }  =\> for v in items  { handle(v) }, JNull              =\> println("parse error: {json\_errors()}"), \_                  =\> println("unexpected root kind"), } ```
 
 ```rust
 pub fn json_errors() -> text
 ```
 
-Populates the runtime's per-call json\_errors state (read by json\_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.
+Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet.
+
+== JSON: reading values
 
 ```rust
 pub fn field(self: const JsonValue, name: text) -> JsonValue[self]
 ```
 
-Observes the runtime's json\_errors state populated by json\_parse.  No parent writes. JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field("a").field("b")` is safe — every intermediate missing produces `JNull`, never a trap.
+JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field("a").field("b")` is safe — every intermediate missing produces `JNull`, never a trap.
 
 ```rust
 pub fn item(self: const JsonValue, index: integer) -> JsonValue[self]
@@ -9353,7 +9353,7 @@ JArray indexer — returns the element at `index`, or `JNull` when `self` isn't 
 pub fn len(self: const JsonValue) -> integer
 ```
 
-Length of a JArray's items vector or a JObject's fields vector. Returns `null` (i32::MIN) for any other variant.
+Length of a JArray's items vector or a JObject's fields vector. Returns `null` for any other variant.
 
 ```rust
 pub fn as_text(self: const JsonValue) -> text
@@ -9372,86 +9372,90 @@ Typed extractor — returns `null` on kind mismatch.
 pub fn as_long(self: const JsonValue) -> integer
 ```
 
-Typed extractor — returns `null` on kind mismatch.  Truncates the underlying `float` toward zero before converting.
+Typed extractor — returns `null` on kind mismatch.  A `JInteger` answers its exact value; a `JNumber` is truncated toward zero.
 
 ```rust
 pub fn as_bool(self: const JsonValue) -> boolean?
 ```
 
 Typed extractor — returns `null` on kind mismatch.
-Declared `boolean?` and not `boolean`: the doc has always promised the null and the signature could not carry it.  Its three siblings keep the promise because `text`, `float` and `integer` each have an in-band sentinel a non-null return can hold; a two-state Rust `bool` has none, so this one answered `false` for every mismatching kind — for an absent field, for the string `"true"`, and for `1` — indistinguishably from a field that really says `false`.
+Declared `boolean?`, so a mismatch — an absent field, the string `"true"`, the number `1` — is `null` and never reads as a field that really says `false`.
 
 ```rust
 pub fn kind(self: const JsonValue) -> text
 ```
 
-Q2 introspection — returns the variant name as text: `"JNull"`, `"JBool"`, `"JNumber"`, `"JString"`, `"JArray"`, or `"JObject"`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.
+Returns the variant name as text: `"JNull"`, `"JBool"`, `"JNumber"`, `"JString"`, `"JArray"`, `"JObject"` or `"JInteger"`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.
 
 ```rust
 pub fn keys(self: const JsonValue) -> vector<text>
 ```
 
-Q2 introspection — returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.
+Returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.
 
 ```rust
 pub fn fields(self: const JsonValue) -> vector<JsonField>
 ```
 
-Q2 introspection — returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.
+Returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.
 
 ```rust
 pub fn has_field(self: const JsonValue, name: text) -> boolean
 ```
 
-Q2 introspection — returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has\_field("users") { … }` is safe to write on any JsonValue without first destructuring. Distinguishes "absent" from "present-but-null" — a field whose value is `JNull` still returns `true`.
+Returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has\_field("users") { … }` is safe to write on any JsonValue without first destructuring. Distinguishes "absent" from "present-but-null" — a field whose value is `JNull` still returns `true`.
+
+== JSON: building values
 
 ```rust
 pub fn to_json(self: const JsonValue) -> text
 ```
 
-Q3 serialiser — render a JsonValue to canonical RFC 8259 JSON text.  All six variants serialise; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `"`, `\\\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.
+Render a JsonValue to canonical RFC 8259 JSON text.  Every variant serialises; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `"`, `\\\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.
 
 ```rust
 pub fn to_json_pretty(self: const JsonValue) -> text
 ```
 
-Q3 pretty serialiser — `to\_json\_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `\[\]` / `{}` (no newline padding).  Primitives are byte-identical to `to\_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`"k": v`). Useful for golden-file tests and log output.
+`to\_json\_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `\[\]` / `{}` (no newline padding).  Primitives are byte-identical to `to\_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`"k": v`). Useful for golden-file tests and log output.
 
 ```rust
 pub fn json_null() -> JsonValue
 ```
 
-Q4 constructor — build a JsonValue set to the `JNull` variant. Useful in test fixtures and reply-construction code that needs a known-null JsonValue without going through `json\_parse("null")`.
+Build a JsonValue set to the `JNull` variant. Useful in test fixtures and reply-construction code that needs a known-null JsonValue without going through `json\_parse("null")`.
 
 ```rust
 pub fn json_bool(v: boolean) -> JsonValue
 ```
 
-Q4 constructor — build a JsonValue set to the `JBool` variant carrying the supplied boolean payload.
+Build a JsonValue set to the `JBool` variant carrying the supplied boolean payload.
 
 ```rust
 pub fn json_number(v: float?) -> JsonValue
 ```
 
-Q4 constructor — build a JsonValue set to the `JNumber` variant carrying the supplied float payload.  Non-finite inputs (float null = NaN, or ±Inf) produce `JNull` with a diagnostic in `json\_errors()` — mirrors the RFC 8259 constraint that JSON numbers must be finite.  The parameter is `float?` because handling a null/NaN input IS its contract (→ `JNull`); a finite `float` passes as a non-null value into the nullable slot as usual.
+Build a JsonValue set to the `JNumber` variant carrying the supplied float payload.  Non-finite inputs (float null = NaN, or ±Inf) produce `JNull` with a diagnostic in `json\_errors()` — mirrors the RFC 8259 constraint that JSON numbers must be finite.  The parameter is `float?` because handling a null/NaN input IS its contract (→ `JNull`); a finite `float` passes as a non-null value into the nullable slot as usual.
 
 ```rust
 pub fn json_string(v: text) -> JsonValue
 ```
 
-Non-finite inputs touch json\_errors state.  Otherwise pure construction into worker stores. Q4 constructor — build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.
+Build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.
 
 ```rust
 pub fn json_array(items: const vector<JsonValue>) -> JsonValue
 ```
 
-Q4 constructor — build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref\_to\_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.
+Build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref\_to\_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.
 
 ```rust
 pub fn json_object(fields: const vector<JsonField>) -> JsonValue
 ```
 
 Build a JsonValue set to the `JObject` variant carrying the supplied fields.  Each field's value deep-copies via the same `dbref\_to\_parsed` walker as `json\_array`, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.
+
+== JSON: the struct bridge
 
 ```rust
 pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue
@@ -9464,7 +9468,7 @@ Return type is declared as `JsonValue` here purely because it shares the same Db
 pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -> text
 ```
 
-Populates json\_errors on type mismatches.  Allocates the result struct into worker stores → par-safe; no parent state writes. P54 Q3 second half — serialise any user struct to canonical JSON. Backs the parser-side intercept for `instance.to\_json()`; the `field == "to\_json"` rewrite in `src/parser/fields.rs` lowers the method call to `n\_struct\_to\_json(self\_ref, struct\_kt)`.  Walks `stores.types\[struct\_kt\].parts` via `Stores::show\_json` (which reuses the existing `ShowDb` schema walker) and produces RFC 8259 JSON text.  String fields are escaped (`"` / `\\` / control bytes); nested structs and vectors recurse; `JsonValue`-typed fields render their inline subtree verbatim.  The first parameter is declared as `JsonValue` purely so the parser type-system accepts the synthesised call regardless of the actual receiver's struct type — the runtime only reads the `struct\_kt` discriminant for dispatch.
+Serialise any user struct to canonical JSON (RFC 8259) — what `instance.to\_json()` calls.  Text fields are escaped (`"` / `\\` / control bytes); nested structs and vectors recurse; a `JsonValue`-typed field renders its subtree as it is.
 
 ```rust
 pub fn struct_to_json_pretty(self_ref: const JsonValue, struct_kt: integer) -> text
@@ -9491,9 +9495,10 @@ pub enum TypeKind {
   VariantKind,
   /// A vector — `element` names what it holds.
   VectorKind,
-  /// A keyed collection (hash / index / sorted / ordered / radix) — walked by
-  /// cursor rather than by layout, so it has no fields of its own. Which of the
-  /// five it is, and on which fields, are in `collection` and `keys`.
+  /// A keyed collection (hash / index / sorted / ordered / radix / trie; a
+  /// `spatial` reports as radix) — walked by cursor rather than by layout, so it
+  /// has no fields of its own. Which of the six it is, and on which fields, are
+  /// in `collection` and `keys`.
   KeyedKind,
   /// A stored reference to another record.
   RefKind,
@@ -9554,8 +9559,7 @@ pub struct KeyInfo {
   ///
   /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
   /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
-  /// be declared descending ever answers `false`. Because
-  /// there is no descending answer to give. Match `collection` first where the
+  /// be declared descending ever answers `false`. Match `collection` first where the
   /// difference between "ascending" and "unordered" matters.
   ascending: boolean,
 }
@@ -9583,7 +9587,7 @@ pub struct TypeInfo {
   const variants: vector<VariantInfo>,
   /// For a vector or a keyed collection, the element type's name.
   element: text,
-  /// For a keyed collection, which of the five it is; `NotKeyed` otherwise.
+  /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
   collection: CollectionKind,
   /// The key fields of a keyed collection, in KEY ORDER — the order a composite
   /// lookup binds them in, which is why it is a vector and not a set.
@@ -9607,19 +9611,18 @@ pub fn reflect_type(kt: integer) -> TypeInfo
 The declared shape of `value`'s type.
 \*\*The argument is read for its TYPE and is not evaluated\*\* — the same contract C's `sizeof` has, and for the same reason: nothing about the answer depends on the value. Pass a variable, a field or a parameter; an expression with a side effect will not have it.
 ```loft t = type\_of(row); println("{t.name}:"); for f in t.fields { println("  {f.name}: {f.type\_name} \@{f.position}") } ```
-\*\*Not inside a generic.\*\* A generic body is parsed ONCE against its type variable, so `type\_of(v)` there answers `\_\_typevar\_T` — the same reason `"{v:j}"` in a generic body renders `{}`. Call it where the concrete type is known. Making it work inside a generic needs the body parsed per instantiation, which is a different plan.
-Describes a TYPE. To read what a VALUE holds at one of these positions, use `field\_value`. WRITING a value by field is a separate and larger question, deliberately still out of scope.
-`type\_of(x)` is intercepted in `src/parser/control.rs` and lowered to `n\_reflect\_type(\<type-id\>)`, so the id is a parse-time constant on both backends — the same mechanism `to\_json` uses, and the reason the answer does not depend on a runtime name lookup.
+\*\*Not inside a generic.\*\* A generic body is parsed ONCE against its type variable, so `type\_of(v)` there answers a type-variable placeholder (`\_\_typevar\_T…`) — the same reason `"{v:j}"` in a generic body renders `{}`. Call it where the concrete type is known.
+Describes a TYPE. To read what a VALUE holds at one of these positions, use `field\_value`. Reflection offers no way to WRITE a value by field.
 
 ```rust
 pub fn type_named(name: text) -> TypeInfo?
 ```
 
-Reads the store's type table through `Stores::layout\_descriptor` and allocates the answer into the caller's own stores → par-safe. The declared shape of the type called `name`, or `null` if this program has no such type — reflection with no value in hand.
+The declared shape of the type called `name`, or `null` if this program has no such type — reflection with no value in hand.
 This is what an ORM or a schema check needs: the name arrives from a config file, a database catalogue or a command line, so there is nothing to call `type\_of` on.
 ```loft t = type\_named("Row"); if t == null { println("no such type") } else { println("{t.name}") } ```
 \*\*`TypeInfo?`, and null means the name is not a type here.\*\* A type that does not exist has no shape, and saying so in the type is what makes a caller handle it rather than read a plausible-looking empty answer.
-A name is matched exactly as the store records it, which is the loft type name — `Point`, `text`, `vector\<Point\>`.
+A name is matched exactly as the store records it, which is the loft type name — `Point`, `text`, `vector\<Point\>`.  A composite name such as `vector\<Point\>` exists only when the program uses that type somewhere; a program that never does answers `null` for it.
 Unlike `type\_of`, no parser intercept: the name is a RUNTIME value, so the lookup is a runtime one. It works on `--native` because the generated `init()` replays the type registrations — names included — and `Stores::name` is a total lookup that answers "absent" rather than minting a type for a typo.
 
 ```rust
@@ -9646,7 +9649,7 @@ pub struct ValueInfo {
 
 One field's VALUE, read out of a record at the position reflection reported.
 `kind` says which payload carries the answer, so a caller matches it once rather than asking a different question per type:
-| `kind` | read | |---|---| | `IntegerKind` · `LongKind` | `i` | | `BooleanKind` | `i` — 1 or 0 | | `CharacterKind` | `i` — the code point | | `FloatKind` · `SingleKind` | `f` | | `TextKind` | `t` | | `OtherKind` | nothing — see `field\_value` |
+| `kind` | read | |---|---| | `IntegerKind` · `LongKind` | `i` | | `BooleanKind` | `i` — 1 or 0 | | `CharacterKind` | `i` — the code point | | `FloatKind` · `SingleKind` | `f` | | `TextKind` | `t` | | `RecordKind` · `VectorKind` · `KeyedKind` · `RefKind` | nothing — no scalar reading | | `OtherKind` | nothing — see `field\_value` |
 A boolean and a character ride in `i` for the reason a bound SQL value does: one integer path is one thing to get right, and the `kind` beside it is what keeps them apart.
 
 ```rust
@@ -9656,23 +9659,20 @@ pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -> V
 The value `value` holds at byte `position` — the VALUE half of reflection.
 `type\_of` says a record has a `text` at byte 16; this reads it. Together they are what a generic serialiser, an ORM write or a diff needs, and neither half is enough alone:
 ```loft t = type\_of(row); for f in t.fields { v = field\_value(row, f.position); if v.is\_null { println("{f.name}=null") } else { println("{f.name}={v.t}") } } ```
-\*\*The position is CHECKED against the type's own descriptor, never trusted.\*\* A number that does not begin a field — a hand-made offset, a stale one, a position from a different type — answers `OtherKind`, which is also what a field whose type has no scalar reading (a nested record, a vector, a keyed collection, a stored reference) answers. So there is no offset a caller can pass that reads bytes belonging to something else, which is what makes this ordinary loft rather than a pointer.
+\*\*The position is CHECKED against the type's own descriptor, never trusted.\*\* A number that does not begin a field — a hand-made offset, a stale one, a position from a different type — answers `OtherKind`. A field whose type has no scalar reading (a nested record, a vector, a keyed collection, a stored reference) answers its own kind with no payload. So there is no offset a caller can pass that reads bytes belonging to something else, which is what makes this ordinary loft rather than a pointer.
 `kind` is the DESCRIPTOR's answer, not the caller's: passing the position of an `integer` field does not make the reading an integer, it makes it whatever that field is. That is why the kind is reported rather than requested.
 \*\*REFUSED inside a generic\*\*, and refused rather than merely unsupported. A generic body is parsed once against its type variable, so there is no concrete type to read positions out of — the same limit `type\_of` has. Left to answer, every call there reports `OtherKind`, which for an ORM's write half is an EMPTY ROW rather than an error: the write succeeds and the columns are missing. So it is a compile error naming the type variable. Call it one frame out, where the type is known, and pass the values in.
-`field\_value(x, position)` is intercepted in `src/parser/control.rs` and lowered to `reflect\_field(x, position, \<type-id\>)`, so the id is a parse-time constant on both backends — the same mechanism `type\_of` and `to\_json` use.
-The value parameter is declared `TypeInfo` only because loft has no way to spell "any record"; the parser substitutes the real argument, and only the reference ABI matters here. `struct\_to\_json` (06\_json.loft) does the same.
 
 ```rust
 pub fn reflect_field_path(value: const TypeInfo, path: const vector<integer>, kt: integer) -> ValueInfo
 ```
 
-Reads through the SAME `Parts::Struct` field list the store itself is walked by, and allocates the answer into the caller's own stores → par-safe. The value at the end of a PATH of positions — `field\_value(x, \[8, 0\])`.
+The value at the end of a PATH of positions — `field\_value(x, \[8, 0\])`.
 `type\_of` reports a nested record's fields at positions relative to THAT record, so one number cannot name `origin.x` — and reflection hands back no handle to a nested record to call `field\_value` on again. A path closes that: each element is a position in the record the previous element landed in.
 \*\*The offsets must not be added up by the caller.\*\* `field\_value(doc, 8 + 0)` asks for a field BEGINNING at byte 8 of `Doc`, which is `origin` itself — the check that makes this ordinary loft rather than a pointer is that a position must begin a field of the type it is read against. So the walk happens inside, one descriptor step per element, each checked the same way.
 ```loft // Doc.origin \@8, Point.y \@8 v = field\_value(doc, \[8, 8\]);   // doc.origin.y ```
 Every step but the last must land on an INLINE record. A step onto a scalar, a vector, a keyed collection or a stored reference answers `OtherKind` and reads nothing: a stored reference names a record with its own identity, and following it would be a pointer chase rather than a field read. An empty path answers `OtherKind` for the same reason a bad position does — nothing names a field there.
 A one-element path is the single-position form, and answers identically.
-`field\_value(x, path)` is intercepted in `src/parser/control.rs` beside the single-position form and lowered to `reflect\_field\_path(x, path, \<type-id\>)`, so the type id is a parse-time constant on both backends.
 
 = Roadmap
 
@@ -9715,7 +9715,11 @@ The game's WebAssembly, textures, and audio are all embedded. Host the file anyw
 - *CLI hardening* — script-level arguments, file-scope constants, and release-mode coroutine-iterator fixes (P126, P128, P131, P132).
 - *Bytecode cache* — `.loftc` files are invalidated on interpreter rebuild via the embedded git commit hash.
 
-=== 0.8.5 (shipped 2026-06-07): Working Moros editor
+=== 0.8.5 (shipped 2026-06-07): Language maturity
+
+The language itself got solid: closures hold a live reference to what they capture, bounded generics carry their types through methods and tuples, and native compilation went to production.
+
+==== Working Moros editor
 
 The Moros hex RPG scene editor runs end-to-end in the browser: load a map, paint hexes, place walls and items, see a live 3D preview, export to GLB. Web only — multiplayer comes in 1.0.0.
 
@@ -9727,19 +9731,19 @@ The Moros hex RPG scene editor runs end-to-end in the browser: load a map, paint
 
 === 0.9.0 — Fully working loft language
 
-The language itself becomes feature-complete, well-documented, and tooling-friendly. No "appears fixed but unverified" bugs. Anyone can write loft code in their preferred editor with syntax highlighting, decent error messages, and a REPL for experimentation.
+The language itself becomes feature-complete, well-documented, and tooling-friendly; every item below has shipped in the monthly releases. No "appears fixed but unverified" bugs. Anyone can write loft code in their preferred editor with syntax highlighting, decent error messages, and a REPL for experimentation.
 
 ==== Language polish
 
 - *Error recovery* — the parser continues after a token-level failure and reports multiple errors in a single pass — *shipped* (a two-error program reports both in one pass).
 - *REPL* — running `loft` with no arguments starts an interactive session; definitions persist across lines — *shipped* (bare `loft` starts one and restores the last session).
 - *Developer warnings* — Clippy-inspired lints for common mistakes — *shipped* (a two-tier warning/advice set with `--explain` fix lines).
-- *AOT library compilation* — automatically compile libraries to native shared libs for faster startup.
-- *Stdlib hygiene* — name-clash warnings and a `std::` prefix for shadowed builtins; library enums in `match` arms without qualification.
+- *AOT library compilation* — automatically compile libraries to native shared libs for faster startup — *shipped* (a `use`d library builds its own native library when a Rust toolchain is present).
+- *Stdlib hygiene* — a `std::` prefix for shadowed builtins; library enums in `match` arms without qualification — *shipped*.
 
 ==== Compilation cache
 
-Bytecode cache (`.loftc`) and the shared constant store are already implemented. Remaining work — mmap-based native cache loading, serialised `Data` definitions, pre-compiled stdlib for WASM — lands in 0.9.0.
+The parsed standard library and program are cached under `.loft/` and restored on the next run, alongside the shared constant store — *shipped*.
 
 ==== Developer experience
 
@@ -9751,7 +9755,7 @@ Bytecode cache (`.loftc`) and the shared constant store are already implemented.
 ==== Packaging and FFI
 
 - *Lock file* (`loft.lock`) for reproducible builds — *shipped* (`loft install` writes it).
-- *Generic FFI marshaller* — zero-boilerplate native functions from a `#native` signature; generic `cdylib` loader scans exports into a hash map.
+- *Generic FFI marshaller* — zero-boilerplate native functions from a `#native` signature; generic `cdylib` loader scans exports into a hash map — *shipped* (`loft generate` writes the stubs).
 
 === 1.0.0 — Totally sure everything works
 
@@ -9773,20 +9777,20 @@ The Moros scene editor gains a loft scripting panel with in-browser compile and 
 
 ==== Multiplayer
 
-- *Server library* — plain HTTP routing, HTTPS with static certs or automatic ACME, WebSockets, JWT / session / API-key auth, CORS, rate limiting, static file serving.
-- *Game loop primitives* — WebSocket polling, broadcast, connection registry.
-- *Game client library* — `GameEnvelope` protocol, lobby + matchmaking, fixed-timestep loop, client-side prediction and reconciliation, WASM script loading with Ed25519 verification.
+- *Server library* — plain HTTP, HTTPS with static certs, WebSockets, CORS headers and static file serving are *shipped* (the `server` library). Planned: automatic ACME certs, JWT / session / API-key auth, rate limiting.
+- *Game loop primitives* — WebSocket polling, broadcast, connection registry — *shipped* (`server`).
+- *Game client library* — the `GameEnvelope` protocol (`game_protocol`) and a fixed-timestep loop (`fixstep`) are *shipped*. Planned: lobby + matchmaking, client-side prediction and reconciliation, WASM script loading with Ed25519 verification.
 - *Moros multiplayer* — DM and players share a live scene hosted on a loft server.
 
 ==== Stability contract
 
-Version 1.0 means: any program that works on 1.0 will compile and run identically on all future 1.x releases. The language syntax, type system, standard library, and command-line flags are frozen. Until then, breaking changes are possible between minor versions.
+Version 1.0 means: any program that works on 1.0 will compile and run identically on all future 1.x releases. The language syntax, type system, standard library, and command-line flags are frozen. Until then, what a released version promises is kept, and a breaking change needs a documented reason and a migration.
 
 Tagging 1.0 requires every stability gate to be satisfied without shortcuts: zero open high-severity bugs, valgrind-clean debug builds of the full Brick Buster and tuple tests, green CI on Linux, macOS Intel, macOS ARM, and Windows, pre-built binaries on the GitHub release, and the reference + PDF linked from the release page.
 
 === 1.1 and beyond
 
-Post-1.0 items include route decorators (`@get` / `@post` / `@ws`), WASM Web Worker pools for browser-side `par()`, iterator protocol (`for msg in ws`), interface factory methods, lazy work-variable initialisation, stack raw-pointer cache, spatial index operations, and additional native codegen optimisations.
+Post-1.0 items include route decorators (`@get` / `@post` / `@ws`), iterator protocol (`for msg in ws`), interface factory methods, lazy work-variable initialisation, stack raw-pointer cache, and additional native codegen optimisations. Browser-side `par()` on Web Workers (`loft --html --threads`) and the `spatial<T>` collection have already shipped.
 
 === Following progress
 

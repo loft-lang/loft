@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paged store loading — Loft, a programming language for small browser games</title>
+  <meta name="description" content="">
+<link rel="canonical" href="https://loft-lang.org/loft/stdlib-paged-store-loading.html">
+<meta property="og:title" content="Paged store loading — Loft, a programming language for small browser games">
+<meta property="og:description" content="">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/stdlib-paged-store-loading.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Paged store loading — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <span class="cur">Paged store loading</span> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>Paged store loading</h1>
+<article>
+<div class="item">
+<pre><code>pub fn store_load_key(local: reference, path: text, key: integer) -&gt; boolean fs#read</code></pre>
+<p>Working-set load: fetch ONE integer-keyed entry from a persisted HASH image into the empty local hash `local`, reading only the pages the lookup touches — not the whole file. The bounded-fetch counterpart of `store_load`, for when `local` should hold only the entries actually asked for (a phone pulling the few map tiles a route needs from a large block). The singular of `store_load_keys` and the integer form of `store_load_key_text`. `path` is a local file or an `http(s)://` URL served with `Range`, on every target including the browser (`--html`), where the fetch goes through the same bridge `store_load_url_trusted` uses. Returns false when the key is absent, the file is unreadable, or the collection is not an integer-keyed hash.</p>
+<p>The entry's own fields are RELOCATED into the local store, so `text`, nested structs and flat vectors all come across; only a `vector&lt;text&gt;` or a `vector&lt;vector&gt;` is refused (its element pointers would dangle), and a refusal says so on stderr rather than looking like an absent key. tiles: hash&lt;Tile[id]&gt; = [] store_load_key(tiles, &quot;block.store&quot;, 42)   // tiles now holds entry 42 only</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_key_text(local: reference, path: text, key: text) -&gt; boolean fs#read</code></pre>
+<p>Text-keyed form of `store_load_key`: fetch ONE entry from a persisted `hash&lt;T[textkey]&gt;` or `trie&lt;T[textkey]&gt;` (a place-name / string-id index) into `local`, reading only the pages the lookup touches. Returns false when the key is absent or the collection isn't a copyable text-keyed hash or trie. places: hash&lt;Place[name]&gt; = [] store_load_key_text(places, &quot;gazetteer.store&quot;, &quot;Amsterdam&quot;)</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_prefix(local: reference, path: text, pre: text, limit: integer) -&gt; integer fs#read</code></pre>
+<p>Prefix form: fetch every entry whose text key begins with `pre` from a persisted `trie&lt;T[k]&gt;` into `local`, reading only the pages the prefix walk touches — what a search box needs, and what a `sorted` range cannot express without a hand-built successor string. Returns the count loaded.</p>
+<p>`limit` caps the WALK, not just the answer: with `limit` 8 the ninth record is never stepped to, so its pages are never fetched. A negative `limit` means no cap, which on a common prefix reads the whole run. words: trie&lt;Word[w]&gt; = [] store_load_prefix(words, &quot;vocab.store&quot;, &quot;kerk&quot;, 20)</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_box(local: reference, path: text, from: const vector&lt;integer&gt;, till: const vector&lt;integer&gt;, limit: integer) -&gt; integer fs#read</code></pre>
+<p>Box form: fetch every entry inside the closed bounding box `from`..`till` from a persisted `spatial&lt;T[x, y]&gt;` into `local`, reading only the pages the box walk touches — what a map viewport needs. Returns the count loaded. The corners are vectors so the same call serves 1, 2 or 3 axes, and writing them the other way round names the same box.</p>
+<p>TWO bounds, and a map needs both. `limit` caps the WALK, not just the answer: with `limit` 200 the 201st marker is never stepped to, so its pages are never fetched (a negative `limit` means no cap). And the BOX bounds it — the Morton interval between two corners is a superset the Z-order curve threads in and out of, so a wide, shallow viewport would otherwise read 1.46 M records to return 4 k. Measured on a 3.2 M-point map index: 5.3 pages of 64 KB for the first viewport, ~1.5 for each pan after it, against a 158 MB whole-image download.</p>
+<p>Those numbers assume a dataset written with locality in every axis, which is the one thing this call cannot do for you. The Morton walk is symmetric; a file laid out along ONE axis is not, so a box crossing that axis pays for every stride it crosses. On a 62 500-point grid returning the same 500 records, a 250x2 box read 107 pages of 64 KiB against 7 for its 2x250 mirror, and the two swapped when the identical data was written in the other axis order — 81 % of the image to return 0.8 % of the records. Write such a dataset TILED: it has no bad orientation, and for the square-ish boxes a viewport uses it beats either linear order. pins: spatial&lt;Pin[x, y]&gt; = [] store_load_box(pins, &quot;map.store&quot;, [x1, y1], [x2, y2], 200)</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_keys(local: reference, path: text, keys: const vector&lt;integer&gt;) -&gt; integer fs#read</code></pre>
+<p>Plural form of `store_load_key`: fetch the given integer keys' entries into `local` in one call (the paged reader is opened once and its cache reused), returning how many were found. Keys absent from the remote are skipped. Same relocation rules as `store_load_key`. tiles: hash&lt;Tile[id]&gt; = [] got = store_load_keys(tiles, &quot;block.store&quot;, [7, 13, 42])   // got == 3</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_keys_text(local: reference, path: text, keys: const vector&lt;text&gt;) -&gt; integer fs#read</code></pre>
+<p>Plural form of `store_load_key_text`, and the text twin of `store_load_keys`: fetch the given text keys' entries into `local` in ONE call, returning how many were found. Keys absent from the remote are skipped. Serves a `hash&lt;T[k]&gt;` and a `trie&lt;T[k]&gt;` alike, like the single-key form.</p>
+<p>Looping `store_load_key_text` is not the same call: each one opens its own reader, so a ring of twenty asset names re-fetches the same 64 KiB bucket-table page twenty times. This opens the reader once and shares its page cache — which is what makes it the PREFETCH call: ask for the ring at a load or level boundary, so no frame is ever the thing that discovers it needs an asset. art: hash&lt;Blob[bl_key]&gt; = [] got = store_load_keys_text(art, &quot;pack.store&quot;, [&quot;page/mobs&quot;, &quot;hit.ogg&quot;])</p>
+</div>
+<div class="item">
+<pre><code>pub fn store_load_range(local: reference, path: text, lo: integer, hi: integer) -&gt; integer fs#read</code></pre>
+<p>Range form: fetch every entry whose integer key is in [lo, hi] from a persisted `sorted&lt;T[k]&gt;` into `local`, reading only the pages the range walk touches — the ordered-collection counterpart of `store_load_keys` (a phone pulling the corridor of map tiles a route crosses). Returns the count loaded. tiles: sorted&lt;Tile[tkey]&gt; = [] store_load_range(tiles, &quot;block.store&quot;, lo_cell, hi_cell)</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
