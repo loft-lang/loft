@@ -179,39 +179,14 @@ a library with its own test, never a workaround in the port.
 
 ### Strand 4 — `Command` + `run`: a subprocess under the two rules (S–M, owner-directed 2026-09-30)
 
-**4a — the `Command` type (S).**  A stdlib struct that opts into typed format strings:
-`lit` splits the author's bytes into words on whitespace (a quoted span in the literal stays
-one word); `hole_text` / `hole_int` / `hole_float` / `hole_boolean` append ONE argv word —
-never split, never quoted, joined onto the open word when the literal touches it
-(`--format={fmt}` is one word); `hole_text` with `null` omits the word, so an optional flag
-composes without an `if`.  Two typed holes carry the cases the argv rule alone does not
-cover, the way `SqlIdent` does for a table name: `args(v: vector<text>)` splices a list, and
-**a value that begins with `-` is refused unless it came through `flag(v)`** — because an
-option is syntax too (@PLN119's `git -c core.sshCommand=…` point survives the reversal as a
-hole type rather than a closed vocabulary).  Gate: a matrix of literal/hole compositions
-against the argv each must produce, hand-computed, on both backends.
-
-**4b — `run` (S–M).**  `run(c: Command) -> Run { code, stdout, stderr }` with both pipes
-drained concurrently and stdin closed; `run(c, input: text)` feeds stdin beside them;
-`run_lines(c)` streams stdout by line while stderr is still drained; `c#timeout` bounds it
-with `LOFT_TIMEOUT`'s kill-after-grace semantics; a `Streams.Inherit` option passes a
-tool's output straight through for the cases a user watches (`cargo build`).  A capability
-group `process#run` so a sandboxed script cannot run anything ungranted (SANDBOX.md S1);
-unavailable on `--html` and WASI, recorded so by `make surface-gen`.  Gate: the deadlock
-probe — a child that writes 1 MiB to stderr while the parent reads stdout — passes on both
-backends; the same probe against `subprocess.Popen(...).stdout.read()` hangs, which is the
-"prove the harness can fail" half.
-
-**4c — recording (S).**  `LOFT_RUN_RECORD=<dir>` records each `run` by its argv and
-input, and `LOFT_RUN_REPLAY=<dir>` answers from the recording — inside `run`, so every port
-is twin-able offline without a per-tool shim.  The Python side reads the same directory
-through one small shim.
-
-**4d — the tools, in the order the work list ranks them.**  `git` first (`lib/git` rewritten
-over `run`, twinned against its natives, which then retire); `gh` and `cargo` as the
-originals call them; `curl` through the `web` library where the script already speaks
-JSON.  Each lands with its first consumer ported and twinned; an interface nobody calls is
-green by construction and is not a phase.
+The design is its own document, [`PROCESS.md`](PROCESS.md): a `process` LIBRARY, invisible
+on use through its `Command` type trigger, natives in the binary, absent from the browser;
+`Command` as a typed format string (a hole is one argv word, an option-shaped value needs
+`flag()`); `run()` for the OK notice and a native-backed `lines()` cursor for the large
+output, over one drainer per pipe that no surface above it can undo; recording and replay
+inside `run`; and the five probes that gate it before any port calls it.  4d ports the tools
+in work-list order — `lib/git` rewritten over `run` and twinned against its natives first,
+then `gh` and `cargo` as the originals call them.
 
 ### Strand 5 — Tranches by caller class (M–L, repeating)
 
@@ -290,10 +265,10 @@ that ships value; 1 and 2 are the instruments and are cheap.
    the originals do is the cheaper port and the exact twin; a pure-loft REST client is the
    better library.  Recommendation: `gh` for the ports, the library only if a consumer
    outside this repo asks for one.
-2b. **Where the process surface lives.**  Recommendation: `Command` and `run` in the stdlib
-   (`default/02_files.loft`, natives in the binary like `git_query.rs`), not a registry
-   library — a script is the shape loft wants to be boring in, and a stdlib builtin is what
-   `make surface-gen` and the sandbox allowlist already know how to gate.
+2b. **Where the process surface lives — DECIDED (owner, 2026-09-30): a `process` library,
+   auto-used through its `Command` type trigger, natives in the binary, absent from the
+   browser** (strand 4 § Where it lives).  Open under it: does `make surface-gen` see an
+   in-binary library's natives the way it sees the stdlib's?  If not, that is the first item.
 3. **The ratchet as a gate.**  Recommendation: from strand 1, `make ci` fails when a NEW
    `.py`/`.sh` appears under `scripts/` without a `# why-not-loft: <gap>` line naming the
    gap that stopped it being loft — the line is a finding for strand 3/4, and the
