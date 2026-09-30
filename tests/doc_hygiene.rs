@@ -1401,15 +1401,22 @@ impl Drop for FileGuard {
 /// Held by every test that REWRITES a committed `doc/` file in place (the generators below,
 /// restored by `FileGuard` on drop) and by the one that READS every `doc/` page
 /// (`the_generated_pages_match_their_sources`): the reader otherwise copies a file mid-rewrite
-/// and reports a page that is fine as drift, one run in two.  Poisoning is ignored — a
-/// failed sibling must not fail every later test that takes the lock.
-static DOC_REWRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// and reports a page that is fine as drift.  A FILE lock, not a `Mutex`: nextest runs every
+/// test in its own PROCESS, where a static mutex serialises nothing — the gate saw the race
+/// that `cargo test`'s threads did not.  Released when the returned handle drops.
+fn doc_rewrite_lock() -> fs::File {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("doc-rewrite.lock");
+    let _ = fs::create_dir_all(path.parent().expect("target/"));
+    let f = fs::File::create(&path).expect("create target/doc-rewrite.lock");
+    f.lock().expect("lock target/doc-rewrite.lock");
+    f
+}
 
 fn assert_generator_output_matches_committed(script: &str, output_relative: &str) {
     // Taken BEFORE the guard, so it is released only after the guard has restored the file.
-    let _rewrite = DOC_REWRITE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _rewrite = doc_rewrite_lock();
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output_path = root.join(output_relative);
     let guard = FileGuard::new(output_path.clone());
@@ -3522,10 +3529,8 @@ fn the_generated_pages_match_their_sources() {
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .collect();
     // The copy and the comparison read committed `doc/` files that the generator tests rewrite
-    // in place; hold their lock for both (see `DOC_REWRITE`).
-    let _rewrite = DOC_REWRITE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // in place; hold their lock for both (see `doc_rewrite_lock`).
+    let _rewrite = doc_rewrite_lock();
     let copy = std::env::temp_dir().join(format!("loft-gendoc-drift-{}", std::process::id()));
     let _ = fs::remove_dir_all(&copy);
     for f in &files {
