@@ -6432,6 +6432,18 @@ use a separate collection or add after the loop"
             }
             return Type::Void;
         }
+        // @FR-H-Materialise — the view the branch below declines to copy is recorded, so the
+        // scope pass opens it in the disturbance walk and copies it with `OpReplaceKeyed` where
+        // its container is reassigned, grown or shrunk while it is live.  Left unrecorded, the
+        // same programs panicked (`hash`, `sorted`, `index`) or read garbage (`trie`).
+        if keyed_kt.is_some()
+            && crate::parser::vectors::is_keyed(&s_type)
+            && !matches!(code, Value::Insert(_) | Value::Null)
+            && !amp_collection_bind
+            && self.keyed_projection_views(code, var_nr)
+        {
+            self.vars.keyed_views.insert(var_nr);
+        }
         if let Some(kt) = keyed_kt
             && crate::parser::vectors::is_keyed(&s_type)
             && !matches!(code, Value::Insert(_) | Value::Null)

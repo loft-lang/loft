@@ -645,13 +645,16 @@ fn mirrored_binding(b: &Block) -> Option<u16> {
     }
 }
 
-/// Is `v` a `match`/`is` payload binding of a KEYED collection field — a view of its subject
-/// (`(B-View)`, the parser marks it never-free as one) that the materialise can copy with
-/// `OpReplaceKeyed`?  Asked of the payload binding only: a keyed PROJECTION bound off an owned
-/// base already copies at the bind (`(B-View-Base)`), and widening the view walk's type list
-/// alone was measured unsound (the naming and the copy have to land together).
+/// Is `v` a VIEW of a keyed collection that the materialise can copy with `OpReplaceKeyed`?
+/// Two kinds: a `match`/`is` payload binding of a keyed field (`(B-View)`, the parser marks
+/// it never-free as one), and a plain bind of a keyed projection the parser recorded as a
+/// view (`Function::keyed_views`, `(B-View-Depth)`, loft#1759).  A one-level projection off an
+/// owned base copies at the bind (`(B-Copy)`) and is neither.  Widening the view walk's type
+/// list alone was measured unsound — the naming and the copy have to land together — which
+/// is why both kinds are admitted through this one test, read by the walk and the copy alike.
 fn keyed_payload_view(function: &Function, v: u16) -> bool {
-    crate::parser::vectors::is_keyed(function.tp(v)) && function.is_overwritten_view(v)
+    crate::parser::vectors::is_keyed(function.tp(v))
+        && (function.is_overwritten_view(v) || function.keyed_views.contains(&v))
 }
 
 /// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
@@ -2245,7 +2248,14 @@ impl ViewWalk<'_> {
                 ) || is_place_link(self.function, *v)
                     || self.function.text_payload_views.contains(v)
                     || self.function.group_write_views.contains_key(v)
-                    || keyed_payload_view(self.function, *v))
+                    || keyed_payload_view(self.function, *v)
+                    // A keyed `&` link (`a = &o.h`) is a view on the same terms as the vector
+                    // one, and was never opened here, so reassigning `o` left it following the
+                    // NEW value where `(B-Ref-Reshape)` refuses the program (loft#1759).  The
+                    // refusal reads `is_amp_container_link` too; the materialise does not copy
+                    // it — it is not a `keyed_views` binding.
+                    || (crate::parser::vectors::is_keyed(self.function.tp(*v))
+                        && self.function.is_amp_container_link(*v)))
             {
                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
                 // local inside a nested block gives a view that outlives the block, and

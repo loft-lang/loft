@@ -434,6 +434,13 @@ pub struct Function {
     /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
     /// parsing.
     pub text_payload_views: std::collections::HashSet<u16>,
+    /// The locals a plain bind made a VIEW of a keyed collection PROJECTION (`g = n.inn.h`,
+    /// `g = vs[0].h` — `(B-View-Depth)`, loft#1759).  The disturbance walk opens each like a
+    /// keyed payload view, and where its container is disturbed while it is still used the
+    /// scope pass copies it with `OpReplaceKeyed` (`(H-Materialise)`).  A `&` link is not
+    /// here: it is refused at the disturbance, never copied.  Carried like
+    /// `text_payload_views`.
+    pub keyed_views: std::collections::HashSet<u16>,
     /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
     /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
     /// collection type the binding's own spelling passes.  The field spelling does not name the
@@ -724,6 +731,7 @@ impl Function {
             mv_field_origin: HashMap::new(),
             tuphold_origin: HashMap::new(),
             text_payload_views: std::collections::HashSet::new(),
+            keyed_views: std::collections::HashSet::new(),
             group_write_views: HashMap::new(),
             tuple_backings: HashMap::new(),
             tuple_backings_seen: std::collections::HashSet::new(),
@@ -916,6 +924,7 @@ impl Function {
         self.tuphold_origin.clone_from(&other.tuphold_origin);
         self.text_payload_views
             .clone_from(&other.text_payload_views);
+        self.keyed_views.clone_from(&other.keyed_views);
         self.group_write_views.clone_from(&other.group_write_views);
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
@@ -1012,6 +1021,7 @@ impl Function {
             // off the copy it works on, long after parsing.
             tuphold_origin: other.tuphold_origin.clone(),
             text_payload_views: other.text_payload_views.clone(),
+            keyed_views: other.keyed_views.clone(),
             group_write_views: other.group_write_views.clone(),
             tuple_backings: other.tuple_backings.clone(),
             tuple_backings_seen: std::collections::HashSet::new(),

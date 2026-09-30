@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1759's second half — @FR-B-Ref-Reshape: reassigning a container while a `&` link into
+// it is still LIVE is a compile-time error, at every collection kind.  A keyed `&` link
+// (`l = &o.h`) was never opened by the disturbance walk, so the reassignment compiled and the
+// link followed the NEW value (`len(l)` answered the replacement's count), where the vector
+// link is refused.  The keyed link now enters the walk beside the vector one; it is refused,
+// never materialised.  Kept apart from `a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft` because a refusal cell and a running cell
+// cannot share a file under the CLI runner.
+//
+// Axes this file MOVES:  the kind (vector + five keyed), depth (one level, nested).
+// Axes it HOLDS FIXED:   the disturbance is a reassignment of the local root.
+
+struct Rv { id: integer }
+struct Row { id: integer }
+struct RS { id: integer }
+struct RI { id: integer }
+struct Wrd { nm: text }
+struct Pt { x: integer, y: integer }
+struct In { v: vector<Rv>, h: hash<Row[id]>, s: sorted<RS[id]>, i: index<RI[id]>, t: trie<Wrd[nm]>, p: spatial<Pt[x, y]>, n: integer }
+struct Mid { inn: In, m: integer }
+struct Top { mid: Mid, k: integer }
+struct Hold { ins: vector<In> }
+
+fn mkin() -> In {
+  In { v: [Rv{id: 1}], h: [Row{id: 1}], s: [RS{id: 1}], i: [RI{id: 1}], t: [Wrd{nm: "a"}], p: [Pt{x: 1, y: 1}], n: 0 }
+}
+fn mkmid() -> Mid { Mid { inn: mkin(), m: 0 } }
+
+// @EXPECT_ERROR: cannot give `o` a new value while `lh` references a place inside it
+fn a_hash_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  lh = &o.h;
+  o = mkin();
+  len(lh)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `mh` references a place inside it
+fn a_nested_hash_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  mh = &n.inn.h;
+  n = mkmid();
+  len(mh)
+}
+
+// @EXPECT_ERROR: cannot give `o` a new value while `ls` references a place inside it
+fn a_sorted_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  ls = &o.s;
+  o = mkin();
+  len(ls)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `ms` references a place inside it
+fn a_nested_sorted_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  ms = &n.inn.s;
+  n = mkmid();
+  len(ms)
+}
+
+// @EXPECT_ERROR: cannot give `o` a new value while `li` references a place inside it
+fn a_index_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  li = &o.i;
+  o = mkin();
+  len(li)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `mi` references a place inside it
+fn a_nested_index_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  mi = &n.inn.i;
+  n = mkmid();
+  len(mi)
+}
+
+// @EXPECT_ERROR: cannot give `o` a new value while `lp` references a place inside it
+fn a_spatial_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  lp = &o.p;
+  o = mkin();
+  len(lp)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `mp` references a place inside it
+fn a_nested_spatial_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  mp = &n.inn.p;
+  n = mkmid();
+  len(mp)
+}
+
+// @EXPECT_ERROR: cannot give `o` a new value while `lt` references a place inside it
+fn a_trie_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  lt = &o.t;
+  o = mkin();
+  len(lt)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `mt` references a place inside it
+fn a_nested_trie_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  mt = &n.inn.t;
+  n = mkmid();
+  len(mt)
+}
+
+// @EXPECT_ERROR: cannot give `o` a new value while `lv` references a place inside it
+fn a_vector_link_refuses_its_container_reassigned() -> integer {
+  o = mkin();
+  lv = &o.v;
+  o = mkin();
+  len(lv)
+}
+
+// @EXPECT_ERROR: cannot give `n` a new value while `mv` references a place inside it
+fn a_nested_vector_link_refuses_its_root_reassigned() -> integer {
+  n = mkmid();
+  mv = &n.inn.v;
+  n = mkmid();
+  len(mv)
+}
