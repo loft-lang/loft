@@ -168,6 +168,12 @@ Still open in this strand: the start-up row above re-measured with `LOFT_PROFILE
 cross-check against `git ls-files` made a test once strand 4's `git` query exists (today it
 is a by-hand comparison, exact on 2026-09-29).
 
+**A registry library on a box the registry cannot reach** (REASONS row 6): `git clone
+https://github.com/loft-lang/loft-libs-core` and copy the package under `~/.loft/lib/<name>`
+— the third place loft's resolver looks (PACKAGES.md § Package lib directories); its native
+crate builds on first use, and both backends then resolve `use <name>;`.  That is how
+`scripts/wasm_bundle_stamp` runs here; the registry fetch itself stays the gap.
+
 ### Strand 2 — The twin harness (S)
 
 `scripts/script_twin.sh` (bash, deliberately: it must run while no loft binary exists, and

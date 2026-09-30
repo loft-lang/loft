@@ -9,7 +9,7 @@ One row per reason a port MET to prefer Python or bash over loft — recorded wh
 guessed, struck only when the port that met it re-measures green on that axis
 ([README § The bar](README.md)).  `OPEN` is the plan's headline number.
 
-**OPEN: 7**
+**OPEN: 9**
 
 | # | met by | axis | the reason | the fix it needs | status |
 |---|---|---|---|---|---|
@@ -18,6 +18,8 @@ guessed, struck only when the port that met it re-measures green on that axis
 | 3 | `scripts/script_census` (strand 1) | behaviour | the interpreter segfaults at `OpFreeText` on `argv_call(self.result[n - 1] ?? "")` inside a struct method that also appends to `self.result`, once enough heap is behind it; `--native` runs it; four other spellings run; no extraction reproduces it yet | [loft#1773](https://github.com/loft-lang/loft/issues/1773) — the census binds the element to a local first, marked to fold back | open |
 | 4 | `fuzz/seed_program_source` (strand 3, the first port) | clarity | no `copy(from, to)`: a file is copied as `write_bytes(dst, read_bytes(src) ?? [])`, two calls and a null discharge for what `cp` says in one word | a `copy` builtin beside `move`, answering `FileResult` | open |
 | 5 | `fuzz/seed_program_source` (strand 3) | clarity | no recursive listing: `find … -name '*.loft'` is a hand-written `walk` over `files()` in every script that needs one (the census carries the same function) | a `files(dir, recursive)` or a `find(dir, suffix)` in the stdlib, symlink-aware | open |
-| 6 | `scripts/wasm_bundle_stamp.sh` (strand 3, not yet ported) | environment | `use crypto;` cannot auto-install behind this box's TLS-intercepting proxy — loft's HTTP client trusts only its bundled roots and ignores `SSL_CERT_FILE`, where `curl` on the same box succeeds | honour `SSL_CERT_FILE` / the system root store in the registry fetch; until then a script needing a registry library is blocked here | open |
+| 6 | `scripts/wasm_bundle_stamp.sh` (strand 3, not yet ported) | environment | `use crypto;` cannot auto-install behind this box's TLS-intercepting proxy — loft's HTTP client trusts only its bundled roots and ignores `SSL_CERT_FILE`, where `curl` on the same box succeeds | honour `SSL_CERT_FILE` / the system root store in the registry fetch.  Interim that works: `git clone` (which the proxy allows) `loft-libs-core` and copy the package under `~/.loft/lib/<name>`; its native crate builds on first use and both backends resolve it | open — the fetch itself |
 | 7 | `fuzz/seed_program_source` (strand 3) | clarity | the refusal of `{n:0>5}` names the cure (`{n:05}`) but points at the line ABOVE the format string | the diagnostic's span | open |
+| 8 | `scripts/wasm_bundle_stamp` (strand 3) | clarity | no path pattern: bash's `default/*.loft` is a `list_dir` + an `ends_with` filter + a path join, four lines for one word | a glob, or a `files(dir, pattern)` in the stdlib | open |
+| 9 | `scripts/wasm_bundle_stamp` (strand 3) | behaviour | no `exit(code)`: `set -e`'s "stop with status 1 on the first unreadable file" is an `assert`, whose stderr and status are loft's, not the script's | `exit(code)` (README § Strand 1) | open |
 
