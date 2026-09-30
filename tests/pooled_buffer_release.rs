@@ -99,11 +99,19 @@ fn a_reused_buffer_of_a_heap_owning_record_releases_before_each_refill() {
 
 #[test]
 fn a_buffer_of_scalars_takes_no_release() {
-    let text = introspect(&[]);
+    // The scope pass's decision, read with the IR's tuple return off: with it on (@PLN180,
+    // `@FR-R-ValueRecord`) a record of scalars read field-wise has no buffer to release.
+    let text = introspect(&[("LOFT_NO_IR_VALUE_RECORD", "1")]);
     let ir = ir_of(&text, "n_c8");
     assert!(
         operands(ir, "OpClear").is_empty() && operands(ir, "OpDatabase").len() == 1,
         "a record of scalars owns nothing, so its reuse releases nothing:\n{ir}"
+    );
+    let text = introspect(&[]);
+    let ir = ir_of(&text, "n_c8");
+    assert!(
+        !ir.contains("__ref_") && ir.contains(":(integer, integer) = n_mk_p("),
+        "a record of scalars read field-wise is a tuple, with no buffer at all:\n{ir}"
     );
 }
 
