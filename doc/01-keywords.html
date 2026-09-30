@@ -70,7 +70,7 @@
   }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first == <span class="nm">8</span>, <span class="st">"First was {first} instead of 8"</span>);</code></pre>
 <h2 id="the-other-loop-while">The other loop: while</h2>
-<p>Loft has two loop statements: <code>for</code>, which walks a range or a collection, and <code>while</code>, which repeats as long as its condition holds. A <code>for</code> over a range carries its own upper bound, so it is the one to reach for; a <code>while</code> does not, and <code>while true { }</code> runs until something stops it. Because nothing bounds a <code>while</code>, its body must move the condition towards false — here <code>n += 1</code> is what ends the loop. This is the same sum as the <code>for</code> above, written the other way.</p>
+<p>Loft has two loop statements: <code>for</code>, which walks a range or a collection, and <code>while</code>, which repeats as long as its condition holds. A <code>for</code> over a BOUNDED range carries its own end, so it is the one to reach for; a <code>while</code> does not, and <code>while true { }</code> runs until something stops it. Because nothing bounds a <code>while</code>, its body must move the condition towards false — here <code>n += 1</code> is what ends the loop. This is the same sum as the <code>for</code> above, written the other way.</p>
 <pre><code>  n = <span class="nm">1</span>;
   t = <span class="nm">0</span>;
   while n &lt;= <span class="nm">5</span> {
@@ -207,8 +207,8 @@ fn main() {
   assert(first == 8, "First was {first} instead of 8");
   // ## The other loop: while
   // Loft has two loop statements: 'for', which walks a range or a collection, and
-  // 'while', which repeats as long as its condition holds. A 'for' over a range
-  // carries its own upper bound, so it is the one to reach for; a 'while' does not,
+  // 'while', which repeats as long as its condition holds. A 'for' over a BOUNDED range
+  // carries its own end, so it is the one to reach for; a 'while' does not,
   // and 'while true { }' runs until something stops it. Because nothing bounds a
   // 'while', its body must move the condition towards false — here 'n += 1' is what
   // ends the loop. This is the same sum as the 'for' above, written the other way.

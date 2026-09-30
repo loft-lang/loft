@@ -68,7 +68,7 @@ cargo build --release
 ./target/release/loft --version
 ```
 
-The binary at `target/release/loft` finds the standard library in the checkout's `default/` directory. Copying the binary on its own elsewhere leaves that library behind; use `make install-user`, or pass `--path <checkout>`.
+The binary at `target/release/loft` uses the standard library in the checkout's `default/` directory, or `share/loft/` beside an installed `bin/`. A copy with neither beside it still runs, on the standard library built into it. `make install-user` (or `make install`) is the way onto your `PATH`.
 
 === Verify the installation
 
@@ -1081,7 +1081,7 @@ A range with no upper bound, 'a..', counts up until the body leaves it with 'bre
 
 === The other loop: while
 
-Loft has two loop statements: 'for', which walks a range or a collection, and 'while', which repeats as long as its condition holds. A 'for' over a range carries its own upper bound, so it is the one to reach for; a 'while' does not, and 'while true { }' runs until something stops it. Because nothing bounds a 'while', its body must move the condition towards false — here 'n += 1' is what ends the loop. This is the same sum as the 'for' above, written the other way.
+Loft has two loop statements: 'for', which walks a range or a collection, and 'while', which repeats as long as its condition holds. A 'for' over a BOUNDED range carries its own end, so it is the one to reach for; a 'while' does not, and 'while true { }' runs until something stops it. Because nothing bounds a 'while', its body must move the condition towards false — here 'n += 1' is what ends the loop. This is the same sum as the 'for' above, written the other way.
 
 ```rust
   n = 1;
@@ -2178,7 +2178,7 @@ struct Product {
 
 === Field Constraints
 
-You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback ('over ?? 0'), the checked cast 'as u8?' (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you ('narrow-fallback'). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
+You can restrict what values a field may hold. 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback ('?? \<value\>'), a 'u8?' destination so a value that does not fit reads null, or a mask ('& 255') that makes the value provably fit. It never stops a running program: a step the compiler cannot ask about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you ('narrow-fallback'). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.
 
 You may meet 'not null' on a field in older code. It has no effect — a type is non-null by default — and the compiler advises removing it.
 
@@ -5298,7 +5298,7 @@ Walkable   — the method `children() -> vector<Self>`.  The standard library's
 
 Reach for `Ordered + Addable` when you want `+` and a comparison.
 
-`-` desugars to the same `OpMin` name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: `\<T: Numeric\>` gives you `-a`, `\<T: Subtractable\>` gives you `a - b`, and `\<T: Numeric + Subtractable\>` gives you both.  A user type provides one of the two arities and so satisfies one of the two bounds — a concrete method key carries no arity, so a type cannot declare `OpMin` twice.
+`-` desugars to the same `OpMin` name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: `\<T: Numeric\>` gives you `-a`, `\<T: Subtractable\>` gives you `a - b`, and `\<T: Numeric + Subtractable\>` gives you both.  A user type may declare `OpMin` at both arities, in either order: `a - b` reaches the binary one and `-a` the unary one, so it satisfies both bounds.
 
 ```rust
 fn gen_diff<T: Subtractable>(gen_a: T, gen_b: T) -> T { gen_a - gen_b }

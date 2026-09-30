@@ -30,7 +30,7 @@
   stock: <span class="ty"><a href="stdlib-types.html">integer</a></span>
 }</code></pre>
 <h2 id="field-constraints">Field Constraints</h2>
-<p>You can restrict what values a field may hold. <code>limit(min, max)</code> gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback (<code>over ?? 0</code>), the checked cast <code>as u8?</code> (the value or null), or a value that provably fits. It never stops a running program: a step the compiler cannot ask about, <code>c.r += 100</code>, takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you (<code>narrow-fallback</code>). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.</p>
+<p>You can restrict what values a field may hold. <code>limit(min, max)</code> gives the field a smaller range. A value the compiler cannot prove fits is refused where you write it, and the error names the cures: a fallback (<code>?? &lt;value&gt;</code>), a <code>u8?</code> destination so a value that does not fit reads null, or a mask (<code>&amp; 255</code>) that makes the value provably fit. It never stops a running program: a step the compiler cannot ask about, <code>c.r += 100</code>, takes the type's default when it leaves the range — 0 for a range that includes zero — and loft advises you (<code>narrow-fallback</code>). A nullable field takes null instead. Zero is an ordinary value here. A Colour of 0, 0, 0 is pure black and reads back as three zeros, with nothing extra to write. Fields you omit in a constructor receive zero (or null for nullable fields) by default.</p>
 <p>You may meet <code>not null</code> on a field in older code. It has no effect — a type is non-null by default — and the compiler advises removing it.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Colour</span> {
   r: <span class="ty"><a href="stdlib-types.html">integer</a></span> <span class="kw">limit</span>(<span class="nm">0</span>, <span class="nm">255</span>),
@@ -202,8 +202,8 @@ struct Product {
 // You can restrict what values a field may hold.
 // 'limit(min, max)' gives the field a smaller range. A value the compiler cannot prove
 // fits is refused where you write it, and the error names the cures: a fallback
-// ('over ?? 0'), the checked cast 'as u8?' (the value or null), or a value
-// that provably fits. It never stops a running program: a step the compiler cannot ask
+// ('?? &lt;value&gt;'), a 'u8?' destination so a value that does not fit reads null, or a
+// mask ('&amp; 255') that makes the value provably fit. It never stops a running program: a step the compiler cannot ask
 // about, 'c.r += 100', takes the type's default when it leaves the range — 0 for a
 // range that includes zero — and loft advises you ('narrow-fallback'). A nullable
 // field takes null instead.

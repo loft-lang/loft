@@ -82,7 +82,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
              type gets you a breadth-first walk without writing one
 </code></pre>
 <p>Reach for <code>Ordered + Addable</code> when you want <code>+</code> and a comparison.</p>
-<p><code>-</code> desugars to the same <code>OpMin</code> name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: <code>&lt;T: Numeric&gt;</code> gives you <code>-a</code>, <code>&lt;T: Subtractable&gt;</code> gives you <code>a - b</code>, and <code>&lt;T: Numeric + Subtractable&gt;</code> gives you both.  A user type provides one of the two arities and so satisfies one of the two bounds — a concrete method key carries no arity, so a type cannot declare <code>OpMin</code> twice.</p>
+<p><code>-</code> desugars to the same <code>OpMin</code> name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: <code>&lt;T: Numeric&gt;</code> gives you <code>-a</code>, <code>&lt;T: Subtractable&gt;</code> gives you <code>a - b</code>, and <code>&lt;T: Numeric + Subtractable&gt;</code> gives you both.  A user type may declare <code>OpMin</code> at both arities, in either order: <code>a - b</code> reaches the binary one and <code>-a</code> the unary one, so it satisfies both bounds.</p>
 <pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
 <span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Numeric</a></span> + <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
 <pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
@@ -308,9 +308,9 @@ fn test_vector_generics() {
 // `-` desugars to the same `OpMin` name at BOTH arities, so unary negation and
 // binary subtraction are two SIGNATURES of one name — and therefore two bounds:
 // `&lt;T: Numeric&gt;` gives you `-a`, `&lt;T: Subtractable&gt;` gives you `a - b`, and
-// `&lt;T: Numeric + Subtractable&gt;` gives you both.  A user type provides one of the
-// two arities and so satisfies one of the two bounds — a concrete method key
-// carries no arity, so a type cannot declare `OpMin` twice.
+// `&lt;T: Numeric + Subtractable&gt;` gives you both.  A user type may declare `OpMin` at
+// both arities, in either order: `a - b` reaches the binary one and `-a` the unary
+// one, so it satisfies both bounds.
 fn gen_diff&lt;T: Subtractable&gt;(gen_a: T, gen_b: T) -&gt; T { gen_a - gen_b }
 fn gen_negdiff&lt;T: Numeric + Subtractable&gt;(gen_a: T, gen_b: T) -&gt; T { -(gen_a - gen_b) }
 
