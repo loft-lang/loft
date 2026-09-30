@@ -80,29 +80,79 @@ knows when it is stale — GALLERY_CI.md), and that one is a deliverable, not a 
    bundle (RELEASE_PUBLISH.md) — that is the one place a precompiled script belongs, and no
    script in this repository's tooling ships.
 
-## All scripts, or only the long-running ones?  Decided by the twin, per script
+## The rule (owner, 2026-09-30): a script runs interpreted; an OLD script runs optimised
 
-The number that decides is the script's own run time against its compile cost, and the twin
-(strand 2) measures both sides on every port, so the choice is read off the scoreboard rather
-than guessed:
+Not a per-script declaration, a POLICY loft applies itself: **any script runs directly,
+interpreted** — no rustc in the loop of an edit, ever — and **a script that has stopped
+changing runs the optimised build**, which loft builds when the script has earned it, without
+delaying the run that earned it.  Two things have to exist for that: a measurement of "old",
+and a build that happens when needed.
 
-| the script's warm run | mode | why |
+### What "old" is, and who measures it
+
+A script is old when its SOURCE has stopped changing, so age is a property of the source
+hash the cache already keys on (@PLN166 B3), not of the file.  Two clocks, and the older one
+wins, because each is wrong alone:
+
+| clock | measures | wrong when |
 |---|---|---|
-| under ~100 ms (a hook, a one-line check, a stamp) | **interpret** | native gains nothing measurable and a cold miss costs 2–4 s on every edit |
-| ~100 ms to ~1 s (most reports) | **native** — the default, cached | the 3.5× is real and the dev-tier compile is short |
-| over ~1 s, or run in a loop / in CI on every leg (the census, the audits, the checklist) | **release** | 2.4× over native; a ~3 s compile amortised in four runs |
+| **first seen** — loft records when it first ran this hash, in the hash's own cache entry (`.loft/cache/<name>-<hash>/`) | an edit makes a script young again the moment it runs, committed or not | a fresh clone: every hash is first seen today, so a CI checkout would interpret everything for a day |
+| **last change in git** — the file's last commit time, through the `git_query` natives the binary already has (`lib/git`) | a clone is as old as its history says | an uncommitted edit: git still reports the old date |
 
-So: every script gets the compiled version by default (that is what `loft` does), the short
-ones opt OUT, and the long ones opt UP.  The declaration has to live in the script, because
-a Makefile line or a workflow step is exactly what the port removes: today the only file
-directive is `#cwd` (`src/parser/mod.rs`), so **a `#mode interpret | native | release`
-directive is a gap for strand 3** — one line at the top, read by `loft` before it picks a
-backend, overridable by the flag.  The census gains a `mode` column, and a script whose
-declared mode disagrees with what its twin measured is a scoreboard row, not a mystery.
+`age = min(now − first_seen, now − last_git_change)`: young if EITHER clock says so.  Beside
+the age, loft records what the policy also needs — the run count for this hash and the wall
+time of the last interpreted run — so the decision is made from measurements loft took, not
+from a list anyone maintains.  `LOFT_TIMING=1` prints all of it (age, runs, last duration,
+the mode chosen and why); a plain run prints nothing, because loft is boring.
+
+### When a script has earned the build
+
+Defaults, overridable in `loft.toml` `[scripts]` and pinned per file by `#mode`:
+
+- the hash is at least **one day** old on both clocks, and
+- the last interpreted run took at least **100 ms** — a script that runs in a millisecond
+  never earns a compile, whatever its age (the census: 4.6 s interpreted, 0.44 s optimised;
+  the `hello`: nothing to gain), and
+- it has run at least **twice** — a one-off is not a tool.
+
+### Built when needed, never in the way
+
+The run that crosses the threshold is still interpreted; when it finishes, loft starts the
+`--native-release` compile DETACHED — under the build lock the native path already uses
+(`loft-native-build.lock`), one at a time, at low priority — so the invocation returns as it
+always did and the NEXT run finds the binary in the cache and takes it.  A build that fails
+(no rustc, a codegen refusal) leaves the script interpreted and a line in `.loft/log.txt`,
+and is not retried for that hash.  For a checkout that cannot build in the background — CI —
+`loft build --aged` (a make target beside `script-census`) builds every script the policy
+would promote, in the foreground, and the actions cache keyed on loft's sha + rustc + the
+script hashes carries the result across runs.
+
+### What keeps it safe
+
+Promotion is only admissible because interpreted and native are BYTE-IDENTICAL by contract
+(the @PLN11 cross-mode harness; goal D).  A script that behaved differently once it aged
+would be the worst class there is — a tool that changes its answer on a Tuesday — so the twin
+(strand 2) runs every port in BOTH modes against the original, and a divergence is a
+language bug filed against parity, never a reason to pin the script.  `#mode interpret` pins
+a hook (2 ms start-up, never a compile); `#mode release` pins a CI gate (built at its first
+run, foreground); neither is the normal case.  The scoreboard shows each script's age, mode
+and the number that decided it.
+
+### What it changes in loft
+
+The default backend for a program invocation is native today (`src/main.rs`, `native_mode =
+true`); under the rule it becomes: the cached release binary if this hash has one, else the
+interpreter — and the policy above decides when a binary comes to exist.  `--interpret`,
+`--native` and `--native-release` keep overriding.  This is C71's steady state ("scripts
+interpret, libraries compile") with the promotion the owner asked for on top; the games
+under `engine_host` get it for free.  Items for the plan: the run record in the cache entry,
+the git-age query, the detached build, `loft build --aged`, `#mode`, and the census's
+`mode` + `age` columns — strand 3, before the first tranche is measured, because the bar's
+performance verdict is taken in the mode the policy would pick.
 
 ## What this does NOT change
 
-The bar (README § The bar) is measured on the mode the script declares, against the
-original as it runs — a Python script has no compile step, so a loft script that needs one
-on first run must still beat it on the runs that follow, and the twin reports both the
-cold and the warm number.
+The bar (README § The bar) is measured in the mode the policy picks for the script's age,
+against the original as it runs — a Python script has no compile step, so a loft script
+that earns one must still beat it on the runs that follow, and the twin reports the
+interpreted, the cold and the warm number.
