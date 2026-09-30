@@ -1,4 +1,9 @@
 {
+  "M-changelog-read": {
+    "at": "2026-09-30 05:46",
+    "commit": "56000d47259d667d57ebac49f92babaf13b5103b",
+    "note": "read CHANGELOG.md's 2026-10 section at candidate 3cf7c5324: it describes this release (the one-meaning release: content ==, use lib, const, foreign stores/file_map, C131 variant casts, binding field patterns, zero-padding, generic holes, literal nulls, re-binds, locked writes, stack_trace lines, defaults, tuple comprehension). Checked against every user-visible commit between the last release and the candidate; the two gaps found (other streams' fixes, 1665f7e2f; locked writes, 56000d472) are in. Perf restorations of in-cycle regressions carry no entry."
+  },
   "M-close-plans": {
     "at": "2026-09-16 10:13",
     "note": "scripts/close-shipped-plans.sh --range v2026.9.0..HEAD --dry-run, 2026-09-16. Eight plan-close directives in range, naming loft-lang/plans issues 149 150 152 153 155 159 160 162, and ALL EIGHT report \"already closed, skipping\". Nothing shipped in this range left a plan open, which is the whole question the step asks. Deliberately run in dry-run only: the acting form calls gh issue close against a separate repo, and closing plan issues is the owner call, not the reviewer one. No outward action taken."
