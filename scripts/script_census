@@ -36,21 +36,99 @@ struct Row {
   source: text,
 }
 
-// The identifier-shaped tokens of one line — quotes, brackets and operators split,
-// so `["gh", "issue"]`, `$(gh api …)` and `gh issue list` all yield the token `gh`.
-fn tokens(line: text) -> vector<text> {
-  result: vector<text> = [];
-  cur = "";
-  for c in line {
-    if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-       || c == '_' || c == '-' || c == '.' {
-      cur += "{c}";
-    } else {
-      if cur != "" { result += [cur]; cur = ""; }
+// The identifier-shaped tokens of one line — brackets and operators split, so
+// `$(gh api …)` and `gh issue list` both yield the token `gh`.  A string literal
+// is skipped — a tool NAMED in a message is not a tool USED — except where a
+// literal IS the command: a bash `$( … )` inside double quotes is code again;
+// in Python the first literal of a list (`["gh", "issue"]`), of an argv-shaped
+// call (`run("gh api")`, `Popen(…)`, `system(…)`, a wrapper such as `sh(…)`) or
+// of a continuation line (`    "gh", "api", …` under a call opened above) is
+// argv.  A loft literal never counts yet; a `Command`-typed one will (strand 4).
+fn argv_call(callee: text) -> boolean {
+  callee.ends_with("run") || callee.ends_with("check_output") || callee.ends_with("check_call")
+    || callee.ends_with("call") || callee.ends_with("Popen") || callee.ends_with("system")
+    || callee.ends_with("getoutput") || callee.ends_with("getstatusoutput")
+    || callee == "sh" || callee == "shell" || callee == "cmd" || callee == "exec"
+    || callee == "execute" || callee == "capture"
+}
+
+fn is_word(c: character) -> boolean {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+    || c == '_' || c == '-' || c == '.'
+}
+
+// The tokenizer's state: one line, one pass.
+struct Lex {
+  result: vector<text>,
+  cur: text,
+  quote: character,    // the quote that opened the literal we are in, or ' '
+  counting: boolean,   // the literal we are in is argv, so its words are tokens
+  depth: integer,      // open `$(` groups inside a double-quoted bash literal
+  argv_next: boolean,  // the next literal is argv (`[`, an argv call, a continuation)
+  prev: character,
+}
+
+fn flush(self: Lex) {
+  if self.cur != "" { self.result += [self.cur]; self.cur = ""; }
+}
+
+// Inside a literal that is being skipped: answers whether `c` was consumed there.
+fn skip_step(self: Lex, c: character, lang: text) -> boolean {
+  if self.depth > 0 {
+    if c == ')' { self.depth -= 1; }
+    else if c == '(' && self.prev == '$' { self.depth += 1; }
+  } else if c == self.quote && self.prev != '\\' {
+    self.quote = ' ';
+  } else if lang == "sh" && c == '(' && self.prev == '$' && self.quote == '"' {
+    self.depth = 1;
+  }
+  self.depth == 0
+}
+
+fn step(self: Lex, c: character, lang: text) {
+  if self.quote != ' ' && !self.counting {
+    if self.skip_step(c, lang) { self.prev = c; return; }
+  } else if self.quote != ' ' && c == self.quote && self.prev != '\\' {
+    self.flush();
+    self.quote = ' ';
+    self.counting = false;
+    self.prev = c;
+    return;
+  } else if self.quote == ' ' && (c == '"' || c == '\'') {
+    self.flush();
+    self.quote = c;
+    self.counting = self.argv_next;
+    self.argv_next = false;
+    self.prev = c;
+    return;
+  }
+  if is_word(c) {
+    self.cur += "{c}";
+  } else {
+    self.flush();
+    if lang == "py" && self.quote == ' ' {
+      if c == '[' { self.argv_next = true; }
+      else if c == '(' {
+        n = len(self.result);
+        // The element is bound before the `??`: `argv_call(self.result[n - 1] ?? "")`
+        // inline segfaults the interpreter at OpFreeText once the census has enough
+        // heap behind it (loft#1773; --native is fine).  Fold back when it closes.
+        last = self.result[n - 1];
+        self.argv_next = n > 0 && argv_call(last ?? "");
+      }
+      else if c != ' ' { self.argv_next = false; }
     }
   }
-  if cur != "" { result += [cur]; }
-  result
+  self.prev = c;
+}
+
+fn tokens(line: text, lang: text) -> vector<text> {
+  lex = Lex { result: [], cur: "", quote: ' ', counting: false, depth: 0,
+              argv_next: lang == "py" && (line.starts_with("\"") || line.starts_with("'")),
+              prev: ' ' };
+  for c in line { lex.step(c, lang); }
+  lex.flush();
+  lex.result
 }
 
 fn has(words: vector<text>, w: text) -> boolean {
@@ -179,7 +257,7 @@ fn classify(path: text) -> Row {
   for raw in src {
     line = trim(raw);
     if line.starts_with("#") || line.starts_with("//") { continue; }
-    w = tokens(line);
+    w = tokens(line, lang);
     for tool in ["gh", "git", "cargo", "rustc", "jq", "curl", "grep", "sed", "awk", "python3"] {
       if has(w, tool) { t = add_unique(t, tool); }
     }
