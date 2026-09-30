@@ -351,6 +351,7 @@ pub mod portable_path;
 pub mod rebind_place;
 pub mod resolution;
 pub mod resolution_scope;
+pub mod return_field;
 pub mod rewrite_census;
 pub mod scopes;
 pub mod siphash;

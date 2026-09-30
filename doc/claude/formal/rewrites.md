@@ -2568,6 +2568,31 @@ on the drawing bench).
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
                  other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
+  (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, or its
+                 view-local spelling `v = p.a; return v` — is answered as the local's own
+                 store at the field's position, instead of a store minted for the return
+                 and the field deep-copied into it.  The parser's copy stands where a view
+                 of a frame local would dangle once the frame's free ran; here the local is
+                 the frame's own store (a dep-empty record local, never a parameter or a
+                 hidden buffer) and the exit is the last thing that names it, so the store
+                 goes to the caller as it stands and the caller frees it whole as it frees
+                 any adopted store — a store's release is keyed on the store and not on the
+                 handle's type or position, and the wrapper's other fields go with it.  The
+                 exit's other store frees are RE-WITNESSED against the root: a buffer that
+                 aliases the handed store (a pooled `__ref_N` the root adopted, an alias
+                 `q = p`) is skipped, one that does not is freed as before, and the root's
+                 own free is dropped.  Admitted only where the returned record OWNS HEAP (a
+                 scalar-only record is the native value form's to answer as a tuple, and its
+                 copy is a few words), the exit block is the parser's materialised copy over
+                 the function's own buffer, and every statement between the copy and the
+                 return is a store or text free.  Declines keep the copy: a parameter's or a
+                 view's field, an ELEMENT (`p.items[i]` — a slot inside a claimed block, not
+                 a field of the root record), any other statement in the exit, a buffer that
+                 is not the function's own.  A caller is not consulted: it binds what comes
+                 back exactly as it binds any buffer-carrying return, adopting with the
+                 witnessed free or copying with the source freed, so a callee whose other exit
+                 writes the buffer is fine — the witness settles which store came back per
+                 execution.
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in

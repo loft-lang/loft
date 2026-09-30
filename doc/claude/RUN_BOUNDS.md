@@ -69,6 +69,22 @@ it on the checkout's scratch and on `TMPDIR` with the session prune, printing `d
 of them touch only loft's own names, only dead pids or aged entries, and never a sibling
 checkout's gate scratch.
 
+**And an agent session sweeps after every turn.**  `scripts/tmp_headroom.sh` is the harness's
+`Stop` and `SubagentStop` hook (`.claude/settings.json`): the standing sweep over `/tmp` and
+`TMPDIR` with the session prune, then — when `/tmp` is below 4 GB and no cargo, nextest or
+rustc process is alive — the suites' native binary caches (`loft_native_cache_<checkout>/`,
+14 GB measured after one `cargo nextest` run started by hand with `TMPDIR` unset, and the
+`loft_test_native_*_bin` entries; the next run rebuilds them), then `disk_headroom.sh` for
+the checkout's disk.  A test run started by hand should set `TMPDIR` to the checkout's gate
+scratch, as `find_problems.sh` does, so its cache lands on the disk and not on the tmpfs.  The two fill
+differently and each kills the box in its own way: `/tmp` is a 16 GB tmpfs on the Lima box,
+and a full one stops the harness from capturing any command's output, while a full disk fakes
+a red gate (both measured, once each way, in the session that added it).  Silent
+when nothing needed doing; `/tmp/loft_tmp_headroom.last` is the stamp of its last run.  It
+never touches a live run's caches or another program's files, and it does not replace the
+20 GB floor a gate refuses under — lowering `LOFT_GATE_MIN_FREE_GB` for one run is what let
+the second fill happen.
+
 ## Store-memory ceiling (`LOFT_MEMORY_LIMIT`)
 
 The sibling of the execution timeout, for the failure it cannot catch.  A corrupted length does

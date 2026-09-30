@@ -27,7 +27,12 @@
 // (the mark kept): every value, leak and falsifier check here stays green on both backends and
 // only the IR pin reads the buffer's free as plain — the caller's buffer holds the null
 // sentinel today, so the guarded free is inert until something pre-mints it (`minted_pairs`
-// is what keeps the pool from doing so).  Restored byte-identically.  `matrix_axes.py`: A4
+// is what keeps the pool from doing so).  Restored byte-identically.  A third receipt from
+// the suite (2026-09-30): the pairing applied to a temp a COPY consumes (`keep += [mk(i)]` in
+// a loop, c15 here, `164-forward-tuple`'s q6) enrolled its buffer in the record-buffer pool
+// while the consuming copy's source-free bit released the store every turn — q6 read a freed
+// record on both backends (`assertion failed: q6 in a loop: 871878381216,…`); the pairing is
+// skipped for a transferred temp, and c15 holds.  `matrix_axes.py`: A4
 // reaches every statement context but `coalesce-subject` (a `mk(n) ?? d` subject takes the
 // join route, `lift_join_witness`, not this one); A9 loop and single.
 struct Rec { items: vector<integer>, name: text, k: integer }
@@ -90,6 +95,15 @@ fn c12(n: integer) -> text { return use_rec(mk_w(n), "!"); }
 fn c13(n: integer) -> integer { return mk(n).k + len(mk(n + 1).items); }
 // c14 a lift inside a formatted string
 fn c14(n: integer) -> text { return "<{use_rec(mk(n), "~")}>"; }
+// c15 a lift a COPY consumes, in a loop: the element copy's source-free bit releases the
+// temp's store, so the temp has no free of its own and its buffer must not join the pool
+fn c15(n: integer) -> text {
+  keep: vector<Rec> = [];
+  for i in 0..3 { keep += [mk(n + i)]; last = keep[len(keep) - 1] ?? lit(0); keep[0]?.k += last.k; }
+  s = "";
+  for r in keep { s += "{r.name}:{r.k};"; }
+  return s;
+}
 
 fn run_all() {
   assert(c1(7) == "r7!3:7", "c1");
@@ -108,6 +122,7 @@ fn run_all() {
   assert(c12(13) == "r13!3:113", "c12");
   assert(c13(20) == 23, "c13");
   assert(c14(21) == "<r21~3:21>", "c14");
+  assert(c15(10) == "r10:43;r11:11;r12:12;", "c15");
   println("ok");
 }
 
@@ -126,6 +141,7 @@ fn run_cell(cell: text, r: integer) -> integer {
   if cell == "c12" { s += len(c12(r % 50)); }
   if cell == "c13" { s += c13(r % 50); }
   if cell == "c14" { s += len(c14(r % 50)); }
+  if cell == "c15" { s += len(c15(r % 50)); }
   return s;
 }
 

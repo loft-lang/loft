@@ -70,14 +70,16 @@ fn section<'a>(text: &'a str, name: &str) -> &'a str {
 
 const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_FIRST_BIND", "1")];
 
-/// 2000 rounds; the named control and the lifted cell mint two stores a call (the callee's
-/// wrapper and the record it promotes), and the switch puts the copy's third back.
+/// 2000 rounds; the named control and the lifted cell mint one store a call (the callee's
+/// wrapper, whose store `(R-ReturnField)` hands through at the field's position since
+/// 2026-09-30 — it was two, the wrapper and a copy of the field, before that rule), and the
+/// switch puts the copy's store at the lift back.
 #[test]
 fn the_lifted_cell_mints_as_the_named_control_does() {
     for mode in ["--interpret", "--native"] {
         let named = store_mints(mode, "c1", &[]);
         let lifted = store_mints(mode, "c2", &[]);
-        assert_eq!(named, 4000, "{mode}: the named control's mints");
+        assert_eq!(named, 2000, "{mode}: the named control's mints");
         assert_eq!(lifted, named, "{mode}: the lifted cell's mints");
         let lifted_off = store_mints(mode, "c2", OFF);
         assert_eq!(
