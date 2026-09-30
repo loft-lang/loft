@@ -1198,6 +1198,11 @@ parses; ordinary runs keep the cache.
 - `try { … }` is refused by name, saying what loft does instead (an operation that can fail
   answers a value you test with `== null` or `??`), where it used to stop at a bare
   *"Expect token ;"*.
+- `v = later(); v[0] = 2.5; v[1]` compiles when `later` is declared further down the file.
+  The element store used to be read as a store into `v` itself, and the program was
+  refused with *"Indexing a non vector — keyed collections …"*, which named a construct it
+  never used.  When the function does not exist, that message used to hide the
+  *"Unknown function"* error, and with it the `use` cure the error names.
 
 ---
 

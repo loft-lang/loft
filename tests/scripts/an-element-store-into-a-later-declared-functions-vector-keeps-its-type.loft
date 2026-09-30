@@ -9,6 +9,11 @@
 // callee did not exist at all, that pass-1 refusal also hid the unknown-function error.
 //
 // Cells: element kind (float, integer, struct), store (`=`, `+=`), path (local, field, keyed).
+//
+// @falsified-at: dd64f1c14 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-element-store-into-a-later-declared-functions-vector-keeps-its-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control refuses the program ("Indexing a non vector") on both backends.
+// HOLDS: every assert on both backends (values, lengths, the untouched neighbours).
 
 struct R { a: integer }
 struct B { xs: vector<integer> }
