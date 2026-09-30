@@ -5934,6 +5934,11 @@ use a separate collection or add after the loop"
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
+        if let Value::Var(v) = to.unspan()
+            && matches!(self.vars.tp(*v), Type::Vector(_, d) if !d.is_empty())
+        {
+            self.borrowing_vector_locals.insert((self.context, *v));
+        }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
         // failure for an advisory lint, a false warning is not.
@@ -7203,8 +7208,11 @@ use a separate collection or add after the loop"
     /// delivered this way, into the caller buffer its call mints; this gives a native
     /// result the same shape.
     ///
-    /// Pass 2 only (`work_refs_p2`), because the dep list it reads is only complete then.  An
-    /// OWNED local (empty deps) is not taken: it adopts the store itself, and its rebind frees
+    /// The FIRST bind is taken too when a later bind borrows (`p = keys(); … p = ["x"]`): the
+    /// local's type is one per local, so once it borrows anywhere nothing frees it anywhere,
+    /// and the store its first bind adopted leaked on every path (`borrowing_vector_locals`
+    /// is how pass 2 knows at that first bind).  Pass 2 only (`work_refs_p2`).  A local that
+    /// never borrows is not taken: it adopts the store itself, and its rebind frees
     /// the one it displaces.  A bare `Call` with a dep-free vector type is the fresh-store
     /// proxy the bind reads too; a projection or a view carries its source in its deps.
     fn own_fresh_rebind(&mut self, to: &Value, code: &mut Value, s_type: &mut Type, op: &str) {
@@ -7218,9 +7226,11 @@ use a separate collection or add after the loop"
         let Type::Vector(elm, deps) = s_type.clone() else {
             return;
         };
+        let borrows = matches!(self.vars.tp(v), Type::Vector(_, d) if !d.is_empty())
+            || self.borrowing_vector_locals.contains(&(self.context, v));
         if !deps.is_empty()
             || self.vars.is_argument(v)
-            || !matches!(self.vars.tp(v), Type::Vector(_, d) if !d.is_empty())
+            || !borrows
             || !matches!(code.unspan(), Value::Call(..))
         {
             return;
