@@ -35,8 +35,16 @@ written in its `releases/<cycle>/README.md`; what work is in scope during a cycl
 ### Documentation validation — required for EVERY release
 
 **No release is tagged until its documentation has been validated against the build it ships,
-in all three parts** (owner).  The checklist row `M-doc-validation` blocks the tag until it is
-ticked with the evidence of each part:
+in all three parts** (owner) — and the validation runs **twice per cycle**:
+
+- **Halfway through the cycle, in full** (`M-doc-validation-mid`, `[mid]`): the three parts
+  below over the whole corpus.  A full pass surfaces defects, not only stale sentences, and
+  halfway leaves the time to fix them before the tag.
+- **Before the tag, over what moved since** (`M-doc-validation`, `[pre]`): the same three
+  parts, bounded by the halfway pass — its commit is the watermark, so only the libraries,
+  sections and `@F` entries whose source moved since then are re-read.
+
+Both rows block the tag until ticked with the evidence of each part:
 
 1. **Library documentation** — every library that owes a review or moved since its
    watermark has been read and its watermark bumped:
@@ -49,13 +57,14 @@ ticked with the evidence of each part:
    cache holding every published library at its latest version, and commit what it writes),
    `scripts/doc_review.py` reads every section cleared, and its sign-offs are committed in
    `.doc_review_ledger`, so the next release starts from them (§ 0 below).
-3. **Feature catalogue** — `make features-review SINCE=<previous release tag>` lists every
-   `@F` entry whose citing source moved since the last release; each is re-read against the
+3. **Feature catalogue** — `make features-review SINCE=<previous release tag>` (at the
+   halfway pass; `SINCE=<the halfway pass's commit>` before the tag) lists every `@F` entry
+   whose citing source moved; each is re-read against the
    build (every limitation, "not supported" and "planned" claim probed on both backends, the
    stated outputs hand-checked) and its issue corrected where it is stale; every feature
    example runs on both backends; and `index/features.json` matches the live tracker
-   (`make features-fetch` leaves no diff).  The previous release tag IS the feature half's
-   watermark.
+   (`make features-fetch` leaves no diff).  The previous release tag is the halfway pass's
+   watermark; the halfway pass's commit is the pre-tag pass's.
 
 A structural aid reading clean is not the validation: the aids say what moved, the reads say
 whether it is still TRUE.  The rest of this section is the method for part 1.
@@ -704,7 +713,7 @@ run of every nightly against HEAD's commit, measured), the dependency audit (`A-
 (`A-consumers`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
-per-release work (`M-doc-validation`, `M-monthly-bugs`, `M-close-plans`, `M-file-split`, and
+per-release work (`M-doc-validation-mid`, `M-doc-validation`, `M-monthly-bugs`, `M-close-plans`, `M-file-split`, and
 `M-perf-pass` — the performance read over loft AND its libraries; @PLN158 grows it
 into per-routine benches with industry reference twins).  `A-deviations` blocks a release on
 any open formal deviation a release can resolve: each has a tracking issue, and the only ones

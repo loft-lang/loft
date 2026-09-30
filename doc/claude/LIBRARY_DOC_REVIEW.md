@@ -8,8 +8,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > Origin: [@PLN141](lib_plans/141-library-worked-examples/README.md) (worked
 > examples). Run for **every release**, before the tag: it is part 1 of the release's
 > documentation validation ([RELEASE.md § Documentation validation — required for EVERY
-> release](RELEASE.md)), and the checklist row `M-doc-validation` blocks the tag until it is
-> done.  The automated `check_doc_drift.sh examples` gate additionally blocks dangling or
+> release](RELEASE.md)): it runs in full halfway through the cycle (`M-doc-validation-mid`)
+> and over what moved since then before the tag (`M-doc-validation`); both rows block the tag
+> until they are done.  The automated `check_doc_drift.sh examples` gate additionally blocks dangling or
 > duplicate citations inside loft, and only advises in a library repo (below).
 
 ## Why a by-hand pass exists
@@ -83,7 +84,7 @@ actually moved, not all ~350 public functions.
 - **The other half of the pass:** the feature catalogue (`@F`/`@I`) is reviewed with
   the same release through `make features-review SINCE=<previous release tag>`, with
   `make features-check` as its pre-flight — the previous tag is its watermark. Same two
-  questions, and the same requirement: both halves are part of `M-doc-validation`, so
+  questions, and the same requirement: both halves are part of `M-doc-validation-mid` and `M-doc-validation`, so
   run both and treat the union as one worklist.
 
 ## The pass — per library
@@ -265,7 +266,7 @@ release is the owner's step.
 
 - **Not a gate on its own aids.** `make libraries-review` and `make features-review` are
   reports that never fail; what blocks the release is the checklist row
-  `M-doc-validation`, ticked once the reads they list are done.
+  `M-doc-validation-mid` and `M-doc-validation`, ticked once the reads they list are done.
 - **Not a full re-sweep.** The watermark + changed-since worklist bound each
   pass to what moved. A month with no library changes is a five-minute pass.
 - **Not a coverage mandate.** A low citation count is healthy when the uncited
