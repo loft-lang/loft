@@ -5,9 +5,6 @@
 // Functions for searching, transforming, and classifying text and character values.
 // Character classification functions return true only if every character in the text satisfies the condition.
 // The single-character variants test one code point.
-// (`starts_with` / `ends_with` moved to `02_files.loft` so the path
-// helpers there can call them; both still available as `text.starts_with`
-// / `text.ends_with`.)
 // Returns true if self contains `prefix` starting at byte position
 // `pos`.  Sugar over `self[pos..pos + prefix.size()] == prefix` for
 // the common "is this token at this offset?" pattern in scanners /
@@ -63,9 +60,6 @@ pub fn char_slice(self: text, from: integer, to: integer) -> text {
   cs_out
 }
 #pure
-// (Path helpers `dir` / `basename` / `join` / `resolve` moved to
-// `02_files.loft` § Path helpers, so they're available before
-// `03_text.loft` loads — same call shape, same `pub fn` signatures.)
 // Removes leading and trailing whitespace. Use when processing user input or file content.
 pub fn trim(self: text) -> text[self];
 #rust"@self.trim()"
@@ -91,10 +85,8 @@ pub fn rfind(self: text, value: text) -> integer?;
 #rust"if let Some(v) = @self.rfind(@value) {{ v as i64 }} else {{ i64::MIN }}"
 #pure
 // Returns true if value appears anywhere in self.
-// `s.contains(v)` == `s.find(v) != null` — `find` returns the position, `contains`
-// is its found?/not-found? projection.  NOT superseded: `contains` is the clearer
-// idiom for a membership test (a boolean predicate), and folding it onto `find`
-// (below) is an implementation detail, not a reason to steer callers away from it.
+// `s.contains(v)` is `s.find(v) != null`: `find` answers the position, `contains`
+// only whether there is one — the clearer spelling for a membership test.
 pub fn contains(self: text, value: text) -> boolean {
   self.find(value) != null
 }
@@ -103,6 +95,9 @@ pub fn contains(self: text, value: text) -> boolean {
 pub fn replace(self: text, value: text, with: text) -> text;
 #rust"@self.replace(@value, @with)"
 #pure
+
+// --- Text: case and classification ---
+
 // Returns a lowercase copy. Use for case-insensitive comparisons.
 pub fn to_lowercase(self: text) -> text;
 #rust"@self.to_lowercase()"
@@ -238,9 +233,10 @@ pub fn arguments() -> vector<text>;
 // reader looks for them.  MOVING them instead would be wrong: definition order is the
 // order types are minted and the native `init()` replays that order, so relocating
 // `vector<u8>`'s first mention renumbers every type id after it.
-// --- Text ---
-// Return the BYTE at position `i` (0..len) as integer 0-255,
-// or 0 for out-of-bounds.  Unlike `text[i]` which decodes the
+// --- Text: bytes and code points ---
+// Return the BYTE at position `i` (0 up to `size()`) as integer 0-255,
+// or 0 for out-of-bounds; a negative `i` counts from the end, as a slice
+// bound does (`byte_at(-1)` is the last byte).  Unlike `text[i]` which decodes the
 // UTF-8 codepoint containing byte `i` (walking back through
 // continuation bytes), `byte_at(i)` is a pure O(1) byte read.
 // Use in ASCII-heavy scanning hot paths (tokenisers, regex-
@@ -292,7 +288,9 @@ pub fn ymd_days_ago(days: integer) -> text;
 #rust"Stores::ymd_days_ago_native(@days)"
 #impure(host_io)
 // Returns the current working directory, optionally with v appended as a subpath.
-// Use to construct absolute paths relative to where the program was launched.
+// loft sets the working directory to the program's own directory, so this is
+// that directory — unless the file declares `#cwd`, which keeps the directory
+// the program was launched from.
 pub fn directory(v: text = "") -> text;
 #rust"Stores::os_directory_native(@v)"
 #impure(host_io)
@@ -302,7 +300,10 @@ pub fn user_directory(v: text = "") -> text;
 #rust"Stores::os_home_native(@v)"
 #impure(host_io)
 // Returns the directory containing the running executable, optionally with v appended.
-// Use to locate assets bundled alongside the program.
+// Use to locate assets shipped beside a compiled program.  Under the interpreter
+// the executable is the `loft` binary itself, and a `--native` run executes from a
+// temporary build directory, so neither names the script's directory — use
+// `source_dir()` for that.
 pub fn program_directory(v: text = "") -> text;
 #rust"Stores::os_executable_native(@v)"
 #impure(host_io)

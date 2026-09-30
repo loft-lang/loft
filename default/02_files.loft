@@ -4,7 +4,6 @@
 // --- File System ---
 // Types and functions for reading and writing files.
 // A File value is obtained via file() and carries the path, format, and an internal reference.
-// An environment variable as a name/value pair.
 // Capability groups — the fs/env split a sandbox profile grants via
 // `fs#read` / `fs#update` / `env#read`; the functions below link in their signature.
 capability fs
@@ -154,10 +153,10 @@ pub fn content(self: const File) -> text?fs#read {
   // tell from a genuinely empty file, so answer null.  `read_bytes(path)` reads
   // such a file exactly; `f#format = LittleEndian; f#read(n)` reads it field by field.
   if size(result) == 0 && self.size > 0 { return null }
+  // Par-safe: reads the file into a worker-local store; the host bridge
+  // serialises filesystem access.
   result
 }
-// Par-safe: reads the file into a worker-local store; the host bridge
-// serialises filesystem access.
 #impure(io)
 // Reads the file and splits it into lines.
 // Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce
@@ -208,9 +207,6 @@ pub fn split(self: text, separator: character) -> vector<text> {
 //   - empty separator → returns `[self]` unchanged (no infinite-split)
 //   - separator never matches → returns `[self]`
 //   - separator at start / end → produces empty boundary entries
-//
-// Named `split_text` (not an overload of `split`) because loft does not
-// overload by non-self parameter type.
 
 pub fn split_text(self: text, separator: text) -> vector<text> {
   out: vector<text> = [];
@@ -233,26 +229,25 @@ pub fn split_text(self: text, separator: text) -> vector<text> {
   out
 }
 #pure
-// --- File System ---
+// --- Files and directories ---
 // Returns the platform path separator character: '\' on Windows, '/' elsewhere.
-// Detected once at startup from the runtime filesystem.
+// Detected once at startup from the runtime filesystem, and fixed for the
+// lifetime of the process.
 
 pub fn path_sep() -> character;
-// #impure(host_io): reads a host-detected constant.  It is fixed for
-// the lifetime of a process, but the runtime caches it inside Stores,
-// so the access is observable and the function cannot be #pure.
 #impure(host_io)
 // Use as the entry point for all file I/O.
-// A relative path resolves against the program's own directory, so
-// `../data.txt` names the file above the script — the same file an absolute path
-// would name, and it answers the same either way.
+// A relative path resolves against the program's own directory (or against the
+// working directory under `#cwd`), so `../data.txt` names the file above the
+// script — the same file an absolute path would name, and it answers the same
+// either way.
 
 pub fn file(path: text) -> File fs#read {
   result = File { path: path, ref: null };
   OpGetFile(result);
+  // Stat-equivalent filesystem read; par-safe.
   result
 }
-// Stat-equivalent filesystem read; par-safe.
 #impure(io)
 // Use to check whether a path is accessible before reading or writing it.
 // A RELATIVE path resolves against the program's own directory, or against the
@@ -261,9 +256,9 @@ pub fn file(path: text) -> File fs#read {
 // `fs` capability a `[sandbox]` profile grants or withholds.
 
 pub fn exists(path: text) -> boolean fs#read {
+  // Filesystem stat (via file()); par-safe.
   file(path).format != Format.NotExists
 }
-// Filesystem stat (via file()); par-safe.
 #impure(io)
 // Method form: f = file("path"); if f.exists() { .. }
 // Also callable as exists(file_obj): a `self` first parameter gives a function
@@ -279,9 +274,9 @@ pub fn exists(self: const File) -> boolean fs#read {
 
 pub fn delete(path: text) -> FileResult fs#update {
   if !exists(path) { return FileResult.NotFound }
+  // Par-safe filesystem write; the host bridge serialises mutations.
   fs_result(OpDelete(path))
 }
-// Par-safe filesystem write; the host bridge serialises mutations.
 #impure(io)
 // Use to rename or relocate a file.  The destination must not already exist
 // (FileResult.Other if it does), and a missing source is FileResult.NotFound.
@@ -293,9 +288,9 @@ pub fn move(from: text, to: text) -> FileResult fs#update {
   fs_result(OpMoveFile(from, to))
 }
 #impure(io)
-// Create a single directory level; the parent must already exist.
-// FileResult.Other when the directory is already there.  There is no
-// counterpart that REMOVES a directory.
+// Create a single directory level; the parent must already exist
+// (FileResult.NotFound when it does not).  FileResult.Other when the directory
+// is already there.  rmdir() removes an empty directory again.
 
 pub fn mkdir(path: text) -> FileResult fs#update {
   fs_result(OpMkdir(path))
@@ -303,8 +298,8 @@ pub fn mkdir(path: text) -> FileResult fs#update {
 #impure(io)
 // Create a directory and all missing parents (like Unix mkdir -p).
 // Idempotent: a directory that already exists is FileResult.Ok, which is what
-// makes it safe on the way into a run.  There is no counterpart that REMOVES a
-// directory.
+// makes it safe on the way into a run.  rmdir() removes an empty directory
+// again.
 
 pub fn mkdir_all(path: text) -> FileResult fs#update {
   fs_result(OpMkdirAll(path))
@@ -345,6 +340,9 @@ pub fn is_symlink(path: text) -> boolean fs#read;
 pub fn list_dir(path: text) -> vector<text> ?fs#read;
 #rust"stores.fs_list_dir(@path)"
 #impure(io)
+
+// --- Binary file I/O ---
+
 // Reads the whole file `path` as raw bytes.  A MISSING / unreadable
 // file reads as NULL (distinct from an EMPTY file, `[]`); discharge with `?? []`
 // to keep the old shape.  Binary-exact (round-trips with write_bytes); use for
@@ -369,22 +367,16 @@ pub fn file_map(path: text) -> vector<u8> ?fs#read;
 pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update;
 #rust"stores.fs_write_bytes(@path, @bytes)"
 #impure(io)
-// Truncate or extend the file to exactly `size` bytes.
-// Truncating removes bytes beyond `size`; extending fills with null bytes.
-// Returns FileResult.NotFound if the file does not exist; FileResult.IsDirectory
-// if the path is a directory; FileResult.Other if size is negative.
-
 // Modification time of `path` as Unix epoch SECONDS (integer —
 // same i64 representation as file.size).  Returns 0 on missing
-// file / IO error / pre-epoch dates — caller treats 0 as
-// "unknown" (matches scan.sh's `stat -c %Y || echo 0` fallback).
-// Takes a path string rather than a File handle so the native +
-// interp dispatch both use the same `n_mtime` registration.
+// file / IO error / pre-epoch dates — treat 0 as "unknown".
 // Use for date-window filters: convert the returned seconds to YYYY-MM-DD and
 // compare lexicographically against `ymd_days_ago(N)`.
 pub fn mtime(path: text) -> integer fs#read;
 #rust"Stores::os_mtime_native(@path)"
 #impure(host_io)
+
+// --- Persistent stores ---
 
 // Durable-store integrity check.  Returns true
 // iff the `.dmeta` sidecar at `<path>.dmeta` validates against the
@@ -426,7 +418,7 @@ pub fn store_durable_seal(path: text) -> boolean fs#update;
 // iterates AND key-looks-up correctly.  A reference that is NOT its own
 // Store root fails soft (returns `false`), same as any I/O error.
 //
-// First call on a path that does NOT yet exist: serialises the
+// First call on a path that does NOT exist: serialises the
 // current in-memory Store at the reference's slot to disk (padded to
 // a valid ≥1024-word image with a tail free block), then mmaps it
 // back.  Caller's existing DbRefs into that slot remain valid.
@@ -459,9 +451,7 @@ pub fn store_durable_seal(path: text) -> boolean fs#update;
 // into a bare `hash<PaintedHex[q, r]>`.  Both are usable; they are just
 // different files.  Bind through the container consistently, or bind a local
 // of the collection's own type when another program has to read the file.
-// The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its
-// own record and the comparison-based kinds hold no per-process state, so
-// every persisted image is portable across processes.
+// The compiler advises at the call when the argument is a field.
 pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update;
 #rust"stores.bind_path((@r).store_nr, std::path::Path::new(@path))"
 #impure(io)
@@ -648,24 +638,9 @@ pub fn store_release(r: reference) -> integer fs#update;
 #rust"stores.release_store((@r).store_nr)"
 #impure(io)
 
-// Working-set load: fetch ONE integer-keyed entry from a persisted HASH image
-// into the empty local hash `local`, reading only the pages the lookup touches
-// — not the whole file. The bounded-fetch counterpart of `store_load`, for when
-// `local` should hold only the entries actually asked for (a phone pulling the
-// few map tiles a route needs from a large block). `path` is a local file or an
-// `http(s)://` URL served with `Range`, on every target including the browser
-// (`--html`), where the fetch goes through the same bridge `store_load_url_trusted`
-// uses. Returns false when the key is absent, the file is unreadable, or the
-// collection is not an integer-keyed hash.
-//
-// The entry's own fields are RELOCATED into the local store, so `text`, nested
-// structs and flat vectors all come across; only a `vector<text>` or a
-// `vector<vector>` is refused (its element pointers would dangle), and a refusal
-// says so on stderr rather than looking like an absent key.
-//   tiles: hash<Tile[id]> = []
-//   store_load_key(tiles, "block.store", 42)   // tiles now holds entry 42 only
+// --- Lazy stores ---
+
 // @F108 — Lazy store binding (catalogue anchor, @PLN92)
-//
 // Bind a COLLECTION to a lazy source. After this, a lookup that
 // MISSES fetches that one entry and inserts it, so the next lookup is an ordinary
 // resident hit; a lookup that hits never leaves the process. The collection is
@@ -697,8 +672,8 @@ pub fn store_release(r: reference) -> integer fs#update;
 // nothing.
 //
 // FALSE means the binding was not made, and it is worth checking. A `.store`
-// IMAGE is read a page at a time, which only a `hash` or a `trie` supports: a
-// `sorted`, `index` or `spatial` bound to one is refused HERE, at the call that
+// IMAGE is read a page at a time, which only a `hash`, a `trie` or a `spatial`
+// supports: a `sorted` or `index` bound to one is refused HERE, at the call that
 // is wrong, rather than answering `null` at every later lookup. Those
 // kinds load whole — `store_load` / `store_load_url_trusted` carry all of them.
 // A DATABASE source judges its own schema on the first fault instead, since what
@@ -813,12 +788,25 @@ pub fn store_lazy_clear(local: reference) -> boolean;
 pub fn store_lazy_fail(local: reference, why: text) fs#read;
 #rust"stores.lazy_fail(&(@local), @why)"
 
-// Fetch ONE integer-keyed entry from a persisted collection image into `local`,
-// reading only the pages the lookup touches. The singular of `store_load_keys`
-// and the integer form of `store_load_key_text`; returns false when the key is
-// absent or the image cannot serve this collection.
+// --- Paged store loading ---
+
+// Working-set load: fetch ONE integer-keyed entry from a persisted HASH image
+// into the empty local hash `local`, reading only the pages the lookup touches
+// — not the whole file. The bounded-fetch counterpart of `store_load`, for when
+// `local` should hold only the entries actually asked for (a phone pulling the
+// few map tiles a route needs from a large block). The singular of
+// `store_load_keys` and the integer form of `store_load_key_text`. `path` is a
+// local file or an `http(s)://` URL served with `Range`, on every target
+// including the browser (`--html`), where the fetch goes through the same bridge
+// `store_load_url_trusted` uses. Returns false when the key is absent, the file
+// is unreadable, or the collection is not an integer-keyed hash.
+//
+// The entry's own fields are RELOCATED into the local store, so `text`, nested
+// structs and flat vectors all come across; only a `vector<text>` or a
+// `vector<vector>` is refused (its element pointers would dangle), and a refusal
+// says so on stderr rather than looking like an absent key.
 //   tiles: hash<Tile[id]> = []
-//   store_load_key(tiles, "block.store", 42)
+//   store_load_key(tiles, "block.store", 42)   // tiles now holds entry 42 only
 pub fn store_load_key(local: reference, path: text, key: integer) -> boolean fs#read;
 #rust"stores.load_key(&(@local), @path, @key)"
 #impure(io)
@@ -912,8 +900,12 @@ pub fn store_load_range(local: reference, path: text, lo: integer, hi: integer) 
 #rust"stores.load_range(&(@local), @path, @lo, @hi)"
 #impure(io)
 
-// Truncates or extends the file to `size` bytes. Returns FileResult.Ok, or an
-// error variant (IsDirectory / NotFound / Other).
+// --- Binary file I/O ---
+
+// Truncates or extends the file to `size` bytes; extending fills with zero bytes.
+// Returns FileResult.Ok, FileResult.NotFound when the file does not exist,
+// FileResult.IsDirectory for a directory, and FileResult.Other for a negative
+// `size` or a failed OS call.
 pub fn set_file_size(self: File, size: integer) -> FileResult fs#update {
   if self.format == Format.Directory { return FileResult.IsDirectory }
   if self.format == Format.NotExists { return FileResult.NotFound }
@@ -925,15 +917,11 @@ pub fn set_file_size(self: File, size: integer) -> FileResult fs#update {
 // Moves the read/write position to `pos` bytes from the start, for random access
 // into a binary file: read an index, jump to the record it names, read that.
 //
-// Equivalent to `self#next = pos`, which is the operator form and has always
-// worked; this is the NAME the operation was already documented under, and a
-// consumer who reached for it (three call forms, all of them this one) concluded
-// random access was unsupported and restructured their file format around it.
+// Equivalent to `self#next = pos`, the operator form.
 //
 // Returns false — a no-op — when there is nothing to seek in: a directory, an
-// absent file, a negative `pos`, or a file the process has not yet read from or
-// written to (the OS handle is opened by the first I/O, so seeking before it
-// exists has nothing to move).  Seeking PAST the end is allowed: the position is
+// absent file, or a negative `pos`.  A seek before the first read or write is
+// remembered and applies to it.  Seeking PAST the end is allowed: the position is
 // remembered and a following write extends the file, which is how a free-list or
 // an update-in-place walk lands.
 pub fn seek(self: File, pos: integer) -> boolean fs#update {
@@ -968,12 +956,14 @@ pub fn sync(self: File) -> boolean fs#update {
   OpSyncFile(self)
 }
 #impure(io)
+
+// --- Files and directories ---
+
 // Returns the entries inside a directory, sorted by path — the same order as
 // `list_dir`, so an index into either listing means the same entry.
 // The File must have format == Format.Directory; anything else lists as `[]`
 // (where `list_dir` answers null, because it has no format to check first).
 // Use to iterate over all files in a folder.
-
 pub fn files(self: const File) -> vector<File> fs#read {
   result = [];
   if self.format == Format.Directory { OpGetDir(self.path, result); }
@@ -1022,9 +1012,9 @@ pub fn c_library_available(soname: text) -> boolean env#read;
 #rust"codegen_runtime::c_library_available(@soname, __C_LIBS, __C_LIB_SYMS)"
 #impure(host_io)
 // --- System directories ---
-// Where this machine keeps temporary files, the user's home, and the per-user
-// config, cache and data directories — each answering "" where the platform has
-// no such place.
+// Where this machine keeps temporary files and loft's per-user cache — each
+// answering null on a target with no filesystem (the browser).  The host input
+// and output channels live here too.
 
 // Private native: the OS temp dir, "" only where there is no filesystem.
 fn os_temp_dir() -> text env#read;
@@ -1233,14 +1223,7 @@ fn OpVecSetInt(vec: const u16, size: const u16, idx: const u16, fld: const u16, 
 fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
 #rust"if i64::from(vector::length_vector(&s.get_var::<DbRef>(@vec), &s.database.allocations)) > s.get_var::<i64>(@idx) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
 
-// ── Path helpers (moved from 03_text.loft so they're available
-//    before file-I/O code that wants to compose them) ─────────
-//
-// loft treats paths as plain text; this group adds the most-needed path
-// operations (dir_of / basename / resolve_relative) as methods on text.
-// Pure-loft, slash-separated; Windows backslash normalisation is out of scope.
-// `starts_with` / `ends_with` are dependencies of `join` /
-// `resolve` so they also live here (was 03_text.loft).
+// --- Path helpers ---
 
 // Returns true if self begins with value. Use for prefix matching (e.g., protocol detection).
 pub fn starts_with(self: text, value: text) -> boolean;
@@ -1252,6 +1235,8 @@ pub fn ends_with(self: text, value: text) -> boolean;
 #pure
 
 // Directory part of a path — strips the trailing `/<segment>`.
+// Paths are plain slash-separated text: a `\` is not a separator here, on any
+// platform.
 //   "doc/claude/PROBLEMS.md".dir() → "doc/claude"
 //   "CLAUDE.md".dir()              → ""   (no `/`)
 //   "/etc/passwd".dir()            → "/etc"

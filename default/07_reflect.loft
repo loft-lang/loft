@@ -41,9 +41,10 @@ pub enum TypeKind {
   VariantKind,
   /// A vector — `element` names what it holds.
   VectorKind,
-  /// A keyed collection (hash / index / sorted / ordered / radix) — walked by
-  /// cursor rather than by layout, so it has no fields of its own. Which of the
-  /// five it is, and on which fields, are in `collection` and `keys`.
+  /// A keyed collection (hash / index / sorted / ordered / radix / trie; a
+  /// `spatial` reports as radix) — walked by cursor rather than by layout, so it
+  /// has no fields of its own. Which of the six it is, and on which fields, are
+  /// in `collection` and `keys`.
   KeyedKind,
   /// A stored reference to another record.
   RefKind,
@@ -100,8 +101,7 @@ pub struct KeyInfo {
   ///
   /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
   /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
-  /// be declared descending ever answers `false`. Because
-  /// there is no descending answer to give. Match `collection` first where the
+  /// be declared descending ever answers `false`. Match `collection` first where the
   /// difference between "ascending" and "unordered" matters.
   ascending: boolean,
 }
@@ -128,7 +128,7 @@ pub struct TypeInfo {
   const variants: vector<VariantInfo>,
   /// For a vector or a keyed collection, the element type's name.
   element: text,
-  /// For a keyed collection, which of the five it is; `NotKeyed` otherwise.
+  /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
   collection: CollectionKind,
   /// The key fields of a keyed collection, in KEY ORDER — the order a composite
   /// lookup binds them in, which is why it is a vector and not a set.
@@ -155,22 +155,13 @@ pub struct TypeInfo {
 /// ```
 ///
 /// **Not inside a generic.** A generic body is parsed ONCE against its type
-/// variable, so `type_of(v)` there answers `__typevar_T` — the same reason
-/// `"{v:j}"` in a generic body renders `{}`. Call it where the concrete type is
-/// known. Making it work inside a generic needs the body parsed per
-/// instantiation, which is a different plan.
+/// variable, so `type_of(v)` there answers a type-variable placeholder
+/// (`__typevar_T…`) — the same reason `"{v:j}"` in a generic body renders `{}`.
+/// Call it where the concrete type is known.
 ///
 /// Describes a TYPE. To read what a VALUE holds at one of these positions, use
-/// `field_value`. WRITING a value by field is a separate and larger question,
-/// deliberately still out of scope.
-//
-// `type_of(x)` is intercepted in `src/parser/control.rs` and lowered to
-// `n_reflect_type(<type-id>)`, so the id is a parse-time constant on both
-// backends — the same mechanism `to_json` uses, and the reason the answer does
-// not depend on a runtime name lookup.
+/// `field_value`. Reflection offers no way to WRITE a value by field.
 pub fn reflect_type(kt: integer) -> TypeInfo;
-// Reads the store's type table through `Stores::layout_descriptor` and
-// allocates the answer into the caller's own stores → par-safe.
 #impure(host_io)
 
 /// The declared shape of the type called `name`, or `null` if this program has
@@ -190,7 +181,9 @@ pub fn reflect_type(kt: integer) -> TypeInfo;
 /// handle it rather than read a plausible-looking empty answer.
 ///
 /// A name is matched exactly as the store records it, which is the loft type
-/// name — `Point`, `text`, `vector<Point>`.
+/// name — `Point`, `text`, `vector<Point>`.  A composite name such as
+/// `vector<Point>` exists only when the program uses that type somewhere; a
+/// program that never does answers `null` for it.
 //
 // Unlike `type_of`, no parser intercept: the name is a RUNTIME value, so the
 // lookup is a runtime one. It works on `--native` because the generated `init()`
@@ -211,6 +204,7 @@ pub fn type_named(name: text) -> TypeInfo?;
 /// | `CharacterKind` | `i` — the code point |
 /// | `FloatKind` · `SingleKind` | `f` |
 /// | `TextKind` | `t` |
+/// | `RecordKind` · `VectorKind` · `KeyedKind` · `RefKind` | nothing — no scalar reading |
 /// | `OtherKind` | nothing — see `field_value` |
 ///
 /// A boolean and a character ride in `i` for the reason a bound SQL value does:
@@ -252,11 +246,11 @@ pub struct ValueInfo {
 ///
 /// **The position is CHECKED against the type's own descriptor, never trusted.**
 /// A number that does not begin a field — a hand-made offset, a stale one, a
-/// position from a different type — answers `OtherKind`, which is also what a
-/// field whose type has no scalar reading (a nested record, a vector, a keyed
-/// collection, a stored reference) answers. So there is no offset a caller can
-/// pass that reads bytes belonging to something else, which is what makes this
-/// ordinary loft rather than a pointer.
+/// position from a different type — answers `OtherKind`. A field whose type has
+/// no scalar reading (a nested record, a vector, a keyed collection, a stored
+/// reference) answers its own kind with no payload. So there is no offset a
+/// caller can pass that reads bytes belonging to something else, which is what
+/// makes this ordinary loft rather than a pointer.
 ///
 /// `kind` is the DESCRIPTOR's answer, not the caller's: passing the position of
 /// an `integer` field does not make the reading an integer, it makes it whatever
@@ -269,17 +263,7 @@ pub struct ValueInfo {
 /// half is an EMPTY ROW rather than an error: the write succeeds and the columns
 /// are missing. So it is a compile error naming the type variable. Call it one
 /// frame out, where the type is known, and pass the values in.
-//
-// `field_value(x, position)` is intercepted in `src/parser/control.rs` and
-// lowered to `reflect_field(x, position, <type-id>)`, so the id is a parse-time
-// constant on both backends — the same mechanism `type_of` and `to_json` use.
-//
-// The value parameter is declared `TypeInfo` only because loft has no way to
-// spell "any record"; the parser substitutes the real argument, and only the
-// reference ABI matters here. `struct_to_json` (06_json.loft) does the same.
 pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -> ValueInfo;
-// Reads through the SAME `Parts::Struct` field list the store itself is walked
-// by, and allocates the answer into the caller's own stores → par-safe.
 #impure(host_io)
 
 /// The value at the end of a PATH of positions — `field_value(x, [8, 0])`.
@@ -308,9 +292,5 @@ pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -> V
 /// field there.
 ///
 /// A one-element path is the single-position form, and answers identically.
-//
-// `field_value(x, path)` is intercepted in `src/parser/control.rs` beside the
-// single-position form and lowered to `reflect_field_path(x, path, <type-id>)`,
-// so the type id is a parse-time constant on both backends.
 pub fn reflect_field_path(value: const TypeInfo, path: const vector<integer>, kt: integer) -> ValueInfo;
 #impure(host_io)

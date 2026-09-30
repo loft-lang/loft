@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @F1 @F4 @F38 @F39 @F44 — catalogue anchors (@PLN92); see loft-lang/features
 // --- Types ---
-// Primitive types built into lav.
+// Primitive types built into loft.
 // True or false value.
 pub type boolean size(1);
 // 64-bit signed integer.
@@ -39,14 +39,10 @@ pub type i32 = integer size(4);
 // `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is
 // NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32`
 // above says why the two differ).  size(4) forces 4-byte storage
-// and serialisation symmetric with `i32`.  Stored as Parts::Int so the
-// in-memory representation is signed i32; values in the upper half
-// (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but
-// read back as negative i64s in expressions.  For full 0..2^32-1
-// values needed in expression-time arithmetic, declare the field /
-// variable as plain `integer` (8-byte) instead — `u32` is for the
-// file / wire-format use cases (magic numbers, counts, tick fields)
-// where the byte width is the load-bearing property.
+// and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2)
+// reads back as the same positive integer.  `u32` is for file / wire-format fields (magic
+// numbers, counts, tick fields) where the byte width is the load-bearing property; plain
+// `integer` holds the whole 0..2^32-1 range and more.
 pub type u32 = integer limit(0, 4294967294) size(4);
 // --- Interfaces ---
 // Standard interfaces for bounded generic functions.
@@ -87,9 +83,8 @@ pub interface Addable {
 // Satisfied by integer, single, float, and user types defining OpMul and OpMin.
 //
 // Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
-// declare both arities of `-`, so keeping them apart is a choice about the shipped surface
-// rather than a limitation: adding a requirement to `Numeric` would take satisfaction away
-// from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
+// declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction
+// away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
 // release may not do.
 pub interface Numeric {
   op * (self: Self, other: Self) -> Self
@@ -102,14 +97,18 @@ pub interface Numeric {
 // A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
 // one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
 // so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
-// interfaces that each name `OpMin`.
+// interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type
+// satisfies one of the two: it can define `OpMin` at one arity only (a second definition is
+// refused as a redefinition), as pinned by
+// `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 pub interface Subtractable {
   op - (self: Self, other: Self) -> Self
 }
 
 // Types that support integer scaling via a `scale` method.
-// Uses a method (not `op *`) because a `<T: Numeric + Scalable>` would then need two
-// signatures of one name from ONE bound set, which is refused.
+// Uses a method (not `op *`): inside a `<T: Numeric + …>` body, `*` already means
+// Numeric's `Self * Self`, so `x * 2` there is refused ("operator '*' requires a concrete
+// type") even when another bound declares `op * (self: Self, f: integer)`.
 // Two SEPARATE generics may each bound their own `T` by an interface declaring the same
 // method differently — a header binds its own type variable.
 // User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -> integer`.
@@ -163,8 +162,9 @@ fn OpNot(v1: boolean) -> boolean;
 // --- Math ---
 // Functions for numeric computation.
 // All trigonometric functions work in radians.
-// Both single and float variants exist for every function —
+// Both single and float variants exist for every floating-point function —
 // choose single for speed, float for precision.
+
 // Integer operations
 // The declared-RANGE guard, applied to the VALUE at a store into a slot that
 // declares one (`integer limit(lo, hi)`, a narrow width).  A value outside `lo..=hi` takes
@@ -394,13 +394,13 @@ pub fn tan(self: single) -> single {
   OpMathFuncSingle(2, self)
 }
 #pure
-// Arc cosine. Returns the angle (in radians) whose cosine is v.
+// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
 
 pub fn acos(self: single) -> single? {
   OpMathFuncSingle(3, self)
 }
 #pure
-// Arc sine. Returns the angle whose sine is v.
+// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
 
 pub fn asin(self: single) -> single? {
   OpMathFuncSingle(4, self)
@@ -432,7 +432,7 @@ pub fn round(self: single) -> single {
   OpMathFuncSingle(8, self)
 }
 #pure
-// Square root. Use for distances and normalization.
+// Square root. Use for distances and normalization. Null for a negative value.
 
 pub fn sqrt(self: single) -> single? {
   OpMathFuncSingle(9, self)
@@ -441,13 +441,13 @@ pub fn sqrt(self: single) -> single? {
 
 fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f32::NAN }}"
-// Arc tangent of y/x, preserving the correct quadrant.
+// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 // Use instead of atan when you have separate x/y components.
 pub fn atan2(self: single, v2: single) -> single {
   OpMathFunc2Single(0, self, v2)
 }
 #pure
-// Logarithm of v in the given base.
+// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
 // Use for converting between scales (e.g., decibels).
 
 pub fn log(self: single, v2: single) -> single? {
@@ -457,7 +457,8 @@ pub fn log(self: single, v2: single) -> single? {
 
 fn OpPowSingle(v1: single, v2: single) -> single;
 #rust"@v1.powf(@v2)"
-// Raises base to the power exp.
+// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
+// is not a real number (`pow(-8.0, 0.5)`).
 // Use for exponential growth curves and scaling.
 pub fn pow(self: single, v2: single) -> single? {
   OpPowSingle(self, v2)
@@ -536,13 +537,13 @@ pub fn tan(self: float) -> float {
   OpMathFuncFloat(2, self)
 }
 #pure
-// Arc cosine. Returns the angle (in radians) whose cosine is v.
+// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
 
 pub fn acos(self: float) -> float? {
   OpMathFuncFloat(3, self)
 }
 #pure
-// Arc sine. Returns the angle whose sine is v.
+// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
 
 pub fn asin(self: float) -> float? {
   OpMathFuncFloat(4, self)
@@ -574,7 +575,7 @@ pub fn round(self: float) -> float {
   OpMathFuncFloat(8, self)
 }
 #pure
-// Square root. Use for distances and normalization.
+// Square root. Use for distances and normalization. Null for a negative value.
 
 pub fn sqrt(self: float) -> float? {
   OpMathFuncFloat(9, self)
@@ -583,13 +584,13 @@ pub fn sqrt(self: float) -> float? {
 
 fn OpMathFunc2Float(fn_id: const i8, v1: float, v2: float) -> float;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f64::NAN }}"
-// Arc tangent of y/x, preserving the correct quadrant.
+// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
 // Use instead of atan when you have separate x/y components.
 pub fn atan2(self: float, v2: float) -> float {
   OpMathFunc2Float(0, self, v2)
 }
 #pure
-// Logarithm of v in the given base.
+// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
 // Use for converting between scales (e.g., decibels).
 
 pub fn log(self: float, v2: float) -> float? {
@@ -599,7 +600,8 @@ pub fn log(self: float, v2: float) -> float? {
 
 fn OpPowFloat(v1: float, v2: float) -> float;
 #rust"@v1.powf(@v2)"
-// Raises base to the power exp.
+// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
+// is not a real number (`pow(-8.0, 0.5)`).
 // Use for exponential growth curves and scaling.
 pub fn pow(self: float, v2: float) -> float? {
   OpPowFloat(self, v2)
@@ -1110,7 +1112,8 @@ fn OpSetText(v1: reference, fld: const u16, val: text);
 // --- Collections ---
 // Operations on vector<T> — the primary ordered collection type.
 // Vectors are grown by appending with += and elements are accessed by index.
-// All structures are passed by reference instead of by value
+// A vector or struct passed to a function is passed by reference: the callee's appends and
+// element writes reach the caller.  Binding one to a new local (`w = v`) copies it.
 type vector size(4);
 type sorted size(4);
 // All vectors are referenced by the field that points towards them.
@@ -1375,8 +1378,8 @@ fn OpHashRemove(data: reference, rec: reference, tp: const u16);
 // C60 Step 3a-part2: iterate a hash in ascending key order.
 // Returns a fresh vector<reference<T>> with the hash's records sorted
 // by key field(s).  The parser desugars `for e in h { … }` into a
-// call with the hash's type id; direct user calls need to supply the
-// id via `sizeof`-style introspection (not yet exposed).  Inefficient
+// call with the hash's type id, which loft code cannot name, so the
+// function is reached only through that desugaring.  Inefficient
 // by design — walks + sorts all records per call.  See CAVEATS.md C60.
 fn hash_sorted(h: reference, tp: integer) -> reference;
 #impure(parent_write)
@@ -1475,7 +1478,7 @@ fn OpPanic(message: text);
 pub fn assert(test: boolean, message: text, file: text, line: integer);
 #impure(host_io)
 // Immediately terminates execution with message. Use for unrecoverable error states.
-// In production mode (--production), logs a fatal entry instead of aborting.
+// In production mode (--production), logs a fatal entry and execution continues.
 // The file and line are injected by the compiler; do not pass them manually.
 pub fn panic(message: text, file: text, line: integer);
 #impure(host_io)
@@ -2101,8 +2104,7 @@ pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
 
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
-// (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
-// shim's call resolves — a forward reference to a generic is not yet supported.
+// (the old form keeps working). `sum_of(v)` == `sum(v, 0)`.
 pub fn sum_of(v: const vector<integer>) -> integer {
   sum(v, 0)
 }
@@ -2212,13 +2214,11 @@ pub struct StructField {
   nullable: boolean,
 }
 
-// Built-in `to_text` impls so primitives satisfy `Printable`
-// automatically.  Placed after every OpFormat* / OpAppend*
-// declaration above so format-string interpolation in the bodies
-// can resolve to the relevant built-in.  Without these impls,
 // Converts an integer to its decimal text. Built-in types define `to_text` so
 // they satisfy the `Printable` interface (used by `print`, format strings, …).
 pub fn to_text(self: integer) -> text {
+  // These built-in impls sit after every OpFormat* / OpAppend* declaration above so
+  // format-string interpolation in the bodies resolves to the relevant built-in.
   "{self}"
 }
 // Converts a float to its text representation.
