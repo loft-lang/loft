@@ -761,7 +761,7 @@ fn mentions(n: &Value, v: u16) -> bool {
 /// Does node `n` ITSELF name variable `v` — as a `Var`, or as one of the variants that
 /// carry a variable number outside a `Var` node?  Exhaustive, so a variant added later is a
 /// compile error here instead of a mention this pass cannot see.
-fn names_var(n: &Value, v: u16) -> bool {
+pub(crate) fn names_var(n: &Value, v: u16) -> bool {
     match n {
         Value::Var(x)
         | Value::Set(x, _)
