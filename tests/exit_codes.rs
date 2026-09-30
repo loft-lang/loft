@@ -1885,6 +1885,18 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
         ok && out.contains("main"),
         "symbols answers from a bare copy: {out:?}\n{err}"
     );
+    // The test runner has its own stdlib load, and needs the same answer.
+    std::fs::create_dir_all(tmp.join("t")).expect("test dir");
+    std::fs::write(
+        tmp.join("t").join("a.loft"),
+        "fn test_sum() { assert(\"ab\".len() + 1 == 3, \"sum\"); }\n",
+    )
+    .expect("test file");
+    let (ok, out, err) = run(&["--tests", "t"]);
+    assert!(
+        ok && out.contains("1 passed"),
+        "--tests runs from a bare copy: {out:?}\n{err}"
+    );
     let (ok, _, err) = run(&["--path", "nowhere", "--interpret", "p.loft"]);
     assert!(
         !ok && err.contains("cannot load standard library"),
