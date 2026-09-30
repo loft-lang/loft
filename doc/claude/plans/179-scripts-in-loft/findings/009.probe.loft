@@ -1,0 +1,2 @@
+// finding 009 — still holds while this is refused.
+fn main() { exit(2); }
