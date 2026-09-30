@@ -101,6 +101,7 @@ struct Ops {
     get_field: u32,
     ref_alias: u32,
     distinct_store: u32,
+    clear: u32,
 }
 
 impl Ops {
@@ -121,6 +122,7 @@ impl Ops {
             get_field: data.def_nr("OpGetField"),
             ref_alias: data.def_nr("OpRefAlias"),
             distinct_store: data.def_nr("OpDistinctStore"),
+            clear: data.def_nr("OpClear"),
         }
     }
 
@@ -147,12 +149,15 @@ impl Ops {
     }
 }
 
-/// A flat record's tuple: its fields in SCHEMA order, `(byte offset, kind)`.
+/// A small record's tuple: its scalars in SCHEMA order, `(byte offset, kind)`, an inline
+/// sub-record's scalars at their offset from the top record (the schema lays them there).
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Layout {
     /// The record's runtime type, what an `OpCopyRecord` of it names.
     tp: u16,
     fields: Vec<(i32, Kind)>,
+    /// Each inline sub-record: `(offset, runtime type, end offset)`.
+    subs: Vec<(i32, u16, i32)>,
 }
 
 impl Layout {
@@ -169,6 +174,18 @@ impl Layout {
 
     fn tuple_type(&self) -> Type {
         Type::Tuple(self.fields.iter().map(|(_, k)| k.tuple_type()).collect())
+    }
+
+    /// The fields a copy of runtime type `tp` into offset `base` fills: the whole record,
+    /// or one inline sub-record.
+    fn extent(&self, base: i32, tp: u16) -> Option<(i32, i32)> {
+        if base == 0 && tp == self.tp {
+            return Some((0, i32::MAX));
+        }
+        self.subs
+            .iter()
+            .find(|(b, t, _)| *b == base && *t == tp)
+            .map(|(b, _, e)| (*b, *e))
     }
 }
 
@@ -419,32 +436,79 @@ fn param_shape(
     Some(*record)
 }
 
-/// The record's tuple, when it has two or more fields and every one is a scalar a tuple
-/// carries at the width the field stores it.
+/// The record's tuple, when it has two or more scalars and every field is a scalar a tuple
+/// carries at the width the field stores it, or an INLINE sub-record of such fields.
 fn flat_layout(data: &Data, stores: &Stores, record: u32, tp: u16) -> Option<Layout> {
+    let mut layout = Layout {
+        tp,
+        fields: Vec::new(),
+        subs: Vec::new(),
+    };
+    flatten(data, stores, record, tp, 0, &mut layout)?;
+    layout.fields.sort_unstable_by_key(|(o, _)| *o);
+    // A loft tuple has two or more elements: a one-element `Type::Tuple` has no spelling,
+    // and `--native` renders it as the bare scalar its `.0` reads cannot index.
+    (layout.fields.len() >= 2).then_some(layout)
+}
+
+/// One level of [`flat_layout`]: the fields of `tp` (declared by `record`), `base` bytes into
+/// the top record.
+fn flatten(
+    data: &Data,
+    stores: &Stores,
+    record: u32,
+    tp: u16,
+    base: i32,
+    layout: &mut Layout,
+) -> Option<()> {
     let Parts::Struct(fields) = &stores.types.get(tp as usize)?.parts else {
         return None;
     };
-    let mut out = Vec::new();
     for f in fields {
         let a = data
             .def(record)
             .attributes
             .iter()
             .position(|a| a.name == f.name)?;
-        let kind = match data.attr_type(record, a).base() {
+        let ftp = data.attr_type(record, a);
+        let off = base + i32::from(f.position);
+        let kind = match ftp.base() {
             Type::Integer(_) if stores.size(f.content) == 8 => Kind::Int,
             Type::Float => Kind::Float,
             Type::Single => Kind::Single,
             Type::Boolean => Kind::Bool,
+            // An inline sub-record: the schema lays its fields into the parent.
+            Type::Reference(sub, _)
+                if data.def_type(*sub) == DefType::Struct
+                    && data.def(*sub).known_type() == f.content
+                    && matches!(
+                        stores.types.get(f.content as usize).map(|t| &t.parts),
+                        Some(Parts::Struct(_))
+                    ) =>
+            {
+                let end = off + i32::from(stores.size(f.content));
+                layout.subs.push((off, f.content, end));
+                flatten(data, stores, *sub, f.content, off, layout)?;
+                continue;
+            }
             _ => return None,
         };
-        out.push((i32::from(f.position), kind));
+        layout.fields.push((off, kind));
     }
-    out.sort_unstable_by_key(|(o, _)| *o);
-    // A loft tuple has two or more elements: a one-element `Type::Tuple` has no spelling,
-    // and `--native` renders it as the bare scalar its `.0` reads cannot index.
-    (out.len() >= 2).then_some(Layout { tp, fields: out })
+    Some(())
+}
+
+/// A place through a variable: the variable and the offset of the place in its record —
+/// the variable itself, or an `OpGetField` path into its inline sub-records.
+fn place_of(n: &Value, ops: &Ops) -> Option<(u16, i32)> {
+    match n.unspan() {
+        Value::Var(v) => Some((*v, 0)),
+        Value::Call(op, args) if *op == ops.get_field => match args.as_slice() {
+            [inner, Value::Int(o), _] => place_of(inner, ops).map(|(v, b)| (v, b + o)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// What a body does with its return buffer, beyond the object literals it fills.
@@ -473,12 +537,15 @@ fn body_shape(
     sh: &mut BodyShape,
 ) -> bool {
     let n = n.unspan();
-    if let Some(fill) = literal_fill(n, buf, layout, ops) {
+    if let Some(lit) = literal(n, buf, layout, ops) {
         return tail
-            && fill
-                .values
-                .iter()
-                .all(|v| !mentions(v, buf) && body_shape(v, buf, layout, ops, false, sh));
+            && lit.parts.iter().all(|p| match p {
+                Part::Header => true,
+                Part::Fill(f) => f
+                    .iter()
+                    .all(|(_, v)| body_shape(v, buf, layout, ops, false, sh)),
+                Part::Free(v) | Part::Other(v) => body_shape(v, buf, layout, ops, false, sh),
+            });
     }
     match n {
         Value::Return(v) => body_shape(v, buf, layout, ops, true, sh),
@@ -536,16 +603,46 @@ fn is_buffer_guard(n: &Value, cond: &Value, buf: u16, ops: &Ops) -> bool {
         && matches!(other.unspan(), Value::Null)
 }
 
-/// An object literal built into `buf`: the field offsets and values in the order it writes
-/// them.
-struct Fill<'a> {
-    offsets: Vec<i32>,
-    values: Vec<&'a Value>,
+/// One statement of an object literal built into the return buffer.
+enum Part<'a> {
+    /// The opening test that mints the record.
+    Header,
+    /// Field writes: `(offset, value)` — a copy into a sub-record writes one per field.
+    Fill(Vec<(i32, Value)>),
+    /// `OpFreeRefIfDistinct(placeholder, buf)`: frees the placeholder unless it IS the
+    /// result, which a tuple never is — so it frees unconditionally.
+    Free(&'a Value),
+    /// Anything else, which does not name the buffer.
+    Other(&'a Value),
 }
 
-/// `{ if … OpDatabase(buf, tp); OpSetX(buf, off, value)…; buf }` filling every field of
-/// `layout` exactly once.
-fn literal_fill<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Fill<'a>> {
+/// An object literal built into `buf`, as its statements, and whether it ends in
+/// `return buf` rather than answering `buf`.
+struct Literal<'a> {
+    parts: Vec<Part<'a>>,
+    returns: bool,
+    scope: u16,
+}
+
+impl Literal<'_> {
+    /// The field offsets in the order the literal writes them.
+    fn fill_order(&self) -> Vec<i32> {
+        self.parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Fill(f) => Some(f.iter().map(|(o, _)| *o)),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+}
+
+/// `{ if … OpDatabase(buf, tp); …; buf }` — or ending in `return buf` — whose statements
+/// fill every field of `layout` exactly once.  A field is written by a setter on the buffer
+/// or on a field path into its inline sub-records, or by a COPY of a record or sub-record
+/// read from a place that may be named once per field.
+fn literal<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Literal<'a>> {
     let Value::Block(b) = n else {
         return None;
     };
@@ -556,35 +653,82 @@ fn literal_fill<'a>(n: &'a Value, buf: u16, layout: &Layout, ops: &Ops) -> Optio
         .filter(|o| !matches!(o, Value::Line(_)))
         .collect();
     let (head, rest) = body.split_first()?;
-    let (last, sets) = rest.split_last()?;
-    if !matches!(last, Value::Var(v) if *v == buf) || !is_header(head, buf, ops) {
+    let (last, middle) = rest.split_last()?;
+    if !is_header(head, buf, ops) {
         return None;
     }
-    let mut offsets = Vec::new();
-    let mut values = Vec::new();
-    for s in sets {
-        let Value::Call(op, args) = s else {
-            return None;
+    let is_buf = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == buf);
+    let returns = match last {
+        Value::Var(v) if *v == buf => false,
+        Value::Return(x) if is_buf(x) => true,
+        _ => return None,
+    };
+    let mut parts = vec![Part::Header];
+    for o in middle {
+        let part = match o {
+            Value::Call(op, args)
+                if let Some(kind) = ops.set_kind(*op)
+                    && let [place, Value::Int(off), value] = args.as_slice()
+                    && let Some((v, base)) = place_of(place, ops)
+                    && v == buf =>
+            {
+                let at = base + off;
+                if layout.kind_at(at) != Some(kind) || mentions(value, buf) {
+                    return None;
+                }
+                Part::Fill(vec![(at, value.clone())])
+            }
+            Value::Call(op, args)
+                if *op == ops.copy_record
+                    && let [src, place, Value::Int(tp)] = args.as_slice()
+                    && let Some((v, base)) = place_of(place, ops)
+                    && v == buf =>
+            {
+                let (lo, hi) = layout.extent(base, *tp as u16)?;
+                if !pure_place(src, ops) || mentions(src, buf) {
+                    return None;
+                }
+                Part::Fill(
+                    layout
+                        .fields
+                        .iter()
+                        .filter(|(o, _)| *o >= lo && *o < hi)
+                        .map(|(o, k)| {
+                            let read = vec![src.clone(), Value::Int(o - base)];
+                            (*o, Value::Call(ops.get_op(*k), read))
+                        })
+                        .collect(),
+                )
+            }
+            Value::Call(op, args)
+                if *op == ops.free_if_distinct
+                    && let [p, witness] = args.as_slice()
+                    && is_buf(witness)
+                    && !mentions(p, buf) =>
+            {
+                Part::Free(p)
+            }
+            other if !mentions(other, buf) => Part::Other(other),
+            _ => return None,
         };
-        let kind = ops.set_kind(*op)?;
-        let [target, Value::Int(off), value] = args.as_slice() else {
-            return None;
-        };
-        if !matches!(target.unspan(), Value::Var(v) if *v == buf)
-            || layout.kind_at(*off) != Some(kind)
-            || offsets.contains(off)
-        {
-            return None;
-        }
-        offsets.push(*off);
-        values.push(value);
+        parts.push(part);
     }
-    (offsets.len() == layout.fields.len()).then_some(Fill { offsets, values })
+    let lit = Literal {
+        parts,
+        returns,
+        scope: b.scope,
+    };
+    let mut filled = lit.fill_order();
+    filled.sort_unstable();
+    let whole: Vec<i32> = layout.fields.iter().map(|(o, _)| *o).collect();
+    (filled == whole).then_some(lit)
 }
 
 /// The literal's opening test — and the loop-hoisted buffer's mint guard, which is the same
 /// shape: an `if` that mints a record into `buf` when it holds none, reading nothing but
-/// `buf` and calling nothing but the three operators it is built from.
+/// `buf` and calling nothing but the operators it is built from.  A pooled buffer's guard
+/// clears the record it still holds in the other arm (`@FR-H-ClearRelease`); with the buffer
+/// gone there is nothing to clear either.
 fn is_header(n: &Value, buf: u16, ops: &Ops) -> bool {
     if !matches!(n, Value::If(..)) {
         return false;
@@ -597,7 +741,7 @@ fn is_header(n: &Value, buf: u16, ops: &Ops) -> bool {
                 if *op == ops.database {
                     mints |=
                         matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == buf);
-                } else if *op != ops.ref_is_null && *op != ops.bool_from_ref {
+                } else if *op != ops.ref_is_null && *op != ops.bool_from_ref && *op != ops.clear {
                     clean = false;
                 }
             }
@@ -1041,11 +1185,12 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
             scan(inner, false, w, s);
         }
         Value::Call(op, args) => {
+            // A field read, through a path into an inline sub-record or not.
             if let Some(kind) = ops.get_kind(*op)
                 && let [target, Value::Int(off)] = args.as_slice()
-                && let Value::Var(v) = target.unspan()
+                && let Some((v, base)) = place_of(target, ops)
             {
-                s.reads.push((*v, *off, kind));
+                s.reads.push((v, base + off, kind));
                 return;
             }
             if stmt
@@ -1204,11 +1349,11 @@ impl Rewrite<'_> {
             Value::Call(op, args) => {
                 if ops.get_kind(*op).is_some()
                     && let [target, Value::Int(off)] = args.as_slice()
-                    && let Value::Var(v) = target.unspan()
-                    && let Some(record) = plan.carriers.get(v)
-                    && let Some(i) = w.layouts[record].index_of(*off)
+                    && let Some((v, base)) = place_of(target, ops)
+                    && let Some(record) = plan.carriers.get(&v)
+                    && let Some(i) = w.layouts[record].index_of(base + off)
                 {
-                    *n = Value::TupleGet(*v, i);
+                    *n = Value::TupleGet(v, i);
                     return;
                 }
                 let d = *op;
@@ -1369,10 +1514,12 @@ fn retype_returns(n: &mut Value, record: u32, old: &Type, tuple: &Type) {
     each_child_mut(n, &mut |c| retype_returns(c, record, old, tuple));
 }
 
-/// Every literal built into `buf` becomes its tuple, in SCHEMA order.  A literal written in
-/// another order binds each value to a temporary first, in the order it wrote them, and the
-/// tuple reads the temporaries — so a field expression with an effect runs where the
-/// program put it.  The values come from the SAME [`literal_fill`] the admission read.
+/// Every literal built into `buf` becomes its tuple, in SCHEMA order.  The statements run
+/// where the literal ran them: when the literal writes its fields in schema order and nothing
+/// follows its first write, the values are the tuple's own elements; otherwise each value is
+/// bound to a temporary where the literal wrote it, and the tuple reads the temporaries — so
+/// a field expression with an effect runs where the program put it.  A free the buffer only
+/// witnessed frees unconditionally, and the opening test goes.
 fn literals_to_tuples(
     n: &mut Value,
     buf: u16,
@@ -1381,42 +1528,62 @@ fn literals_to_tuples(
     vars: &mut crate::variables::Function,
 ) {
     let n = n.unspan_mut();
-    if let Some(fill) = literal_fill(n, buf, layout, ops) {
-        let offsets = fill.offsets.clone();
-        let mut values: Vec<Value> = fill.values.into_iter().cloned().collect();
-        let Value::Block(b) = &*n else { unreachable!() };
-        let scope = b.scope;
-        for v in &mut values {
-            literals_to_tuples(v, buf, layout, ops, vars);
-        }
-        let in_order = offsets.iter().zip(&layout.fields).all(|(o, (f, _))| o == f);
-        *n = if in_order {
-            Value::Tuple(values)
-        } else {
-            let mut stmts = Vec::new();
-            let mut temps: HashMap<i32, u16> = HashMap::default();
-            for (off, value) in offsets.iter().zip(values) {
-                let kind = layout.kind_at(*off).expect("a filled field");
-                let t = vars.add_unique("vf", &kind.tuple_type(), scope);
-                stmts.push(Value::Set(t, Box::new(value)));
-                temps.insert(*off, t);
-            }
-            stmts.push(Value::Tuple(
-                layout
-                    .fields
-                    .iter()
-                    .map(|(o, _)| Value::Var(temps[o]))
-                    .collect(),
-            ));
-            Value::Block(Box::new(Block {
-                name: "Tuple",
-                operators: stmts,
-                result: layout.tuple_type(),
-                scope,
-                var_size: 0,
-            }))
-        };
+    let Some(lit) = literal(n, buf, layout, ops) else {
+        each_child_mut(n, &mut |c| literals_to_tuples(c, buf, layout, ops, vars));
         return;
+    };
+    let schema: Vec<i32> = layout.fields.iter().map(|(o, _)| *o).collect();
+    let first_fill = lit.parts.iter().position(|p| matches!(p, Part::Fill(_)));
+    let after_fill = first_fill.is_some_and(|i| {
+        lit.parts[i..]
+            .iter()
+            .any(|p| matches!(p, Part::Free(_) | Part::Other(_)))
+    });
+    let staged = after_fill || lit.fill_order() != schema;
+    let mut stmts: Vec<Value> = Vec::new();
+    let mut values: HashMap<i32, Value> = HashMap::default();
+    for part in &lit.parts {
+        match part {
+            Part::Header => {}
+            Part::Fill(f) => {
+                for (off, v) in f {
+                    let value = if staged {
+                        let kind = layout.kind_at(*off).expect("a filled field");
+                        let t = vars.add_unique("vf", &kind.tuple_type(), lit.scope);
+                        stmts.push(Value::Set(t, Box::new(v.clone())));
+                        Value::Var(t)
+                    } else {
+                        v.clone()
+                    };
+                    values.insert(*off, value);
+                }
+            }
+            Part::Free(p) => stmts.push(Value::Call(ops.free_ref, vec![(*p).clone()])),
+            Part::Other(o) => stmts.push((*o).clone()),
+        }
     }
-    each_child_mut(n, &mut |c| literals_to_tuples(c, buf, layout, ops, vars));
+    let tuple = Value::Tuple(
+        schema
+            .iter()
+            .map(|o| values.remove(o).expect("filled"))
+            .collect(),
+    );
+    let result = if lit.returns {
+        Value::Return(Box::new(tuple))
+    } else {
+        tuple
+    };
+    let scope = lit.scope;
+    *n = if stmts.is_empty() {
+        result
+    } else {
+        stmts.push(result);
+        Value::Block(Box::new(Block {
+            name: "Tuple",
+            operators: stmts,
+            result: layout.tuple_type(),
+            scope,
+            var_size: 0,
+        }))
+    };
 }
