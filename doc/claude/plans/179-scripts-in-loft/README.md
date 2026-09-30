@@ -158,6 +158,12 @@ What writing it measured — the first gaps, each closed before strand 3 starts:
   was right, and the split it asked for is the version that shipped.  A data point for the
   advice tier: a script's `main` reaches the nudge fast.
 
+The first port taught the census two tranches it lacked: **T5**, a script that runs a
+program of its own choosing (`"$@"`, `exec`, a command held in a variable, a `$LOFT`
+binary) and so needs strand 4's `run` before any tool library — most of what the tool
+list had read as "needs nothing" — and **T8**, a shell fragment another script `source`s,
+which is not a program and is ported when its last consumer is.
+
 Still open in this strand: the start-up row above re-measured with `LOFT_PROFILE`, and the
 cross-check against `git ls-files` made a test once strand 4's `git` query exists (today it
 is a by-hand comparison, exact on 2026-09-29).

@@ -4,48 +4,39 @@
 | language | files | lines |
 |---|---|---|
 | Python | 96 | 28319 |
-| bash | 143 | 18412 |
+| bash | 144 | 18517 |
 | loft (under scripts/) | 3 | — |
 
-Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **36394**.
+Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **36499**.
 
-## T0 — already loft — the twin harness's first subjects (3 files, 653 lines)
+## T0 — already loft — the twin harness's first subjects (3 files, 685 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
 | `scripts/build-gallery-examples.loft` | loft | 113 |  |  |  | report |
 | `scripts/build-playground-examples.loft` | loft | 176 |  |  |  | report |
-| `scripts/script_census` | loft | 364 |  |  | make | report |
+| `scripts/script_census` | loft | 396 |  |  | make | report |
 
-## T1 — needs nothing loft lacks — strand 3, the first tranche (23 files, 1647 lines)
+## T1 — needs nothing loft lacks — strand 3, the first tranche (14 files, 1066 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
-| `doc/claude/plans/106-android-build-target/b2-spike/build_apk.sh` | sh | 33 |  |  |  | report |
 | `doc/claude/plans/146-content-delivery/probes/f7a_alpha.py` | py | 180 | python3 |  |  | gate |
 | `doc/claude/plans/35-match-peg/rest-store-lifetime/gen_probes.py` | py | 171 |  |  |  | writes |
-| `doc/claude/plans/nested-vector-representation/probes/scope.sh` | sh | 139 |  |  |  | writes |
 | `fuzz/seed_program_source.sh` | sh | 21 |  |  |  | report |
-| `scripts/box-claim.sh` | sh | 47 |  |  | make | gate+writes |
-| `scripts/browser/run_golden.sh` | sh | 123 | python3 |  |  | gate |
-| `scripts/cc-mold` | sh | 47 |  |  |  | report |
 | `scripts/ci_budget.sh` | sh | 86 | python3 |  | make,script | writes |
 | `scripts/introspect_diff.sh` | sh | 60 |  |  | script | writes |
 | `scripts/ir_schema_check.sh` | sh | 97 | python3 |  | make | gate+writes |
 | `scripts/nextest_priority.sh` | sh | 28 |  |  | make | writes |
 | `scripts/registry_schema_gate.sh` | sh | 51 | python3 |  | script | gate |
-| `scripts/sccache_env.sh` | sh | 26 |  |  | script | report |
 | `scripts/wasm_bundle_stamp.sh` | sh | 27 |  |  | make | report |
 | `tests/data/slow_font_server.py` | py | 71 | python3 |  |  | report |
 | `tests/probes/h7-retbuf-alias/oracle.sh` | sh | 58 |  |  | script | report |
-| `tests/probes/h7-retbuf-alias/run.sh` | sh | 13 |  |  | make,script | report |
 | `tests/scripts/snap_smoke.sh` | sh | 134 |  |  | make | gate+writes |
-| `tests/scripts/test_gl_snapshots.sh` | sh | 113 |  |  | script | gate |
 | `tests/wasm/coi-server.py` | py | 44 |  |  | make,script | writes |
-| `tests/wasm/gate-lib.sh` | sh | 40 |  |  | script | report |
 | `tests/wasm/html-plain-server.py` | py | 38 |  |  | script | writes |
 
-## T2 — needs only regex / TOML / json / argparse — after strand 3 closes those gaps (96 files, 14538 lines)
+## T2 — needs only regex / TOML / json / argparse — after strand 3 closes those gaps (79 files, 12851 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
@@ -53,17 +44,11 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `.claude/hooks/session-start.sh` | sh | 30 | awk |  | hook,script | writes |
 | `.githooks/commit-msg` | sh | 79 | sed grep |  | make,hook,script | gate |
 | `bench/portal/portal.py` | py | 401 | python3 | subprocess | make | gate+writes |
-| `doc/claude/plans/106-android-build-target/b2-spike/run_emulator_test.sh` | sh | 40 | sed grep |  |  | writes |
 | `doc/claude/plans/108-share-read-only-stores/bench/run.sh` | sh | 34 | grep sed |  | make,script | writes |
 | `doc/claude/plans/114-tuple-stack-layout-split/probes/run.sh` | sh | 59 | grep sed |  | make,script | report |
-| `doc/claude/plans/118-store-lifetime-uaf-mutated-vector/oracle/run-matrix.sh` | sh | 55 | sed |  |  | gate |
-| `doc/claude/plans/130-element-view-invalidation/probes/40-reshape-refusal/run.sh` | sh | 23 | grep sed |  | make,script | report |
 | `doc/claude/plans/130-element-view-invalidation/probes/run_set.sh` | sh | 63 | grep |  | script | report |
 | `doc/claude/plans/146-content-delivery/corpus/census.py` | py | 59 |  | re | make,ci,script | report |
 | `doc/claude/plans/146-content-delivery/corpus/w0.sh` | sh | 52 | python3 sed grep |  | script | gate+writes |
-| `doc/claude/plans/146-content-delivery/corpus/w2.sh` | sh | 134 | grep sed python3 |  | script | gate+writes |
-| `doc/claude/plans/146-content-delivery/corpus/w5.sh` | sh | 147 | python3 sed grep |  |  | gate+writes |
-| `doc/claude/plans/146-content-delivery/corpus/w6.sh` | sh | 73 | grep |  |  | gate+writes |
 | `doc/claude/plans/146-content-delivery/probes/f2_server.py` | py | 91 | python3 | re | script | writes |
 | `doc/claude/plans/146-content-delivery/probes/w2_raster.py` | py | 128 |  | subprocess |  | gate+writes |
 | `doc/claude/plans/154-stack-shadow/census-run.sh` | sh | 34 | grep sed |  |  | writes |
@@ -76,20 +61,15 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `doc/claude/plans/85-store-lifetime-retirement/probes/residual-19/run.sh` | sh | 12 | grep |  | make,script | report |
 | `doc/claude/plans/85-store-lifetime-retirement/probes/text-tail-return/leakowner.sh` | sh | 13 | grep sed |  | script | report |
 | `doc/claude/plans/85-store-lifetime-retirement/probes/text-tail-return/run_matrix.sh` | sh | 39 | grep sed |  | script | writes |
-| `doc/claude/plans/85-store-lifetime-retirement/probes/text-tail-return/sweep_owners.sh` | sh | 10 | sed |  |  | report |
 | `doc/claude/plans/finished/52-value-block-borrow-cleanup/probes/run_set.sh` | sh | 200 | grep sed |  | script | gate |
-| `doc/claude/plans/finished/53-sanitizer-ci-lever/probes/run.sh` | sh | 62 | grep sed |  | make,script | gate |
 | `doc/claude/plans/finished/58-nested-vector-layout/probes/run_matrix.sh` | sh | 34 | grep |  | script | report |
 | `doc/claude/plans/h2-append-elision/probes/run-callee.sh` | sh | 71 | sed grep |  | script | report |
 | `doc/claude/plans/h2-append-elision/probes/run-join.sh` | sh | 84 | sed grep |  |  | report |
 | `doc/claude/plans/h2-append-elision/probes/run.sh` | sh | 24 | sed |  | make,script | report |
 | `doc/claude/plans/h3-narrow-vector/probes/run.sh` | sh | 67 | grep |  | make,script | report |
 | `doc/claude/plans/native-type-mint/repeat.sh` | sh | 57 | grep sed |  |  | report |
-| `doc/claude/presentations/par/build_par_slides.sh` | sh | 148 | sed |  |  | gate+writes |
 | `scripts/acquisition-chain.sh` | sh | 126 | sed |  | ci,script | gate+writes |
 | `scripts/api_lint.py` | py | 296 |  | re |  | gate+writes |
-| `scripts/asan_leak_ratchet.sh` | sh | 65 | grep awk sed |  | script | gate |
-| `scripts/asan_leak_scan.sh` | sh | 77 | grep awk sed |  | ci,script | gate+writes |
 | `scripts/browser/run_caps.sh` | sh | 76 | python3 grep sed |  |  | gate |
 | `scripts/c86_lint.py` | py | 141 |  | re | script | gate |
 | `scripts/cache_bust_html.py` | py | 167 | python3 | re | make | gate+writes |
@@ -98,13 +78,11 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/diag_position_audit.py` | py | 125 |  | re subprocess |  | gate |
 | `scripts/diagnostic_spelling.py` | py | 177 |  | re |  | gate |
 | `scripts/doc_history_report.py` | py | 155 | python3 | re | make,script | gate |
-| `scripts/doc_probe_sweep.sh` | sh | 132 | sed grep awk |  | make | writes |
 | `scripts/emission_audit.py` | py | 292 |  | re |  | gate |
 | `scripts/feature_coverage.sh` | sh | 104 | grep sed |  | ci | gate+writes |
 | `scripts/feature_hygiene.sh` | sh | 86 | jq grep sed awk |  | ci | gate |
 | `scripts/fetch-doc-packages.sh` | sh | 76 | awk |  | make,ci | gate |
 | `scripts/free_licence_audit.py` | py | 375 |  | re | make | report |
-| `scripts/gate_lock.sh` | sh | 289 | grep awk |  | make,script | writes |
 | `scripts/gen-library-catalogue.py` | py | 459 |  | argparse json re | make | gate+writes |
 | `scripts/install_claude_hooks.py` | py | 73 |  | json | make | gate+writes |
 | `scripts/ir_walker_audit.py` | py | 1474 |  | json re subprocess | make,script | gate+writes |
@@ -124,18 +102,14 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/probe_leg_report.sh` | sh | 49 | sed grep |  | ci | writes |
 | `scripts/registry_matrix_versions.py` | py | 148 |  | json re | make,ci | gate |
 | `scripts/repeat-test.sh` | sh | 129 | sed grep |  |  | gate |
-| `scripts/repro-toolchain.sh` | sh | 69 | sed |  | script | report |
 | `scripts/revalidate_matrix.py` | py | 270 |  | json re subprocess tomllib | make,ci,script | gate |
 | `scripts/rule_predicate_audit.py` | py | 86 |  | re | script | gate |
 | `scripts/setup-test-databases.sh` | sh | 104 | grep |  |  | report |
 | `scripts/steering_rate.py` | py | 184 |  | argparse json |  | gate |
 | `scripts/switch_ab.sh` | sh | 177 | sed awk grep |  | ci | gate+writes |
-| `scripts/test-timing-runner.sh` | sh | 47 | awk |  |  | gate+writes |
 | `scripts/test_duration_gate.py` | py | 86 |  | re tomllib | ci,script | gate |
 | `scripts/vacuity-sweep.py` | py | 69 | python3 | re subprocess |  | report |
-| `scripts/valgrind-sweep.sh` | sh | 151 | grep sed awk |  | ci,script | gate+writes |
 | `tests/dump_ignored_tests.py` | py | 58 |  | re |  | report |
-| `tests/scripts/snap_example.sh` | sh | 165 | awk |  | script | gate+writes |
 | `tests/wasm/html-unavailable-builtin.sh` | sh | 85 | python3 grep |  | script | gate+writes |
 | `tests/wasm/par-memory-proof.sh` | sh | 44 | python3 grep |  | script | gate+writes |
 | `tests/wasm/par-scaling-bench.sh` | sh | 70 | python3 grep |  | script | gate+writes |
@@ -146,22 +120,17 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `tools/indexer/migrate.py` | py | 312 |  | argparse re |  | gate+writes |
 | `tools/ir_schema/extract.py` | py | 215 |  | re | script | gate |
 
-## T3 — needs git / gh / curl — strand 4, typed git + github (65 files, 15098 lines)
+## T3 — needs git / gh / curl — strand 4, typed git + github (52 files, 12172 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
 | `.githooks/pre-commit` | sh | 28 | git |  | hook,script | report |
-| `bench/portal/checkout_libs.sh` | sh | 58 | git |  | make,script | report |
 | `doc/claude/plans/146-content-delivery/corpus/oracle/draw.py` | py | 783 | python3 gh | re | script | gate+writes |
-| `doc/claude/plans/146-content-delivery/probes/f2.sh` | sh | 86 | grep python3 curl awk |  |  | gate+writes |
 | `doc/claude/plans/146-content-delivery/probes/f3.sh` | sh | 67 | grep python3 curl |  |  | gate+writes |
 | `doc/claude/plans/152-validity-flag-null-model/probes/diag/run.sh` | sh | 35 | git sed grep |  | make,script | gate |
 | `doc/claude/plans/152-validity-flag-null-model/probes/refusal/run.sh` | sh | 24 | git sed grep |  | make,script | gate |
-| `doc/claude/plans/152-validity-flag-null-model/probes/step6-cost/run.sh` | sh | 49 | git awk sed |  | make,script | report |
 | `doc/claude/plans/154-stack-shadow/phase4-yield.sh` | sh | 110 | git grep sed awk |  |  | writes |
 | `doc/claude/plans/85-store-lifetime-retirement/probes/corpus-leakers/run.sh` | sh | 12 | git sed |  | make,script | report |
-| `doc/claude/plans/85-store-lifetime-retirement/probes/generic-text-return/run.sh` | sh | 39 | git grep |  | make,script | report |
-| `doc/claude/plans/85-store-lifetime-retirement/probes/generic-tuple-return/run.sh` | sh | 39 | git grep |  | make,script | report |
 | `doc/claude/plans/85-store-lifetime-retirement/probes/text-tail-return/framework/verify.sh` | sh | 39 | git awk sed |  | ci,script | report |
 | `doc/claude/registry_ci_template/validate.py` | py | 444 | git | json re subprocess | ci,script | gate |
 | `scripts/audit-stale-plans.sh` | sh | 114 | sed gh git grep |  | ci,script | gate |
@@ -170,11 +139,9 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/check-release-published.py` | py | 163 | gh | argparse json re subprocess | ci,script | gate |
 | `scripts/check_bundle_fresh.sh` | sh | 67 | git grep |  | ci | gate |
 | `scripts/check_contract_goldens.sh` | sh | 91 | grep git |  | make | gate |
-| `scripts/check_doc_drift.sh` | sh | 1677 | git grep sed awk curl jq |  | make,ci,hook,script | gate+writes |
 | `scripts/check_registry_coverage.sh` | sh | 128 | curl python3 git sed |  | ci,script | writes |
 | `scripts/ci_failure_digest.py` | py | 624 | gh git | json re subprocess | make,ci | gate |
 | `scripts/ci_timing.py` | py | 292 | gh | json subprocess | make,ci | gate |
-| `scripts/close-shipped-plans.sh` | sh | 151 | sed git grep gh |  | ci,script | report |
 | `scripts/close_fixed_on_merge.py` | py | 114 | gh git | json re subprocess | make,ci | gate |
 | `scripts/contract_labels.py` | py | 226 | git gh | argparse json re subprocess | make,ci,script | gate |
 | `scripts/deploy-library-ci.sh` | sh | 150 | git gh grep python3 |  | ci | writes |
@@ -188,8 +155,6 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/gallery_render_check.sh` | sh | 149 | grep sed python3 curl |  | make | gate |
 | `scripts/gen-toolchain-entry.py` | py | 244 | git | argparse json re subprocess | ci,script | gate+writes |
 | `scripts/idx` | sh | 363 | awk jq grep sed gh |  | make,ci,script | gate+writes |
-| `scripts/install.sh` | sh | 143 | sed curl |  | script | report |
-| `scripts/lib-branch-audit.sh` | sh | 106 | sed gh git grep python3 |  | ci | writes |
 | `scripts/lib_coverage_check.sh` | sh | 80 | curl jq gh grep sed |  | ci | gate+writes |
 | `scripts/linkcheck.sh` | sh | 84 | git grep sed curl |  | make,script | gate |
 | `scripts/migrate_plan_refs.py` | py | 124 | git | re subprocess | script | writes |
@@ -201,83 +166,129 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/refresh-loft-release.py` | py | 113 | gh | json subprocess | make,script | gate+writes |
 | `scripts/refresh-unreleased.py` | py | 154 | gh | json subprocess | make,script | gate+writes |
 | `scripts/registry_retention_check.py` | py | 264 | git | argparse json subprocess | ci | gate+writes |
-| `scripts/release-gate.sh` | sh | 88 | sed git gh |  | make | gate |
 | `scripts/release-liveness.py` | py | 358 | gh | argparse json re subprocess | make | gate |
-| `scripts/revalidate_libs_local.sh` | sh | 296 | sed git python3 grep awk |  | ci,script | gate+writes |
 | `scripts/rewrite-org.sh` | sh | 82 | sed git grep |  |  | writes |
 | `scripts/rule_tags.py` | py | 1311 | gh | re json subprocess | make,ci,script | gate+writes |
 | `scripts/skills-review.py` | py | 348 | git | argparse re subprocess | make,script | gate+writes |
-| `scripts/sweep_scratch.sh` | sh | 127 | sed git |  | make,script | report |
 | `scripts/sync-fixtures.sh` | sh | 408 | git sed grep awk |  | ci,script | gate |
 | `scripts/unreleased-work.py` | py | 259 | gh | argparse json subprocess | make,ci | gate+writes |
 | `scripts/validator-dryrun.py` | py | 247 | gh git | argparse json subprocess | script | gate+writes |
 | `scripts/work-issues.sh` | sh | 108 | sed gh grep |  | make | gate |
 | `sketch/draw.py` | py | 584 | python3 gh | re | script | writes |
-| `tools/indexer/install-hook.sh` | sh | 67 | git grep awk |  | make | writes |
 | `tools/indexer/rewrite_links.py` | py | 248 | git | argparse re subprocess | make | gate+writes |
 
-## T4 — needs cargo / rustc — strand 4, typed cargo (51 files, 11869 lines)
+## T4 — needs cargo / rustc — strand 4, typed cargo (29 files, 7370 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
 | `bench/frontend/frontend.py` | py | 243 | python3 rustc | argparse re subprocess | script | gate+writes |
 | `bench/portal/hand_price.sh` | sh | 41 | rustc grep |  |  | gate |
-| `bench/run_bench.sh` | sh | 241 | grep sed python3 rustc awk |  | make,script | writes |
 | `bench/stats.py` | py | 600 | python3 rustc git | argparse re subprocess | script | gate+writes |
 | `doc/claude/plans/118-store-lifetime-uaf-mutated-vector/oracle/leak-oracle.sh` | sh | 101 | grep sed rustc |  | script | report |
 | `doc/claude/plans/154-stack-shadow/shadow-control.sh` | sh | 94 | git python3 grep cargo |  | script | gate+writes |
 | `doc/claude/plans/85-store-lifetime-retirement/fuzz/classify_vs_runtime.py` | py | 125 | python3 rustc | re subprocess |  | report |
 | `doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py` | py | 261 | rustc | re argparse subprocess | script | gate+writes |
-| `doc/claude/plans/97-layout-contract/harness/run.sh` | sh | 39 | git cargo grep sed |  | make,script | writes |
-| `doc/claude/plans/97-layout-contract/harness/run_browser.sh` | sh | 39 | git cargo sed python3 grep |  |  | writes |
-| `doc/claude/plans/finished/53-sanitizer-ci-lever/probes/run_guard.sh` | sh | 75 | cargo grep sed |  |  | gate |
 | `doc/claude/plans/nested-narrow-width/run.sh` | sh | 90 | cargo grep sed |  | make,script | writes |
-| `scripts/asan.sh` | sh | 59 | rustc cargo |  | script | gate |
-| `scripts/ci-run.sh` | sh | 304 | git python3 grep sed awk cargo |  | make,script | gate+writes |
 | `scripts/clippy-review.py` | py | 566 | git cargo | argparse json re subprocess | make | gate+writes |
 | `scripts/disk_headroom.sh` | sh | 85 | awk cargo |  | make,script | gate |
-| `scripts/disk_janitor.sh` | sh | 179 | jq grep awk git sed cargo |  | make,script | writes |
 | `scripts/doc_review.py` | py | 370 | cargo | re | script | gate+writes |
 | `scripts/doctor.sh` | sh | 152 | rustc cargo python3 grep |  | make,script | report |
-| `scripts/falsify.sh` | sh | 631 | git grep cargo sed awk |  | make,script | gate+writes |
-| `scripts/find_problems.sh` | sh | 786 | rustc sed grep cargo git awk gh |  | make,script | gate+writes |
 | `scripts/gate_ledger.py` | py | 225 | git cargo | json re subprocess | make,script | gate+writes |
-| `scripts/gate_preflight.sh` | sh | 84 | sed python3 cargo |  | script | gate |
 | `scripts/gen_target_surface.py` | py | 223 | rustc cargo | json re subprocess | make | gate+writes |
 | `scripts/inline_audit.py` | py | 103 | rustc | re subprocess |  | gate |
 | `scripts/interp_gap.py` | py | 622 | rustc cargo | argparse json re subprocess | make | gate+writes |
 | `scripts/join.py` | py | 841 | git cargo | argparse json re subprocess |  | gate+writes |
-| `scripts/leakcheck` | sh | 142 | sed cargo grep |  |  | gate+writes |
 | `scripts/lib_audit.sh` | sh | 302 | git sed gh cargo rustc grep python3 |  | ci,script | gate |
-| `scripts/make-release.sh` | sh | 159 | grep sed git rustc cargo |  | ci,script | writes |
 | `scripts/native_attrib.py` | py | 238 | cargo rustc | json re subprocess |  | gate |
-| `scripts/native_ratio.sh` | sh | 155 | sed awk rustc |  | make,script | gate+writes |
 | `scripts/op_census.py` | py | 308 | cargo | argparse json re subprocess | make | gate+writes |
-| `scripts/p09_fast_gate.sh` | sh | 207 | cargo grep awk |  |  | gate |
 | `scripts/par_gates.sh` | sh | 102 | python3 rustc grep |  | make,ci | gate+writes |
 | `scripts/perf_check.py` | py | 174 | cargo | argparse subprocess | make,script | gate |
-| `scripts/probe-local.sh` | sh | 79 | cargo sed awk |  |  | writes |
-| `scripts/profile.sh` | sh | 383 | sed cargo grep awk rustc |  | make,script | gate+writes |
 | `scripts/profile_corpus.sh` | sh | 178 | sed cargo python3 awk grep |  | make | gate+writes |
-| `scripts/registry_validate.sh` | sh | 162 | git grep rustc awk cargo |  | ci,script | writes |
-| `scripts/repro-flags.sh` | sh | 64 | rustc |  | ci,script | report |
 | `scripts/repro-roundtrip.sh` | sh | 95 | git cargo |  | ci | gate |
 | `scripts/repro-verify.sh` | sh | 204 | sed gh rustc grep cargo |  | ci,script | gate |
 | `scripts/rewrite_census.py` | py | 172 | rustc git | subprocess | make,ci,script | gate+writes |
 | `scripts/test-timing.py` | py | 109 | rustc |  | script | gate |
 | `scripts/test_speed.py` | py | 536 | rustc git cargo | argparse re subprocess | make,script | gate+writes |
 | `scripts/test_speed_gate.py` | py | 210 | gh cargo | json re subprocess | make,ci,script | gate+writes |
+
+## T5 — runs a program of its own choosing — strand 4's `run` first (57 files, 9314 lines)
+
+| script | lang | lines | tools | py modules | callers | contract |
+|---|---|---|---|---|---|---|
+| `bench/portal/checkout_libs.sh` | sh | 58 | git run |  | make,script | report |
+| `bench/run_bench.sh` | sh | 241 | grep sed python3 rustc awk run |  | make,script | writes |
+| `doc/claude/plans/106-android-build-target/b2-spike/build_apk.sh` | sh | 33 | run |  |  | report |
+| `doc/claude/plans/106-android-build-target/b2-spike/run_emulator_test.sh` | sh | 40 | run sed grep |  |  | writes |
+| `doc/claude/plans/118-store-lifetime-uaf-mutated-vector/oracle/run-matrix.sh` | sh | 55 | run sed |  |  | gate |
+| `doc/claude/plans/130-element-view-invalidation/probes/40-reshape-refusal/run.sh` | sh | 23 | run grep sed |  | make,script | report |
+| `doc/claude/plans/146-content-delivery/corpus/w2.sh` | sh | 134 | grep sed run python3 |  | script | gate+writes |
+| `doc/claude/plans/146-content-delivery/corpus/w5.sh` | sh | 147 | python3 sed grep run |  |  | gate+writes |
+| `doc/claude/plans/146-content-delivery/corpus/w6.sh` | sh | 73 | run grep |  |  | gate+writes |
+| `doc/claude/plans/146-content-delivery/probes/f2.sh` | sh | 86 | grep python3 curl run awk |  |  | gate+writes |
+| `doc/claude/plans/152-validity-flag-null-model/probes/step6-cost/run.sh` | sh | 49 | git awk run sed |  | make,script | report |
+| `doc/claude/plans/85-store-lifetime-retirement/probes/generic-text-return/run.sh` | sh | 39 | git grep run |  | make,script | report |
+| `doc/claude/plans/85-store-lifetime-retirement/probes/generic-tuple-return/run.sh` | sh | 39 | git grep run |  | make,script | report |
+| `doc/claude/plans/85-store-lifetime-retirement/probes/text-tail-return/sweep_owners.sh` | sh | 10 | sed run |  |  | report |
+| `doc/claude/plans/97-layout-contract/harness/run.sh` | sh | 39 | git cargo run grep sed |  | make,script | writes |
+| `doc/claude/plans/97-layout-contract/harness/run_browser.sh` | sh | 39 | git cargo sed run python3 grep |  |  | writes |
+| `doc/claude/plans/finished/53-sanitizer-ci-lever/probes/run.sh` | sh | 62 | run grep sed |  | make,script | gate |
+| `doc/claude/plans/finished/53-sanitizer-ci-lever/probes/run_guard.sh` | sh | 75 | run cargo grep sed |  |  | gate |
+| `doc/claude/plans/nested-vector-representation/probes/scope.sh` | sh | 139 | run |  |  | writes |
+| `doc/claude/presentations/par/build_par_slides.sh` | sh | 148 | sed run |  |  | gate+writes |
+| `scripts/asan.sh` | sh | 59 | rustc run cargo |  | script | gate |
+| `scripts/asan_leak_ratchet.sh` | sh | 65 | run grep awk sed |  | script | gate |
+| `scripts/asan_leak_scan.sh` | sh | 77 | run grep awk sed |  | ci,script | gate+writes |
+| `scripts/box-claim.sh` | sh | 47 | run |  | make | gate+writes |
+| `scripts/browser/run_golden.sh` | sh | 123 | python3 run |  |  | gate |
+| `scripts/cc-mold` | sh | 47 | run |  |  | report |
+| `scripts/check_doc_drift.sh` | sh | 1677 | git run grep sed awk curl jq |  | make,ci,hook,script | gate+writes |
+| `scripts/ci-run.sh` | sh | 304 | git python3 grep sed awk run cargo |  | make,script | gate+writes |
+| `scripts/close-shipped-plans.sh` | sh | 151 | sed git grep gh run |  | ci,script | report |
+| `scripts/disk_janitor.sh` | sh | 179 | run jq grep awk git sed cargo |  | make,script | writes |
+| `scripts/doc_probe_sweep.sh` | sh | 132 | sed grep run awk |  | make | writes |
+| `scripts/falsify.sh` | sh | 631 | git grep run cargo sed awk |  | make,script | gate+writes |
+| `scripts/find_problems.sh` | sh | 786 | run rustc sed grep cargo git awk gh |  | make,script | gate+writes |
+| `scripts/gate_lock.sh` | sh | 289 | grep awk run |  | make,script | writes |
+| `scripts/gate_preflight.sh` | sh | 84 | run sed python3 cargo |  | script | gate |
+| `scripts/install.sh` | sh | 143 | sed curl run |  | script | report |
+| `scripts/leakcheck` | sh | 142 | sed cargo grep run |  |  | gate+writes |
+| `scripts/lib-branch-audit.sh` | sh | 106 | sed gh git run grep python3 |  | ci | writes |
+| `scripts/make-release.sh` | sh | 159 | grep sed git rustc run cargo |  | ci,script | writes |
+| `scripts/native_ratio.sh` | sh | 155 | sed run awk rustc |  | make,script | gate+writes |
+| `scripts/p09_fast_gate.sh` | sh | 207 | run cargo grep awk |  |  | gate |
+| `scripts/probe-local.sh` | sh | 79 | run cargo sed awk |  |  | writes |
+| `scripts/profile.sh` | sh | 383 | sed run cargo grep awk rustc |  | make,script | gate+writes |
+| `scripts/registry_validate.sh` | sh | 162 | git grep rustc awk run cargo |  | ci,script | writes |
+| `scripts/release-gate.sh` | sh | 88 | run sed git gh |  | make | gate |
+| `scripts/revalidate_libs_local.sh` | sh | 296 | run sed git python3 grep awk |  | ci,script | gate+writes |
+| `scripts/script_twin.sh` | sh | 105 | run sed git |  | make | gate+writes |
+| `scripts/sweep_scratch.sh` | sh | 127 | sed git run |  | make,script | report |
+| `scripts/test-timing-runner.sh` | sh | 47 | run awk |  |  | gate+writes |
+| `scripts/valgrind-sweep.sh` | sh | 151 | run grep sed awk |  | ci,script | gate+writes |
+| `scripts/vet-lib.sh` | sh | 142 | cargo run git sed grep |  | script | report |
+| `tests/probes/h7-retbuf-alias/run.sh` | sh | 13 | run |  | make,script | report |
+| `tests/scripts/snap_example.sh` | sh | 165 | run awk |  | script | gate+writes |
+| `tests/scripts/test_gl_snapshots.sh` | sh | 113 | run |  | script | gate |
+| `tests/wasm/html-thread-proof.sh` | sh | 123 | rustc run python3 grep |  | script | gate+writes |
+| `tools/audience-demo/run-demo.sh` | sh | 161 | sed grep python3 curl cargo run |  |  | gate |
+| `tools/indexer/install-hook.sh` | sh | 67 | git grep awk run |  | make | writes |
+
+## T8 — a shell fragment another script sources — not a program (5 files, 484 lines)
+
+| script | lang | lines | tools | py modules | callers | contract |
+|---|---|---|---|---|---|---|
+| `scripts/repro-flags.sh` | sh | 64 | rustc |  | ci,script | report |
+| `scripts/repro-toolchain.sh` | sh | 69 | sed |  | script | report |
+| `scripts/sccache_env.sh` | sh | 26 |  |  | script | report |
 | `scripts/test_subjects.sh` | sh | 285 | rustc git |  | make,script | report |
-| `scripts/vet-lib.sh` | sh | 142 | cargo git sed grep |  | script | report |
-| `tests/wasm/html-thread-proof.sh` | sh | 123 | rustc python3 grep |  | script | gate+writes |
-| `tools/audience-demo/run-demo.sh` | sh | 161 | sed grep python3 curl cargo |  |  | gate |
+| `tests/wasm/gate-lib.sh` | sh | 40 |  |  | script | report |
 
 ## T9 — stays as it is unless the owner says otherwise (4 files, 3579 lines)
 
 | script | lang | lines | tools | py modules | callers | contract |
 |---|---|---|---|---|---|---|
 | `scripts/browser/coop_server.py` | py | 23 |  |  | script | report |
-| `scripts/registry-sign.sh` | sh | 845 | sed cargo git gh python3 grep |  | script | gate+writes |
-| `scripts/registry_maintain.sh` | sh | 717 | gh git curl python3 cargo grep sed awk |  | ci,script | gate+writes |
+| `scripts/registry-sign.sh` | sh | 845 | sed cargo run git gh python3 grep |  | script | gate+writes |
+| `scripts/registry_maintain.sh` | sh | 717 | gh git curl python3 cargo grep sed awk run |  | ci,script | gate+writes |
 | `scripts/release-checklist.py` | py | 1994 | git gh cargo grep python3 curl | argparse json re subprocess | make,script | gate+writes |
 
