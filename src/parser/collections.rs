@@ -3965,7 +3965,7 @@ use #count instead"
                 // A vector whose ELEMENT names no definition has said what is wrong with it
                 // too, only earlier: at the literal it was built from (`[Hexz { … }]`), in
                 // another statement, so the count above cannot see it.
-                let element_undefined = matches!(&in_type, Type::Vector(e, _)
+                let element_undefined = matches!(in_type.base(), Type::Vector(e, _)
                     if self.data.type_def_nr(e) == u32::MAX);
                 if self.lexer.diagnostics().error_count() == errors_before_iterable
                     && !element_undefined
