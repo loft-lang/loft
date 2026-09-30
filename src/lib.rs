@@ -340,6 +340,7 @@ pub mod compact;
 pub mod const_fn;
 pub mod copy_view;
 pub mod exit_vector;
+pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]

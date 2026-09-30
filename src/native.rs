@@ -460,6 +460,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_path_sep", n_path_sep),
     ("i_parse_error_push", i_parse_error_push),
     ("n_hash_sorted", n_hash_sorted),
+    ("n_vector_sum_int", n_vector_sum_int),
     ("n_radix_sorted", n_radix_sorted),
     ("n_spatial_range", n_spatial_range),
     ("n_trie_prefix", n_trie_prefix),
@@ -3621,6 +3622,15 @@ fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
 /// type id (`tp`) explicitly — the parser-desugared `for e in h`
 /// path emits it as a compile-time constant; direct callers must
 /// use `sizeof(hash<T[…]>)`-style type introspection to obtain it.
+/// `vector_sum_int(v, acc)` — the loop kernel (`loop_kernels::vector_sum_int`), one
+/// `OpStaticCall` for the whole sum.  Its native twin is `codegen_runtime::n_vector_sum_int`.
+fn n_vector_sum_int(stores: &mut Stores, stack: &mut DbRef) {
+    let acc = stores.get::<i64>(stack);
+    let v = stores.get::<DbRef>(stack);
+    let result = crate::loop_kernels::vector_sum_int(&stores.allocations, &v, acc);
+    stores.put(stack, result);
+}
+
 fn n_hash_sorted(stores: &mut Stores, stack: &mut DbRef) {
     let v_tp = stores.get::<i64>(stack) as u16;
     let v_h = stores.get::<DbRef>(stack);
