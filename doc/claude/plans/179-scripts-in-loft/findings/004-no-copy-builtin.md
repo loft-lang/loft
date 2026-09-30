@@ -6,7 +6,7 @@ fix: `path.copy_to(dst) -> FileResult` in the on-demand `script` library (README
 ref: 
 probe: 004.probe.loft
 expect: refused
-checked: 03b3e836
+checked: 23155096
 holds: yes
 
 no `copy(from, to)`: a file is copied as `write_bytes(dst, read_bytes(src) ?? [])`, two calls and a null discharge for what `cp` says in one word

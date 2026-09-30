@@ -1,0 +1,3 @@
+// finding 011 — still holds while this is refused (the shape the library's roadmap names).
+use regex;
+fn main() { g = "x=12".match_groups("x=([0-9]+)"); println("{len(g)}"); }

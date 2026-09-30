@@ -6,7 +6,7 @@ fix: `pattern.glob() -> vector<text>` in the on-demand `script` library (README 
 ref: 
 probe: 008.probe.loft
 expect: refused
-checked: 03b3e836
+checked: 23155096
 holds: yes
 
 no path pattern: bash's `default/*.loft` is a `list_dir` + an `ends_with` filter + a path join, four lines for one word

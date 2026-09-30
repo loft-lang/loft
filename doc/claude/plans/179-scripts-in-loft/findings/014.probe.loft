@@ -1,0 +1,2 @@
+// finding 014 — still holds while a backtick cannot be escaped inside a backtick literal.
+fn main() { s = `code: \`x\` here`; println(s); }
