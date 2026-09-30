@@ -191,6 +191,10 @@ fn print_help() {
     println!(
         "  --native-debug                like --native but compile with -Cdebuginfo=2 (DWARF)"
     );
+    println!(
+        "                                and preserve the generated .rs on disk; combine with"
+    );
+    println!("                                --native-release for optimised + debug-info");
     println!("  --lean                        strip the live/debug tier — smallest binary, no");
     println!("                                live-flip/breakpoints");
     println!("  --dev-soft-halt               demote dev-mode runtime raises to log-and-continue");
@@ -198,10 +202,6 @@ fn print_help() {
     println!(
         "                                site in a single run instead of halting on the first"
     );
-    println!(
-        "                                and preserve the generated .rs on disk; combine with"
-    );
-    println!("                                --native-release for optimised + debug-info");
     println!("  --native-emit [out.rs]        write generated Rust source and exit");
     println!("                                (default: .loft/<script>.rs beside the script)");
     println!("  --native-wasm [out.wasm]      compile to WebAssembly (wasm32-wasip2)");
@@ -1014,12 +1014,13 @@ fn install_from_registry_with_opts(args: &[String], opts: &loft::install::Instal
                         println!("  created loft.toml (package `{pkg}`)");
                     }
                 }
+                let path = manifest.to_string_lossy().to_string();
                 if manifest.exists()
-                    && loft::manifest::record_dependency(
-                        &manifest.to_string_lossy(),
-                        name,
-                        &requirement,
-                    )
+                    && (loft::manifest::record_dependency(&path, name, &requirement)
+                        // An explicit version MOVES an existing declaration: left standing,
+                        // it overruled the lock this install wrote (loft#1751).
+                        || (version.is_some()
+                            && loft::manifest::replace_dependency(&path, name, &requirement)))
                 {
                     println!("  declared in loft.toml: {name} = \"{requirement}\"");
                 }
@@ -12177,6 +12178,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // often exactly what is being asked. Both are silent unless armed.
     state.report_alloc_sites(&p.data);
     state.report_profile(&p.data);
+    // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
+    loft::op_census::write(&p.data);
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {

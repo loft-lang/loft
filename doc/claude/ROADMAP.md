@@ -405,7 +405,7 @@ Every item below must be checked off before the project claims its stability bar
 
 | ID | Title | Notes |
 |---|---|---|
-| O1 | Superinstruction peephole rewriting | **Re-triage** — deferred as "opcode table full (254/256)", a premise that no longer holds: the escape prefix makes the space 511 (PERFORMANCE-history.md § P1) |
+| O1 | Superinstruction peephole rewriting | **Delivered** — operand fusion (PERFORMANCE.md § Operand fusion — superinstructions) |
 
 ---
 

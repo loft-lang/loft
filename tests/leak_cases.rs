@@ -158,7 +158,7 @@ fn leak_cases_interp() {
 }
 
 #[test]
-#[ignore = "heavy (rustc per case) — run with --test leak_cases -- --ignored"]
+#[ignore = "heavy (rustc per case) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test leak_cases leak_cases_native -- --ignored`"]
 fn leak_cases_native() {
     sweep("--native", true, |e| e.native_leaks);
 }

@@ -62,7 +62,6 @@ doc/claude/DRAWING.md	timeline	1
 doc/claude/FIRST_CONTACT.md	timeline	29
 doc/claude/FORMALIZATION.md	history	2
 doc/claude/FORMALIZATION.md	timeline	4
-doc/claude/FORMATTER.md	timeline	1
 doc/claude/GALLERY_CI.md	timeline	6
 doc/claude/GOALS.md	timeline	7
 doc/claude/GOALS_USEFUL_NOT_STABLE.md	timeline	2
@@ -127,9 +126,9 @@ doc/claude/REMOTE_STORES.md	timeline	6
 doc/claude/REPL.md	timeline	1
 doc/claude/RUN_BOUNDS.md	timeline	2
 doc/claude/SANDBOX.md	timeline	14
-doc/claude/SKILLS_REVIEW.md	timeline	14
+doc/claude/SKILLS_REVIEW.md	timeline	15
 doc/claude/SLOTS.md	history	1
-doc/claude/SLOTS.md	timeline	5
+doc/claude/SLOTS.md	timeline	4
 doc/claude/STABILITY_METHOD.md	history	2
 doc/claude/STABILITY_METHOD.md	timeline	15
 doc/claude/STABILITY_PASS2.md	history	1
@@ -211,7 +210,7 @@ doc/claude/releases/2026-06/README.md	timeline	1
 doc/claude/releases/2026-07/README.md	timeline	23
 doc/claude/releases/2026-08/README.md	timeline	2
 doc/claude/releases/2026-09/README.md	timeline	8
-doc/claude/releases/2026-10/README.md	timeline	28
+doc/claude/releases/2026-10/README.md	timeline	36
 doc/claude/releases/README.md	timeline	4
 doc/features/F109.md	hedge	1
 doc/features/F22.md	hedge	1

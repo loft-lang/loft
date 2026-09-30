@@ -2854,7 +2854,19 @@ four measurements that shaped the mechanism, is in
 
 The rules chapter's `OPEN` paragraph, moved here as written (RELEASE.md § 5b).
 
-**OPEN: 0.**  `D-own-52` (a record function whose abandoned return candidate is promoted onto
+**OPEN: 0.**  `D-own-53` (an element slot lost its tie to its container when a literal built
+into it named its type: `unique_elm_var` ties the slot to the container and marks it a borrow,
+but on pass 2 the slot still held pass 1's placeholder `Reference(0, …)`, and the inner
+literal's retype replaced that type WHOLESALE — dependency list included.  The empty list then
+answered `(O-Proxy)`'s "owns no store?" with yes, a fresh backing was minted, and the element's
+contents went there.  After a `.map` over one inline `vector<vector<integer>>` literal the next
+such literal's first element read EMPTY — `[[1,1,1,1,1], [1]].map(|x| { len(x) })` answered
+`[0, 1]`, a `for` and a `.reduce` over it summed as if it were empty — silently, on both
+backends, on released 2026.9.0.  `Function::change_var_type` now keeps the recorded borrows
+when it refines the `Reference(0, …)` placeholder: learning a variable's shape says nothing new
+about the store it lives in.  Found walking `(I-Map)`/`(I-Reduce)` over inline receivers.  Guard
+`tests/scripts/a-literal-after-a-map-keeps-its-first-element.loft`) opened and CLOSED 2026-09-30.
+`D-own-52` (a record function whose abandoned return candidate is promoted onto
 its buffer and which answers ANOTHER function's result through it — `none = F {…}; if k < 0
 { return none }; if k > 0 { return other(k) }` — freed the promoted local BEFORE the call that
 is handed it as the buffer: the loft#1126 transition free, unguarded, where `(O-Buffer)`'s

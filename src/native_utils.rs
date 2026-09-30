@@ -353,8 +353,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     let rlib = profile_dir.join("libloft.rlib");
     let fp = loft::cache::loft_build_fingerprint();
     let fresh = |dir: &std::path::Path| {
-        dir.join("libloft.rlib").exists()
-            && loft::cache::native_artifact_fingerprint_matches(dir, fp)
+        dir.join("libloft.rlib").exists() && loft::cache::runtime_fingerprint_matches(dir, fp)
     };
     if fresh(&profile_dir) {
         crate::platform::timing_record("wasmrlib", shape.name(), true, None);
@@ -474,10 +473,15 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         cmd.arg("--target-dir").arg(tree.join(sub));
     }
     let subject = format!("libloft.rlib ({triple})");
+    let modified = || std::fs::metadata(&rlib).and_then(|m| m.modified()).ok();
+    let before = modified();
     let status = crate::platform::timing_exec("cargo", &subject, why, || cmd.status());
     match status {
         Ok(s) if s.success() && rlib.exists() => {
-            loft::cache::write_native_artifact_fingerprint(&profile_dir, fp);
+            // An unchanged rlib means cargo found it current for this source tree: this
+            // loft build joins the ones it serves rather than evicting them.
+            let rebuilt = before.is_none() || modified() != before;
+            loft::cache::stamp_runtime_fingerprint(&profile_dir, fp, rebuilt);
             Some(profile_dir)
         }
         Ok(_) => {

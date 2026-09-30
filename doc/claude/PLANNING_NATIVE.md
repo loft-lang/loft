@@ -256,16 +256,6 @@ at the end prevents cleanup, compounding the issue.
 
 ---
 
-### O1  Superinstruction merging
-**Status: no longer blocked — the prerequisite it waited on exists**
-**Sources:** PERFORMANCE-history.md § P1
-**Description:** Peephole pass in `src/compile.rs` merges common 4-opcode sequences (var/var/op/put) into single opcodes.  This was deferred on "no slots remain without a redesign of the opcode space (e.g. a two-byte opcode escape)" — **that escape exists**: byte 255 escapes to `OPERATORS[255 + ext]`, so the space is 511 opcodes and a superinstruction lands in the escape range as a two-byte opcode (INTERMEDIATE.md § Opcode budget; `make ops-census` for the current occupancy).  The extra byte-fetch is negligible against replacing ~4 one-byte ops.
-**Expected gain:** 2–4× on tight integer loops.
-**Effort:** Medium — the peephole pass itself; the opcode-space work it was waiting for is done.
-**Target:** 1.1+
-
----
-
 ### O2  Stack raw pointer cache
 **Sources:** PERFORMANCE-history.md § P2
 **Description:** Every `get_stack`/`put_stack` call resolves `database.store(&stack_cur)` then computes a raw pointer from `rec + pos`. Adding `stack_base: *mut u8` to `State` that is refreshed once per function call/return eliminates this lookup on every arithmetic push/pop, reducing the hot path to a single pointer add.

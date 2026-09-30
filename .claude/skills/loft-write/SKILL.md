@@ -124,6 +124,12 @@ This is the same reachable-fault rule as `÷0` / out-of-bounds indexing (@PLN25
 `(N-Parse)`).  A *numeric* `as` (`3.14 as integer`, `x as u8`) is not a parse and does
 not add `?` on its own (a narrowing numeric cast that can miss uses `as u8?`).
 
+**A cast to a variant is non-null** (C131): `s as Circle` answers a `Circle`; on a miss its fields
+are defaulted and it WARNS (`variant-cast-default`) unless checked first (`if s is Circle { … }`)
+or spelled `as Circle?` (null on a miss).  A miss the compiler can prove is an error.  Likewise
+`t as Color` (text → plain enum) answers the FIRST variant on a miss and warns
+(`enum-parse-default`); write `as Color?` or `t as Color ?? Blue`.
+
 **Nullability defaults (@PLN25 DN1) — every scalar and vector is NON-NULL by default.** A plain
 `integer` / `float` / `single` / `boolean` / `character` / `text` (and `vector<T>`) field, local, or
 return REJECTS `null`: storing `null` — or an undischarged `τ?` from a fit-failing op (parse, `/`,
@@ -152,8 +158,7 @@ struct Point {
 }
 ```
 
-Modifiers: `limit(min, max)`, `default(expr)` / `= expr`, `virtual(expr)`.  (`not null` still parses
-but is a retired no-op — see the DN1 defaults note above; use `?` for the nullable case.)
+Modifiers: `limit(min, max)`, `default(expr)` / `= expr`, `virtual(expr)`.
 
 **Two const axes** (@PLN40) — `const` before the NAME freezes the *binding*; `const` before the
 TYPE freezes the *value*.  They are opposites and compose:
@@ -388,7 +393,7 @@ flag         = nested.1;          // true
   by one.
 - **Scalar elements are NON-NULL by default (@PLN25 DN1)** — a tuple
   `integer` / `text` / … element rejects `null`; append `?` to the element
-  type (`(integer?, text)`) to allow it. (`not null` is a retired no-op.)
+  type (`(integer?, text)`) to allow it.
 - **Compound assignment on tuple LHS is rejected** — `(a, b) += (1, 2)`
   is a compile error; rewrite as `a += 1; b += 2;` or rebuild the tuple.
 
@@ -561,9 +566,7 @@ x as i32                           // cast to a 4-byte sized integer
 flags & ~32                        // bitwise NOT — clears bit 5
 ```
 
-**`?` and `??` are at opposite ends of this table**, so they parenthesise
-oppositely on a binary result: `a / b ?? 0` discharges the division, `a / b?` is
-`a / (b?)` and yields **null** — write `(a / b)?`.
+**`?` and `??` are at opposite ends of this table** — write `(a / b)?` (see § `?`).
 
 ### `==` compares content; `&a == &b` asks identity
 
@@ -622,7 +625,9 @@ containing braces — JSON, a rendered struct, a code sample — must double the
 **A format spec tunes what the value RENDERS as, so it works on every type**, not just
 numbers and text: `{c:>5}` pads a character, `{v:>12}` a vector, `{p:*^16}` a struct. The
 flags that choose the rendering (`#`, `:j`) are separate from width and alignment and combine
-with them.
+with them.  Zero-padding is the exception: `0N` pads a NUMBER (`{-1:04}` is `-001`) and is a
+compile error on anything else — use a fill instead (`{b:*>6}`).  Inside a `<T: Printable>`
+generic a hole renders as the instance's type (`{x:05}` on an integer `T` is `00042`).
 
 ### Backtick strings (`` `...` ``)
 
@@ -706,6 +711,8 @@ match shape {
     _ => {},
 }
 ```
+A name after `:` in a `match` field pattern BINDS (`Circle { radius: r } => r`), never compares
+with a variable in scope; `is` takes bare names only (`if s is Circle { radius } { … }`).
 <!-- from tests/reference/skill-is-and-match.loft -->
 ```loft
 said = match (3, 7) {
@@ -882,8 +889,7 @@ width (`f += (n as i32)`).
 ## Nullable defaults, the copy-write hazard, and null-checking reads
 
 **A plain `vector<T>` field is non-null and defaults to `[]`** (@PLN25 DN1) — declare
-it plainly; write `vector<T>?` only when null must be distinct from empty.  The
-`not null` modifier still parses but is a retired no-op — don't add it.
+it plainly; write `vector<T>?` only when null must be distinct from empty.
 
 **Never capture a vector into a local in order to write through it.**  A
 whole-value bind COPIES the heap value (C86), so every write lands in the
@@ -927,6 +933,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
 | `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
 | `Undefined type string` | Use `text`, not `string` |
+| `variant-cast-default` / `enum-parse-default` (warnings) | The cast answers a default on a miss — check first (`if s is Circle`), or write `as V?` / `?? default` |
 | `Allocating a used store` | A store is being reused while still held — check parallel blocks / store lifetimes (a `key` field name is NOT the cause; that works) |
 | `Unknown function say` | Use `println()` |
 | `Cannot pass a literal or expression to a '&' parameter` | Assign to a named variable first, then pass it. `v[i]` and `s.field` work directly (P160). |

@@ -724,6 +724,76 @@ impl State {
         }
     }
 
+    /// `OpTextWalkStep` — one step of a `for c in T` walk: the parser's `for text next` block
+    /// (the shape `hoist::char_walks` matches for `--native`'s `(R-CharWalk)`) in one op.
+    /// `index = next`; the character at `next`, with the fault note a NUL read makes; `next`
+    /// advanced by the character's UTF-8 width; `next = index + 1` when that did not move it;
+    /// `c` bound to the character.  The same functions as the unfused ops, in the same order.
+    /// Every operand is a frame position taken at the op's stack height, as `OpVarInt`'s is.
+    pub fn text_walk_step(&mut self) {
+        let c = self.code::<u16>();
+        let index = self.code::<u16>();
+        let next = self.code::<u16>();
+        let src = self.code::<u16>();
+        let arg = self.code::<u8>();
+        let at = self.get_var::<i64>(next);
+        let (ch, empty) = {
+            let text = self.local_text(src, arg);
+            let t = text.str();
+            (ops::text_character(t, at), t.is_empty())
+        };
+        ops::note_format_fault(3, ch == char::from(0) && at != i64::MIN && !empty);
+        let width = if ch == char::from(0) {
+            0
+        } else {
+            ch.len_utf8() as i64
+        };
+        let mut moved = ops::op_add_int(at, width);
+        if moved <= at {
+            moved = ops::op_add_int(at, 1);
+        }
+        // `put_var` addresses `stack_pos + step - pos`; these positions are read-style
+        // (`stack_pos - pos`), so each write adds the value's step back.
+        let step = self.stack_step(8) as u16;
+        self.put_var::<i64>(index + step, at);
+        self.put_var::<i64>(next + step, moved);
+        self.put_var::<char>(c + step, ch);
+    }
+
+    /// The text local at frame position `src`, borrowed as `OpVarText` (`arg == 0`: the slot
+    /// owns a `String`) or `OpArgText` (`arg != 0`: the slot holds a `Str`) would push it.
+    fn local_text(&mut self, src: u16, arg: u8) -> Str {
+        if arg == 0 {
+            Str::new(self.get_var_ref::<String>(src))
+        } else {
+            self.get_var::<Str>(src)
+        }
+    }
+
+    /// `OpTextNullJump` — `if !T { … }`: jump past the arm when T is not the null text, the
+    /// answer `OpConvBoolFromText`, `OpNot` and `OpGotoFalseWord` give together.
+    pub fn text_null_jump(&mut self) {
+        let src = self.code::<u16>();
+        let arg = self.code::<u8>();
+        let step = self.code::<i32>();
+        if self.local_text(src, arg).str() != crate::state::STRING_NULL {
+            self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
+        }
+    }
+
+    /// `OpTextEndJump` — `if size(T) <= index { … }`: jump past the arm when the size is
+    /// greater, the answer `OpSizeText`, `OpLeInt` and `OpGotoFalseWord` give together.
+    pub fn text_end_jump(&mut self) {
+        let src = self.code::<u16>();
+        let arg = self.code::<u8>();
+        let idx = self.code::<u16>();
+        let step = self.code::<i32>();
+        let size = self.local_text(src, arg).str().len() as i64;
+        if size > self.get_var::<i64>(idx) {
+            self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
+        }
+    }
+
     pub fn var_text(&mut self) {
         let pos = self.code::<u16>();
         let new_value = Str::new(self.get_var_ref::<String>(pos));

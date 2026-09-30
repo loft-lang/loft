@@ -289,6 +289,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     copy_record,
     place_record,
     move_record,
+    move_field,
+    move_vector,
     free_record_in,
     copy_ref_or_null,
     bind_or_copy,
@@ -351,6 +353,21 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     call_ref_store,
     bind_fn_ref_result,
     coroutine_retain,
+    int_v_v,
+    int_v_c,
+    cmp_int_v_v,
+    cmp_int_v_c,
+    int_v_v_put,
+    int_v_c_put,
+    cmp_int_v_v_jump,
+    cmp_int_v_c_jump,
+    text_walk_step,
+    text_null_jump,
+    text_end_jump,
+    vec_get_int,
+    vec_get_int_nullable,
+    vec_set_int,
+    vec_end_jump,
 ];
 
 /// The loft name of each [`OPERATORS`] slot, in slot order — the operator declarations
@@ -618,6 +635,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCopyRecord",
     "OpPlaceRecord",
     "OpMoveRecord",
+    "OpMoveField",
+    "OpMoveVector",
     "OpFreeRecordIn",
     "OpCopyRefOrNull",
     "OpBindOrCopy",
@@ -680,6 +699,21 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCallRefStore",
     "OpBindFnRefResult",
     "OpCoroutineRetain",
+    "OpIntVV",
+    "OpIntVC",
+    "OpCmpIntVV",
+    "OpCmpIntVC",
+    "OpIntVVPut",
+    "OpIntVCPut",
+    "OpCmpIntVVJump",
+    "OpCmpIntVCJump",
+    "OpTextWalkStep",
+    "OpTextNullJump",
+    "OpTextEndJump",
+    "OpVecGetInt",
+    "OpVecGetIntNullable",
+    "OpVecSetInt",
+    "OpVecEndJump",
 ];
 
 fn goto(s: &mut State) {
@@ -2912,6 +2946,20 @@ fn move_record(s: &mut State) {
     s.database.move_record_out(&v_data, &v_dest, v_tp);
 }
 
+fn move_field(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_dest = s.get_stack::<DbRef>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.move_field_out(&v_data, &v_dest, v_tp);
+}
+
+fn move_vector(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_src = s.get_stack::<DbRef>();
+    let v_dest = s.get_stack::<DbRef>();
+    s.database.move_vector(&v_dest, &v_src, v_tp);
+}
+
 fn free_record_in(s: &mut State) {
     let v_tp = s.code::<u16>();
     let v_rec = s.get_stack::<DbRef>();
@@ -3265,4 +3313,163 @@ fn coroutine_retain(s: &mut State) {
     let v_gen = s.get_stack::<DbRef>();
     let new_value = s.coroutine_retain(v_gen);
     s.put_stack(new_value);
+}
+
+fn int_v_v(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let new_value = ops::fused_int(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+    s.put_stack(new_value);
+}
+
+fn int_v_c(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let new_value = ops::fused_int(v_kind, s.get_var::<i64>(v_a), v_c);
+    s.put_stack(new_value);
+}
+
+fn cmp_int_v_v(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let new_value = ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+    s.put_stack(new_value);
+}
+
+fn cmp_int_v_c(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let new_value = ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), v_c);
+    s.put_stack(new_value);
+}
+
+fn int_v_v_put(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_dst = s.code::<u16>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    {
+        let r = ops::fused_int(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b));
+        s.put_var(v_dst, r);
+    }
+}
+
+fn int_v_c_put(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_dst = s.code::<u16>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    {
+        let r = ops::fused_int(v_kind, s.get_var::<i64>(v_a), v_c);
+        s.put_var(v_dst, r);
+    }
+}
+
+fn cmp_int_v_v_jump(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_b = s.code::<u16>();
+    let v_step = s.code::<i32>();
+    if !ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), s.get_var::<i64>(v_b)) {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
+    }
+}
+
+fn cmp_int_v_c_jump(s: &mut State) {
+    let v_kind = s.code::<u8>();
+    let v_a = s.code::<u16>();
+    let v_c = s.code::<i64>();
+    let v_step = s.code::<i32>();
+    if !ops::fused_cmp(v_kind, s.get_var::<i64>(v_a), v_c) {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
+    }
+}
+
+fn text_walk_step(s: &mut State) {
+    s.text_walk_step();
+}
+
+fn text_null_jump(s: &mut State) {
+    s.text_null_jump();
+}
+
+fn text_end_jump(s: &mut State) {
+    s.text_end_jump();
+}
+
+fn vec_get_int(s: &mut State) {
+    let v_vec = s.code::<u16>();
+    let v_size = s.code::<u16>();
+    let v_idx = s.code::<u16>();
+    let v_fld = s.code::<u16>();
+    let new_value = {
+        let r = s.get_var::<DbRef>(v_vec);
+        let i = s.get_var::<i64>(v_idx);
+        let db = s.vec_get_or_raise(&r, u32::from(v_size), i);
+        if db.rec == 0 {
+            i64::MIN
+        } else {
+            s.database
+                .store(&db)
+                .get_int(db.rec, db.pos + u32::from(v_fld))
+        }
+    };
+    s.put_stack(new_value);
+}
+
+fn vec_get_int_nullable(s: &mut State) {
+    let v_vec = s.code::<u16>();
+    let v_size = s.code::<u16>();
+    let v_idx = s.code::<u16>();
+    let v_fld = s.code::<u16>();
+    let new_value = {
+        let r = s.get_var::<DbRef>(v_vec);
+        let i = s.get_var::<i64>(v_idx);
+        let db = vector::get_vector(&r, u32::from(v_size), i, &s.database.allocations);
+        ops::note_format_fault(3, db.rec == 0 && i != i64::MIN && !r.is_null());
+        if db.rec == 0 {
+            i64::MIN
+        } else {
+            s.database
+                .store(&db)
+                .get_int(db.rec, db.pos + u32::from(v_fld))
+        }
+    };
+    s.put_stack(new_value);
+}
+
+fn vec_set_int(s: &mut State) {
+    let v_vec = s.code::<u16>();
+    let v_size = s.code::<u16>();
+    let v_idx = s.code::<u16>();
+    let v_fld = s.code::<u16>();
+    let v_val = s.get_stack::<i64>();
+    {
+        let v = v_val;
+        let r = s.get_var::<DbRef>(v_vec);
+        let i = s.get_var::<i64>(v_idx);
+        let db = s.vec_get_or_raise(&r, u32::from(v_size), i);
+        if db.rec != 0 {
+            s.database
+                .store_mut(&db)
+                .set_int(db.rec, db.pos + u32::from(v_fld), v);
+        }
+    }
+}
+
+fn vec_end_jump(s: &mut State) {
+    let v_vec = s.code::<u16>();
+    let v_idx = s.code::<u16>();
+    let v_step = s.code::<i32>();
+    if i64::from(vector::length_vector(
+        &s.get_var::<DbRef>(v_vec),
+        &s.database.allocations,
+    )) > s.get_var::<i64>(v_idx)
+    {
+        s.code_pos = (i64::from(s.code_pos) + i64::from(v_step)) as u32;
+    }
 }

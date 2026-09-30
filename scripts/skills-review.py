@@ -127,8 +127,17 @@ def make_targets() -> set[str]:
     return set(re.findall(r"^([a-z][a-z0-9_-]+):", text, re.M))
 
 
+# A markdown link written RELATIVE to the skill (`../../../doc/claude/X.md`, deeper from a
+# `references/` file) names the same repo path once its `../` run is dropped: every skill file
+# sits under `.claude/skills/`, and the run climbs to the root before a top-level directory.
+# Unmatched, such links were neither existence-checked nor tracked, so a skill citing a doc
+# only by link was never reopened when that doc changed.
+REL_LINK_RE = re.compile(r"(?:\.\./)+(?=(?:doc|scripts|src|tests|default|editors|index|\.github)/)")
+
+
 def cited_paths(text: str) -> set[str]:
     out = set()
+    text = REL_LINK_RE.sub(" ", text)
     for m in PATH_RE.findall(text):
         p = m.rstrip(".,;:)]}'\"")
         # A glob or a placeholder is an idiom, not a reference to one file.

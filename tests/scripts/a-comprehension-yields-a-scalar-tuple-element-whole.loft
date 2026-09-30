@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-I-Comp` — the SILENT half of formal/iteration.md D-iter-11: `[for x in v { x }]` over a
+// `vector<(integer, integer)>` read the loop variable's reference as the two members and
+// answered garbage (`(1030792151072, …)`) on the interpreter with no diagnostic; `--native` did
+// not compile.  Apart from `a-comprehension-yields-a-tuple-element-whole.loft`, whose heap-member
+// cells crash the control, so that these values are scored.
+//
+// Axes this file MOVES:  filter or none, which element is read.
+// Axes it HOLDS FIXED:   `(integer, integer)` elements of a local vector.
+//
+// @falsified-at: 6fc54bcbd — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-yields-a-scalar-tuple-element-whole.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: asserts on the interpreter — the control answered garbage members; exit natively.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+fn test_a_scalar_tuple_element_is_copied_as_its_values() {
+  vi: vector<(integer, integer)> = [(3, 31), (4, 41), (7, 71)];
+  ci = [for x in vi { x }];
+  fi = [for x in vi if x.0 % 2 == 1 { x }];
+  a0 = ci[0].0;
+  a1 = ci[2].1;
+  b0 = fi[1].0;
+  b1 = fi[1].1;
+  got = "{len(ci)}:{a0},{a1} {len(fi)}:{b0},{b1}";
+  assert(got == "3:3,71 2:7,71", "scalar tuple elements: {got}");
+}

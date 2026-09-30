@@ -307,10 +307,12 @@ pub mod narrow;
 pub mod native;
 pub mod net_profile;
 pub mod null_census;
+pub mod op_census;
 pub mod spent;
 pub mod stack_census;
 pub mod stack_verify;
 pub mod stdlib_ops;
+pub mod store_census;
 // `net::fetch_bytes` (behind `store_load_url*`) exists exactly where `load_url`
 // does: a native `registry` build, or the browser (`--html`) target.
 pub mod host;
@@ -336,6 +338,7 @@ pub mod byte_copy;
 pub mod compact;
 pub mod const_fn;
 pub mod copy_view;
+pub mod exit_vector;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]

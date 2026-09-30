@@ -244,7 +244,9 @@ Auto-strips leading indentation: the **first content line** sets the base, and t
 leading spaces come off every line that has them.  A blank line does not set the base,
 a line indented less than the base comes out flush, and a TAB-indented line is left
 alone (a tab is not a space, so there is nothing to count).  The first and last lines
-are dropped when they contain only whitespace.
+are dropped when they contain only whitespace.  Text on the line of the OPENING backtick
+is content but never the base — its column is the statement's, not the block's — so the
+base comes from the next line (guard `tests/scripts/a-backtick-first-line-text-does-not-set-the-base.loft`).
 
 Interpolation is no exception — a block with `{…}` in it dedents exactly like one
 without (guard `tests/scripts/990-backtick-dedent-with-holes.loft`).
@@ -262,13 +264,15 @@ shader = `
 `;
 
 msg = `Hello, {name}!
-  You have {count} messages.`;   // holes -> NOT stripped: the two spaces survive
+  You have {count} messages.`;   // "Hello, Ann!\nYou have 3 messages." — the base is the
+                                 // second line's two spaces, hole or no hole
 ```
 
 Use backtick strings for GLSL shaders, multi-line templates, or text containing `"`.
 Embedded code brings its own braces, and every one of them has to be doubled — a bare `{`
-opens an interpolation hole wherever it appears. Doubling keeps the strip working, because
-`{{` is not a hole; a real `{expr}` is what switches it off.
+opens an interpolation hole wherever it appears, and a bare `}` closes one that is not open.
+Both are refused (`format-unclosed-hole`, `format-unescaped-brace`), and `loft fix --apply`
+doubles them for you.
 
 **Gotcha — indexing a text yields `character`, slicing yields `text`.**  The two
 operations on the same subject return different types:

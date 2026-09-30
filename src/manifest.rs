@@ -1117,6 +1117,72 @@ pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
     std::fs::write(path, body).is_ok()
 }
 
+/// Move an EXISTING `[dependencies]` declaration of `name` to `requirement` — the half of
+/// `loft install <name>@<version>` that [`record_dependency`] leaves alone.  A plain string
+/// declaration is rewritten, and an inline table's `version` key; a trailing comment is kept.
+/// Answers whether the file changed: `false` when `name` is not declared, or is declared in a
+/// shape with no version to move (a path dependency), so the caller can say what it did.
+pub fn replace_dependency(path: &str, name: &str, requirement: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let mut in_deps = false;
+    let mut changed = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let (code, comment) = line.split_once('#').map_or((line, ""), |(c, m)| (c, m));
+        let t = code.trim();
+        if t.starts_with('[') {
+            in_deps = t == "[dependencies]";
+        } else if in_deps
+            && !changed
+            && let Some((key, value)) = t.split_once('=')
+            && key.trim() == name
+        {
+            let value = value.trim();
+            let moved = if value.starts_with('"') {
+                Some(format!("{name} = \"{requirement}\""))
+            } else if value.starts_with('{') && value.contains("version") {
+                let re = table_with_version(value, requirement);
+                re.map(|v| format!("{name} = {v}"))
+            } else {
+                None
+            };
+            if let Some(m) = moved {
+                let tail = if comment.is_empty() {
+                    String::new()
+                } else {
+                    format!("  #{comment}")
+                };
+                out.push(format!("{m}{tail}"));
+                changed = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !changed {
+        return false;
+    }
+    let mut body = out.join("\n");
+    body.push('\n');
+    std::fs::write(path, body).is_ok()
+}
+
+/// `{ version = "…", … }` with its `version` value replaced, or `None` when it has none.
+fn table_with_version(table: &str, requirement: &str) -> Option<String> {
+    let at = table.find("version")?;
+    let rest = &table[at..];
+    let open = rest.find('"')?;
+    let close = rest[open + 1..].find('"')? + open + 1;
+    Some(format!(
+        "{}{}\"{requirement}\"{}",
+        &table[..at],
+        &rest[..open],
+        &rest[close + 1..]
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

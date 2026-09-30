@@ -10,6 +10,199 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-Header)`'s function clause — a parameter's header bound once at entry (2026-09-30)
+
+A function reading a vector parameter outside any loop paid the runtime's vector lookup at
+every `v[i]` (`get_vector` + `length_vector`, ~9 ns a read: 37 % of pluginabi's check profile
+once the tree copies were gone).  `hoist::fn_header_params` binds one header at entry for
+every parameter read twice or more that `hoist::param_untouched` finds left as it was: no
+rebind, no native op on it that is not a reader, no free, and every loft callee it reaches
+asked the same of that position (a heap argument that is not the frame's own may name the
+parameter's store and is asked too; a recursion assumes the answer it computes).  Headers
+only, no base: growth of other stores cannot move a header's record or length, and the
+memory a base points into is not provably the parameter's own once a placed buffer may share
+its store.  `Output::begin_fn_headers` opens the frame after the prologue (the header reads
+`stores`) and `end_vector_hoist` closes it before the block's brace, so a loop inside re-uses
+the header and a tail value flows out.  Cells f1–f10 with the emission pin `tests/fn_header.rs`
+(`LOFT_NO_FN_HEADER=1`); falsified: a native write let through keeps a stale header, which
+`LOFT_HOIST_VERIFY=1` names on f10.  Two findings on the way: `Function::is_argument` is true
+for every scope-0 local, so a parameter is `index < attributes().len()` (a work buffer's
+promoted local included); and `OpVectorIsNull` was missing from the hoist's reader list.
+
+### `text_from_byte_range(bytes, lo, hi)` — a text from a byte range, read in place (2026-09-30)
+
+`text_from_bytes(bytes[lo..hi])` builds the slice as a fresh vector (`(Slice-Value)` at an
+argument position) only to read it once; the range form reads the bytes where they are.  Its
+own name, because the interpreter dispatches a stdlib native by name (`native.rs FUNCTIONS`,
+`is_text_dest_native`) and an arity overload landed on the one-argument entry (SIGSEGV in
+`OpFormatText`).  Bounds clamp as a slice's, invalid UTF-8 answers "" as `text_from_bytes`
+does; both backends; guard `tests/scripts/a-text-from-a-byte-range-builds-no-slice.loft`.
+Measured on pluginabi's `check_request` scratch (records.md): the value text's slice store
+was a fifth of the check.
+
+### `(R-Place)`'s loop clause and `(R-ExitVector)` — a decoder builds its tree in one store (2026-09-29)
+
+Two clauses on the placement matrix (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`,
+cells w1/w9 and v1–v13, hand-computed, both backends, pinned in `tests/place_result.rs`).
+**The loop clause** (`place_result::admitted_loops`): a bind inside a loop whose result's ONE
+heap-owning field is stored into an element appended to a parameter or a local vector bound
+before the loop has its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy
+mint's `then`), the field moves by the new `OpMoveField` (bytes relocate, source zeroed), and
+each exit releases the placed record as a block.  **The exit vector** (`exit_vector.rs`, new,
+run right after the placements): a local vector that reaches the exit only inside the literal
+built into the return buffer has its wrapper claimed in that buffer's store, the literal takes
+it by the new `OpMoveVector` (a handle move: the slot's record number moves, the source slot is
+zeroed; the runtime keeps the copy for a cross-store or filled pair, fatal under
+`LOFT_HOIST_VERIFY=1`), and each exit releases the wrapper's block.  A/B on this box (the
+clauses off against on, the census-flagged lanes): `check_request` +18 % and cbor `decode`
++17 % without them, no hex_* routine moved 15 % either way — the native header and base hoists
+that decline a placed vector (no longer a fresh store root) cost nothing measurable, blessed in
+the census.  Composed, the cbor
+`read_value` builds its whole tree in the outermost buffer's store: its bench's decode row
+42.6 ms → 26.2 ms per op here, stores per pluginabi `check_request` 26 → 7.  Switches
+`LOFT_NO_PLACE_RESULT` (both placements) and `LOFT_NO_EXIT_VECTOR`; `LOFT_TRACE_PLACE=1` names
+each admission and decline.  Fixed on the way: the loop clause's first cut REMOVED a buffer's
+exit frees by paths read before any plan was applied, so a second buffer's path landed one
+statement on and stripped the NEXT buffer's free — a store leaked per map decode (the cbor
+bench: 400 a round, `store table exhausted` in `bench/stats.py`); frees are now made no-ops in
+place, and a plan's site is asserted to be what it names.  Found by `make perf-check` over
+hex_shape and declined: a tuple-destructured vector local's wrapper is typed
+`main_vector<vector<T>>` (loft#1757), and releasing it as a block by that type read every
+integer as a handle (`Store access out of bounds … the reference is corrupt` in
+`wall_chain_walk`); the clause admits only a wrapper named `main_vector<T>` for a
+`vector<T>` local (matrix cell v14).  Not measured as a speed-up on
+`check_request` itself: the store cycles it lost were replaced by block claims and releases in
+the shared store (`place_record_prefilled` 11 %, `free_record_in` 10.6 % of the profile), and
+the free-tree cost of a claim is close to a store mint's — `bench/portal/analysis/records.md`
+§ check_request after the two clauses.
+
+### `(R-Place)`'s callee clause admits a chain exit (2026-09-29)
+
+`place_result::callee_writes_buffer_at_every_exit` read `return g(…)` as an exit answering a
+store other than the buffer, and a chain function's buffer attribute is the `__ref_N` the
+chain renamed it to, which the `__retbuf` name test refused before any exit was asked.  Now
+the buffer is whatever attribute the callee's return-buffer index names, and a chain block
+(`{ one_buffer_chain: buf = g(…, buf); …; buf }`) writes the buffer iff `g` writes ITS buffer
+on every exit — `chain_writes_buffer`, recursive with a cycle guard.  On the placement
+matrix (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`) the chain cell is
+placed like the literal control and its stores per call go 2 → 1; the three declines hold,
+and the clause's recursion is what refuses a chain to a callee whose exits answer different
+stores (sabotage: a store fault on `--native`).  No library bench program carries the shape
+yet (census unchanged); the decoder rows wait on the loop, local-host and wrapper-field
+admissions the matrix records.
+
+### A `??` fallback's text set is the discharge buffer's own (2026-09-29)
+
+`hoist::discharge_buffer_set` (`@FR-R-InPlace`'s hidden-buffer allowance, `@FR-R-Callee`):
+any `OpSet*` whose target is the pass-2 discharge buffer `null_buffer_alloc` admits the mint
+of — a text field's `OpSetText` included — is admitted beside the mint, in the loop body
+(`blocks_header_hoist`), in a callee's in-place verdict (`callee_allowance`) and in its write
+set (`body_writes`, as the buffer's own type).  The buffer's store is the site's own, reached
+by nothing a caller holds.  stage's `frame_of` (`q = self.st_seqs[n.nd_seq] ?? Sequence {…,
+q_name: ""}`) was a writing callee for that one op, and `pack_instances`, which calls it per
+node, held no header at all: 16 general appends and 20 store reads per node.  Now 16 pushes
+through the header and three vector headers: 920 → 309 µs per op (24.3× → 8.4× of Rust) here,
+hash unchanged.  Under `LOFT_NO_NULL_BUFFER_HOIST` with the mint.  Guard
+`tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft` (four cells; c3
+is a callee that sets a text INTO an element of the walked vector, which must keep the loop
+on the runtime); pin `tests/discharge_set.rs`.
+
+### A whole-record copy into an appended element is a complete write (2026-09-29)
+
+`hoist::group_covers_type` (`@FR-R-CompleteWrite`) broke at the first statement that was not
+an `OpSet*` on the element, so a value parameter appended whole — `self.vertices += [av]`,
+delivered as one `OpCopyRecord(av, elm, tp)` — kept `OpNewRecord`'s prefill of the eight
+fields the copy then overwrote.  A whole-record copy INTO the element now covers the type
+when the element owns no heap; a heap-owning element keeps the prefill, because the copy's
+fresh-destination path (`COPY_FRESH_DEST`) trusts the zeroed handles the prefill wrote.
+`add_vertex` mints with `OpNewRecordNP`; mesh3d's `sphere` 1.22 → 0.94 ms per op (7.1× →
+5.4× of Rust) here, same hash; the census gains `R-CompleteWrite` in twelve programs.  Cells
+c9 (heap-free, skips) and c10 (a text field, keeps) of the V-y cells; pin
+`tests/complete_write.rs`.
+### A hoisted loop asks a store's lock once, not once per element (2026-09-29)
+
+d2f0e9733 made every write route consult `@FR-H-WriteLocked`, the `--native` hoisted writers
+included — per element: `vec_set_at`, `push_windowed` and `rec_set` each loaded the store's
+`read_only` through `stores.allocations[nr]` after every raw store, which LLVM cannot keep in
+a register.  Lane 14 paid for it on every writing row (`index_write` 1.02 → 4.13 of Rust,
+`push` 0.34 → 0.73, `comprehension` 1.53 → 2.48, `grid` 3.57 → 4.41, `record_update`
+1.61 → 2.36), the read rows unmoved.  The lock state is now read where the loop takes its
+handle and held for the loop — no loop the hoist admits can lock or unlock a store, every op
+that does being a writer it refuses: `VecHeader.locked`, `PushWindow.locked`, and a `__pl_N`
+local bound beside each `__pa_N` record address (`vector::rec_locked`).  A window over a
+locked store has NO capacity, so a push or mint through it takes the runtime's append, which
+refuses — the fast path carries no lock test at all, and a locked store's spare capacity is
+never written.  Lane 14 now reads `index_write` 1.03, `push` 0.30, `comprehension` 1.28,
+`grid` 3.32, `record_update` 1.61 — at or under the build with the checks deleted.
+`tests/locked_writes.rs` gains the hoisted cells (production discards, development halts in
+a windowed loop, and a pin that the loops still reach the writers under test).
+
+### A record appended to a struct's vector field takes the plain path (2026-09-29)
+
+`Stores::record_new` / `record_finish` had a short path for `field == u16::MAX` only (a bare
+vector, @PLN157 § V-k); `self.items += [x]` — `OpNewRecord(self, Mesh, vertices)` — took the
+general dispatch: `nullable_field_parent` (a `__nullable<` NAME test through `key_owner`,
+twice), `sub_record_type`, `field_ref`, then `insert_record`'s kind dispatch, `link_siblings`
+over an empty sibling list and `settle_displaced` over nothing — 27 % of mesh3d's `sphere`
+in `perf`.  `plain_field_vector` (over `Stores::plain_vector_field`, `@FR-R-Mint`'s field
+clause: a `Parts::Struct` parent, a `Parts::Vector` field, no sibling) now answers the
+field's vector and its element type, and the two halves serve it as they serve a bare
+vector.  Beside it, `Type::nullable_wrapper` records the `__nullable<` fact once at the
+type's creation, so `nullable_some_variant` tests a bool before it formats a name.
+`LOFT_NO_PLAIN_FIELD_APPEND=1` keeps the general dispatch (BOTH backends).  `sphere`
+1.70 → 1.22 ms per op on `--native` (10.0× → 7.1× of Rust); the interpreter shares the
+path (its sphere run 0.22 → 0.20 s, inside its noise); guard
+`tests/scripts/a-record-appended-to-a-struct-field-vector-takes-the-plain-path.loft` (seven
+hand-computed cells incl. the four shapes that must keep the general path; falsified by an
+eight-byte shift of the field position — a store panic on both backends).
+
+### The native test cache is per checkout and forgets an older build by itself (2026-09-29)
+
+`tests/native.rs` keeps its generated `.rs`, binaries and keys in `platform::native_cache_dir`
+(`<scratch>/loft_native_cache_<hash of the checkout>`) instead of the shared temp directory, and
+`platform::sweep_own_native_cache` runs once per process at a run's start: the rlib's path and
+content hash stamp the build in `.build`, and a stamp the directory has not seen removes every
+`loft_native_*` entry older than two minutes before the run compiles anything.  The rule reads
+one directory that only this checkout's harness writes, so it can never take another
+checkout's or another process's files — the bound the earlier age-based reclaim could not
+give, since it read the shared directory.  Measured cause: 4 259 binaries, 13 GB of the
+16 GB `/tmp` tmpfs, all this checkout's, all from one day's builds, none older than the
+day-old rule.  `sweep_scratch.sh` runs its dead-pid rule inside the directory (the harness's
+per-pid `_args.txt`, `.rs.tmp` and `.key.tmp` temporaries; not `_<pid>_bin`, which a stem
+ending in digits spells too) and ages the directory as a whole.  Unit test
+`reclaim_tests::a_new_build_sweeps_only_the_old_entries_of_its_own_cache`.
+
+### A walk of a scalar literal builds no vector (2026-09-29)
+
+`@FR-R-LiteralWalk` (formal/rewrites.md): `for x in [e₀, …, eₙ₋₁]` over 1..=16 items of one
+scalar type is lowered at parse time to n scalar temps set once, in order, before the loop and
+an `Iter` whose `next` steps `x#index` and selects the temp by a compare chain — the range
+iterator's shape with a select in place of the counter — so no vector is built on either
+backend.  `parse_vector` offers the finished literal (block, items, element type) in
+`Parser::literal_walk`; `parse_for` takes it when the block is its iterable and neither
+`rev(…)` nor `par` follows.  `LOFT_NO_LITERAL_WALK=1` keeps the vector walk (BOTH backends);
+the census counts `R-LiteralWalk`.  mesh3d's `mesh_to_floats` 2.85 → 1.84 ms per op (15.8× →
+10.5× of Rust) on this box.  Guard `tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft`
+(21 hand-computed cells, sabotage-falsified through the order-sensitive ones), pin
+`tests/literal_walk.rs`.
+
+### A widening vector literal converted the wrong item (2026-09-29)
+
+`parse_item`'s inferred-type branch asked "does the element type widen to this item's?" by
+converting the ITEM (`self.convert(&mut p, in_t, &t)`), which wrapped `2.5` in a
+float-from-integer conversion, while the earlier `1` stayed an integer appended under a float
+vector — `for f in [1, 2.5, 4]` yielded 4.9e-324, 4.6e18, 4 on both backends (native's
+`append_f64(…, 1_i64)` failed to compile the same shape).  An assignment's variable type
+repaired it on the second pass, which is why `v = [1, 2.5, 4]` was right.  The question is now
+asked on a scratch and the widening converts the EARLIER items.  Silent-wrong; cells c2, c19
+and c21 of the literal-walk guard.
+
+The front-end allocation pin (`bench/frontend/allocations.tsv`, linux-release) was re-recorded
+on this box: it already read +774 (tiny) / +6 491 (medium) over the pin at the commit BEFORE the
+walk, measured in a clean worktree of that commit, and the walk adds 9 to each — the offer is
+gated to a `for` head, so an ordinary literal pays nothing.  Where the +774 came from is not
+established (the pin was recorded at the join of 2026-09-29 07:35, on another box).
+
 ### `v != null` on a record view no longer declines a loop's hoist (2026-09-29)
 
 `OpEqRef` and `OpNeRef` compare two `DbRef`s and touch no store, but the header hoist's

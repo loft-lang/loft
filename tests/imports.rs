@@ -971,3 +971,129 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
     assert_eq!(out, "3\n", "`pub use inner::(Thing);` passes it on:\n{err}");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// A type named by a construction AND by a written annotation, and resolved by neither, is
+/// reported once with the import cure (@C98) — never an internal compiler error.
+///
+/// `use lat;` binds only the `lat::` qualifier, so `Hex` is unresolved in this file.  The
+/// construction `nb(Hex { … }, 1)` registers a speculative stub for it; the annotation
+/// `d: vector<Hex>` then names the same stub.  Left speculative, nothing reported the
+/// annotation, and `for h in d` read `def(u32::MAX)` (dryopea's `damage.loft` under C98).
+/// A misspelled name used both ways is the single-file form:
+/// `issues::a_type_both_constructed_and_annotated_is_reported_once`.
+#[test]
+fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
+    let dir = std::env::temp_dir().join(format!("loft_c98_stub_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let libs = dir.join("libs");
+    std::fs::create_dir_all(&libs).expect("libs");
+    std::fs::write(
+        libs.join("lat.loft"),
+        "pub struct Hex { q: integer, r: integer }\n\
+         pub fn nb(h: Hex, d: integer) -> Hex { Hex { q: h.q + d, r: h.r } }\n",
+    )
+    .expect("lat");
+    let run = |name: &str, body: &str| -> (bool, String) {
+        let main = dir.join(name);
+        std::fs::write(&main, body).expect("main");
+        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&libs)
+            .arg(&main)
+            .env("LOFT_ERRORS", "compact")
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("failed to invoke the loft binary");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    let body = |hex: &str| {
+        format!(
+            "use lat;\n\
+             fn a(q: integer) -> integer {{\n  x = lat::nb({hex} {{ q: q, r: 0 }}, 1);\n  x.q\n}}\n\
+             fn g() -> integer {{\n  d: vector<{hex}> = [];\n  for i in 0..3 {{ d += [{hex} {{ q: i, r: 0 }}]; }}\n  \
+             n = 0;\n  for h in d {{ n += h.q; }}\n  n\n}}\n\
+             fn main() {{ print(\"{{g()}} {{a(5)}}\") }}\n"
+        )
+    };
+    let (ok, bare) = run("bare.loft", &body("Hex"));
+    assert!(
+        !ok,
+        "`Hex` is not imported, so the program is refused:\n{bare}"
+    );
+    assert!(
+        !bare.contains("internal compiler error"),
+        "an unresolved type is a user error, not a compiler fault:\n{bare}"
+    );
+    assert!(
+        bare.contains("Undefined type Hex") && bare.contains("use lat::(Hex);"),
+        "the report names the import cure:\n{bare}"
+    );
+    assert_eq!(
+        bare.lines().filter(|l| l.starts_with("Error:")).count(),
+        1,
+        "one cause, one error — no `Unknown variable 'd'` beside it:\n{bare}"
+    );
+    // The cure the error names compiles and answers the hand-computed values:
+    // g() = 0 + 1 + 2, a(5) = 5 + 1.
+    let (ok, cured) = run("cured.loft", &body("lat::Hex"));
+    assert!(
+        ok && cured.contains("3 6"),
+        "the qualified spelling is the cure:\n{cured}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A CONSTANT behind a bare `use` gets the same cure as a function or a type (@C98): the
+/// report names the library and both spellings, not a bare "Unknown variable".  dryopea's
+/// `CLOCK_UNITS_PER_SECOND` after `use fixstep;` is the shape.
+#[test]
+fn a_constant_behind_a_bare_use_names_the_import_cure() {
+    let dir = std::env::temp_dir().join(format!("loft_c98_const_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let libs = dir.join("libs");
+    std::fs::create_dir_all(&libs).expect("libs");
+    std::fs::write(libs.join("clk.loft"), "pub const UNITS: integer = 3000;\n").expect("clk");
+    let run = |name: &str, body: &str| -> (bool, String) {
+        let main = dir.join(name);
+        std::fs::write(&main, body).expect("main");
+        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&libs)
+            .arg(&main)
+            .env("LOFT_ERRORS", "compact")
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("failed to invoke the loft binary");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    let (ok, bare) = run(
+        "bare.loft",
+        "use clk;\nfn main() { print(\"{UNITS / 1000}\") }\n",
+    );
+    assert!(!ok, "`UNITS` is not imported:\n{bare}");
+    assert!(
+        bare.contains("it is in `clk`") && bare.contains("`clk::UNITS`"),
+        "the report names the library and the qualified spelling:\n{bare}"
+    );
+    let (ok, cured) = run(
+        "cured.loft",
+        "use clk;\nfn main() { print(\"{clk::UNITS / 1000}\") }\n",
+    );
+    assert!(
+        ok && cured.contains('3'),
+        "the qualified spelling is the cure:\n{cured}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

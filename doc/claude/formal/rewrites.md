@@ -415,7 +415,20 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  derives it once before the loop, and every element read, element
                  write and len(P) in the body uses it (R-State).  A rebind of P's root
                  inside the body removes P; a nested loop's prelude skips a path an
-                 outer one already holds.
+                 outer one already holds.  The FUNCTION clause: a body that reads a
+                 vector PARAMETER twice or more through an element address, and
+                 leaves that parameter as it found it — never rebinds it, never
+                 hands it to a native that is not a reader, never frees it, and
+                 hands it (or a heap value that may name its store: a parameter, a
+                 view, a link — never a local's own fresh store or a work buffer)
+                 only to callees of which the same holds at that position, a
+                 recursive call answering for itself — binds its header once at
+                 entry, and every read in the body, loops included, serves from it.
+                 Growth of OTHER stores is no concern of a header (its record and
+                 length are the vector's own), so a body that builds its result
+                 beside the reads keeps them; only a BASE would need the store's
+                 memory still, and the clause binds none — a loop inside that is
+                 growth-free derives its base off the held header.
 ```
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
@@ -670,7 +683,9 @@ vector or record read fills a value in a store; each stays a writer.  Switch `LO
                  or whose only writes land fixed-width scalars in its own hidden
                  return buffer, is admitted under (R-InPlace) as a direct set is.
                  Its body is read with the header hoist's own allowances — a
-                 null-discharge buffer's mint and defaults, a lazy buffer's mint, a
+                 null-discharge buffer's mint, its defaults and the SETS of its
+                 fallback (a text field's included: the buffer's store is the
+                 site's own, reached by nothing a caller holds), a lazy buffer's mint, a
                  record free, and its DEAD buffers (R-ValueRecord: a tuple answer's
                  buffer is never minted, so its mint, clear and frees are nothing;
                  the fact is per FUNCTION, read off one program-wide table) — since
@@ -684,6 +699,15 @@ still walk below the call node, so a growing op inside one blocks on its own.
 Switches `LOFT_NO_INPLACE_CALLEE_HOIST`, `LOFT_NO_RETBUF_HOIST`.  Sites:
 `hoist::in_place_only_writer`, `hoist::retbuf_only_writer`,
 `hoist::call_writes_store`.
+*The set half of the discharge allowance (2026-09-29, `hoist::discharge_buffer_set`, under
+`LOFT_NO_NULL_BUFFER_HOIST` with the mint):* a callee whose `??` fallback carries a text
+field (`Sequence { …, q_name: "" }`) wrote it with `OpSetText`, the one op outside the
+twelve scalar setters, and was a WRITING callee for it — stage's `pack_instances` called
+three such and held no header at all.  Guard
+`tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft` (c3 is the write
+the allowance must not reach: a text set into an element of the walked vector, which grows
+that store); pin `tests/discharge_set.rs`.  `pack_instances` 920 → 309 µs per op (24.3× →
+8.4× of Rust) here, hash unchanged.
 
 ### A record scalar the body cannot write is read once
 
@@ -1760,6 +1784,46 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
 `tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
 `tests/vec_copy.rs`).
 
+### A walk of a scalar literal builds no vector
+
+```
+  (R-LiteralWalk) `for x in [e₀, …, eₙ₋₁] { … }` — a `for` whose iterable is a vector
+                 LITERAL of 1..=16 items of one scalar element type (`integer` of any
+                 width, `float`, `single`, `boolean`, `character`; an item a later item
+                 widened counts at the widened type) evaluates each item once, in source
+                 order, into its own scalar temp before the first iteration, and walks
+                 the temps by a counted select: the loop variable at step i is temp i,
+                 `x#index` is i, and the walk ends after step n−1.  No vector is built,
+                 on either backend.  A `rev(…)` around the literal, a `par` walk, a
+                 `[v; n]` repeat, a text, record or tuple item, and seventeen or more
+                 items keep the vector walk.
+```
+
+**In words.**  "For each of these three" is written as a walk over a literal —
+`for i in [tri.a, tri.b, tri.c]` — because that is the spelling the language offers, and
+the literal cost what a vector costs: a buffer reset (or a mint), a reservation, one append
+per item, and a length and an element read per step through the store, per execution of the
+loop.  The values are fixed before the loop starts on the vector form too (the literal is
+built, then walked), so holding them in scalar temps changes no value, no order and no count;
+the select is what the vector's element read was, on a bound the compiler knows.  A body
+that writes the loop variable writes its own copy either way, and a body that writes an
+item's SOURCE after the loop began never reached the built vector either.  Both backends
+take the lowering at parse time, which makes their agreement no evidence — the guard's cells
+are hand-computed and the switch is the A/B.
+
+**BUILT** (2026-09-29, `Parser::literal_walk` at parse time, `LOFT_NO_LITERAL_WALK`; guard
+`tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft` — 21 cells, falsified by a
+one-off in the select, which the order-sensitive cells catch and the plain sums do not — pin
+`tests/literal_walk.rs`).  mesh3d's `mesh_to_floats` (`for i in [t.a, t.b, t.c]` per
+triangle): **2.85 → 1.84 ms per op, 15.8× → 10.5× of Rust** on this box, same hash; the
+census loses the literal's own loop buffer, header and complete write in every program that
+carries the two mesh3d walks, and gains the walk.  Building it surfaced a defect in the
+literal itself: `[1, 2.5, 4]` in an iterable position converted the WIDENING item through
+an integer conversion and left the earlier `1` an integer under a float vector (an
+assignment's variable type repaired it on the second pass, so `v = [1, 2.5, 4]` was right
+and `for f in [1, 2.5, 4]` read 2.5's bits as an integer) — fixed at the coercion site, cell
+c21 keeps the vector form of it.
+
 ### A lookup by one integer key takes the typed entry
 
 ```
@@ -2224,8 +2288,12 @@ line in `Output::output_function`'s prelude.
                  `set_default_value`'s walk (or its all-zero `zero_range`, which
                  duplicates the zero-on-claim) writes nothing that survives, and
                  the site calls the no-prefill twin (`OpDatabaseNP` /
-                 `OpNewRecordNP`).  An uncovered field — a nested struct arriving
-                 by `OpCopyRecord`, a vector field bound by an append, a
+                 `OpNewRecordNP`).  A WHOLE-record `OpCopyRecord` into the element
+                 itself (`self.items += [p]`, `p` a value of the element type)
+                 covers every field when the element owns no heap; a heap-owning
+                 element's copy trusts the zeroed handles the prefill wrote and
+                 keeps it.  An uncovered field — a nested struct arriving by
+                 `OpCopyRecord` into a FIELD, a vector field bound by an append, a
                  `__nullable` element whose discriminant no `OpSet` names — keeps
                  the prefill: the check can only DECLINE the elision.  `db_vars`
                  is keyed by the local (every `OpDatabase` site must cover);
@@ -2367,7 +2435,10 @@ line in `Output::output_function`'s prelude.
                  half loses the inline at every call site, and the whole fast path
                  pays a call for a compare and a load.  `#[inline(never)]` on the
                  cold half is load-bearing, not a hint: without it rustc folds the
-                 halves back together.
+                 halves back together.  So is `#[cold]`: it is the branch weight
+                 that keeps the fast path's test a plain branch — without it LLVM
+                 may turn that test into flag arithmetic paid on every element,
+                 and which form it picks then moves with unrelated code nearby.
 ```
 
 **In words.** @PLN157 § V-h found the class (`hash` paid a third of its row for the
@@ -2395,7 +2466,11 @@ on the drawing bench).
                  or not that record exists yet — is handed a return buffer CLAIMED IN
                  S (R-Callee: a buffer may be a record the caller offered), so the
                  result is never minted in a store of its own and the later store into
-                 the destination is a relocation within S (R-MoveLast).  When the
+                 the destination is a relocation within S (R-MoveLast).  The callee
+                 writes that buffer on every exit: a fresh literal built into it, or a
+                 CHAIN exit that hands the same buffer to a callee of which this holds
+                 (asked recursively; a cycle declines) — a chain function's buffer is
+                 the `__ref_N` the chain renamed it to.  When the
                  destination place EXISTS at the call and no argument of the call
                  reaches it, the buffer IS the place and nothing moves.  Declines: a
                  path that reads the result after a RELOCATING store (the destination
@@ -2413,8 +2488,21 @@ on the drawing bench).
                  exists only while the value holds that variant.  A member of a linked
                  collection group is NOT a decline: the group's maintenance brackets
                  the fill (Col-Group), and a fill that arrives through the buffer
-                 instead of an append is one it must see.  Every other call keeps its
-                 own buffer.
+                 instead of an append is one it must see.  A bind INSIDE a loop is
+                 admitted through the same argument when the destination is the ONE
+                 heap-owning field of the result — its payload — stored into an
+                 element appended to a host that is a parameter or a local vector
+                 bound before the loop, with the result's scalars read after the
+                 store: the buffer is claimed in the host's store on the first turn
+                 and cleared on the next (the lazy mint keeps its shape), the field
+                 moves by relocation with its source ZEROED — the turn's clear and
+                 the callee's refill then find an empty record, and a later read of a
+                 scalar reads what the callee wrote — and the exit releases the placed
+                 record as a block, so a host that outlives the frame keeps nothing of
+                 it.  Declines keep the copy: a read of the payload after the move, a
+                 second destination, a nested loop, the local or the buffer named
+                 outside the turn, a host bound after the loop or rebound.  Every
+                 other call keeps its own buffer.
   (R-MoveLast)   a record-literal field or a field/element assignment whose source is
                  a LOCAL the ownership oracle marks OWNED (O-Owner: never a parameter,
                  a view, a `&` link or a witnessed local) and DEAD on every path after
@@ -2429,6 +2517,32 @@ on the drawing bench).
                  for it — and keeps B-Copy's deep copy when they do not: a cross-store
                  move copies every claim anyway, so the rewrite has no gain there, and
                  R-Place is what brings the source into the destination's store first.
+  (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
+                 function's exit only inside the literal built into the return
+                 buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its
+                 wrapper CLAIMED IN the return buffer's store (the buffer ensured
+                 first, exactly as the exit ensures it), the literal takes the vector
+                 by a HANDLE MOVE — the slot's record number moves and the source slot
+                 is zeroed, so no element and no heap claim moves — and every exit
+                 releases the wrapper's block, which finds nothing on the path that
+                 moved and the whole vector on one that did not.  Between its init
+                 and the exit the local is only ever a RECEIVER (the first argument of
+                 a native op: a push, a read, a placement host) or a borrowed argument
+                 of a loft-defined call, and the wrapper is named only at its null
+                 init, its mint, its length reset and its exit frees.  Declines keep
+                 the wrapper store and the copy: a rebind or an alias of the local, a
+                 bare `return xs`, a copy of it anywhere but the buffer's literal, a
+                 mention of it in that literal AFTER the field that took it (the move
+                 would be read as empty), a free outside an exit, a wrapper freed
+                 nowhere, and a wrapper whose type is not `main_vector<T>` for the
+                 local's `vector<T>` (a tuple-destructured local's is typed a level
+                 too deep, loft#1757, and a release that walked it by that type would
+                 read every element as a handle).  It composes with R-Place's loop clause: a loop whose host is
+                 this local places its buffers in the return buffer's store too, so a
+                 recursive decoder builds its whole tree in the store of the outermost
+                 buffer and copies nothing on the way up.  The move is same-store and
+                 into an empty slot by construction; the runtime keeps the copy for any
+                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in
@@ -2504,6 +2618,17 @@ rule — the B2 relocation only a destination in an element appended to a PARAME
 collection, outside a loop, with no second destination or host — and a narrower admission
 costs the rewrite and never a value.  The declines written into the rules above are the
 ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
+*The chain form of the callee clause (2026-09-29, `place_result::chain_writes_buffer`):*
+`return mk(n)` hands the buffer through, and the exit test read it as an exit answering
+another store, so every chain-built result cost a store of its own — the shape a decoder's
+`decode` (`return d`) and every `return build(…)` wrapper has.  Guard
+`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`, the placement MATRIX for a
+decoder's shapes (the chains, the wrapper-field shapes the next clause must admit, the
+placement sites and their three declines); pin `tests/place_result.rs`.  The matrix also
+records what the decoder still needs and this rule does not yet admit: a bind INSIDE a loop
+(the pass reads top-level binds only), a destination in a LOCAL's store, and the placed
+thing being a heap-owning FIELD of a wrapper result whose scalars are read after the move.
+
 The rules are written BEFORE the phases so that a question met while building one is
 answered here rather than decided in the code.
 

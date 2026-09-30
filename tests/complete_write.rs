@@ -31,7 +31,16 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c6", 1, 1), // the inner N literal skips; O (nested by OpCopyRecord) declines
     ("n_c7", 1, 0), // a conditional part still writes its field
     ("n_c8", 2, 3), // the vector store and the discharge fallback skip; the __nullable
-                    // mints keep the prefill (the discriminant is not in the group's write set)
+    // mints keep the prefill (the discriminant is not in the group's write set)
+    // c9 / c10 — a value of the element type appended WHOLE (`b.ps += [p]`): the one
+    // `OpCopyRecord` into the element covers every field, so the heap-free P3 mint skips
+    // (n_add_p — its one prefilled site is the live-dispatch prelude's `OpDatabase` that
+    // materialises the tuple parameter, not a mint) and the text-owning NT mint keeps the
+    // prefill (n_add_n).  The two drivers mint their bag with a vector store apiece, covered.
+    ("n_add_p", 1, 1),
+    ("n_add_n", 0, 1),
+    ("n_c9", 2, 0),
+    ("n_c10", 2, 0),
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {

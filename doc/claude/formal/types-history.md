@@ -1307,6 +1307,84 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-types-24** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(T-Syn)`: one expression, one
+  synthesised type on both passes.  Pass 1 marks a variant literal `Rewritten(Circle)` (built in
+  place) and pass 2 does not, and `variant_parent_enum` / `joins_to_enum` stopped at the marker —
+  so on pass 1 the arms of `if c { Circle {…} } else { Sq {…} }` never joined: the `Sq` arm was
+  checked against `Circle` and ACCEPTED as one, and the join was typed `Circle`.  Pass 2 typed it
+  `Shape`.  That disagreement is what D-types-22's inferred-local refusal was; after D-types-22's
+  `variant_join` it was absorbed, and a pass-1 decision could still read the wrong type.  **Fix.**
+  Both read through `Rewritten`.  **Instrument.**  `LOFT_AUDIT_RETYPE=1` reports every PASS-2
+  retype of a variable pass 1 typed as another shape — each is an expression synthesised twice
+  differently.  Over the corpus it named this one and, through parameter defaults (the one place
+  pass 1's tree is replayed), led to calls.md D-call-25 and D-call-26; the rest were inference
+  completing (a generic resolved on pass 2), `#663`'s width adoption and the nullable-struct
+  synthesis, both documented.
+* **D-types-22, D-types-23** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Var)` composed with
+  `(I-Join)`/`(N-Join)` and `(C-Tuple)`: two DIFFERENT variants of one enum join to the enum
+  wherever they meet, and nothing is licensed between two variants.  Walking `(T-Sub)` found
+  `C-Var` holding at 24 of 25 checking positions; every failure was a JOIN.  **-22** (over-refusal):
+  an INFERRED local assigned two variants — an `if`, a `match`, an `else if` chain, or
+  `x = Circle {…}; x = Sq {…}` — was refused *"cannot change type from Circle to Shape"* (pass 1
+  types the arm join by its first arm, pass 2 by the enum, and `change_var_type` had no variant
+  join); tuple arms naming different variants in one member were refused in every `if` and
+  `match` form, even into a declared `(Shape, integer)`; and a vector literal of such tuples,
+  `[(Circle {…}, 1), (Sq {…}, 2)]`, was *"No common type"* while `[Circle {…}, Sq {…}]` compiled.
+  **-23** (silent-wrong, found by -22's refusal cells): the arm join's member test was
+  `Type::is_same`, a KIND test to which any two records are one type, so `(null, Circle {…})`
+  beside `(3, Tri {…})` — another enum — joined as `(integer?, Circle)` and the `Tri` was read at
+  `Circle`'s offsets on both backends; loft#1682's own join carried it.  Once -22 let variant
+  tuples reach that join, a pair that did not join was also converted SILENTLY in `parse_if`
+  and in the scalar `match`, which has no second check.  Before this change the null-member
+  shape already slipped through there: `(3, Tri {…})` after `(null, Circle {…})` printed the
+  `Tri` as `{r:2.5}`, and a text member stopped code generation with an internal compiler error.  **Fix.**  `Variables::variant_join` answers the inferred local's join,
+  element-wise; `Parser::tuple_join_open` makes a variant member leave a tuple arm unpinned, as a
+  `null` member did; `join_tuple_arms` tests members by `is_equal`, joins nested tuples and
+  either order of variant and enum, through a `?`; a pair that does not join is refused where
+  the join is asked (`parse_if`, `join_null_tuple_arm` for every match site); and an inferred
+  vector literal stores a tuple element's variant members as their enum
+  (`widen_variant_members`), as it stores a bare variant element.  Guards
+  `tests/scripts/sibling-variants-join-to-their-enum.loft` (the value half, scored by `{}`, which
+  renders by the STATIC type) and `sibling-variants-refuse-*.loft` (three refusals).
+* **D-types-20, D-types-21** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(T-Chk)` pushes the
+  expected type "structurally into sub-expressions", and at an argument, a tail or a default
+  it stopped at the literal's brackets.  **-20** `(T-Chk-Vec)`: the expected `vector<τ>` reached
+  a bare literal's elements only when `τ` was a narrow integer (#432's scope), so `f([1, 2])`
+  into a `vector<float>` parameter, `fn g() -> vector<(float, integer)> { [(1, 2)] }`, a lambda
+  tail and a parameter default were refused while `v: vector<float> = [1, 2]` compiled; a
+  `vector<S>` or `vector<vector<float>>` parameter DEFAULT failed with *"Variable '_elm_1' cannot
+  change type"* once seeded, because it was parsed into a variable slot nothing occupied.  The
+  hint now seeds any element type naming no type variable, and a literal that is the RECEIVER
+  of a chain (`[1, 2].map(…)`) takes none.  **-21** `(T-Chk-Var)`: the list of expected-type
+  shapes an argument pushes was written five times and disagreed — a named argument, a method
+  argument and a parameter default reported a bare variant ambiguous where a positional
+  argument resolved it, a method argument took no tuple member types, and a struct-field
+  default took no collection.  One list, `argument_hint`, now serves every spelling.  All were
+  refusals.  Guard `tests/scripts/an-expected-element-type-reaches-every-literal-position.loft`.
+* **D-types-18, D-types-19** *(opened 2026-09-29, CLOSED 2026-09-29)* — two field stores that
+  skipped `convert`, so `(C-Num)`, `(C-Tuple)` and the width rules did not reach them.  **-18**:
+  a field DEFAULT was converted only integer → integer, so `p: float = 7` stored the integer's
+  BITS — the field read 3.5e-323 on the interpreter and did not compile natively (E0308) — and a
+  `(float, integer) = (1, 2)` default likewise; the default now converts like a parameter's
+  (a collection's is still delivered at the field type by the function it is hoisted into).
+  **-19**: a tuple field REASSIGNED (`w.p = (3, 4)`) was written member by member with no
+  conversion and no check, so an `integer` member stored its bits into a `float`, `(300, 4)` into
+  a `(u8, integer)` field kept 44 on both backends, and a `text` member was written as a float;
+  the value is now converted and checked against the field.  Guards
+  `tests/scripts/a-field-store-converts-its-value.loft`,
+  `tests/scripts/a-field-store-refuses-a-narrowed-member.loft`,
+  `tests/scripts/a-field-store-refuses-a-text-member-into-a-float.loft`.
+* **D-types-17** *(opened 2026-09-29, CLOSED 2026-09-29, loft#1742)* — a tuple carrying a HEAP
+  member (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out
+  of a function was REFUSED when the returned value was a CALL: `fn back(k) -> (text, float) {
+  mk(k) }` over `mk -> (text, integer)` said *"expected (text, float), got (text, integer) on
+  return from block"*, and so did an inferred local holding the call's result, an `if` or
+  `match` of calls, and a `return mk(k)` statement.  The return's tuple rewrite takes a
+  STACK-tuple tail only; converting the members inside `convert` instead left it a literal it
+  wrote as `null`.  Both return sites now ask `unbox_stored_tuple_tail`, which binds such a tail
+  to a stack-tuple local at its OWN members — the shape an annotated local already had — and
+  the rewrite writes each member at the declared type, converting it.  Guard
+  `tests/scripts/a-heap-tuple-returned-from-a-call-widens-its-members.loft`.
 * **D-types-15, D-types-16** *(opened 2026-09-29, CLOSED 2026-09-29)* — `(C-Num)`, which this
   chapter did not state although LOFT.md's conversion table promises it, through `(C-Tuple)`.
   **-15**: a tuple that is not a LITERAL was stored bit for bit, so a member widening from

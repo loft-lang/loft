@@ -1273,6 +1273,20 @@ refusal names it.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-bind-69** *(opened 2026-09-30, CLOSED 2026-09-30; loft#1759)* — `(B-View-Depth)`,
+  `(H-Materialise)` and `(B-Ref-Reshape)` at the KEYED kinds.  The keyed bind copied every keyed
+  source but an `&` one, so `g = n.inn.h`, `g = vs[0].h` and `g = m.inn.h` off a parameter were
+  copies where the vector twin was a view.  **Fix, in two halves.**  (1) The keyed bind declines
+  the copy for a projection `collection_bind_source` answers as a view (ce1db0b84; guard
+  `a-nested-keyed-projection-is-a-view-like-its-vector-twin.loft`).  (2) That view then needs
+  `(H-Materialise)`: unrecorded, a reassignment, growth or removal of its container while it was
+  live panicked (`hash`, `sorted`, `index`) or read garbage (`trie`).  The view is recorded in
+  `Function::keyed_views`, which `scopes::keyed_payload_view` admits to the disturbance walk and
+  the `OpReplaceKeyed` copy together; and a keyed `&` link (`l = &o.h`), which the walk never
+  opened — so `o = …` compiled and `l` followed the NEW value — now enters it and meets the
+  refusal.  Guards `a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft` and
+  `a-keyed-link-refuses-a-reassigned-container.loft`.
+
 * **D-bind-68** *(opened 2026-09-28, CLOSED 2026-09-28; loft#1717)* — `(B-Scope)`: a `for f in
   x#fields` walk is unrolled at compile time and created its variable BY NAME, so it missed
   loft#915's per-loop binding twice over.  Pass 1 leaves the name naming the LAST walk's

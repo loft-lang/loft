@@ -1161,3 +1161,86 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
         "a declaration no dependency accepts is refused at install, naming both sides:\n{said}"
     );
 }
+
+/// A package named on `loft install` WITHOUT a version installs what the project declares for
+/// it, and one named WITH a version moves the declaration too — so the manifest and the lock
+/// never disagree after an install (loft#1751).
+///
+/// The bare form resolved the newest release and wrote it to the lock beside a `=` pin it left
+/// standing; `@<version>` did the same, and printed nothing.  The load lets a declaration
+/// overrule the lock, so the program then ran a version nobody chose — an explicitly
+/// requested one was quietly undone at the next run.
+#[test]
+fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
+    let home = empty_home("install_named");
+    for v in ["0.1.0", "0.1.2"] {
+        cache_pkg(&home, "probepkg", v, ">=0.8");
+    }
+    let entry = |v: &str| {
+        format!(
+            r#""{v}":{{"url":"http://127.0.0.1:1/probepkg-{v}.tar.gz","sha256":"00","size":1,"loft":">=0.8","published":"2026-09-29T00:00:00Z"}}"#
+        )
+    };
+    write(
+        &home.join(".loft/registry/index.json"),
+        &format!(
+            r#"{{"schema_version":1,"packages":{{"probepkg":{{"versions":{{{},{}}}}}}}}}"#,
+            entry("0.1.0"),
+            entry("0.1.2"),
+        ),
+    );
+    let pkg = project(
+        &home,
+        "named",
+        "probepkg = \"=0.1.0\"",
+        None,
+        "probepkg",
+        "probepkg::probe_id()",
+    );
+    let install = |arg: &str| {
+        let out = Command::new(loft_bin())
+            .args(["install", arg])
+            .env("LOFT_HOME", &home)
+            .env("HOME", &home)
+            .env("LOFT_REGISTRY_URL", "http://127.0.0.1:1/index.json")
+            .env("LOFT_OFFLINE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(&pkg)
+            .output()
+            .expect("spawn loft");
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lock = std::fs::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
+        let manifest = std::fs::read_to_string(pkg.join("loft.toml")).unwrap_or_default();
+        (said, lock, manifest)
+    };
+    let (said_bare, lock_bare, manifest_bare) = install("probepkg");
+    let (said_moved, lock_moved, manifest_moved) = install("probepkg@0.1.2");
+    let ran = run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]);
+    let _ = std::fs::remove_dir_all(&home);
+
+    assert!(
+        lock_bare.contains("version = \"0.1.0\"") && !lock_bare.contains("version = \"0.1.2\""),
+        "a bare named install keeps the declared `=0.1.0`:\n{said_bare}\n{lock_bare}"
+    );
+    assert!(
+        manifest_bare.contains("probepkg = \"=0.1.0\""),
+        "and leaves the declaration as it was:\n{manifest_bare}"
+    );
+    assert!(
+        lock_moved.contains("version = \"0.1.2\"")
+            && manifest_moved.contains("probepkg = \"0.1.2\""),
+        "`@0.1.2` moves the lock AND the declaration:\n{said_moved}\n{lock_moved}\n{manifest_moved}"
+    );
+    assert!(
+        said_moved.contains("declared in loft.toml: probepkg = \"0.1.2\""),
+        "and says so:\n{said_moved}"
+    );
+    assert!(
+        ran.lines().any(|l| l == "probepkg-0.1.2"),
+        "the program loads the version the install moved to:\n{ran}"
+    );
+}

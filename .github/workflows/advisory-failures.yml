@@ -1,4 +1,4 @@
-# Advisory failures — one issue per advisory CI job that went red, with what failed and
+# Advisory failures — ONE issue listing every CI step that is red now, with what failed and
 # where to look (`scripts/ci_failure_digest.py`, whose docstring is the contract).  And,
 # for a PR's `CI` run, the timing report: where each test leg's time went
 # (`scripts/ci_timing.py`).
@@ -6,8 +6,8 @@
 # Why this exists: a REQUIRED check blocks the merge, so it is fixed before anything
 # lands.  An advisory one does not — it goes red on a PR, the PR merges, and the finding
 # survives only if someone opened the log.  Every finding here is meant to be fixed; the
-# issue is what keeps it on the list (`make work` counts `ci-advisory` issues like any
-# other) until it is, instead of relying on someone watching the checks.
+# combined issue is what keeps it on the list (`make work` counts it like any other issue)
+# until it is, instead of relying on someone watching the checks.
 #
 # Why `workflow_run`: the watched workflows run on pull requests, and a pull_request run
 # must not be able to write issues (`miri.yml`'s `notify` refuses PR events for exactly
@@ -21,7 +21,7 @@
 #
 # Which jobs count: on a PR, every job the PR's check list does not mark REQUIRED, asked
 # live through `isRequired` (a copied list is what `miri.yml` documents drifting three
-# times); on the default branch, every job.  A run on any other branch files nothing —
+# times); on the default branch, every job.  A run on any other branch writes nothing —
 # a feature branch's run is that branch's evidence (loft#1527).
 #
 # `workflow_run` only fires for a workflow file on the default branch, so this starts
@@ -40,8 +40,9 @@ permissions:
   actions: write         # the single retry of a run whose failures were all the runner's
 
 concurrency:
-  # One digest per watched run; a re-run of it (a new attempt) queues behind the first.
-  group: advisory-failures-${{ github.event.workflow_run.id }}
+  # ONE group: every digest rewrites the one combined issue, and two racing on its body would
+  # each drop the other's rows.  Queued, never cancelled — each run's rows count.
+  group: advisory-failures
   cancel-in-progress: false
 
 jobs:
@@ -57,7 +58,7 @@ jobs:
           # (blobs fetched lazily, only for the files an issue names).
           fetch-depth: 0
           filter: blob:none
-      - name: File, update or close the advisory-failure issues
+      - name: Rewrite the combined red-steps issue
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

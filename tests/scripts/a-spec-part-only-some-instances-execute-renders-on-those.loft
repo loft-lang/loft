@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SPEC PART ONLY SOME INSTANCES EXECUTE RENDERS ON THOSE (`@FR-G-Mono`, `@FR-F-Spec-Exec`,
+// `@FR-F-Spec-Radix`).  A precision `.P` and a radix `#x` are judged per instance, as the concrete
+// twin judges them: a `float` instance renders `{x:08.2}` as `00003.14`, an `integer` one renders
+// `{x:#x}` as `0xff`, and only an instance whose type has no such rendering is refused
+// (`a-generic-format-hole-is-refused-where-its-instance-is.loft`).  The template refused both
+// holes for EVERY instance, because it judged the spec against the type variable.
+//
+// @falsified-at: 62b857086 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-spec-part-only-some-instances-execute-renders-on-those.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the refusal — the control refuses the template's `.2` and `#x` on `T` for every instance.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
+
+fn fl<T: Printable>(x: T) -> text { "{x:08.2}" }
+fn pr<T: Printable>(x: T) -> text { "{x:.3}" }
+fn hx<T: Printable>(x: T) -> text { "{x:#x}" }
+
+fn main() {
+  assert(fl(3.14159) == "00003.14", "width and precision on a float instance: {fl(3.14159)}");
+  assert(pr(2.0) == "2.000", "precision alone: {pr(2.0)}");
+  assert(fl(-1.5) == "-0001.50", "a negative float keeps its sign in front: {fl(-1.5)}");
+  assert(hx(255) == "0xff", "a radix on an integer instance: {hx(255)}");
+}

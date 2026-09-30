@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1742 — `@FR-C-Tuple` over `@FR-C-Num` at a RETURN: a tuple carrying a heap member is
+// returned in its stored spelling (`__tuple<…>`), and one returned straight from a call whose
+// member widens (`(text, integer)` out of a function declared `-> (text, float)`) was refused —
+// "expected (text, float), got (text, integer) on return from block" — while the same value
+// bound to an annotated local first returned correctly (formal/types.md D-types-17).
+//
+// Axes this file MOVES:  the tail's shape (a call, an inferred local, an `if` join, a `match`, an
+//                        early `return` statement), the widening (`float`, `single`), the heap
+//                        member (text, struct), the no-conversion control, repeated calls.
+// Axes it HOLDS FIXED:   two-member tuples.
+//
+// @falsified-at: ee614fb5a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-heap-tuple-returned-from-a-call-widens-its-members.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the defect was a refusal, so the control does not compile this file.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+struct P { x: integer }
+fn mk(k: integer) -> (text, integer) { ("m{k}", k) }
+fn mp(k: integer) -> (P, integer) { (P { x: k * 10 }, k) }
+fn call(k: integer) -> (text, float) { mk(k) }
+fn inferred(k: integer) -> (text, float) { a = mk(k); a }
+fn either(k: integer) -> (text, float) { if k > 1 { mk(k) } else { mk(k + 100) } }
+fn by_match(k: integer) -> (text, float) { match k { 1 => mk(11), _ => mk(k) } }
+fn early(k: integer) -> (text, float) { if k > 5 { return mk(k * 2); } mk(k) }
+fn narrow_float(k: integer) -> (text, single) { mk(k) }
+fn record(k: integer) -> (P, float) { mp(k) }
+fn same(k: integer) -> (text, integer) { mk(k) }
+
+fn test_every_tail_shape_widens_its_members() {
+  for i in 1..4 {
+    c = call(i);
+    l = inferred(i);
+    j = either(i);
+    m = by_match(i);
+    e = early(i);
+    f = early(i + 5);
+    s = narrow_float(i);
+    r = record(i);
+    q = same(i);
+    got = "{c.0},{c.1 + 0.5} {l.0},{l.1} {j.0},{j.1} {m.0},{m.1} {e.0},{e.1} {f.0},{f.1} {s.0},{s.1} {r.0.x},{r.1} {q.0},{q.1}";
+    jn = if i > 1 { i } else { i + 100 };
+    mn = if i == 1 { 11 } else { i };
+    want = "m{i},{i}.5 m{i},{i} m{jn},{jn} m{mn},{mn} m{i},{i} m{(i + 5) * 2},{(i + 5) * 2} m{i},{i} {i * 10},{i} m{i},{i}";
+    assert(got == want, "tails {i}: {got}");
+  }
+}

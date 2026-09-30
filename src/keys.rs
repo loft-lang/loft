@@ -1549,6 +1549,22 @@ pub fn api_advice_enabled() -> bool {
 
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
+/// `LOFT_NO_EXIT_VECTOR=1` (scope pass, BOTH backends): a local vector returned inside the
+/// exit literal keeps its wrapper store and the literal keeps deep-copying it — the
+/// before-half of `(R-ExitVector)`'s A/B, and the first bisect step for a wrong or empty
+/// vector field out of a callee that built it in a local.
+pub fn exit_vector_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_EXIT_VECTOR"))
+}
+
+/// `LOFT_HOIST_VERIFY=1` read at RUNTIME, for the store operations whose same-store
+/// dispatch has no emitter-chosen verify flag (`Stores::move_vector`).
+pub fn hoist_verify() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_HOIST_VERIFY"))
+}
+
 pub fn trace_place() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_TRACE_PLACE"))

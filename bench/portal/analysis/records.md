@@ -517,3 +517,253 @@ parameter on purpose.  The lever is a scalar vector literal of constant length c
 an ARRAY — a local (`for i in [a, b, c]`, walked without a store) or a record field
 (`Mat4 { m: [16 floats] }`, mat4_mul 38×): one representation clause beside the value
 record, § Order item 7 of the evaluation, and the next unit for both rows.
+
+**BUILT 2026-09-29, the local half** (`(R-LiteralWalk)`, `LOFT_NO_LITERAL_WALK`): the literal
+walk is n scalar temps and a counted select on both backends, no vector.  `mesh_to_floats`
+**2.85 → 1.84 ms per op (15.8× → 10.5×)**, same hash.  What the row pays now is the six field
+reads through `stores.store(&db).get_float` (a store lookup and a null test each) and the six
+pushes through the header per vertex, against a Rust twin that reads a struct and extends a
+`Vec<f32>` — the `(R-RecPtr)` remainder for a nullable view whose store is the parameter's.
+The record-field half (`Mat4 { m: [16 floats] }`, `mat4_mul` 38.6×) is still the
+representation clause and stays open.
+
+## `sphere` (2026-09-29) — the append's runtime dispatch, not its writes
+
+Profiled alone (`perf`, the scratch driver over mesh3d by path): `record_new` 10 %,
+`record_finish` 8 %, `nullable_field_parent` 8.4 % and `nullable_some_variant` 6.8 % (a
+`__nullable<` NAME test, twice per append), `insert_record` 4.4 %, `link_siblings` 4.5 % and
+`settle_displaced` 3.6 % over empty lists — 27 % of the row in the runtime's general
+record dispatch for `self.vertices += [av]`, which the emitter had already reduced to eight
+`rec_set`s through the element's address.  The bare-vector short path (§ V-k) never reached a
+FIELD.  It does now (BOTH backends, `LOFT_NO_PLAIN_FIELD_APPEND`): **1.70 → 1.22 ms per op
+(10.0× → 7.1×)**, same hash; the interpreter shares the path (0.22 → 0.20 s for twenty spheres, inside
+its noise).  What the row still pays:
+`vector_append`'s growth (the twin's `Vec` pays it too), the prefill of the eight fields
+the tuple then overwrites (`OpNewRecord` with prefill — `(R-CompleteWrite)` does not see the
+tuple delivery's writes, which sit in one block statement the coverage walk does not enter),
+and the `add_triangle` half.  **The prefill went the same day** (`(R-CompleteWrite)`, a
+whole-record copy into a heap-free element covers the type): **1.22 → 0.94 ms per op
+(7.1× → 5.4×)**.  What is left is the growth, the two `add_triangle` writes and the
+trigonometry the twin also pays.
+
+## `pack_instances` (2026-09-29) — one text set kept three callees writing
+
+Traced (`LOFT_TRACE_HOIST_DECLINE`): the loop declined at `out += [frame_of(self, i) as
+single]`.  `frame_of` discharges `self.st_seqs[n.nd_seq] ?? Sequence { …, q_name: "" }`; the
+fallback's mint into its `__ref_p2_` buffer was already an allowance, its text field's
+`OpSetText` was not — outside the twelve scalar setters, it made the callee a writer, and
+`lit_colour`'s chain the same.  With the SET admitted as the mint is (the buffer's store is
+the site's own): **920 → 309 µs per op (24.3× → 8.4×)**, hash unchanged — 16 pushes through
+the push header, three vector headers, where before there were 16 general appends and 20
+store reads per node.  What the row still pays: the twenty field reads of `n` through the
+store (`(R-RecPtr)`'s remainder: `out` is the return buffer, never proven apart from `self`)
+and the three calls per node.
+
+## cbor `encode_bytes` and `decode` (2026-09-29) — profiled, not yet built
+
+`encode_bytes` (31.7× on the laptop): the byte-wise copy IS admitted (`LOFT_TRACE_BYTE_COPY`
+names `n_encode`'s `_mv_value_4` as one append), and the row's 100 encodes of a 64 × 256-byte
+array cost 33 µs each here — 2 ns a byte against a memcpy.  The profile is flat and all of
+it is per-CHILD buffer churn: `encode(items[i])` mints a result store (`op_database_inner`,
+`claim_block`, `claim_best_fit`), `head()` mints another and pushes one to three bytes into
+it, the parent appends the child (`vector_add`, `copy_block_cross_store`, `resize`) and frees
+it (`free_named`, `clear_vector_release`, `set_free_header`, `fl_insert`) — about 500 ns
+around 259 bytes.  The lever is the destination-directed build (§ Order item 6): `buf +=
+encode(x)` handing `buf` to the callee as the buffer it appends INTO, so a child neither mints
+nor is copied; `encode` is recursive, which is why the frame's buffer pool does not reach it.
+
+`decode` (21.8×, 42.6 ms against 2.0 ms — the largest absolute gap on the list, and
+pluginabi's `check_request` at 59.9× decodes every frame twice through it): `read_value`'s
+own code 19 %, and the CLAIMS machinery 40 % — `remove_claims_mode` 12 %, `owned_walk`
+9.6 %, `copy_claims` 6.8 %, `holds_no_heap` 3.2 %, `OpFreeRef` 2.9 %, and `malloc` /
+`cfree` / `finish_grow` 8 % from the child lists the walks allocate per record.  The shape:
+`sub = read_value(bytes, p); items += [sub.value]` deep-copies the child's heap into the
+parent's vector and then walks the temporary to free it, per node.  Two levers, the second
+cheap: (a) the cross-call MOVE — the child built where it will live (§ Order item 6 again),
+which removes both the copy and the free; (b) the walks themselves — `owned_walk` pushes a
+child per FIELD of a struct, scalars included, into a `Vec` allocated per record, and
+`remove_claims` re-asks `holds_no_heap` per child; a walk that visits heap-capable fields
+only, over a scratch kept in `Stores`, is a runtime unit for every free of a heap-owning
+record on both backends.  Beside them, `bytes[pos] ?? 0` reads through the runtime
+(`length_vector` 5.9 %, `get_vector` 5.3 %): a parameter read outside any loop holds no
+header, and the byte-range copies `for k in 0..arg { bs += [bytes[argpos + k] ?? 0] }` are
+the `(R-VecCopy)` shape with a RANGE, one `append_bytes` each if the rule takes it.
+
+## pluginabi `check_request` (2026-09-29) — the worst row, taken apart
+
+58.8× here (12.1 ms per op of 2 048 checks: 5.9 µs a check against the twin's 101 ns), 59.9×
+on the laptop.  A check decodes a three-entry CBOR map (`op` text, `state` 88 bytes, `arg`
+24 bytes) TWICE — `pa_decode_ok`, then `pa_decode` — walks the entries for `op`, copies its
+text out and compares it with six constants.  The twin does the same two decodes over
+borrowed slices and allocates nothing.
+
+**Counted** (`LOFT_ALLOC_REPORT=1`, one round of 2 048 checks minus the next): **26 store
+alloc/free cycles and 5.5 records per check**; live stores stay at 21 (reuse works), the
+CYCLES are the cost.  **Profiled** (`perf` over the `--native-release` child, symbols kept):
+store allocation and free 27 % (`claim_block`, `claim_best_fit`, `fl_insert`, `finish_claim`,
+`set_free_header`, `free_named`, `database_named`, `op_database_inner`, `OpFreeRef`), the
+claims walks 24 % (`copy_claims` 10.7 %, `remove_claims_mode` 5.8 %, `owned_walk` 4.9 %,
+`holds_no_heap` 2.6 %), the program's own code 11 %, vector reads 7.6 %, byte copies 4.9 %,
+the Rust heap the walks allocate 4.8 %.  `decode` is 55 % inclusive (two calls), the rest
+is the copy `pa_decode` makes, the entry walk, and the frees.
+
+**The structure, per CBOR node** (`n_read_value`'s map arm, read off the emission): the
+child's `Decoded` is built in a store of its own (`__ref_7` / `__ref_8`, one per key and
+value), its `value` deep-copied into the parent's entry (`OpCopyRecord` → `copy_claims`,
+recursing through the text or byte vector), the child's store cleared; the finished map
+deep-copied into the frame's return buffer (copy 2, the whole tree walked again); `decode`
+returns it; `pa_decode` copies `d.value` into a local (copy 3 — a workaround for loft#425,
+which is CLOSED); `check_request` frees.  Every payload byte is copied three times and
+every node's claims are walked three times and freed three times.  Eleven hidden buffers
+per `read_value` frame are freed on each of its return paths (187 `OpFreeRef` sites), and
+byte strings are pushed a byte at a time (`bs += [bytes[argpos + k] ?? 0]`, 2 ns a byte).
+
+**The six structural problems**, most costly first:
+1. *A heap-owning record that crosses a call boundary is a STORE.*  Each `read_value`
+   answer mints an arena (header, free tree, footer) for a three-field record, and frees it
+   after one read.  Twenty-six per check; the twin has zero.  The value-record rule
+   (`(R-ValueRecord)`) declines every record with a vector or text field, so the whole
+   decoder is outside it.
+2. *Composition copies where Rust moves.*  `items += [sub.value]`, `Decoded { value: CMap
+   {…} }` and `v = d.value` each deep-copy a tree between stores; a move would be a handle
+   write.  The destination-directed build (§ Order item 6 — the callee builds its answer in
+   the slot it will occupy) is the lever for both 1 and 2.
+3. *The claims walks allocate.*  `owned_walk` pushes a child per FIELD into a `Vec` per
+   record, scalars included, and `remove_claims` re-asks `holds_no_heap` per child.
+4. *Byte ranges are pushed one at a time.*  The `(R-VecCopy)` shape with a range is one
+   `append_bytes`.
+5. *Frees are per variable, per return path.*  A frame that mints nothing still tests
+   eleven buffers at every exit; a frame that did mint pays a store free each.
+6. *In the library:* the loft#425 workaround copy is dead weight now, `pa_get` discharges
+   each entry through a fresh record with two text fields (`entries[i] ?? CborEntry {…}`),
+   and `pa_text` copies the text out (`"{value}"`) where a borrow would do.
+
+**What 3× needs.**  3× is ≈ 300 ns a check here — at most two or three store cycles.  Items
+2, 4, 3 and 6 take the row to an estimated 1.5 µs (≈ 15×): the copies and their walks go,
+the byte loops become memcpys, the library stops copying.  The rest of the distance is
+item 1 — records that own heap answered as VALUES (a `Decoded` crossing the call as a tuple
+whose payload is a handle), so a decode allocates once for the tree, not once per node —
+and that is a rule extension of `(R-ValueRecord)`, not a site fix.  The double decode is
+the library's design and the twin's too; it does not move the ratio, only the absolute.
+
+## The placement matrix (2026-09-29) — what a decoder's shapes need from `(R-Place)`
+
+Built before any code (`tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft`),
+hand-computed, stores counted per call with `LOFT_ALLOC_REPORT`.  The boundary today:
+
+| shape | decision | stores/call |
+|---|---|---:|
+| p2 a literal-only callee's result into a literal field of a parameter's element | placed | 1 (the host literal) |
+| p3 the same through a chain (`return mk(n)`) | placed since the chain clause (was: "not a fresh literal on every exit") | 1 (was 2) |
+| p0/p1 the result appended WHOLE (`r.items += [v]`) | "the copy carries a flag" | 2 |
+| w2 the wrapper's field copied out and returned (`v = d.value; return v`) | "a reference into the local leaves the receiver chain" | 3 |
+| w1 the decoder loop (`sub = read(…)` in a loop, `items += [sub.value]`, `p = sub.next` after) | never a candidate: the bind is inside a loop and the host is a local | — |
+| w4 recursion, w7 two heap fields, w9 a branch join, w3 an alias | not candidates / declined | — |
+
+So the chain clause is landed and the decoder is still whole: what it needs next, in
+order, is (a) a bind inside a loop with the per-iteration buffer, (b) a destination in a
+local vector's store, (c) the placed thing being the ONE heap-owning field of a wrapper whose
+scalars are read after the move (a field move that zeroes its source so the wrapper's free
+finds nothing), and (d) the local vector returned inside the exit literal built in the
+return buffer's store.  Each is an ownership argument with cells already in the matrix.
+
+## `check_request` after the loop clause and the exit vector (2026-09-29)
+
+Both clauses the matrix asked for are built (`(R-Place)`'s loop clause: w1/w9; `(R-ExitVector)`:
+v1–v13, w1, w4, l3), and the cbor `read_value` is admitted at every site: `sub`, `kd`, `vd`
+placed in the local vector's store and moved out by field; `bs`, `tb`, `items`, `entries`
+claimed in the return buffer's store and taken by a handle move.  The tree is built in ONE
+store — the outermost buffer's — and copied nowhere on the way up.
+
+**Measured** (this box, `--native-release`):
+
+| row | before | loop clause | + exit vector |
+|---|---:|---:|---:|
+| cbor bench `decode`, ms per op | 42.6 | 34.7 | 26.2 |
+| stores per `check_request` | 26 (20.4 after the fixes since) | 20.4 | 7.4 |
+| `check_request` driver, 40 rounds of 2 048 checks | 0.47 s | 0.39 s | 0.39 s |
+
+**The A/B the census demanded** (`scripts/perf_check.py`, this box, the clauses off against
+the clauses on over the seven libraries and two consumer lanes the census flagged): with both
+clauses OFF `check_request` is 18 % slower (49.6× → 58.6×) and cbor's `decode` 17 % slower
+(23.8× → 27.7×); no hex_* routine moved 15 % either way, so the native header and base
+hoists the placed vectors lose cost nothing the bench can see.  Blessed in
+`bench/portal/rewrite_census.tsv`.
+
+So the decoder's own row moved 38 %, the store cycles per check fell to a third, and
+`check_request`'s TIME did not move with the second clause.  The profile says why: what the
+store mints cost is now paid by BLOCK claims and releases in the shared store —
+`place_record_prefilled` 11 % (a best-fit search of the store's free tree per placement, then
+the prefill), `free_record_in` 10.6 % (the claims walk, then a free-tree delete per block), and
+the free-tree maintenance behind both (`claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_balance`,
+`delete`: ≈ 16 %).  A claim in a store is not cheaper than a store mint: both are an allocator
+round-trip.  The other half of the profile is unchanged: `OpCopyRecord` 15 % (the library's
+`v = d.value` copy in `pa_decode`, item 6), the claims walks 18 % (`remove_claims_mode`,
+`owned_walk`, `holds_no_heap` — item 3, and `owned_walk` still allocates a `Vec` per record),
+`read_value`'s own code 13 %.
+
+**What this settles.**  Items 2 and part of 1 of the six are done — no copy composes the tree
+and only two stores a decode remain (the `d` buffer and `pa_decode`'s copy).  The distance to 3×
+is now in three places, each a runtime or library change rather than a rewrite:
+
+1. *The arena's allocator.*  A tree built once and cleared whole pays a red-black free-tree
+   claim per node and a delete per node at the clear.  A store whose content is one tree wants
+   BUMP claims and a one-step reset (`(R-Header)`'s store-free list already resets a root
+   vector's store in one step); the heap the texts own is the only thing a reset must still
+   find.
+2. *The claims walk.*  `owned_walk` allocates per record and `remove_claims` re-asks
+   `holds_no_heap` per child (item 3): the same walk over a type table computed once would
+   cost a fraction.
+3. *The library.*  `pa_decode`'s copy (`v = d.value; return v` — the w2 shape, 15 % of the
+   profile) and `pa_get`'s discharge (item 6).
+
+The first two move every store-based program, not this row; the third is pluginabi's and is
+this stream's to make.
+
+**A side-finding the perf-check surfaced.**  hex_shape's `wall_chain_walk` died under the
+exit vector with a corrupt reference: its `(mq, mr, md) = chain_marks(…)` locals carry
+wrappers typed `main_vector<vector<integer>>` over `vector<integer>` (loft#1757), harmless
+while a wrapper is a store released whole, fatal once released as a block by its type.  The
+clause declines such a wrapper (54 sites in hex_shape); the typing itself stays open.
+
+## `check_request` on the library AS WRITTEN — the copies and claims per check (2026-09-30)
+
+Owner's rule (`(Perf-Teach)`): the row is measured on cbor and pluginabi exactly as they are
+written, and the code generation earns the speed.  After the loop clause, the exit vector and
+`(R-Header)`'s function clause, the check driver runs 0.38 s per 40 rounds (49.6× calibrated)
+and the profile is these, in order:
+
+| share | what | where it is decided |
+|---:|---|---|
+| 13.9 % | `OpCopyRecord` in the caller: `pa_text(pa_decode(frame), "op")` LIFTS the call result into `__lift_1`, and a lifted bind takes the adopt-or-copy protocol with an unconditional free of the passed buffer — so the first bind always deep-copies the tree.  A NAMED bind `z = f(…)` adopts the callee's store with a witnessed free (`OpFreeRefIfDistinct(__ref, z)`). | the lift's lowering in `scopes` (`new_lift_var` marks it `inline_ref`; the pairing never runs) and both backends' bind arms |
+| 10.9 % | `free_record_in`: the placed buffers' and wrappers' releases (a claims walk that allocates, then a free-tree delete) | runtime |
+| 10.3 % | `place_record_prefilled`: the placement's claim (a best-fit search once the store has frees) and the prefill of a record every exit literal rewrites whole | runtime; the prefill is `(R-CompleteWrite)`'s to skip |
+| 6.9 % | `remove_claims_mode`: the per-turn `OpClear` of a placed buffer | runtime |
+| 13.2 % | `read_value`'s own code | — |
+| 5 % | `set_str` + `text_from_bytes_native`: the text payloads copied out of the frame (the cbor spans branch reads them in place; a text FIELD that borrows the frame is the language change the tree form cannot reach 3× without) | language |
+
+The runtime copy census (`LOFT_COPY_DUMP=1`, one round): per check, one copy at
+pluginabi:71 (`v = d.value` in `pa_decode`), one at :218 (the lift above), and 1.75 each at :86
+(`r = e.value` in `pa_get`) and :94 (`pa_text`'s match arm) — six deep copies of a CborValue
+tree per check, every one a compiler matter:
+
+1. **A lifted call result adopts like a named bind** (`__lift_N = f(…, __ref_N)`): the same
+   witnessed pairing a plain bind gets, so `f(g(x))` copies nothing.  −14 %.
+2. **`(R-ReturnField)`**: `p = mk(…); return p.a` hands `p`'s store over at the field's
+   position instead of minting a store and copying the field into it (`pa_decode`); cells
+   written and hand-checked in the scratchpad (`return_field_cells.loft`, r1–r7, values hold on
+   both backends today; 3 stores per call, 2 after).
+3. **Arena buffers**: a store that holds one tree cleared whole (a lazy `__ref` result buffer)
+   claims by bump and releases nothing until its root's `OpClear`, which RESETS it — the
+   placement's claim, the block releases and the per-turn walk all go.  A runtime policy
+   behind a switch; needs the fact that a record owns nothing outside its store.
+4. **Skip the prefill** of a placed buffer whose callee writes every field on every exit
+   (`(R-CompleteWrite)` already proves that for a mint).
+5. **`pa_get`'s and `pa_text`'s match copies**: a `match` on a view's variant binding a field
+   copies the payload; a read-only arm wants a view.
+6. **Text payloads as spans of the frame** — the language change.
+
+Beside the row, measured as a CEILING and kept in scratch (`cbor.patch`, `pluginabi.patch`):
+a reader that skips instead of decoding puts the row at 5.3× against a scanning twin, 1.97×
+against the tree twin.  It is not the answer; it is what the compiler is measured against.
+

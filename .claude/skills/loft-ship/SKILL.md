@@ -49,8 +49,8 @@ Tier 1 library or under-estimating a Tier 2 one.
 loft on purpose — the libraries are the teaching corpus, and a slow routine is an engine
 finding, not a licence for a native "fast pass"
 ([formal/performance.md](../../../doc/claude/formal/performance.md) `(Perf-Cure)`; the
-per-release measurement against an industry-language twin is `(Perf-Weight)`, the drawing
-library's `bench/` is the model). `#native` is for a real host capability, and a native
+per-release measurement against an industry-language twin is `(Perf-Weight)`, read across every
+shipped library with `make perf-portal`; the drawing library's `bench/` is the model). `#native` is for a real host capability, and a native
 rewrite for speed is a per-routine edge case with its reason recorded.
 
 ## The workflow
@@ -79,6 +79,8 @@ rewrite for speed is a per-routine edge case with its reason recorded.
 5. **Run the parity gate** (below) — the definition of done.
 6. **Publish** — build per target, sign, submit to the registry. The signing step has a
    foot-gun that breaks *every* install if missed → **read `references/publish.md`.**
+   A release that breaks its API raises `api_compatible_with`: consumers' `loft update` then
+   holds them at the older release until they opt across the break (PACKAGES.md).
 
 ## The parity gate — the definition of "shipped"
 

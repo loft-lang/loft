@@ -2218,6 +2218,15 @@ impl Parser {
             // the same carve-outs — the sibling-variant join, the statement-position discard,
             // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
             // first concrete arm has nothing to agree with and names the type instead.
+            let unboxed_tail;
+            let t = if context == "return from block"
+                && let Some(tt) = self.unbox_stored_tuple_tail(t, result, &mut l[last])
+            {
+                unboxed_tail = tt;
+                &unboxed_tail
+            } else {
+                t
+            };
             let arm_of_sibling = context == "else"
                 || ((context == "if" || context == "match_arm") && !result.is_unknown());
             let tuple_rewritten = !self.first_pass
@@ -4483,6 +4492,53 @@ impl Parser {
         }
     }
 
+    /// loft#1742 — a heap-carrying tuple returned straight from a CALL arrives in its stored
+    /// spelling (`__tuple<text,integer>`), which the return's tuple rewrite does not take, so a
+    /// member widening into the declared `__tuple<text,float>` (`@FR-C-Num`) failed `convert`.
+    /// Bound to a stack-tuple local first — the shape the same function written
+    /// `a: (text, integer) = mk(); a` has — the rewrite writes each member at the declared type,
+    /// converting it.  Answers the tail's new type, or `None` when the tail is not that pair.
+    /// Asked by both return sites, the tail of a body and a `return` statement.
+    pub(crate) fn unbox_stored_tuple_tail(
+        &mut self,
+        t: &Type,
+        result: &Type,
+        tail: &mut Value,
+    ) -> Option<Type> {
+        let (Type::Reference(d, _), Type::Reference(r, _)) = (t, result) else {
+            return None;
+        };
+        if self.first_pass
+            || d == r
+            || !self.data.def(*d).name().starts_with("__tuple<")
+            || !self.data.def(*r).name().starts_with("__tuple<")
+            || !self.changes_representation(t, result)
+        {
+            return None;
+        }
+        let (elems, declared) = (
+            self.stored_tuple_elements(t),
+            self.stored_tuple_elements(result),
+        );
+        if elems.len() != declared.len()
+            || !elems
+                .iter()
+                .zip(&declared)
+                .all(|(x, y)| x.is_equal(y) || self.changes_representation(x, y))
+        {
+            return None;
+        }
+        let src = Type::Tuple(elems.clone());
+        let tmp = self.create_unique("_tret", &src);
+        let unboxed = self.unbox_tuple_from_dbref(tail.clone(), &elems);
+        *tail = v_block(
+            vec![v_set(tmp, unboxed), Value::Var(tmp)],
+            src.clone(),
+            "tuple_return_unbox",
+        );
+        Some(src)
+    }
+
     pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
         &mut self,
         synthetic_d_nr: u32,
@@ -5059,10 +5115,30 @@ impl Parser {
     /// `OpVectorIsNull` — where a scalar compares against a `…FromNull` literal.  Callers that
     /// read a null proof out of a condition need both spellings; this is the heap one, and it
     /// answers only for a plain variable, which is the only place a proof can be recorded.
+    ///
+    /// A NULLABLE STRUCT held inline — a `vector<P?>` element, a `for` variable over one — is
+    /// the synthetic `__nullable<P>` enum (`Data::is_nullable_wrapper`), whose null test is its
+    /// discriminant: `OpEqInt(OpConvIntFromEnum(OpGetEnum(v, 0)), 0)`, the `== null` lowering
+    /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
+    /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
+    /// ordinary enum's discriminant test says nothing about null.
     fn heap_null_test(&self, test: &Value) -> Option<u16> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
+        if self.data.def(*op).name() == "OpEqInt"
+            && let [lhs, Value::Int(0)] = args.as_slice()
+            && let Value::Call(conv, conv_args) = lhs.unspan()
+            && self.data.def(*conv).name() == "OpConvIntFromEnum"
+            && let [get] = conv_args.as_slice()
+            && let Value::Call(get_op, get_args) = get.unspan()
+            && self.data.def(*get_op).name() == "OpGetEnum"
+            && let [subject, Value::Int(0)] = get_args.as_slice()
+            && let Value::Var(v) = subject.unspan()
+            && self.data.is_nullable_wrapper(self.vars.tp(*v))
+        {
+            return Some(*v);
+        }
         if args.len() != 1 || !matches!(self.data.def(*op).name(), "OpRefIsNull" | "OpVectorIsNull")
         {
             return None;
@@ -5236,6 +5312,33 @@ impl Parser {
         }
     }
 
+    /// The `(subject, discriminant)` an `is` test proves: the lowering `parse_is_variant`
+    /// gives a struct-enum subject, `OpEqInt(OpConvIntFromEnum(OpGetEnum(s, 0)), disc)`.
+    fn variant_proof_from_condition(&self, test: &Value) -> Option<(Value, i32)> {
+        let Value::Call(eq, args) = test.unspan() else {
+            return None;
+        };
+        if self.data.def(*eq).name() != "OpEqInt" || args.len() != 2 {
+            return None;
+        }
+        let Value::Int(disc) = args[1].unspan() else {
+            return None;
+        };
+        let Value::Call(conv, conv_args) = args[0].unspan() else {
+            return None;
+        };
+        if self.data.def(*conv).name() != "OpConvIntFromEnum" {
+            return None;
+        }
+        let Some(Value::Call(get, get_args)) = conv_args.first().map(Value::unspan) else {
+            return None;
+        };
+        if self.data.def(*get).name() != "OpGetEnum" {
+            return None;
+        }
+        get_args.first().map(|s| (s.unspan().clone(), *disc))
+    }
+
     fn divisor_proof_from_condition(&self, test: &Value) -> Option<(u16, bool)> {
         let Value::Call(op, args) = test.unspan() else {
             return None;
@@ -5330,6 +5433,12 @@ impl Parser {
         if let Some((v, true)) = divisor {
             self.divisor_nonzero.push(v);
         }
+        // `if v is Variant { … }` proves the variant in the THEN branch (THEN-only: the else
+        // side knows only which variant it is NOT), so a cast `v as Variant` there is checked.
+        let variant_base = self.variant_proven.len();
+        if let Some(pair) = self.variant_proof_from_condition(&test) {
+            self.variant_proven.push(pair);
+        }
         // …and the MATH twin, the third family, on the same discipline.
         let math_sign = self.math_sign_proof_from_condition(&test);
         let math_base = self.math_sign_proven.len();
@@ -5374,6 +5483,7 @@ impl Parser {
         // proves the divisor non-zero on the ELSE side, pushed just below with the else narrowing.
         self.divisor_nonzero.truncate(divisor_base);
         self.math_sign_proven.truncate(math_base);
+        self.variant_proven.truncate(variant_base);
         // Leaving the THEN branch — drop its `idx < len(vec)` in-bounds proofs (THEN-only).
         self.index_bounded.truncate(index_base);
         if let Some((v, false)) = narrow {
@@ -5398,6 +5508,8 @@ impl Parser {
         // already an error and synthesises a `null` else for recovery; the DN1 widening below must
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
+        // Where the else arm starts: a tuple arm pair that does not join is reported there.
+        let else_pos = self.lexer.pos().clone();
         if had_else {
             self.vars.restore_write_state(&write_state);
             self.vars.clear_write_state();
@@ -5407,7 +5519,7 @@ impl Parser {
             // loft#1682 — a then arm answering a tuple WITH a `null` member has no type of
             // its own either: the member is the sibling's to name, and the two join
             // element-wise once the sibling is parsed (`join_tuple_arms`).
-            let then_tuple_nulls: Option<Type> = if Self::tuple_has_null_member(&true_type) {
+            let then_tuple_nulls: Option<Type> = if self.tuple_join_open(&true_type) {
                 Some(true_type.clone())
             } else {
                 None
@@ -5514,12 +5626,31 @@ impl Parser {
             }
             if true_type == Type::Unknown(0) {
                 if let Some(orig) = &then_tuple_nulls {
-                    // loft#1682 — both tails take the element-wise join; a pair of shapes
-                    // that does not join keeps the sibling's type, and the then tail's
-                    // conversion then reports the member that cannot land.
-                    let joined = self
-                        .join_tuple_arms(orig, &false_type)
-                        .unwrap_or_else(|| false_type.clone());
+                    // loft#1682 — both tails take the element-wise join.  A pair that does not
+                    // join is REFUSED here, as the plain else arm is: the tail conversion below
+                    // only answers whether it converted and reports nothing, so leaving it to
+                    // that read `(Tri {…}, 2)` at `(Circle, integer)`'s offsets in silence.  The
+                    // sibling's type is kept for recovery.
+                    let joined = if let Some(j) = self.join_tuple_arms(orig, &false_type) {
+                        j
+                    } else {
+                        if !self.first_pass
+                            && !matches!(
+                                false_type.base(),
+                                Type::Void | Type::Never | Type::Null | Type::Unknown(_)
+                            )
+                        {
+                            let want = orig.source_name(&self.data);
+                            let have = false_type.source_name(&self.data);
+                            diagnostic_at!(
+                                self.lexer,
+                                &else_pos,
+                                Level::Error,
+                                "expected {want}, got {have} on else"
+                            );
+                        }
+                        false_type.clone()
+                    };
                     self.convert_arm_tail(&mut true_code, orig, &joined);
                     let false_orig = false_type.clone();
                     self.convert_arm_tail(&mut false_code, &false_orig, &joined);
@@ -5680,7 +5811,7 @@ impl Parser {
         self.vars.defined(o);
         // `o = []` (pass-gated: empty on pass 1, the OpDatabase alloc on pass 2 — exactly
         // as a user-written `o: vector = []` lowers), then `o += <binding>`, then yield o.
-        let mut ops = self.vector_db(&v_type, o);
+        let mut ops = self.vector_db(&elm, o);
         // `o = []` is a REPLACE, and `o` becomes the caller's return buffer once
         // `ref_return` promotes it — at which point `vector_db` above no-ops (an argument
         // keeps the caller's store) and the append below piles this call's elements onto
@@ -5938,7 +6069,7 @@ impl Parser {
             {
                 self.expect_match_arm_arrow();
                 let mut arm_body = Value::Null;
-                let arm_expected = Self::match_arm_expected(&result_type);
+                let arm_expected = self.match_arm_expected(&result_type);
                 let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
                 // loft#978 — every arm can deliver this match's value, so the result carries
                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
@@ -6050,9 +6181,11 @@ impl Parser {
             };
 
             if pattern_name == "_" {
-                let was_null_tuple = Self::tuple_has_null_member(&result_type);
+                let before = self
+                    .tuple_join_open(&result_type)
+                    .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
-                if was_null_tuple && !Self::tuple_has_null_member(&result_type) {
+                if before.is_some_and(|b| !b.is_equal(&result_type)) {
                     // loft#1682 — the wildcard arm named the member; the earlier arms follow.
                     let joined = result_type.clone();
                     self.reconvert_null_tuple_arms(&mut arms, &joined);
@@ -6497,7 +6630,7 @@ impl Parser {
             // Save/restore write tracking so writes in one arm don't cause
             // false dead-assignment warnings in sibling arms.
             let mut arm_body = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
@@ -6797,10 +6930,10 @@ impl Parser {
 
     /// The type a match arm is expected to answer in: what the arms have agreed on so
     /// far, or `Unknown` while nothing is settled yet.
-    fn match_arm_expected(result_type: &Type) -> Type {
+    fn match_arm_expected(&self, result_type: &Type) -> Type {
         if result_type.is_unknown()
             || Self::match_result_unsettled(result_type)
-            || Self::tuple_has_null_member(result_type)
+            || self.tuple_join_open(result_type)
         {
             Type::Unknown(0)
         } else {
@@ -6986,7 +7119,7 @@ impl Parser {
         let is_exhaustive = guard_opt.is_none();
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
-        let arm_expected = Self::match_arm_expected(result_type);
+        let arm_expected = self.match_arm_expected(result_type);
         let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         // loft#978 — see the arm sites above: the wildcard is an arm like any other.
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
@@ -7085,7 +7218,7 @@ impl Parser {
         }
         self.expect_match_arm_arrow();
         let mut arm_code = Value::Null;
-        let arm_expected = Self::match_arm_expected(result_type);
+        let arm_expected = self.match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
         if Self::match_result_unsettled(result_type) {
@@ -7447,7 +7580,24 @@ impl Parser {
                 Some((attr_idx, field_type)) => {
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
-                        if let Some(cond) = self.parse_field_sub_pattern(
+                        // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
+                        // binding under that name (`Circle { radius: r }`), total like the
+                        // shorthand `{ radius }`, and never a comparison with a variable of that
+                        // name in scope.  Read through as a value, it compared against an outer
+                        // `r` (a silent wrong arm) or refused an unknown one.  Only the plain
+                        // name followed by `,` / `}` — `r..5`, `_`, a variant and a literal keep
+                        // their sub-pattern meaning.
+                        if let Some(bind_name) = self.field_pattern_rename() {
+                            self.bind_match_field_capture(
+                                variant_def_nr,
+                                attr_idx,
+                                &bind_name,
+                                &field_type,
+                                subject_val,
+                                arm_stmts,
+                                name_aliases,
+                            );
+                        } else if let Some(cond) = self.parse_field_sub_pattern(
                             field_read,
                             &field_type,
                             arm_stmts,
@@ -7486,6 +7636,59 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+    }
+
+    /// After `is V {`, is `field: name` (then `,` or `}`) an attempted RENAME of a field of `V`,
+    /// rather than a body opening with a declaration?  Only when `field` is a field of the
+    /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
+    /// lookahead the caller reverts, after `field` has been read.
+    fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
+        let Some(field) = field else {
+            return false;
+        };
+        let is_field = self.data.def(variant_def_nr).attributes[1..]
+            .iter()
+            .any(|a| a.name == field);
+        if !is_field || !self.lexer.has_token(":") {
+            return false;
+        }
+        let Some(alias) = self.lexer.has_identifier() else {
+            return false;
+        };
+        Self::is_binding_name(&alias)
+            && self.data.def_nr(&alias) == u32::MAX
+            && (self.lexer.peek_token(",") || self.lexer.peek_token("}"))
+    }
+
+    /// A field sub-pattern that is a plain binding NAME (`Circle { radius: r }`) — a rename of
+    /// the capture, `@FR-P-Point` — consumed and answered; anything else (`r..5`, `_`, a
+    /// variant, a literal) is left unread for the sub-pattern parse.  Only a name followed by
+    /// `,` or `}` qualifies, and the lexer is linked only when a name is next, so a numeric
+    /// range is never re-lexed.  One home for the single-pattern and the listed-pattern arm.
+    fn field_pattern_rename(&mut self) -> Option<String> {
+        if !matches!(
+            &self.lexer.peek().has,
+            LexItem::Identifier(id) if Self::is_binding_name(id)
+        ) {
+            return None;
+        }
+        let link = self.lexer.link();
+        let name = self.lexer.has_identifier().unwrap_or_default();
+        if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+            Some(name)
+        } else {
+            self.lexer.revert(link);
+            None
+        }
+    }
+
+    /// A lowercase identifier other than `_` — the spelling that BINDS in a pattern.
+    fn is_binding_name(name: &str) -> bool {
+        name != "_"
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
     }
 
     /// The discriminant integer for `variant_def_nr` (a variant of enum `e_nr`).
@@ -9619,35 +9822,45 @@ impl Parser {
                     // condition (the caller ANDs it into the branch's own guard).  A
                     // sub-pattern that BINDS a name binds a fresh variable the shared arm body
                     // never reads, so that one is refused by name rather than read wrongly.
+                    // A plain lowercase NAME as the sub-pattern is a RENAME (`w: v`): it binds
+                    // the capture under that name, and the shared arm body reads it like a
+                    // shorthand capture of the first pattern's name.
+                    let mut capture = field_name.clone();
                     if self.lexer.has_token(":") {
-                        let field_read =
-                            self.get_field(variant_def_nr, attr_idx, subject_val.clone());
-                        let mut sub_binds: Vec<Value> = Vec::new();
-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
-                        if let Some(c) = self.parse_field_sub_pattern(
-                            field_read,
-                            &field_type,
-                            &mut sub_binds,
-                            conds,
-                            &mut aliases,
-                        ) {
-                            conds.push(c);
+                        let renamed = self.field_pattern_rename();
+                        if let Some(name) = &renamed {
+                            capture.clone_from(name);
                         }
-                        self.join_later_sub_pattern_captures(
-                            &mut aliases,
-                            &mut sub_binds,
-                            shared,
-                            stmts,
-                            &mut bound,
-                        );
-                        self.pattern_binds_pending.append(&mut aliases);
-                        if !self.lexer.has_token(",") {
-                            break;
+                        if renamed.is_none() {
+                            let field_read =
+                                self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                            let mut sub_binds: Vec<Value> = Vec::new();
+                            let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                            if let Some(c) = self.parse_field_sub_pattern(
+                                field_read,
+                                &field_type,
+                                &mut sub_binds,
+                                conds,
+                                &mut aliases,
+                            ) {
+                                conds.push(c);
+                            }
+                            self.join_later_sub_pattern_captures(
+                                &mut aliases,
+                                &mut sub_binds,
+                                shared,
+                                stmts,
+                                &mut bound,
+                            );
+                            self.pattern_binds_pending.append(&mut aliases);
+                            if !self.lexer.has_token(",") {
+                                break;
+                            }
+                            continue;
                         }
-                        continue;
                     }
-                    if let Some((var_nr, shared_ty)) = shared.get(&field_name).cloned() {
-                        let ok = self.shared_slot_accepts(&field_name, &field_type, &shared_ty);
+                    if let Some((var_nr, shared_ty)) = shared.get(&capture).cloned() {
+                        let ok = self.shared_slot_accepts(&capture, &field_type, &shared_ty);
                         // Skip the assignment into the shared slot on a confirmed
                         // type mismatch — a `text`→`integer` store is incoherent and
                         // the arm never runs (compile fails).  First pass still binds
@@ -9660,12 +9873,12 @@ impl Parser {
                             );
                             stmts.push(v_set(var_nr, field_read));
                         }
-                        bound.insert(field_name.clone());
+                        bound.insert(capture.clone());
                     } else {
                         let v_nr = self.bind_match_field_capture(
                             variant_def_nr,
                             attr_idx,
-                            &field_name,
+                            &capture,
                             &field_type,
                             subject_val,
                             stmts,
@@ -9673,8 +9886,8 @@ impl Parser {
                         );
                         if v_nr != u16::MAX {
                             let tp = self.vars.tp(v_nr).clone();
-                            shared.insert(field_name.clone(), (v_nr, tp));
-                            bound.insert(field_name.clone());
+                            shared.insert(capture.clone(), (v_nr, tp));
+                            bound.insert(capture.clone());
                         }
                     }
                 }
@@ -10135,7 +10348,7 @@ impl Parser {
 
             self.expect_match_arm_arrow();
             let mut arm_code = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
             // A `null`-first arm must NOT pin the result to `Null` — promote to
             // the first CONCRETE arm's type (else `match c { false => null, true
@@ -10153,7 +10366,7 @@ impl Parser {
             {
                 // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                 for prev in &mut arms {
-                    if Self::tuple_has_null_member(&prev.2) {
+                    if self.tuple_join_open(&prev.2) {
                         let prev_orig = prev.2.clone();
                         self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                         prev.2 = joined.clone();
@@ -11351,7 +11564,7 @@ impl Parser {
             // delegated to `parse_block("block", …, &Type::Void)`, which DROPS the trailing
             // result expression (`{ c = 5; c }` → `c = 5; drop c`) — the block then yielded void,
             // so native delivered 0 (interpret happened to still surface the value).
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
             // loft#978 — every arm can deliver this match's value, so the result carries
             // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
@@ -11364,7 +11577,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if Self::tuple_has_null_member(prev_tp) {
+                    if self.tuple_join_open(prev_tp) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -11728,7 +11941,7 @@ impl Parser {
 
             self.expect_match_arm_arrow();
             let mut arm_body = Value::Null;
-            let arm_expected = Self::match_arm_expected(&result_type);
+            let arm_expected = self.match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
@@ -11767,7 +11980,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if Self::tuple_has_null_member(prev_tp) {
+                    if self.tuple_join_open(prev_tp) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -12071,8 +12284,11 @@ impl Parser {
         let is_field_capture = is_struct && self.lexer.peek_token("{") && {
             let link = self.lexer.link();
             self.lexer.token("{");
-            let is_capture = self.lexer.has_identifier().is_some()
-                && (self.lexer.peek_token(",") || self.lexer.peek_token("}"));
+            let first = self.lexer.has_identifier();
+            let is_capture = first.is_some()
+                && (self.lexer.peek_token(",")
+                    || self.lexer.peek_token("}")
+                    || self.is_capture_rename_attempt(variant_def_nr, first.as_deref()));
             self.lexer.revert(link);
             is_capture
         };
@@ -12111,6 +12327,25 @@ impl Parser {
                         "duplicate field binding '{}' in is-capture",
                         field_name
                     );
+                }
+                // `is Circle { radius: r }` — a `match` field pattern renames, an `is` capture
+                // does not (its list is `{ ident, … }`, told from a body by lookahead, and a
+                // body may open with the declaration `x: T`).  Consumed so the refusal is the
+                // only message, rather than the body parse's `Undefined type r`.
+                let mut rename: Option<String> = None;
+                if self.lexer.has_token(":") {
+                    let alias = self.lexer.has_identifier().unwrap_or_default();
+                    rename = Some(alias.clone());
+                    if !self.first_pass {
+                        let vn = self.data.def(variant_def_nr).name().to_string();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "an `is` capture binds a field under its own name — write `is {vn} \
+                             {{ {field_name} }}`; to bind it as `{alias}`, use `match`: \
+                             `{vn} {{ {field_name}: {alias} }} => …`"
+                        );
+                    }
                 }
                 seen_fields.insert(field_name.clone());
                 let attr_idx_and_type = {
@@ -12192,6 +12427,12 @@ impl Parser {
                             self.is_capture_bindings.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
+                            // The refused rename's name reads the same capture, so the body's
+                            // use of it adds no second error.
+                            if let Some(alias) = rename.as_ref().filter(|a| !a.is_empty()) {
+                                let old = self.vars.set_name(alias, v_nr);
+                                self.is_capture_aliases.push((alias.clone(), old));
+                            }
                         }
                     }
                     None => {
@@ -14259,7 +14500,10 @@ impl Parser {
         let Type::Enum(e, _, _) = enum_tp else {
             return false;
         };
-        match (true_type, false_type) {
+        // Through `Rewritten`, as `variant_parent_enum` reads it, and through `?`
+        // (`@FR-N-Shape`).
+        let (then_tp, else_tp) = (true_type.unrewritten(), false_type.unrewritten());
+        match (then_tp.base(), else_tp.base()) {
             // A sibling variant, and only a sibling: the arm's def must belong to THIS
             // enum.  The acceptance sites read this predicate too (`arm_joins_to_enum`),
             // so an unrelated struct reaching it would be waved past the conversion it
@@ -14274,6 +14518,18 @@ impl Parser {
         }
     }
 
+    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
+    /// question without building the answer, for the predicates asked of every arm.
+    fn names_variant(&self, tp: &Type) -> bool {
+        let mut tp = tp.base();
+        while let Type::Rewritten(inner) = tp {
+            tp = inner;
+        }
+        matches!(tp, Type::Reference(d, _)
+            if matches!(self.data.def_type(*d), DefType::EnumValue)
+                && self.data.def(*d).parent != u32::MAX)
+    }
+
     /// The ENUM a variant type belongs to — `Some(Enum(E))` for a `Reference(S)` whose def
     /// is one of `E`'s variants, `None` for anything else.
     ///
@@ -14285,8 +14541,20 @@ impl Parser {
     ///
     /// `Definition::parent` makes this O(1) — a variant records its enum — so it is cheap
     /// enough to ask on every `if` that yields a record.
+    ///
+    /// Through `Rewritten`: the marker says a value is built in place (loft#943) and what it
+    /// IS stays the variant.  Pass 1 marks a variant literal this way and pass 2 does not, so
+    /// stopping at the marker made the two passes join `if c { Circle {…} } else { Sq {…} }`
+    /// differently — pass 1 accepted `Sq` AS a `Circle` (`@FR-T-Syn`, D-types-24).  A `τ?` is
+    /// NOT peeled here: whether the slot may be absent is the caller's to carry.
     pub(super) fn variant_parent_enum(&self, tp: &Type) -> Option<Type> {
-        let Type::Reference(d, deps) = tp else {
+        let mut tp = tp;
+        while let Type::Rewritten(inner) = tp {
+            tp = inner;
+        }
+        // `.base()` — `Sq?` is a variant of `Shape` as `Sq` is (`@FR-N-Shape`); whether the
+        // joined value may be absent is the join's own question, answered from its arms.
+        let Type::Reference(d, deps) = tp.base() else {
             return None;
         };
         let def = self.data.def(*d);
@@ -14296,16 +14564,62 @@ impl Parser {
         Some(Type::Enum(def.parent, true, deps.clone()))
     }
 
-    /// loft#1682 — a tuple type with a `null` MEMBER, `(null, integer)`, is what a tuple
-    /// literal with a `null` element synthesises, and it is not a type a sibling arm can
-    /// answer in: nothing converts a concrete member to `null`.  A bare `null` arm has
-    /// long taken the carve-out that lets the sibling decide (`parse_if`,
-    /// `match_arm_expected`); this is the same fact one level down, asked where the
-    /// arm's type is read, so `if z { (null, 3) } else { (4, 5) }` joins to
-    /// `(integer?, integer)` (`@FR-T-Chk`, `@FR-I-Join`) exactly as the reversed order
-    /// always has.
-    fn tuple_has_null_member(tp: &Type) -> bool {
-        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| matches!(e.base(), Type::Null)))
+    /// A tuple type with every member that names a VARIANT widened to that variant's enum,
+    /// nested tuples included — `None` when no member does.  A vector ELEMENT is a record of
+    /// the enum whichever variant it holds (`[Circle {…}]` is a `vector<Shape>`), so an
+    /// inferred literal's tuple element takes the same type for its variant members
+    /// (`@FR-C-Var` through `@FR-C-Tuple`), and a later element or append naming another
+    /// variant then lands in the slot it would have as a bare element.
+    pub(super) fn widen_variant_members(&self, tp: &Type) -> Option<Type> {
+        let Type::Tuple(elems) = tp.base() else {
+            return None;
+        };
+        // Asked of every tuple element of every inferred literal, so answer "nothing to widen"
+        // without building anything.
+        if !elems
+            .iter()
+            .any(|e| self.names_variant(e.base()) || matches!(e.base(), Type::Tuple(_)))
+        {
+            return None;
+        }
+        let mut widened = false;
+        let out: Vec<Type> = elems
+            .iter()
+            .map(|e| {
+                if let Some(en) = self.variant_parent_enum(e.base()) {
+                    widened = true;
+                    if matches!(e, Type::Optional(_)) {
+                        Type::optional(en)
+                    } else {
+                        en
+                    }
+                } else if let Some(inner) = self.widen_variant_members(e) {
+                    widened = true;
+                    inner
+                } else {
+                    e.clone()
+                }
+            })
+            .collect();
+        widened.then_some(Type::Tuple(out))
+    }
+
+    /// Is a tuple arm type still OPEN to its siblings, so the first arm does not pin it?
+    ///
+    /// Two members leave it open.  A `null` member (loft#1682): `(null, integer)` is what a
+    /// tuple literal with a `null` element synthesises, and nothing converts a concrete member
+    /// to `null` — a bare `null` arm has long taken the carve-out that lets the sibling decide
+    /// (`parse_if`, `match_arm_expected`), and this is the same fact one level down, so
+    /// `if z { (null, 3) } else { (4, 5) }` joins to `(integer?, integer)` (`@FR-T-Chk`,
+    /// `@FR-I-Join`) exactly as the reversed order always has.  And a member naming one
+    /// VARIANT of an enum: a sibling naming another variant widens it to the enum
+    /// (`@FR-C-Var`), which converts nothing between two variants, so checking the sibling
+    /// against the first arm refused `if c { (Circle {…}, 1) } else { (Square {…}, 2) }` even
+    /// into a declared `(Shape, integer)`.  Either way the arms meet in `join_tuple_arms`.
+    fn tuple_join_open(&self, tp: &Type) -> bool {
+        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| {
+            matches!(e.base(), Type::Null) || self.names_variant(e.base()) || self.tuple_join_open(e)
+        }))
     }
 
     /// loft#1682 — the ELEMENT-WISE join of two tuple arm types: `null ⊔ τ = τ?`
@@ -14313,7 +14627,7 @@ impl Parser {
     /// settle, equal members keep their type, and two sibling variants join to their enum
     /// (`@FR-C-Var`, as `parse_if` does for a whole arm).  `None` where the shapes differ
     /// or a member pair joins to nothing, which keeps the refusal the caller would have made.
-    fn join_tuple_arms(&self, a: &Type, b: &Type) -> Option<Type> {
+    pub(super) fn join_tuple_arms(&self, a: &Type, b: &Type) -> Option<Type> {
         let (Type::Tuple(ea), Type::Tuple(eb)) = (a.base(), b.base()) else {
             return None;
         };
@@ -14329,13 +14643,41 @@ impl Parser {
                 (Type::Null, _) => Type::optional(y.clone()),
                 (_, Type::Null) => Type::optional(x.clone()),
                 _ => match (x, y) {
-                    // The member test is the arms' own (`match_arm_types_unify`), not equality:
-                    // a payload binding's `integer` and a literal's carry different specs and
-                    // are one type to the join, which keeps the first arm's spelling as the
-                    // whole-arm join does.
-                    (x, y) if x == y || match_arm_types_unify(x, y) => x.clone(),
-                    (x, y) => match self.variant_parent_enum(x) {
-                        Some(enum_tp) if self.joins_to_enum(&enum_tp, x, y) => enum_tp,
+                    // The member test is `is_equal`, not `==`: a payload binding's `integer`
+                    // and a literal's carry different specs and are one type to the join,
+                    // which keeps the first arm's spelling as the whole-arm join does.  Not
+                    // the arms' `match_arm_types_unify` either — that is `is_same`, a KIND
+                    // test to which any two records are one type, so `(Circle, 1)` joined
+                    // `(Tri, 2)` or `(P, 2)` and the second arm was read at the first's offsets.
+                    (x, y) if x == y || x.is_equal(y) => x.clone(),
+                    // A nested tuple joins by the same rule, member by member.
+                    (x, y) if matches!((x.base(), y.base()), (Type::Tuple(_), Type::Tuple(_))) => {
+                        self.join_tuple_arms(x, y)?
+                    }
+                    // Through the `?` (`@FR-N-Shape`): a member a sibling left optional joins
+                    // by its base, and the join stays optional (`@FR-N-Join`).
+                    // The member is the enum already and the arm names one of its variants:
+                    // the enum is the join, unchanged (`@FR-C-Var`).
+                    (x, y)
+                        if matches!(
+                            (x.base(), self.variant_parent_enum(y.base())),
+                            (Type::Enum(a, true, _), Some(Type::Enum(b, _, _))) if *a == b
+                        ) =>
+                    {
+                        if matches!(y, Type::Optional(_)) && !matches!(x, Type::Optional(_)) {
+                            Type::optional(x.clone())
+                        } else {
+                            x.clone()
+                        }
+                    }
+                    (x, y) => match self.variant_parent_enum(x.base()) {
+                        Some(enum_tp) if self.joins_to_enum(&enum_tp, x.base(), y.base()) => {
+                            if matches!(x, Type::Optional(_)) || matches!(y, Type::Optional(_)) {
+                                Type::optional(enum_tp)
+                            } else {
+                                enum_tp
+                            }
+                        }
                         _ => return None,
                     },
                 },
@@ -14380,10 +14722,33 @@ impl Parser {
         arm_body: &mut Value,
         arm_type: &mut Type,
     ) -> Option<Type> {
-        if !Self::tuple_has_null_member(result_type) {
+        if !self.tuple_join_open(result_type) {
             return None;
         }
-        let joined = self.join_tuple_arms(result_type, arm_type)?;
+        // An OPEN result hands its arms no expected type (`match_arm_expected`), so the arm's
+        // own conversion never ran and cannot refuse it: an arm that does not join is refused
+        // HERE, the one place every match site asks.  Left to the sites, the scalar match has
+        // no second check at all and answered `(Tri {…}, 2)` at `(Circle, integer)`'s offsets;
+        // a text member corrupted the store.  The flag keeps a site's own gate quiet.
+        let Some(joined) = self.join_tuple_arms(result_type, arm_type) else {
+            if !self.first_pass
+                && !self.arm_convert_reported
+                && !matches!(
+                    arm_type.base(),
+                    Type::Void | Type::Never | Type::Null | Type::Unknown(_)
+                )
+            {
+                let want = result_type.source_name(&self.data);
+                let have = arm_type.source_name(&self.data);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "expected {want}, got {have} on a match arm"
+                );
+                self.arm_convert_reported = true;
+            }
+            return None;
+        };
         let orig = arm_type.clone();
         self.convert_arm_tail(arm_body, &orig, &joined);
         *arm_type = joined.clone();
@@ -14393,7 +14758,7 @@ impl Parser {
     /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
     fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
         for prev in arms.iter_mut() {
-            if Self::tuple_has_null_member(&prev.tp) {
+            if self.tuple_join_open(&prev.tp) {
                 let prev_orig = prev.tp.clone();
                 self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                 prev.tp = joined.clone();
@@ -17922,6 +18287,9 @@ impl Parser {
             // "expected __tuple<…>, got (…)" even though the SAME tuple as a
             // function's final expression compiles.  parse_return is the statement
             // path; block_result is the tail path — they must agree.
+            let t = self
+                .unbox_stored_tuple_tail(&t, &r_type, &mut v)
+                .unwrap_or(t);
             let tuple_rewritten = !self.first_pass
                 // Through `base()`, exactly as `block_result`'s twin above: the statement path
                 // and the tail path must agree about what a tuple is, and an absent tuple is one
@@ -18610,14 +18978,8 @@ impl Parser {
                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
                             // parameter the positional form does, so it must infer the
                             // same way; the spelling of the argument is not the axis.
-                            if Self::seeds_collection_hint(&expected)
-                                || self.interpolation_target(&expected) != u32::MAX
-                                || Self::seeds_lambda_hint(&expected)
-                                || self.seeds_instance_hint(&expected)
-                            {
-                                self.expected = expected;
-                            } else if let Some(tuple) = self.tuple_hint_type(&expected) {
-                                self.expected = tuple;
+                            if let Some(h) = self.argument_hint(expected) {
+                                self.expected = h;
                             }
                             break;
                         }
@@ -18678,46 +19040,16 @@ impl Parser {
                 } else {
                     self.fnref_param_hint(name, arg_idx)
                 };
-                if let Some(expected) = hinted {
-                    if Self::seeds_lambda_hint(&expected) {
-                        // A `fn(…)` parameter, so a SHORT-form lambda argument can infer its
-                        // parameter types — the fn-ref position of the push the `fn_def_nr`
-                        // block above makes for a named callee.
-                        //
-                        // This arm was held CLOSED when loft#1280 landed, because seeding it
-                        // made the short form parse and land in a dispatch that could not
-                        // carry a fn-ref argument at all (loft#1285: no output and exit 0 on
-                        // `--interpret`, E0308 on `--native`).  With that dispatch fixed —
-                        // the 20-byte pair at the interpreter's call site, the `fn_ref_context`
-                        // binding in the native emitter, and the `CallRef` arm in the
-                        // reachability walk — the refusal has nothing left to protect.
-                        self.expected = expected;
-                    } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
-                        self.expected = expected;
-                    } else if Self::seeds_collection_hint(&expected) {
-                        // #432 — seed a bare vector-literal argument's element width
-                        // from the parameter type, so it builds at the callee's
-                        // stride instead of `vector<integer>`.  Both passes (like the
-                        // enum hint): the literal's element type must agree across
-                        // passes, and the callee is already registered on pass 1.
-                        self.expected = expected;
-                    } else if self.interpolation_target(&expected) != u32::MAX {
-                        // @PLN124 — seed a format-string argument's target type, so
-                        // `f("… {x} …")` BUILDS the parameter's type instead of
-                        // rendering text the call would then reject. Both passes, for
-                        // the same reason the two hints above are: taking the branch
-                        // mints an accumulator, and a one-pass mint would shift the
-                        // name-keyed variable tables.
-                        self.expected = expected;
-                    } else if let Some(tuple) = self.tuple_hint_type(&expected) {
-                        // loft#1122 — seed a tuple argument's MEMBER types, so
-                        // `f(([], 9))` and `f((Dot, 9))` resolve against the parameter
-                        // the way the same literal does in a declared local.  Both
-                        // passes, for the reason the enum hint above states: a bare
-                        // variant seeded on one pass only becomes a stray placeholder
-                        // var that shadows the real variant on the other.
-                        self.expected = tuple;
-                    }
+                // Every spelling of an argument position pushes the same shapes
+                // (`argument_hint`): a `fn(…)` for a short lambda (the fn-ref dispatch of
+                // loft#1285 carries it), an enum for a bare variant, a collection for a bare
+                // literal's element type (#432), a format string's target (@PLN124), and a
+                // tuple's member types (loft#1122) — on BOTH passes, because a bare variant
+                // seeded on one pass only becomes a stray placeholder on the other.
+                if let Some(expected) = hinted
+                    && let Some(h) = self.argument_hint(expected)
+                {
+                    self.expected = h;
                 }
             }
             // for map/filter/reduce, infer lambda hint from the vector
@@ -19915,29 +20247,32 @@ impl Parser {
         Type::Text(Deps::none())
     }
 
-    /// #432 — should a bare vector-literal argument be seeded with this parameter
-    /// type's element width (`vector_hint`)?  Only for a CONCRETE narrow-integer
-    /// element (`vector<u8>` … `vector<i32>`): an untyped integer literal infers
-    /// `vector<integer>` (8-byte stride) and the callee would reinterpret it at the
-    /// narrow stride.  Each branch below is deliberately NOT covered:
-    /// - A generic `vector<T>` (element is a `Reference` to a type-var) must NOT
-    ///   seed — the literal cannot be built at an abstract element type, and seeding
-    ///   it wrongly fails `min_of([3, 1, 2])` with "would lose precision".
-    /// - `vector<single>` is excluded on purpose: a float literal infers
-    ///   `vector<float>` and f64→f32 is rejected as precision-loss regardless of the
-    ///   constant, so seeding would turn the (separate, pre-existing) stride bug
-    ///   into a fresh compile error — out of #432's "integer-vector literal" scope.
-    /// - Struct/enum element vectors already build from their own literal.
+    /// May a bare vector literal take its ELEMENT type from this expected type — `(T-Chk-Vec)`
+    /// (`@FR-T-Chk-Vec`): `[e₁ … eₙ] ⇐ vector<τ>` checks each `eᵢ ⇐ τ`, so a `vector<u8>`
+    /// parameter builds a 1-byte-stride literal (#432), a `vector<float>` one converts `[1, 2]`
+    /// member by member (`@FR-C-Num`), and a `vector<E>` one resolves `[North, South]` against
+    /// `E`.  A typed local already did all three through its own `var_tp`; an argument, a
+    /// function or lambda tail and a default reach the literal only through this channel, and
+    /// it admitted narrow integers alone — so `f([1, 2])` into a `vector<float>` was refused
+    /// while `v: vector<float> = [1, 2]` compiled.
     ///
-    /// Recurses through nested vector layers so `vector<vector<u8>>` seeds too (the
-    /// outer literal is seeded; inner literals thread their element type through
-    /// `var_tp`).  The leaf must be a narrow integer.
-    pub(crate) fn seeds_vector_hint(expected: &Type) -> bool {
+    /// A NULLABLE element at any level (`vector<text?>`, `vector<P?>`,
+    /// `vector<vector<integer>?>`) seeds too: `@FR-N-Decl` — a declared slot is a commitment,
+    /// and an inferred literal stays dense, so the declared `?` is the one fact the literal
+    /// cannot infer.  Built dense and converted after, it cannot be: a `P?` element is stored as
+    /// `__nullable<P>` (`Data::is_nullable_wrapper`), a different layout, so `f(["a", null])`
+    /// was refused where the same literal in a declared local is accepted.
+    ///
+    /// The one element type that must NOT seed is one still naming a TYPE VARIABLE (a generic
+    /// `vector<T>` parameter): the literal cannot be built at an abstract element type, and
+    /// seeding it wrongly fails `min_of([3, 1, 2])`.  An unresolved placeholder does not seed
+    /// either — it is the parser's, not the author's.
+    pub(crate) fn seeds_vector_hint(&self, expected: &Type) -> bool {
         match expected {
             Type::Vector(elem, _) => {
-                // @PLN25: peel `Optional(τ)` so a `vector<u8?>` literal seeds its narrow
-                // stride like `vector<u8>` (else #432 stride-reinterpretation corruption).
-                matches!(elem.base(), Type::Integer(_)) || Self::seeds_vector_hint(elem)
+                !elem.is_unknown()
+                    && !elem.any_node(&mut |t| t.is_unknown())
+                    && !self.data.mentions_type_var(elem)
             }
             _ => false,
         }
@@ -19945,13 +20280,13 @@ impl Parser {
 
     /// loft#703 — may a bare `[…]` argument take its CONTAINER from this parameter type?
     ///
-    /// `seeds_vector_hint` above answers the narrower #432 question — may the parameter
-    /// override the element WIDTH the literal already inferred.  A keyed parameter is a
+    /// `seeds_vector_hint` above answers the narrower question — may the parameter give
+    /// the literal's ELEMENTS their type.  A keyed parameter is a
     /// different question with no trade-off in it: `[K { … }]` infers `vector<K>`, which
     /// is not a `hash<K[k]>` at any width, so the parameter type is the only thing that
     /// can say what to build and passing one was simply impossible without it.
-    pub(crate) fn seeds_collection_hint(expected: &Type) -> bool {
-        Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
+    pub(crate) fn seeds_collection_hint(&self, expected: &Type) -> bool {
+        self.seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
     }
 
     /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
@@ -20164,7 +20499,6 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,
@@ -20216,12 +20550,8 @@ impl Parser {
                     let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
                         let expected = self.callee_param_hint(hint_nr, a, &types);
-                        if Self::seeds_collection_hint(&expected)
-                            || self.interpolation_target(&expected) != u32::MAX
-                            || Self::seeds_lambda_hint(&expected)
-                            || self.seeds_instance_hint(&expected)
-                        {
-                            self.expected = expected;
+                        if let Some(h) = self.argument_hint(expected) {
+                            self.expected = h;
                         }
                     }
                 }
@@ -20255,12 +20585,8 @@ impl Parser {
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
                 // library API actually presents.  A `fn(…)` parameter types a short
                 // lambda, as it does for the free spelling of the same call.
-                if Self::seeds_collection_hint(&expected)
-                    || self.interpolation_target(&expected) != u32::MAX
-                    || Self::seeds_lambda_hint(&expected)
-                    || self.seeds_instance_hint(&expected)
-                {
-                    self.expected = expected;
+                if let Some(h) = self.argument_hint(expected) {
+                    self.expected = h;
                 }
             }
             // @PLN165 arc E — a `#builtin` method's lowering is its special form, and so are

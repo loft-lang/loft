@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1760 — @FR-Col-Copy / @FR-H-Copy: a whole-value copy of an absent collection is absent; @FR-Col-Cons
+// — `c = []` is the EMPTY collection.  A `vector<T>?` FIELD broke both, quietly, on both
+// backends (released 2026.9.0): nothing crashed and nothing was reported.
+//
+// - `o.v = []` on an absent field read back `null`: the clear found no record behind the
+//   absent marker and left the marker where the empty collection belonged
+//   (`vector::clear_vector`).
+// - `g = o.v` of an absent field read back `[]`: `Stores::vector_replace` recognised an absent
+//   source only as the value-level null, and a field source is a reference AT its slot, whose
+//   absence is the marker the slot holds.
+// - `o.v = src`, `H { v: src }` with `src` absent read back `[]`: both lowered to a clear and
+//   an APPEND, and an append cannot make its target absent.  A field declared `?` now takes
+//   `OpReplaceVector` — the rule loft#1319 gave a nullable LOCAL — in every arm of the
+//   assignment (an owned local, a `&`-linked one, a projection, a call) and in the constructor.
+//   A dense field keeps the append and its IR.
+//
+// The keyed kinds are the sibling file: an-absent-keyed-field-is-empty-to-every-reader.loft.
+//
+// Axes this file MOVES:  the operation (clear, copy out, copy in, construct), the source
+//                        (owned local, linked local, field, call), absent vs present.
+//                        the holder's field count (one: the root-reset clear; two: the plain one).
+// Axes it HOLDS FIXED:   one element record type with a text member; the holder is a local.
+//
+// @falsified-at: 9a8ae1885 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/a-vector-field-keeps-its-absence.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   CHANNEL: asserts on both backends — four of the five tests fail on the control (the fifth
+//   is the present-source control); native's 8 is those four counted by both lines that report
+//   each.  The copy-in test stops at its first cell there, so its later cells are unscored on
+//   the control; run alone there, the local, linked-local and call cells each answered
+//   `o.v == null` false, both backends.
+// HOLDS: leak, panic, refusals and expectations are equal on both trees and both backends.
+
+struct Rv { id: integer, tag: text }
+struct Box { v: vector<Rv>?, n: integer }
+struct One { v: vector<Rv>? }
+
+fn nothing() -> vector<Rv>? { null }
+
+// @EXPECT_WARNING: a nullable `vector<Rv>?` is stored into parameter 1 of `len`
+fn n(c: vector<Rv>?) -> integer { len(c) }
+
+fn test_a_clear_makes_an_absent_field_empty() {
+  o = Box { v: null, n: 0 };
+  o.v = [];
+  assert("{n(o.v)} {o.v == null}" == "0 false", "= [] on an absent field");
+  // A one-field holder is the store's ROOT, whose clear resets the store and re-creates the
+  // vector — right before this fix too, and kept so the two clear paths stay one answer.
+  p = One { v: null };
+  p.v = [];
+  assert("{n(p.v)} {p.v == null}" == "0 false", "= [] on an absent field of a one-field holder");
+}
+
+fn test_a_copy_out_of_an_absent_field_is_absent() {
+  o = Box { v: null, n: 0 };
+  g = o.v;
+  assert("{n(g)} {g == null}" == "0 true", "g = o.v of an absent field");
+  g += [Rv { id: 1, tag: "a" }];
+  assert("{n(g)} {o.v == null}" == "1 true", "and appending to it leaves the field absent");
+}
+
+fn test_a_copy_into_a_field_keeps_the_sources_absence() {
+  e = Box { v: null, n: 0 };
+  o = Box { v: [Rv { id: 1, tag: "a" }], n: 0 };
+  o.v = e.v;
+  assert("{n(o.v)} {o.v == null}" == "0 true", "from an absent field");
+  a: vector<Rv>? = null;
+  o.v = [Rv { id: 2, tag: "b" }];
+  o.v = a;
+  assert("{n(o.v)} {o.v == null}" == "0 true", "from an absent local");
+  o.v = [Rv { id: 3, tag: "c" }];
+  b = &e.v;
+  o.v = b;
+  assert("{n(o.v)} {o.v == null}" == "0 true", "from a linked local over an absent field");
+  o.v = [Rv { id: 4, tag: "d" }];
+  o.v = nothing();
+  assert("{n(o.v)} {o.v == null}" == "0 true", "from a call answering null");
+}
+
+fn test_a_present_source_still_copies() {
+  w: vector<Rv> = [Rv { id: 1, tag: "a" }, Rv { id: 2, tag: "b" }];
+  o = Box { v: null, n: 0 };
+  o.v = w;
+  w += [Rv { id: 3, tag: "c" }];
+  assert("{n(o.v)} {len(w)} {o.v == null}" == "2 3 false", "a copy, not a link");
+  e = Box { v: [Rv { id: 5, tag: "e" }], n: 0 };
+  o.v = e.v;
+  assert("{n(o.v)}" == "1", "from a present field");
+  b = &e.v;
+  o.v = b;
+  assert("{n(o.v)} {n(e.v)}" == "1 1", "from a linked local over a present field");
+}
+
+fn test_a_constructor_keeps_the_sources_absence() {
+  a: vector<Rv>? = null;
+  c = Box { v: a, n: 0 };
+  assert("{n(c.v)} {c.v == null}" == "0 true", "constructed from an absent local");
+  w: vector<Rv> = [Rv { id: 1, tag: "a" }];
+  d = Box { v: w, n: 0 };
+  assert("{n(d.v)} {d.v == null}" == "1 false", "constructed from a present local");
+}

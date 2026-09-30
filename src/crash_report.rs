@@ -47,6 +47,10 @@ thread_local! {
     /// Updated by [`set_context`] from the interpreter's inner loop.
     static LAST_CTX: Cell<Ctx> = const { Cell::new(Ctx::EMPTY) };
 
+    /// The labels that go with [`LAST_CTX`]: constant for a dispatch loop, so they are
+    /// written when the loop starts ([`set_dispatch_names`]) rather than with every op.
+    static LAST_NAMES: Cell<Names> = const { Cell::new(Names::EMPTY) };
+
     /// Plan-07 phase 1 step 1.20 / phase 3 — pc → source-position table
     /// snapshot for the running interpreter.  `State::execute_argv`
     /// publishes a clone here on entry so the panic hook (a process-wide
@@ -64,11 +68,11 @@ thread_local! {
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 struct Ctx {
+    /// `u32::MAX` until an op has been dispatched on this thread.
     pc: u32,
     fn_d_nr: u32,
-    op_code: u8,
-    op_name: &'static str,
-    fn_name: &'static str,
+    /// The full opcode — `255 + ext` for a two-byte one, never the escape byte alone.
+    op_code: u16,
 }
 
 impl Ctx {
@@ -76,6 +80,18 @@ impl Ctx {
         pc: u32::MAX,
         fn_d_nr: u32::MAX,
         op_code: 0,
+    };
+}
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct Names {
+    op_name: &'static str,
+    fn_name: &'static str,
+}
+
+impl Names {
+    const EMPTY: Names = Names {
         op_name: "",
         fn_name: "",
     };
@@ -114,7 +130,7 @@ pub fn set_op_names(build: impl FnOnce() -> Vec<&'static str>) {
 /// but nothing reads it where there is no handler to read it from, so an ungated
 /// definition is dead code on Windows and warns there while building clean on Linux.
 #[cfg(unix)]
-fn op_name_of(op: u8) -> &'static str {
+fn op_name_of(op: u16) -> &'static str {
     OP_NAMES
         .get()
         .and_then(|v| v.get(op as usize).copied())
@@ -243,7 +259,7 @@ pub fn crash_file_path() -> Option<String> {
 #[inline]
 pub fn set_context(
     pc: u32,
-    op_code: u8,
+    op_code: u16,
     op_name: &'static str,
     fn_d_nr: u32,
     fn_name: &'static str,
@@ -253,8 +269,25 @@ pub fn set_context(
             pc,
             fn_d_nr,
             op_code,
-            op_name,
-            fn_name,
+        });
+    });
+    LAST_NAMES.with(|c| c.set(Names { op_name, fn_name }));
+}
+
+/// The labels a dispatch loop's [`set_dispatch`] calls go with, set once as the loop starts.
+pub fn set_dispatch_names(op_name: &'static str, fn_name: &'static str) {
+    LAST_NAMES.with(|c| c.set(Names { op_name, fn_name }));
+}
+
+/// [`set_context`] for a dispatch loop: the per-op fields only, twelve bytes, the labels
+/// having been set by [`set_dispatch_names`].  It runs once per interpreted op.
+#[inline]
+pub fn set_dispatch(pc: u32, op_code: u16, fn_d_nr: u32) {
+    LAST_CTX.with(|c| {
+        c.set(Ctx {
+            pc,
+            fn_d_nr,
+            op_code,
         });
     });
 }
@@ -265,7 +298,7 @@ pub fn set_context(
 /// op was executing when a stack value turned out to be corrupt.
 #[must_use]
 #[allow(dead_code)]
-pub fn last_context() -> (u32, u8, u32) {
+pub fn last_context() -> (u32, u16, u32) {
     LAST_CTX.with(|c| {
         let ctx = c.get();
         (ctx.pc, ctx.op_code, ctx.fn_d_nr)
@@ -465,12 +498,33 @@ pub fn install(program: &'static str) {
 /// writes a one-line diagnostic to stderr; the default handler
 /// then takes over (which produces a core dump if `ulimit -c` is
 /// set).
+/// The op and function labels a crash report prints: the opcode's own name when the table
+/// reached us, else the dispatch loop's label — never just the number, which names nothing —
+/// and the function's label, or `(?)`.
+#[cfg(unix)]
+fn context_labels(op_code: u16) -> (&'static str, &'static str) {
+    let labels = LAST_NAMES.with(Cell::get);
+    let named = op_name_of(op_code);
+    let op = if named.is_empty() {
+        labels.op_name
+    } else {
+        named
+    };
+    let func = if labels.fn_name.is_empty() {
+        "(?)"
+    } else {
+        labels.fn_name
+    };
+    (op, func)
+}
+
 #[cfg(unix)]
 extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: *mut libc::c_void) {
     // Read the context.  If the interpreter wasn't running, EMPTY
     // fields produce a "no context" message — still useful to
     // confirm the signal fired.
     let ctx = LAST_CTX.with(Cell::get);
+    let (op_label, fn_label) = context_labels(ctx.op_code);
     // Plan-07 phase 3 — try to resolve the offending pc to a loft
     // source position.  This is technically not async-signal-safe
     // (`RefCell::try_borrow` reads a counter that another borrow
@@ -511,23 +565,16 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
     let _ = w.str(") ");
     let _ = w.str(sig_name);
     let _ = w.str(" caught ===\n  last op:  ");
-    if ctx.op_name.is_empty() {
+    if ctx.pc == u32::MAX {
         let _ = w.str("(none — crash outside interpreter)\n");
     } else {
-        // The opcode's own name when the table reached us, else the dispatch
-        // label — never just the number, which names nothing.
-        let named = op_name_of(ctx.op_code);
-        let _ = w.str(if named.is_empty() { ctx.op_name } else { named });
+        let _ = w.str(op_label);
         let _ = w.str(" (op=");
         let _ = w.u32(u32::from(ctx.op_code));
         let _ = w.str(")\n  pc:       ");
         let _ = w.u32(ctx.pc);
         let _ = w.str("\n  fn:       ");
-        let _ = w.str(if ctx.fn_name.is_empty() {
-            "(?)"
-        } else {
-            ctx.fn_name
-        });
+        let _ = w.str(fn_label);
         let _ = w.str(" (d_nr=");
         let _ = w.u32(ctx.fn_d_nr);
         let _ = w.str(")\n");
@@ -697,9 +744,12 @@ mod tests {
             let ctx = c.get();
             assert_eq!(ctx.pc, 10);
             assert_eq!(ctx.op_code, 7);
-            assert_eq!(ctx.op_name, "OpVarInt");
             assert_eq!(ctx.fn_d_nr, 42);
-            assert_eq!(ctx.fn_name, "main");
+        });
+        LAST_NAMES.with(|c| {
+            let names = c.get();
+            assert_eq!(names.op_name, "OpVarInt");
+            assert_eq!(names.fn_name, "main");
         });
     }
 

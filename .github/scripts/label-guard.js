@@ -180,4 +180,21 @@ function applicable(chosen, current) {
   });
 }
 
-module.exports = { VALID, CATEGORIES, TRIAGE_HEADING, chooseLabels, applicable };
+/// The label that parks an issue past a release freeze.  The release tag strips it
+/// (`release.yml`, job `unpark`), so the issue returns to `make work` by itself.
+const NEXT_RELEASE = "next-release";
+
+/// Why `next-release` may NOT sit on this issue — the labels that make it a DEFECT —
+/// or `[]` when it may.  A bug is fixed before the release, never parked past it
+/// (CLAUDE.md § Bug-filing policy), and `silent-wrong` least of all; without this the
+/// one relabel that takes an issue off `make work` would be a way round that rule.
+/// Empty when the label is absent: only a parked issue is judged.
+function nextReleaseConflicts(current) {
+  const has = new Set(current);
+  if (!has.has(NEXT_RELEASE)) return [];
+  return [...has].filter((l) => l === "bug" || l === "silent-wrong" || l.startsWith("sev:")).sort();
+}
+
+module.exports = {
+  VALID, CATEGORIES, TRIAGE_HEADING, NEXT_RELEASE, chooseLabels, applicable, nextReleaseConflicts,
+};

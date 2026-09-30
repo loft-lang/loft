@@ -1557,6 +1557,22 @@ fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
 fn OpMoveRecord(data: reference, dest: reference, tp: const u16);
 #rust"stores.move_record_out(&@data, &@dest, @tp);"
 #impure(parent_write)
+// @PLN164 B2 (`@FR-R-MoveLast`, the field clause) — the SHALLOW move: the `tp` record's
+// bytes at `data` relocate into `dest` (the heap handles keep their claims) and the source
+// bytes are zeroed, so the record that held them — a placed buffer a loop refills on its
+// next turn, or a wrapper whose scalars are still read — keeps its block and owns nothing
+// of what moved.  Across stores it is `OpCopyRecord`'s deep copy and the source's heap is
+// released, the same end state.
+fn OpMoveField(data: reference, dest: reference, tp: const u16);
+#rust"stores.move_field_out(&@data, &@dest, @tp);"
+#impure(parent_write)
+// `(R-ExitVector)` — the exit literal takes a local vector by a HANDLE MOVE: the vector's
+// record number moves from the wrapper's slot to the literal's field slot and the source
+// slot is zeroed, so the elements and their heap claims never move.  Same store only; across
+// stores, or into a field that already holds elements, it is the copy it replaced.
+fn OpMoveVector(dest: vector, src: vector, tp: const u16);
+#rust"stores.move_vector(&@dest, &@src, @tp);"
+#impure(parent_write)
 // @PLN164 B2 — release a placed record inside a store that lives on: the heap it still
 // owns, then its block; null-guarded, and a store-root record frees its whole store.
 fn OpFreeRecordIn(rec: reference, tp: const u16);

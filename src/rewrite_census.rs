@@ -14,6 +14,12 @@
 //! and `R-…/clause` for a clause worth counting apart.  `LOFT_REWRITE_CENSUS=<file>` writes
 //! `rule<TAB>count` lines there when the native source has been generated; unset, a call is
 //! one cached test.
+//!
+//! `LOFT_REWRITE_CENSUS_FN=<file>` writes the same admissions split by WHERE they were
+//! decided — `phase<TAB>function<TAB>rule<TAB>count` — so a routine's rewrites can be read
+//! off the functions it runs (`scripts/interp_gap.py`).  The phase is `native` for a body the
+//! generator emits (the interpreter never sees that form), `ir` for the scope pass's per-body
+//! rewrites (both backends run them), and `parse` for everything decided before either.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -22,6 +28,50 @@ use std::sync::{Mutex, OnceLock};
 
 static COUNTS: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
 static PAUSED: AtomicUsize = AtomicUsize::new(0);
+/// `(phase, function, rule) → count`, kept only when `LOFT_REWRITE_CENSUS_FN` is set.
+type ByFn = BTreeMap<(&'static str, String, &'static str), u64>;
+static BY_FN: Mutex<ByFn> = Mutex::new(BTreeMap::new());
+/// The body an admission is being decided for: `(phase, function)`.
+static WHERE: Mutex<Option<(&'static str, String)>> = Mutex::new(None);
+
+/// While one lives, admissions are credited to `function` in `phase` (`"ir"`, `"native"`);
+/// outside every such scope they are `parse`-phase with no function.
+pub struct InBody {
+    prev: Option<(&'static str, String)>,
+}
+
+impl InBody {
+    #[must_use]
+    pub fn enter(phase: &'static str, function: &str) -> Self {
+        let mut prev = None;
+        if by_fn_target().is_some()
+            && let Ok(mut w) = WHERE.lock()
+        {
+            prev = w.replace((phase, function.to_owned()));
+        }
+        InBody { prev }
+    }
+}
+
+impl Drop for InBody {
+    fn drop(&mut self) {
+        if by_fn_target().is_some()
+            && let Ok(mut w) = WHERE.lock()
+        {
+            *w = self.prev.take();
+        }
+    }
+}
+
+fn by_fn_target() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        std::env::var("LOFT_REWRITE_CENSUS_FN")
+            .ok()
+            .filter(|p| !p.is_empty())
+    })
+    .as_deref()
+}
 
 /// Counting is suspended while one of these lives: an emission made FOR something other than
 /// the program — a dependency package's native crate, built in-process on a cold artefact
@@ -61,21 +111,47 @@ fn target() -> Option<&'static str> {
 
 /// Rewrite `rule` was admitted at `n` more sites.
 pub fn fired(rule: &'static str, n: usize) {
-    if n == 0 || target().is_none() || PAUSED.load(Ordering::Relaxed) > 0 {
+    if n == 0 || PAUSED.load(Ordering::Relaxed) > 0 {
         return;
     }
-    if let Ok(mut c) = COUNTS.lock() {
+    if target().is_some()
+        && let Ok(mut c) = COUNTS.lock()
+    {
         *c.entry(rule).or_insert(0) += n as u64;
+    }
+    if by_fn_target().is_some() {
+        let (phase, function) = WHERE
+            .lock()
+            .ok()
+            .and_then(|w| w.clone())
+            .unwrap_or(("parse", String::new()));
+        if let Ok(mut c) = BY_FN.lock() {
+            *c.entry((phase, function, rule)).or_insert(0) += n as u64;
+        }
     }
 }
 
-/// Write the counts to `LOFT_REWRITE_CENSUS`, sorted by rule; nothing when it is unset.
+/// Write the counts to `LOFT_REWRITE_CENSUS`, sorted by rule, and the per-body split to
+/// `LOFT_REWRITE_CENSUS_FN`; nothing for a switch that is unset.
 pub fn write() {
+    write_by_fn();
     let Some(path) = target() else { return };
     let Ok(c) = COUNTS.lock() else { return };
     let mut out = String::new();
     for (rule, n) in c.iter() {
         let _ = writeln!(out, "{rule}\t{n}");
+    }
+    if let Err(e) = std::fs::write(path, out) {
+        eprintln!("loft: cannot write the rewrite census to '{path}': {e}");
+    }
+}
+
+fn write_by_fn() {
+    let Some(path) = by_fn_target() else { return };
+    let Ok(c) = BY_FN.lock() else { return };
+    let mut out = String::new();
+    for ((phase, function, rule), n) in c.iter() {
+        let _ = writeln!(out, "{phase}\t{function}\t{rule}\t{n}");
     }
     if let Err(e) = std::fs::write(path, out) {
         eprintln!("loft: cannot write the rewrite census to '{path}': {e}");

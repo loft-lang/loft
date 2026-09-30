@@ -1368,6 +1368,7 @@ impl Lexer {
                 break;
             } else if c == '{' && self.interpolate_strings {
                 self.next_char();
+                // `@FR-F-Escape` — `{{` is one literal `{`; the second is consumed below.
                 if let Some('{') = self.iter.peek() {
                     res.push(c);
                 } else if !self.hole_closes_on_this_line() {
@@ -2609,6 +2610,46 @@ impl Lexer {
                 depth += 1;
             } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
                 if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
+        self.revert(saved);
+        found
+    }
+
+    /// Is the vector literal whose `[` was just consumed the RECEIVER of a method chain —
+    /// is its matching `]` followed by a `.`?  `Some(true)` / `Some(false)` when the scan
+    /// reached that `]`, `None` when it stopped first.  The lexer is restored either way.
+    ///
+    /// The expected type of an argument or a tail belongs to the value the whole
+    /// expression produces, and a literal followed by `.map(…)` is not that value: seeding
+    /// it made `h([1, 2].map(|x| { "n{x}" }))` into a `vector<text>` refuse its integers.
+    ///
+    /// It stops, like [`peek_tuple_literal`](Self::peek_tuple_literal), BEFORE a string
+    /// literal (an interpolation hole's scanner state is not part of what a revert restores)
+    /// and at a `;` outside any group.
+    pub fn peek_literal_receiver(&mut self) -> Option<bool> {
+        let saved = self.link();
+        let mut depth: i32 = 0;
+        let mut found = None;
+        loop {
+            if matches!(self.peek.has, LexItem::None | LexItem::CString(_)) {
+                break;
+            }
+            if depth == 0 && self.peek_token(";") {
+                break;
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    if self.peek_token("]") {
+                        self.cont();
+                        found = Some(self.peek_token("."));
+                    }
                     break;
                 }
                 depth -= 1;

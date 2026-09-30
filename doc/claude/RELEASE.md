@@ -189,6 +189,18 @@ plan.  Closing is explicit and cross-repo:
 - **Manual fallback:** run `scripts/close-shipped-plans.sh --range
   <prev-release>..main` once after the merge if the on-merge workflow didn't fire.
 
+### Unparking `next-release` when the release is published
+
+Work postponed past a freeze is an issue labelled `next-release` — never a defect
+([LABELS.md § Lifecycle](../../.github/LABELS.md#lifecycle-where-the-fix-is-not-what-kind-of-bug)).
+`make work` leaves it out and counts it on its last line.  When the owner PUBLISHES the
+release (not at the tag, which only builds a draft), the
+[`unpark-next-release` workflow](../../.github/workflows/unpark-next-release.yml) removes the
+label from every open issue and comments on each, so the parked work is the first thing
+`make work` lists for the next cycle.  Manual fallback: run that workflow by hand
+(`gh workflow run unpark-next-release.yml -f dry_run=false`; the default `dry_run=true`
+only lists).
+
 ## Release records — one directory per cycle
 
 What a PARTICULAR release needed, found, and decided is not process, and it does not belong
@@ -337,12 +349,13 @@ leaks, so the floor is a store count of zero at every program's exit.
 An ignored test is a bug you promised you would fix, then pulled out of CI.  Every
 `#[ignore]` hides a known failure — if the suite is silently skipping them, the release's
 "all green" status is a lie.  The bar: **no `#[ignore]` ships unless it carries a rationale
-that names the run it rides**, and the owner signs off on the set each release.
+that names the run it rides**, and the release agent verifies the set each release: each
+reason still true, each test actually run where its reason says, and the record names the evidence.
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Zero-ignore gate** | H | Every `#[ignore]` carries a one-line rationale in `tests/ignored_tests.baseline` naming how it runs instead (a measurement by hand, a nightly sweep, a platform cap) — held mechanically by `A-ignores`, and judged for acceptability by the owner in `M-ignores`. | `tests/ignored_tests.baseline`, `tests/doc_hygiene.rs::{ignored_tests_baseline_is_current, every_ignore_reason_says_how_it_runs}` |
-| **Skip-list audit** | H | Every `SKIP` / `NATIVE_SKIP` / `ignored_scripts()` entry is a suppression of the same kind and is in the same sign-off; `make release-liveness` reports any whose justifying issue has since closed.  TESTING.md § *Every skip says why, how it runs instead, and when it ends* is the rule's home. | `tests/*.rs` skip lists (found by shape), `scripts/release-liveness.py` |
+| **Zero-ignore gate** | H | Every `#[ignore]` carries a one-line rationale in `tests/ignored_tests.baseline` naming how it runs instead (a measurement by hand, a nightly sweep, a platform cap) — held mechanically by `A-ignores`, and verified by the release agent in `M-ignores`: the job or command each reason names exists and passes, and nothing ignored hides a failure. | `tests/ignored_tests.baseline`, `tests/doc_hygiene.rs::{ignored_tests_baseline_is_current, every_ignore_reason_says_how_it_runs}` |
+| **Skip-list audit** | H | Every `SKIP` / `NATIVE_SKIP` / `ignored_scripts()` entry is a suppression of the same kind and is verified in the same `M-ignores` pass; `make release-liveness` reports any whose justifying issue has since closed.  TESTING.md § *Every skip says why, how it runs instead, and when it ends* is the rule's home. | `tests/*.rs` skip lists (found by shape), `scripts/release-liveness.py` |
 
 ---
 
@@ -352,7 +365,8 @@ The applications built with loft (the games, the crawler, the web IDE shell), th
 libraries and the registry follow their own lifecycles and are **not** release blockers here
 (§ What forces a release).  The consumers are PROVEN against a release at its tag
 ([RELEASE_PUBLISH.md § What the tag pipeline proves](RELEASE_PUBLISH.md#what-the-tag-pipeline-proves-about-the-artifacts)),
-and the owner decides on the record whether a red consumer holds it.
+and a red consumer HOLDS the release unless the record names a cause outside loft — the
+consumer's own defect, with the issue filed in its repo.
 
 ---
 
@@ -609,6 +623,9 @@ Three things make it worth working through rather than reading:
 - **Manual items carry the exact command and what counts as a pass**, and are
   the only ones `--done` accepts.  Progress lives in `releases/<cycle>/checklist.json`,
   committed, with a timestamp and your note as the evidence.
+- **The release agent verifies and ticks every item; the owner signs off on none.**  The
+  owner monitors each release through this record, so a tick's note is written for that
+  reader: what was run, on which commit, and what it answered — never "checked" alone.
 - **Items for work this release did not touch stay hidden.**  The VS Code
   extension pass and the native-debug gate are rituals for code most releases
   never change; the script asks git whether they moved since the last tag.  A

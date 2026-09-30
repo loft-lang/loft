@@ -198,3 +198,210 @@ fn the_store_census_drops_by_one_per_admitted_call() {
         "interpreter: {off} mints under the switch, {on} with placement"
     );
 }
+
+/// `@FR-R-Place`'s callee clause, the CHAIN form (2026-09-29): the guard
+/// `tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft` says the values hold;
+/// this pins the IR — the chain cell `slot_chain` is placed (an `OpPlaceRecord` at its
+/// buffer's init, an `OpMoveRecord` at the field store) exactly like the control `slot_mk`,
+/// the three declines (`slot_bound`, `slot_view`, `slot_chain_bound`) keep the copy, and the
+/// switch restores the copy shape in the chain cell.
+const CHAIN_CELLS: &str = "tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft";
+
+fn chain_ir(env: &[(&str, &str)]) -> String {
+    let mut cmd = loft();
+    cmd.arg("introspect")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_CELLS));
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "introspect failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn fn_ir<'a>(text: &'a str, name: &str) -> &'a str {
+    let start = text
+        .find(&format!("fn {name}("))
+        .unwrap_or_else(|| panic!("{name}'s IR"));
+    let rest = &text[start..];
+    let end = rest
+        .find("}#block(1)")
+        .expect("the function's closing block")
+        + "}#block(1)".len();
+    &rest[..end]
+}
+
+#[test]
+fn a_chain_exit_is_placed_like_a_literal_and_the_declines_keep_the_copy() {
+    let text = chain_ir(&[]);
+    for name in ["n_slot_mk", "n_slot_chain"] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("= OpPlaceRecord(").count(),
+            1,
+            "{name}: one placed buffer"
+        );
+        assert_eq!(
+            ir.matches("OpMoveRecord(").count(),
+            1,
+            "{name}: the field store is a move"
+        );
+        assert_eq!(
+            ir.matches("OpCopyRecord(").count(),
+            0,
+            "{name}: no copy left"
+        );
+    }
+    for name in [
+        "n_slot_bound",
+        "n_slot_view",
+        "n_slot_chain_bound",
+        "n_add_chain",
+    ] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("OpPlaceRecord(").count(),
+            0,
+            "{name}: declined, no placement"
+        );
+        assert_eq!(
+            ir.matches("OpMoveRecord(").count(),
+            0,
+            "{name}: declined, no move"
+        );
+    }
+}
+
+#[test]
+fn the_switch_keeps_the_chain_cells_copy() {
+    let text = chain_ir(&[("LOFT_NO_PLACE_RESULT", "1")]);
+    let ir = fn_ir(&text, "n_slot_chain");
+    assert_eq!(ir.matches("OpPlaceRecord(").count(), 0);
+    assert_eq!(ir.matches("OpMoveRecord(").count(), 0);
+    assert_eq!(
+        ir.matches("OpCopyRecord(").count(),
+        1,
+        "the copy is back under the switch"
+    );
+}
+
+/// `(R-Place)`'s loop clause and `(R-ExitVector)`, on the same matrix: the decoder loop `w1`
+/// places its per-turn buffer in the local vector's store and moves the payload FIELD out
+/// (`OpPlaceRecord(items`, `OpMoveField`); the local vectors of `v1`, `v9` (two), `w1`
+/// and `l3` are claimed in the return buffer's store, taken by a handle move and released
+/// as a block (`OpPlaceRecord(__retbuf`, `OpMoveVector`, `OpFreeRecordIn(__vdb`); the
+/// declines `v2` (read after the move), `v3` (an alias), `v7` (a rebind), `v10` (read after
+/// the move) and `v13` (returned bare) keep the wrapper store; and each switch restores its
+/// own shape and no other.
+#[test]
+fn the_loop_and_exit_vector_clauses_place_the_matrix_cells_predicted() {
+    let text = chain_ir(&[]);
+    let w1 = fn_ir(&text, "n_w1");
+    assert_eq!(
+        w1.matches("= OpPlaceRecord(items(").count(),
+        1,
+        "w1: the turn's buffer is placed in the local vector's store"
+    );
+    assert_eq!(
+        w1.matches("OpMoveField(").count(),
+        1,
+        "w1: the payload field moves"
+    );
+    assert_eq!(w1.matches("OpCopyRecord(").count(), 0, "w1: no copy left");
+    for (name, moves, frees) in [
+        ("n_v1", 1, 1),
+        ("n_v9", 2, 2),
+        ("n_w1", 1, 1),
+        ("n_l3", 1, 1),
+        ("n_read_list", 1, 2),
+    ] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("= OpPlaceRecord(__retbuf(").count(),
+            moves,
+            "{name}: the wrapper is placed in the buffer's store"
+        );
+        assert_eq!(
+            ir.matches("OpMoveVector(").count(),
+            moves,
+            "{name}: the literal takes the vector by a handle move"
+        );
+        assert_eq!(
+            ir.matches("OpFreeRecordIn(__vdb").count(),
+            frees,
+            "{name}: the wrapper is released as a block"
+        );
+        assert_eq!(
+            ir.matches("OpDatabase(__vdb").count(),
+            0,
+            "{name}: no wrapper store left"
+        );
+    }
+    // v7's rebind `xs = [n * 10]` mints a second wrapper: two stores stay.
+    for (name, wrappers) in [
+        ("n_v2", 1),
+        ("n_v3", 1),
+        ("n_v7", 2),
+        ("n_v10", 1),
+        ("n_v13", 1),
+    ] {
+        let ir = fn_ir(&text, name);
+        assert_eq!(
+            ir.matches("OpMoveVector(").count(),
+            0,
+            "{name}: declined, no move"
+        );
+        assert_eq!(
+            ir.matches("OpDatabase(__vdb").count(),
+            wrappers,
+            "{name}: declined, the wrapper store stays"
+        );
+    }
+}
+
+#[test]
+fn each_switch_restores_its_own_shape() {
+    let text = chain_ir(&[("LOFT_NO_EXIT_VECTOR", "1")]);
+    let w1 = fn_ir(&text, "n_w1");
+    assert_eq!(
+        w1.matches("OpMoveVector(").count(),
+        0,
+        "no handle move under the exit-vector switch"
+    );
+    assert_eq!(
+        w1.matches("OpDatabase(__vdb").count(),
+        1,
+        "the wrapper store is back"
+    );
+    assert_eq!(
+        w1.matches("= OpPlaceRecord(items(").count(),
+        1,
+        "the loop clause is untouched by the exit-vector switch"
+    );
+    let text = chain_ir(&[("LOFT_NO_PLACE_RESULT", "1")]);
+    let w1 = fn_ir(&text, "n_w1");
+    assert_eq!(
+        w1.matches("OpPlaceRecord(").count(),
+        1,
+        "under the placement switch only the exit vector is placed"
+    );
+    assert_eq!(
+        w1.matches("OpMoveField(").count(),
+        0,
+        "no field move under the placement switch"
+    );
+    assert_eq!(
+        w1.matches("OpCopyRecord(").count(),
+        1,
+        "the field copy is back under the placement switch"
+    );
+    assert_eq!(
+        w1.matches("OpMoveVector(").count(),
+        1,
+        "the exit vector is untouched by the placement switch"
+    );
+}

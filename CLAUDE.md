@@ -112,7 +112,10 @@ make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY 
                                          #   `perf-portal-render` re-renders from saved runs;
                                          #   PACKAGES="--package <scratch clone>/drawing=drawing"
                                          #   adds a library's own bench.  A REPORT, never a gate
-make perf-check [ARGS="--only 16,17"]     # BEFORE COMMITTING a compiler change: measures the
+make perf-check [ARGS="--only 16,17"]     # ONCE PER ARC, IN THE BACKGROUND, never a foreground
+                                         #   wait — a commit needs the matrix, the pins, clippy
+                                         #   and one targeted A/B on its own row; CI_BUDGET.md
+                                         #   § What a compiler change needs.  It measures the
                                          #   lanes the census says the change touched (or
                                          #   ARGS' lanes) and compares each routine's ratio to
                                          #   Rust with this machine's last committed row
@@ -133,6 +136,12 @@ python3 bench/stats.py                   # native vs the Rust reference per benc
                                          #   ok / OVER / unclear verdict against --bar (2.0);
                                          #   hashes must agree across lanes.  `--tsv` keeps a
                                          #   run to diff against the next — bench/README.md
+make interp-gap [ARGS="--only 14"]       # INTERPRETER vs NATIVE per bench routine: the
+                                         #   ratio, what the interpreter executes (ops by
+                                         #   family, bytes copied) and the native-only
+                                         #   rewrites in those functions — the candidates to
+                                         #   move into the IR phase.  A report, by hand
+                                         #   (bench/README.md § Interpreter against native)
 make ops-census                          # which bytecode operators anything still EMITS:
                                          #   live / unexercised (a site emits it, no program
                                          #   does — a test gap) / orphan (nothing emits it and
@@ -156,10 +165,20 @@ make work                                # the open issues that are PICK-UP work
 make disk-headroom                       # ROOM FOR A GATE: every gate runs this first; by hand
                                          #   when a build says `No space left on device`.  This
                                          #   checkout's scratch only, never a sibling's live run
+make janitor-install                     # once per box: scripts/disk_janitor.sh runs, detached,
+                                         #   beside every agent build (a user-level hook) and
+                                         #   beside find_problems/stats.py — every checkout's
+                                         #   stale artefacts, under cargo's build lock
 make sweep-scratch                       # reclaim loft's temp scratch (dead-process native
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
                                          #   NATIVE corpus with a code-shaped message
+scripts/join.py run [SRC …]              # JOIN sibling branches: survey what this tree lacks
+                                         #   (by content, not ancestry), pick source by source,
+                                         #   re-derive every artefact in scripts/derived_
+                                         #   artefacts.json, verify — stops at each decision.
+                                         #   Steps one by one: survey/apply/rederive/verify/
+                                         #   guards — JOINING.md § The script
 make view                                # branch-aware doc/code viewer; binds LOOPBACK,
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>

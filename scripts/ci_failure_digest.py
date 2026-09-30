@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""File one issue per ADVISORY CI failure, with what failed and where to look.
+"""Keep ONE issue that lists every red CI step, with what failed and where to look.
 
 A required check blocks the merge, so it is fixed before anything lands.  An advisory
 one does not: it goes red on a PR, the PR merges, and the finding lives on only if
@@ -16,12 +16,14 @@ someone read the log.  That reading is what this script does, once per finished 
   * where to look — the commit that last changed each named test file or source line;
   * whether it is NEW — the same job's conclusion on the default branch's last run.
 
-Each failure becomes one issue keyed by a SIGNATURE (workflow, job, and the headline
-with its numbers and paths blanked), so a repeat comments instead of filing again,
-and a failure that comes back after its issue closed reopens it.  The issues carry
-`ci-advisory` and no `status:planned`, so they are `make work` like any other.  A
-failure of the RUNNER, not of loft (a download timeout, a lost runner, a full disk),
-goes to one rolling `ci-infra` issue and the run's failed jobs are retried once.
+All of it goes to one `[ci] Red steps` issue (label `ci-advisory`), grouped by where the
+step is red — the default branch, or each open PR — and by workflow.  The issue body
+carries its own state as JSON, so each run rewrites exactly its own origin and workflow:
+a step that is green again leaves, a merged or closed PR's steps leave with it, and the
+issue closes itself when nothing is left and reopens when something is.  One issue per
+red step clogged the issue list with findings a merge had already settled.  A failure of
+the RUNNER, not of loft (a download timeout, a lost runner, a full disk), is a row too,
+marked `runner`, and a run whose failures were all of that kind is retried once.
 
     ci_failure_digest.py dry-run RUN_ID   # print what `file` would do; writes nothing
     ci_failure_digest.py file RUN_ID      # what advisory-failures.yml runs
@@ -45,15 +47,11 @@ FIXTURES = ROOT / "tests" / "fixtures" / "ci_logs"
 EXCERPT_LIMIT = 12000
 BODY_LIMIT = 60000
 LABELS = {
-    "ci-advisory": ("5319e7", "Auto-filed: an advisory CI job failed (advisory-failures.yml)"),
-    "ci-infra": ("bfdadc", "Auto-filed: a CI runner failure, not a loft one"),
-    "needs-triage": ("fbca04", "A public report awaiting triage: reproduce, minimise, then apply sev:/area:/wa:."),
-    "regression": ("d93f0b", "worked before and broke"),
-    "hit-by:loft": ("c5def5", "Found by loft itself"),
+    "ci-advisory": ("5319e7", "Auto-maintained: the one issue that lists every red CI step (advisory-failures.yml)"),
 }
 # Jobs that REPORT on the others and fail only because they did; filing them repeats
 # the failure they report.
-META_JOB = re.compile(r"→ tracked issue|Daily status|^notify$", re.I)
+META_JOB = re.compile(r"→ tracked issue|Daily status|Nightly health|^notify$", re.I)
 
 # ── the extractor: a pure function of the log text ─────────────────────────────
 
@@ -342,42 +340,9 @@ def origin_of(ctx: dict) -> str:
     return f"pr:{ctx['pr']}" if ctx["pr"] else "main"
 
 
-def issue_body(ctx: dict, d: dict) -> str:
-    run = ctx["run"]
-    src = (f"PR #{ctx['pr']} (`{run['head_branch']}` @ `{run['head_sha'][:9]}`)" if ctx["pr"]
-           else f"`{ctx['default']}` ({run['event']}) @ `{run['head_sha'][:9]}`")
-    mr = ctx.get("main_run")
-    if d["main"] == "success":
-        on_main = f"green on `{ctx['default']}` at [{mr['head_sha'][:9]}]({mr['html_url']}) — **new here**"
-    elif d["main"]:
-        on_main = f"`{d['main']}` on `{ctx['default']}` at [{mr['head_sha'][:9]}]({mr['html_url']}) — pre-existing"
-    else:
-        on_main = "no run of this job on the default branch to compare with"
-    parts = [
-        f"<!-- ci-signature: {d['signature']} -->",
-        f"<!-- ci-job: {d['workflow']} / {d['job']} -->",
-        f"<!-- ci-origin: {origin_of(ctx)} -->",
-        f"**Job:** [{defuse(d['job'])}]({d['url']}) in *{d['workflow']}* · [run {run['id']}]({run['html_url']})  ",
-        f"**Source:** {src}  ",
-        f"**On `{ctx['default']}`:** {on_main}",
-    ]
-    if d["steps"]:
-        parts.append("**Failed steps:** " + ", ".join(f"`{defuse(s)}`" for s in d["steps"]))
-    parts += ["", "### What failed", "", f"`{defuse(d['headline'])}`"]
-    if d["tests"]:
-        parts.append("\nFailing tests: " + ", ".join(f"`{defuse(t)}`" for t in d["tests"][:10]))
-    if d["where"]:
-        parts += ["", "### Where to look", ""]
-        for target, commit in d["where"]:
-            parts.append(f"- `{target}`" + (f" — {defuse(commit)}" if commit else ""))
-        loft = [t for t, _ in d["where"] if t.endswith(".loft")]
-        if loft:
-            parts.append(f"\nRe-run: `cargo run --bin loft -- --tests {loft[0]}` (the job's own flags are in its log).")
-    parts += ["", "### Log excerpt", "", fence(d["excerpt"])]
-    parts += ["", "---", "_Filed by `advisory-failures.yml`. A repeat adds a comment; a failure after this closes "
-              "reopens it. It closes itself once this job is green on the default branch after the change that "
-              "caused it has landed. Triage it like any bug: `sev:`/`area:`/`wa:`, then remove `needs-triage`._"]
-    return "\n".join(parts)[:BODY_LIMIT]
+TITLE = "[ci] Red steps"
+STATE_RE = re.compile(r"<!-- ci-state: (.*?) -->", re.S)
+ROW_EXCERPT = 2500
 
 
 def ensure_labels() -> None:
@@ -385,73 +350,155 @@ def ensure_labels() -> None:
         gh("label", "create", name, "--color", color, "--description", desc, "--force", check=False)
 
 
-def find_issue(sig: str) -> dict | None:
-    hits = json.loads(gh("issue", "list", "--label", "ci-advisory", "--state", "all", "--search",
-                         f"\"ci-signature: {sig}\" in:body", "--json", "number,state,body", "--limit", "5"))
-    return next((h for h in hits if f"ci-signature: {sig}" in h["body"]), None)
-
-
-def file_one(ctx: dict, d: dict, dry: bool) -> str:
+def row_of(ctx: dict, d: dict) -> dict:
+    """One red step, as the combined issue stores it (a JSON object in its body)."""
     run = ctx["run"]
-    labels = ["ci-advisory", "needs-triage", "hit-by:loft"] + (["regression"] if d["main"] == "success" else [])
-    title = f"[ci] {d['job']}: {d['headline']}".replace("\n", " ")[:180]
-    existing = None if dry else find_issue(d["signature"])
-    seen = f"Seen again in [run {run['id']}]({run['html_url']}) ({origin_of(ctx)}, `{run['head_sha'][:9]}`)."
+    return {
+        "job": d["job"], "workflow": d["workflow"], "kind": d["kind"], "signature": d["signature"],
+        "headline": d["headline"], "url": d["url"], "main": d["main"] or "",
+        "steps": d["steps"], "tests": d["tests"][:8], "where": d["where"][:5],
+        "excerpt": d["excerpt"][-ROW_EXCERPT:], "run": run["id"], "run_url": run["html_url"],
+        "sha": run["head_sha"][:9], "since_run": run["id"], "since_url": run["html_url"],
+    }
+
+
+def load_state() -> tuple[dict | None, dict]:
+    """The one combined issue (open or closed) and the state its body carries."""
+    hits = json.loads(gh("issue", "list", "--label", "ci-advisory", "--state", "all", "--search",
+                         "\"ci-state:\" in:body", "--json", "number,state,body", "--limit", "10"))
+    hits = [h for h in hits if STATE_RE.search(h["body"])]
+    if not hits:
+        return None, {"sections": {}}
+    issue = next((h for h in hits if h["state"] == "OPEN"), hits[0])
+    raw = STATE_RE.search(issue["body"]).group(1).replace("--\\u003e", "-->")
+    try:
+        return issue, json.loads(raw)
+    except ValueError:
+        return issue, {"sections": {}}
+
+
+def update_state(state: dict, ctx: dict, items: list[dict]) -> None:
+    """This run's origin and workflow now hold exactly the steps red in it: a green step
+    leaves, a new one enters, and one red before keeps the run it was first seen in."""
+    run = ctx["run"]
+    key = f"{origin_of(ctx)}|{run['name']}"
+    before = {(r["job"], r["signature"]): r for r in state["sections"].get(key, {}).get("rows", [])}
+    rows = []
+    for d in items:
+        row = row_of(ctx, d)
+        old = before.get((row["job"], row["signature"]))
+        if old:
+            row["since_run"], row["since_url"] = old["since_run"], old["since_url"]
+        rows.append(row)
+    if rows:
+        state["sections"][key] = {"origin": origin_of(ctx), "workflow": run["name"], "branch": run["head_branch"],
+                                  "run": run["id"], "run_url": run["html_url"], "sha": run["head_sha"][:9],
+                                  "rows": rows}
+    else:
+        state["sections"].pop(key, None)
+
+
+def prune_prs(state: dict, r: str, current: str) -> None:
+    """A merged or closed PR's steps are no longer the PR's to report: what it merged, the
+    default branch's own runs report from then on."""
+    for key in list(state["sections"]):
+        origin = key.split("|", 1)[0]
+        if origin.startswith("pr:") and origin != current:
+            p = api(f"repos/{r}/pulls/{origin[3:]}")
+            if p.get("state") != "open":
+                del state["sections"][key]
+
+
+def render(state: dict, default: str) -> tuple[str, str]:
+    secs = sorted(state["sections"].values(),
+                  key=lambda s: (s["origin"] != "main", int(s["origin"][3:]) if s["origin"] != "main" else 0,
+                                 s["workflow"]))
+    counts: dict[str, int] = {}
+    for s in secs:
+        where = f"`{default}`" if s["origin"] == "main" else f"PR #{s['origin'][3:]}"
+        counts[where] = counts.get(where, 0) + len(s["rows"])
+    title = TITLE + (" — " + ", ".join(f"{n} on {w.strip('`')}" for w, n in counts.items()) if counts else "")
+    parts = ["Every CI step that is red right now, and where. `advisory-failures.yml` rewrites this "
+             "after each CI and nightly run: a step leaves when its job is green again, a merged or "
+             "closed PR's steps leave with it, and the issue closes itself when nothing is left.", ""]
+    last_origin = None
+    for s in secs:
+        if s["origin"] != last_origin:
+            head = f"`{default}`" if s["origin"] == "main" else f"PR #{s['origin'][3:]} (`{s['branch']}`)"
+            parts += [f"## {head}", ""]
+            last_origin = s["origin"]
+        parts += [f"**{s['workflow']}** — [run {s['run']}]({s['run_url']}) @ `{s['sha']}`", "",
+                  "| step | what failed | vs main | red since |", "|---|---|---|---|"]
+        for r in s["rows"]:
+            vs = {"success": "**new**", "": "?"}.get(r["main"], "pre-existing")
+            if r["kind"] == "infra":
+                vs = "runner"
+            since = "this run" if r["since_run"] == s["run"] else f"[run {r['since_run']}]({r['since_url']})"
+            parts.append(f"| [{defuse(r['job'])}]({r['url']}) | `{defuse(r['headline'][:100])}` | {vs} | {since} |")
+        parts.append("")
+        for r in s["rows"]:
+            detail = []
+            if r["steps"]:
+                detail.append("Failed steps: " + ", ".join(f"`{defuse(x)}`" for x in r["steps"]))
+            if r["tests"]:
+                detail.append("Failing tests: " + ", ".join(f"`{defuse(t)}`" for t in r["tests"]))
+            for target, commit in r["where"]:
+                detail.append(f"- `{target}`" + (f" — {defuse(commit)}" if commit else ""))
+            if r.get("excerpt"):
+                detail.append(fence(r["excerpt"]))
+            if detail:
+                parts += [f"<details><summary>{defuse(r['job'])}</summary>", "", *detail, "", "</details>"]
+        parts.append("")
+    if not secs:
+        parts.append("Nothing is red.")
+    blob = json.dumps(state, separators=(",", ":")).replace("-->", "--\\u003e")
+    body = "\n".join(parts)
+    # The state is what the next run reads, so it always fits: excerpts go first.
+    while len(body) + len(blob) > BODY_LIMIT and any(r.get("excerpt") for s in secs for r in s["rows"]):
+        for s in secs:
+            for r in s["rows"]:
+                r["excerpt"] = ""
+        return render(state, default)
+    return title, f"{body}\n<!-- ci-state: {blob} -->"
+
+
+def publish(issue: dict | None, state: dict, default: str, dry: bool) -> str:
+    title, body = render(state, default)
+    empty = not state["sections"]
     if dry:
-        print(f"\n=== would file: {defuse(title)}\n    labels: {', '.join(labels)}\n")
-        print(issue_body(ctx, d))
+        print(f"\n=== combined issue {('#' + str(issue['number'])) if issue else '(new)'}: {title}\n")
+        print(body.split("<!-- ci-state:")[0])
         return "(dry-run)"
-    if existing is None:
-        url = gh("issue", "create", "--title", defuse(title), "--body-file", "-",
-                 *sum((["--label", lb] for lb in labels), []), input_text=issue_body(ctx, d)).strip()
+    if issue is None:
+        if empty:
+            return ""
+        url = gh("issue", "create", "--title", title, "--label", "ci-advisory", "--body-file", "-",
+                 input_text=body).strip()
         return url.rsplit("/", 1)[-1]
-    n = str(existing["number"])
-    comments = gh("issue", "view", n, "--json", "comments", "--jq", ".comments[].body", check=False)
-    # This run already reported: in the body that filed it, or in a comment since.  A second
-    # digest of one run (a re-triggered workflow) adds nothing.
-    if f"runs/{run['id']})" in existing["body"] + comments:
-        return n
-    if existing["state"] != "OPEN":
-        gh("issue", "reopen", n, check=False)
-        seen = "**Back after it closed.** " + seen
-    gh("issue", "comment", n, "--body", seen)
+    n = str(issue["number"])
+    gh("issue", "edit", n, "--title", title, "--body-file", "-", input_text=body)
+    if empty and issue["state"] == "OPEN":
+        gh("issue", "close", n, "--reason", "completed", "--comment", "Nothing is red — closing.")
+    elif not empty and issue["state"] != "OPEN":
+        gh("issue", "reopen", n, "--comment", "Red again — see the body.")
     return n
 
 
-def infra(ctx: dict, items: list[dict], all_infra: bool, dry: bool) -> None:
-    run = ctx["run"]
-    lines = [f"- {defuse(d['job'])}: `{defuse(d['headline'])}` ([job]({d['url']}))" for d in items]
-    text = f"[Run {run['id']}]({run['html_url']}) ({origin_of(ctx)}):\n" + "\n".join(lines)
-    retry = all_infra and run["run_attempt"] == 1
-    if dry:
-        print(f"\n=== would note on the rolling ci-infra issue{' and re-run the failed jobs' if retry else ''}:\n{text}")
-        return
-    hits = json.loads(gh("issue", "list", "--label", "ci-infra", "--state", "open", "--json", "number", "--limit", "1"))
-    if hits:
-        gh("issue", "comment", str(hits[0]["number"]), "--body", text)
-    else:
-        gh("issue", "create", "--title", "CI runner failures (rolling)", "--label", "ci-infra", "--body-file", "-",
-           input_text="Runner failures — downloads, lost runners, full disks — collected here so they neither "
-                      "file loft bugs nor go unseen. Each run whose failures were all of this kind is retried "
-                      "once.\n\n" + text)
-    if retry:
-        gh("run", "rerun", str(run["id"]), "--failed", check=False)
-
-
-def pr_summary(ctx: dict, filed: list[tuple[dict, str]], dry: bool) -> None:
+def pr_summary(ctx: dict, items: list[dict], issue_no: str, dry: bool) -> None:
     """One comment per PR, one section per workflow, updated in place."""
     if not ctx["pr"]:
         return
     run, wf = ctx["run"], ctx["run"]["name"]
     start, end = f"<!-- ci-advisory:{wf} -->", f"<!-- /ci-advisory:{wf} -->"
-    if filed:
+    ref = f"#{issue_no}" if issue_no.isdigit() else issue_no
+    if items:
         rows = [f"| {defuse(d['job'])} | `{defuse(d['headline'][:90])}` | "
-                f"{'new here' if d['main'] == 'success' else 'pre-existing' if d['main'] else '?'} | "
-                f"{'#' + n if n.isdigit() else n} |" for d, n in filed]
-        section = (f"{start}\n**{wf}** — [run {run['id']}]({run['html_url']}) @ `{run['head_sha'][:9]}`\n\n"
-                   "| advisory job | what failed | vs main | issue |\n|---|---|---|---|\n" + "\n".join(rows) + f"\n{end}")
+                f"{'new here' if d['main'] == 'success' else 'pre-existing' if d['main'] else '?'} |" for d in items]
+        section = (f"{start}\n**{wf}** — [run {run['id']}]({run['html_url']}) @ `{run['head_sha'][:9]}` "
+                   f"(details in {ref})\n\n| advisory step | what failed | vs main |\n|---|---|---|\n"
+                   + "\n".join(rows) + f"\n{end}")
     else:
-        section = f"{start}\n**{wf}** — every advisory job green in [run {run['id']}]({run['html_url']}).\n{end}"
+        section = f"{start}\n**{wf}** — every advisory step green in [run {run['id']}]({run['html_url']}).\n{end}"
     marker = "<!-- ci-advisory-summary -->"
     if dry:
         print(f"\n=== would update the PR #{ctx['pr']} summary with:\n{section}")
@@ -460,9 +507,9 @@ def pr_summary(ctx: dict, filed: list[tuple[dict, str]], dry: bool) -> None:
     comments = api(f"repos/{r}/issues/{ctx['pr']}/comments?per_page=100")
     mine = next((c for c in comments if marker in c["body"]), None)
     if mine is None:
-        if not filed:
+        if not items:
             return
-        body = f"{marker}\n### Advisory checks that failed\n\nNot merge gates, and still to be fixed: each has an issue.\n\n{section}"
+        body = f"{marker}\n### Advisory checks that failed\n\nNot merge gates, and still to be fixed.\n\n{section}"
         gh("api", f"repos/{r}/issues/{ctx['pr']}/comments", "-f", f"body={body}")
         return
     body = mine["body"]
@@ -471,51 +518,24 @@ def pr_summary(ctx: dict, filed: list[tuple[dict, str]], dry: bool) -> None:
     gh("api", "-X", "PATCH", f"repos/{r}/issues/comments/{mine['id']}", "-f", f"body={body}")
 
 
-def close_green(ctx: dict, dry: bool) -> None:
-    """On a default-branch run: close the issues of jobs that are green now, where the
-    change that caused them is on the default branch (its own origin, or its PR merged
-    before this run started).  A feature branch's green run closes nothing (loft#1527)."""
-    run = ctx["run"]
-    if ctx["pr"] or run["head_branch"] != ctx["default"]:
-        return
-    r = repo()
-    green = {j["name"] for j in jobs_of(r, run) if j["conclusion"] == "success"}
-    issues = json.loads(gh("issue", "list", "--label", "ci-advisory", "--state", "open",
-                           "--json", "number,body", "--limit", "200"))
-    for i in issues:
-        m = re.search(r"<!-- ci-job: (.+?) / (.+?) -->", i["body"])
-        o = re.search(r"<!-- ci-origin: (\S+) -->", i["body"])
-        if not m or m.group(1) != run["name"] or m.group(2) not in green:
-            continue
-        origin = o.group(1) if o else "main"
-        if origin.startswith("pr:"):
-            p = api(f"repos/{r}/pulls/{origin[3:]}")
-            if not p.get("merged_at") or p["merged_at"] > run["created_at"]:
-                continue
-        note = f"Green on `{ctx['default']}` in [run {run['id']}]({run['html_url']}) — closing."
-        if dry:
-            print(f"=== would close #{i['number']}: {note}")
-        else:
-            gh("issue", "comment", str(i["number"]), "--body", note)
-            gh("issue", "close", str(i["number"]), "--reason", "completed")
-
-
 def process(run_id: str, dry: bool) -> int:
     r = repo()
     ctx, items, _ = findings(r, run_id)
     if ctx["skipped"]:
         print(f"nothing to do: {ctx['skipped']}")
         return 0
-    real = [d for d in items if d["kind"] != "infra"]
-    flaky = [d for d in items if d["kind"] == "infra"]
     if not dry:
         ensure_labels()
-    filed = [(d, file_one(ctx, d, dry)) for d in real]
-    if flaky:
-        infra(ctx, flaky, all_infra=not real, dry=dry)
-    pr_summary(ctx, filed, dry)
-    close_green(ctx, dry)
-    print(f"\n{len(real)} advisory failure(s), {len(flaky)} runner failure(s) in run {run_id}")
+    issue, state = load_state()
+    update_state(state, ctx, items)
+    prune_prs(state, r, origin_of(ctx))
+    n = publish(issue, state, ctx["default"], dry)
+    pr_summary(ctx, items, n, dry)
+    # A run whose every failure was the RUNNER's is retried once: nothing of loft's failed.
+    run = ctx["run"]
+    if items and all(d["kind"] == "infra" for d in items) and run["run_attempt"] == 1 and not dry:
+        gh("run", "rerun", str(run["id"]), "--failed", check=False)
+    print(f"\n{len(items)} red step(s) in run {run_id}; combined issue {n or '(none — all green)'}")
     return 0
 
 
@@ -561,6 +581,31 @@ def selftest() -> int:
     c = signature("W", "K", "panicked at src/store.rs:4081: Unknown record 39")
     if a != b or a == c:
         print("FAIL signature: numbers must not split it, the job must")
+        bad += 1
+    # The combined issue's state: a step red again keeps its first run, a green re-run of
+    # the same origin and workflow drops it, and the body round-trips the state.
+    def fake(run_id, jobs):
+        ctx = {"run": {"id": run_id, "html_url": f"u/{run_id}", "head_sha": "abcdef012345", "name": "CI",
+                       "head_branch": "main"}, "pr": None, "default": "main"}
+        items = [{"job": j, "workflow": "CI", "kind": "panic", "signature": signature("CI", j, "h"),
+                  "headline": "h", "url": "j", "main": "failure", "steps": [], "tests": [], "where": [],
+                  "excerpt": "x"} for j in jobs]
+        return ctx, items
+    st = {"sections": {}}
+    update_state(st, *fake(1, ["a", "b"]))
+    update_state(st, *fake(2, ["b", "c"]))
+    rows = {r["job"]: r for r in st["sections"]["main|CI"]["rows"]}
+    if set(rows) != {"b", "c"} or rows["b"]["since_run"] != 1 or rows["c"]["since_run"] != 2:
+        print(f"FAIL combined state: {sorted(rows)} {[(r['job'], r['since_run']) for r in rows.values()]}")
+        bad += 1
+    _, body = render(st, "main")
+    back = json.loads(STATE_RE.search(body).group(1).replace("--\\u003e", "-->"))
+    if back != st:
+        print("FAIL combined state: the body does not round-trip the state")
+        bad += 1
+    update_state(st, *fake(3, []))
+    if st["sections"] or "Nothing is red." not in render(st, "main")[1]:
+        print("FAIL combined state: a green run must empty its section")
         bad += 1
     fenced = fence("x ``` y @someone")
     if not fenced.startswith("````") or "@someone" in fenced:

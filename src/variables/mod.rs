@@ -355,6 +355,10 @@ pub fn author_spelling(name: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+    /// The closure-build facts the scope pass's free emitter decided on, kept for the static
+    /// leak mirrors that read the function after it (`scopes::FrameReleases`).  Absent on a
+    /// function restored from the IR cache.
+    capture_builds: Option<crate::scopes::CaptureBuilds>,
     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
     ///
     /// A CALL RESULT's deps are the CALLEE's answer and pass 1 has not read the callee's body,
@@ -430,6 +434,13 @@ pub struct Function {
     /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
     /// parsing.
     pub text_payload_views: std::collections::HashSet<u16>,
+    /// The locals a plain bind made a VIEW of a keyed collection PROJECTION (`g = n.inn.h`,
+    /// `g = vs[0].h` — `(B-View-Depth)`, loft#1759).  The disturbance walk opens each like a
+    /// keyed payload view, and where its container is disturbed while it is still used the
+    /// scope pass copies it with `OpReplaceKeyed` (`(H-Materialise)`).  A `&` link is not
+    /// here: it is refused at the disturbance, never copied.  Carried like
+    /// `text_payload_views`.
+    pub keyed_views: std::collections::HashSet<u16>,
     /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
     /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
     /// collection type the binding's own spelling passes.  The field spelling does not name the
@@ -699,8 +710,17 @@ impl Display for Function {
 }
 
 impl Function {
+    pub(crate) fn set_capture_builds(&mut self, builds: crate::scopes::CaptureBuilds) {
+        self.capture_builds = Some(builds);
+    }
+
+    pub(crate) fn capture_builds(&self) -> Option<&crate::scopes::CaptureBuilds> {
+        self.capture_builds.as_ref()
+    }
+
     pub fn new(name: &str, file: &str) -> Self {
         Function {
+            capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
@@ -711,6 +731,7 @@ impl Function {
             mv_field_origin: HashMap::new(),
             tuphold_origin: HashMap::new(),
             text_payload_views: std::collections::HashSet::new(),
+            keyed_views: std::collections::HashSet::new(),
             group_write_views: HashMap::new(),
             tuple_backings: HashMap::new(),
             tuple_backings_seen: std::collections::HashSet::new(),
@@ -903,6 +924,7 @@ impl Function {
         self.tuphold_origin.clone_from(&other.tuphold_origin);
         self.text_payload_views
             .clone_from(&other.text_payload_views);
+        self.keyed_views.clone_from(&other.keyed_views);
         self.group_write_views.clone_from(&other.group_write_views);
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
@@ -984,6 +1006,8 @@ impl Function {
 
     pub fn copy(other: &Function) -> Self {
         Function {
+            // The build facts belong to one finished scope pass, and a copy starts another.
+            capture_builds: None,
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
@@ -997,6 +1021,7 @@ impl Function {
             // off the copy it works on, long after parsing.
             tuphold_origin: other.tuphold_origin.clone(),
             text_payload_views: other.text_payload_views.clone(),
+            keyed_views: other.keyed_views.clone(),
             group_write_views: other.group_write_views.clone(),
             tuple_backings: other.tuple_backings.clone(),
             tuple_backings_seen: std::collections::HashSet::new(),
@@ -2540,7 +2565,24 @@ impl Function {
         let ctr = self.unique.entry(name.to_string()).or_insert(0);
         *ctr += 1;
         let nr = *ctr;
-        self.add_variable(&format!("_{name}_{nr}"), type_def, lexer)
+        let full = format!("_{name}_{nr}");
+        // An ELEMENT temp is minted by some sites in pass 2 only (a slice, `map`, `filter`, a
+        // whole-vector copy), so its number names a different site in each pass and pass 2's
+        // `_elm_5` can meet pass 1's `_elm_5` at another element SHAPE.  Pass 1's code is
+        // discarded, so that type is no fact: pass 2's wins.  Kept the old way, a correct
+        // program was refused — `c = v` on a `vector<vector<integer>>` followed by a deeper
+        // literal: "Variable '_elm_5' cannot change type" (found by loft#1739's guard).  Only
+        // a SHAPE conflict, and only this family: another family can mint the same site twice
+        // on purpose and read pass 1's type (a multi-pattern capture keeps its local `τ?`).
+        if name == "elm"
+            && let Some(&v) = self.names.get(&full)
+            && !type_def.is_unknown()
+            && self.variables[v as usize].type_def.without_deps() != type_def.without_deps()
+        {
+            self.trace_type_change(v, type_def, "unique(elm)");
+            self.variables[v as usize].type_def = type_def.clone();
+        }
+        self.add_variable(&full, type_def, lexer)
     }
 
     /// Mark a variable as carrying an EXPLICIT `: Type` annotation (vs an inferred type).
@@ -2829,6 +2871,68 @@ impl Function {
     #[must_use]
     pub fn is_nullable_text_buffer(&self, var_nr: u16) -> bool {
         self.nullable_text_buffers.contains(&var_nr)
+    }
+
+    /// The join of an inferred local's type `cur` with a new assignment's `new` where the two
+    /// differ only in which VARIANT of one enum they name: the enum (`@FR-C-Var`), optional
+    /// when either side is (`@FR-N-Join`), and element-wise through a tuple.  `None` when the
+    /// two differ in anything else, or not at all, so the caller's other arms still decide.
+    fn variant_join(cur: &Type, new: &Type, data: &Data) -> Option<Type> {
+        let enum_of = |t: &Type| match t.base() {
+            Type::Reference(d, _)
+                if matches!(data.def_type(*d), crate::data::DefType::EnumValue)
+                    && data.def(*d).parent != u32::MAX =>
+            {
+                Some(data.def(*d).parent)
+            }
+            _ => None,
+        };
+        let joined = match (cur.base(), new.base()) {
+            (Type::Tuple(ca), Type::Tuple(na)) if ca.len() == na.len() => {
+                let mut widened = false;
+                let mut out = Vec::with_capacity(ca.len());
+                for (c, n) in ca.iter().zip(na.iter()) {
+                    if let Some(j) = Self::variant_join(c, n, data) {
+                        widened = true;
+                        out.push(j);
+                    } else if c.is_equal(n) {
+                        out.push(c.clone());
+                    } else {
+                        return None;
+                    }
+                }
+                if !widened {
+                    return None;
+                }
+                Type::Tuple(out)
+            }
+            (Type::Reference(a, deps), Type::Reference(b, _)) if a != b => {
+                let e = enum_of(cur.base())?;
+                if enum_of(new.base()) != Some(e) {
+                    return None;
+                }
+                Type::Enum(e, true, deps.clone())
+            }
+            (Type::Reference(_, deps), Type::Enum(f, true, _)) => {
+                if enum_of(cur.base()) != Some(*f) {
+                    return None;
+                }
+                Type::Enum(*f, true, deps.clone())
+            }
+            // Already the enum: a variant joins into it unchanged (a tuple member needs the
+            // answer; a whole local takes the `lhs_shape` acceptance below either way).
+            (Type::Enum(e, true, _), Type::Reference(..)) if enum_of(new.base()) == Some(*e) => {
+                cur.base().clone()
+            }
+            _ => return None,
+        };
+        Some(
+            if matches!(cur, Type::Optional(_)) || matches!(new, Type::Optional(_)) {
+                Type::optional(joined)
+            } else {
+                joined
+            },
+        )
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -3125,6 +3229,21 @@ impl Function {
             self.depend_all(var_nr, type_def);
             return self.is_new(var_nr);
         }
+        // @FR-I-Join with @FR-C-Var — an INFERRED local assigned two different variants of one
+        // enum, or a variant and the enum, has the ENUM for its type: that is their join, since
+        // `(C-Var)` licenses `Reference(S) ⤳ Enum(E)` for each variant and nothing between two
+        // of them.  `x = Circle {…}; x = Square {…}` was refused as a type change, and so was an
+        // `if`/`match` whose arms name two variants, because pass 1 types such an arm join by
+        // its first arm and pass 2 by the enum.  Element-wise through a tuple, as the arm join
+        // is (`join_tuple_arms`).  A DECLARED binding never widens (`@FR-N-Decl`).
+        if !self.is_declared(var_nr)
+            && let Some(joined) = Self::variant_join(var_tp, type_def, data)
+        {
+            self.trace_type_change(var_nr, &joined, "change_var_type(C-Var join)");
+            self.variables[var_nr as usize].type_def = joined;
+            self.depend_all(var_nr, type_def);
+            return self.is_new(var_nr);
+        }
         // Allow assigning an iterator (vector slice) to a vector variable
         // when element types are compatible — the iterator is materialised.
         if let (Type::Vector(_, _), Type::Iterator(_, _)) = (var_tp, type_def) {
@@ -3303,7 +3422,22 @@ impl Function {
             }
         }
         self.trace_type_change(var_nr, type_def, "change_var_type");
+        // Refining the generic `Reference(0, …)` placeholder ("some record, shape not known
+        // yet") keeps the borrows already recorded on it: they say which store the variable
+        // lives in, and learning its SHAPE changes nothing about that.  Replaced wholesale, an
+        // element slot `unique_elm_var` had tied to its container lost the tie when the literal
+        // built into it named its type, and the empty dep list then read as "owns no store"
+        // (`@FR-O-Proxy`), so a fresh backing was minted and the element's contents went there:
+        // after a `.map` over one inline `vector<vector<integer>>` literal, the next such
+        // literal's first element read EMPTY, silently, on both backends.
+        let placeholder_deps = match self.variables[var_nr as usize].type_def.base() {
+            Type::Reference(0, deps) if !deps.is_empty() => Some(Type::Reference(0, deps.clone())),
+            _ => None,
+        };
         self.variables[var_nr as usize].type_def = type_def.clone();
+        if let Some(old) = placeholder_deps {
+            self.depend_all(var_nr, &old);
+        }
         true
     }
 
@@ -3528,17 +3662,37 @@ impl Function {
     /// peels to one, `binding.md` D-bind-52), while a compiler view of the link — a tuple
     /// unbox's `__ref_N = t`, which keeps `["t"]` — is an alias that frees nothing, and a copy
     /// into it is a store nobody releases.
+    ///
+    /// A `??` hoist or a payload binding the parser mints as a VIEW
+    /// ([`Self::is_overwritten_view`]) copies nothing either, for the same reason: it releases
+    /// nothing, so `__ncc_N = s` copied on `--native` into a store nobody freed while the
+    /// interpreter bound the view (loft#1752).  A destination that must be independent of such
+    /// a hoist gets its copy where it binds the hoist (`Scopes::arm_bind`).
+    ///
+    /// A destination declared as a DIFFERENT record than its source copies nothing either
+    /// (`Data::copies_as`): the bind a variant cast's hoisted `__ncc` temp receives
+    /// (`__ncc: Circle = t`, `t: Shape`) is the compiler's view of the operand.  The interpreter
+    /// asked that half at its arm and native did not, so native deep-copied into the view and
+    /// nothing freed the copy — one record per hit of `(t as Circle?) ?? d`.
     #[must_use]
-    pub fn record_copy_source(&self, v: u16, src: u16) -> Option<u32> {
+    pub fn record_copy_source(&self, data: &Data, v: u16, src: u16) -> Option<u32> {
+        if self.is_overwritten_view(v) {
+            return None;
+        }
         let src_tp = self.tp(src);
-        if matches!(src_tp.base(), Type::RefVar(_)) {
+        let src_d = if matches!(src_tp.base(), Type::RefVar(_)) {
             // @FR-O-Proxy asks copy — a destination with deps views the link; only an owner copies.
             if !self.tp(v).depend().is_empty() {
                 return None;
             }
-            return src_tp.peel_link().heap_def_nr();
+            src_tp.peel_link().heap_def_nr()?
+        } else {
+            src_tp.heap_def_nr()?
+        };
+        match self.tp(v).base().heap_def_nr() {
+            Some(dst_d) if !data.copies_as(dst_d, src_d) => None,
+            _ => Some(src_d),
         }
-        src_tp.heap_def_nr()
     }
 
     #[must_use]
@@ -5157,6 +5311,34 @@ impl Function {
     /// (loft#666) — and the origin word alone ("depend") cannot answer it.
     #[track_caller]
     fn trace_type_change(&self, var_nr: u16, new_tp: &Type, origin: &str) {
+        // `LOFT_AUDIT_RETYPE=1` — every retype on PASS 2 of a variable pass 1 had already typed
+        // as a different SHAPE.  Pass 2 starts from pass 1's variable table, so such a retype
+        // means pass 1 synthesised another type for the same expression (`@FR-T-Syn` asks for
+        // one): the inferred join of `if c { Circle {…} } else { Sq {…} }` was typed by its
+        // first arm on pass 1 and by the enum on pass 2 (D-types-22).  Not a user diagnostic —
+        // it reports the compiler, like `LOFT_AUDIT_PASS1`.  `is_equal` keeps the refinements
+        // pass 2 exists for quiet: an integer width, a borrow list.
+        if crate::env_once!(std::env::var_os("LOFT_AUDIT_RETYPE").is_some())
+            && !crate::diagnostics::IN_FIRST_PASS.load(std::sync::atomic::Ordering::Relaxed)
+            && let Some(v) = self.variables.get(var_nr as usize)
+            && !v.type_def.is_unknown()
+            && !matches!(v.type_def.base(), Type::Null | Type::Never)
+            && !crate::data::Data::type_has_unresolved(&v.type_def)
+            && !v.type_def.is_equal(new_tp)
+            // `is_equal` still compares a borrow list inside a tuple; a borrow is not a shape.
+            && v.type_def.without_deps() != new_tp.without_deps()
+            // A work buffer promoted to a `&` link of its own type is a lowering, not a retype.
+            && !matches!(new_tp.base(), Type::RefVar(inner) if inner.is_equal(v.type_def.base()))
+        {
+            eprintln!(
+                "[audit_retype] {origin} {file} {func}::{var}  {old:?}  ->  {new:?}",
+                file = self.file,
+                func = self.name,
+                var = v.name,
+                old = v.type_def,
+                new = new_tp,
+            );
+        }
         let Some(target) = crate::log_config::type_timeline_target() else {
             return;
         };

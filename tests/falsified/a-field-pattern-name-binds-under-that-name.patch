@@ -1,0 +1,391 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 62f11929f..dd9503ae7 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2882,6 +2882,7 @@ use #count instead"
+         // L9: escalate format-specifier mismatches to compile errors.
+         // A specifier that can never have any effect on the value type is always a bug.
+         if !self.first_pass {
++            let is_text = matches!(tp, Type::Text(_));
+             // @FR-F-Spec — a precision reaches here in two spellings: a bare `.P` sets
+             // `float` and leaves `P` in the width slot, and the dotted `W.P` — the only
+             // spelling that gives both at once — arrives as one `Value::Float`.
+@@ -2922,22 +2923,11 @@ use #count instead"
+                     Self::radix_letter(state.radix),
+                     tp.source_name(&self.data)
+                 );
+-            } else if state.token == "0"
+-                && state.width != Value::Int(0)
+-                && matches!(
+-                    tp.base(),
+-                    Type::Text(_) | Type::Boolean | Type::Character | Type::Enum(_, false, _)
+-                )
+-            {
+-                // @FR-F-Spec — `0N` zero-pads a NUMBER, and `@FR-F-Spec-Exec` refuses a spec
+-                // part the type cannot execute.  Only `text` was refused: a `boolean` rendered
+-                // `{b:06}` as `true00`, the zeros on the wrong side of a word.  A container is
+-                // not judged here: an iterator applies the spec to each element.
++            } else if is_text && state.token == "0" && state.width != Value::Int(0) {
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+-                    "Zero-padding has no effect on {}",
+-                    tp.source_name(&self.data)
++                    "Zero-padding has no effect on text"
+                 );
+             } else if has_precision && !matches!(tp, Type::Float | Type::Single) {
+                 // @FR-F-Spec — `.P` asks for fractional digits, and only `float` and
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 9cdbce55e..f37296518 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -7393,39 +7393,7 @@ impl Parser {
+                 Some((attr_idx, field_type)) => {
+                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                     if self.lexer.has_token(":") {
+-                        // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
+-                        // binding under that name (`Circle { radius: r }`), total like the
+-                        // shorthand `{ radius }`, and never a comparison with a variable of that
+-                        // name in scope.  Read through as a value, it compared against an outer
+-                        // `r` (a silent wrong arm) or refused an unknown one.  Only the plain
+-                        // name followed by `,` / `}` — `r..5`, `_`, a variant and a literal keep
+-                        // their sub-pattern meaning.
+-                        let named = matches!(
+-                            &self.lexer.peek().has,
+-                            LexItem::Identifier(id) if Self::is_binding_name(id)
+-                        );
+-                        let mut rename = None;
+-                        if named {
+-                            let link = self.lexer.link();
+-                            let name = self.lexer.has_identifier().unwrap_or_default();
+-                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+-                                rename = Some(name);
+-                            } else {
+-                                self.lexer.revert(link);
+-                            }
+-                        }
+-                        if let Some(bind_name) = rename {
+-                            self.bind_match_field(
+-                                &bind_name,
+-                                variant_def_nr,
+-                                attr_idx,
+-                                &field_type,
+-                                &field_read,
+-                                subject_val,
+-                                arm_stmts,
+-                                name_aliases,
+-                            );
+-                        } else if let Some(cond) = self.parse_field_sub_pattern(
++                        if let Some(cond) = self.parse_field_sub_pattern(
+                             field_read,
+                             &field_type,
+                             arm_stmts,
+@@ -7435,16 +7403,97 @@ impl Parser {
+                             field_conditions.push(cond);
+                         }
+                     } else {
+-                        self.bind_match_field(
+-                            &field_name,
+-                            variant_def_nr,
+-                            attr_idx,
+-                            &field_type,
+-                            &field_read,
+-                            subject_val,
+-                            arm_stmts,
+-                            name_aliases,
+-                        );
++                        let v_nr = self.create_unique(&format!("mv_{field_name}"), &field_type);
++                        // The binding's VALUE reads through a nullable slot's tag; the
++                        // ORIGIN recorded below stays the slot's own read, since a write
++                        // resolved back to the field (`resolved_group_write`) is spelled
++                        // against the field.
++                        let bound =
++                            self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
++                        if v_nr != u16::MAX {
++                            self.vars.defined(v_nr);
++                            // loft#1160 — remember which field this binding projects, so a
++                            // write spelled through it can take the field path and reach the
++                            // linked group the field belongs to.
++                            self.vars.mv_field_origin.insert(
++                                v_nr,
++                                (
++                                    field_read.clone(),
++                                    Type::Reference(variant_def_nr, Deps::none()),
++                                ),
++                            );
++                            arm_stmts.push(v_set(v_nr, bound));
++                            let old = self.vars.set_name(&field_name, v_nr);
++                            name_aliases.push((field_name.clone(), old));
++                            // B5 remaining half (2026-04-14): a HEAP match-arm
++                            // binding is a field extraction from the subject —
++                            // the subject owns the store and the binding is a
++                            // borrowed view (a DbRef pointing into the subject's
++                            // record).  Emitting OpFreeRef for it at function
++                            // exit would decrement a store the binding doesn't
++                            // own; worse, if the arm wasn't taken the slot is
++                            // never assigned and the free reads garbage bytes as
++                            // a DbRef (observed as out-of-bounds store_nr ≈ 4621
++                            // in `p54_b5_recursive_struct_enum`).  Mark it
++                            // `skip_free` so scope cleanup leaves it alone in
++                            // both the taken and not-taken arms.
++                            //
++                            // @PLN85 Class B — but a TEXT payload binding is
++                            // NOT a borrow: `_mv_<f> = OpGetText(subj, off)` is
++                            // typed plain `text` (an OWNED copy), and it is
++                            // default-initialised to `""` at block entry — so
++                            // freeing it is correct (it owns an allocation) AND
++                            // safe in the not-taken arm (`OpFreeText("")` is a
++                            // no-op, no garbage read).  Leaving it `skip_free`
++                            // leaked the copy 1/call whenever a text-payload arm
++                            // was taken (the whole p54 struct-enum / json-match
++                            // family).  So skip_free HEAP bindings only; let a
++                            // text binding free through normal scope cleanup.
++                            if matches!(field_type.base(), Type::Text(_)) {
++                                self.record_text_payload_view(v_nr, &field_read);
++                            } else {
++                                self.vars.set_skip_free(v_nr);
++                            }
++                            // #429: the binding is a BORROWED VIEW of the
++                            // subject, so its TYPE must record that borrow —
++                            // otherwise a value derived from it and returned
++                            // (`CMap { entries } => { r = entries[..]; return r }`)
++                            // breaks the borrow chain at the binding: `ref_return`
++                            // walks `r` → `entries` → <this binding> and stops (the
++                            // binding has empty deps), never reaching the subject
++                            // parameter, so the fn is mis-classified OWNED and the
++                            // caller whole-store-frees the subject's record (#429
++                            // interp-vs-native divergence).  Give a HEAP
++                            // (DbRef-carrying) binding a frame dep on the subject's
++                            // source var so the chain reaches the parameter — exactly
++                            // the `["src"]` dep a `b = subj.field` bind already
++                            // carries.  Scalars hold no DbRef, so they need no borrow
++                            // dep (the `_mv_value` integer binding stays dep-free).
++                            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
++                            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
++                            // base type, as `mark_slice_element_view` asks it.
++                            if matches!(
++                                field_type.base(),
++                                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
++                            ) && let Some(src) = self.match_borrow_source(subject_val)
++                            {
++                                if crate::env_once!(std::env::var_os("LOFT_MV_DEP_TRACE").is_some())
++                                {
++                                    eprintln!(
++                                        "[mv-dep] fn={} pass{} binding={}({}) src={}({})",
++                                        self.data.def(self.context).name(),
++                                        u8::from(!self.first_pass) + 1,
++                                        self.vars.name(v_nr),
++                                        v_nr,
++                                        self.vars.name(src),
++                                        src,
++                                    );
++                                }
++                                let bound_tp =
++                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
++                                self.vars.set_type(v_nr, bound_tp);
++                            }
++                        }
+                     }
+                 }
+                 None => {
+@@ -7467,123 +7516,6 @@ impl Parser {
+         self.lexer.token("}");
+     }
+ 
+-    /// A lowercase identifier other than `_` — the spelling that BINDS in a pattern.
+-    fn is_binding_name(name: &str) -> bool {
+-        name != "_"
+-            && name
+-                .chars()
+-                .next()
+-                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+-    }
+-
+-    /// Bind a variant field's value to `bind_name` for the arm — the shorthand `{ f }` binds it
+-    /// as `f`, the renamed `{ f: n }` as `n`; one home, so both carry the same borrow and free
+-    /// rules.
+-    #[expect(
+-        clippy::too_many_arguments,
+-        reason = "the arm's binding context, passed through"
+-    )]
+-    fn bind_match_field(
+-        &mut self,
+-        bind_name: &str,
+-        variant_def_nr: u32,
+-        attr_idx: usize,
+-        field_type: &Type,
+-        field_read: &Value,
+-        subject_val: &Value,
+-        arm_stmts: &mut Vec<Value>,
+-        name_aliases: &mut Vec<(String, Option<u16>)>,
+-    ) {
+-        let v_nr = self.create_unique(&format!("mv_{bind_name}"), field_type);
+-        // The binding's VALUE reads through a nullable slot's tag; the
+-        // ORIGIN recorded below stays the slot's own read, since a write
+-        // resolved back to the field (`resolved_group_write`) is spelled
+-        // against the field.
+-        let bound = self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
+-        if v_nr != u16::MAX {
+-            self.vars.defined(v_nr);
+-            // loft#1160 — remember which field this binding projects, so a
+-            // write spelled through it can take the field path and reach the
+-            // linked group the field belongs to.
+-            self.vars.mv_field_origin.insert(
+-                v_nr,
+-                (
+-                    field_read.clone(),
+-                    Type::Reference(variant_def_nr, Deps::none()),
+-                ),
+-            );
+-            arm_stmts.push(v_set(v_nr, bound));
+-            let old = self.vars.set_name(bind_name, v_nr);
+-            name_aliases.push((bind_name.to_string(), old));
+-            // B5 remaining half (2026-04-14): a HEAP match-arm
+-            // binding is a field extraction from the subject —
+-            // the subject owns the store and the binding is a
+-            // borrowed view (a DbRef pointing into the subject's
+-            // record).  Emitting OpFreeRef for it at function
+-            // exit would decrement a store the binding doesn't
+-            // own; worse, if the arm wasn't taken the slot is
+-            // never assigned and the free reads garbage bytes as
+-            // a DbRef (observed as out-of-bounds store_nr ≈ 4621
+-            // in `p54_b5_recursive_struct_enum`).  Mark it
+-            // `skip_free` so scope cleanup leaves it alone in
+-            // both the taken and not-taken arms.
+-            //
+-            // @PLN85 Class B — but a TEXT payload binding is
+-            // NOT a borrow: `_mv_<f> = OpGetText(subj, off)` is
+-            // typed plain `text` (an OWNED copy), and it is
+-            // default-initialised to `""` at block entry — so
+-            // freeing it is correct (it owns an allocation) AND
+-            // safe in the not-taken arm (`OpFreeText("")` is a
+-            // no-op, no garbage read).  Leaving it `skip_free`
+-            // leaked the copy 1/call whenever a text-payload arm
+-            // was taken (the whole p54 struct-enum / json-match
+-            // family).  So skip_free HEAP bindings only; let a
+-            // text binding free through normal scope cleanup.
+-            if matches!(field_type.base(), Type::Text(_)) {
+-                self.record_text_payload_view(v_nr, &field_read);
+-            } else {
+-                self.vars.set_skip_free(v_nr);
+-            }
+-            // #429: the binding is a BORROWED VIEW of the
+-            // subject, so its TYPE must record that borrow —
+-            // otherwise a value derived from it and returned
+-            // (`CMap { entries } => { r = entries[..]; return r }`)
+-            // breaks the borrow chain at the binding: `ref_return`
+-            // walks `r` → `entries` → <this binding> and stops (the
+-            // binding has empty deps), never reaching the subject
+-            // parameter, so the fn is mis-classified OWNED and the
+-            // caller whole-store-frees the subject's record (#429
+-            // interp-vs-native divergence).  Give a HEAP
+-            // (DbRef-carrying) binding a frame dep on the subject's
+-            // source var so the chain reaches the parameter — exactly
+-            // the `["src"]` dep a `b = subj.field` bind already
+-            // carries.  Scalars hold no DbRef, so they need no borrow
+-            // dep (the `_mv_value` integer binding stays dep-free).
+-            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
+-            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
+-            // base type, as `mark_slice_element_view` asks it.
+-            if matches!(
+-                field_type.base(),
+-                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+-            ) && let Some(src) = self.match_borrow_source(subject_val)
+-            {
+-                if crate::env_once!(std::env::var_os("LOFT_MV_DEP_TRACE").is_some()) {
+-                    eprintln!(
+-                        "[mv-dep] fn={} pass{} binding={}({}) src={}({})",
+-                        self.data.def(self.context).name(),
+-                        u8::from(!self.first_pass) + 1,
+-                        self.vars.name(v_nr),
+-                        v_nr,
+-                        self.vars.name(src),
+-                        src,
+-                    );
+-                }
+-                let bound_tp = Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
+-                self.vars.set_type(v_nr, bound_tp);
+-            }
+-        }
+-    }
+-
+     /// The discriminant integer for `variant_def_nr` (a variant of enum `e_nr`).
+     /// Struct-enum variants store it in their own `attributes[0]`; unit variants
+     /// and plain enums read it from the parent enum's attribute for the name.
+@@ -9636,39 +9568,19 @@ impl Parser {
+             };
+             match attr_idx_and_type {
+                 Some((attr_idx, field_type)) => {
+-                    // The capture is named by the field, or by the name a `(P-Point)` rename
+-                    // binds it to (`w: v`, `@FR-P-Point`), the same rule the first pattern follows.  Any other
+-                    // field sub-pattern (`f: pat`) makes the branch condition non-trivial —
+-                    // that is Phase 4.  Reject cleanly and skip.
+-                    let mut capture = field_name.clone();
++                    // A field sub-pattern (`f: pat`) makes the branch condition
++                    // non-trivial — that is Phase 4.  Reject cleanly and skip.
+                     if self.lexer.has_token(":") {
+-                        let named = matches!(
+-                            &self.lexer.peek().has,
+-                            LexItem::Identifier(id) if Self::is_binding_name(id)
+-                        );
+-                        let mut renamed = false;
+-                        if named {
+-                            let link = self.lexer.link();
+-                            let name = self.lexer.has_identifier().unwrap_or_default();
+-                            if self.lexer.peek_token(",") || self.lexer.peek_token("}") {
+-                                capture = name;
+-                                renamed = true;
+-                            } else {
+-                                self.lexer.revert(link);
+-                            }
+-                        }
+-                        if !renamed {
+-                            if !self.first_pass {
+-                                diagnostic!(
+-                                    self.lexer,
+-                                    Level::Error,
+-                                    "a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4)"
+-                                );
+-                            }
+-                            self.lexer.has_identifier();
++                        if !self.first_pass {
++                            diagnostic!(
++                                self.lexer,
++                                Level::Error,
++                                "a field sub-pattern is not yet supported in a multi-pattern arm (Phase 4)"
++                            );
+                         }
++                        self.lexer.has_identifier();
+                     }
+-                    match shared.get(&capture) {
++                    match shared.get(&field_name) {
+                         Some((var_nr, shared_ty)) => {
+                             // `@FR-L-Null-Which` — a local holds a `S?` field as the pointer, so
+                             // compare the bound spellings: a declared `S?` can reach here as
+@@ -9685,7 +9597,7 @@ impl Parser {
+                                     self.lexer,
+                                     Level::Error,
+                                     "multi-pattern arm: capture '{}' is {} in this pattern but {} in the first — every listed pattern must bind the same captures at the same type",
+-                                    capture,
++                                    field_name,
+                                     field_type.source_name(&self.data),
+                                     shared_ty.source_name(&self.data)
+                                 );
+@@ -9702,7 +9614,7 @@ impl Parser {
+                                 );
+                                 stmts.push(v_set(*var_nr, field_read));
+                             }
+-                            bound.insert(capture.clone());
++                            bound.insert(field_name.clone());
+                         }
+                         None => {
+                             if !self.first_pass {
+@@ -9710,7 +9622,7 @@ impl Parser {
+                                     self.lexer,
+                                     Level::Error,
+                                     "multi-pattern arm: capture '{}' is not bound by the first pattern (partial overlap → option<T> is Phase 4)",
+-                                    capture
++                                    field_name
+                                 );
+                             }
+                         }

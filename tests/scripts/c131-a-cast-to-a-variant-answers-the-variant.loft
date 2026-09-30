@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @EXPECT_WARNING: answers a `Circle` with every field at its default
+// @EXPECT_WARNING: answers `North`, the first variant
+//
+// @C131 — A CAST TO A VARIANT ANSWERS THE VARIANT.  `s as Circle` on a `Shape` is a non-null
+// `Circle`: on a miss, `Circle` with every field at its `(D-Rec)` default, never null — and the
+// unchecked cast warns (`variant-cast-default`).  Checked directly — inside `if s is Circle` —
+// it needs no default and draws no warning; `as Circle?` is the checked form and answers null.
+// The cast answered null while typed non-null, so `!c` was reported "always false" and printed
+// true.  On native a hit also leaked the record it was deep-copied into.  The refusals (a provable miss, a variant with no default) are the sibling file.
+// Values are hand-computed.
+//
+// @falsified-at: 339dd1956 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/c131-a-cast-to-a-variant-answers-the-variant.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the first re-bind cell on both backends — on the control `rb = rs as Circle` over an
+//   owned `rb` aliases `rs` (42).  The miss-is-the-default cells were falsified at f298fb423.
+// HOLDS: leak, panic and free-refusal are clean on both trees; the cells before the re-bind pass
+//   on the control too, so the assertion channel is the only one that moves.
+
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { radius: integer, tag: text, at: Pt }, Rect { w: integer, h: integer } }
+enum Direction { North, East, South, West }
+struct Code { code: vector<Shape> }
+
+fn main() {
+  s: Shape = Rect { w: 3, h: 4 };
+  c = s as Circle;
+  assert(c.radius == 0 && c.tag == "" && c.at.x == 0 && c.at.y == 0, "a miss is the default Circle: {c.radius} [{c.tag}] {c.at.x}");
+  t: Shape = Circle { radius: 5, tag: "x", at: Pt { x: 7, y: 8 } };
+  d = t as Circle;
+  assert(d.radius == 5 && d.tag == "x" && d.at.x == 7, "a hit is the value: {d.radius} [{d.tag}] {d.at.x}");
+  hit = 0;
+  if t is Circle {
+    e = t as Circle;
+    hit = e.radius;
+  }
+  assert(hit == 5, "checked directly: {hit}");
+  f = s as Circle?;
+  assert(f == null, "the checked form answers null on a miss");
+  // A hit through the checked form and `??` views `t` — native deep-copied it into the
+  // hoisted `__ncc` temp and leaked the copy (both spellings, before C131 too).
+  k = (t as Circle?) ?? Circle { radius: 1, tag: "", at: Pt { x: 0, y: 0 } };
+  assert(k.radius == 5 && k.tag == "x", "checked form with a fallback: {k.radius}");
+  v: vector<Shape> = [Circle { radius: 9, tag: "v", at: Pt { x: 1, y: 1 } }, Rect { w: 1, h: 1 }];
+  g = v[0] as Circle;
+  h = v[1] as Circle;
+  assert(g.radius == 9 && h.radius == 0 && h.tag == "", "elements: {g.radius} {h.radius}");
+  // The text half: a runtime text (a literal that names no variant is refused).
+  bad = "Purple";
+  good = "East";
+  assert("{bad as Direction}" == "North", "a text naming no variant answers the first variant");
+  assert("{good as Direction}" == "East", "a text naming a variant answers it");
+  bd = bad as Direction?;
+  assert(bd == null, "the checked parse answers null");
+  assert("{bad as Direction ?? West}" == "West", "a fallback discharges the checked parse");
+  assert("{"South" as Direction}" == "South", "a literal naming a variant");
+  // A bind of the cast of a LOCAL copies it (`@FR-B-Copy`): a write through the result stays
+  // there.  The cast of a PROJECTION views the element (`@FR-B-View`), so a write reaches it.
+  m: Shape = Circle { radius: 3, tag: "m", at: Pt { x: 0, y: 0 } };
+  mc = m as Circle;
+  mc.radius = 30;
+  assert((m as Circle?).radius == 3 && mc.radius == 30, "the cast of a local is a copy");
+  // The same cast RE-BINDING a destination that already owns a record copies too — spelled
+  // bare, checked, and as the branch the unchecked form lowers to.  Each aliased the local on
+  // at least one backend: the pair `Circle ⟵ Shape` was not one `Data::copies_as` admitted.
+  rs: Shape = Circle { radius: 1, tag: "r", at: Pt { x: 0, y: 0 } };
+  rb = Circle { radius: 5, tag: "b", at: Pt { x: 0, y: 0 } };
+  println("{rb.radius}");
+  rb = rs as Circle;
+  rb.radius = 42;
+  assert((rs as Circle?).radius == 1 && rb.radius == 42, "a re-bound cast of a local is a copy: {(rs as Circle?).radius}");
+  if rs is Circle {
+    rc = Circle { radius: 6, tag: "c", at: Pt { x: 0, y: 0 } };
+    println("{rc.radius}");
+    rc = rs as Circle;
+    rc.radius = 43;
+    assert((rs as Circle?).radius == 1 && rc.radius == 43, "a checked re-bound cast is a copy: {(rs as Circle?).radius}");
+  }
+  rd = Circle { radius: 7, tag: "d", at: Pt { x: 0, y: 0 } };
+  println("{rd.radius}");
+  rd = if rs is Circle { rs as Circle } else { Circle { radius: 8, tag: "", at: Pt { x: 0, y: 0 } } };
+  rd.radius = 44;
+  assert((rs as Circle?).radius == 1 && rd.radius == 44, "a re-bound branch of a cast is a copy: {(rs as Circle?).radius}");
+  code = Code { code: [Circle { radius: 4, tag: "c", at: Pt { x: 0, y: 0 } }, Rect { w: 1, h: 1 }] };
+  i = 0;
+  if i < len(code.code) {
+    pc = code.code[i] as Circle;
+    pc.radius = 40;
+  }
+  first = code.code[0] ?? Rect { w: 0, h: 0 };
+  assert((first as Circle?).radius == 40, "the cast of a projection views the element");
+  // Checked directly on a PROJECTION: `if code.code[j] is Circle` proves the element, so the
+  // cast takes no default, draws no warning, and a write through it reaches the element.
+  j = 0;
+  if j < len(code.code) {
+    if code.code[j] is Circle {
+      pj = code.code[j] as Circle;
+      pj.radius = 50;
+    }
+  }
+  again = code.code[0] ?? Rect { w: 0, h: 0 };
+  assert((again as Circle?).radius == 50, "a checked projection cast writes through");
+}

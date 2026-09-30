@@ -260,6 +260,27 @@ rule already said the set; the test asked about a pair.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **`D-col-14`** — opened and CLOSED 2026-09-30 (loft#1760): **an absent keyed FIELD was followed as a
+  record by nearly every reader**, against `(Col-Len)`, `(Col-Cons)` and `(Col-Copy)`.  `D-col-13`
+  made the counts test the value-level null — what an absent LOCAL is — and its guard binds every
+  collection to a local.  A null FIELD is not that null: its slot holds `DbRef::ABSENT_REC`
+  (loft#917), which `Store::collection_rec` reads as "no records".  The vector side asked through
+  it; `hash`, `radix_db`, `trie_db` and the `index` tree read the slot raw, and every arm of the
+  owned walk (teardown, copy, `==`) tested the marker only to keep it from being REFUSED, then
+  walked it.  So on a null `hash` / `sorted` / `index` / `spatial` / `trie` field, `len`, `= []`,
+  `= [r]`, `= other`, `g = o.f`, `o.f[k] = null`, `= null` after a fill and a copy of the holding
+  struct all panicked on `rec=4294967295`, both backends; `+=` did too on `trie` and `spatial`
+  (loft#1213 fixed it for the other three).  The vector kind answered quietly wrong instead:
+  `o.v = []` stayed `null`, and `g = o.v`, `o.v = src`, `o.v = f()` and `H { v: src }` of an
+  absent source read back `[]`.  **Fix.**  The walk and the copy ask one question at their entry
+  (`Stores::absent_collection_slot`) — an absent walk is an empty one, an absent copy is absent;
+  the keyed modules read their slot through `collection_rec`; `vector::clear_vector` replaces the
+  marker with the empty collection; `vector_replace` asks the source's SLOT; and a field declared
+  `?` takes `OpReplaceVector` in every assignment arm and the constructor (loft#1319's rule for a
+  local).  Guards `tests/scripts/an-absent-keyed-field-is-empty-to-every-reader.loft` and
+  `tests/scripts/a-vector-field-keeps-its-absence.loft`; the second also moves the holder's field
+  count, because a ONE-field holder's clear takes the root-reset path and was right.
+
 - **`D-col-13`** — opened and CLOSED 2026-09-29: **`len` of a nullable KEYED collection was
   refused or crashed** where a `vector<…>?` warned and counted.  Three layers, one per kind
   family: `hash`, `sorted`, `spatial` and `trie` were warned by `(N-Store)`'s junction and then

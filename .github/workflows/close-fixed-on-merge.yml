@@ -1,0 +1,34 @@
+# Close every issue a merged PR fixes — named in its body or in any of its commits
+# (`scripts/close_fixed_on_merge.py`, whose docstring is the contract).
+#
+# Why: GitHub closes one issue per keyword, and on a squash merge reads only the merge
+# commit.  PR #1744 closed #1570 and left nine fixed issues open, each still labelled
+# `fixed-pending-merge`.  `fixed-pending-merge (strip)` removes that label once they close.
+#
+# Why `pull_request_target`: it runs THIS file from the default branch with a token that
+# can write issues.  It checks out the default branch only (the script), and reads the PR's
+# commits as data through `git log` — nothing of the PR is executed.
+name: fixed-pending-merge (close on merge)
+on:
+  pull_request_target:
+    types: [closed]
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+jobs:
+  close:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          filter: blob:none
+      - name: Close the issues this PR fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/close_fixed_on_merge.py "${{ github.event.pull_request.number }}"

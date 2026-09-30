@@ -1,0 +1,217 @@
+{
+  "about": "Every committed artefact a join must RE-DERIVE on the joined tree rather than take from either side (doc/claude/JOINING.md § The script). `paths` are whole files that are nothing but the artefact: a conflict in one is resolved to either side and re-derived, and a commit touching only such files is skipped by `scripts/join.py`. `inputs` are the paths whose change makes re-deriving necessary. `pin` names a file of numbers that must not GROW: a rise is accepted only up to the growth each source pinned on its own tree. `regen` runs in order; `check` must pass afterwards. `union_files` are append-only (a conflict keeps both sides); `shrink_files` are ratchets that only lose lines (a conflict keeps the lines BOTH sides still carry). `row_files` are hand-written docs holding measured `| **N** |` rows: a commit that changes only such rows there is not missing for that file.",
+  "artefacts": [
+    {
+      "name": "optional-ratchet",
+      "paths": [
+        "index/optional_ratchet.json"
+      ],
+      "inputs": [
+        "src/"
+      ],
+      "check": "python3 scripts/ir_walker_audit.py optional --check-ratchet",
+      "regen": [
+        "python3 scripts/ir_walker_audit.py optional --write-ratchet"
+      ],
+      "pin": {
+        "file": "index/optional_ratchet.json",
+        "format": "json"
+      },
+      "on_growth": "optional-sites",
+      "cure": "peel the new shape tests with `.base()` (@FR-N-Shape) — a growth is a code change, never a re-pin"
+    },
+    {
+      "name": "quality-rows",
+      "paths": [],
+      "inputs": [
+        "src/",
+        "doc/claude/QUALITY.md"
+      ],
+      "check": "python3 scripts/join.py quality-rows --check",
+      "regen": [
+        "python3 scripts/join.py quality-rows --write"
+      ]
+    },
+    {
+      "name": "frontend-allocations",
+      "paths": [
+        "bench/frontend/allocations.tsv"
+      ],
+      "inputs": [
+        "src/",
+        "default/",
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "check": "cargo test --release -q --test frontend_counts",
+      "regen": [
+        "LOFT_FRONTEND_REPIN=1 cargo test --release -q --test frontend_counts",
+        "LOFT_FRONTEND_REPIN=1 cargo test -q --test frontend_counts"
+      ],
+      "pin": {
+        "file": "bench/frontend/allocations.tsv",
+        "format": "tsv"
+      },
+      "cure": "the same delta on every corpus size is the COLD stdlib parse (a new default/ declaration): accept it with --accept frontend-allocations and name the declarations in the commit; a delta that grows with the corpus is the front end: find the new allocation (tests/frontend_counts.rs says how). PERFORMANCE.md § Front-end speed"
+    },
+    {
+      "name": "rewrite-census",
+      "paths": [
+        "bench/portal/rewrite_census.tsv"
+      ],
+      "inputs": [
+        "src/",
+        "default/",
+        "bench/"
+      ],
+      "check": "make -s rewrite-census",
+      "check_first": true,
+      "regen": [
+        "make -s rewrite-census-bless"
+      ],
+      "cure": "a DROP is a rewrite that stopped firing on the union: find the condition that tightened, or bless it by hand as a deliberate decline"
+    },
+    {
+      "name": "target-surface",
+      "paths": [
+        "index/target_surface.json"
+      ],
+      "inputs": [
+        "src/",
+        "default/"
+      ],
+      "check": "make -s surface-check",
+      "regen": [
+        "cargo build --release -q --target wasm32-unknown-unknown --lib --no-default-features --features random",
+        "make -s surface-gen"
+      ]
+    },
+    {
+      "name": "browser-bundle",
+      "paths": [
+        "doc/pkg/",
+        "doc/pkg-src.stamp"
+      ],
+      "inputs": [
+        "src/",
+        "default/",
+        "Cargo.toml",
+        "Cargo.lock"
+      ],
+      "check": null,
+      "regen": [
+        "make -s wasm"
+      ]
+    },
+    {
+      "name": "features-shadow",
+      "paths": [
+        "doc/features/",
+        "tests/docs/features/"
+      ],
+      "inputs": [
+        "index/features.json",
+        "scripts/"
+      ],
+      "check": "make -s features-check",
+      "regen": [
+        "make -s features-gen"
+      ]
+    },
+    {
+      "name": "docs-lint-baseline",
+      "paths": [
+        "doc/claude/releases/docs-lint.baseline"
+      ],
+      "inputs": [
+        "doc/",
+        "CLAUDE.md",
+        ".claude/"
+      ],
+      "check": null,
+      "regen": [],
+      "note": "a REPORT baseline re-pinned at release, never on a join: its committed counts lag every branch, and the PR's own `make docs-lint-gate` judges what a branch adds.  Registered so a conflict in it resolves to either side."
+    },
+    {
+      "name": "ignored-tests-baseline",
+      "paths": [
+        "tests/ignored_tests.baseline"
+      ],
+      "inputs": [
+        "tests/",
+        "src/"
+      ],
+      "check": "cargo test --release -q --test doc_hygiene ignored_tests_baseline_is_current",
+      "regen": [
+        "python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline"
+      ]
+    },
+    {
+      "name": "ownership-drop-gate",
+      "paths": [
+        "tests/ownership_drop_gate.baseline",
+        "tests/ownership_drop_gate.native.baseline"
+      ],
+      "inputs": [
+        "src/",
+        "default/",
+        "tests/ownership_drop_gate.rs"
+      ],
+      "check": "cargo test --release -q --test ownership_drop_gate -- --include-ignored",
+      "check_first": true,
+      "regen": [
+        "LOFT_BLESS_DROP_GATE=1 cargo test --release -q --test ownership_drop_gate -- --include-ignored"
+      ],
+      "cure": "a NEW line is a cell that releases wrongly on the union: fix it; only GONE lines (fixes) may be blessed, by hand"
+    }
+  ],
+  "union_files": [
+    "CHANGELOG.md",
+    "doc/claude/CHANGELOG_TECHNICAL.md"
+  ],
+  "verify": [
+    [
+      "pre-flight",
+      "scripts/gate_preflight.sh"
+    ],
+    [
+      "optional ratchet",
+      "python3 scripts/ir_walker_audit.py optional --check-ratchet"
+    ],
+    [
+      "cargo check",
+      "cargo check --all-targets -q"
+    ],
+    [
+      "clippy",
+      "cargo clippy -q --tests -- -D warnings"
+    ],
+    [
+      "clippy all-features",
+      "cargo clippy -q --all-targets --all-features -- -D warnings"
+    ],
+    [
+      "o_proxy",
+      "python3 scripts/o_proxy_check.py"
+    ],
+    [
+      "rule tags",
+      "python3 scripts/rule_tags.py check"
+    ],
+    [
+      "receipts",
+      "python3 scripts/falsify-review.py --check"
+    ],
+    [
+      "hygiene",
+      "cargo nextest run --release -E 'binary(doc_hygiene) + binary(frontend_counts)'"
+    ]
+  ],
+  "shrink_files": [
+    "tests/falsified.baseline",
+    "tests/falsified_docs.baseline"
+  ],
+  "row_files": [
+    "doc/claude/QUALITY.md"
+  ]
+}

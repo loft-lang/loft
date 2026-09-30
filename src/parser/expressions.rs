@@ -1824,6 +1824,26 @@ use a separate collection or add after the loop"
         {
             return VecBind::NotABind;
         }
+        self.collection_bind_source(code, var_nr)
+    }
+
+    /// Is this keyed bind's source a PROJECTION that `@FR-B-View-Depth` / `@FR-B-View-Base`
+    /// make a view — a field read or a tuple member that `collection_bind_source` does not
+    /// answer as a copy?  Only projections are asked: a call or a branch is a value of its
+    /// own, whatever the classifier says about it.
+    fn keyed_projection_views(&self, code: &Value, var_nr: u16) -> bool {
+        let projection = matches!(code.unspan(), Value::TupleGet(_, _))
+            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpGetField"));
+        projection && matches!(self.collection_bind_source(code, var_nr), VecBind::NotABind)
+    }
+
+    /// `@FR-B-Copy` vs `@FR-B-View` / `@FR-B-View-Base` / `@FR-B-View-Depth` for a bind of a
+    /// whole COLLECTION, asked of its source alone — one home for the vector and the keyed
+    /// kinds, whose answers are the same rule.  A whole variable (a capture, a constant read)
+    /// and a one-level projection off an OWNED record or tuple copy; every other projection —
+    /// a nested field read, a read through an element, a read off a borrowed base — is a view
+    /// (`NotABind`), as is every shape that is not a projection at all.
+    fn collection_bind_source(&self, code: &Value, var_nr: u16) -> VecBind {
         // The bare-Var test is deliberately NOT unspanned (a Span-wrapped RHS
         // lowers elsewhere); the field-read and self-assign tests are.
         //
@@ -1855,9 +1875,9 @@ use a separate collection or add after the loop"
         let owned_field_read = if let Value::Call(d, args) = code.unspan()
             && *d == self.data.def_nr("OpGetField")
             && let Some(Value::Var(bv)) = args.first().map(Value::unspan)
-            && matches!(self.vars.tp(*bv), Type::Reference(_, _))
+            && matches!(self.vars.tp(*bv).base(), Type::Reference(_, _))
         {
-            self.vars.tp(*bv).depend().is_empty()
+            self.vars.tp(*bv).base().depend().is_empty()
         } else {
             false
         };
@@ -1869,7 +1889,7 @@ use a separate collection or add after the loop"
         // on the store it was copied into), never a borrow of another variable — a `&` link
         // is a `RefVar`, not a `Tuple` — so ownership here is "a local that is not a parameter".
         let owned_tuple_member = matches!(code.unspan(), Value::TupleGet(bv, _)
-            if matches!(self.vars.tp(*bv), Type::Tuple(_)) && !self.vars.is_argument(*bv));
+            if matches!(self.vars.tp(*bv).base(), Type::Tuple(_)) && !self.vars.is_argument(*bv));
         if is_bare_var {
             if matches!(code.unspan(), Value::Var(rhs) if *rhs == var_nr) {
                 return VecBind::SelfAssign;
@@ -2439,7 +2459,10 @@ use a separate collection or add after the loop"
         if op != "=" || var_nr != u16::MAX || self.first_pass {
             return false;
         }
-        if f_type.is_unknown() || s_type.is_unknown() {
+        // A `never` target has no value to store into: it is what an element of an
+        // unresolved call's result reads as (`v = missing(); v[0] = 2.5`), whose own error
+        // is already reported, and `as never` is no cure.
+        if f_type.is_unknown() || s_type.is_unknown() || matches!(f_type.base(), Type::Never) {
             return false;
         }
         // A bare `null` is exempt because the targets that legitimately take one reach
@@ -6070,9 +6093,19 @@ use a separate collection or add after the loop"
                     code.unspan(),
                     Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
                 );
+                // A field that may record absence takes the whole-value REPLACE for every
+                // copy below, temp fills included: an append cannot make its target absent,
+                // so `o.v = o2.v` with `o2.v` null read back `[]`.  The rule the local
+                // destination follows (`lower_vec_copy_bind`) and the keyed field's
+                // `OpReplaceKeyed` carries; a dense field keeps the append and its IR.
+                let whole = if declared_nullable {
+                    "OpReplaceVector"
+                } else {
+                    "OpAppendVector"
+                };
                 if owned_var_rhs {
                     let mut ops = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), code.clone(), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), code.clone(), rec_tp]);
                     ops.push(append);
                     *code = Value::Insert(ops);
                 } else if matches!(code.unspan(), Value::Var(_)) {
@@ -6084,19 +6117,20 @@ use a separate collection or add after the loop"
                     let dep_free_tp = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
                     let tmp = self.vars.unique("_p154_rhs", &dep_free_tp, &mut self.lexer);
                     let init_tmp = v_set(tmp, Value::Null);
-                    let fill_tmp = self.cl(
-                        "OpAppendVector",
-                        &[Value::Var(tmp), rhs_saved, rec_tp.clone()],
-                    );
+                    let fill_tmp = self.cl(whole, &[Value::Var(tmp), rhs_saved, rec_tp.clone()]);
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), Value::Var(tmp), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
                     let mut ops = vec![init_tmp, fill_tmp];
                     ops.extend(clear);
                     ops.push(append);
                     *code = Value::Insert(ops);
-                } else if let Some(ops) =
-                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+                } else if !(declared_nullable && matches!(s_type, Type::Optional(_)))
+                    && let Some(ops) = self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
                 {
+                    // Not for a `?` field fed by a `?` call: the field is handed over as the
+                    // callee's return BUFFER, and a `return null` answers the null VALUE and
+                    // leaves the buffer untouched, so the field read back `[]`.  The general
+                    // arm below binds the result and replaces, which sees the null.
                     *code = Value::Insert(ops);
                 } else {
                     let rhs_saved = code.clone();
@@ -6129,7 +6163,7 @@ use a separate collection or add after the loop"
                     }
                     let set_tmp = v_set(tmp, rhs_saved);
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), Value::Var(tmp), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
                     let mut ops = vec![set_tmp];
                     ops.extend(clear);
                     ops.push(append);
@@ -6398,6 +6432,18 @@ use a separate collection or add after the loop"
             }
             return Type::Void;
         }
+        // @FR-H-Materialise — the view the branch below declines to copy is recorded, so the
+        // scope pass opens it in the disturbance walk and copies it with `OpReplaceKeyed` where
+        // its container is reassigned, grown or shrunk while it is live.  Left unrecorded, the
+        // same programs panicked (`hash`, `sorted`, `index`) or read garbage (`trie`).
+        if keyed_kt.is_some()
+            && crate::parser::vectors::is_keyed(&s_type)
+            && !matches!(code, Value::Insert(_) | Value::Null)
+            && !amp_collection_bind
+            && self.keyed_projection_views(code, var_nr)
+        {
+            self.vars.keyed_views.insert(var_nr);
+        }
         if let Some(kt) = keyed_kt
             && crate::parser::vectors::is_keyed(&s_type)
             && !matches!(code, Value::Insert(_) | Value::Null)
@@ -6406,6 +6452,12 @@ use a separate collection or add after the loop"
             // the source survives (it is this branch's `make_independent` that strips it),
             // which is exactly the non-owning shape the vector twin already has.
             && !amp_collection_bind
+            // @FR-B-View-Depth / @FR-B-View-Base — a PROJECTION the vector twin reads as a view
+            // (a nested field read, a read through an element, a read off a borrowed base)
+            // is a view for the keyed kinds too, and takes the same handle share.  Deep-copied
+            // here, `g = n.inn.h; n.inn.h += [r]` left `g` one record short (loft#1759).  A
+            // call, a branch and a whole variable are not projections and keep the copy.
+            && !self.keyed_projection_views(code, var_nr)
         {
             // `s = s` self-assign — emit nothing rather than clear+recopy
             // off the same storage.
@@ -7554,8 +7606,37 @@ use a separate collection or add after the loop"
                         .collect()
                 });
                 let host_field_pos = (first_pos as u16).saturating_sub(offsets[0]);
+                let rhs_pos = self.lexer.pos().clone();
                 let mut rhs = Value::Null;
-                let _rhs_type = self.expression(&mut rhs);
+                let rhs_type = self.expression(&mut rhs);
+                // The store meets the field's type like every other store does (`@FR-C-Tuple`
+                // over `@FR-C-Num`, and the width rules): the value was written member by
+                // member with no conversion and no check, so `w.p = (3, 4)` into a
+                // `(float, integer)` field stored the integer's BITS, `(300, 4)` into a
+                // `(u8, integer)` one kept 44, and a `text` member was written as a float.
+                // A KEYED member given a vector is not a conversion: `emit_tuple_set_ops` fills
+                // it by key (loft#1675), so that member is checked at its own type here.
+                let want = match rhs_type.base() {
+                    Type::Tuple(src) if src.len() == elems_vec.len() => Type::Tuple(
+                        elems_vec
+                            .iter()
+                            .zip(src.iter())
+                            .map(|(d, s)| {
+                                if crate::parser::vectors::is_keyed(d)
+                                    && matches!(s.base(), Type::Vector(_, _))
+                                {
+                                    s.clone()
+                                } else {
+                                    d.clone()
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => f_type.clone(),
+                };
+                if !rhs_type.is_unknown() && !self.convert(&mut rhs, &rhs_type, &want) {
+                    self.validate_convert("assignment", &rhs_type, &want, &rhs_pos);
+                }
                 let ops = self.emit_tuple_set_ops(&host_ref, host_field_pos, &elems_vec, rhs);
                 *code = crate::data::v_block(ops, Type::Void, "tuple_field_set_via_assign");
                 return Type::Void;
@@ -9613,7 +9694,7 @@ use a separate collection or add after the loop"
                 // (it is pass-2-only, and answers an empty list for a case that must
                 // keep the caller's backing — an argument, a keyed local — where the
                 // view is already not the buffer's).
-                let mut ops = self.vector_db(elem, v_nr);
+                let mut ops = self.vector_db(&elm_tp, v_nr);
                 if ops.is_empty() {
                     return Value::Set(v_nr, Box::new(view));
                 }
@@ -10193,6 +10274,8 @@ use a separate collection or add after the loop"
         // `vector<τ>` to its inner `τ` and emits a scalar `OpSetInt4`, storing the element's
         // 12-byte vector DbRef as a 4-byte int — SIGSEGV on interpret, `E0308` on native.
         // `OpCopyRecord` recurses through nesting.  Scalar / struct elements keep set_field.
+        // @FR-N-Shape: asked of the peeled element, so `vector<vector<T>?>` slices copy too
+        // — an absent element stays absent through the copy (loft#1739).
         if matches!(elm_tp.base(), Type::Vector(_, _)) {
             ops.push(self.cl("OpCopyRecord", &[src, Value::Var(elm_var), element_id]));
         } else if self.is_type_var_element(&elm_tp) {

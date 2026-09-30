@@ -144,6 +144,8 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// The `??` hoists that hold a whole LOCAL rather than a projection ([`whole_value_hoists_in`]).
+    whole_value_hoists: HashSet<u16>,
     /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.
@@ -643,13 +645,16 @@ fn mirrored_binding(b: &Block) -> Option<u16> {
     }
 }
 
-/// Is `v` a `match`/`is` payload binding of a KEYED collection field — a view of its subject
-/// (`(B-View)`, the parser marks it never-free as one) that the materialise can copy with
-/// `OpReplaceKeyed`?  Asked of the payload binding only: a keyed PROJECTION bound off an owned
-/// base already copies at the bind (`(B-View-Base)`), and widening the view walk's type list
-/// alone was measured unsound (the naming and the copy have to land together).
+/// Is `v` a VIEW of a keyed collection that the materialise can copy with `OpReplaceKeyed`?
+/// Two kinds: a `match`/`is` payload binding of a keyed field (`(B-View)`, the parser marks
+/// it never-free as one), and a plain bind of a keyed projection the parser recorded as a
+/// view (`Function::keyed_views`, `(B-View-Depth)`, loft#1759).  A one-level projection off an
+/// owned base copies at the bind (`(B-Copy)`) and is neither.  Widening the view walk's type
+/// list alone was measured unsound — the naming and the copy have to land together — which
+/// is why both kinds are admitted through this one test, read by the walk and the copy alike.
 fn keyed_payload_view(function: &Function, v: u16) -> bool {
-    crate::parser::vectors::is_keyed(function.tp(v)) && function.is_overwritten_view(v)
+    crate::parser::vectors::is_keyed(function.tp(v))
+        && (function.is_overwritten_view(v) || function.keyed_views.contains(&v))
 }
 
 /// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
@@ -2243,7 +2248,14 @@ impl ViewWalk<'_> {
                 ) || is_place_link(self.function, *v)
                     || self.function.text_payload_views.contains(v)
                     || self.function.group_write_views.contains_key(v)
-                    || keyed_payload_view(self.function, *v))
+                    || keyed_payload_view(self.function, *v)
+                    // A keyed `&` link (`a = &o.h`) is a view on the same terms as the vector
+                    // one, and was never opened here, so reassigning `o` left it following the
+                    // NEW value where `(B-Ref-Reshape)` refuses the program (loft#1759).  The
+                    // refusal reads `is_amp_container_link` too; the materialise does not copy
+                    // it — it is not a `keyed_views` binding.
+                    || (crate::parser::vectors::is_keyed(self.function.tp(*v))
+                        && self.function.is_amp_container_link(*v)))
             {
                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
                 // local inside a nested block gives a view that outlives the block, and
@@ -3253,14 +3265,20 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
 /// One home for the two sites that ask it about the same copy: the bind itself, and a
 /// reassignment written out per arm, which strips its arm tails before the first arm reads the
 /// binding's type.
-fn var_copy_owns(function: &Function, v: u16, src: u16) -> bool {
+///
+/// Which record pairs copy is `Data::copies_as`'s question, as at every other site that decides
+/// the copy: the same def, a variant widened into its enum, or the narrowing a variant cast
+/// proves.  Asked as `d_nr == src_d`, `bl = if q is Circle { q as Circle } else { … }`
+/// re-bound over an owned `bl` kept the join's borrow of `q`, and the interpreter's re-bind
+/// then aliased it where native copied.
+fn var_copy_owns(function: &Function, data: &Data, v: u16, src: u16) -> bool {
     let (Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _)) = function.tp(v).base() else {
         return false;
     };
     let (Type::Reference(src_d, _) | Type::Enum(src_d, true, _)) = function.tp(src).base() else {
         return false;
     };
-    d_nr == src_d && !function.is_captured(v) && !function.is_skip_free(v)
+    data.copies_as(*d_nr, *src_d) && !function.is_captured(v) && !function.is_skip_free(v)
 }
 
 /// The `(destination, source)` pairs of whole-value copies written inside a branch ARM.
@@ -6054,7 +6072,7 @@ fn rewrite_written_out(
                 let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, data, true);
                 if stmt.is_some() {
                     for src in branch_tail_vars(val) {
-                        if var_copy_owns(vars, *t, src) {
+                        if var_copy_owns(vars, data, *t, src) {
                             vars.make_independent(*t, src);
                         }
                     }
@@ -6282,6 +6300,7 @@ fn run_scan_phase(
         lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
         null_led_first: null_led_first_binds_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
@@ -6657,6 +6676,7 @@ fn run_scan_phase(
             .collect(),
     );
     lazy_buffer_mints(&mut code, &mut function, data);
+    function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]
@@ -7308,6 +7328,71 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .filter(|&(_, n)| n >= 2)
         .map(|(v, _)| v)
         .collect()
+}
+
+/// The `??` hoists (`__ncc_N`) whose every bind is a whole LOCAL or a null — never a projection,
+/// a call or a construction.  `@FR-B-Copy` / `@FR-B-View`.
+///
+/// A subject that is not a variable is hoisted into a temp that VIEWS what the subject
+/// evaluated to, and whether the binding of the `??` copies it depends on what that was.  A
+/// projection (`v[i] ?? d`, `o.inner ?? d`) is a place, and the binding views it as its plain
+/// spelling does.  A whole local reached through a cast or a branch (`(e as B?) ?? d`,
+/// `(if c { s } else { null }) ?? d`) is a VALUE, and the plain bind of a value copies — so
+/// the hoist has to be read as the local it holds, or the binding aliases it (loft#1752).
+///
+/// Read off the hoist's own `Set`s, so both the parser's single bind (`__ncc = if c { s }
+/// else { null }`) and the per-arm binds the sink writes out of it are seen.  A local counts
+/// only when the author wrote it: a compiler temp is a slot inside something else.
+fn whole_value_hoists_in(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
+    // `Some(true)`: a whole local on some path; `Some(false)`: only nulls; `None`: anything else.
+    fn tails(v: &Value, function: &Function, data: &Data) -> Option<bool> {
+        match v.unspan() {
+            Value::Var(x) => (!function.is_compiler_generated(*x)).then_some(true),
+            Value::Null => Some(false),
+            Value::Call(d, a)
+                if a.is_empty()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpNullRefSentinel" | "OpConvRefFromNull"
+                    ) =>
+            {
+                Some(false)
+            }
+            Value::If(_, t, f) => {
+                let (t, f) = (tails(t, function, data)?, tails(f, function, data)?);
+                Some(t || f)
+            }
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
+                tails(bl.operators.last()?, function, data)
+            }
+            _ => None,
+        }
+    }
+    // The hoists with a whole local on some path, then minus any with a bind that is neither a
+    // local nor null.  In this order the set stays unallocated for the (usual) function whose
+    // hoists hold no whole local, which is every hoist in the stdlib (`frontend_counts`).
+    let mut whole: HashSet<u16> = HashSet::default();
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && is_discharge_hoist(function, *v)
+            && tails(rhs, function, data) == Some(true)
+        {
+            whole.insert(*v);
+        }
+    });
+    if whole.is_empty() {
+        return whole;
+    }
+    // A `None` bind disqualifies; a bind that is only null neither makes nor breaks it.
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && whole.contains(v)
+            && tails(rhs, function, data).is_none()
+        {
+            whole.remove(v);
+        }
+    });
+    whole
 }
 
 /// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
@@ -9332,6 +9417,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
         }
+        let _census_body = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
         let free_ref_nr = data.def_nr("OpFreeRef");
         let mut orig_code = data.definitions[d_nr as usize].code.clone();
         let mut orig_vars = Function::copy(&data.def(d_nr).variables);
@@ -9455,6 +9541,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // live: decided here, after the scan has settled the function's frees and before the
         // slot intervals are computed off the final IR.  One home for both backends.
         crate::place_result::rewrite(data, d_nr);
+        // `(R-ExitVector)` — a local vector returned inside the exit literal is built in the
+        // return buffer's store: decided on the same IR, after the placements it may host.
+        crate::exit_vector::rewrite(data, d_nr);
         // `@FR-R-Rebind` — `x = f(x, …)` hands the callee x's own record as its buffer:
         // decided here for the same reason, on the same settled IR.
         crate::rebind_place::rewrite(data, database, d_nr);
@@ -10848,7 +10937,7 @@ fn captures_built_in(
 ///
 /// Two facts, one walk, because both are read off the same `OpSetDbRef(___clos_N, …, capture)`
 /// point and a second walk would be a copy of an ordering that has drifted before.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct CaptureBuilds {
     /// The backing local a capture named AT THE BUILD — the store the record actually holds.
     /// A capture that owns its store outright (a struct) has no backing root and is absent.
@@ -12397,7 +12486,7 @@ impl Scopes<'_> {
                 self.per_path_pairs.insert((v, src));
                 if stopped == src {
                     self.mint_handoff_flag(function, src);
-                    if var_copy_owns(function, v, src) {
+                    if var_copy_owns(function, data, v, src) {
                         function.make_independent(v, src);
                     }
                 } else {
@@ -13533,7 +13622,7 @@ impl Scopes<'_> {
         // typed it with once the branch was written out per arm, and the per-arm copies
         // then read as borrows: an alias on both backends, where the dense twin copied.
         if let Value::Var(src) = unspanned_value
-            && var_copy_owns(function, v, *src)
+            && var_copy_owns(function, data, v, *src)
         {
             // @PLN130 F1 — this strip is LOAD-BEARING FOR NATIVE, which is why the obvious
             // narrowing does not work.  Skipping it when both sides are borrows fixes the
@@ -13558,8 +13647,20 @@ impl Scopes<'_> {
         // the temp and the temp frees by store identity against its one base (or, for a
         // record, owns unconditionally through `OpBindOrCopy`).  `(O-Complete)` asks for the
         // fact per binding, per path; this gives each path a binding.
+        // A value BLOCK that ends in a local record (`t = { s }`) hands the binding that local as an
+        // arm would, and `(B-Copy)` copies it the same way: without it the block spelling
+        // aliased what the bare `t = s` copies (loft#1752).
         let rewritten_arms;
-        let value: &Value = if Self::is_value_branch(value)
+        // A RECORD only: a collection tail is lifted through `OpReplaceVector`, which reads an
+        // absent vector as empty (`[for z in v { z }]` over a `vector<integer>?` element).
+        let local_tail = if let Value::Block(bl) = value.unspan()
+            && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(_)))
+        {
+            bl.result.base().heap_def_nr().is_some()
+        } else {
+            false
+        };
+        let value: &Value = if (Self::is_value_branch(value) || local_tail)
             && self.arm_tails_need_binding(value, v, data, function)
         {
             let mut rw = value.clone();
@@ -20159,7 +20260,12 @@ impl Scopes<'_> {
                 // Gated on the walk's answer and not on the shape, for the reason the
                 // projection arm states: a discharge whose container is NEVER disturbed must
                 // keep aliasing, and copying it would lose a write that lands today.
-                if function.is_compiler_generated(*x) {
+                //
+                // A hoist that holds a WHOLE local is the other exception, and it needs no walk:
+                // `(e as B?) ?? d`, `(if c { s } else { null }) ?? d` hand the binding the local
+                // itself, which `(B-Copy)` copies wherever it is spelled — the temp only saved a
+                // second evaluation of the subject (loft#1752, `whole_value_hoists_in`).
+                if function.is_compiler_generated(*x) && !self.whole_value_hoists.contains(x) {
                     if !(is_discharge_hoist(function, *x)
                         && self.views_to_materialise.contains_key(&bound))
                     {
@@ -20184,8 +20290,17 @@ impl Scopes<'_> {
                 // this question, so a `c = Box{…}; c = v[1] ?? Box{…}` differed from its
                 // inline twin only in which of the two arms the projection was spelled in
                 // (loft#1401).
+                // A whole-value hoist bound into a binding the parser typed as a VIEW is the
+                // same kind of fact: no runtime join bind copies into a borrow, so without the
+                // lift `t = S{…}; t = (if c { s } else { null }) ?? d` aliased `s` (loft#1752).
+                // An owner-typed binding keeps the runtime copy it already gets.
+                // @FR-O-Proxy asks copy — chooses whether this arm copies; authorises no free.
+                let whole_into_view = (self.whole_value_hoists.contains(x)
+                    || !function.is_compiler_generated(*x))
+                    && !function.tp(bound).depend().is_empty();
                 if self.multi_assigned.contains(&bound)
                     && !self.views_to_materialise.contains_key(&bound)
+                    && !whole_into_view
                 {
                     return None;
                 }
@@ -23471,7 +23586,6 @@ fn returned_var_null_unified(expr: &Value, null_nr: u32) -> u16 {
 /// delivers looks like a local nobody frees — which is exactly what it is NOT, because
 /// returning it transfers it to the caller.  `check_ref_leaks` asserted on that shape as a
 /// leak (a generic instantiated at a STRUCT, where the return is a heap ref).
-#[cfg(debug_assertions)]
 fn collect_all_return_vars(expr: &Value, data: &Data, out: &mut Vec<u16>) {
     if let Value::Return(inner) = expr.unspan() {
         collect_return_sources(inner, data, out);
@@ -24040,7 +24154,6 @@ pub(crate) fn return_has_null_arm(expr: &Value, null_sentinel_nr: u32) -> bool {
 
 /// Recursively collect every variable freed by `OpFreeRef` in `ir`.
 /// Used by `check_ref_leaks` to verify no Reference variable is leaked.
-#[cfg(debug_assertions)]
 fn collect_freed_vars(ir: &Value, free_ops: &[u32], result: &mut HashSet<u16>) {
     ir.walk(&mut |n| {
         if let Value::Call(d_nr, args) = n
@@ -24067,7 +24180,6 @@ fn collect_freed_vars(ir: &Value, free_ops: &[u32], result: &mut HashSet<u16>) {
 /// separately, so `v` is already in `freed` and never reaches the leak assert).
 /// It credits `v` only when `lhs` is in `freed`, so it cannot mask a genuine
 /// leak where the adopting LHS itself is never freed.
-#[cfg(debug_assertions)]
 fn collect_adopted_block_results(ir: &Value, freed: &HashSet<u16>, result: &mut HashSet<u16>) {
     ir.walk(&mut |n| {
         if let Value::Set(lhs, rhs) = n
@@ -24592,6 +24704,243 @@ mod text_return_path_tests {
     }
 }
 
+/// What a function's lowered body says about who releases each local's store — the facts a
+/// STATIC leak mirror needs before it may call a local with no frame free a leak.
+///
+/// One home for two mirrors of `get_free_vars`: [`check_ref_leaks`] (the debug-build assert)
+/// and `ownership_cfg`'s leak scan (`LOFT_OWN_ORACLE=check-leak`).  Each suppression leg the
+/// emitter has grown had to be taught to each mirror separately, and the scan, holding only the
+/// first, reported the other legs' stores as leaks: the literal buffer behind an escaping
+/// nullable capture, a closure written out through a `&fn` link, a `_read_N` moved into its
+/// destination.
+pub(crate) struct FrameReleases {
+    pub(crate) freed: HashSet<u16>,
+    pub(crate) adopted: HashSet<u16>,
+    pub(crate) ret_deps: HashSet<u16>,
+    pub(crate) direct_ret_var: u16,
+    pub(crate) built_with: CaptureBuilds,
+    pub(crate) link_delivered: Vec<u16>,
+    pub(crate) fn_def_nr: u32,
+    /// `(R-Place)` buffers whose release their adopting local carries (`place_result`).
+    pub(crate) placed: HashSet<u16>,
+}
+
+impl FrameReleases {
+    pub(crate) fn of(
+        ir: &Value,
+        function: &Function,
+        data: &Data,
+        fn_name: &str,
+        ret_type: &Type,
+    ) -> Self {
+        // Every op that FREES its first argument counts as that var's free
+        // site: the plain scope-exit free, the @P317 tag-checked free, and
+        // the witness-pair conditional free (`OpFreeRefIfDistinct` — how a
+        // ref-returning call's work ref is released when it doesn't alias
+        // the assigned var; the armed-corpus sweep's ~130 "no OpFreeRef"
+        // false positives were all this shape).
+        // ⚠ `OpFreeRefOrHandUp` belongs here for the same reason the other three do, and its
+        // absence is what made this assert fire on `n___lambda_3`'s `__ref_p2_1` — a store that
+        // IS released, by an op this list had never heard of.  loft#1186 added it (D-clo-13) as
+        // `OpFreeRefIfDistinct` with an owner on the not-distinct leg, on the EMIT side only:
+        // three files emit it and nineteen name its sibling, so every matcher keyed on the op
+        // NAME went blind to the new spelling at once.  A free-op list is a claim about a
+        // NOTION — "this op releases its first argument" — and each new spelling of that notion
+        // has to arrive here too, or the assert reports a leak the compiler does not have.
+        let sets = data.op_sets();
+        let free_ops: Vec<u32> = sets
+            .unconditional_ref_frees
+            .iter()
+            .chain(sets.conditional_ref_frees.iter())
+            .copied()
+            .collect();
+        let mut freed: HashSet<u16> = HashSet::default();
+        collect_freed_vars(ir, &free_ops, &mut freed);
+
+        // A block-tail temp adopted into a freed LHS (`q = f#read as S`, whose
+        // `#reading file` surface temp `_read_N` moves its record into `q`) has no
+        // OpFreeRef of its own and must not — `q`'s free covers it.  Credit it so
+        // the leak assert below does not false-positive on the moved-from source.
+        let mut adopted: HashSet<u16> = HashSet::default();
+        collect_adopted_block_results(ir, &freed, &mut adopted);
+
+        // H2: `ret_type` deps are ATTRIBUTE indices — translate each to its
+        // frame var through the attribute name before pooling with the
+        // frame-space deps below (the old code inserted them raw, so an attr
+        // index colliding with an unrelated var number silently suppressed a
+        // leak report).
+        let fn_def_nr = data.def_nr(fn_name);
+        let mut ret_deps: HashSet<u16> = HashSet::default();
+        for raw in ret_type.depend() {
+            match crate::data::DepEntry::decode(raw) {
+                crate::data::DepEntry::Attr(a) => {
+                    let a_idx = a as usize;
+                    if fn_def_nr != u32::MAX && a_idx < data.def(fn_def_nr).attributes().len() {
+                        let av = function.var(&data.def(fn_def_nr).attributes()[a_idx].name);
+                        if av != u16::MAX {
+                            ret_deps.insert(av);
+                        }
+                    }
+                }
+                // H2 step 5: a tagged callee-frame note IS a frame var — pool
+                // it directly (the untagged value was silently dropped by the
+                // attr-range guard before, so a returned closure's work var
+                // could surface as a false leak report).
+                crate::data::DepEntry::CalleeFrame(w) => {
+                    ret_deps.insert(w);
+                }
+            }
+        }
+        // The directly-returned variable (e.g. the owned struct constructed by a function
+        // whose return type is Reference) passes ownership to the caller — no FreeRef is
+        // emitted for it and that is correct.  Exclude it so check_ref_leaks does not
+        // false-positive on `fn foo() -> S { S { ... } }`.
+        let direct_ret_var = returned_var_null_unified(ir, data.def_nr("OpNullRefSentinel"));
+        // Transitive: if the returned variable depends on another variable, that
+        // variable's store must also survive — include it in ret_deps.
+        if direct_ret_var != u16::MAX {
+            for d in function.tp(direct_ret_var).depend() {
+                ret_deps.insert(d);
+            }
+        }
+        // …and every variable an EARLY return hands back, which the tail-value helper above
+        // cannot see: `if a { return a?; } x` reports only `x`, so the guard arm's work var
+        // read as a local nobody freed.  Returning it IS the transfer, wherever the return sits.
+        let mut early_ret: Vec<u16> = Vec::new();
+        collect_all_return_vars(ir, data, &mut early_ret);
+        for v in early_ret {
+            ret_deps.insert(v);
+            for d in function.tp(v).depend() {
+                ret_deps.insert(d);
+            }
+        }
+
+        // The build facts the free EMITTER decided on, read off the body before the scope pass
+        // rewrote it (`Scopes::capture_build_backing`).  Recomputed from the lowered body they
+        // answer about a different program: loft#1715's null-capture rewrite moves the
+        // capture's backing, and the mirror then reported the buffer the emitter had rightly
+        // left to the closure record.  A body restored from the IR cache carries none, and
+        // the lowered body is the only fact left there.
+        let built_with = function
+            .capture_builds()
+            .cloned()
+            .unwrap_or_else(|| capture_build_backings(data, function, ir));
+        let link_delivered = link_written_closure_records(data, function, fn_def_nr);
+        let placed = placed_buffers_released_by_their_local(ir, data);
+        FrameReleases {
+            freed,
+            adopted,
+            ret_deps,
+            direct_ret_var,
+            built_with,
+            link_delivered,
+            fn_def_nr,
+            placed,
+        }
+    }
+
+    /// Does something other than a frame-exit free release `v`'s store, by a leg the free
+    /// emitter itself uses?  Each leg is a CALL to the emitter's own predicate, never a
+    /// restatement of it.
+    pub(crate) fn explains(&self, data: &Data, function: &Function, v: u16) -> bool {
+        // #323: a heap local a closure record ADOPTS is owned by that record (which
+        // stores its 12-byte DbRef; `free_named`'s cascade frees it when the record
+        // dies), so `get_free_vars` emits no frame-exit free for it and "unfreed" is not
+        // "leaked" here.
+        //
+        // The same call the emitter makes, not the rule written out again.  This mirror
+        // going out of step with it is exactly how loft#1308 stayed hidden, and a mirror
+        // that knows only the `is_captured` half calls the BACKING local of a collection
+        // capture a leak — which no closure captured by name.
+        if capture_adoption_owns_free(data, function, &self.built_with, v) {
+            return true;
+        }
+        // …and the BUFFER that minted such a store, which the emitter releases through the
+        // same cascade by a predicate of its own (loft#1446's leg in `get_free_vars`).  Asked
+        // of the buffer rather than of the capture's name, because a buffer names ONE store
+        // for its whole life while a capture local reassigned after the build names two — and
+        // asked here because a mirror that knows only `capture_adoption_owns_free` reports the
+        // literal buffer behind an escaping nullable capture as a leak (`n: C39? = C39 { … };
+        // fn() -> integer { … n.a … }`, whose `__ref_p2_N` the record's cascade frees).
+        if escaping_record_holds_buffer(data, function, self.fn_def_nr, &self.built_with, v) {
+            return true;
+        }
+        // …and a closure record this frame WRITES OUT through a `&fn(…)` link, which the
+        // emitter suppresses on the same reading (`link_delivered` in `get_free_vars`): a
+        // write through a link delivers exactly as a `return` does, so the caller holds the
+        // record and the frame owes no free.  The third suppression leg this mirror has had
+        // to learn, and the reason each is a CALL to the emitter's own predicate rather than
+        // a restatement of it.
+        // A record written out through a link is skipped whether or not `(L-CapKeep)` decides
+        // the delivery at run time: on a frame where the write always happens the emitter owes
+        // no free, and where it does not, the free it emits is guarded by store identity — a
+        // static mirror can assert neither.
+        if self.link_delivered.contains(&v) {
+            return true;
+        }
+        if v == self.direct_ret_var {
+            return true; // ownership transferred to caller
+        }
+        if self.adopted.contains(&v) {
+            return true; // moved into a freed LHS — that free covers this store
+        }
+        // `(R-Place)` — a call result built where it will live: the buffer and the local the
+        // call delivered into are ONE record, and `place_result` collapses their exit pair into
+        // `OpFreeRecordIn(local)` on a path that never stored it and nothing on a path whose
+        // `OpMoveRecord(local, …)` did.  The buffer carries no free of its own by design.
+        if self.placed.contains(&v) {
+            return true;
+        }
+        false
+    }
+}
+
+/// The `(R-Place)` buffers (`__ref_N = OpPlaceRecord(host, tp)`) whose adopting local — the
+/// one a call delivered into through that buffer — is released by `OpFreeRecordIn` or consumed
+/// by `OpMoveRecord` somewhere in the body.  A buffer whose local neither releases nor moves is
+/// left out, so a dropped release still reads as a leak.
+fn placed_buffers_released_by_their_local(ir: &Value, data: &Data) -> HashSet<u16> {
+    let place = data.def_nr("OpPlaceRecord");
+    let mut buffers: HashSet<u16> = HashSet::default();
+    ir.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && matches!(rhs.unspan(), Value::Call(d, _) if *d == place)
+        {
+            buffers.insert(*v);
+        }
+    });
+    if buffers.is_empty() {
+        return buffers;
+    }
+    let (free_in, mv) = (data.def_nr("OpFreeRecordIn"), data.def_nr("OpMoveRecord"));
+    let mut released: HashSet<u16> = HashSet::default();
+    let mut adopter: Vec<(u16, u16)> = Vec::new();
+    ir.walk(&mut |n| match n.unspan() {
+        Value::Call(d, args) if *d == free_in || *d == mv => {
+            if let Some(Value::Var(l)) = args.first().map(Value::unspan) {
+                released.insert(*l);
+            }
+        }
+        Value::Set(l, rhs) => {
+            if let Value::Call(_, args) = rhs.unspan() {
+                for a in args {
+                    if let Value::Var(b) = a.unspan()
+                        && buffers.contains(b)
+                    {
+                        adopter.push((*b, *l));
+                    }
+                }
+            }
+        }
+        _ => {}
+    });
+    adopter
+        .into_iter()
+        .filter(|(_, l)| released.contains(l))
+        .map(|(b, _)| b)
+        .collect()
+}
+
 /// After scope analysis, assert that every Reference variable that should be
 /// freed has a corresponding `OpFreeRef` somewhere in `ir`.
 ///
@@ -24613,90 +24962,10 @@ fn check_ref_leaks(
     ret_type: &Type,
     var_scope: &BTreeMap<u16, u16>,
 ) {
-    // Every op that FREES its first argument counts as that var's free
-    // site: the plain scope-exit free, the @P317 tag-checked free, and
-    // the witness-pair conditional free (`OpFreeRefIfDistinct` — how a
-    // ref-returning call's work ref is released when it doesn't alias
-    // the assigned var; the armed-corpus sweep's ~130 "no OpFreeRef"
-    // false positives were all this shape).
-    // ⚠ `OpFreeRefOrHandUp` belongs here for the same reason the other three do, and its
-    // absence is what made this assert fire on `n___lambda_3`'s `__ref_p2_1` — a store that
-    // IS released, by an op this list had never heard of.  loft#1186 added it (D-clo-13) as
-    // `OpFreeRefIfDistinct` with an owner on the not-distinct leg, on the EMIT side only:
-    // three files emit it and nineteen name its sibling, so every matcher keyed on the op
-    // NAME went blind to the new spelling at once.  A free-op list is a claim about a
-    // NOTION — "this op releases its first argument" — and each new spelling of that notion
-    // has to arrive here too, or the assert reports a leak the compiler does not have.
-    let sets = data.op_sets();
-    let free_ops: Vec<u32> = sets
-        .unconditional_ref_frees
-        .iter()
-        .chain(sets.conditional_ref_frees.iter())
-        .copied()
-        .collect();
-    let mut freed: HashSet<u16> = HashSet::default();
-    collect_freed_vars(ir, &free_ops, &mut freed);
-
-    // A block-tail temp adopted into a freed LHS (`q = f#read as S`, whose
-    // `#reading file` surface temp `_read_N` moves its record into `q`) has no
-    // OpFreeRef of its own and must not — `q`'s free covers it.  Credit it so
-    // the leak assert below does not false-positive on the moved-from source.
-    let mut adopted: HashSet<u16> = HashSet::default();
-    collect_adopted_block_results(ir, &freed, &mut adopted);
-
-    // H2: `ret_type` deps are ATTRIBUTE indices — translate each to its
-    // frame var through the attribute name before pooling with the
-    // frame-space deps below (the old code inserted them raw, so an attr
-    // index colliding with an unrelated var number silently suppressed a
-    // leak report).
-    let fn_def_nr = data.def_nr(fn_name);
-    let mut ret_deps: HashSet<u16> = HashSet::default();
-    for raw in ret_type.depend() {
-        match crate::data::DepEntry::decode(raw) {
-            crate::data::DepEntry::Attr(a) => {
-                let a_idx = a as usize;
-                if fn_def_nr != u32::MAX && a_idx < data.def(fn_def_nr).attributes().len() {
-                    let av = function.var(&data.def(fn_def_nr).attributes()[a_idx].name);
-                    if av != u16::MAX {
-                        ret_deps.insert(av);
-                    }
-                }
-            }
-            // H2 step 5: a tagged callee-frame note IS a frame var — pool
-            // it directly (the untagged value was silently dropped by the
-            // attr-range guard before, so a returned closure's work var
-            // could surface as a false leak report).
-            crate::data::DepEntry::CalleeFrame(w) => {
-                ret_deps.insert(w);
-            }
-        }
-    }
-    // The directly-returned variable (e.g. the owned struct constructed by a function
-    // whose return type is Reference) passes ownership to the caller — no FreeRef is
-    // emitted for it and that is correct.  Exclude it so check_ref_leaks does not
-    // false-positive on `fn foo() -> S { S { ... } }`.
-    let direct_ret_var = returned_var_null_unified(ir, data.def_nr("OpNullRefSentinel"));
-    // Transitive: if the returned variable depends on another variable, that
-    // variable's store must also survive — include it in ret_deps.
-    if direct_ret_var != u16::MAX {
-        for d in function.tp(direct_ret_var).depend() {
-            ret_deps.insert(d);
-        }
-    }
-    // …and every variable an EARLY return hands back, which the tail-value helper above
-    // cannot see: `if a { return a?; } x` reports only `x`, so the guard arm's work var
-    // read as a local nobody freed.  Returning it IS the transfer, wherever the return sits.
-    let mut early_ret: Vec<u16> = Vec::new();
-    collect_all_return_vars(ir, data, &mut early_ret);
-    for v in early_ret {
-        ret_deps.insert(v);
-        for d in function.tp(v).depend() {
-            ret_deps.insert(d);
-        }
-    }
-
-    let built_with = capture_build_backings(data, function, ir);
-    let link_delivered = link_written_closure_records(data, function, fn_def_nr);
+    let releases = FrameReleases::of(ir, function, data, fn_name, ret_type);
+    let FrameReleases {
+        freed, ret_deps, ..
+    } = &releases;
     for (&v, &scope) in var_scope {
         if scope == 0 {
             continue; // function parameter — caller frees
@@ -24707,46 +24976,8 @@ fn check_ref_leaks(
         if function.is_skip_free(v) {
             continue;
         }
-        // #323: a heap local a closure record ADOPTS is owned by that record (which
-        // stores its 12-byte DbRef; `free_named`'s cascade frees it when the record
-        // dies), so `get_free_vars` emits no frame-exit free for it and "unfreed" is not
-        // "leaked" here.
-        //
-        // The same call the emitter makes, not the rule written out again.  This mirror
-        // going out of step with it is exactly how loft#1308 stayed hidden, and a mirror
-        // that knows only the `is_captured` half calls the BACKING local of a collection
-        // capture a leak — which no closure captured by name.
-        if capture_adoption_owns_free(data, function, &built_with, v) {
+        if releases.explains(data, function, v) {
             continue;
-        }
-        // …and the BUFFER that minted such a store, which the emitter releases through the
-        // same cascade by a predicate of its own (loft#1446's leg in `get_free_vars`).  Asked
-        // of the buffer rather than of the capture's name, because a buffer names ONE store
-        // for its whole life while a capture local reassigned after the build names two — and
-        // asked here because a mirror that knows only `capture_adoption_owns_free` reports the
-        // literal buffer behind an escaping nullable capture as a leak (`n: C39? = C39 { … };
-        // fn() -> integer { … n.a … }`, whose `__ref_p2_N` the record's cascade frees).
-        if escaping_record_holds_buffer(data, function, fn_def_nr, &built_with, v) {
-            continue;
-        }
-        // …and a closure record this frame WRITES OUT through a `&fn(…)` link, which the
-        // emitter suppresses on the same reading (`link_delivered` in `get_free_vars`): a
-        // write through a link delivers exactly as a `return` does, so the caller holds the
-        // record and the frame owes no free.  The third suppression leg this mirror has had
-        // to learn, and the reason each is a CALL to the emitter's own predicate rather than
-        // a restatement of it.
-        // A record written out through a link is skipped whether or not `(L-CapKeep)` decides
-        // the delivery at run time: on a frame where the write always happens the emitter owes
-        // no free, and where it does not, the free it emits is guarded by store identity — a
-        // static mirror can assert neither.
-        if link_delivered.contains(&v) {
-            continue;
-        }
-        if v == direct_ret_var {
-            continue; // ownership transferred to caller
-        }
-        if adopted.contains(&v) {
-            continue; // moved into a freed LHS — that free covers this store
         }
         if let Type::Reference(_, dep) = function.tp(v) {
             // LOFT_REF_LEAK_WARN=1 downgrades the assert to a warning so a

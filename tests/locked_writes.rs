@@ -12,6 +12,15 @@
 //!   (exit 1, the development report), `d.name = …` and `d.name += …` crashed with a Rust
 //!   panic (`Claim on read-only store`) in both modes, and the hoisted loop write on
 //!   `--native` changed the locked vector silently (`xs=[0,100,200]`, exit 0).
+//!
+//! The HOISTED writers (`--native`'s loop forms: `vec_set_at`, `rec_set`, `push_windowed`,
+//! `push_record_windowed`) read the lock state ONCE per loop — from the vector header, the
+//! push window or the record address it was taken with — and a window over a locked store
+//! has no capacity, so every push through it takes the runtime's refusing append.
+//! Falsified against a build of c8ec0efba with the per-element checks deleted from those
+//! writers: the `view`, `idxrec` and `index` cells changed the locked store (`v=77,77`,
+//! `v=55,55`, `xs=[0,100,200]`).  The windowed cells do not move on that build — closing the
+//! window refuses the length — so they guard the outcome, not the check.
 
 use std::process::Command;
 
@@ -200,4 +209,149 @@ fn development_halts_on_a_locked_write_interpreted() {
 #[test]
 fn development_halts_on_a_locked_write_native() {
     development_halts_with_the_report("--native");
+}
+
+/// One cell per hoisted writer, each in the loop shape that reaches it on `--native`
+/// ([`hoisted_loops_reach_the_writers_under_test`] pins that); every line prints the value
+/// from BEFORE its write.
+const HOISTED: &str = r#"struct E { k: integer, v: integer }
+struct D { n: integer, xs: vector<integer>, recs: vector<E> }
+fn view_loop(d: &D) { for r in d.recs { r.v = 77; } }
+fn index_rec_loop(d: &D) { for i in 0..len(d.recs) { d.recs[i].v = 55; } }
+fn index_loop(d: &D) { for i in 0..len(d.xs) { d.xs[i] = i * 100; } }
+fn main() {
+  d = D { n: 7, xs: [1, 2, 3], recs: [E { k: 1, v: 10 }, E { k: 2, v: 20 }] };
+  d#lock = true;
+  view_loop(d); println("view v={d.recs[0].v},{d.recs[1].v}");
+  index_rec_loop(d); println("idxrec v={d.recs[0].v},{d.recs[1].v}");
+  index_loop(d); println("index xs={d.xs}");
+  ys = [1, 2, 3];
+  ys#lock = true;
+  for i in 0..3 { ys += [i * 11]; }
+  println("push ys={ys}");
+  ts = [E { k: 1, v: 10 }];
+  ts#lock = true;
+  for i in 0..3 { ts += [E { k: i + 20, v: i + 30 }]; }
+  println("mint ts={len(ts)} v={ts[0].v}");
+  println("done");
+}
+"#;
+
+const HOISTED_UNCHANGED: &str =
+    "view v=10,20\nidxrec v=10,20\nindex xs=[1,2,3]\npush ys=[1,2,3]\nmint ts=1 v=10\ndone\n";
+
+fn production_discards_every_hoisted_write(backend: &str) {
+    let (stdout, stderr, code, log) = run("hoisted", HOISTED, backend, true);
+    assert_eq!(
+        stdout, HOISTED_UNCHANGED,
+        "{backend}: a hoisted loop changed a locked store\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        code, 0,
+        "{backend}: a production run must finish; stderr:\n{stderr}"
+    );
+    assert!(
+        log.contains("[write_to_locked_store]"),
+        "{backend}: the discarded writes are logged; log:\n{log}"
+    );
+    assert!(!stderr.contains("panicked"), "{backend}: {stderr}");
+}
+
+#[test]
+fn production_discards_every_hoisted_write_interpreted() {
+    production_discards_every_hoisted_write("--interpret");
+}
+
+#[test]
+fn production_discards_every_hoisted_write_native() {
+    production_discards_every_hoisted_write("--native");
+}
+
+/// The cells above are only a guard of the hoisted writers while `--native` still emits
+/// them for these loops: a shape that fell back to the runtime's per-write path would pass
+/// for the wrong reason.  And `rec_set` takes the lock state held beside its address.
+#[test]
+fn hoisted_loops_reach_the_writers_under_test() {
+    let dir = std::env::temp_dir().join(format!("loft_locked_emit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let script = dir.join("hoisted.loft");
+    std::fs::write(&script, HOISTED).expect("write script");
+    let out = dir.join("hoisted.rs");
+    let status = Command::new(loft_bin())
+        .arg("--native-emit")
+        .arg(&out)
+        .arg("--lean")
+        .arg(&script)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke loft");
+    let rust = std::fs::read_to_string(&out).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    for writer in [
+        "vec_set_at::<",
+        "push_windowed::<",
+        "push_record_windowed::<",
+    ] {
+        assert!(rust.contains(writer), "no `{writer}` in the emitted loops");
+    }
+    assert!(
+        rust.contains("rec_set::<i64>(__pa_") && rust.contains("let __pl_"),
+        "`rec_set` is emitted with a lock state bound beside its address"
+    );
+    assert_eq!(
+        rust.matches("rec_set::<").count(),
+        rust.matches(", __pl_").count(),
+        "every `rec_set` passes its `__pl_` lock state"
+    );
+}
+
+/// The windowed shapes in a development run: a window over a locked store has no room, so
+/// the first push or mint goes through the runtime's append, which halts with the report.
+const DEV_WINDOWED: [(&str, &str); 2] = [
+    (
+        "wpush",
+        "fn main() {\n  ys = [1, 2, 3];\n  ys#lock = true;\n  for i in 0..3 { ys += [i * 11]; }\n  println(\"reached {ys}\");\n}\n",
+    ),
+    (
+        "wmint",
+        "struct E { k: integer, v: integer }\nfn main() {\n  ts = [E { k: 1, v: 10 }];\n  ts#lock = true;\n  for i in 0..3 { ts += [E { k: i + 20, v: i + 30 }]; }\n  println(\"reached {len(ts)}\");\n}\n",
+    ),
+];
+
+fn development_halts_in_a_windowed_loop(backend: &str) {
+    for (name, source) in DEV_WINDOWED {
+        let (stdout, stderr, code, _) = run(name, source, backend, false);
+        assert_ne!(
+            code, 0,
+            "{backend} {name}: a development run halts; stdout {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("reached"),
+            "{backend} {name}: ran past the write"
+        );
+        assert!(
+            stderr.contains("locked store"),
+            "{backend} {name}: the report; stderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "{backend} {name}: a crash:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn development_halts_in_a_windowed_loop_interpreted() {
+    development_halts_in_a_windowed_loop("--interpret");
+}
+
+#[test]
+fn development_halts_in_a_windowed_loop_native() {
+    development_halts_in_a_windowed_loop("--native");
 }

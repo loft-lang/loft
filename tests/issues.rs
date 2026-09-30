@@ -18744,3 +18744,52 @@ fn test() { w: (integer, Entity) = (1, \"x\"); bump(w); print(\"{w.0}\"); }"
 variable name or cast with 'as' at a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused:3:45",
     );
 }
+
+/// An element of an unresolved call's result reads as `never`, and a store into it is not a
+/// second mistake: the program reports the unknown function once, with its cure, and no
+/// `Cannot assign float to a field of type never — use 'as never'` beside it.
+#[test]
+fn a_store_into_an_unresolved_calls_element_reports_only_the_call() {
+    code!(
+        "fn run() -> float {
+    v = nope_rest(3);
+    v[0] = 2.5;
+    v[0]
+}"
+    )
+    .error("Unknown function nope_rest at a_store_into_an_unresolved_calls_element_reports_only_the_call:2:9");
+}
+
+/// A misspelled type used both in a construction and in an annotation is ONE mistake.  The
+/// construction's speculative stub is named by the annotation too, and the annotation's
+/// report was skipped as if only the construction had named it — which left `d` unknown and
+/// cascaded into `Unknown variable 'd'`, `Unknown in expression type never` and `cannot
+/// iterate over never`.  The multi-file form, where the same gap was an internal compiler
+/// error: `imports::an_unimported_type_both_constructed_and_annotated_names_the_import_cure`.
+#[test]
+fn a_type_both_constructed_and_annotated_is_reported_once() {
+    code!(
+        "fn nb(h: integer, k: integer) -> integer { h + k }
+fn a(q: integer) -> integer {
+    x = nb(Hexq { q: q, r: 0 }, 1);
+    x
+}
+fn g() -> integer {
+    d: vector<Hexq> = [];
+    n = 0;
+    for h in d { n += h.q; }
+    n
+}"
+    )
+    .error("Undefined type Hexq — did you mean 'text'? at a_type_both_constructed_and_annotated_is_reported_once:3:12");
+}
+
+/// A tuple return of three or more members whose member names an undefined type is one
+/// mistake, reported once — never an internal compiler error.  Such a tuple has no record
+/// behind it (its reference is `u32::MAX`), and the tail's value hint read `def(u32::MAX)`.
+/// Two members took another path and always reported; 2026.9.0 crashed on three.
+#[test]
+fn a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash() {
+    code!("fn f(k: integer) -> (integer, text, Hexz) { (k, \"a\", Hexz { q: 1 }) }")
+        .error("Undefined type Hexz — did you mean 'text'? at a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash:1:42");
+}

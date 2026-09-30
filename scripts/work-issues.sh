@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # work-issues — the open issues that are actually PICK-UP work.
 #
-# "Work" is the residue after two exclusions, both of which mean *no agent work
-# remains right now*:
+# "Work" is the residue after three exclusions, each of which means *no agent work
+# is due right now*:
 #
 #   * `fixed-pending-merge` — the fix has landed on a branch; only the merge is left,
 #     and the `Fixes #N` trailer closes it automatically (LABELS.md § Lifecycle).
 #   * `status:planned`      — the fix path is a PLAN and progress is measured there;
 #     no short-term fix will be taken, and the label names the plan.
+#   * `next-release`        — postponed past a release freeze.  Never a defect (the
+#     label guard refuses it beside `silent-wrong` or a `sev:`), and the release tag
+#     strips it, so it cannot outlive one release unnoticed (LABELS.md § Lifecycle).
+#     Counted on the last line, so a parked item is never invisible.
 #
 # Everything else is somebody's next task.  That is the whole point: it makes
 # *"is there work?"* a query rather than a judgement, so the answer cannot be
 # improved by closing or relabelling an issue — the two exits a board-shaped
-# goal otherwise leaves open.
+# goal otherwise leaves open.  `next-release` is the one relabel that removes an
+# issue, and it is bounded twice: it cannot carry a defect, and it expires at the tag.
 #
 # A REPORT, never a gate: exit 0 whether the list is empty or not.  `--count`
 # prints just the number, for a goal or a prompt that wants the scalar.  Exit 2 is
@@ -29,7 +34,7 @@ while [ $# -gt 0 ]; do
         --count) count_only=1 ;;
         --repo) shift; repo="$1" ;;
         --label) shift; labels+=("$1") ;;
-        -h|--help) sed -n '2,22p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "work-issues: unknown argument $1" >&2; exit 2 ;;
     esac
     shift
@@ -52,13 +57,14 @@ args=(issue list --state open --limit 200 --json number,title,labels)
 [ -z "$repo" ] || args+=(--repo "$repo")
 for l in ${labels+"${labels[@]}"}; do args+=(--label "$l"); done
 
-# One jq: drop the two "no work remains" labels, then render severity first so the
+# One jq: drop the three "no work due" labels, then render severity first so the
 # list reads in the order it should be picked up in.
 jq_prog='
   [ .[]
     | select([.labels[].name] as $l
              | ($l | index("fixed-pending-merge")) == null
-               and ($l | index("status:planned")) == null)
+               and ($l | index("status:planned")) == null
+               and ($l | index("next-release")) == null)
   ]
   | sort_by([.labels[].name] | map(select(startswith("sev:"))) | .[0] // "sev:zzz")
   | .[]
@@ -77,13 +83,26 @@ fi
 
 n=$(printf '%s' "$out" | grep -c . || true)
 
+# The parked half, counted so a `next-release` item is never out of sight.
+parked_args=(issue list --state open --limit 200 --label next-release --json number --jq length)
+[ -z "$repo" ] || parked_args+=(--repo "$repo")
+for l in ${labels+"${labels[@]}"}; do parked_args+=(--label "$l"); done
+if ! parked="$(gh "${parked_args[@]}" 2>&1)"; then
+    echo "work-issues: cannot ask the tracker — $parked" >&2
+    exit 2
+fi
+parked_line=""
+[ "$parked" = 0 ] || parked_line="parked for the next release: $parked (label next-release — publishing the release returns them here)"
+
 if [ "$count_only" = 1 ]; then echo "$n"; exit 0; fi
 
 if [ "$n" = 0 ]; then
-    echo "work issues: none — every open issue either carries a fix or names its plan."
+    echo "work issues: none — every open issue carries a fix, names its plan, or waits for the next release."
+    [ -z "$parked_line" ] || echo "$parked_line"
     exit 0
 fi
 
-echo "work issues: $n (open, minus fixed-pending-merge and status:planned)"
+echo "work issues: $n (open, minus fixed-pending-merge, status:planned and next-release)"
 echo
 printf '%s\n' "$out"
+[ -z "$parked_line" ] || { echo; echo "$parked_line"; }

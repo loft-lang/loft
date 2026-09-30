@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A backtick block's dedent base is its first content line — but text on the line of the
+// OPENING backtick is never the base: its column is the statement's, not the block's, so the
+// base comes from the next line (LOFT_LITERALS.md § Backtick strings).  The doc's own example
+// claimed the opposite — "the two spaces survive" — for a block with a hole; measured
+// 2026-09-29 the spaces are stripped, hole or no hole, on both backends, and the lexer
+// documents why (`Lexer::backtick_line_start`).  A hole does not change the dedent (loft#990).
+//
+// Axes this file MOVES:  first-line text present or not, a hole or not, the next line's indent.
+// Axes it HOLDS FIXED:   space indentation.
+//
+// @falsified-by: tests/falsified/a-backtick-first-line-text-does-not-set-the-base.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: asserts — the mutation lets text on the opening line settle the base at 0.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+fn test_the_opening_line_is_content_but_not_the_base() {
+  name = "Ann";
+  count = 3;
+  msg = `Hello, {name}!
+  You have {count} messages.`;
+  plain = `Hello, Ann!
+  You have 3 messages.`;
+  deeper = `head
+      a
+        b`;
+  assert(msg == "Hello, Ann!\nYou have 3 messages.", "holed: [{msg}]");
+  assert(plain == msg, "plain: [{plain}]");
+  assert(deeper == "head\na\n  b", "base from the second line: [{deeper}]");
+}
+
+fn test_without_opening_text_the_first_content_line_is_the_base() {
+  n = 7;
+  s = `
+    a {n}
+      b
+  `;
+  assert(s == "a 7\n  b", "[{s}]");
+}

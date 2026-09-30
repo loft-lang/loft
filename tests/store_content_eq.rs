@@ -32,7 +32,12 @@ fn identity_sites(name: &str, src: &str) -> Vec<String> {
     String::from_utf8_lossy(&out.stderr)
         .lines()
         .filter_map(|l| l.strip_prefix("[eq-identity] "))
-        .map(|l| l.rsplit_once('/').map_or(l, |(_, tail)| tail).to_string())
+        // The probe's path is the host's: a Windows temp dir separates with `\`.
+        .map(|l| {
+            l.rsplit_once(['/', '\\'])
+                .map_or(l, |(_, tail)| tail)
+                .to_string()
+        })
         .collect()
 }
 

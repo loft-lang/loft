@@ -1072,6 +1072,13 @@ pub struct Output<'a> {
     /// loft#885. The before-half of an A/B on one binary, and the first thing to try when
     /// a program answers differently under `--native` than under `--interpret`.
     pub hoist_disabled: bool,
+    /// `LOFT_NO_FN_HEADER=1` — `(R-Header)`'s FUNCTION clause off: a body that writes no
+    /// store and reads a vector path twice or more keeps deriving the path's header at every
+    /// read instead of once at entry.  The first bisect step for a wrong element read
+    /// outside any loop under `--native`.
+    pub fn_header_disabled: bool,
+    /// [`hoist::param_untouched`]'s memo: `(function, parameter)` → left as found.
+    pub fn_header_memo: HashMap<(u32, u16), bool>,
     /// `LOFT_NO_FILL_HOIST=1` — a filling loop keeps its per-element form (@PLN157 § V-ae,
     /// `@FR-R-Fill`): the bisect step for a wrong element or a missed write out of
     /// `for i in lo..hi { v[base + i] = c }`.
@@ -1150,6 +1157,11 @@ pub struct Output<'a> {
     /// notion of "where am I" — position reaches it as `Value::Line` nodes in the
     /// statement list, and this is where that stream is remembered.
     pub ckpt_cur_line: u32,
+    /// Does the function being emitted push a NAMED frame (`cr_call_push`, not a leaf and not
+    /// the lean tier)?  Only such a frame records where it is calling from
+    /// (`cr_call_site`), which is what `stack_trace()` reports as the callee's `line`
+    /// (loft#1753): a frameless function writing a site would write its caller's slot.
+    pub named_frame: bool,
     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
@@ -2294,6 +2306,8 @@ impl<'a> Output<'a> {
             hoist_counter: 0,
             hoist_verify: std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"),
             hoist_disabled: std::env::var("LOFT_NO_VECTOR_HOIST").is_ok_and(|v| v != "0"),
+            fn_header_disabled: std::env::var("LOFT_NO_FN_HEADER").is_ok_and(|v| v != "0"),
+            fn_header_memo: HashMap::new(),
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
             nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
@@ -2311,6 +2325,7 @@ impl<'a> Output<'a> {
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
+            named_frame: false,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
@@ -2436,7 +2451,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
             // into a fresh store, so r OWNS the result (C86), regardless of the
             // source's own ownership.
-            Value::Var(src) if vars.record_copy_source(v, *src).is_some() => true,
+            Value::Var(src) if vars.record_copy_source(data, v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
             // Borrow/Join view — the oracle carries the distinction.
             Value::Block(_) | Value::Call(_, _) | Value::Insert(_) => matches!(
@@ -3836,15 +3851,22 @@ impl Output<'_> {
     }
 
     /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
-    /// innermost enclosing loop that holds BOTH the vector's header and its element base.
-    /// The base is bound only in a loop that grows no store, so the vector's length is the
-    /// one the end's prelude took, on every round.  `None` everywhere else.
+    /// header the innermost loop holding the vector's element BASE derived that base from —
+    /// its own, or one an enclosing frame holds (an outer loop's, or the function's
+    /// `(R-Header)` header of a parameter the function leaves as it found it).  The base is
+    /// bound only in a loop that grows no store, so for that loop's extent the vector's
+    /// length is the one the end's prelude took, on every round.  Asking for header and base
+    /// in ONE frame declined every loop whose header an enclosing frame holds, and so the
+    /// function clause switched the bound clause off for the loops it covered.  `None`
+    /// everywhere else.
     pub(super) fn range_end_header(&self, var: u16) -> Option<String> {
         let path = self.range_end_lengths.get(&var)?;
-        (0..self.vec_bases.len().min(self.vec_headers.len()))
+        let base_level = (0..self.vec_bases.len())
             .rev()
-            .find(|&i| self.vec_bases[i].contains_key(path))
-            .and_then(|i| self.vec_headers[i].get(path).cloned())
+            .find(|&i| self.vec_bases[i].contains_key(path))?;
+        (0..=base_level.min(self.vec_headers.len().checked_sub(1)?))
+            .rev()
+            .find_map(|j| self.vec_headers[j].get(path).cloned())
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -4179,6 +4201,48 @@ impl Output<'_> {
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.
+    /// `(R-Header)`'s FUNCTION clause — one header per admitted parameter, bound at entry
+    /// (after the prologue, which the header reads `stores` through), and a frame for the
+    /// whole body: every element read serves from it and a loop inside re-uses it.  Answers
+    /// whether a frame was pushed; [`Self::end_vector_hoist`] closes it.
+    fn begin_fn_headers(
+        &mut self,
+        w: &mut dyn Write,
+        paths: Vec<(hoist::PathKey, Value)>,
+    ) -> std::io::Result<bool> {
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        let mut lines: Vec<String> = Vec::new();
+        for (path, expr) in paths {
+            if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            self.hoist_counter += 1;
+            let name = format!("__vh_{}", self.hoist_counter);
+            let operand = self.expr_string(&expr)?;
+            lines.push(format!(
+                "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@FR-R-Header function clause"
+            ));
+            frame.insert(path, name);
+        }
+        if frame.is_empty() {
+            return Ok(false);
+        }
+        writeln!(w, "{{ //(R-Header) function headers")?;
+        for line in lines {
+            self.indent(w)?;
+            writeln!(w, "{line}")?;
+        }
+        crate::rewrite_census::fired("R-FnHeader", frame.len());
+        self.vec_headers.push(frame);
+        self.vec_bases.push(HashMap::new());
+        self.vec_bounds.push(HashMap::new());
+        self.scalar_hoists.push(HashMap::new());
+        self.invariant_hoists.push(HashMap::new());
+        self.push_headers.push(HashMap::new());
+        self.mint_push_headers.push(HashMap::new());
+        Ok(true)
+    }
+
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
         self.vec_bases.pop();
@@ -4531,7 +4595,7 @@ impl Output<'_> {
     }
 
     /// `@FR-R-RecPtr` — the `__pa_N` local holding the address of record view `v`, when an
-    /// enclosing block bound one.
+    /// enclosing block bound one.  Its store's lock state is `__pl_N` ([`rec_ptr_lock`]).
     #[must_use]
     pub fn active_rec_ptr(&self, v: u16) -> Option<&str> {
         self.rec_ptrs
@@ -4674,6 +4738,7 @@ impl Output<'_> {
         };
         self.hoist_counter += 1;
         let name = format!("__pa_{}", self.hoist_counter);
+        let lock = rec_ptr_lock(&name);
         let mut operand: Vec<u8> = Vec::new();
         self.output_code_inner(&mut operand, &Value::Var(r))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
@@ -4692,6 +4757,8 @@ impl Output<'_> {
                 w,
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
             )?;
+            self.indent(w)?;
+            writeln!(w, "let {lock}: bool = {header}.locked;")?;
         } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
             // `@FR-R-PushFill`'s record clause — an element minted through an open window
             // sits at the window's next slot: its address is the base plus the length
@@ -4700,10 +4767,17 @@ impl Output<'_> {
                 w,
                 "let {name}: *const u8 = unsafe {{ {win}.base.add({win}.len as usize * {size}) }}; //@FR-R-PushFill windowed mint address for {operand}"
             )?;
+            self.indent(w)?;
+            writeln!(w, "let {lock}: bool = {win}.locked;")?;
         } else {
             writeln!(
                 w,
                 "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+            )?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {lock}: bool = vector::rec_locked(&({operand}), &stores.allocations);"
             )?;
         }
         if self.recptr_trace {
@@ -5482,20 +5556,7 @@ impl Output<'_> {
         if let Some(&v) = self.leaf_cache.get(&def_nr) {
             return v;
         }
-        let data = self.data;
-        let leaf = !data.def(def_nr).code().any_node(&mut |v| match v {
-            Value::Call(d, _) => {
-                let callee = data.def(*d);
-                let name = callee.name();
-                // A free overload member (`f_…`) is a free function in all but its key.
-                name.starts_with("n_")
-                    || callee.is_free_overload()
-                    || ((name.starts_with("t_") || callee.is_instance())
-                        && matches!(callee.code(), Value::Block(_)))
-            }
-            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
-            _ => false,
-        });
+        let leaf = !calls_a_frame(self.data, self.data.def(def_nr).code());
         self.leaf_cache.insert(def_nr, leaf);
         leaf
     }
@@ -8995,6 +9056,7 @@ extern crate loft;"
         }
         // Here and not in `start_fn`, which the type registration also runs for every
         // definition: a body emitted is the unit a rewrite's admission is counted in.
+        let _census_body = crate::rewrite_census::InBody::enter("native", def.name());
         self.census_plans();
         // Skip functions implemented in codegen_runtime — emitting a stub
         // would shadow the real implementation.  Plan 09 phase 01
@@ -9646,6 +9708,7 @@ extern crate loft;"
                 } else {
                     fnref_guard
                 };
+                self.named_frame = !leaf && !self.lean;
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
@@ -9667,6 +9730,7 @@ extern crate loft;"
                 self.output_block(w, body, returns_text, true)?;
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
+                self.named_frame = false;
             } else {
                 // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
                 // derivation from the UnsafeCell parameter for templates / inner calls.
@@ -11171,4 +11235,33 @@ fn write_const_columns(
     }
     writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
     writeln!(w, "        }}")
+}
+
+/// `@FR-R-RecPtr` — the local holding the lock state of the store a `__pa_N` record address
+/// points into, bound beside it: `__pl_N`.
+#[must_use]
+pub fn rec_ptr_lock(ptr: &str) -> String {
+    ptr.replacen("__pa_", "__pl_", 1)
+}
+
+/// Does `code` make a call that can enter a frame — a user function, a method or free
+/// overload with a loft body, a fn-ref, `parallel` or a `yield`?
+///
+/// The one answer to two questions: a function whose body makes none is a LEAF and carries
+/// no frame (N4), and a statement that makes one first records the line it calls from
+/// (`cr_call_site`, loft#1753).
+pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
+    code.any_node(&mut |v| match v {
+        Value::Call(d, _) => {
+            let callee = data.def(*d);
+            let name = callee.name();
+            // A free overload member (`f_…`) is a free function in all but its key.
+            name.starts_with("n_")
+                || callee.is_free_overload()
+                || ((name.starts_with("t_") || callee.is_instance())
+                    && matches!(callee.code(), Value::Block(_)))
+        }
+        Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+        _ => false,
+    })
 }

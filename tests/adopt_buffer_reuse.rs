@@ -303,7 +303,9 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (194, 303, 170, 269),
+        // 2026-09-29: `(R-ExitVector)` claims four local vectors' wrappers in their return
+        // buffers' stores (four mints fewer on each backend, same on and off the pool).
+        (190, 299, 166, 265),
         "mints (interpret on, off, native on, off)"
     );
 }

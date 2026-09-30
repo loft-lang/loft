@@ -158,6 +158,30 @@ impl Stores {
         (parent_tp, *data)
     }
 
+    /// The plain vector FIELD `field` of the plain-struct record at `data`, as the vector's
+    /// `DbRef` and its element type — the shape `record_new` / `record_finish` serve with a
+    /// plain append and a length bump (`Stores::plain_vector_field` decides the shape: a
+    /// `Parts::Struct` parent, a `Parts::Vector` field, no sibling sharing its records).
+    /// `None` for every other shape, and under `LOFT_NO_PLAIN_FIELD_APPEND=1`, which keeps
+    /// the general dispatch for a bisect.
+    fn plain_field_vector(&self, data: &DbRef, parent_tp: u16, field: u16) -> Option<(DbRef, u16)> {
+        if field == u16::MAX || !plain_field_append_enabled() {
+            return None;
+        }
+        let (pos, vtp) = self.plain_vector_field(parent_tp, field)?;
+        let Parts::Vector(c) = self.types.get(vtp as usize)?.parts else {
+            return None;
+        };
+        Some((
+            DbRef {
+                store_nr: data.store_nr,
+                rec: data.rec,
+                pos: data.pos + u32::from(pos),
+            },
+            c,
+        ))
+    }
+
     /// The type of the sub-record `record_new` / `record_finish` operate on: the parent
     /// itself when `field == u16::MAX` (the element record IS the parent), otherwise that
     /// field's own content type.
@@ -240,6 +264,13 @@ impl Stores {
             && let Parts::Vector(c) = self.types[parent_tp as usize].parts
         {
             return vector::vector_append(data, u32::from(self.size(c)), &mut self.allocations);
+        }
+        // The next commonest, `self.items += [x]` on a plain vector FIELD of a plain struct:
+        // no nullable parent to redirect, no sibling to link, no key to place — the element
+        // is the inline slot `vector_append` claims at the field's vector, which is all the
+        // general dispatch below did for it (two type walks and three no-ops around it).
+        if let Some((d, c)) = self.plain_field_vector(data, parent_tp, field) {
+            return vector::vector_append(&d, u32::from(self.size(c)), &mut self.allocations);
         }
         // @PLN25 single-payload: when creating a sub-record for a FIELD inside a
         // `__nullable<S>` element (a nested collection/struct), the field lives in the inline
@@ -337,6 +368,12 @@ impl Stores {
         // the length bump and nothing else (no siblings to link, no key to place).
         if field == u16::MAX && matches!(self.types[parent_tp as usize].parts, Parts::Vector(_)) {
             vector::vector_finish(data, &mut self.allocations);
+            return;
+        }
+        // …and its field twin: `insert_record` on a vector IS `vector_finish`, and a field
+        // with no sibling links nothing and displaces nothing.
+        if let Some((d, _)) = self.plain_field_vector(data, parent_tp, field) {
+            vector::vector_finish(&d, &mut self.allocations);
             return;
         }
         // @PLN25 single-payload: mirror `record_new`'s nullable-field redirect so the
@@ -1219,7 +1256,14 @@ impl Stores {
         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
-        if o_db.store_nr == u16::MAX {
+        // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
+        // slot, never the value-level null, so its absence is the marker the slot holds.
+        let slot_absent = o_db.store_nr != u16::MAX
+            && o_db.rec != 0
+            && o_db.pos != 0
+            && keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos)
+                == DbRef::ABSENT_REC;
+        if o_db.store_nr == u16::MAX || slot_absent {
             self.clear_vector_release(db);
             self.mark_collection_absent(db);
             return;
@@ -2942,6 +2986,10 @@ impl Stores {
         if !self.store(to).write_allowed(to.rec, to.pos) {
             return;
         }
+        #[cfg(feature = "op-census")]
+        crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
+        #[cfg(feature = "op-census")]
+        crate::store_census::copied_into(to.store_nr, u64::from(len));
         unsafe {
             std::ptr::copy(
                 self.store(from)
@@ -2975,6 +3023,13 @@ impl Stores {
             self.store_mut(to).shadow_set_tags(at, &tags);
         }
     }
+}
+
+/// `LOFT_NO_PLAIN_FIELD_APPEND=1` routes `self.items += [x]` through the general record
+/// dispatch again (BOTH backends): the first bisect step for a wrong element out of an
+/// append to a struct's vector field.
+fn plain_field_append_enabled() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_PLAIN_FIELD_APPEND").is_none())
 }
 
 #[cfg(test)]

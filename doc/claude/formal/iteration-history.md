@@ -23,6 +23,27 @@ place source and a range bound were re-read per round.  D-iter-7 opened and clos
 opened and closed 2026-09-26 (loft#1695, below): a collection field source followed a body that
 replaced it.  D-iter-9 and D-iter-10 opened and closed 2026-09-28 (loft#1710, below): the
 snapshot walk of a keyed kind yielded a record removed ahead of it, and accepted an append.
+D-iter-11 opened and closed 2026-09-29 (below): a comprehension yielding a TUPLE element whole.
+
+> **D-iter-11 — OPENED AND CLOSED (2026-09-29). A comprehension that yields a tuple element
+> itself read the element's reference as its members.**  `(I-Comp)`: `[for x in v { x }]` is a
+> fresh vector of the elements.  Over a `vector<(integer, integer)>` it answered garbage on the
+> interpreter, silently (`c[1]` read `(1030792151072, …)`), and did not compile natively; a text
+> member segfaulted, a vector member panicked in the store — every tuple shape, filtered
+> (`[for x in v if p { x }]`) or not, and in an `if` arm, on released 2026.9.0 too.  loft#1074
+> closed the COMBINATORS over tuple elements, and its corpus (`1074-combinators-over-tuple-
+> elements.loft`) yields members (`x.0`) or rebuilds the tuple — never `x` whole.  **Where.**  A
+> tuple element is stored as a `__tuple<…>` record, so the loop variable is a REFERENCE to it;
+> the element write (`emit_tuple_set_ops`) recognised a stored-tuple source only when it was a
+> CALL, and a variable — the comprehension's value temp — took the per-member path, splitting
+> the 12-byte reference into two integers.  **Fix.**  The recogniser reads the source's TYPE (a
+> call's return, a variable's, a block's result), so the element is copied as a record: a deep,
+> independent copy (setting `c[0].1` leaves `v[0].1` alone).  An append, a field store, a local
+> bind and an indexed read of the same element were already right.  Found walking
+> `(I-Map)`/`(I-Filter)`/`(I-Reduce)` over nine element types × seven sources.  Guards
+> `tests/scripts/a-comprehension-yields-a-tuple-element-whole.loft` and, apart so the control's
+> crash cannot hide it, the silent half `a-comprehension-yields-a-scalar-tuple-element-whole.loft`.
+> The same walk found ownership.md D-own-53.
 
 > **D-iter-9 — OPENED AND CLOSED (2026-09-28, loft#1710). A snapshot walk yielded a record removed
 > ahead of it.**  A `for` over a `hash`, `spatial` (any form) or `trie` walks a scratch of record

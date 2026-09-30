@@ -912,6 +912,10 @@ pub struct Parser {
     iterable_context: bool,
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
+    /// `@FR-R-LiteralWalk` — the last scalar vector literal `parse_vector` built as a block:
+    /// the block, its items (each at the element type) and that type.  `parse_for` takes it
+    /// when the block is its iterable and walks the items without the vector.
+    pub(crate) literal_walk: Option<(Value, Vec<Value>, Type)>,
     pub(crate) last_range_till: Option<Value>,
     /// The default arms of the `??`s built last, each with the type it SYNTHESISED before it
     /// was brought to the coalesce's type.  A store whose value is a `??` checks its default
@@ -1058,8 +1062,9 @@ pub struct Parser {
     /// four: readers dispatch on its SHAPE via the helpers below —
     /// - a `Type::Function` → short-form lambda (`|x| {…}`) parameter inference ([`Self::lambda_hint`]);
     /// - an enum type → a bare value-position variant (`f(Red)`) resolves against it ([`Self::enum_hint`]);
-    /// - a `Type::Vector` of concrete narrow elements → a bare literal (`[10,255,20]`) builds at the
-    ///   element width (#432, [`Self::vector_hint`]);
+    /// - a `Type::Vector` of a concrete element type → a bare literal (`[10,255,20]`, `[1, 2]`,
+    ///   `[North, South]`) is checked element by element against it (`(T-Chk-Vec)`,
+    ///   [`Self::vector_hint`]);
     /// - any type → an `f#read` infers its byte width from it ([`Self::read_target_type`]).
     ///
     /// (`var_tp` already carries the type for typed-local decls / `==` / struct-field init,
@@ -1374,6 +1379,10 @@ pub struct Parser {
     /// non-zero literal) is provably fit and types NON-null; otherwise it types `τ?`. Same
     /// push/truncate/invalidate discipline as `narrowed_non_null`.
     pub(crate) divisor_nonzero: Vec<u16>,
+    /// `(subject, discriminant)` pairs an enclosing `if s is Variant { … }` proves in its THEN
+    /// branch — a variable or a projection (`code[b]`), compared by IR shape
+    /// (`same_projection`) — so a cast `s as Variant` there is checked directly.
+    pub(crate) variant_proven: Vec<(Value, i32)>,
     /// `@FR-N-Domain`'s guard licence for the domain-partial MATH family — local-var slots
     /// proven `> 0` (`Pos`) or `>= 0` (`NonNeg`) by an enclosing comparison against zero.
     /// `domain_sign` reads it for a bare `Value::Var`, so a guarded `sqrt(x)` types non-null
@@ -1727,6 +1736,7 @@ impl Parser {
             reverse_iterator: false,
             iterable_context: false,
             last_range_from: None,
+            literal_walk: None,
             last_range_till: None,
             coalesce_defaults: Vec::new(),
             block_path: Vec::new(),
@@ -1841,6 +1851,7 @@ impl Parser {
             const_views: std::collections::HashMap::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
+            variant_proven: Vec::new(),
             math_sign_proven: Vec::new(),
             text_payload_views: std::collections::HashMap::new(),
             last_index_fit: false,
@@ -4562,12 +4573,33 @@ impl Parser {
         }
     }
 
+    /// The `⇐` push an ARGUMENT or a parameter DEFAULT makes (`@FR-T-Chk`): which shapes of
+    /// the parameter's type reach the value being parsed.  One list for every spelling of
+    /// the position — positional or named, free function or method, or the default a caller
+    /// omits — because the spelling is not the axis: `f(X)` resolved a bare variant against
+    /// the parameter's enum while `f(p: X)`, `h.m(X)` and `fn f(p: B = X)` reported it
+    /// ambiguous, and a method argument took no tuple member types (`@FR-T-Chk-Var`).
+    pub(crate) fn argument_hint(&self, expected: Type) -> Option<Type> {
+        if Self::seeds_lambda_hint(&expected)
+            || self.enum_context(&expected)
+            || self.seeds_instance_hint(&expected)
+            || self.seeds_collection_hint(&expected)
+            || self.interpolation_target(&expected) != u32::MAX
+        {
+            Some(expected)
+        } else {
+            self.tuple_hint_type(&expected)
+        }
+    }
+
     /// Read through `base()`, so a nullable tuple asks what its base asks — whether a slot
     /// may be absent says nothing about what its members are.
     pub(crate) fn tuple_hint_type(&self, tp: &Type) -> Option<Type> {
         match tp.base() {
             Type::Tuple(_) => Some(tp.base().clone()),
-            Type::Reference(d_nr, _) => {
+            // A tuple whose member names an undefined type has no record behind it: its
+            // reference is `u32::MAX`, and the member's own "Undefined type" is the report.
+            Type::Reference(d_nr, _) if *d_nr != u32::MAX => {
                 let group = self.data.def(*d_nr).tuple_group()?;
                 let members: Vec<Type> = group
                     .field_indices
@@ -4617,10 +4649,10 @@ impl Parser {
         }
     }
 
-    /// Expected `vector<…>` element-width hint for a bare literal — `expected` filtered to a
-    /// concrete narrow-element vector (#432; [`Self::seeds_vector_hint`]).
+    /// Expected `vector<…>` element type for a bare literal — `expected` filtered to a vector
+    /// whose element type names no type variable ([`Self::seeds_vector_hint`]).
     pub(crate) fn vector_hint(&self) -> Type {
-        if Self::seeds_vector_hint(&self.expected) {
+        if self.seeds_vector_hint(&self.expected) {
             self.expected.without_deps()
         } else {
             Type::Unknown(0)
@@ -5638,6 +5670,10 @@ impl Parser {
         }
     }
 
+    /// `@FR-T-Sub` — a value synthesised as `is_type` is accepted where `should` is expected
+    /// when `is_type ⤳ should`, and `code` is rewritten to deliver it (a widening, a member-wise
+    /// tuple rebuild, a variant into its enum).  `false` when no conversion is licensed; the
+    /// caller owns the diagnostic.
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
@@ -9180,6 +9216,49 @@ impl Parser {
     /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
     const CONTENT_EQ_PENDING: i32 = i32::MIN;
 
+    /// The marker a format hole over a bound type variable carries until its instance lowers
+    /// it (`append_data`, `@FR-G-Mono`).
+    pub(crate) const FORMAT_PENDING: i32 = i32::MIN + 1;
+
+    /// Lower each marked format hole of a fresh monomorph with the type the instance binds its
+    /// type variable to: `append_data`, the lowering a concrete hole gets, spec checks and all.
+    /// Run inside the instance's frame, as [`Self::resolve_content_eq`] is.
+    fn resolve_pending_formats(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+        if let Value::Call(_, args) = code.unspan_mut()
+            && args.len() == 14
+            && matches!(args[5].unspan(), Value::Int(Self::FORMAT_PENDING))
+            && let (Value::Var(append), Value::Int(holder), Value::Int(append_value)) =
+                (args[0].unspan(), args[6].unspan(), args[7].unspan())
+            && let (Value::Int(dir), Value::Int(radix)) = (args[3].unspan(), args[8].unspan())
+            && let (Value::Boolean(plus), Value::Boolean(note), Value::Boolean(float)) =
+                (args[9].unspan(), args[10].unspan(), args[11].unspan())
+            && let (Value::Text(spec), Value::Text(token)) = (args[12].unspan(), args[13].unspan())
+        {
+            let concrete = bindings
+                .iter()
+                .find(|(h, _)| *h as i32 == *holder)
+                .map_or(Type::Unknown(0), |(_, t)| t.clone());
+            let (append, append_value) = (*append, *append_value as u16);
+            let (spec, token) = (spec.clone(), token.clone());
+            let state = OutputState {
+                radix: *radix,
+                width: args[2].clone(),
+                token: &token,
+                plus: *plus,
+                note: *note,
+                dir: *dir,
+                float: *float,
+                spec: &spec,
+            };
+            let format = args[1].clone();
+            let mut list = Vec::new();
+            self.append_data(concrete, &mut list, append, append_value, &format, state);
+            *code = Value::Insert(list);
+            return;
+        }
+        code.for_each_child_mut(&mut |c| self.resolve_pending_formats(c, bindings));
+    }
+
     /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
     /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
     /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
@@ -9298,6 +9377,7 @@ impl Parser {
         // Inside the instance's own frame (its variables, its context), so a comparison that
         // needs a temporary — a tuple's element-wise one — makes it in the right function.
         self.resolve_content_eq(&mut code, bindings);
+        self.resolve_pending_formats(&mut code, bindings);
         let returned = self.data.def(d_nr).returned().clone();
         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
         {
@@ -13766,19 +13846,26 @@ impl Parser {
         // into the host field at `base_pos`.  Mirrors the
         // `Type::Reference(_, deps.is_empty())` arm in
         // `set_field_check` (line 3202-3216).
+        //
+        // The question is the SOURCE's representation, so it is read off the source's TYPE —
+        // a call's return, a variable's, a block's result — not off one node shape.  Asked of
+        // a call alone, a VARIABLE holding the stored form took the per-element path and its
+        // 12-byte reference was read as the tuple's members: `[for x in v { x }]` over a
+        // `vector<(integer, integer)>` (the loop variable IS a stored tuple, a record of the
+        // vector) answered garbage on `--interpret`, and a text member crashed it; `--native`
+        // did not compile either.
         let promoted_src_def: Option<u32> = if self.first_pass {
             None
         } else {
-            match val_code.unspan() {
-                Value::Call(d_nr, _) => {
-                    if let Type::Reference(d, _) = self.data.def(*d_nr).returned()
-                        && *d == tuple_d_nr
-                    {
-                        Some(tuple_d_nr)
-                    } else {
-                        None
-                    }
-                }
+            let src_tp = match val_code.unspan() {
+                Value::Call(d_nr, _) => Some(self.data.def(*d_nr).returned().clone()),
+                Value::Var(v) => Some(self.vars.tp(*v).clone()),
+                Value::Block(bl) => Some(bl.result.clone()),
+                _ => None,
+            };
+            // `.base()` — a nullable stored tuple is the same record (`@FR-N-Shape`).
+            match src_tp.as_ref().map(Type::base) {
+                Some(Type::Reference(d, _)) if *d == tuple_d_nr => Some(tuple_d_nr),
                 _ => None,
             }
         };
@@ -17079,6 +17166,20 @@ impl Parser {
                         }
                         substituted = Value::Call(d, inner);
                     }
+                    // loft#1758, `@FR-F-Default` — the default answers what the same expression
+                    // written as the argument would, and a call returning a lifetime-bearing
+                    // tuple hands back the BOXED `__tuple<…>` record (`boxed_tuple_return`).
+                    // An argument written by hand is unboxed on its way into a tuple parameter
+                    // (`convert`'s stored-tuple arm); a default's call has to take the same
+                    // conversion, or the callee reads the record's DbRef as its tuple — `null`
+                    // members on the interpreter, a type error under `--native`.
+                    if matches!(tp.base(), Type::Tuple(_))
+                        && matches!(all_types[a_nr].base(), Type::Reference(_, _))
+                    {
+                        let boxed = all_types[a_nr].clone();
+                        self.convert(&mut substituted, &boxed, &tp);
+                        all_types[a_nr] = tp.clone();
+                    }
                     actual[a_nr] = substituted;
                 }
             }
@@ -17111,36 +17212,26 @@ impl Parser {
     /// replace `Value::Var(i)` for `i < args.len()` with `args[i]`
     /// in a default-expression tree.  Used at call sites to transplant a
     /// default's earlier-parameter references into the caller's scope.
-    fn substitute_param_refs(val: Value, args: &[Value]) -> Value {
-        match val {
-            Value::Var(n) if (n as usize) < args.len() => args[n as usize].clone(),
-            Value::Call(op, xs) => Value::Call(
-                op,
-                xs.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::CallRef(op, xs) => Value::CallRef(
-                op,
-                xs.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::Set(v, inner) => {
-                Value::Set(v, Box::new(Self::substitute_param_refs(*inner, args)))
-            }
-            Value::Insert(ops) => Value::Insert(
-                ops.into_iter()
-                    .map(|x| Self::substitute_param_refs(x, args))
-                    .collect(),
-            ),
-            Value::Span(b) => {
-                let (pos, inner) = *b;
-                let new_inner = Self::substitute_param_refs(inner, args);
-                Value::with_span(pos, new_inner)
-            }
-            other => other,
+    /// `@FR-F-Default` — a default's reference to an EARLIER parameter, `Var(n)` for
+    /// `n < args.len()`, replaced by the caller's argument for it.  Through EVERY node shape
+    /// (`Value::for_each_child_mut`, the exhaustive child list): a hand-kept list of five shapes
+    /// left a TUPLE literal's members alone, so `t: (integer, integer) = (k, 9)` read the
+    /// CALLER's `Var(0)` for `k` — `h(1)` answered `(0, 9)`, silently, and native did not
+    /// compile.  A replacement is not descended into: it is the caller's expression, and its own
+    /// variables are the caller's.
+    fn substitute_param_refs(mut val: Value, args: &[Value]) -> Value {
+        if let Value::Var(n) = val {
+            return if (n as usize) < args.len() {
+                args[n as usize].clone()
+            } else {
+                val
+            };
         }
+        val.for_each_child_mut(&mut |c| {
+            let child = std::mem::replace(c, Value::Null);
+            *c = Self::substitute_param_refs(child, args);
+        });
+        val
     }
     // ********************
     // * Parser functions *
@@ -20403,6 +20494,18 @@ impl Parser {
             || pos.file.to_string(),
             |f| f.to_string_lossy().into_owned(),
         );
+        // When this file ALSO has a bare `use` of that file, the two files already `use`
+        // each other, and a mutual import resolves both ways (the p173 cycle): the cure is
+        // to import the name, `use errand::*;` or `use errand::(Errand);`, with no file moved.
+        let def_source = self.data.def(d_nr).source;
+        if let Some(q) = self.data.bare_use_qualifier(self.data.source, def_source) {
+            return Some(format!(
+                "`{bare}` is declared in {file}:{}, which this file `use`s bare — a bare \
+                 `use {q};` brings in only the `{q}::` qualifier.  Import the name: \
+                 `use {q}::*;` or `use {q}::({bare});`.",
+                pos.line
+            ));
+        }
         Some(format!(
             "`{bare}` is declared in {file}:{}, which `use`s this file — a `use` \
              imports the used file's names into the file that used it, never the \

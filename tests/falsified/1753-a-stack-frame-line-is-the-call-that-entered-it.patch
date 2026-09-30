@@ -1,0 +1,296 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index e5689eca1..723d61e8f 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -5542,7 +5542,7 @@ fn browser_panic_frames() -> String {
+             return "  (no loft frame — the panic is outside any loft call)\n".to_string();
+         }
+         let mut out = String::new();
+-        for (nm, f, ln, _) in b.iter().rev().take(12) {
++        for (nm, f, ln) in b.iter().rev().take(12) {
+             out.push_str(&format!("  in {nm}() ({f}:{ln})\n"));
+         }
+         if b.len() > 12 {
+@@ -5567,9 +5567,7 @@ fn browser_panic_frames() -> String {
+ // (frame renderers, `stack_trace()`) run between pushes, not inside one.
+ thread_local! {
+     static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
+-    /// `(name, file, declaration line, call site)` per frame: the call site is the line
+-    /// this frame is calling from, written by [`cr_call_site`] before each call.
+-    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32, u32)>> =
++    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32)>> =
+         const { UnsafeCell::new(Vec::new()) };
+ }
+ 
+@@ -5585,7 +5583,7 @@ thread_local! {
+ /// inside `cr_call_push`'s statement on this same thread and is gone by the
+ /// time any reader runs; entries below `depth` are fully initialised because
+ /// the depth is published after the write.
+-fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)]) -> R) -> R {
++fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32)]) -> R) -> R {
+     let depth = CALL_DEPTH.get();
+     CALL_FRAMES.with(|frames| {
+         let v = unsafe { &*frames.get() };
+@@ -5601,12 +5599,7 @@ fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)])
+ /// `panic`, neither of which can see a `State` to read frames from.
+ #[must_use]
+ pub fn native_call_chain() -> Vec<String> {
+-    with_call_frames(|b| {
+-        b.iter()
+-            .rev()
+-            .map(|(nm, _, _, _)| (*nm).to_string())
+-            .collect()
+-    })
++    with_call_frames(|b| b.iter().rev().map(|(nm, _, _)| (*nm).to_string()).collect())
+ }
+ 
+ /// Push a frame onto the shadow call stack.  Called at the start of every
+@@ -5632,7 +5625,7 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
+     let depth = CALL_DEPTH.get();
+     if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
+         let (running_file, running_line) =
+-            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln, _)| (*f, *ln)));
++            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln)| (*f, *ln)));
+         cr_stack_overflow(running_file, running_line);
+     }
+     CALL_FRAMES.with(|frames| {
+@@ -5640,9 +5633,9 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
+         // thread, and nothing else can run inside it.
+         let v = unsafe { &mut *frames.get() };
+         if depth < v.len() {
+-            v[depth] = (name, file, line, 0);
++            v[depth] = (name, file, line);
+         } else {
+-            v.push((name, file, line, 0));
++            v.push((name, file, line));
+         }
+     });
+     CALL_DEPTH.set(depth + 1);
+@@ -5654,26 +5647,6 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
+     crate::timeout::checkpoint_fn("run-native", name, file, line);
+ }
+ 
+-/// Record the line the running frame is calling FROM (loft#1753).  Emitted before each
+-/// statement that calls into a frame, in a function that pushed a named frame, so that
+-/// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
+-/// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
+-/// never emits it.
+-#[inline]
+-pub fn cr_call_site(line: u32) {
+-    let depth = CALL_DEPTH.get();
+-    if depth == 0 {
+-        return;
+-    }
+-    CALL_FRAMES.with(|frames| {
+-        // SAFETY: as in `cr_call_push` — an exclusive borrow for this statement only.
+-        let v = unsafe { &mut *frames.get() };
+-        if let Some(frame) = v.get_mut(depth - 1) {
+-            frame.3 = line;
+-        }
+-    });
+-}
+-
+ /// Native stack size for the generated `main` thread.  The OS main-thread
+ /// stack (~8 MiB) overflows at a few thousand recursive loft calls — below the
+ /// `MAX_CALL_DEPTH` (10 000) guard.  A generous, virtual (lazily-committed)
+@@ -6000,7 +5973,7 @@ impl Drop for FnRefBufGuard {
+ /// using the same stores API as the interpreter implementation in `native.rs`.
+ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
+     let stores: &mut Stores = unsafe { &mut *cell.get() };
+-    let snapshot: Vec<(&str, &str, u32, u32)> = with_call_frames(<[_]>::to_vec);
++    let snapshot: Vec<(&str, &str, u32)> = with_call_frames(<[_]>::to_vec);
+ 
+     let sf_elm = stores.name("StackFrame");
+     let sf_size = u32::from(stores.size(sf_elm));
+@@ -6012,10 +5985,7 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
+     let vec = stores.database(sf_size);
+     stores.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
+ 
+-    // A frame's `line` is the call site that ENTERED it — the line its caller recorded —
+-    // and the entry frame, which no loft call entered, answers 0 (loft#1753, STACKTRACE.md).
+-    for (idx, (fn_name, file, _, _)) in snapshot.iter().enumerate() {
+-        let line = if idx == 0 { 0 } else { snapshot[idx - 1].3 };
++    for (fn_name, file, line) in &snapshot {
+         let elm = crate::vector::vector_append(&vec, sf_size, &mut stores.allocations);
+         let fn_str = stores.store_mut(&vec).set_str(fn_name);
+         stores
+@@ -6027,7 +5997,7 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
+             .set_u32_raw(elm.rec, elm.pos + file_pos, file_str);
+         stores
+             .store_mut(&vec)
+-            .set_int(elm.rec, elm.pos + line_pos, i64::from(line));
++            .set_int(elm.rec, elm.pos + line_pos, i64::from(*line));
+         // Zero the arguments and variables vector fields.
+         stores
+             .store_mut(&vec)
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 730093f0f..641f0e47c 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -3097,13 +3097,6 @@ impl Output<'_> {
+                 writeln!(w, "// loft:{file}:{line}")?;
+                 continue;
+             }
+-            // loft#1753 — a statement that calls into a frame first records the line it calls
+-            // from in THIS frame, which is what `stack_trace()` reports as the callee frame's
+-            // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
+-            if self.named_frame && self.ckpt_cur_line != 0 && super::calls_a_frame(self.data, v) {
+-                self.indent(w)?;
+-                writeln!(w, "cr_call_site({});", self.ckpt_cur_line)?;
+-            }
+             // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
+             // ONCE: the declaration statement (its pre-evals included — an OpDatabase
+             // hoisted out of the guard would re-clear the store per iteration) runs only
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index fa0a3dde2..0805cee90 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -1150,11 +1150,6 @@ pub struct Output<'a> {
+     /// notion of "where am I" — position reaches it as `Value::Line` nodes in the
+     /// statement list, and this is where that stream is remembered.
+     pub ckpt_cur_line: u32,
+-    /// Does the function being emitted push a NAMED frame (`cr_call_push`, not a leaf and not
+-    /// the lean tier)?  Only such a frame records where it is calling from
+-    /// (`cr_call_site`), which is what `stack_trace()` reports as the callee's `line`
+-    /// (loft#1753): a frameless function writing a site would write its caller's slot.
+-    pub named_frame: bool,
+     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
+     /// before N4.  The bisect switch for a diagnostic that lost its
+     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
+@@ -2316,7 +2311,6 @@ impl<'a> Output<'a> {
+             ckpt_filter: ckpt_filter_from_env(),
+             ckpt_sites: Vec::new(),
+             ckpt_cur_line: 0,
+-            named_frame: false,
+             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
+             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
+             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
+@@ -5498,7 +5492,20 @@ impl Output<'_> {
+         if let Some(&v) = self.leaf_cache.get(&def_nr) {
+             return v;
+         }
+-        let leaf = !calls_a_frame(self.data, self.data.def(def_nr).code());
++        let data = self.data;
++        let leaf = !data.def(def_nr).code().any_node(&mut |v| match v {
++            Value::Call(d, _) => {
++                let callee = data.def(*d);
++                let name = callee.name();
++                // A free overload member (`f_…`) is a free function in all but its key.
++                name.starts_with("n_")
++                    || callee.is_free_overload()
++                    || ((name.starts_with("t_") || callee.is_instance())
++                        && matches!(callee.code(), Value::Block(_)))
++            }
++            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
++            _ => false,
++        });
+         self.leaf_cache.insert(def_nr, leaf);
+         leaf
+     }
+@@ -9650,7 +9657,6 @@ extern crate loft;"
+                 } else {
+                     fnref_guard
+                 };
+-                self.named_frame = !leaf && !self.lean;
+                 let push = if leaf {
+                     String::new()
+                 } else if !self.lean {
+@@ -9672,7 +9678,6 @@ extern crate loft;"
+                 self.output_block(w, body, returns_text, true)?;
+                 self.pop_twin_frames();
+                 self.call_stack_prefix = None;
+-                self.named_frame = false;
+             } else {
+                 // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
+                 // derivation from the UnsafeCell parameter for templates / inner calls.
+@@ -11185,25 +11190,3 @@ fn write_const_columns(
+ pub fn rec_ptr_lock(ptr: &str) -> String {
+     ptr.replacen("__pa_", "__pl_", 1)
+ }
+-
+-/// Does `code` make a call that can enter a frame — a user function, a method or free
+-/// overload with a loft body, a fn-ref, `parallel` or a `yield`?
+-///
+-/// The one answer to two questions: a function whose body makes none is a LEAF and carries
+-/// no frame (N4), and a statement that makes one first records the line it calls from
+-/// (`cr_call_site`, loft#1753).
+-pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
+-    code.any_node(&mut |v| match v {
+-        Value::Call(d, _) => {
+-            let callee = data.def(*d);
+-            let name = callee.name();
+-            // A free overload member (`f_…`) is a free function in all but its key.
+-            name.starts_with("n_")
+-                || callee.is_free_overload()
+-                || ((name.starts_with("t_") || callee.is_instance())
+-                    && matches!(callee.code(), Value::Block(_)))
+-        }
+-        Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+-        _ => false,
+-    })
+-}
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 3a4cc4e73..c6e46441a 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -761,13 +761,13 @@ impl State {
+     /// When call depth exceeds `MAX_CALL_DEPTH` (possible infinite recursion).
+     pub fn fn_call(&mut self, d_nr: u32, args_size: u16, to: i64) {
+         let args_base = self.stack_pos - u32::from(args_size);
+-        // The line of the CALL: the nearest line entry STRICTLY before `code_pos`.  Entries
+-        // sit before the first instruction of each line, and `code_pos` is already past the
+-        // whole Call instruction, so an entry AT `code_pos` belongs to the next statement —
+-        // the one a call that ends its statement is followed by (loft#1753).
++        // Find the nearest source line at or before the current code position.
++        // line_numbers entries are emitted before the first instruction on each line,
++        // so after consuming a Call instruction code_pos is past the entry — use
++        // range(..=code_pos).next_back() to recover the most recent line.
+         let line = self
+             .line_numbers
+-            .range(..self.code_pos)
++            .range(..=self.code_pos)
+             .next_back()
+             .map_or(0, |(_, &v)| v);
+         // Plan-07 phase 4f.12 — stack overflow becomes a typed
+@@ -1141,7 +1141,8 @@ impl State {
+             self.database.call_stack_snapshot = self
+                 .call_stack
+                 .iter()
+-                .map(|f| {
++                .enumerate()
++                .map(|(idx, f)| {
+                     if let Some(data) = data_opt
+                         && f.d_nr != u32::MAX
+                         && (f.d_nr as usize) < data.definitions.len()
+@@ -1149,14 +1150,23 @@ impl State {
+                         let def = &data.definitions[f.d_nr as usize];
+                         let name = def.trace_name();
+                         let file = def.position().file.to_string();
+-                        // A frame's `line` is the call site that ENTERED it, 0 where no loft
+-                        // call did — the entry frame, a parallel worker's entry frame (its
+-                        // caller is on another thread) and a compiler-synthesised call
+-                        // (STACKTRACE.md ST-4).  Where such a frame is running now is the
+-                        // next frame's `line`.  (loft#1753: a lookup of the next frame's
+-                        // call position here named the statement AFTER a call that ended
+-                        // its statement, and only then.)
+-                        (name, file, f.line)
++                        // Fix #92: line resolution for parallel-worker frames.
++                        // The CallFrame.line is only updated by `fn_call`, which
++                        // never runs for the worker's entry frame.  Fall back to
++                        // looking up the current bytecode position in
++                        // `line_numbers` so workers report the actual source
++                        // line they're executing rather than 0.
++                        let line = if f.line != 0 {
++                            f.line
++                        } else {
++                            let cp = if idx + 1 == self.call_stack.len() {
++                                self.code_pos
++                            } else {
++                                self.call_stack[idx + 1].call_pos
++                            };
++                            self.line_numbers.get(&cp).copied().unwrap_or(0)
++                        };
++                        (name, file, line)
+                     } else {
+                         // Worker frame without Data context — use placeholder.
+                         ("<worker>".to_string(), String::new(), f.line)

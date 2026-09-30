@@ -71,6 +71,12 @@ each is a case the rule's text names as its next clause or its known limit.
 | "rebound in the body", "handed to a call outside a text-value position" — `slice_shrink`, `format_specs`, `make_names` | 20 | `(R-TextBorrow)` | a `&p` link, a rebind, or a text-building op with `p` as destination needs a `String` slot |
 | "Grown through parameter (whole)" | 50 | `(R-Base)` | growth through a parameter blocks the base for the whole loop |
 | a nullable view tested against null (`if v != null`) — `mesh_to_floats`, `mesh_to_floats_uv` | 4 loops | `(R-Header)`'s store-free list | **BUILT 2026-09-29**: `OpEqRef` / `OpNeRef` compare two `DbRef`s and touch no store, now listed beside `OpRefIsNull`; `mesh_to_floats` 36.9× → 15.8× here |
+| a scalar vector literal walked by `for` (`for i in [t.a, t.b, t.c]`) — `mesh_to_floats`, `mesh_to_floats_uv`, hex_fit's bench | 7 loops | `(R-LiteralWalk)` (new) | **BUILT 2026-09-29**: the items are scalar temps and the walk a counted select, no vector on either backend; `mesh_to_floats` 15.8× → 10.5× here |
+| a callee whose `??` fallback carries a TEXT field — `frame_of`, `lit_colour` under `pack_instances` | 3 callees, 1 loop | `(R-Callee)`'s discharge allowance | **BUILT 2026-09-29**: the set into the discharge buffer is admitted as its mint is; `pack_instances` 24.3× → 8.4× here |
+| a result arriving through a CHAIN exit (`return mk(n)`) — `decode`'s `return d`, every `return build(…)` wrapper | matrix p3 | `(R-Place)`'s callee clause | **BUILT 2026-09-29**: the chain hands the buffer through and is asked recursively; stores per call 2 → 1 on the matrix, no bench row moved yet |
+| a bind inside a LOOP whose payload field is appended to a local vector (`sub = read(…); items += [sub.value]; p = sub.next`) — cbor `read_value`, every decoder | matrix w1, w9 | `(R-Place)`'s loop clause | **BUILT 2026-09-29**: the per-turn buffer is claimed in the host's store, the payload field relocates with its source zeroed, the exit releases the block; cbor decode 42.6 → 34.7 ms per op |
+| a local vector returned INSIDE the exit literal (`return Out { items: items, … }`) — cbor `read_value` (four locals), `make_texts`, `make_ints`, every builder | matrix v1–v13, w1, w4, l3 | `(R-ExitVector)` (new) | **BUILT 2026-09-29**: the wrapper is claimed in the return buffer's store, the literal takes the vector by a handle move; cbor decode 34.7 → 26.2 ms per op, stores per `check_request` 20 → 7, `check_request`'s TIME unmoved (the block claims cost what the store mints did) |
+| a vector PARAMETER read a few times outside any loop (`bytes[pos]`, `bytes[argpos + k]` in a decoder's head) — cbor `read_value`, every byte reader | cells f1–f10 | `(R-Header)`'s function clause | **BUILT 2026-09-30**: one header at entry, the runtime lookup per read gone (7 % → 2 % of the check profile), no base — growth elsewhere cannot move a header |
 
 And the clauses the rule texts name, in the order the rows pay for them:
 
@@ -102,8 +108,11 @@ And the clauses the rule texts name, in the order the rows pay for them:
   templates, because the parser reserves only for a local vector.
 - **`(R-FormatAppend)`** — a field or element destination, and BUILT text rather than
   appended text (`render_inline` 5.95×).
-- **`(R-Place)`** — the implementation admits less than the rule: the relocation only for an
-  element appended to a PARAMETER's collection, outside a loop, with no second destination.
+- **`(R-Place)`** — the implementation admits less than the rule: the relocation for an
+  element appended to a PARAMETER's collection with no second destination, and (since
+  2026-09-29) inside a loop for the ONE heap-owning field of the result appended to a parameter
+  or a local vector; a destination in a local RECORD, two heap fields and a nested loop still
+  keep the copy.
 
 ## Optimise — shapes with no rule
 

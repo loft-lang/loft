@@ -403,6 +403,7 @@ MEASURED, then reverted; the numbers fixed both the scope and a BLOCKER (design 
 - **The WORKFLOW (dev tier + ratchet):** the dev checks live behind `check-dev`, never on the default
   `check`; `tests/ownership_oracle.rs::oracle_dev_free_check_ratchet` (`#[ignore]`) asserts findings
   `≤ DEV_FP_BASELINE` — a one-way ratchet lowered by each improvement; `0` promotes them into `check`.
+  Retired 2026-09-29 (owner): see CHECK_C_UNDERFREE_DESIGN.md § RETIRED.
 - **RATCHET 153 → 0 (2026-07-07).** The "materialisation-aware fact" = use the POST-codegen **type
   dep** as the ownership signal (a copied `ac_copy = f(a, __ref_2)` has an empty dep = owns; the
   usage-dependent borrow-elision is baked in there). Check C: `depend().is_empty()`; Check B: freed

@@ -813,7 +813,12 @@ impl Parser {
                 // has been seen.  `v = obj.field(n)` is a PROJECTION (@FR-H-View: the local
                 // aliases the place, and freeing it is the owner's business), `v = obj[i]`
                 // and `v = obj#attr` likewise; none of them is a whole-value bind, so none
-                // is this arm's to make independent.
+                // is this arm's to make independent.  Nor is `v = obj as V`: the CAST decides
+                // what the bind receives — a variant cast answers the default on a miss
+                // (@C131) — and typing the source as the destination here, before `as` is
+                // read, turned `c = s as Circle` on a `Rect` into an identity cast that read
+                // the `Rect`'s bytes as a `Circle`.  The copy of a hit is the scope pass's
+                // (`var_copy_owns`, through `Data::copies_as`).
                 //
                 // Taking it anyway cost the receiver its dep: the arm returns the source's
                 // type WITHOUT deps, so a method call's receiver reached `call_dependencies`
@@ -824,7 +829,8 @@ impl Parser {
                 // never fired: the same bind, typed two ways, one pass apart.
                 if !(self.lexer.peek_token(".")
                     || self.lexer.peek_token("[")
-                    || self.lexer.peek_token("#"))
+                    || self.lexer.peek_token("#")
+                    || self.lexer.peek_token("as"))
                     && let Some(d_nr) = self.vars.tp(*into).base().heap_def_nr()
                     && let Some(vd_nr) = self.vars.tp(v_nr).base().heap_def_nr()
                     && self.data.copies_as(d_nr, vd_nr)
@@ -1050,6 +1056,13 @@ impl Parser {
                              }}`, or declare the function with a plain first-parameter name \
                              (not `self`), which makes it a free function and a usable fn-ref"
                         );
+                    } else if let Some(msg) =
+                        self.data
+                            .import_cure("Unknown variable", name, self.data.source)
+                    {
+                        // A constant a bare `use` did not bring in (@C98) — the same cure the
+                        // function and type reports name, rather than a spelling guess.
+                        diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                     } else if let Some(s) = suggestion {
                         diagnostic_at!(
                             self.lexer,
@@ -1299,12 +1312,19 @@ impl Parser {
                         if let Some(msg) = self.generic_value_refusal(name) {
                             diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                         } else if receivers.is_empty() {
-                            diagnostic_at!(
-                                self.lexer,
-                                name_pos,
-                                Level::Error,
-                                "Unknown variable '{name}'"
-                            );
+                            if let Some(msg) =
+                                self.data
+                                    .import_cure("Unknown variable", name, self.data.source)
+                            {
+                                diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                            } else {
+                                diagnostic_at!(
+                                    self.lexer,
+                                    name_pos,
+                                    Level::Error,
+                                    "Unknown variable '{name}'"
+                                );
+                            }
                         } else {
                             let on = receivers.join("`, `");
                             diagnostic_at!(
@@ -6565,8 +6585,16 @@ impl Parser {
                             Value::Int(i32::from(vec_tp)),
                         ],
                     );
+                    // A field declared `?` takes the whole-value REPLACE, which leaves it
+                    // absent when the source is — `H { xs: w }` with `w` null read back `[]`
+                    // (the `o.xs = w` assignment's twin in `expressions.rs`).
+                    let whole = if matches!(td, Type::Optional(_)) {
+                        "OpReplaceVector"
+                    } else {
+                        "OpAppendVector"
+                    };
                     list.push(self.cl(
-                        "OpAppendVector",
+                        whole,
                         &[
                             field_ref.clone(),
                             value.clone(),

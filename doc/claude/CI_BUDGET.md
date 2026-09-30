@@ -400,6 +400,35 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
 
+## What a compiler change needs before its commit — and what runs beside the work
+
+**The rule.** A change in this loop (a rewrite clause, an op, a runtime path) is verified by
+the checks that FIND defects, in the foreground, in minutes: the guard's matrix on BOTH
+backends under the falsifiers, the emission pins, the two clippy variants, and ONE targeted
+A/B on the row the change is for (the consumer's driver binary, seconds).  Then commit, push,
+and start the broad gate on GitHub against that sha (`gh workflow run ci.yml --ref <branch>
+-f os=ubuntu-latest`).  Everything wider is a BACKSTOP and runs in the background while the
+next unit is built: the curated local suite (`find_problems.sh --bg`), and `make perf-check`
+over the lanes the census flagged — once per arc, not per commit.
+
+**What it must never be:** a foreground wait.  Nothing here needs a quiet box: the perf
+threshold is 15 %, the noisy rows are flagged, and a move is one that repeats.  Holding the
+box idle for a measurement, and then for the suite, is how a verified unit sat for two hours
+(the history companion has the measurement).
+
+**The three traps that turned one perf-check into three:**
+
+* a lane crashes — that is a DEFECT in the change, found by the run doing its job; fix it,
+  and rerun only that lane (`ARGS="--package DIR=NAME"`), never the set;
+* `no method named …` in a native lane's `rustc` after a new op — the bare
+  `target/release/libloft.rlib` the lanes link is STALE (`cargo build --bin loft` never
+  refreshes it); `cargo build --release --lib` first, and `make check-rlib` says when;
+* `no baseline to compare with` — this host has no committed results row; the A/B is then
+  `perf_check.py --baseline <saved on-run.tsv>` with the switches OFF, on the flagged lanes
+  named explicitly (`--package …`, `--only …`), because with the switches off the census
+  names a different, smaller set and measures the wrong thing.
+
+
 ## After a red gate: recheck, do not restart
 
 **The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
@@ -422,6 +451,25 @@ shared lifetime/codegen machinery.  `--changed` maps a PATH to a subject, and a 
 compiler ACCEPTS can break a cell in a subject it never names (a new refusal broke three tests
 in `codegen` from a `.loft` under `doc/claude/plans/`, 2026-09-24).  A fix to a constant, a
 fixture, a derived row, formatting or a lint attribute is not that.
+
+### Sizing the checks for a performance change
+
+Size the local checks to how far the change reaches and how quietly it could fail.
+A performance rewrite that computes the same thing through the same functions, and fails
+LOUDLY when its one risk goes wrong, needs four things.  First, its guard: hand-computed cells
+aimed at that risk, falsified once by planting the defect.  Second, the switch back to the old
+form, which (R-Switch) requires anyway.  Third, `find_problems.sh --changed`.  Fourth, one
+timing.  Then push; the PR's `ci.yml` runs the full gate on the exact commit, and it is the
+one gate the change owes for a new op.
+
+A local full suite, a corpus A/B, a second planted defect or a round-trip check is warranted
+only when the change reaches every run, or the paths the instruments depend on, or when its
+failure would be SILENT.  Measured 2026-09-29: the interpreter's operand fusion
+(superinstructions) got its guard, two planted defects, a 1,876-script fused/unfused A/B, a
+round-trip check and a full suite.  Only the guard and one plant were owed.  A wrong operand
+position breaks nearly every loop, as a wrong value or a hang, which the guard shows on its
+first run.  The fast stack path the same day did reach every interpreted run and every
+instrument's checked path, so its one full suite was owed.
 
 **The pre-flight** runs in `ci-run.sh start` and refuses to queue a gate that would stop on one
 of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygiene` and
@@ -465,9 +513,9 @@ does not belong on a PR, however cheap it is.**
 
 | cadence | jobs | trigger |
 |---|---|---|
-| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, several advisory doc jobs | `pull_request` |
+| **per PR** (`ci.yml`) | full suite ubuntu + macOS, ASan UAF/OOB (ubuntu), `stack_align_guard`, browser build+probe, Clippy, Format, Doc hygiene, CodeQL (`codeql.yml`, scoped by `.github/codeql/codeql-config.yml`), feature catalogue, contract-goldens drift, API compat, the advisory ownership leak scan (`leak-scan`), several advisory doc jobs | `pull_request` |
 | **push to main** | everything above **plus the real `Test (windows-latest)` leg** (~53 min) | `push: main` |
-| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored ownership fuzz replay + SI-2 check), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
+| **nightly 04:00** (`miri.yml`) | Miri ×2, ASan UAF/OOB ×2, ASan interpreter leak ×2, POISON arena-UAF, STACK-SHADOW frame-slot gate, TSan, native-backend ASan, debug-assertions, valgrind memcheck sweep (release binary, both backends), release-gate sweeps (the ignored tests whose reason names the job: ownership fuzz replay, SI-2 check, whole corpus in one process, cross-mode and native leak gates, keyed-collection poison sweep and differential, seed-corpus replay), toolchain matrix (beta+nightly), doc index hygiene, library health, stale-plan audit | `schedule` |
 | **nightly 04:30** | `registry-validation` (scope `tip`) — each published package's NEWEST stable installed + tested on both backends, 42 legs | `schedule` |
 | **Sundays 05:30** | `registry-validation` (scope `full`) — EVERY non-yanked published version, 164 legs.  The nightly only ever validated the tip, so 121 of 164 versions were checked by nothing (loft#1462, the gate hole behind #1448).  Weekly rather than nightly because a rotted OLD release breaks nobody until somebody pins it | `schedule` |
 | **nightly 06:17 + on `src/**`,`default/**`** | `revalidate-libs` — ONE suite pass per published lib, scored twice: does it still compile + test (a break is the freeze's business), and is it RELEASE-READY — RED on any warning, since a lib carrying them fails its own `LOFT_DENY_WARNINGS` CI. **Advisory, never a required check**; blocking on a release | `schedule`, `push`, `pull_request` |
@@ -572,7 +620,7 @@ What `ci.yml` does since:
   hash (`tests/native.rs` `cache_key`), so any commit touching loft's source misses
   all of them. The `corpus` shard's own cache of them is gone for the same reason.
   Windows keeps its copy: that cache holds nothing else large.
-- **`index-hygiene` and `viewer-smoke` restore the `test` job's cache read-only.** They
+- **`index-hygiene`, `leak-scan` and `viewer-smoke` restore the `test` job's cache read-only.** They
   build the same release `loft`; their own 3.5 GB caches only competed for the budget.
   A restore matches only a save with the identical `path:` list, so theirs is a copy.
 - **The save key is the restore step's `cache-primary-key`.** A second

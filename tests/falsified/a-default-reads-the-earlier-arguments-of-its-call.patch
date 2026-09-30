@@ -1,0 +1,203 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index c1b917a21..59fd43fbd 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5582,7 +5582,7 @@ impl Parser {
+                     } else {
+                         if !self.first_pass
+                             && !matches!(
+-                                false_type.base(),
++                                false_type,
+                                 Type::Void | Type::Never | Type::Null | Type::Unknown(_)
+                             )
+                         {
+@@ -14338,8 +14338,7 @@ impl Parser {
+         let Type::Enum(e, _, _) = enum_tp else {
+             return false;
+         };
+-        // Through `Rewritten`, as `variant_parent_enum` reads it.
+-        match (&true_type.unrewritten(), &false_type.unrewritten()) {
++        match (true_type, false_type) {
+             // A sibling variant, and only a sibling: the arm's def must belong to THIS
+             // enum.  The acceptance sites read this predicate too (`arm_joins_to_enum`),
+             // so an unrelated struct reaching it would be waved past the conversion it
+@@ -14354,18 +14353,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
+-    /// question without building the answer, for the predicates asked of every arm.
+-    fn names_variant(&self, tp: &Type) -> bool {
+-        let mut tp = tp.base();
+-        while let Type::Rewritten(inner) = tp {
+-            tp = inner;
+-        }
+-        matches!(tp, Type::Reference(d, _)
+-            if matches!(self.data.def_type(*d), DefType::EnumValue)
+-                && self.data.def(*d).parent != u32::MAX)
+-    }
+-
+     /// The ENUM a variant type belongs to — `Some(Enum(E))` for a `Reference(S)` whose def
+     /// is one of `E`'s variants, `None` for anything else.
+     ///
+@@ -14377,17 +14364,15 @@ impl Parser {
+     ///
+     /// `Definition::parent` makes this O(1) — a variant records its enum — so it is cheap
+     /// enough to ask on every `if` that yields a record.
+-    ///
+-    /// Through `Rewritten`: the marker says a value is built in place (loft#943) and what it
+-    /// IS stays the variant.  Pass 1 marks a variant literal this way and pass 2 does not, so
+-    /// stopping at the marker made the two passes join `if c { Circle {…} } else { Sq {…} }`
+-    /// differently — pass 1 accepted `Sq` AS a `Circle` (`@FR-T-Syn`, D-types-24).  A `τ?` is
+-    /// NOT peeled here: whether the slot may be absent is the caller's to carry.
++    /// Does `tp` name one VARIANT of a struct-enum?  [`Self::variant_parent_enum`]'s
++    /// question without building the answer, for the predicates asked of every arm.
++    fn names_variant(&self, tp: &Type) -> bool {
++        matches!(tp.base(), Type::Reference(d, _)
++            if matches!(self.data.def_type(*d), DefType::EnumValue)
++                && self.data.def(*d).parent != u32::MAX)
++    }
++
+     pub(super) fn variant_parent_enum(&self, tp: &Type) -> Option<Type> {
+-        let mut tp = tp;
+-        while let Type::Rewritten(inner) = tp {
+-            tp = inner;
+-        }
+         let Type::Reference(d, deps) = tp else {
+             return None;
+         };
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 8a3a76bcb..0a1d70f23 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6679,18 +6679,11 @@ impl Parser {
+         if d_nr == u32::MAX {
+             return None;
+         }
+-        // The HIDDEN attributes are the return mechanism `ref_return` / `text_return` added to
+-        // the minted function (its return buffer, a work buffer) — not parameters the default
+-        // was parsed with.  Read back as parameters they widened pass 2's signature past pass
+-        // 1's, and the re-type of "parameter" 1 landed on the body's first local: a record
+-        // `match` default was refused as "'_match_subj_1' cannot change type from integer to
+-        // P" (`@FR-T-Syn` — one signature on both passes).
+         let params: Vec<Argument> = self
+             .data
+             .def(d_nr)
+             .attributes()
+             .iter()
+-            .filter(|a| !a.hidden)
+             .map(|a| Argument {
+                 name: a.name.clone(),
+                 typedef: a.typedef.clone(),
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 90db25134..1422d8c64 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -7564,7 +7564,7 @@ use a separate collection or add after the loop"
+                 // `(u8, integer)` one kept 44, and a `text` member was written as a float.
+                 // A KEYED member given a vector is not a conversion: `emit_tuple_set_ops` fills
+                 // it by key (loft#1675), so that member is checked at its own type here.
+-                let want = match rhs_type.base() {
++                let want = match &rhs_type {
+                     Type::Tuple(src) if src.len() == elems_vec.len() => Type::Tuple(
+                         elems_vec
+                             .iter()
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 70a03d7c7..df13c9e8a 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -17131,26 +17131,36 @@ impl Parser {
+     /// replace `Value::Var(i)` for `i < args.len()` with `args[i]`
+     /// in a default-expression tree.  Used at call sites to transplant a
+     /// default's earlier-parameter references into the caller's scope.
+-    /// `@FR-F-Default` — a default's reference to an EARLIER parameter, `Var(n)` for
+-    /// `n < args.len()`, replaced by the caller's argument for it.  Through EVERY node shape
+-    /// (`Value::for_each_child_mut`, the exhaustive child list): a hand-kept list of five shapes
+-    /// left a TUPLE literal's members alone, so `t: (integer, integer) = (k, 9)` read the
+-    /// CALLER's `Var(0)` for `k` — `h(1)` answered `(0, 9)`, silently, and native did not
+-    /// compile.  A replacement is not descended into: it is the caller's expression, and its own
+-    /// variables are the caller's.
+-    fn substitute_param_refs(mut val: Value, args: &[Value]) -> Value {
+-        if let Value::Var(n) = val {
+-            return if (n as usize) < args.len() {
+-                args[n as usize].clone()
+-            } else {
+-                val
+-            };
++    fn substitute_param_refs(val: Value, args: &[Value]) -> Value {
++        match val {
++            Value::Var(n) if (n as usize) < args.len() => args[n as usize].clone(),
++            Value::Call(op, xs) => Value::Call(
++                op,
++                xs.into_iter()
++                    .map(|x| Self::substitute_param_refs(x, args))
++                    .collect(),
++            ),
++            Value::CallRef(op, xs) => Value::CallRef(
++                op,
++                xs.into_iter()
++                    .map(|x| Self::substitute_param_refs(x, args))
++                    .collect(),
++            ),
++            Value::Set(v, inner) => {
++                Value::Set(v, Box::new(Self::substitute_param_refs(*inner, args)))
++            }
++            Value::Insert(ops) => Value::Insert(
++                ops.into_iter()
++                    .map(|x| Self::substitute_param_refs(x, args))
++                    .collect(),
++            ),
++            Value::Span(b) => {
++                let (pos, inner) = *b;
++                let new_inner = Self::substitute_param_refs(inner, args);
++                Value::with_span(pos, new_inner)
++            }
++            other => other,
+         }
+-        val.for_each_child_mut(&mut |c| {
+-            let child = std::mem::replace(c, Value::Null);
+-            *c = Self::substitute_param_refs(child, args);
+-        });
+-        val
+     }
+     // ********************
+     // * Parser functions *
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 10006d798..e2aea844c 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -5234,34 +5234,6 @@ impl Function {
+     /// (loft#666) — and the origin word alone ("depend") cannot answer it.
+     #[track_caller]
+     fn trace_type_change(&self, var_nr: u16, new_tp: &Type, origin: &str) {
+-        // `LOFT_AUDIT_RETYPE=1` — every retype on PASS 2 of a variable pass 1 had already typed
+-        // as a different SHAPE.  Pass 2 starts from pass 1's variable table, so such a retype
+-        // means pass 1 synthesised another type for the same expression (`@FR-T-Syn` asks for
+-        // one): the inferred join of `if c { Circle {…} } else { Sq {…} }` was typed by its
+-        // first arm on pass 1 and by the enum on pass 2 (D-types-22).  Not a user diagnostic —
+-        // it reports the compiler, like `LOFT_AUDIT_PASS1`.  `is_equal` keeps the refinements
+-        // pass 2 exists for quiet: an integer width, a borrow list.
+-        if crate::env_once!(std::env::var_os("LOFT_AUDIT_RETYPE").is_some())
+-            && !crate::diagnostics::IN_FIRST_PASS.load(std::sync::atomic::Ordering::Relaxed)
+-            && let Some(v) = self.variables.get(var_nr as usize)
+-            && !v.type_def.is_unknown()
+-            && !matches!(v.type_def.base(), Type::Null | Type::Never)
+-            && !crate::data::Data::type_has_unresolved(&v.type_def)
+-            && !v.type_def.is_equal(new_tp)
+-            // `is_equal` still compares a borrow list inside a tuple; a borrow is not a shape.
+-            && v.type_def.without_deps() != new_tp.without_deps()
+-            // A work buffer promoted to a `&` link of its own type is a lowering, not a retype.
+-            && !matches!(new_tp.base(), Type::RefVar(inner) if inner.is_equal(v.type_def.base()))
+-        {
+-            eprintln!(
+-                "[audit_retype] {origin} {file} {func}::{var}  {old:?}  ->  {new:?}",
+-                file = self.file,
+-                func = self.name,
+-                var = v.name,
+-                old = v.type_def,
+-                new = new_tp,
+-            );
+-        }
+         let Some(target) = crate::log_config::type_timeline_target() else {
+             return;
+         };

@@ -27,6 +27,13 @@ index 0 is the entry point; the last element is the direct caller.  The vector
 is fully materialised at the moment of the call.  Each frame's `variables`
 field contains live local variables at that frame's call site.
 
+A frame's `line` is the line of the CALL that entered it — the call site in the frame
+before it — and the entry frame, which no loft call entered, answers `0`; so does a frame
+entered from another thread (a `par` worker's first frame) or from a compiler-synthesised
+call (ST-4).  Where a frame is running now is the next frame's `line`.  Both backends answer
+the same numbers (`tests/scripts/1753-a-stack-frame-line-is-the-call-that-entered-it.loft`).
+`file` and `function` name the frame's own function.
+
 ---
 
 ## Usage Example

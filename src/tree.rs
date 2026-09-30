@@ -33,7 +33,7 @@ pub fn find(
     key: &[Content],
 ) -> u32 {
     let store = keys::store(data, stores);
-    let mut rec = store.get_i32_raw(data.rec, data.pos) as u32;
+    let mut rec = store.collection_rec(data.rec, data.pos);
     let mut result = DbRef {
         store_nr: data.store_nr,
         rec: 0,
@@ -296,7 +296,8 @@ pub fn last(data: &DbRef, fields: u16, stores: &[Store]) -> DbRef {
 
 fn end(data: &DbRef, fields: u16, stores: &[Store], forward: u32) -> DbRef {
     let store = keys::store(data, stores);
-    let mut i = store.get_i32_raw(data.rec, data.pos);
+    // The root through `collection_rec`: an ABSENT collection has no first or last node.
+    let mut i = store.collection_rec(data.rec, data.pos) as i32;
     while i > 0 && store.get_i32_raw(i as u32, u32::from(fields) + forward) > 0 {
         i = store.get_i32_raw(i as u32, u32::from(fields) + forward);
     }
@@ -871,7 +872,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
     let store = keys::store(data, stores);
     let rec = DbRef {
         store_nr: data.store_nr,
-        rec: store.get_i32_raw(data.rec, data.pos) as u32,
+        rec: store.collection_rec(data.rec, data.pos),
         pos: u32::from(fields),
     };
     if rec.rec == 0 {
@@ -895,7 +896,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
 
 pub fn remove(data: &DbRef, rec: &DbRef, fields: u16, stores: &mut [Store], keys: &[Key]) {
     let mut black = false;
-    let top = keys::store(data, stores).get_i32_raw(data.rec, data.pos) as u32;
+    let top = keys::store(data, stores).collection_rec(data.rec, data.pos);
     let r = DbRef {
         store_nr: rec.store_nr,
         rec: rec.rec,

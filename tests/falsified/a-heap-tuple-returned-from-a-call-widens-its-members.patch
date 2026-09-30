@@ -1,0 +1,174 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 0f84a47ef..c6a7aed36 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -226,38 +226,6 @@ pub use crate::live_dispatch::n_live_flip;
+ #[cfg(not(target_arch = "wasm32"))]
+ pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
+ 
+-/// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
+-/// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
+-/// `&str` parameter (`&str`), or a call's result (`Str`, whose text lives in the store).
+-/// Rust reconciles `&String` with `&str` inside a tuple only where the expected type is in
+-/// view, so the emitter asks this one spelling of every such member (loft#1740).
+-pub trait TupleText<'a> {
+-    fn tuple_text(self) -> &'a str;
+-}
+-
+-impl<'a> TupleText<'a> for &'a String {
+-    fn tuple_text(self) -> &'a str {
+-        self.as_str()
+-    }
+-}
+-
+-impl<'a> TupleText<'a> for &'a str {
+-    fn tuple_text(self) -> &'a str {
+-        self
+-    }
+-}
+-
+-impl<'a> TupleText<'a> for crate::keys::Str {
+-    fn tuple_text(self) -> &'a str {
+-        self.str()
+-    }
+-}
+-
+-#[inline]
+-pub fn tuple_text<'a, T: TupleText<'a>>(v: T) -> &'a str {
+-    v.tuple_text()
+-}
+-
+ /// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
+ /// unknown names — user-defined functions and Op stubs default to the
+ /// post-P199.A cell ABI.
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 641f0e47c..a1b37107b 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -531,14 +531,6 @@ impl Output<'_> {
+                     // block that binds it — is a statement list with a value tail, which
+                     // inside a tuple is legal Rust only as a block expression.
+                     let as_block = e.unspan().kind() == ValueType::Insert;
+-                    // loft#1740 — a text member in a `&str` slot is spelled `&String`, `&str`
+-                    // or `Str` depending on its source, and rustc reconciles those inside a
+-                    // tuple only where the expected type is in view: an `if` join's two arms
+-                    // and a pre-bound block argument were refused.  One spelling for all.
+-                    let as_str = elem_is_text && !self.tuple_text_to_string;
+-                    if as_str {
+-                        write!(w, "tuple_text(")?;
+-                    }
+                     if as_block {
+                         write!(w, "{{ ")?;
+                     }
+@@ -546,9 +538,6 @@ impl Output<'_> {
+                     if as_block {
+                         write!(w, " }}")?;
+                     }
+-                    if as_str {
+-                        write!(w, ")")?;
+-                    }
+                     if elem_is_bool {
+                         write!(w, ") as u8)")?;
+                     }
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 29bc4af48..5779b8151 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -2154,15 +2154,6 @@ impl Parser {
+             // the same carve-outs — the sibling-variant join, the statement-position discard,
+             // the honest nullability.  Gated on a KNOWN expected type exactly as `if` is: the
+             // first concrete arm has nothing to agree with and names the type instead.
+-            let unboxed_tail;
+-            let t = if context == "return from block"
+-                && let Some(tt) = self.unbox_stored_tuple_tail(t, result, &mut l[last])
+-            {
+-                unboxed_tail = tt;
+-                &unboxed_tail
+-            } else {
+-                t
+-            };
+             let arm_of_sibling = context == "else"
+                 || ((context == "if" || context == "match_arm") && !result.is_unknown());
+             let tuple_rewritten = !self.first_pass
+@@ -4428,53 +4419,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// loft#1742 — a heap-carrying tuple returned straight from a CALL arrives in its stored
+-    /// spelling (`__tuple<text,integer>`), which the return's tuple rewrite does not take, so a
+-    /// member widening into the declared `__tuple<text,float>` (`@FR-C-Num`) failed `convert`.
+-    /// Bound to a stack-tuple local first — the shape the same function written
+-    /// `a: (text, integer) = mk(); a` has — the rewrite writes each member at the declared type,
+-    /// converting it.  Answers the tail's new type, or `None` when the tail is not that pair.
+-    /// Asked by both return sites, the tail of a body and a `return` statement.
+-    pub(crate) fn unbox_stored_tuple_tail(
+-        &mut self,
+-        t: &Type,
+-        result: &Type,
+-        tail: &mut Value,
+-    ) -> Option<Type> {
+-        let (Type::Reference(d, _), Type::Reference(r, _)) = (t, result) else {
+-            return None;
+-        };
+-        if self.first_pass
+-            || d == r
+-            || !self.data.def(*d).name().starts_with("__tuple<")
+-            || !self.data.def(*r).name().starts_with("__tuple<")
+-            || !self.changes_representation(t, result)
+-        {
+-            return None;
+-        }
+-        let (elems, declared) = (
+-            self.stored_tuple_elements(t),
+-            self.stored_tuple_elements(result),
+-        );
+-        if elems.len() != declared.len()
+-            || !elems
+-                .iter()
+-                .zip(&declared)
+-                .all(|(x, y)| x.is_equal(y) || self.changes_representation(x, y))
+-        {
+-            return None;
+-        }
+-        let src = Type::Tuple(elems.clone());
+-        let tmp = self.create_unique("_tret", &src);
+-        let unboxed = self.unbox_tuple_from_dbref(tail.clone(), &elems);
+-        *tail = v_block(
+-            vec![v_set(tmp, unboxed), Value::Var(tmp)],
+-            src.clone(),
+-            "tuple_return_unbox",
+-        );
+-        Some(src)
+-    }
+-
+     pub(crate) fn rewrite_tail_tuple_to_synthetic_struct(
+         &mut self,
+         synthetic_d_nr: u32,
+@@ -17954,9 +17898,6 @@ impl Parser {
+             // "expected __tuple<…>, got (…)" even though the SAME tuple as a
+             // function's final expression compiles.  parse_return is the statement
+             // path; block_result is the tail path — they must agree.
+-            let t = self
+-                .unbox_stored_tuple_tail(&t, &r_type, &mut v)
+-                .unwrap_or(t);
+             let tuple_rewritten = !self.first_pass
+                 // Through `base()`, exactly as `block_result`'s twin above: the statement path
+                 // and the tail path must agree about what a tuple is, and an absent tuple is one
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 0850aa824..9bfb25fc0 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -6700,12 +6700,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                     && !self.vars.work_texts().contains(&d)
+                     && !self.vars.is_argument(d)
+             });
+-            // A `??` answers its present value through its own `__ncc_N` temporary, which is
+-            // freed when the statement ends — a type with no deps says nothing about that, so
+-            // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
+-            // (loft#1740).
+-            let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
+-            if !borrows_a_place && !discharge_temp {
++            if !borrows_a_place {
+                 return None;
+             }
+             let w = self.vars.work_text_p2(&mut self.lexer);

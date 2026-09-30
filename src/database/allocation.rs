@@ -221,6 +221,34 @@ impl Stores {
         cur == DbRef::ABSENT_REC
     }
 
+    /// Does `rec` address a collection SLOT that holds the absent marker?
+    ///
+    /// Enforces @FR-Col-Len (an absent collection has no records to walk or count) and
+    /// @FR-Col-Copy (a copy of an absent collection is absent) for every kind at once.
+    ///
+    /// The one test the walk and the copy ask before any per-kind arm reads the slot.
+    /// Each arm read the id raw, and each tested the marker only to keep it from being
+    /// REFUSED as corrupt — so an absent slot fell through into the arm's own walk and was
+    /// followed as a record: `len`, a clear, a copy and a free of a null `hash` / `sorted` /
+    /// `index` / `spatial` / `trie` field all dereferenced `u32::MAX`.  The set is the kinds
+    /// whose slot is a record id — the same set `owned_walk` zeroes on teardown.
+    fn absent_collection_slot(&self, rec: &DbRef, tp: u16) -> bool {
+        matches!(
+            self.types[tp as usize].parts,
+            Parts::Vector(_)
+                | Parts::Sorted(_, _)
+                | Parts::Array(_)
+                | Parts::Ordered(_, _)
+                | Parts::Hash(_, _)
+                | Parts::Radix(_, _)
+                | Parts::Trie(_, _)
+                | Parts::Index(_, _, _)
+                | Parts::ChildRec(_)
+        ) && rec.store_nr != u16::MAX
+            && rec.rec != 0
+            && Self::owned_edge_absent(self.store(rec).get_u32_raw(rec.rec, rec.pos))
+    }
+
     /// Report an edge the walk refused to follow, once per site.
     ///
     /// Loud rather than silent: refusing the edge turns a crash into a leak, which is
@@ -369,6 +397,17 @@ impl Stores {
         let mut children = Vec::new();
         let mut container_rec = None;
         let mut extra_recs = Vec::new();
+        // An absent collection owns exactly what an empty one owns: nothing.  Asked
+        // before the view split, because `borrowed_spine` reads the same slot.  The
+        // field is still zeroed, so a clear (`o.h = []`) leaves the EMPTY collection.
+        if self.absent_collection_slot(rec, tp) {
+            return OwnedWalk {
+                children,
+                container_rec,
+                extra_recs,
+                zero_field: true,
+            };
+        }
         // A view over records a sibling owns: keep the spine teardown, drop the
         // element walk.  Only the per-element-record kinds can be a view — a
         // contiguous `Vector`/`Sorted` stores its elements INLINE, so it cannot
@@ -798,6 +837,7 @@ impl Stores {
         self.clear_free_bit(slot);
         // @PLN101 Slice 0 — the true heap metric: a store slot just went live.
         self.stores_allocated += 1;
+        crate::store_census::note(crate::store_census::Work::StoreNew, 1);
         // @PLN105 leak provenance — stamp the currently-executing op position so a
         // leaked store's allocation site is attributable for EVERY path (reuse/copy
         // included), not only `OpDatabase`. Read before the mutable slot borrow.
@@ -1292,6 +1332,7 @@ impl Stores {
             store.reclaim_tail();
         }
         store.free = true;
+        crate::store_census::note(crate::store_census::Work::StoreFree, 1);
         // LOFT_UAF: record the freed slot so the dispatch loop can scan, after
         // this op, for live variables that still read it (a premature free).
         if crate::keys::uaf_any_enabled() {
@@ -2862,8 +2903,12 @@ impl Stores {
         let length = vector::length_vector(rec, &self.allocations);
         let size = u32::from(self.size(content_tp));
         let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
-        if cur == 0 {
-            self.store_mut(to).set_u32_raw(to.rec, to.pos, 0);
+        // An empty source (`0`) copies to an empty destination and an ABSENT one
+        // (`DbRef::ABSENT_REC`, a `vector<vector<T>?>` element that is null) to an absent
+        // one: neither names a block to copy.  Followed as a record, the absent marker sent
+        // `c = v`, `w += v` and a pass-by-value of such a vector into wild memory (loft#1739).
+        if cur == 0 || Self::owned_edge_absent(cur) {
+            self.store_mut(to).set_u32_raw(to.rec, to.pos, cur);
             return;
         }
         let into = self.store_mut(to).claim(1 + (size * length).div_ceil(8));
@@ -3300,7 +3345,27 @@ impl Stores {
         }
     }
 
+    /// An absent collection copies to an absent one, of every kind: the marker is the value
+    /// (`c = o.h` of a null field is null, not `[]`), and there is no block behind it to copy.
+    /// Asked before `copy_claims` dispatches, because every per-kind body reads the slot as a
+    /// record id.  Answers whether it copied.
+    fn copy_absent_collection(&mut self, rec: &DbRef, to: &DbRef, tp: u16) -> bool {
+        if !self.absent_collection_slot(rec, tp) {
+            return false;
+        }
+        self.store_mut(to)
+            .set_u32_raw(to.rec, to.pos, DbRef::ABSENT_REC);
+        true
+    }
+
     pub fn copy_claims(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
+        if !self.copy_absent_collection(rec, to, tp) {
+            self.copy_claims_kind(rec, to, tp);
+        }
+    }
+
+    /// The per-kind half of [`Self::copy_claims`], for a value that is present.
+    fn copy_claims_kind(&mut self, rec: &DbRef, to: &DbRef, tp: u16) {
         // TODO prevent copying secondary structures
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
@@ -4522,7 +4587,7 @@ impl Stores {
                 | Parts::Sorted(..)
                 | Parts::Ordered(..)
                 | Parts::Hash(..)
-                | Parts::Index(..) => self.store(rec).get_u32_raw(rec.rec, pos) == 0,
+                | Parts::Index(..) => self.store(rec).collection_rec(rec.rec, pos) == 0,
                 _ => false,
             }
         })

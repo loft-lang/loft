@@ -746,3 +746,18 @@ best ratio, because macOS duplicates ubuntu exactly and costs ~50 % more to do i
   **macOS only** — `ci.yml` already gates every PR with an ubuntu ASan job.
 
 ---
+
+## Two hours of waiting on one verified unit (2026-09-29)
+
+The loop clause and `(R-ExitVector)` (fb214dd7) were verified in minutes — the matrix on
+both backends, the pins, the sabotage, clippy — and then sat for two hours: three full
+`make perf-check` runs of ~30 min each on the lima box (the first found a real crash in
+hex_shape, loft#1757; the second failed on a stale bare rlib; the third had no baseline to
+compare with), two clause-off A/B runs (the first measured only the drawing lane, because
+with the switches off the census flags a different set), then the curated suite — each held
+in the foreground with the box idle to keep the measurement quiet.  The A/B that answered
+the question took fifteen minutes on seven flagged libraries: `check_request` +18 % and cbor
+`decode` +17 % without the clauses, no hex_* routine moved 15 %.  The owner's verdict: too
+much testing for one speed improvement.  CI_BUDGET.md § What a compiler change needs before
+its commit is the rule that came out of it.
+

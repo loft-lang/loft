@@ -1,0 +1,14 @@
+diff --git a/src/lexer.rs b/src/lexer.rs
+index 410e9825d..e0be2a0f3 100644
+--- a/src/lexer.rs
++++ b/src/lexer.rs
+@@ -718,7 +718,8 @@ impl Lexer {
+                     let nested = self.in_format_expr;
+                     // A fresh literal: its dedent is not settled until its first content
+                     // line.  `close_backtick` pops it.
+-                    self.backtick_strip.push(None);
++                    let opening_text = self.iter.clone().any(|c| !c.is_whitespace());
++                    self.backtick_strip.push(if opening_text { Some(0) } else { None });
+                     self.backtick_string(nested)
+                 }
+                 '\'' => {

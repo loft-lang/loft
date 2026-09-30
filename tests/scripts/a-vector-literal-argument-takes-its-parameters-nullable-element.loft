@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A VECTOR LITERAL ARGUMENT TAKES ITS PARAMETER'S NULLABLE ELEMENT (`@FR-N-Decl`, `@FR-N-Store`).
+// A parameter is a declared slot, and a declared `vector<τ?>` is the one place a literal learns
+// that its elements may be null: an inferred literal stays dense.  `f(["a", null])` against
+// `fn f(v: vector<text?>)` was refused ("expected vector<text?>, got vector<text>") while the same
+// literal in a declared local was accepted; `text`, a struct and a nested vector were refused,
+// only `integer` passed.  A struct element cannot be relabelled after the fact either: a `P?`
+// element is stored as `__nullable<P>`, another layout, so the literal must be BUILT at the
+// parameter's type.  Values are hand-computed.
+//
+// @falsified-at: 62b857086 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-vector-literal-argument-takes-its-parameters-nullable-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the refusal — the control rejects the `text`, struct and nested literals
+//   ("expected vector<text?>, got vector<text>") and fails to parse the all-`null` one.
+// HOLDS: no assertion runs on the control tree; on the cure tree every assertion passes on both
+//   backends, leak-free (the loop builds a fresh literal per round).
+
+struct P { a: integer }
+fn fi(v: vector<integer?>) -> text { "{len(v)} {v[1] == null} {v[2] ?? -1}" }
+fn ft(v: vector<text?>) -> text { r = ""; for e in v { r += "{e ?? \"-\"},"; } "{len(v)}:{r}" }
+fn fp(v: vector<P?>) -> integer { s = 0; for e in v { if e != null { s += e.a; } else { s += 100; } } s }
+fn fn2(v: vector<vector<integer>?>) -> text { r = ""; for e in v { if e == null { r += "N,"; } else { r += "{len(e)},"; } } r }
+fn fm(self: P, v: vector<text?>) -> integer { self.a + len(v) }
+
+fn main() {
+  assert(fi([1, null, 3]) == "3 true 3", "integer, the case that already passed: {fi([1, null, 3])}");
+  assert(ft(["a", null, "c"]) == "3:a,-,c,", "text: {ft([\"a\", null, \"c\"])}");
+  assert(ft([null, "b"]) == "2:-,b,", "null first, so no earlier element names the type");
+  assert(ft([null, null]) == "2:-,-,", "every element null");
+  assert(fp([P { a: 1 }, null, P { a: 5 }]) == 106, "a struct: {fp([P { a: 1 }, null, P { a: 5 }])}");
+  assert(fp([null, P { a: 2 }]) == 102, "a struct, null first: {fp([null, P { a: 2 }])}");
+  assert(fn2([[1, 2], null, []]) == "2,N,0,", "a nested vector: {fn2([[1, 2], null, []])}");
+  p = P { a: 7 };
+  assert(p.fm(["x", null]) == 9, "a method's argument: {p.fm([\"x\", null])}");
+  for i in 0..3 { assert(fp([P { a: i }, null]) == 100 + i, "a fresh literal per round: {i}"); }
+}

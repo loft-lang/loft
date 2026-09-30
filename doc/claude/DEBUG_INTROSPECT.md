@@ -346,3 +346,26 @@ a few lines below it is visible without running anything, and it is how `fields.
 was confirmed. Treat that as a confirmation aid, not a discovery instrument: it reads as a
 tell only once you know the class, and a site whose gate is two functions up looks
 identical to a correct one. **Enumeration finds these; this instrument keeps them found.**
+
+## Where the two passes type one expression differently (`LOFT_AUDIT_RETYPE`)
+
+Prints `[audit_retype] <origin> <file> <fn>::<var>  <pass-1 type>  ->  <pass-2 type>` for every
+retype on PASS 2 of a variable that pass 1 had already typed as a different SHAPE.  Pass 2 starts
+from pass 1's variable table, so each line is an expression synthesised twice, differently —
+`formal/types.md (T-Syn)` asks for one type.  The audience is this repo.
+
+```bash
+for f in tests/scripts/*.loft; do           # on a COPY of the corpus: a sweep writes caches
+  LOFT_AUDIT_RETYPE=1 loft --check "$f" 2>&1 | grep '^\[audit_retype\]'
+done | grep -v '/default/'
+```
+
+**Read it filtered.** Width and borrow-list refinements are already quiet (`is_equal`, and the
+borrow lists stripped).  Still listed, and correct: compiler temporaries (`__ref_`, `__ncc_`,
+`___tret`, … — a slot reused or lowered), a captured local boxed into a cell (`set_type` to a
+`Reference`), `#663`'s element-width adoption, the nullable-struct synthesis between the passes,
+and inference that COMPLETES on pass 2 (a generic resolved there, so a keyed read turns `τ?`).
+Measured 2026-09-29 over 1916 corpus files: 936 lines, about 25 on user-named variables after
+those filters; the ones that were defects were the variant join pass 1 read through a
+`Rewritten` marker (D-types-24), and — followed to the one place pass 1's TREE is replayed, a
+parameter default — two call defects (calls.md D-call-25, D-call-26).

@@ -197,7 +197,9 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   it, and @PLN25 p379 depends on the write-through (`cells = sc.v;
                   cells[i] = h`).
   (B-View-Depth)  a vector INDEX read (`a = vv[0]`) and a NESTED field read
-                  (`c = o.inner.v`) are VIEWS whatever the element type — #426's RESOLUTION,
+                  (`c = o.inner.v`) are VIEWS whatever the element type and whatever the
+                  collection kind — `c = o.inner.h` views as the vector does (loft#1759) —
+                  #426's RESOLUTION,
                   whose FILED premise (*"these must COPY"*) was recorded as the wrong read:
                   under the reference-default model a binding to a heap value aliases the
                   source and in-place mutation writes through.  A view survives the realloc
@@ -433,6 +435,10 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 ## Deviations
 
 **OPEN: 0.**
+
+**D-bind-69 CLOSED 2026-09-30** (loft#1759): a keyed nested or borrowed-base projection copied
+where `(B-View-Depth)` makes it a view, its view then escaped `(H-Materialise)`, and a keyed `&`
+link was not refused when its container was reassigned — [binding-history.md](binding-history.md).
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

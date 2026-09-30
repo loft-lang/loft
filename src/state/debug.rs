@@ -1002,6 +1002,12 @@ impl State {
             // 1 opcode byte + a 32-bit displacement (loft#654).
             let to = i64::from(p) + 5 + i64::from(self.code::<i32>()) - i64::from(start_pos);
             write!(f, "jump=:POS{to}")?;
+        } else if def.name().ends_with("Jump") && a.name == "step" {
+            // A fused compare-and-jump: the displacement is its last operand, measured from
+            // the end of the instruction, which is where the read below leaves `code_pos`.
+            let disp = self.code::<i32>();
+            let to = i64::from(self.code_pos) + i64::from(disp) - i64::from(start_pos);
+            write!(f, "jump=:POS{to}")?;
         } else if (def.name() == "OpGoto" || def.name() == "OpGotoFalse") && a_nr == 0 {
             let to = i64::from(p) + 2 + i64::from(self.code::<i8>()) - i64::from(start_pos);
             write!(f, "jump=:POS{to}")?;
@@ -1533,6 +1539,24 @@ impl State {
                     self.code_pos = cur;
                     self.stack_pos = stack;
                     return Ok(op);
+                } else if (def.name().starts_with("OpIntV") || def.name().starts_with("OpCmpIntV"))
+                    && (a.name == "a" || a.name == "b")
+                {
+                    // A fused integer op reads its locals in place: name them as a `pos` read
+                    // is named.  Codegen records operand `a`'s read one byte into the
+                    // instruction and `b`'s two (`emit_fused_int`, `gen_if_test`).
+                    let pos = self.code::<u16>();
+                    let abs_slot = self.stack_pos - u32::from(pos);
+                    let key = code + if a.name == "a" { 1 } else { 2 };
+                    let annotation =
+                        if config.annotate_slots && d_nr != u32::MAX && code != u32::MAX {
+                            self.vars.get(&key).map_or(String::new(), |&v| {
+                                format!("={}", data.def(d_nr).variables().name(v))
+                            })
+                        } else {
+                            String::new()
+                        };
+                    attr.insert(a_nr, format!("{}=var[{abs_slot}]{annotation}", a.name));
                 } else if a_nr == 0
                     && a.name == "pos"
                     && a.typedef

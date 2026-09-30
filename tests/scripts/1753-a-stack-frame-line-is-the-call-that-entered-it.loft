@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1753 — `stack_trace()`: a frame's `line` is the line of the CALL that entered it, and the
+// entry frame, which no loft call entered, answers 0 (STACKTRACE.md, the TR1.4 guard).  The
+// interpreter named the NEXT statement's line for a call that ended its statement — and gave the
+// entry frame that line too — while `--native` answered every function's declaration line.
+//
+// Each cell writes the whole chain `function:line …` into `o.s`, so most calls END their
+// statement (the shape the interpreter got wrong); `mid` is the control, a call followed by more
+// of its expression.  The cells: statement-final, mid-expression, a loop body, an argument, a
+// fn-ref, a method, recursion and a call spread over two lines.
+
+struct Out { s: text }
+
+fn chain(o: Out) {
+  s = "";
+  for f in stack_trace() { s += "{f.function}:{f.line} "; }
+  o.s = s.trim();
+}
+
+fn tail(o: Out) {
+  chain(o);
+}
+
+fn mid(o: Out) -> integer {
+  chain(o);
+  1
+}
+
+fn in_loop(o: Out) {
+  for i in 0..2 {
+    chain(o);
+  }
+}
+
+fn inner(o: Out) -> integer {
+  chain(o);
+  2
+}
+
+fn outer(x: integer) -> integer {
+  x
+}
+
+fn target(o: Out) {
+  chain(o);
+}
+
+struct Tick { n: integer }
+
+fn go(self: Tick, o: Out) {
+  chain(o);
+}
+
+fn rec(n: integer, o: Out) {
+  if n > 0 {
+    rec(n - 1, o);
+  } else {
+    chain(o);
+  }
+}
+
+fn two(a: integer, o: Out) {
+  chain(o);
+}
+
+fn main() {
+  o = Out { s: "" };
+  tail(o);
+  assert(o.s == "main:0 tail:70 chain:23", "statement-final: {o.s}");
+  n = mid(o) + 1;
+  assert(o.s == "main:0 mid:72 chain:27", "mid-expression: {o.s}");
+  assert(n == 2, "mid answers: {n}");
+  in_loop(o);
+  assert(o.s == "main:0 in_loop:75 chain:33", "loop: {o.s}");
+  x = outer(inner(o));
+  assert(o.s == "main:0 inner:77 chain:38", "argument: {o.s}");
+  assert(x == 2, "outer answers: {x}");
+  f = target;
+  f(o);
+  assert(o.s == "main:0 target:81 chain:47", "fn-ref: {o.s}");
+  k = Tick { n: 1 };
+  k.go(o);
+  assert(o.s == "main:0 t_4Tick_go:84 chain:53", "method: {o.s}");
+  rec(2, o);
+  assert(o.s == "main:0 rec:86 rec:58 rec:58 chain:60", "recursion: {o.s}");
+  two(1,
+      o);
+  assert(o.s == "main:0 two:88 chain:65", "two lines: {o.s}");
+}
+
+// The receipt sits BELOW the cells: every assertion above names a line of this file.
+//
+// @falsified-at: e44a8368c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1753-a-stack-frame-line-is-the-call-that-entered-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the assertion channel on both backends; the first cell stops the run.
+//   WITNESS: on the control the statement-final cell reads `main:71 tail:71 chain:23` on the
+//   interpreter (the next statement's line, given to the entry frame as well) and
+//   `main:68 tail:22 chain:16` on native (each function's declaration line), where the file
+//   says `main:0 tail:70 chain:23`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and `falsify`
+//   requires HERE to be clean, so all four are clean on both.

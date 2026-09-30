@@ -1,4 +1,5 @@
 // Benchmark 11: par (parallel for-loop) — 100,000 elements of 50-step Newton's sqrt, 4 threads
+// bench-threads: 4
 //
 // One OP is one parallel pass over the items, summed.  Per-element work dominates par's
 // bookkeeping, so the row reflects parallel-speedup quality rather than thread-spawn cost.

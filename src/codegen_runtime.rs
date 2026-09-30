@@ -226,6 +226,38 @@ pub use crate::live_dispatch::n_live_flip;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::live_dispatch::{n_kernel_rebuild_artifact, n_rebuild_start, n_rebuild_status};
 
+/// A tuple's `text` member in a `&str` slot (an argument, an `if` arm, a pre-bound block),
+/// whatever its source spelled: a `String` local or work text (`&String`), a literal or a
+/// `&str` parameter (`&str`), or a call's result (`Str`, whose text lives in the store).
+/// Rust reconciles `&String` with `&str` inside a tuple only where the expected type is in
+/// view, so the emitter asks this one spelling of every such member (loft#1740).
+pub trait TupleText<'a> {
+    fn tuple_text(self) -> &'a str;
+}
+
+impl<'a> TupleText<'a> for &'a String {
+    fn tuple_text(self) -> &'a str {
+        self.as_str()
+    }
+}
+
+impl<'a> TupleText<'a> for &'a str {
+    fn tuple_text(self) -> &'a str {
+        self
+    }
+}
+
+impl<'a> TupleText<'a> for crate::keys::Str {
+    fn tuple_text(self) -> &'a str {
+        self.str()
+    }
+}
+
+#[inline]
+pub fn tuple_text<'a, T: TupleText<'a>>(v: T) -> &'a str {
+    v.tuple_text()
+}
+
 /// Look up the ABI of a runtime helper.  Returns `Abi::Cell` for
 /// unknown names — user-defined functions and Op stubs default to the
 /// post-P199.A cell ABI.
@@ -2869,7 +2901,9 @@ pub fn n_ticks(cell: &std::cell::UnsafeCell<Stores>) -> i64 {
     if let Some(fake) = fake_clock_env("LOFT_FAKE_TICKS_US") {
         return fake;
     }
-    stores.start_time.elapsed().as_micros() as i64
+    let micros = stores.start_time.elapsed().as_micros() as i64;
+    crate::store_census::at_ticks(micros);
+    micros
 }
 
 /// Bytecode equivalent: `n_ticks` in `src/native.rs`.  Gated on
@@ -5510,7 +5544,7 @@ fn browser_panic_frames() -> String {
             return "  (no loft frame — the panic is outside any loft call)\n".to_string();
         }
         let mut out = String::new();
-        for (nm, f, ln) in b.iter().rev().take(12) {
+        for (nm, f, ln, _) in b.iter().rev().take(12) {
             out.push_str(&format!("  in {nm}() ({f}:{ln})\n"));
         }
         if b.len() > 12 {
@@ -5535,7 +5569,9 @@ fn browser_panic_frames() -> String {
 // (frame renderers, `stack_trace()`) run between pushes, not inside one.
 thread_local! {
     static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
-    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32)>> =
+    /// `(name, file, declaration line, call site)` per frame: the call site is the line
+    /// this frame is calling from, written by [`cr_call_site`] before each call.
+    static CALL_FRAMES: UnsafeCell<Vec<(&'static str, &'static str, u32, u32)>> =
         const { UnsafeCell::new(Vec::new()) };
 }
 
@@ -5551,7 +5587,7 @@ thread_local! {
 /// inside `cr_call_push`'s statement on this same thread and is gone by the
 /// time any reader runs; entries below `depth` are fully initialised because
 /// the depth is published after the write.
-fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32)]) -> R) -> R {
+fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)]) -> R) -> R {
     let depth = CALL_DEPTH.get();
     CALL_FRAMES.with(|frames| {
         let v = unsafe { &*frames.get() };
@@ -5567,7 +5603,12 @@ fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32)]) -> R
 /// `panic`, neither of which can see a `State` to read frames from.
 #[must_use]
 pub fn native_call_chain() -> Vec<String> {
-    with_call_frames(|b| b.iter().rev().map(|(nm, _, _)| (*nm).to_string()).collect())
+    with_call_frames(|b| {
+        b.iter()
+            .rev()
+            .map(|(nm, _, _, _)| (*nm).to_string())
+            .collect()
+    })
 }
 
 /// Push a frame onto the shadow call stack.  Called at the start of every
@@ -5593,7 +5634,7 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     let depth = CALL_DEPTH.get();
     if depth >= crate::state::State::MAX_CALL_DEPTH as usize {
         let (running_file, running_line) =
-            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln)| (*f, *ln)));
+            with_call_frames(|b| b.last().map_or((file, line), |(_, f, ln, _)| (*f, *ln)));
         cr_stack_overflow(running_file, running_line);
     }
     CALL_FRAMES.with(|frames| {
@@ -5601,9 +5642,9 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
         // thread, and nothing else can run inside it.
         let v = unsafe { &mut *frames.get() };
         if depth < v.len() {
-            v[depth] = (name, file, line);
+            v[depth] = (name, file, line, 0);
         } else {
-            v.push((name, file, line));
+            v.push((name, file, line, 0));
         }
     });
     CALL_DEPTH.set(depth + 1);
@@ -5613,6 +5654,26 @@ pub fn cr_call_push(name: &'static str, file: &'static str, line: u32) {
     // is not armed, the body is just one relaxed atomic load + branch
     // (no allocation, no mutex) — ~1-2 ns per fn entry.
     crate::timeout::checkpoint_fn("run-native", name, file, line);
+}
+
+/// Record the line the running frame is calling FROM (loft#1753).  Emitted before each
+/// statement that calls into a frame, in a function that pushed a named frame, so that
+/// [`n_stack_trace`] reports each frame's `line` as the call site that entered it — the
+/// interpreter's `CallFrame.line`.  One store into this thread's frame array; the lean tier
+/// never emits it.
+#[inline]
+pub fn cr_call_site(line: u32) {
+    let depth = CALL_DEPTH.get();
+    if depth == 0 {
+        return;
+    }
+    CALL_FRAMES.with(|frames| {
+        // SAFETY: as in `cr_call_push` — an exclusive borrow for this statement only.
+        let v = unsafe { &mut *frames.get() };
+        if let Some(frame) = v.get_mut(depth - 1) {
+            frame.3 = line;
+        }
+    });
 }
 
 /// Native stack size for the generated `main` thread.  The OS main-thread
@@ -5941,7 +6002,7 @@ impl Drop for FnRefBufGuard {
 /// using the same stores API as the interpreter implementation in `native.rs`.
 pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let snapshot: Vec<(&str, &str, u32)> = with_call_frames(<[_]>::to_vec);
+    let snapshot: Vec<(&str, &str, u32, u32)> = with_call_frames(<[_]>::to_vec);
 
     let sf_elm = stores.name("StackFrame");
     let sf_size = u32::from(stores.size(sf_elm));
@@ -5953,7 +6014,10 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
     let vec = stores.database(sf_size);
     stores.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
 
-    for (fn_name, file, line) in &snapshot {
+    // A frame's `line` is the call site that ENTERED it — the line its caller recorded —
+    // and the entry frame, which no loft call entered, answers 0 (loft#1753, STACKTRACE.md).
+    for (idx, (fn_name, file, _, _)) in snapshot.iter().enumerate() {
+        let line = if idx == 0 { 0 } else { snapshot[idx - 1].3 };
         let elm = crate::vector::vector_append(&vec, sf_size, &mut stores.allocations);
         let fn_str = stores.store_mut(&vec).set_str(fn_name);
         stores
@@ -5965,7 +6029,7 @@ pub fn n_stack_trace(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
             .set_u32_raw(elm.rec, elm.pos + file_pos, file_str);
         stores
             .store_mut(&vec)
-            .set_int(elm.rec, elm.pos + line_pos, i64::from(*line));
+            .set_int(elm.rec, elm.pos + line_pos, i64::from(line));
         // Zero the arguments and variables vector fields.
         stores
             .store_mut(&vec)

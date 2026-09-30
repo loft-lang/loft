@@ -6,7 +6,7 @@ description: >-
   REVIEWER's pass that brings one doc (or one PR's doc changes) fully under
   doc/claude/DOC_CONTRACT.md. Use it BEFORE adding a paragraph, a measurement, a closed
   item or a dated ruling to any doc, whenever a doc is near or over 1000 lines, and when
-  reviewing docs (the release checklist's D-review and D-user rows, a PR's comments and
+  reviewing docs (the release checklist's `M-doc-review` and `M-docs-review` rows, a PR's comments and
   docs, "review the docs", "clean up the comments", "split this doc"). It carries the two
   hard rules writers keep breaking — history goes to the doc's `<doc>-history.md`
   companion, and no working doc passes 1000 lines — plus the judgment the lint cannot:
@@ -64,6 +64,8 @@ git add -N <every new doc>           # the lint, the link check and the baseline
                                      #   TRACKED files only: an untracked split doc is unchecked
 wc -l <doc>                          # ≤ 1000 for a working doc
 python3 scripts/doc_lint.py --since HEAD <doc>   # only the findings your edit added: want none
+python3 scripts/doc_lint.py --changed --since HEAD   # after a split or a history move: what was
+                                     #   only MOVED is not new (`make docs-lint-gate` = the PR gate)
 ```
 
 ## The reviewer's pass

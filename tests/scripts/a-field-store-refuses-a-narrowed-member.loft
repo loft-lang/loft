@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A tuple field reassigned with a member that does not fit its narrow type is refused, as the
+// same value is at every other store (formal/types.md D-types-19).  `w.p = (300, 4)` into a
+// `(u8, integer)` field kept 44 on both backends with no diagnostic.
+//
+// @falsified-at: 68ace3882 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-field-store-refuses-a-narrowed-member.patch — the same channels.
+//   CHANNEL: expect — the control compiled and printed `44 4`, so the expected refusal was missing.
+// HOLDS: leak and panic are clean on both trees and both backends.
+//
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+
+struct W { n: integer, p: (u8, integer) }
+
+fn main() {
+  w = W { n: 1, p: (1, 2) };
+  w.p = (300, 4);
+  println("{w.p.0} {w.p.1}");
+}

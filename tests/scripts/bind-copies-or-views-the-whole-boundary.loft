@@ -22,6 +22,9 @@
 //         #426's RESOLUTION, whose filed premise "these must COPY" was the wrong read
 //   VIEW  ANY projection off a BORROWED base, at every element type
 //
+// The same boundary with the source spelled through a cast, a branch or a block under `??`
+// (`(e as B?) ?? d` copies, `(v[0] as B?) ?? d` views) is `1752-a-coalesce-over-a-whole-local-copies`.
+//
 // `OWNERSHIP_MODEL § The law` is the prose; a view materialises where @PLN130's three
 // disturbance events end the place it names.
 //

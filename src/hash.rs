@@ -646,7 +646,7 @@ fn hash_rec_pos(
 #[must_use]
 pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
     let store = &stores[hash_ref.store_nr as usize];
-    let claim = store.get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     let mut record = DbRef {
         store_nr: hash_ref.store_nr,
         rec: 0,
@@ -713,7 +713,7 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
         return None;
     }
     let store = &stores[hash_ref.store_nr as usize];
-    let claim = store.get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     let mut found = DbRef {
         store_nr: hash_ref.store_nr,
         rec: 0,
@@ -861,7 +861,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
     if rec.rec == 0 {
         return 0;
     }
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
     if length == 0 {
         return 0;
@@ -923,7 +923,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
 /// holds what [`remove`] answered.  A record slot is somebody else's record and a
 /// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
 pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 {
         return;
     }
@@ -943,7 +943,7 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
 /// own first four bytes, so it must be released only after the caller has finished
 /// reading the entry's fields (its key to unlink by, its pointers to free).
 pub fn free_entry(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store]) {
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return;
     }
@@ -982,7 +982,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
     if hash_ref.is_null() {
         return 0;
     }
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return 0;
     }
@@ -1008,7 +1008,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
 /// for an uninitialised hash (no claim allocated yet).
 #[must_use]
 pub fn table_bytes(hash_ref: &DbRef, stores: &[Store]) -> u32 {
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return 0;
     }
@@ -1043,7 +1043,7 @@ pub fn records(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
 #[must_use]
 pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
     let store = keys::store(hash_ref, stores);
-    let claim = store.get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return Vec::new();
     }
@@ -1073,7 +1073,7 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
 #[must_use]
 pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
     let store = keys::store(hash_ref, stores);
-    let claim = store.get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = store.collection_rec(hash_ref.rec, hash_ref.pos);
     if claim == 0 {
         return Vec::new();
     }
@@ -1117,7 +1117,7 @@ pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<D
 /// debug-time structural invariant check; callers should never hit a
 /// panic here in production.
 pub fn validate(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) {
-    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let claim = keys::store(hash_ref, stores).collection_rec(hash_ref.rec, hash_ref.pos);
     let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
     let mut l = 0;
     for record in records(hash_ref, stores) {

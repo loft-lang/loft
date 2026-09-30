@@ -89,6 +89,14 @@ whose performance claim is unfalsifiable.
                  then in the loft algorithm itself; REPLACING the loft
                  implementation with a native one is an edge case decided
                  per routine and recorded as such — never the default cure.
+  (Perf-Teach)   rewriting loft code for speed — a routine's own, or a
+                 consumer's — is the LAST resort, taken only after the code
+                 generation for the code AS WRITTEN has been improved as far
+                 as it goes, and only when the faster spelling is one the
+                 compiler can NAME to a user in an `advice` diagnostic (a
+                 library API that answers the same question, a form the rules
+                 admit): a speed-up that lives in a rewrite nobody is told
+                 about teaches nothing and leaves every other program slow.
 ```
 
 **In words.** The libraries are written in loft ON PURPOSE, twice over: loft has to be a
@@ -98,6 +106,14 @@ the libraries double as the project's teaching corpus — an open-source distrib
 libraries a reader can actually comprehend (GOALS.md § B — the teaching corpus) — so the
 industry-wide pattern this rule refuses is the "fast pass": readable code shadowed by an
 optimized twin nobody can follow.  The reference twin exists to MEASURE, never to ship.
+`(Perf-Teach)` is the same doctrine one level up, for a rewrite in LOFT: the natural
+spelling of a decoder (`sub = read(…); items += [sub.value]`, a tree built and freed) is
+what users write, so the compiler is where its speed is made — the clauses of `(R-Place)`
+and `(R-ExitVector)` came from exactly that row.  A hand-written faster form (a reader that
+skips instead of decoding, 49.6× → 5.3× on pluginabi's `check_request`) is measured as a
+CEILING and kept beside the row, and reaches the library only when the compiler cannot
+close the gap AND an `advice` can point a user at it — then it is an API with a diagnostic
+naming it, never a private fast path.  Owner's rule, 2026-09-30.
 A native rewrite remains available for the edge case that genuinely needs it, taken per
 routine, with the reason recorded beside it — an exception with a receipt, not a habit.
 loft#1426 is the rule applied: the profiler showed the loft hot loop matching the
@@ -137,12 +153,12 @@ different matter and `(Perf-Like)`'s.
 
 OPEN: **1**
 
-- **D-perf-2 (OPEN, loft#1743, @PLN158)** — violates (Perf-Weight): the shipped routines as a population
-  are over both bars.  Measured 2026-09-29 by `make perf-portal` at 639aaa2c3 (every in-repo lane
-  and every library bench with a Rust twin, hash-validated under (Perf-Like)): 205 routines,
-  median 2.79×, 140 over 3×, 29 of them at 10× or more — `pluginabi` `check_request` 59.9×,
-  `mesh3d` `mat4_mul` 39.0× and `mesh_to_floats` 32.1×, `cbor` `encode_bytes` 31.7×.  The
-  table and its classes are [PERF_PORTAL.md](../PERF_PORTAL.md); the per-routine row is
-  `bench/portal/results/<host>.tsv`, whose git history `make perf-trend` reads.  The entry
-  closes when the portal's population meets both bars; `drawing`, the first library judged
-  (D-perf-1, now in [performance-history.md](performance-history.md)), already does.
+- **D-perf-2 (OPEN, loft#1743, @PLN158) — not resolvable in a release** (owner, 2026-09-29) —
+  violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  The bar spans
+  every public routine of the stdlib and of every shipped library, and the routines over it fall
+  into mechanism classes whose cures are engine work measured in cycles (@PLN158, the native
+  optimisation stream), so no single release can close it; each routine that crosses the bar is
+  fixed on its own, and the release reads the position instead (`M-perf-pass`, `make
+  perf-portal`, [PERF_PORTAL.md](../PERF_PORTAL.md)).  The entry closes when the portal's
+  population meets both bars; `drawing`, the first library judged, already does (D-perf-1, in
+  [performance-history.md](performance-history.md)).

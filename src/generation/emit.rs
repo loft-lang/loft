@@ -531,12 +531,23 @@ impl Output<'_> {
                     // block that binds it — is a statement list with a value tail, which
                     // inside a tuple is legal Rust only as a block expression.
                     let as_block = e.unspan().kind() == ValueType::Insert;
+                    // loft#1740 — a text member in a `&str` slot is spelled `&String`, `&str`
+                    // or `Str` depending on its source, and rustc reconciles those inside a
+                    // tuple only where the expected type is in view: an `if` join's two arms
+                    // and a pre-bound block argument were refused.  One spelling for all.
+                    let as_str = elem_is_text && !self.tuple_text_to_string;
+                    if as_str {
+                        write!(w, "tuple_text(")?;
+                    }
                     if as_block {
                         write!(w, "{{ ")?;
                     }
                     self.output_code_node(w, e)?;
                     if as_block {
                         write!(w, " }}")?;
+                    }
+                    if as_str {
+                        write!(w, ")")?;
                     }
                     if elem_is_bool {
                         write!(w, ") as u8)")?;
@@ -2700,6 +2711,23 @@ impl Output<'_> {
         if let Some(prefix) = self.call_stack_prefix.take() {
             writeln!(w, "{prefix}")?;
         }
+        // `(R-Header)`'s FUNCTION clause — the body itself as the frame: a body that writes
+        // no store and reads a vector path twice or more holds the path's header from here,
+        // exactly as a loop body would, and a loop inside re-uses it.  Opened after the
+        // prologue, because the header reads `stores`; closed before the block's brace so a
+        // tail value flows out of the wrapper.
+        let fn_frame = if is_fn_body && !self.fn_header_disabled && !self.hoist_disabled {
+            let mut memo = std::mem::take(&mut self.fn_header_memo);
+            let paths = super::hoist::fn_header_params(bl, self.data, self.def_nr, &mut memo);
+            self.fn_header_memo = memo;
+            if paths.is_empty() {
+                false
+            } else {
+                self.begin_fn_headers(w, paths)?
+            }
+        } else {
+            false
+        };
         // @PLN157 § V-j (`@FR-R-MoveAppend`) — a paired `for f in call(…)`: place the
         // call's buffer as a record in the destination's own store, and arm the loop
         // variable so the append's OpCopyRecord emits the move.  The destination's
@@ -3085,6 +3113,13 @@ impl Output<'_> {
                 self.indent(w)?;
                 writeln!(w, "// loft:{file}:{line}")?;
                 continue;
+            }
+            // loft#1753 — a statement that calls into a frame first records the line it calls
+            // from in THIS frame, which is what `stack_trace()` reports as the callee frame's
+            // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
+            if self.named_frame && self.ckpt_cur_line != 0 && super::calls_a_frame(self.data, v) {
+                self.indent(w)?;
+                writeln!(w, "cr_call_site({});", self.ckpt_cur_line)?;
             }
             // @PLN157 § V-x (`@FR-R-LitHoist`) — an invariant loop-body literal builds
             // ONCE: the declaration statement (its pre-evals included — an OpDatabase
@@ -3715,6 +3750,9 @@ impl Output<'_> {
         }
         if adopt_delivery {
             self.in_adopt_delivery -= 1;
+        }
+        if fn_frame {
+            self.end_vector_hoist(w, true)?;
         }
         self.indent(w)?;
         write!(

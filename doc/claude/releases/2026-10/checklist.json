@@ -1,7 +1,17 @@
 {
+  "M-changelog-read": {
+    "at": "2026-09-30 05:46",
+    "commit": "56000d47259d667d57ebac49f92babaf13b5103b",
+    "note": "read CHANGELOG.md's 2026-10 section at candidate 3cf7c5324: it describes this release (the one-meaning release: content ==, use lib, const, foreign stores/file_map, C131 variant casts, binding field patterns, zero-padding, generic holes, literal nulls, re-binds, locked writes, stack_trace lines, defaults, tuple comprehension). Checked against every user-visible commit between the last release and the candidate; the two gaps found (other streams' fixes, 1665f7e2f; locked writes, 56000d472) are in. Perf restorations of in-cycle regressions carry no entry."
+  },
   "M-close-plans": {
     "at": "2026-09-16 10:13",
     "note": "scripts/close-shipped-plans.sh --range v2026.9.0..HEAD --dry-run, 2026-09-16. Eight plan-close directives in range, naming loft-lang/plans issues 149 150 152 153 155 159 160 162, and ALL EIGHT report \"already closed, skipping\". Nothing shipped in this range left a plan open, which is the whole question the step asks. Deliberately run in dry-run only: the acting form calls gh issue close against a separate repo, and closing plan issues is the owner call, not the reviewer one. No outward action taken."
+  },
+  "M-docs-review": {
+    "at": "2026-09-29 18:12",
+    "commit": "99ee20513395bc8205e13960576832b25c9434f9",
+    "note": "2026-09-29 steps 1-4 + 8: make work lists only #1739 (fixed 429041e7b); scripts/linkcheck.sh 416 links OK and every working-doc src/ path checked (CODE, PLANNING_WEB, BRITTLE, SLOTS, PLANNING_STABILITY fixed; FORMATTER.md rewritten \u2014 it described the deleted Rust formatter); no orphan docs; every working doc under 1000 lines (the subject splits); make clippy-review: 39 dead + 8 partly dead suppressions and 5 dead crate-level allows reported, not yet removed."
   },
   "M-falsify-receipts": {
     "at": "2026-09-16 09:10",
@@ -10,6 +20,11 @@
   "M-file-sizes": {
     "at": "2026-09-16 23:55",
     "note": "make file-sizes run 2026-09-16 at the row's creation; both halves read. SIZE (scripts/file-sizes.py): docs 1000 files, median 189 lines, 89 over the 700 bar, 36 reading as several subjects -- PERFORMANCE.md (32 sections, largest 17%), DESIGN_DECISIONS.md (70, 6%), TESTING.md (36, 20%), WASM.md (22, 13%), PLANNING.md (21, 22%), LOFT.md (29, 16%), PACKAGES.md (39, 22%), plans/157 DESIGN.md (56, 8%). Code 612 files, median 260, 96 over the 1200 bar, 45 as several subjects; the giant parser/state files are KEEP because one impl block is 74-97% of each (one subject, merely long), and the real candidate is src/use_analysis.rs (167 sections, largest 8%) -- tests/issues.rs (1550, 1%) is a test file where that shape is the point. HISTORY (scripts/doc_history_report.py): the split holds in general, 138 docs carrying 5155 timeline lines of 90793 (6%); it concentrates in the formal contract docs, where formal/heap.md is 71% history with NO -history.md companion (the only high-share contract doc without one) and binding 52%, tuples 59%, closures 49%, ownership 35% HAVE a companion and still carry that much -- a companion existing is not evidence the history moved, so the share is what to read. METHOD NOTE: the first version of file-sizes.py divided the largest section by the whole FILE while sections span first-anchor-to-EOF, so a doc with one late ## scored 2% and read as several subjects; 7 of 43 doc recommendations were false until a len(secs)<2 guard landed. WHAT REMAINS: no file was split. This tick records the census and the candidate list; each split is its own edit with its own review, and the heap.md history move is the one the record already scoped (RELEASE.md 5b: MOVE, never copy -- a register living in two files defines its entries twice)."
+  },
+  "M-ignores": {
+    "at": "2026-09-30 00:48",
+    "commit": "a72d8257ffe11cfb8187e2597b62406f3df2d3f4",
+    "note": "at a72d8257f: each ignore's reason checked TRUE by running what it names \u2014 leak_cross_mode (4), leak_cases_native, f26_wide_poison_sweep, fuzz_differential, seed_corpus_replay green locally 2026-09-29 and now steps in miri.yml release-gate-sweeps; the job's existing sweeps (fuzz_gate_map54_full_replay, SI-2, whole corpus) green in miri.yml run 36554569886; differential oracle green in ci.yml daily 36548461806; oracle_leak_scan_ratchet 0 findings, advisory PR job; 18 measurements/benchmarks assert nothing (by hand, by design); regen_fill_rs a maintenance tool; format_width x2 Windows-only (run on Linux). Removed: native_suite_floor_holds (stale floor), oracle_dev_free_check_ratchet (superseded checker). Skip lists: the 4 html_wasm platform limits (host facility absent), none cite an issue."
   },
   "M-libs": {
     "at": "2026-09-16 10:54",
@@ -26,6 +41,16 @@
   "M-monthly-docs": {
     "at": "2026-09-16 10:13",
     "note": "Both halves run 2026-09-16. make libraries-review: 8 reviewed, 41 never reviewed, 2 exempt, 1 deferred, 6 owe a verdict, 0 stale rows; 1441 published pub items with 36 undocumented (2 fn, 34 type); 359 in-tree pub fns. Five sources moved past their watermark (default, lib/code.loft, lib/lexer.loft, lib/parser.loft, lib/testlib.loft) and EACH reports 0 pub fn line(s) changed, so no public surface moved in any of them. make features-review: 71 entries with a runnable example, 14 exempt, 2 deferred (F47, F100), 0 unwritten, 0 owe a verdict, 35 infra entries needing no example. WHAT REMAINS: the by-hand read of those five prose deltas is NOT done. The census is what this tick records; the zero pub-fn-line finding is why the deltas are low risk, not why they are read."
+  },
+  "M-ndb": {
+    "at": "2026-09-30 00:41",
+    "commit": "ef27ed8bc3dfc2c33a262365449569c21a961e05",
+    "note": "gdb (stock, no plugin) on a --native-debug build of fact(5) at ef27ed8bc: 'break loft_native_*::n_fact' resolves to the preserved .rs line 3314, bt shows n_fact <- n_main, info args var_n = 5; objdump decodedline names the preserved .rs, which exists. lldb not installed on this host. Help text for --native-debug fixed (114630b3f)."
+  },
+  "M-ops-census": {
+    "at": "2026-09-29 18:12",
+    "commit": "99ee20513395bc8205e13960576832b25c9434f9",
+    "note": "2026-09-29 make ops-census: 324 declared / 306 emitted / 11 unexercised / 7 orphan. Two unexercised were test gaps, now covered (OpRemSingleNullable in 02-floats, OpDeliver in pln105-expose-iterate); the other 11 are census blind spots \u2014 lambda bodies (OpFreeRefOrHandUp), IR-only ops codegen rewrites (OpConvRefFromNull, OpCreateStack), LOFT_STORE_TAG-gated ops no test arms (OpStoreTag, OpFreeRefTag), name-only mentions (OpGotoFalse, OpConstLongText, OpGetRef, OpSetRef, OpGetShortSpare, OpHashAdd). OpGoto was live only through two stray bytes behind OpSetStackRef \u2014 fixed 47ba568c6. The 7 orphans are retirement candidates, not verdicts."
   },
   "M-perf-pass": {
     "at": "2026-09-16 09:54",

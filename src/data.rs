@@ -7934,8 +7934,10 @@ impl Data {
                         self.def(*d_nr).name()
                     ));
                 }
-                if self.def_type(*d_nr) != DefType::Struct {
-                    // An enum-value reference and other non-struct refs default fine.
+                // A struct-enum VARIANT is a record like a struct and defaults the same way,
+                // `(D-Rec)` over its payload fields (its discriminant attribute carries its own
+                // value); other non-struct refs default fine.
+                if !matches!(self.def_type(*d_nr), DefType::Struct | DefType::EnumValue) {
                     return Ok(());
                 }
                 let rec = self.def(*d_nr).name().to_string();
@@ -11553,6 +11555,15 @@ impl Data {
         }
     }
 
+    /// The qualifier `into_source` names `lib_source` by through a bare `use`, if it has one.
+    #[must_use]
+    pub fn bare_use_qualifier(&self, into_source: u16, lib_source: u16) -> Option<&str> {
+        self.bare_uses
+            .iter()
+            .find(|(into, _, lib)| *into == into_source && *lib == lib_source)
+            .map(|(_, q, _)| q.as_str())
+    }
+
     /// The qualifier of a library `into_source` imported with a bare `use`, and that
     /// declares a public `name` (a type, constant or function), or `None`.  A bare `use`
     /// brings in only the qualifier (@C98), so this answers "is this unresolved name
@@ -12575,10 +12586,19 @@ impl Data {
     /// first-bind and rebind arms — so they cannot disagree about which pairs copy; the
     /// native emitter asks only that both sides be records (`Type::heap_def_nr`), and
     /// this is the widest pair the checker lets reach it.
+    ///
+    /// And the NARROWING a variant cast proves (`@FR-N-Cast`, @C131): `s as Circle` lowers to
+    /// `if s is Circle { s } else { … }`, so a `Circle` binding meets the whole `Shape` local
+    /// only on the path whose discriminant test holds, and a bind there copies like any other.
+    /// Declining it left a RE-BIND (`bl = X; bl = s as Circle`, sunk into the arm as a plain
+    /// `bl = s`) on the alias path, so a write through `bl` reached `s` on both backends.  The
+    /// cast's own `??` hoist is not a bind that copies; `Function::record_copy_source` declines
+    /// it by what it is (`is_overwritten_view`) before this pair is asked.
     #[must_use]
     pub fn copies_as(&self, dst: u32, src: u32) -> bool {
         dst == src
             || (matches!(self.def_type(src), DefType::EnumValue) && self.def(src).parent == dst)
+            || (matches!(self.def_type(dst), DefType::EnumValue) && self.def(dst).parent == src)
     }
 
     #[must_use]

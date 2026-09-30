@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN `is` CAPTURE REFUSES A RENAME BY NAME (`@FR-P-Point`).  A `match` field pattern binds a
+// field under another name (`Circle { radius: r } => …`); an `is` capture binds each field under
+// its own (`is Circle { radius } { … }`), because its list is told from a BODY by lookahead and
+// a body may open with a declaration `x: T`.  `is Circle { radius: r }` was read as that body and
+// refused with `Expect token ;` and `Undefined type r`, naming neither the capture nor the cure.
+// It is refused once, naming both spellings; a body that opens with a typed declaration
+// (`{ radius: integer = 5; … }`) is still a body.
+//
+// @falsified-at: d5c257b77 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-is-capture-refuses-a-rename-by-name.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusal — the control reads the capture as a body and reports
+//   `Expect token ;` and `Undefined type r`, not the rename.
+// HOLDS: nothing runs on either tree (a refusal file).
+
+enum Sh { Circle { radius: integer }, Rect { w: integer } }
+
+fn main() {
+  t: Sh = Circle { radius: 2 };
+  // @EXPECT_ERROR: an `is` capture binds a field under its own name
+  if t is Circle { radius: r } { x = r; }
+}

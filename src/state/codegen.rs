@@ -178,6 +178,7 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             | "n_host_input"
             // text_from_bytes — owned text decoded from a vector<u8>.
             | "n_text_from_bytes"
+            | "n_text_from_byte_range"
     )
 }
 
@@ -228,6 +229,13 @@ impl State {
         let logging = !crate::portable_path::is_stdlib_source(&data.def(def_nr).position().file);
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
+        self.walk_steps = if fusion_enabled() {
+            crate::generation::hoist::char_walks(data, def_nr)
+                .into_values()
+                .collect()
+        } else {
+            Vec::new()
+        };
         // @PLN11 G2/M6 — read the body's SHAPE (null / empty-block) from the
         // persistent store when present, so these last native body reads are
         // also store-backed; else from the native graph.
@@ -1180,10 +1188,7 @@ impl State {
         f_val: IrNode,
         stack: &mut Stack,
     ) -> Type {
-        self.generate_node(test, stack, false);
-        stack.add_op("OpGotoFalseWord", self);
-        let code_step = self.code_pos;
-        self.code_add(0i32); // temp step
+        let code_step = self.gen_if_test(test, stack);
         let true_pos = self.code_pos;
         let stack_pos = stack.position;
         let tp = self.generate_node(t_val, stack, false);
@@ -2200,6 +2205,9 @@ impl State {
         let value_owned = value.to_owned_value();
         let value = &value_owned;
         self.vars.insert(self.code_pos, v);
+        if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
+            return;
+        }
         // Zero-sized variables (null-typed) have no stack storage.
         if size(stack.function.tp(v), &Context::Variable) == 0 {
             stack.function.set_stack_allocated(v);
@@ -3032,7 +3040,7 @@ impl State {
                 if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && let Value::Var(src) = value.unspan()
                     && *src != v
-                    && let Some(src_d) = stack.function.record_copy_source(v, *src)
+                    && let Some(src_d) = stack.function.record_copy_source(stack.data, v, *src)
                     && stack.data.copies_as(d_nr, src_d)
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
@@ -3284,7 +3292,7 @@ impl State {
             && let Value::Var(src) = value
             // `record_copy_source` also reads a `&S` source as its `S` (@FR-C-Ref), so `y = e`
             // with `e = &z` copies the record the link names (`binding.md` D-bind-52).
-            && let Some(src_d_nr) = stack.function.record_copy_source(v, *src)
+            && let Some(src_d_nr) = stack.function.record_copy_source(stack.data, v, *src)
             && stack.data.copies_as(d_nr, src_d_nr)
         {
             // First assignment `d = c` where both hold the same heap RECORD type — a struct
@@ -4264,6 +4272,13 @@ impl State {
              (@FR-G-Mono)",
             stack.data.def(op).name()
         );
+        if let Some(f) = fusable_int(stack, op, parameters) {
+            self.emit_fused_int(stack, &f, None);
+            return stack.data.def(op).returned().clone();
+        }
+        if self.emit_fused_vec(stack, op, parameters) {
+            return stack.data.def(op).returned().clone();
+        }
         let mut tps = Vec::new();
         let mut last = 0;
         let mut was_stack = u16::MAX;
@@ -4837,6 +4852,273 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// A text walk's end test over a text local as one compare-and-jump: `!T`
+    /// (`OpNot(OpConvBoolFromText(T))`) as `OpTextNullJump`, `size(T) <= index` as
+    /// `OpTextEndJump`.  Answers where the jump's displacement sits, or `None` — emitting
+    /// nothing — for any other test.
+    fn emit_text_end_test(&mut self, test: IrNode, stack: &mut Stack) -> Option<u32> {
+        if !fusion_enabled() || test.kind() != ValueType::Call {
+            return None;
+        }
+        let args: Vec<Value> = test
+            .call_args()
+            .iter()
+            .map(|a| a.to_owned_value())
+            .collect();
+        let inner = |v: &Value, name: &str| -> Option<u16> {
+            let Value::Call(op, a) = v.unspan() else {
+                return None;
+            };
+            let [t] = &a[..] else { return None };
+            (stack.data.def(*op).name() == name).then_some(())?;
+            text_local(stack, t)
+        };
+        let (src, idx) = match (stack.data.def(test.call_to()).name(), &args[..]) {
+            ("OpNot", [b]) => (inner(b, "OpConvBoolFromText")?, None),
+            ("OpLeInt", [size, i]) => (inner(size, "OpSizeText")?, Some(int_local(stack, i)?)),
+            _ => return None,
+        };
+        let at = self.code_pos;
+        let arg = u8::from(stack.function.is_argument(src));
+        let src_pos = stack.var_pos(src);
+        let idx_pos = idx.map(|i| stack.var_pos(i));
+        stack.add_op(
+            if idx.is_some() {
+                "OpTextEndJump"
+            } else {
+                "OpTextNullJump"
+            },
+            self,
+        );
+        self.code_add(src_pos);
+        self.code_add(arg);
+        self.vars.insert(at + 1, src);
+        if let (Some(i), Some(p)) = (idx, idx_pos) {
+            self.code_add(p);
+            self.vars.insert(at + 2, i);
+        }
+        let code_step = self.code_pos;
+        self.code_add(0i32); // temp step
+        Some(code_step)
+    }
+
+    /// An integer element of a local vector at a local index as one op: `OpGetInt` over
+    /// `OpGetVector[Nullable](vec, size, idx)` becomes `OpVecGetInt[Nullable]`, and `OpSetInt`
+    /// over `OpGetVector` with a pure value (`fused_pure_int`) becomes the value, then
+    /// `OpVecSetInt`.  Answers `false`, emitting nothing, for any other shape.
+    fn emit_fused_vec(&mut self, stack: &mut Stack, op: u32, params: &[Value]) -> bool {
+        if !fusion_enabled() {
+            return false;
+        }
+        let name = stack.data.def(op).name();
+        let (get, value) = match (name, params) {
+            ("OpGetInt", [elem, Value::Int(fld)]) => (true, (elem, *fld, None)),
+            ("OpSetInt", [elem, Value::Int(fld), val]) if fused_pure_int(stack, val) => {
+                (false, (elem, *fld, Some(val)))
+            }
+            _ => return false,
+        };
+        let (elem, fld, val) = value;
+        let Value::Call(g, g_args) = elem.unspan() else {
+            return false;
+        };
+        let nullable = match stack.data.def(*g).name() {
+            "OpGetVector" => false,
+            "OpGetVectorNullable" if get => true,
+            _ => return false,
+        };
+        let [vec, Value::Int(size), idx] = &g_args[..] else {
+            return false;
+        };
+        let (Some(vec), Some(idx)) = (vector_local(stack, vec), int_local(stack, idx)) else {
+            return false;
+        };
+        let (Ok(size), Ok(fld)) = (u16::try_from(*size), u16::try_from(fld)) else {
+            return false;
+        };
+        // Taken BEFORE the value is pushed: `OpVecSetInt` pops its value first and reads the
+        // locals after, at the height the value was pushed from.
+        let (vp, ip) = (stack.var_pos(vec), stack.var_pos(idx));
+        if let Some(v) = val {
+            self.generate(v, stack, false);
+        }
+        let at = self.code_pos;
+        stack.add_op(
+            match (get, nullable) {
+                (true, false) => "OpVecGetInt",
+                (true, true) => "OpVecGetIntNullable",
+                (false, _) => "OpVecSetInt",
+            },
+            self,
+        );
+        self.code_add(vp);
+        self.code_add(size);
+        self.code_add(ip);
+        self.code_add(fld);
+        self.vars.insert(at + 1, vec);
+        self.vars.insert(at + 2, idx);
+        true
+    }
+
+    /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
+    /// `OpTextWalkStep`.  The index, next and text variables already hold their slots; `c`
+    /// may be taking its first assignment, which does what `generate_set`'s first-assignment
+    /// branch does for a character — mark the slot allocated, write the value at its planned
+    /// slot.  Every slot written must lie wholly below the stack top: the unfused form pushes
+    /// before it stores, which grows the stack, and this op pushes nothing.  Any other state
+    /// answers `false`, and the block is emitted as before.
+    fn emit_walk_step(&mut self, stack: &mut Stack, c: u16) -> bool {
+        let Some(w) = self.walk_steps.iter().find(|w| w.loop_var == c).cloned() else {
+            return false;
+        };
+        let f = &stack.function;
+        let below_top = |v: u16| f.stack(v) != u16::MAX && f.stack(v) + 8 <= stack.position;
+        if ![w.index, w.next, w.src]
+            .iter()
+            .all(|&v| f.is_stack_allocated(v) && below_top(v))
+            || !below_top(c)
+            || !matches!(f.tp(c).base(), Type::Character)
+            || !matches!(f.tp(w.src).base(), Type::Text(_))
+        {
+            return false;
+        }
+        let arg = u8::from(f.is_argument(w.src));
+        stack.function.set_stack_allocated(c);
+        let at = self.code_pos;
+        let positions = [
+            stack.var_pos(c),
+            stack.var_pos(w.index),
+            stack.var_pos(w.next),
+            stack.var_pos(w.src),
+        ];
+        stack.add_op("OpTextWalkStep", self);
+        for p in positions {
+            self.code_add(p);
+        }
+        self.code_add(arg);
+        for (k, v) in [w.index, w.next, w.src].into_iter().enumerate() {
+            self.vars.insert(at + 1 + k as u32, v);
+        }
+        true
+    }
+
+    /// Emit an `if` test and the jump taken when it is false, and answer where the jump's
+    /// 32-bit displacement sits for the back-patch.  A comparison of integer locals and a
+    /// literal (see [`fusable_int`]) is one `OpCmpIntVVJump` / `OpCmpIntVCJump`; anything else
+    /// is the test followed by `OpGotoFalseWord`.  Both end in the displacement, so the patch
+    /// is the same.
+    fn gen_if_test(&mut self, test: IrNode, stack: &mut Stack) -> u32 {
+        let fused = if test.kind() == ValueType::Call {
+            let args: Vec<Value> = test
+                .call_args()
+                .iter()
+                .map(|a| a.to_owned_value())
+                .collect();
+            fusable_int(stack, test.call_to(), &args).filter(|f| f.compare)
+        } else {
+            None
+        };
+        if let Some(code_step) = self.emit_text_end_test(test, stack) {
+            return code_step;
+        }
+        let le_args: Vec<Value> = if test.kind() == ValueType::Call
+            && stack.data.def(test.call_to()).name() == "OpLeInt"
+        {
+            test.call_args()
+                .iter()
+                .map(|a| a.to_owned_value())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if fusion_enabled()
+            && let [len, idx] = &le_args[..]
+            && let Value::Call(len_op, len_args) = len.unspan()
+            && stack.data.def(*len_op).name() == "OpLengthVector"
+            && let [vec] = &len_args[..]
+            && let Some(vec) = vector_local(stack, vec)
+            && let Some(idx) = int_local(stack, idx)
+        {
+            let at = self.code_pos;
+            let (vp, ip) = (stack.var_pos(vec), stack.var_pos(idx));
+            stack.add_op("OpVecEndJump", self);
+            self.code_add(vp);
+            self.code_add(ip);
+            self.vars.insert(at + 1, vec);
+            self.vars.insert(at + 2, idx);
+            let code_step = self.code_pos;
+            self.code_add(0i32); // temp step
+            return code_step;
+        }
+        if let Some(f) = fused {
+            let at = self.code_pos;
+            let a = stack.var_pos(f.a);
+            stack.add_op(
+                match f.b {
+                    FusedOperand::Var(_) => "OpCmpIntVVJump",
+                    FusedOperand::Const(_) => "OpCmpIntVCJump",
+                },
+                self,
+            );
+            self.code_add(f.kind);
+            self.code_add(a);
+            match f.b {
+                FusedOperand::Var(v) => self.code_add(stack.var_pos(v)),
+                FusedOperand::Const(c) => self.code_add(c),
+            }
+            self.vars.insert(at + 1, f.a);
+            if let FusedOperand::Var(v) = f.b {
+                self.vars.insert(at + 2, v);
+            }
+        } else {
+            self.generate_node(test, stack, false);
+            stack.add_op("OpGotoFalseWord", self);
+        }
+        let code_step = self.code_pos;
+        self.code_add(0i32); // temp step
+        code_step
+    }
+
+    /// Emit a fused integer operator (see [`fusable_int`]): the result pushed, or with
+    /// `dst` stored straight into that local.  Every operand position is taken at the stack
+    /// height the op starts at — no operand is pushed first — and `dst` is the position an
+    /// `OpPutInt` would carry after the result's push, which is how `put_var` addresses it.
+    fn emit_fused_int(&mut self, stack: &mut Stack, f: &FusedInt, dst: Option<u16>) {
+        let at = self.code_pos;
+        let a = stack.var_pos(f.a);
+        let dst_pos = dst.map(|d| stack.position + stack.step(8) - stack.function.stack(d));
+        let name = match (f.compare, f.b, dst.is_some()) {
+            (false, FusedOperand::Var(_), false) => "OpIntVV",
+            (false, FusedOperand::Const(_), false) => "OpIntVC",
+            (true, FusedOperand::Var(_), false) => "OpCmpIntVV",
+            (true, FusedOperand::Const(_), false) => "OpCmpIntVC",
+            (false, FusedOperand::Var(_), true) => "OpIntVVPut",
+            (false, FusedOperand::Const(_), true) => "OpIntVCPut",
+            (true, _, true) => unreachable!("a comparison is never stored by operand fusion"),
+        };
+        let b = match f.b {
+            FusedOperand::Var(v) => Some(stack.var_pos(v)),
+            FusedOperand::Const(_) => None,
+        };
+        stack.add_op(name, self);
+        self.code_add(f.kind);
+        if let Some(d) = dst_pos {
+            self.code_add(d);
+        }
+        self.code_add(a);
+        match f.b {
+            FusedOperand::Var(_) => self.code_add(b.expect("a local operand has a position")),
+            FusedOperand::Const(c) => self.code_add(c),
+        }
+        // The reads, where the debugger's reference ranges look for them: inside this
+        // instruction, one byte each, so neither overwrites the store target a Set keyed at
+        // `at` (the unfused first read landed on `at` and replaced it).
+        self.vars.insert(at + 1, f.a);
+        if let FusedOperand::Var(v) = f.b {
+            self.vars.insert(at + 2, v);
+        }
+    }
+
     pub(super) fn generate_call_ref(
         &mut self,
         stack: &mut Stack,
@@ -5635,22 +5917,45 @@ impl State {
                 Type::RefVar(inner) => crate::data::NarrowSlot::of_type(inner),
                 _ => None,
             };
-            match *tp {
+            // Every write op here takes a `fld` operand after the reference except
+            // `OpSetStackRef(r, v1)`: writing the `0u16` behind it too left two bytes
+            // the op does not declare, which ran as `OpGoto(+0)` only because `OpGoto`
+            // is opcode 0.
+            let takes_fld = match *tp {
                 Type::Integer(_) if narrow_link.is_some() => {
                     stack.add_op(narrow_link.expect("checked").set_op(), self);
+                    true
                 }
-                Type::Integer(_) => stack.add_op("OpSetInt", self),
-                Type::Character => stack.add_op("OpSetCharacter", self),
-                Type::Single => stack.add_op("OpSetSingle", self),
-                Type::Float => stack.add_op("OpSetFloat", self),
+                Type::Integer(_) => {
+                    stack.add_op("OpSetInt", self);
+                    true
+                }
+                Type::Character => {
+                    stack.add_op("OpSetCharacter", self);
+                    true
+                }
+                Type::Single => {
+                    stack.add_op("OpSetSingle", self);
+                    true
+                }
+                Type::Float => {
+                    stack.add_op("OpSetFloat", self);
+                    true
+                }
                 // The write half of `&boolean` (loft#655).  Paired with
                 // `OpGetBoolean` on the read path: both carry the tri-state
                 // storage ↔ two-state expression conversion, which `OpSetByte`
                 // would skip.
-                Type::Boolean => stack.add_op("OpSetBoolean", self),
+                Type::Boolean => {
+                    stack.add_op("OpSetBoolean", self);
+                    true
+                }
                 // `OpSetEnum` for the same reason as the read: `OpSetByte` takes a `min` operand
                 // this site does not write.
-                Type::Enum(_, false, _) => stack.add_op("OpSetEnum", self),
+                Type::Enum(_, false, _) => {
+                    stack.add_op("OpSetEnum", self);
+                    true
+                }
                 // A KEYED collection joins the store-backed kinds: its slot holds a DbRef
                 // exactly as a vector's does, so the write-back repoints it the same way.
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the
@@ -5658,13 +5963,17 @@ impl State {
                 // optimisation, which is the trade the other way round (loft#1292).
                 Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _) => {
                     stack.add_op("OpSetStackRef", self);
+                    false
                 }
                 ref other if crate::parser::vectors::is_keyed(other) => {
                     stack.add_op("OpSetStackRef", self);
+                    false
                 }
                 _ => panic!("Unknown reference variable type"),
+            };
+            if takes_fld {
+                self.code_add(0u16);
             }
-            self.code_add(0u16);
             if let Some(slot) = narrow_link
                 && slot.kind.takes_min()
             {
@@ -5745,6 +6054,18 @@ impl State {
             return;
         }
         let stack_before = stack.position;
+        // Operand fusion's store half: `x = a op c` in one op.  The same predicate as the
+        // `OpPutInt` selection below (a plain integer slot, not a linked narrow one), so the
+        // fused put writes exactly the slot that op would have.
+        if matches!(stack.function.tp(var).base(), Type::Integer(_))
+            && stack.function.linked_narrow_slot(var).is_none()
+            && let Value::Call(op, args) = value.unspan()
+            && let Some(f) = fusable_int(stack, *op, args)
+            && !f.compare
+        {
+            self.emit_fused_int(stack, &f, Some(var));
+            return;
+        }
         // A fn-ref slot is the PAIR (8 B d_nr + 12 B closure DbRef), and the put-op chosen
         // below pops all twenty for a `Function` slot.  A non-capturing source — a bare
         // `dbl`, or a lambda that captures nothing — lowers to the lone d_nr and pushes
@@ -6023,6 +6344,124 @@ impl State {
 
 /// Check if a Value is a divergent expression (return/break/continue)
 /// that never produces a value at the join point.
+/// A fused integer op's second operand.
+#[derive(Clone, Copy)]
+enum FusedOperand {
+    Var(u16),
+    Const(i64),
+}
+
+/// An integer operator whose operands can be read in place (`OpIntVV` and its siblings).
+struct FusedInt {
+    compare: bool,
+    kind: u8,
+    a: u16,
+    b: FusedOperand,
+}
+
+/// `LOFT_NO_FUSE=1` — emit every integer operator with its operands pushed first, as before
+/// operand fusion.  The first bisect step for an interpreter-only wrong answer, and the
+/// switch the fusion's A/B runs against (both forms must print the same).
+fn fusion_enabled() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_FUSE").is_none())
+}
+
+/// Can `op(params)` be emitted as one fused integer op?  Yes when `op` is one of the integer
+/// operators the fused ops carry (`ops::fused`), the first operand is a plain integer local
+/// and the second is one too or an integer literal.  A plain local is one `generate_var`
+/// reads with `OpVarInt` ([`int_local`]) — an allocated integer slot that is not a linked
+/// narrow one — so the fused op reads the same eight bytes that op would.  Every other shape
+/// answers `None` and is emitted as before: a literal first operand, a narrow-linked operand,
+/// any other operator.  That is always correct, because the unfused form is the reference.
+fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
+    use crate::ops::fused;
+    if params.len() != 2 || !fusion_enabled() {
+        return None;
+    }
+    let (compare, kind) = match stack.data.def(op).name() {
+        "OpAddInt" => (false, fused::ADD),
+        "OpMinInt" => (false, fused::MIN),
+        "OpMulInt" => (false, fused::MUL),
+        "OpLandInt" => (false, fused::LAND),
+        "OpLorInt" => (false, fused::LOR),
+        "OpEorInt" => (false, fused::EOR),
+        "OpEqInt" => (true, fused::EQ),
+        "OpNeInt" => (true, fused::NE),
+        "OpLtInt" => (true, fused::LT),
+        "OpLeInt" => (true, fused::LE),
+        _ => return None,
+    };
+    let a = int_local(stack, &params[0])?;
+    let b = match params[1].unspan() {
+        Value::Int(c) => FusedOperand::Const(i64::from(*c)),
+        Value::Long(c) => FusedOperand::Const(*c),
+        other => FusedOperand::Var(int_local(stack, other)?),
+    };
+    Some(FusedInt {
+        compare,
+        kind,
+        a,
+        b,
+    })
+}
+
+/// A plain integer local: one `generate_var` reads with `OpVarInt`, which it decides on the
+/// PEELED type, so an `integer?` local (same storage, same op) is one too.
+fn int_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v).base(), Type::Integer(_))
+        && stack.function.linked_narrow_slot(v).is_none()
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// A text local: one `generate_var` reads with `OpVarText` or `OpArgText`, decided on the
+/// peeled type.
+fn text_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v).base(), Type::Text(_))
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// A vector local: one `generate_var` reads with `OpVarVector`, decided on the peeled type.
+fn vector_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v).base(), Type::Vector(_, _))
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// An integer value that can neither fault nor reach a store: literals, plain integer
+/// locals, and the integer operators the fused ops carry (`ops::fused`), which answer null
+/// on overflow instead of raising.  Evaluating one before an element lookup rather than
+/// after it therefore changes nothing a program can see.
+fn fused_pure_int(stack: &Stack, v: &Value) -> bool {
+    match v.unspan() {
+        Value::Int(_) | Value::Long(_) => true,
+        Value::Var(_) => int_local(stack, v).is_some(),
+        Value::Call(op, args) => {
+            matches!(
+                stack.data.def(*op).name(),
+                "OpAddInt" | "OpMinInt" | "OpMulInt" | "OpLandInt" | "OpLorInt" | "OpEorInt"
+            ) && args.iter().all(|a| fused_pure_int(stack, a))
+        }
+        _ => false,
+    }
+}
+
 fn is_divergent(node: IrNode) -> bool {
     match node.kind() {
         ValueType::Return | ValueType::Break | ValueType::Continue => true,

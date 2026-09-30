@@ -1,6 +1,6 @@
 ---
 name: formal-rules
-description: Set up and use a NAMED-RULE register with code-site citations in any project — the mechanism that makes "which sites enforce this rule?" a grep and "is this rule already implemented?" a lookup. Use this when adopting the @FR- tag convention in a new project, when writing or citing a formal rule, when checking that every citation resolves, or when asking which rule a piece of code enforces. Tree-agnostic method with a bindings section for this repo; the portable checker is scripts/rule_tags.py (vendor it and repoint two env vars).
+description: Set up and use a NAMED-RULE register with code-site citations in any project — the mechanism that makes "which sites enforce this rule?" a grep and "is this rule already implemented?" a lookup. Use this when adopting the @FR- tag convention in a new project, when writing or citing a formal rule, when checking that every citation resolves, or when asking which rule a piece of code enforces. Tree-agnostic method with a bindings section for this repo; the portable checker is scripts/rule_tags.py (vendor it and repoint `RULES_DIR`/`CITE_DIRS`/`CITE_EXTS`; `coverage` also reads `GUARD_DIRS`/`GUARD_EXTS`).
 user-invocable: false
 ---
 

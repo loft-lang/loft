@@ -3465,17 +3465,28 @@ impl Parser {
                 let value_start = self.lexer.link();
                 let unresolved_before = self.unresolved_names;
                 let unresolved_types_before = self.unresolved_types;
-                let mut t = Value::Var(arguments.len() as u16);
+                // Parsed as a VALUE (`Null`), not into the slot `Var(arguments.len())`: no variable
+                // occupies that number while the default is parsed, so a literal building
+                // "into" it met its own element temporary minted at the same number, and a
+                // seeded `vector<S>` default failed with "Variable '_elm_1' cannot change type".
+                // The slot stays the marker for a default whose parse BUILT nothing — a pass-1
+                // call to a function declared below (loft#1170) — which is not the `null` literal
+                // that means "no default".
+                let null_literal = self.lexer.peek_token("null");
+                let mut t = Value::Null;
                 // loft#1067 — the parameter's declared type is the expected type for its
                 // DEFAULT, exactly as it is for an argument a caller passes: a default is
                 // checked against it a few lines below, and `fn takes(f: fn(integer) ->
                 // integer = |x| { x * 2 })` has no other way to say what `x` is.
                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-                if Self::seeds_lambda_hint(&typedef) {
-                    self.expected = typedef.base().clone();
+                if let Some(h) = self.argument_hint(typedef.base().clone()) {
+                    self.expected = h;
                 }
                 let dtype = self.expression(&mut t);
                 self.expected = saved_expected;
+                if matches!(t, Value::Null) && !null_literal {
+                    t = Value::Var(arguments.len() as u16);
+                }
                 // @PLN102 arc-E (E2 Tier-0): type-check + coerce the default
                 // expression against the parameter type, exactly as a call-site
                 // argument is (`convert` then `validate_convert`, mod.rs:5907).
@@ -3873,6 +3884,16 @@ impl Parser {
             return Some(Type::Unknown(u_nr));
         }
         if tp_nr != u32::MAX && self.data.def_type(tp_nr) == DefType::Unknown {
+            // A WRITTEN type is the evidence a `Name { … }` construction alone is not: the
+            // stub a construction registered on speculation is now a type the author named,
+            // and `resolve_deferred_unknowns` must report it when nothing adopts it.  Kept
+            // speculative, the report was left to the construction site, the annotation
+            // carried the unresolved stub into pass 2, and `for h in d` over a
+            // `d: vector<Hex>` read `def(u32::MAX)` — an internal compiler error where
+            // "Undefined type Hex — it is in `lat` …" belonged.
+            if self.first_pass {
+                self.speculative_type_refs.remove(&tp_nr);
+            }
             let args = self.skip_forward_type_args(on_d);
             self.note_forward_return(returned, tp_nr, args);
             return Some(Type::Unknown(tp_nr));
@@ -6441,8 +6462,10 @@ impl Parser {
         // loft#1067 — a DEFAULT is checked against the declared type, so
         // `fn takes(f: fn(integer) -> integer = |x| { x * 2 })` infers `x`
         // exactly as a caller passing the same lambda would.
-        if self.enum_context(a_type) || Self::seeds_lambda_hint(a_type) {
-            self.expected = a_type.clone();
+        // A field default is the same position as a parameter's (`argument_hint`): a bare
+        // `vector<E>` literal default resolves its variants against `E` as well.
+        if let Some(h) = self.argument_hint(a_type.clone()) {
+            self.expected = h;
         }
         // loft#698 — where the default's value is BUILT decides whether it
         // can be replayed.  Mark the source position first: a default that
@@ -6455,19 +6478,22 @@ impl Parser {
         if a_type.is_unknown() {
             *a_type = tp.clone();
         }
-        // A field default is a store into the field, so an INTEGER one meets the field's
-        // narrowing the way a parameter default and a struct literal's field do — through
-        // `convert`.  It met nothing: `f: u8 = 256` read 0 with no diagnostic, and a
-        // `limit(0, 10)?` field defaulting to 12 held 12.  Only the integer question is asked
-        // here: a keyed collection's default is a `vector` literal until the function it is
-        // hoisted into delivers it at the field's type (loft#703).
+        // A field default is a store into the field, so it meets the field's conversion
+        // the way a parameter default and a struct literal's field do — through `convert`
+        // (`@FR-C-Num`, `@FR-C-Tuple`).  It met nothing: `f: u8 = 256` read 0 with no
+        // diagnostic, and `p: float = 7` stored the integer's BITS, so the field read
+        // 3.5e-323 on the interpreter and did not compile natively.  A collection is not
+        // asked here: a keyed collection's default is a `vector` literal until the function
+        // it is hoisted into delivers it at the field's type (loft#703), and that function
+        // converts its own result.
         let dtype_concrete = match &tp {
             Type::Rewritten(inner) => inner.as_ref(),
             other => other,
         };
         if !self.first_pass
-            && matches!(a_type.base(), Type::Integer(_))
-            && matches!(dtype_concrete.base(), Type::Integer(_))
+            && !a_type.is_unknown()
+            && !dtype_concrete.is_unknown()
+            && !crate::parser::vectors::is_collection(a_type)
             && !matches!(value, Value::Null)
             && !self.convert(value, &tp, a_type)
         {
@@ -6663,11 +6689,18 @@ impl Parser {
         if d_nr == u32::MAX {
             return None;
         }
+        // The HIDDEN attributes are the return mechanism `ref_return` / `text_return` added to
+        // the minted function (its return buffer, a work buffer) — not parameters the default
+        // was parsed with.  Read back as parameters they widened pass 2's signature past pass
+        // 1's, and the re-type of "parameter" 1 landed on the body's first local: a record
+        // `match` default was refused as "'_match_subj_1' cannot change type from integer to
+        // P" (`@FR-T-Syn` — one signature on both passes).
         let params: Vec<Argument> = self
             .data
             .def(d_nr)
             .attributes()
             .iter()
+            .filter(|a| !a.hidden)
             .map(|a| Argument {
                 name: a.name.clone(),
                 typedef: a.typedef.clone(),
@@ -6821,7 +6854,12 @@ impl Parser {
         }
         let d_nr = self.context;
         if self.first_pass {
-            self.data.set_returned(d_nr, a_type.clone());
+            // loft#1758, `@FR-F-Ret` — a lifetime-bearing tuple is returned BOXED, exactly as a
+            // declared `-> (text, integer)` is: handed back bare, a text member viewed a record
+            // the minted frame freed on exit.  The caller unboxes it where the default becomes
+            // the argument (`add_defaults`), as it does for `f(k, mk(k))`.
+            let returned = self.boxed_tuple_return(a_type.clone());
+            self.data.set_returned(d_nr, returned);
         }
         self.vars
             .append(&mut self.data.definitions[d_nr as usize].variables);

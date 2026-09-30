@@ -13,6 +13,48 @@ OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-25 — OPENED AND CLOSED (2026-09-29): a default reading an earlier parameter through a tuple read the caller's own local
+
+`(F-Default)`, written for this entry: a default fills its parameter with the earlier parameters
+bound to the call's own arguments.  A default replayed in place names an earlier parameter as
+`Var(n)`, and `substitute_param_refs` swaps it for the call's argument — through a hand-kept
+list of five node shapes that had no `Tuple`.  So in `fn h(k: integer, t: (integer, integer) =
+(k, 9))` the `k` stayed `Var(0)` and read the CALLER's first local: `h(1)` answered `(0, 9)` and
+`h(5)` whatever the previous call had left, `(k, k * 2)` printed uninitialised memory — silently,
+on the interpreter, on every build measured back to 9c3c6cf78 — and native did not compile.
+Scalar, text and record defaults took the `Call` arm and were right, which is why nothing had
+met it.  **Fix.**  The substitution walks `Value::for_each_child_mut`, the exhaustive child
+list, and does not descend into a replacement (the caller's expression, whose variables are the
+caller's).  Guard `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft`.
+Found walking `(T-Syn)`: a parameter default is the one place pass 1's TREE is replayed.
+
+### D-call-27 — OPENED AND CLOSED (2026-09-30): a lowered text-tuple default did not answer what its argument would (loft#1758)
+
+A default that needs a temporary is lowered into a minted function (`default_value_fn`), and that
+function returned a lifetime-bearing tuple BARE, where every declared `-> (text, integer)` is
+returned as the boxed `__tuple<…>` record (`@FR-F-Ret`, `boxed_tuple_return`).  Its text member
+viewed a record the minted frame freed on exit: `--native` refused the call (`(String, i64)` for a
+`(&str, i64)` parameter) and the interpreter answered `null` members — for `t: (text, integer) =
+mk(k)`, with no diagnostic.  The register read `OPEN: 0` over it; the deviation was named in the
+chapter's prose only.  **Fix.**  The minted function's return is boxed as a declaration's is, and
+`add_defaults` converts the boxed result to the parameter's tuple where the default becomes the
+argument — `convert`'s stored-tuple arm, the one an explicit `f(k, mk(k))` takes.  Guard
+`tests/scripts/1758-a-text-tuple-default-answers-what-its-argument-would.loft` (nine cells, both
+backends; a literal member replayed in place is the control).
+
+### D-call-26 — OPENED AND CLOSED (2026-09-29): a record `match` default was refused with an internal temporary's name
+
+A default that needs a temporary is lowered into a minted function, and pass 2 re-types that
+function's parameters from the signature pass 1 gave it (`hoisted_default_signature`) — read from
+its ATTRIBUTES, which include the hidden return buffer `ref_return` adds for a record result.  Pass
+2's signature was therefore one wider than pass 1's, and "parameter" 1 was the body's first local:
+`p: P = match k { 1 => P { x: 11 }, _ => P { x: 22 } }` (a struct or an enum) was refused *"Variable
+'_match_subj_1' cannot change type from integer to P"*, on both backends and every build measured.
+An `if` default has no local at that slot, so the stray re-type was a no-op there.  **Fix.**  The
+signature skips the hidden attributes, as the other readers of a minted function's attributes
+already do.  Guard `tests/scripts/a-match-default-over-records-compiles.loft`, apart from
+D-call-25's so the control's refusal cannot stop the value cells before they are scored.
+
 ### D-call-24 — OPENED AND CLOSED (2026-09-29): a nullable vector local at the tail lost every write after its null
 
 `(F-Ret)`: a function returns the value it computed.  `fn f(k) -> vector<integer>? { v:

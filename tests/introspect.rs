@@ -539,3 +539,46 @@ fn compiling_the_same_file_twice_gives_the_same_bytecode_and_slots() {
         }
     }
 }
+
+/// `OpSetStackRef(r, v1)` declares no `fld` operand, so nothing may follow it in the stream but
+/// the next op.  The `&`-link write wrote the `0u16` field offset its sibling ops declare behind
+/// it too, and those two bytes ran as `OpGoto(+0)` — harmless only because `OpGoto` is opcode 0,
+/// and counted by the operator census as a live `OpGoto`.
+#[test]
+fn a_set_stack_ref_is_followed_by_the_next_op() {
+    let file = workspace_root().join("tests/data/set_stack_ref.loft");
+    let out = Command::new(loft_bin())
+        .args(["introspect", "--show-bytecode"])
+        .arg(&file)
+        .current_dir(workspace_root())
+        .output()
+        .expect("failed to invoke loft binary");
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = listing.lines().collect();
+    let sites: Vec<usize> = (0..lines.len())
+        .filter(|&i| lines[i].contains("SetStackRef("))
+        .collect();
+    assert!(
+        sites.len() >= 2,
+        "the fixture no longer writes through OpSetStackRef:\n{listing}"
+    );
+    for i in sites {
+        let next = lines.get(i + 1).copied().unwrap_or("");
+        assert!(
+            !next.contains("Goto("),
+            "operand bytes behind OpSetStackRef decode as an op:\n{}\n{next}",
+            lines[i]
+        );
+    }
+    let run = Command::new(loft_bin())
+        .args(["--interpret"])
+        .arg(&file)
+        .current_dir(workspace_root())
+        .output()
+        .expect("failed to invoke loft binary");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

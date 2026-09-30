@@ -14,6 +14,11 @@
 //! the stdlib parse, the corpus parse, the scope pass and the post-scope lints — so the
 //! harness's own allocations are outside the window.  The corpus is `bench/frontend`'s,
 //! read through `frontend.py --emit`, so both instruments measure the same input.
+//!
+//! The stdlib parse is COLD: no startup cache is read, so a new `default/` declaration
+//! moves every row by the same constant — one a real install pays once per stdlib change,
+//! not per run.  PERFORMANCE.md § Front-end speed says how to tell that from front-end
+//! growth.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

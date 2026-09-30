@@ -508,6 +508,8 @@ impl Output<'_> {
                 | "OpCopyRecord"
                 | "OpPlaceRecord"
                 | "OpMoveRecord"
+                | "OpMoveField"
+                | "OpMoveVector"
                 | "OpFreeRecordIn"
                 | "OpSizeofRef"
                 | "OpStep"

@@ -1,0 +1,225 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index ad1a5e8a4..3cf9471c3 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2879,40 +2879,6 @@ use #count instead"
+         } else {
+             "OpFormat"
+         };
+-        // `@FR-G-Mono` — a hole whose type is a BOUND type variable is lowered per instance,
+-        // with the concrete type, by this same function: the rendering a builtin lowers to is
+-        // a constant derived from the type, and the instance behaves as its hand-written twin
+-        // (`{x:05}` on an integer `T` is `00042`, a `text` `T` is refused as its twin is).
+-        // Lowered here, through `to_text` and a TEXT append, the template fixed text's
+-        // alignment and text's zero-fill for every instance.  The hole is marked with its
+-        // whole spec; `Parser::resolve_pending_formats` lowers it inside the instance.
+-        if let Type::Reference(tv, _) = tp
+-            && self.data.is_type_var_placeholder(tv)
+-            && self.has_bound_for_method("to_text", tv, None)
+-        {
+-            list.push(self.cl(
+-                &(start.to_owned() + "Text"),
+-                &[
+-                    var,
+-                    format.clone(),
+-                    state.width.clone(),
+-                    Value::Int(state.dir),
+-                    Value::Int(i32::from(
+-                        state.token.as_bytes().first().copied().unwrap_or(b' '),
+-                    )),
+-                    Value::Int(Self::FORMAT_PENDING),
+-                    Value::Int(tv as i32),
+-                    Value::Int(i32::from(append_value)),
+-                    Value::Int(state.radix),
+-                    Value::Boolean(state.plus),
+-                    Value::Boolean(state.note),
+-                    Value::Boolean(state.float),
+-                    Value::Text(state.spec.to_string()),
+-                    Value::Text(state.token.to_string()),
+-                ],
+-            ));
+-            return;
+-        }
+         // L9: escalate format-specifier mismatches to compile errors.
+         // A specifier that can never have any effect on the value type is always a bug.
+         if !self.first_pass {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 81620a89c..39aef451f 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5059,30 +5059,10 @@ impl Parser {
+     /// `OpVectorIsNull` — where a scalar compares against a `…FromNull` literal.  Callers that
+     /// read a null proof out of a condition need both spellings; this is the heap one, and it
+     /// answers only for a plain variable, which is the only place a proof can be recorded.
+-    ///
+-    /// A NULLABLE STRUCT held inline — a `vector<P?>` element, a `for` variable over one — is
+-    /// the synthetic `__nullable<P>` enum (`Data::is_nullable_wrapper`), whose null test is its
+-    /// discriminant: `OpEqInt(OpConvIntFromEnum(OpGetEnum(v, 0)), 0)`, the `== null` lowering
+-    /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
+-    /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
+-    /// ordinary enum's discriminant test says nothing about null.
+     fn heap_null_test(&self, test: &Value) -> Option<u16> {
+         let Value::Call(op, args) = test.unspan() else {
+             return None;
+         };
+-        if self.data.def(*op).name() == "OpEqInt"
+-            && let [lhs, Value::Int(0)] = args.as_slice()
+-            && let Value::Call(conv, conv_args) = lhs.unspan()
+-            && self.data.def(*conv).name() == "OpConvIntFromEnum"
+-            && let [get] = conv_args.as_slice()
+-            && let Value::Call(get_op, get_args) = get.unspan()
+-            && self.data.def(*get_op).name() == "OpGetEnum"
+-            && let [subject, Value::Int(0)] = get_args.as_slice()
+-            && let Value::Var(v) = subject.unspan()
+-            && self.data.is_nullable_wrapper(self.vars.tp(*v))
+-        {
+-            return Some(*v);
+-        }
+         if args.len() != 1 || !matches!(self.data.def(*op).name(), "OpRefIsNull" | "OpVectorIsNull")
+         {
+             return None;
+@@ -18722,7 +18702,7 @@ impl Parser {
+                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
+                             // parameter the positional form does, so it must infer the
+                             // same way; the spelling of the argument is not the axis.
+-                            if self.seeds_collection_hint(&expected)
++                            if Self::seeds_collection_hint(&expected)
+                                 || self.interpolation_target(&expected) != u32::MAX
+                                 || Self::seeds_lambda_hint(&expected)
+                                 || self.seeds_instance_hint(&expected)
+@@ -18806,7 +18786,7 @@ impl Parser {
+                         self.expected = expected;
+                     } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
+                         self.expected = expected;
+-                    } else if self.seeds_collection_hint(&expected) {
++                    } else if Self::seeds_collection_hint(&expected) {
+                         // #432 — seed a bare vector-literal argument's element width
+                         // from the parameter type, so it builds at the callee's
+                         // stride instead of `vector<integer>`.  Both passes (like the
+@@ -20044,24 +20024,12 @@ impl Parser {
+     /// Recurses through nested vector layers so `vector<vector<u8>>` seeds too (the
+     /// outer literal is seeded; inner literals thread their element type through
+     /// `var_tp`).  The leaf must be a narrow integer.
+-    ///
+-    /// And a NULLABLE element at any level (`vector<text?>`, `vector<P?>`,
+-    /// `vector<vector<integer>?>`): `@FR-N-Decl` — a declared slot is a commitment, and an
+-    /// inferred literal stays dense, so the declared `?` is the one fact the literal cannot
+-    /// infer.  Built dense and converted after, it cannot be: a `P?` element is stored as
+-    /// `__nullable<P>` (`Data::is_nullable_wrapper`), a different layout, so `f(["a", null])` was refused where the same
+-    /// literal in a declared local is accepted.  Not over a type variable, for the generic
+-    /// reason above.
+-    pub(crate) fn seeds_vector_hint(&self, expected: &Type) -> bool {
++    pub(crate) fn seeds_vector_hint(expected: &Type) -> bool {
+         match expected {
+             Type::Vector(elem, _) => {
+                 // @PLN25: peel `Optional(τ)` so a `vector<u8?>` literal seeds its narrow
+                 // stride like `vector<u8>` (else #432 stride-reinterpretation corruption).
+-                matches!(elem.base(), Type::Integer(_))
+-                    || ((matches!(**elem, Type::Optional(_))
+-                        || self.data.is_nullable_wrapper(elem))
+-                        && !self.data.mentions_type_var(elem))
+-                    || self.seeds_vector_hint(elem)
++                matches!(elem.base(), Type::Integer(_)) || Self::seeds_vector_hint(elem)
+             }
+             _ => false,
+         }
+@@ -20074,8 +20042,8 @@ impl Parser {
+     /// different question with no trade-off in it: `[K { … }]` infers `vector<K>`, which
+     /// is not a `hash<K[k]>` at any width, so the parameter type is the only thing that
+     /// can say what to build and passing one was simply impossible without it.
+-    pub(crate) fn seeds_collection_hint(&self, expected: &Type) -> bool {
+-        self.seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
++    pub(crate) fn seeds_collection_hint(expected: &Type) -> bool {
++        Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
+     }
+ 
+     /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
+@@ -20340,7 +20308,7 @@ impl Parser {
+                     let a = self.data.attr(hint_nr, &arg_name);
+                     if a != usize::MAX {
+                         let expected = self.callee_param_hint(hint_nr, a, &types);
+-                        if self.seeds_collection_hint(&expected)
++                        if Self::seeds_collection_hint(&expected)
+                             || self.interpolation_target(&expected) != u32::MAX
+                             || Self::seeds_lambda_hint(&expected)
+                             || self.seeds_instance_hint(&expected)
+@@ -20379,7 +20347,7 @@ impl Parser {
+                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
+                 // library API actually presents.  A `fn(…)` parameter types a short
+                 // lambda, as it does for the free spelling of the same call.
+-                if self.seeds_collection_hint(&expected)
++                if Self::seeds_collection_hint(&expected)
+                     || self.interpolation_target(&expected) != u32::MAX
+                     || Self::seeds_lambda_hint(&expected)
+                     || self.seeds_instance_hint(&expected)
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index f6da9a557..ab5c7ca02 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -4625,7 +4625,7 @@ impl Parser {
+     /// Expected `vector<…>` element-width hint for a bare literal — `expected` filtered to a
+     /// concrete narrow-element vector (#432; [`Self::seeds_vector_hint`]).
+     pub(crate) fn vector_hint(&self) -> Type {
+-        if self.seeds_vector_hint(&self.expected) {
++        if Self::seeds_vector_hint(&self.expected) {
+             self.expected.without_deps()
+         } else {
+             Type::Unknown(0)
+@@ -9185,49 +9185,6 @@ impl Parser {
+     /// The `tp` a bound `==` is marked with until its schema row is known (`(G-Sat-Eq)`).
+     const CONTENT_EQ_PENDING: i32 = i32::MIN;
+ 
+-    /// The marker a format hole over a bound type variable carries until its instance lowers
+-    /// it (`append_data`, `@FR-G-Mono`).
+-    pub(crate) const FORMAT_PENDING: i32 = i32::MIN + 1;
+-
+-    /// Lower each marked format hole of a fresh monomorph with the type the instance binds its
+-    /// type variable to: `append_data`, the lowering a concrete hole gets, spec checks and all.
+-    /// Run inside the instance's frame, as [`Self::resolve_content_eq`] is.
+-    fn resolve_pending_formats(&mut self, code: &mut Value, bindings: &[(u32, Type)]) {
+-        if let Value::Call(_, args) = code.unspan_mut()
+-            && args.len() == 14
+-            && matches!(args[5].unspan(), Value::Int(Self::FORMAT_PENDING))
+-            && let (Value::Var(append), Value::Int(holder), Value::Int(append_value)) =
+-                (args[0].unspan(), args[6].unspan(), args[7].unspan())
+-            && let (Value::Int(dir), Value::Int(radix)) = (args[3].unspan(), args[8].unspan())
+-            && let (Value::Boolean(plus), Value::Boolean(note), Value::Boolean(float)) =
+-                (args[9].unspan(), args[10].unspan(), args[11].unspan())
+-            && let (Value::Text(spec), Value::Text(token)) = (args[12].unspan(), args[13].unspan())
+-        {
+-            let concrete = bindings
+-                .iter()
+-                .find(|(h, _)| *h as i32 == *holder)
+-                .map_or(Type::Unknown(0), |(_, t)| t.clone());
+-            let (append, append_value) = (*append, *append_value as u16);
+-            let (spec, token) = (spec.clone(), token.clone());
+-            let state = OutputState {
+-                radix: *radix,
+-                width: args[2].clone(),
+-                token: &token,
+-                plus: *plus,
+-                note: *note,
+-                dir: *dir,
+-                float: *float,
+-                spec: &spec,
+-            };
+-            let format = args[1].clone();
+-            let mut list = Vec::new();
+-            self.append_data(concrete, &mut list, append, append_value, &format, state);
+-            *code = Value::Insert(list);
+-            return;
+-        }
+-        code.for_each_child_mut(&mut |c| self.resolve_pending_formats(c, bindings));
+-    }
+-
+     /// Lower each marked bound `==` of a fresh monomorph (`(G-Sat-Eq)`): the call
+     /// `OpEqContent(a, b, PENDING, holder)` becomes the CONCRETE `a == b` for the type the
+     /// monomorph binds `holder` to — `call_op`, the one lowering a concrete site gets, so a
+@@ -9346,7 +9303,6 @@ impl Parser {
+         // Inside the instance's own frame (its variables, its context), so a comparison that
+         // needs a temporary — a tuple's element-wise one — makes it in the right function.
+         self.resolve_content_eq(&mut code, bindings);
+-        self.resolve_pending_formats(&mut code, bindings);
+         let returned = self.data.def(d_nr).returned().clone();
+         if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
+         {

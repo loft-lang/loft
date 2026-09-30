@@ -81,6 +81,8 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REPO_HASH=$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)
 REPO_SLUG=$(printf '%s' "$(basename "$REPO_ROOT")" | tr -c 'A-Za-z0-9._-' '_')
 REPO_TAG="$REPO_SLUG.$REPO_HASH"
+# The janitor runs beside every build this starts, detached (RUN_BOUNDS.md § Scratch hygiene).
+"$REPO_ROOT/scripts/disk_janitor.sh" --background 2>/dev/null || true
 # The per-checkout server-test port offset used to be computed here and exported.  It is now
 # `common::checkout_port_offset`, which reproduces `(cksum(path) % 6 + 1) * 2000` in Rust — the
 # SAME bands, so nothing moved, but every way of running the suite gets them: `make ci` and a

@@ -40,8 +40,9 @@ gets) and sampled from the binary loft cached.  Point it at a SCRATCH CLONE, nev
 library's working tree: the build writes caches beside the source.
 
 The programs are BUILT before they are measured, in sets of `--batch` (20): a set compiles
-`--build-jobs` (5) at a time at low priority, then is measured one program at a time, so no
-build ever runs beside a measurement.  Every build step's wall-clock and CPU seconds and peak
+`--build-jobs` (5) at a time at low priority, then is measured `--measure-jobs` (3) programs
+at a time, each on its own fastest cores, so no build ever runs beside a measurement.  A
+program that declares `// bench-threads: N` gets N cores and is measured alone.  Every build step's wall-clock and CPU seconds and peak
 memory are printed and, with `--build-tsv`, written out (bench/README.md § Statistics).
 
 A REPORT, never a gate: timings are machine-bound.  Exit 1 on a hash disagreement, a lane
@@ -50,6 +51,7 @@ otherwise, whatever the ratios say.
 """
 import argparse
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -89,6 +91,22 @@ def fastest_cpus(count):
         return []
     ranked = sorted(cores.values(), key=lambda fc: (-fc[0], fc[1]))
     return [cpu for _, cpu in ranked[:count]]
+
+
+def top_tier_cpus():
+    """The first hardware thread of every core in the FASTEST tier (max frequency within
+    10 % of the fastest core's): the cores a ratio measured on one of them compares with.  A
+    hybrid CPU's efficiency cores are a different machine for this purpose."""
+    base = "/sys/devices/system/cpu"
+    freq = {}
+    for cpu in fastest_cpus(os.cpu_count() or 1):
+        try:
+            with open(f"{base}/cpu{cpu}/cpufreq/cpuinfo_max_freq") as f:
+                freq[cpu] = int(f.read())
+        except OSError:
+            return []
+    top = max(freq.values(), default=0)
+    return [cpu for cpu, fr in freq.items() if fr >= 0.9 * top]
 
 
 def pin_prefix(threads, enabled):
@@ -264,12 +282,16 @@ def run_metadata(a):
         "arch": f"{platform.machine()}-{platform.system().lower()}",
         "date": datetime.date.today().isoformat(),
         "commit": git("rev-parse", "--short", "HEAD"),
-        "dirty": "yes" if git("status", "--porcelain", "--untracked-files=no") else "no",
+        # The portal's own outputs are not the tree under measurement: a partial run is
+        # always taken over the results file the previous run left modified.
+        "dirty": "yes" if git("status", "--porcelain", "--untracked-files=no", "--", ".",
+                              ":!bench/portal/results", ":!doc/claude/PERF_PORTAL.md") else "no",
         "rustc": subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip(),
         "samples": a.samples,
         "target_ms": a.target_ms,
         "ref_flags": a.ref_flags,
         "pinned": "no" if a.no_pin or not pin_prefix(1, True) else "yes",
+        "measure_jobs": a.measure_jobs,
     }
 
 
@@ -308,8 +330,133 @@ def build_batch(batch, lanes, a, build_rows, failed):
     return built
 
 
-def threads_of(bench):
-    return 4 if bench.startswith("11_") else 1
+def measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp):
+    """Measure one built program: calibrate each lane, one discarded warm-up round, then
+    `a.samples` interleaved rounds.  Answers its printed lines, its rows, its ratios and
+    their verdicts — nothing shared is touched, so several can run at once."""
+    lines, recs, ratios, verdict_list = [], [], [], []
+    cwd = pkg_dir
+    unit_target = target_us if pkg_dir is None else max(target_us, a.package_target_ms * 1000.0)
+    n_of = {lane: calibrate(cmd, pin, unit_target, f"{bench} [{lane}]", cwd) for lane, cmd in cmds.items()}
+    samples = {lane: {} for lane in cmds}
+    regions = {lane: {} for lane in cmds}
+    hashes = {lane: {} for lane in cmds}
+    # One discarded round first: the first run of a lane after the OTHER lane's
+    # calibration reads 5–8 % slow (caches, frequency ramp), every later one does not.
+    for cmd_lane, cmd in cmds.items():
+        rows_of(cmd, n_of[cmd_lane], pin, f"{bench} [{cmd_lane}] warm-up", cwd)
+    for _ in range(a.samples):
+        for lane, cmd in cmds.items():
+            for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]", cwd).items():
+                samples[lane].setdefault(name, []).append(r["ns"])
+                regions[lane].setdefault(name, []).append(r["us"])
+                prev = hashes[lane].setdefault(name, r["hash"])
+                if prev != r["hash"]:
+                    fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
+    names = list(next(iter(samples.values())))
+    for name in names:
+        seen = {lane: hashes[lane].get(name) for lane in cmds if name in hashes[lane]}
+        if len(set(seen.values())) != 1:
+            fail(f"{bench}/{name}: the lanes compute different results — {seen}")
+        line = f"{bench:15} {name:13}"
+        rec = dict(bench=bench, routine=name, hash=next(iter(seen.values())),
+                   commit=stamp["commit"], date=stamp["date"])
+        for lane in lanes:
+            xs = samples.get(lane, {}).get(name)
+            if not xs:
+                line += f" {'—':>15} {'':>5}"
+                continue
+            med, sp = statistics.median(xs), spread(xs)
+            line += f" {med:>15,.0f} {sp:>5.1f}"
+            rec.update({f"{lane}_ns": med, f"{lane}_min": min(xs), f"{lane}_max": max(xs),
+                        f"{lane}_spread": sp, f"{lane}_n": n_of[lane]})
+        nat, ref = samples.get("native", {}).get(name), samples.get("rust", {}).get(name)
+        if nat and ref:
+            ratio = statistics.median(nat) / statistics.median(ref)
+            (nq1, nq3), (rq1, rq3) = quartiles(nat), quartiles(ref)
+            lo, hi = nq1 / rq3, nq3 / rq1
+            if hi <= a.bar:
+                verdict = "ok"
+            elif lo > a.bar:
+                verdict = "OVER"
+            else:
+                verdict = "unclear"
+            verdict_list.append(verdict)
+            ratios.append(ratio)
+            noisy = max(spread(nat), spread(ref)) > a.noisy
+            # A program runs every routine `--n` times, calibrated on its SLOWEST one, so a
+            # routine a thousand times faster is timed over a region of a few microseconds
+            # of a microsecond clock.  Such a row is COARSE: its figure is real but blunt.
+            coarse = min(statistics.median(regions["native"][name]),
+                         statistics.median(regions["rust"][name])) < a.coarse_us
+            flags = ("  (noisy)" if noisy else "") + ("  (coarse)" if coarse else "")
+            line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{flags}"
+            rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict,
+                       flags=(("noisy " if noisy else "") + ("coarse" if coarse else "")).strip())
+        lines.append(line)
+        if a.show_samples:
+            for lane in lanes:
+                xs = samples.get(lane, {}).get(name)
+                if xs:
+                    lines.append(f"    {lane:7} n={n_of[lane]:<7} " + " ".join(f"{x:,}" for x in xs))
+        recs.append(rec)
+    return lines, recs, ratios, verdict_list
+
+def measure_batch(jobs, a, lanes, target_us, stamp):
+    """Measure the built programs of one batch, `a.measure_jobs` at a time, each on its own
+    fastest cores (a program never shares a core with another one).  Answers each program's
+    result in the batch's order, so the table reads the same however many ran at once."""
+    if a.measure_jobs <= 1:
+        for bench, pkg_dir, cmds in jobs:
+            yield measure_unit(bench, pkg_dir, cmds, pin_prefix(threads_of(bench, pkg_dir), not a.no_pin),
+                               a, lanes, target_us, stamp)
+        return
+    import threading
+    free = top_tier_cpus() if not a.no_pin and shutil.which("taskset") else []
+    pinning = bool(free)
+    order = list(free)
+    lock = threading.Condition()
+
+    def one(bench, pkg_dir, cmds):
+        threads = min(threads_of(bench, pkg_dir), len(order)) if pinning else 0
+        # A threaded program takes EVERY core of the tier — it waits for the others to finish
+        # and nothing starts beside it — and runs on the first `threads` of them.
+        want = len(order) if threads > 1 else threads
+        cpus = []
+        if pinning:
+            with lock:
+                lock.wait_for(lambda: len(free) >= want)
+                cpus, free[:] = free[:want], free[want:]
+        pin = ["taskset", "-c", ",".join(map(str, cpus[:threads]))] if cpus else []
+        try:
+            return measure_unit(bench, pkg_dir, cmds, pin, a, lanes, target_us, stamp)
+        finally:
+            if cpus:
+                with lock:
+                    free[:0] = cpus
+                    free.sort(key=order.index)
+                    lock.notify_all()
+
+    with ThreadPoolExecutor(max_workers=a.measure_jobs) as pool:
+        futures = [pool.submit(one, *job) for job in jobs]
+        for fut in futures:
+            yield fut.result()
+
+
+def threads_of(bench, pkg_dir):
+    """How many threads the program runs its routines on, as its own `bench.loft` declares
+    in a `// bench-threads: N` line (bench/README.md § The row protocol); 1 when it declares
+    none.  It is pinned to that many cores, and a program above 1 is measured ALONE."""
+    src = os.path.join(pkg_dir, "bench", "bench.loft") if pkg_dir else os.path.join(HERE, bench, "bench.loft")
+    try:
+        with open(src) as f:
+            for line in f:
+                m = re.match(r"\s*//\s*bench-threads:\s*(\d+)", line)
+                if m:
+                    return max(1, int(m.group(1)))
+    except OSError:
+        pass
+    return 1
 
 
 def main():
@@ -332,6 +479,9 @@ def main():
                     help="programs compiled at the same time, each at low priority")
     ap.add_argument("--batch", type=int, default=20,
                     help="programs built before they are measured, one at a time")
+    ap.add_argument("--measure-jobs", type=int, default=3,
+                    help="programs measured at the same time, each pinned to its own cores of "
+                         "the fastest tier; a threaded program is always measured alone")
     ap.add_argument("--build-mem-reserve-gb", type=float, default=3.0,
                     help="a build step waits while the machine has less memory available")
     ap.add_argument("--build-tsv", default="",
@@ -344,6 +494,8 @@ def main():
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
     ap.add_argument("--lib-dir", default=os.environ.get("LOFT_LIB_DIR", os.path.join(ROOT, "target/release")))
     a = ap.parse_args()
+    # The janitor runs beside the builds this starts, detached (RUN_BOUNDS.md § Scratch hygiene).
+    subprocess.run([os.path.join(ROOT, "scripts", "disk_janitor.sh"), "--background"], check=False)
 
     lanes = [x for x in a.lanes.split(",") if x]
     unknown = set(lanes) - {"native", "rust", "interp", "python"}
@@ -393,76 +545,19 @@ def main():
         built = build_batch(batch, lanes, a, build_rows, failed)
         build_wall += time.monotonic() - t0
         t0 = time.monotonic()
+        jobs = []
         for bench, pkg_dir in batch:
             if bench not in built:
                 continue
             cmds = built[bench]
-            cwd = pkg_dir
-            pin = pin_prefix(threads_of(bench), not a.no_pin)
-            unit_target = target_us if pkg_dir is None else max(target_us, a.package_target_ms * 1000.0)
-            n_of = {lane: calibrate(cmd, pin, unit_target, f"{bench} [{lane}]", cwd) for lane, cmd in cmds.items()}
-            samples = {lane: {} for lane in cmds}
-            regions = {lane: {} for lane in cmds}
-            hashes = {lane: {} for lane in cmds}
-            # One discarded round first: the first run of a lane after the OTHER lane's
-            # calibration reads 5–8 % slow (caches, frequency ramp), every later one does not.
-            for cmd_lane, cmd in cmds.items():
-                rows_of(cmd, n_of[cmd_lane], pin, f"{bench} [{cmd_lane}] warm-up", cwd)
-            for _ in range(a.samples):
-                for lane, cmd in cmds.items():
-                    for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]", cwd).items():
-                        samples[lane].setdefault(name, []).append(r["ns"])
-                        regions[lane].setdefault(name, []).append(r["us"])
-                        prev = hashes[lane].setdefault(name, r["hash"])
-                        if prev != r["hash"]:
-                            fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
-            names = list(next(iter(samples.values())))
-            for name in names:
-                seen = {lane: hashes[lane].get(name) for lane in cmds if name in hashes[lane]}
-                if len(set(seen.values())) != 1:
-                    fail(f"{bench}/{name}: the lanes compute different results — {seen}")
-                line = f"{bench:15} {name:13}"
-                rec = dict(bench=bench, routine=name, hash=next(iter(seen.values())),
-                           commit=stamp["commit"], date=stamp["date"])
-                for lane in lanes:
-                    xs = samples.get(lane, {}).get(name)
-                    if not xs:
-                        line += f" {'—':>15} {'':>5}"
-                        continue
-                    med, sp = statistics.median(xs), spread(xs)
-                    line += f" {med:>15,.0f} {sp:>5.1f}"
-                    rec.update({f"{lane}_ns": med, f"{lane}_min": min(xs), f"{lane}_max": max(xs),
-                                f"{lane}_spread": sp, f"{lane}_n": n_of[lane]})
-                nat, ref = samples.get("native", {}).get(name), samples.get("rust", {}).get(name)
-                if nat and ref:
-                    ratio = statistics.median(nat) / statistics.median(ref)
-                    (nq1, nq3), (rq1, rq3) = quartiles(nat), quartiles(ref)
-                    lo, hi = nq1 / rq3, nq3 / rq1
-                    if hi <= a.bar:
-                        verdict = "ok"
-                    elif lo > a.bar:
-                        verdict = "OVER"
-                    else:
-                        verdict = "unclear"
-                    verdicts[verdict] += 1
-                    ratios.append(ratio)
-                    noisy = max(spread(nat), spread(ref)) > a.noisy
-                    # A program runs every routine `--n` times, calibrated on its SLOWEST one, so a
-                    # routine a thousand times faster is timed over a region of a few microseconds
-                    # of a microsecond clock.  Such a row is COARSE: its figure is real but blunt.
-                    coarse = min(statistics.median(regions["native"][name]),
-                                 statistics.median(regions["rust"][name])) < a.coarse_us
-                    flags = ("  (noisy)" if noisy else "") + ("  (coarse)" if coarse else "")
-                    line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{flags}"
-                    rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict,
-                               flags=(("noisy " if noisy else "") + ("coarse" if coarse else "")).strip())
+            jobs.append((bench, pkg_dir, cmds))
+        for lines, recs, unit_ratios, unit_verdicts in measure_batch(jobs, a, lanes, target_us, stamp):
+            for line in lines:
                 print(line, flush=True)
-                if a.show_samples:
-                    for lane in lanes:
-                        xs = samples.get(lane, {}).get(name)
-                        if xs:
-                            print(f"    {lane:7} n={n_of[lane]:<7} " + " ".join(f"{x:,}" for x in xs))
-                out_rows.append(rec)
+            out_rows.extend(recs)
+            ratios.extend(unit_ratios)
+            for v in unit_verdicts:
+                verdicts[v] += 1
         measure_wall += time.monotonic() - t0
 
     if ratios:

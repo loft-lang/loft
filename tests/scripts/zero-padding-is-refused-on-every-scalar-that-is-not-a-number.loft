@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// ZERO-PADDING IS REFUSED ON EVERY SCALAR THAT IS NOT A NUMBER (`@FR-F-Spec`, `@FR-F-Spec-Exec`).
+// `0N` zero-pads a number, and a spec part the hole's type cannot execute refuses the program.
+// Only `text` was refused: a `boolean` rendered `{b:06}` as `true00` — the zeros on the wrong
+// side of a word — and a `character` and a plain enum took the same text-side fill.  A number
+// still pads, and an iterator applies the spec to each element (`14-formatting.loft`).
+//
+// @falsified-at: 47ba568c6 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/zero-padding-is-refused-on-every-scalar-that-is-not-a-number.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree refuses only the text hole.
+// HOLDS: nothing runs on either tree (a refusal file); the control tree refuses only the text
+//   hole, so three of the four expectations are unmet there.
+
+enum Dir { North, South }
+
+fn main() {
+  b = true;
+  // @EXPECT_ERROR: Zero-padding has no effect on boolean
+  x1 = "{b:06}";
+  c = 'q';
+  // @EXPECT_ERROR: Zero-padding has no effect on character
+  x2 = "{c:04}";
+  d: Dir = South;
+  // @EXPECT_ERROR: Zero-padding has no effect on Dir
+  x3 = "{d:08}";
+  s = "ab";
+  // @EXPECT_ERROR: Zero-padding has no effect on text
+  x4 = "{s:05}";
+}

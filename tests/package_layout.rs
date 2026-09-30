@@ -527,3 +527,53 @@ fn shared_sibling_carries_types_and_functions() {
         "the prescribed cure must compile; diagnostics: {d:?}"
     );
 }
+
+/// A MUTUAL `use` is cured by importing the name: when this file also has a bare `use`
+/// of the file that uses it, the two already `use` each other, and a mutual glob resolves
+/// both ways (the p173 cycle) — no file moved.  dryopea's `spawn` (`use errand;`, a field
+/// of type `Errand`) and `errand` (`use spawn::*;`) is the shape; the named cure is checked
+/// to compile, so the note never prescribes one that does not.
+#[test]
+fn i826_mutual_use_names_the_import_cure() {
+    let refused = i826_pkg(
+        "mutual",
+        "pub fn top() -> integer { spawn_n() }\n",
+        &[
+            (
+                "spawn",
+                "use errand;\npub struct Holder { route: Errand }\npub fn spawn_n() -> integer { 1 }\n",
+            ),
+            (
+                "errand",
+                "use spawn::*;\npub struct Errand { e_n: integer }\n\
+                 pub fn errand_new() -> Errand { Errand { e_n: 4 } }\n",
+            ),
+        ],
+    );
+    let d = i826_parse(&refused).join("\n");
+    assert!(
+        d.contains("`use errand::*;`"),
+        "the note names the import cure a mutual `use` allows:\n{d}"
+    );
+    let cured = i826_pkg(
+        "mutual_cured",
+        "pub fn top() -> integer { spawn_n() }\n",
+        &[
+            (
+                "errand",
+                "use spawn::*;\npub struct Errand { e_n: integer }\n\
+                 pub fn errand_new() -> Errand { Errand { e_n: 4 } }\n",
+            ),
+            (
+                "spawn",
+                "use errand::*;\npub struct Holder { route: Errand }\n\
+                 pub fn spawn_n() -> integer { 1 }\n",
+            ),
+        ],
+    );
+    let d = i826_parse(&cured);
+    assert!(
+        !d.iter().any(|l| l.contains("rror")),
+        "the import cure must compile; diagnostics: {d:?}"
+    );
+}

@@ -208,7 +208,89 @@ body always did — and a type with an `OpDrop` runs it there, where it used to 
 the function.  If your `OpDrop` releases something a later line still relies on — a transaction,
 a lock — declare the binding where you want the release to happen.
 
+**A cast to a variant answers that variant, never `null`.**  `s as Circle` on a `Shape` used to
+answer `null` when `s` held a `Rect`, while its type said it could not be null — so `c.radius`
+read a hole and a null test on `c` was reported as always false.  Now a miss answers a `Circle`
+with every field at its default, and the cast warns (`variant-cast-default`) unless you checked
+first (`if s is Circle { … }`) or wrote `s as Circle?`, which is the spelling that answers `null`
+on a miss.  A miss the compiler can already see — a known `Rect` cast to `Circle` — is an error.
+Parsing text into a plain enum works the same way: `t as Color` answers the first variant for a
+text that names none and warns (`enum-parse-default`); write `t as Color?` or `t as Color ?? Blue`.
+
+**A name after `:` in a `match` field pattern binds.**  `Circle { radius: r } => r * 2` compared
+the field against an `r` already in scope (and fell to the next arm when it differed), or was
+refused when there was none.  It now binds `r`, the way `Circle { radius }` binds `radius`.  An
+`is` capture still takes bare names only — `if s is Circle { radius: r }` is refused, and the
+error says to use `match` for the rename.
+
+**`0N` zero-pads a number, and is refused on anything else.**  `{flag:05}` on a boolean rendered
+`true0`, and `{v:010}` on a vector or `{p:012}` on a struct put the zeros after the whole text.
+A character, an enum, a struct, a list and a boolean now refuse `0N`, as text already did; use a
+fill for them (`{flag:*>6}`).  A `for` inside a hole still pads each number it produces
+(`{for n in v {n}:03}`).
+
 ### Everything else
+
+**A generic format hole renders as the type it is called with.**  Inside
+`fn show<T: Printable>(x: T)`, `"{x:05}"` rendered `show(42)` as `42000` and `"{x:5}"` put a
+number on the left, because the hole was rendered as text for every caller.  It now renders
+exactly as the same hole with the concrete type: `00042`, `   42`.  A precision (`{x:.2}`) or a
+radix (`{x:#x}`) now works for the types that have one, and is refused, at the call, for those
+that do not.
+
+**A list literal holding `null` can be passed where the parameter says its elements may be
+null.**  `f(["a", null])` against `fn f(v: vector<text?>)` was refused, although the same list
+could be stored in a `vector<text?>` variable; so was a list of records with a `null` in it, and
+a list of lists.  They are all accepted now.
+
+**Checking an element for `null` narrows it.**  In `for e in v { if e != null { s += e.a } }`
+over a `vector<P?>`, `e.a` still counted as possibly `null`, and the function returning `s`
+warned about it.  The check now does for a list element what it does for a variable.
+
+**Assigning a whole variable always copies it.**  `b = { a }`, `b = if c { a } else { … }` and
+`b = a as Circle` — each assigned to a `b` that already held a value — made `b` and `a` the same
+value, so a change through `b` showed up in `a`.  They copy, as `b = a` does.
+
+**A list literal after a `.map` over another keeps its first element.**  After a `.map` over
+one inline list of lists, the next such literal's first element read empty:
+`[[1,1,1,1,1], [1]].map(|x| { len(x) })` answered `[0, 1]`, and a `for` or `.reduce` over it
+summed as if it were empty — on both backends, with no message.  It answers `[5, 1]`.
+
+**A comprehension that yields a tuple element copies it.**  `[for x in pairs { x }]` over a
+`vector<(integer, integer)>` answered garbage on the interpreter; with a `text` member it
+crashed, with a list member it stopped with a store error, and `--native` did not compile it.
+It now builds a fresh list of independent copies, filtered or not.
+
+**A parameter default may read the call's earlier arguments, and a tuple default works.**
+`fn h(k: integer, t: (integer, integer) = (k, 9))` read the CALLER's first local instead of
+`k` — `h(1)` answered `(0, 9)` — and a default that builds a text-carrying tuple through a call
+(`= mk(k)`) answered `null` members on the interpreter and did not compile with `--native`.
+Both answer what the same expression written as the argument would.
+
+**A write to something locked is refused the same way everywhere.**  A value locked with
+`#lock = true`, a constant and a mapped file cannot be written.  A development run stops at the
+write with the lock report; a `--production` run logs the write, discards it and carries on
+with the old value.  Before, a production run stopped too, a write to a locked `text` crashed
+inside loft, and a loop writing a locked list under `--native` changed it with no message.
+
+**`stack_trace()` names the line each frame was called from.**  A frame's line is the call that
+entered it, and the outermost frame answers 0, as the documentation said.  The interpreter
+gave the NEXT line when a call ended its statement, and `--native` gave each function's
+declaration line.
+**A function that reads a vector parameter a few times outside any loop** now looks the
+vector up once at entry instead of at every read, as a loop already did.  Byte-level
+decoders, which read the head of a value a byte at a time, are where it shows.
+
+**`text_from_byte_range(bytes, lo, hi)`** makes a text from part of a byte buffer without
+copying the part out first: what a decoder writes once it has found where a text starts and
+ends, instead of `text_from_bytes(bytes[lo..hi])`.
+
+**A function that builds a vector and returns it inside a record copies nothing on the way
+out.**  `items: vector<T> = []; …; return Out { items: items }` used to build the vector in a
+store of its own and copy every element into the result; now it is built where the result
+lives, and a decoder that does this at every level (the cbor library's `read_value`) builds
+its whole tree in one store — its decode bench runs in 60 % of the time it took.  Nothing in
+your code changes; `LOFT_NO_EXIT_VECTOR=1` and `LOFT_NO_PLACE_RESULT=1` restore the copies.
 
 **Bytes can be read without copying them.**
 
@@ -311,6 +393,48 @@ said.  It is refused now, as the `if` spelling always was.  (loft#1390)
   program, and when you change the program it used to read the whole standard library again as
   well.  It now reuses the standard library it already read, so a small program starts in about
   a sixth of the work it took before.  A changed standard library is still always read again.
+
+**A record that arrives through a chain of calls is built where it will live.**  A helper
+that ends in `return build(n)` used to cost a store of its own for every result, on top of
+the one its inner builder wrote; it now hands the caller's buffer through, on both backends.
+
+**The interpreter runs about twice as fast.**  `loft --interpret` spent most of each
+operation on bookkeeping: every push and pop of its stack went through the general store
+checks, and the dispatch loop did the work of the debugger, profiler and memory checkers
+even when none was on.  The stack now has a direct path, and a plain run uses a lean loop.
+Each instrument keeps its checked path when you turn it on.  Integer arithmetic,
+comparisons and loop tests on local variables now run as single operations, and so do each
+step of a `for c in text` walk and each integer element read or written at a local index.
+Over the 79 bench routines the interpreter is 2.5× faster (median).  The loops gain most:
+`split` 5.1×, `split_walk` 5.2×, `index_write` and `sum` 3.7×, `push` 3.0×.  Same output
+everywhere.
+
+**A loop that calls a helper whose `??` fallback carries a text keeps its fast paths on
+`--native`.**  `q = seqs[n] ?? Seq { first: 0, count: 1, name: "" }` inside a helper made
+every loop calling it give up its headers, because the fallback's text field counted as a
+store write.  The fallback's buffer is the helper's own, so it no longer does.  stage's
+`pack_instances` runs 3× faster, same output.
+
+**A record passed by value and appended whole skips the field prefill on `--native`.**
+`self.items += [p]` with `p` a small record parameter wrote every field twice: the default
+fill, then the copy.  When the record owns no heap the fill is gone.  mesh3d's `sphere` is
+1.3× faster again, same output.
+
+**Appending a record to a struct's vector field is as cheap as appending to a plain vector.**
+`self.items += [x]`, the way every library grows its collections, went through the runtime's
+general record dispatch — two type walks and three empty bookkeeping steps per element, on
+both backends.  It now takes the short path a bare vector always had.  mesh3d's `sphere` runs
+1.4× faster on `--native`, same output; the interpreter shares the path.
+
+**A loop over a small list of scalars builds no list.**  `for i in [tri.a, tri.b, tri.c]`
+used to build a three-element vector on every pass and read it back; it now evaluates the
+three values once and walks them directly, on both backends.  mesh3d's `mesh_to_floats` runs
+1.5× faster, same output.
+
+**A vector literal that widens its element type is read correctly in every position.**
+`for f in [1, 2.5, 4]` read garbage for `f` (2.5's bits as an integer, and `1` stored as
+an integer under a float vector): the widening converted the wrong item.  A literal
+assigned to a variable was already right; the loop form now is too.
 
 **A loop that tests an element for `null` before using it keeps its fast paths on
 `--native`.**  `p = pts[i]; if p != null { out += [p.x, p.y] }` used to lose every hoisted
@@ -1099,6 +1223,11 @@ parses; ordinary runs keep the cache.
 - `try { … }` is refused by name, saying what loft does instead (an operation that can fail
   answers a value you test with `== null` or `??`), where it used to stop at a bare
   *"Expect token ;"*.
+- `v = later(); v[0] = 2.5; v[1]` compiles when `later` is declared further down the file.
+  The element store used to be read as a store into `v` itself, and the program was
+  refused with *"Indexing a non vector — keyed collections …"*, which named a construct it
+  never used.  When the function does not exist, that message used to hide the
+  *"Unknown function"* error, and with it the `use` cure the error names.
 
 ---
 

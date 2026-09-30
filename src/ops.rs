@@ -724,6 +724,49 @@ pub fn op_conv_bool_from_character(v: char) -> bool {
     v != '\0'
 }
 
+/// The integer operators a fused interpreter op can carry (`OpIntVV` and its siblings in
+/// `default/02_files.loft`), by the `kind` byte the bytecode generator writes.  Each arm is
+/// the unfused operator's own function, so fusing an op changes how its operands arrive and
+/// nothing about what it computes.
+pub mod fused {
+    pub const ADD: u8 = 0;
+    pub const MIN: u8 = 1;
+    pub const MUL: u8 = 2;
+    pub const LAND: u8 = 3;
+    pub const LOR: u8 = 4;
+    pub const EOR: u8 = 5;
+    pub const EQ: u8 = 0;
+    pub const NE: u8 = 1;
+    pub const LT: u8 = 2;
+    pub const LE: u8 = 3;
+}
+
+/// The arithmetic `kind` of a fused op applied to `v1` and `v2` (`OpAddInt` … `OpEorInt`).
+#[inline]
+#[must_use]
+pub fn fused_int(kind: u8, v1: i64, v2: i64) -> i64 {
+    match kind {
+        fused::ADD => op_add_int(v1, v2),
+        fused::MIN => op_min_int(v1, v2),
+        fused::MUL => op_mul_int(v1, v2),
+        fused::LAND => op_logical_and_int(v1, v2),
+        fused::LOR => op_logical_or_int(v1, v2),
+        _ => op_exclusive_or_int(v1, v2),
+    }
+}
+
+/// The comparison `kind` of a fused op applied to `v1` and `v2` (`OpEqInt` … `OpLeInt`).
+#[inline]
+#[must_use]
+pub fn fused_cmp(kind: u8, v1: i64, v2: i64) -> bool {
+    match kind {
+        fused::EQ => v1 == v2,
+        fused::NE => v1 != v2,
+        fused::LT => v1 < v2,
+        _ => v1 <= v2,
+    }
+}
+
 // C54.A (Phase 2c) — int arithmetic is now i64.  Functions forward to
 // long counterparts; stdlib `#rust"ops::op_add_int(@v1, @v2)"` calls
 // keep working unchanged because integer's Rust type is now i64.

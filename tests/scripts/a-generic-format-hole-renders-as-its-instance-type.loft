@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A GENERIC FORMAT HOLE RENDERS AS ITS INSTANCE'S TYPE (`@FR-G-Mono`, `@FR-F-Spec`,
+// `@FR-F-Spec-Zero`).  An instance is its hand-written twin with `[T ↦ C]` applied throughout,
+// and the rendering a hole lowers to is derived from the type: so `{x:05}` inside a
+// `<T: Printable>` renders an integer `T` as `00042` and a negative one as `-0007`, and `{x:5}`
+// right-aligns a number and left-aligns a word, exactly as the concrete hole does.  The template
+// lowered every such hole through `to_text` and a TEXT append, which gave every instance text's
+// alignment and text's zero-fill: `42000`, `-7000`, `42   `, with no diagnostic.  A precision on
+// a `float` instance and a radix on an `integer` one are their own file (the template refused both
+// outright); the refusals an
+// instance's type earns are the refusal sibling.
+// Values are hand-computed and checked against the concrete twins.
+//
+// @falsified-at: 62b857086 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-generic-format-hole-renders-as-its-instance-type.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the first assertion on both backends — the control renders `zp(42)` as `42000`.
+// HOLDS: leak, panic and free-refusal are clean on both trees; the control compiles, so the
+//   assertion channel is the only one that moves.
+
+struct Money { c: integer }
+fn to_text(self: Money) -> text { "${self.c}" }
+
+fn zp<T: Printable>(x: T) -> text { "{x:05}" }
+fn w5<T: Printable>(x: T) -> text { "{x:5}" }
+fn lw<T: Printable>(x: T) -> text { "{x:<5}" }
+fn pl<T: Printable>(x: T) -> text { "{x:+}" }
+fn bare<T: Printable>(x: T) -> text { "<{x}>" }
+fn outer<T: Printable>(x: T) -> text { zp(x) }
+
+fn main() {
+  assert(zp(42) == "00042", "zero-pad an integer: {zp(42)}");
+  assert(zp(-7) == "-0007", "the sign stays in front of the zeros: {zp(-7)}");
+  assert(zp(2.5) == "002.5", "zero-pad a float: {zp(2.5)}");
+  assert(w5(42) == "   42", "a number right-aligns: [{w5(42)}]");
+  assert(w5(-7) == "   -7", "a negative number right-aligns: [{w5(-7)}]");
+  assert(lw(42) == "42   ", "`<` still left-aligns a number: [{lw(42)}]");
+  assert(w5("ab") == "ab   ", "text left-aligns: [{w5(\"ab\")}]");
+  assert(w5(true) == "true ", "a boolean left-aligns: [{w5(true)}]");
+  assert(w5('q') == "q    ", "a character left-aligns: [{w5('q')}]");
+  assert(pl(5) == "+5" && pl(2.5) == "+2.5", "a forced sign: {pl(5)} {pl(2.5)}");
+  m = Money { c: 3 };
+  assert(bare(m) == "<$3>", "a struct renders through its own to_text: {bare(m)}");
+  assert(outer(42) == "00042", "a generic calling a generic: {outer(42)}");
+}

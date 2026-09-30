@@ -883,12 +883,20 @@ impl Parser {
             // `[…]` infers `vector<K>`, which is not a narrower or wider version of
             // `hash<K[k]>` but a different container — so there is no inference to
             // override, only the one answer.
+            // A literal that is the RECEIVER of a chain (`[1, 2].map(…)`) is not the value the
+            // expected type describes, so it takes none (`Lexer::peek_literal_receiver`); a
+            // scan that cannot tell keeps the hint.
             let hint = if is_collection(&self.expected)
                 && (self.lexer.peek_token("]") || is_keyed(&self.expected))
             {
                 self.expected.without_deps()
             } else {
-                self.vector_hint()
+                let seed = self.vector_hint();
+                if !seed.is_unknown() && self.lexer.peek_literal_receiver() == Some(true) {
+                    Type::Unknown(0)
+                } else {
+                    seed
+                }
             };
             self.expected = Type::Unknown(0);
             // #501 — a vector literal parsed as an assignment RHS reuses the LHS var
@@ -3600,7 +3608,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let elem_known = self.vector_of(in_t);
         let known = Value::Int(i32::from(if elem_known == u16::MAX {
             0
-        } else if matches!(in_t, Type::Vector(_, _))
+        } else if matches!(in_t.base(), Type::Vector(_, _))
             && self.database.size(self.database.content(elem_known)) < 4
         {
             self.database.vector(elem_known)
@@ -3644,7 +3652,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // discriminates on specific variants: a `Span` around any of them hides the shape,
         // the generator var is not found, and the loop silently loses the break — which is
         // the unbounded append @P325 was.
-        let coroutine_gen_var = if matches!(in_type, Type::Iterator(_, _))
+        let coroutine_gen_var = if matches!(in_type.base(), Type::Iterator(_, _))
             && let Value::Set(_, rhs) = for_next.unspan()
             && let Value::Call(_, next_args) = rhs.unspan()
             && let Some(Value::Var(v)) = next_args.first().map(Value::unspan)
@@ -3717,7 +3725,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             None => vec_expr.clone(),
         };
         let mut lp = vec![for_next];
-        if matches!(in_type, Type::Text(_))
+        if matches!(in_type.base(), Type::Text(_))
             && let Some(idx) = pre_var
         {
             // loft#755 — a comprehension / par materialisation over text
@@ -3731,7 +3739,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 lp.push(step);
             }
         } else if let Some((src, index_var)) = vector_end
-            && matches!(in_type, Type::Vector(_, _))
+            && matches!(in_type.base(), Type::Vector(_, _))
         {
             // loft#1000 — a VECTOR ends on its LENGTH, never on the element's value.
             // The same rule the `for` STATEMENT already uses, and for the same reason:
@@ -3742,7 +3750,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             for step in self.vector_loop_break(&src, index_var) {
                 lp.push(step);
             }
-        } else if !matches!(in_type, Type::Iterator(_, _)) {
+        } else if !matches!(in_type.base(), Type::Iterator(_, _)) {
             let mut test_for = Value::Var(for_var);
             self.convert(&mut test_for, var_tp, &Type::Boolean);
             test_for = self.cl("OpNot", &[test_for]);
@@ -3774,8 +3782,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // DbRef handle).  The scalar `set_field(usize::MAX)` path emits `OpSetInt4`
         // (4 of 12 bytes) → eval-stack skew → garbage rec-id into the locked
         // CONST_STORE.  Deep-copy the inner record instead.  Scalar elements keep
-        // `set_field`.
-        if matches!(in_t, Type::Vector(_, _)) {
+        // `set_field`.  @FR-N-Shape: the shape is asked of the peeled element, so a
+        // `vector<vector<T>?>` body takes this arm too — asked of `Optional(Vector)` it fell
+        // to `set_field`, which stored the DbRef as a 4-byte int (loft#1739).
+        if let (Type::Vector(_, _), nullable) = in_t.peel_optional() {
             lp.push(self.cl(
                 "OpSetInt4",
                 &[Value::Var(elm), Value::Int(0), Value::Int(0)],
@@ -3791,10 +3801,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     .vector_element_type(in_t, &mut self.database)
                     .unwrap_or(u16::MAX),
             ));
-            lp.push(self.cl(
+            let copy = self.cl(
                 "OpCopyRecord",
                 &[Value::Var(comp_var), Value::Var(elm), type_nr],
-            ));
+            );
+            if nullable {
+                // A null body leaves the element ABSENT (`DbRef::ABSENT_REC`, what the
+                // literal and `v[i] = null` write), not the empty vector the zeroed handle is.
+                #[allow(clippy::cast_possible_wrap)]
+                let absent = Value::Int(crate::keys::DbRef::ABSENT_REC as i32);
+                let is_null = self.cl("OpVectorIsNull", &[Value::Var(comp_var)]);
+                let mark = self.cl("OpSetInt4", &[Value::Var(elm), Value::Int(0), absent]);
+                lp.push(v_if(is_null, mark, copy));
+            } else {
+                lp.push(copy);
+            }
         } else if self.is_type_var_element(in_t) {
             // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
             // `v += [x]` writes it, which each monomorph re-lowers at its concrete element
@@ -3858,7 +3879,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // into tp so that (a) the block's result type keeps the db alive until the
             // block exits, and (b) the caller receives the correct Vector<T,[db]> type,
             // preventing scopes from emitting a redundant OpFreeRef for the result variable.
-            if let Type::Vector(elem, _) = &tp {
+            if let Type::Vector(elem, _) = tp.base() {
                 tp = Type::Vector(elem.clone(), Deps::frame(self.vars.tp(vec).depend()));
             }
         }
@@ -3895,6 +3916,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     - On a field inside a structure, this fills any data structure with more elements.
     */
     // <vector> ::= '[' <expr> [ ';' <size-expr>]{ ',' <expr> [ ';' <size-expr> } ']'
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the literal's every shape (empty, keyed, comprehension, repeat, the walk offer) meets here"
+    )]
     pub(crate) fn parse_vector(
         &mut self,
         var_tp: &Type,
@@ -4087,7 +4112,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else {
             *val = Value::Insert(ls);
         }
+        // Offered only in a `for` head (`iterable_context`): the clone it costs is then paid
+        // by the literal a walk may take, not by every small literal a program builds.
+        if block && !is_var && !is_field && !keyed_dest && self.iterable_context {
+            self.offer_literal_walk(val, &res, &in_t);
+        }
         tp
+    }
+
+    /// `@FR-R-LiteralWalk` — a fresh literal of 1..=16 scalar items, every one at the
+    /// element type (a widening converted the earlier ones), no `[x; n]` repeat, is offered
+    /// to the `for` that may be walking it.
+    fn offer_literal_walk(&mut self, block: &Value, res: &[Value], in_t: &Type) {
+        if (1..=16).contains(&res.len())
+            && res.iter().all(|r| !matches!(r.unspan(), Value::Return(_)))
+            && crate::parser::collections::is_walkable_scalar(in_t)
+        {
+            self.literal_walk = Some((block.clone(), res.to_vec(), in_t.clone()));
+        }
     }
 
     /// Parse comma-separated vector items inside `[...]`, returning an early error type on failure.
@@ -5165,8 +5207,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // `[JCircle { r: 1 }, dot]`) is stored into it as it is; a variant LITERAL is built
             // into it (the object literal's `type_matches`).
             Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
-        } else if let Type::Vector(inner, _) = assign_tp {
-            // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
+        } else if let Type::Vector(inner, _) = assign_tp.base() {
+            // #555 — a `vector<T>` element keeps its SPECIFIC type (`@FR-N-Shape`: a
+            // `vector<T>?` element too — unpeeled it took `was`, loft#1739).  `was` routes through
             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`
             // source def (data.rs), so the element var's inner type is shared across all vector
             // slices in a function — two nested-vector slices then desync (the later one's first
@@ -5409,6 +5452,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(vt) = self.iterator_as_vector(&mut p, &t, &in_t.clone()) {
             t = vt;
         }
+        // @FR-C-Var — an inferred literal's tuple element stores its variant members as their
+        // enum, as a bare variant element is stored (`widen_variant_members`).
+        if !declared && let Some(wide) = self.widen_variant_members(&t) {
+            let from = t.clone();
+            self.convert(&mut p, &from, &wide);
+            t = wide;
+        }
         let elem_capturing_lambda = self.last_closure_work_var != u16::MAX;
         if let Type::Rewritten(tp) = in_t {
             *in_t = *tp.clone();
@@ -5600,9 +5650,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         in_t.source_name(&self.data)
                     );
                 }
-            } else if self.convert(&mut p, in_t, &t) {
-                // INFERRED element type: widen to the common type
-                // (e.g. [1, 2.0] → vector<float>).
+            } else if self.widen_literal_items(elm, in_t, &t, res) {
                 *in_t = t.clone();
             } else {
                 diagnostic!(
@@ -5658,6 +5706,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// shape, so the element slot holds a plain fn-ref only; a struct FIELD holds a
     /// capturing closure, which is the route the message names
     /// (DESIGN_DECISIONS.md C116).
+    /// INFERRED element type: does `in_t` WIDEN to this item's `t` (`[1, 2.5]` →
+    /// vector<float>)?  Asked on a scratch, because the EARLIER items are what the widening
+    /// converts — the item itself is already of type `t`, and converting IT wrote 2.5's bits
+    /// through an integer conversion while `1` stayed an integer under a float vector.
+    /// `true` with every earlier item converted to `t`; the caller then widens `in_t`.
+    fn widen_literal_items(&mut self, elm: u16, in_t: &Type, t: &Type, res: &mut [Value]) -> bool {
+        let mut probe = Value::Var(elm);
+        if !self.convert(&mut probe, in_t, t) {
+            return false;
+        }
+        for earlier in res.iter_mut() {
+            if !matches!(earlier.unspan(), Value::Return(_)) {
+                self.convert(earlier, in_t, t);
+            }
+        }
+        true
+    }
+
     pub(crate) fn refuse_capturing_closure_in_collection(&mut self) {
         diagnostic!(
             self.lexer,
@@ -5967,6 +6033,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(guard) = self.keyed_local_materialise(vec) {
             ls.push(guard);
         }
+        // @FR-N-Shape — `τ?` is a nullability bit over τ's own layout: every question below
+        // about the element's SHAPE (a vector handle, a record, a nullable enum) is asked of
+        // the peeled type, and only the nullability question reads `in_t`.  Asked of
+        // `Optional(Vector)` they all answered "no", so `v += [x]` with `x: vector<T>?`
+        // stored the DbRef as a 4-byte int (loft#1739).
+        let shape = in_t.base();
         let is_field = self.is_field(val);
         let ed_nr = self.data.type_def_nr(in_t);
         if ed_nr == u32::MAX && self.first_pass && crate::data::Data::type_has_unresolved(in_t) {
@@ -6135,7 +6207,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             let elem_known = lhs_known.unwrap_or_else(|| self.vector_of(in_t));
             // Inside a template a vector over a type variable has no row yet (`vector_of`
             // bakes the `u16::MAX` sentinel), so there is no content to size.
-            let known_tp = if matches!(in_t, Type::Vector(_, _))
+            let known_tp = if matches!(shape, Type::Vector(_, _))
                 && elem_known != u16::MAX
                 && self.database.size(self.database.content(elem_known)) < 4
             {
@@ -6195,17 +6267,40 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // handle on EVERY construction path — the literal/`Insert` path lacked
             // it (only the copy branch below had it), so nested `single` literals
             // crashed.  No-op for the already-zero 8-byte cases.
-            if !self.first_pass && matches!(in_t, Type::Vector(_, _)) {
+            if !self.first_pass && matches!(shape, Type::Vector(_, _)) {
                 ls.push(self.cl(
                     "OpSetInt4",
                     &[Value::Var(elm), Value::Int(0), Value::Int(0)],
                 ));
             }
-            if matches!(
-                in_t,
+            if self.is_null_source(p) && Self::is_collection_type(shape) {
+                // A `null` ELEMENT of a collection-typed element writes the element's 4-byte
+                // record id, the slot a collection FIELD has, so it takes the field's rule
+                // (`mark_collection_absent`): a NULLABLE element (`vector<vector<T>?>`) is
+                // ABSENT — `DbRef::ABSENT_REC`, what `v[i] = null` writes and
+                // `vector::is_absent_collection` reads — and a non-nullable one is the EMPTY
+                // collection, record id `0` (`(N-Default)`).  Writing `0` for the nullable
+                // element made `[[1], null]` read back `[]` and answer `v[1] == null` false
+                // (loft#1739, @FR-N-Shape).
+                //
+                // The generic `set_field` below cannot take this value: `convert` made the
+                // `null` a 16-byte REFERENCE sentinel, and the element's setter writes 4.
+                let (_, nullable) = in_t.peel_optional();
+                #[allow(clippy::cast_possible_wrap)]
+                let slot = if nullable {
+                    crate::keys::DbRef::ABSENT_REC as i32
+                } else {
+                    0
+                };
+                ls.push(self.cl(
+                    "OpSetInt4",
+                    &[Value::Var(elm), Value::Int(0), Value::Int(slot)],
+                ));
+            } else if matches!(
+                shape,
                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
             ) {
-                let inner_nr = match in_t {
+                let inner_nr = match shape {
                     Type::Reference(nr, _) => *nr,
                     _ => self.data.type_def_nr(in_t),
                 };
@@ -6279,7 +6374,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     let free_source_bit: i32 = 0;
                     let type_nr = if self.first_pass {
                         Value::Int(i32::from(u16::MAX))
-                    } else if matches!(in_t, Type::Vector(_, _)) {
+                    } else if matches!(shape, Type::Vector(_, _)) {
                         // The ELEMENT type of the outer vector, from the shared
                         // resolver — the same id the literal, slice and comprehension
                         // paths use.  `vector(db_type(inner))` named a different row:
@@ -6311,7 +6406,19 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                         }
                         other => other,
                     };
-                    ls.push(self.cl("OpCopyRecord", &[p.clone(), Value::Var(elm), type_nr]));
+                    let copy = self.cl("OpCopyRecord", &[p.clone(), Value::Var(elm), type_nr]);
+                    if matches!(shape, Type::Vector(_, _)) && in_t.peel_optional().1 {
+                        // A `vector<T>?` source that is null leaves the element ABSENT, as the
+                        // literal `null` does — copying nothing would leave the zeroed handle,
+                        // the EMPTY vector (loft#1739).
+                        #[allow(clippy::cast_possible_wrap)]
+                        let absent = Value::Int(crate::keys::DbRef::ABSENT_REC as i32);
+                        let is_null = self.cl("OpVectorIsNull", std::slice::from_ref(p));
+                        let mark = self.cl("OpSetInt4", &[Value::Var(elm), Value::Int(0), absent]);
+                        ls.push(v_if(is_null, mark, copy));
+                    } else {
+                        ls.push(copy);
+                    }
                 }
             } else if let Value::Tuple(values) = p {
                 // P189c — vector-element tuple literal.  Emit
@@ -6361,26 +6468,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 for l in steps {
                     ls.push(l.clone());
                 }
-            } else if self.is_null_source(p) && Self::is_collection_type(in_t.base()) {
-                // A `null` ELEMENT of a collection-typed element (`vector<vector<T>?>`,
-                // and the keyed kinds) is the EMPTY collection — the same rule a `null`
-                // reaching a collection FIELD takes (loft#922), because the slot is the
-                // same: a 4-byte record id where `0` already means "no records".
-                //
-                // Without this arm the element fell to the generic `set_field` below,
-                // which wrote what `convert` had made of the `null`: a REFERENCE sentinel
-                // (`OpNullRefSentinel`, a 16-byte DbRef with `store_nr = u16::MAX`), the
-                // right null for a vector VARIABLE, whose slot is a DbRef.  Writing it
-                // through the element's 4-byte setter aborted the compiler with an
-                // internal assertion — `expected 8B on stack but … pushed 16B` — so
-                // `vv += [null]` never reached a diagnostic, let alone a value.
-                //
-                // Telling this empty from an absent element is the same open question
-                // the FIELD has, and has one home: loft#917's reader half.
-                ls.push(self.cl(
-                    "OpSetInt4",
-                    &[Value::Var(elm), Value::Int(0), Value::Int(0)],
-                ));
             } else if let Some(op) = self.narrow_elm_set(in_t, elm, p) {
                 // @PLN25 item 2 / #624 — narrow integer element write, shared with
                 // the slice-materialise site.  The fallback (an element outside the
@@ -6701,7 +6788,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     && !self.vars.work_texts().contains(&d)
                     && !self.vars.is_argument(d)
             });
-            if !borrows_a_place {
+            // A `??` answers its present value through its own `__ncc_N` temporary, which is
+            // freed when the statement ends — a type with no deps says nothing about that, so
+            // `(opt() ?? "d", 1.5)` stored into a local left the member reading freed text
+            // (loft#1740).
+            let discharge_temp = matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc");
+            if !borrows_a_place && !discharge_temp {
                 return None;
             }
             let w = self.vars.work_text_p2(&mut self.lexer);
@@ -7305,6 +7397,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         source_in(&self.data, &b.operators)
     }
 
+    ///
+    /// `assign_tp` is the ELEMENT type: the backing is `main_vector<assign_tp>` (`@FR-H-ClearRelease`
+    /// reads the element type off it), so a caller holding the vector's whole type passes its
+    /// content — `vector<integer>` here minted `main_vector<vector<integer>>` (loft#1757).
     pub(crate) fn vector_db(&mut self, assign_tp: &Type, vec: u16) -> Vec<Value> {
         self.vector_db_init(assign_tp, vec, 0, false)
     }

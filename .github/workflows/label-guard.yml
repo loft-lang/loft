@@ -92,6 +92,27 @@ jobs:
               (live.labels || []).map(l => (typeof l === "string" ? l : l.name)),
             );
 
+            // `next-release` parks work past a freeze and takes it off `make work`;
+            // a DEFECT may never carry it (a bug is fixed before the release).
+            // Judged before the non-bug exit, because a mislabelled enhancement
+            // carrying `sev:` is exactly the case to catch.
+            const conflicts = guard.nextReleaseConflicts([...labels]);
+            if (conflicts.length) {
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number: number, name: guard.NEXT_RELEASE,
+              }).catch(() => {});
+              labels.delete(guard.NEXT_RELEASE);
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: number,
+                body: `<!-- loft-label-guard:next-release -->\n`
+                  + `\`${guard.NEXT_RELEASE}\` was removed: this issue carries `
+                  + conflicts.map(l => `\`${l}\``).join(", ")
+                  + `, so it is a defect, and a defect is fixed before the release rather `
+                  + `than parked past it.  If it is not a defect, correct those labels first — see `
+                  + `[\`.github/LABELS.md\` § Lifecycle](https://github.com/${owner}/${repo}/blob/main/.github/LABELS.md#lifecycle-where-the-fix-is-not-what-kind-of-bug).`,
+              });
+            }
+
             // #626 — a non-bug template's marker label.  These issues are not
             // defects, so the sev/wa/area contract does not apply to them.
             // Matched exactly or as a `prefix:` namespace (`showcase:pending`).

@@ -549,7 +549,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: speed profile profile-corpus speed-gate interp-gap janitor-install rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -564,6 +564,14 @@ disk-headroom:  ## Make room for a gate: sweep scratch, incremental caches, this
 	@scripts/disk_headroom.sh --scratch $(TEST_SCRATCH)
 	@df -h / | tail -1
 
+janitor-install:  ## Run scripts/disk_janitor.sh beside every agent build on this box (a user-level Claude Code hook)
+	@install -m 755 scripts/disk_janitor.sh $$HOME/.local/bin/loft-disk-janitor
+	@f=$$HOME/.claude/settings.json; [ -f $$f ] || echo '{}' > $$f; \
+	if jq -e '[.hooks.PreToolUse[]?.hooks[]?.command] | index("loft-disk-janitor --hook")' $$f >/dev/null; then \
+	  echo "hook already in $$f"; \
+	else \
+	  jq '.hooks.PreToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "loft-disk-janitor --hook", "timeout": 10}]}]' $$f > $$f.tmp && mv $$f.tmp $$f && echo "hook added to $$f"; \
+	fi
 sweep-target:  ## Drop cargo artefacts no build in two weeks has used (stale-hash test binaries)
 	@# `target/debug/deps` keeps every test binary of every dependency hash it ever built
 	@# (76-110 GB per checkout measured); cargo-sweep removes the ones no recent build
@@ -585,6 +593,10 @@ sections:  ## Every section of LOFT.md / STDLIB.md and what keeps it — a sampl
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
+interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
+	cargo build --release --lib --bin loft -q
+	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
+	python3 scripts/interp_gap.py $(ARGS)
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
@@ -1004,7 +1016,7 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 # rising class is worth one generalization is the judgement, and stays an agent task.
 #   make bug-review                       # fetch from gh and report
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
-work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge and status:planned)
+work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge, status:planned, next-release)
 	@bash scripts/work-issues.sh $(ARGS)
 
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
@@ -2336,6 +2348,7 @@ ci: ci-guard
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_failure_digest.py selftest >> result.txt 2>&1 && \
+	python3 scripts/close_fixed_on_merge.py selftest >> result.txt 2>&1 && \
 	python3 scripts/ci_timing.py selftest >> result.txt 2>&1 && \
 	python3 scripts/gate_ledger.py selftest >> result.txt 2>&1 && \
 	python3 scripts/revalidate_matrix.py --self-test >> result.txt 2>&1 && \

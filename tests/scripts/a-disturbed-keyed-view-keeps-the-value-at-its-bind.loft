@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1759's materialise half — @FR-H-Materialise: a view whose container is DISTURBED
+// (reassigned, grown, shrunk) while it is still used is copied, holding the value AT THE BIND,
+// and the author is told.  `a-nested-keyed-projection-is-a-view-like-its-vector-twin.loft`
+// makes `g = n.inn.h` a view; this file is what that view needs next.  Made a view without
+// joining the disturbance walk, the same programs panicked on `rec=4294967295` (`hash`,
+// `sorted`, `index`, both backends) or read garbage (`trie` answered 1268 records) once the
+// container moved.  The keyed view is now recorded (`Function::keyed_views`) and admitted by
+// `scopes::keyed_payload_view`, so the walk opens it and `OpReplaceKeyed` copies it — the
+// three advice sentences are the vector's.
+//
+// The vector column is the reference and is asserted beside the keyed ones.
+//
+// Axes this file MOVES:  the kind (vector + five keyed), the disturbance (reassign the root,
+//                        grow the element's vector in a CALLEE, remove the element).
+// Axes it HOLDS FIXED:   the view is nested or through an element; one record before the
+//                        write; the holder is a local.  The `&` link's refusal is the sibling
+//                        file, a-keyed-link-refuses-a-reassigned-container.loft.
+//
+// @falsified-at: bec7b20ef — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-disturbed-keyed-view-keeps-the-value-at-its-bind.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 4 assertion failures -> 0, native panicked -> clean
+//   CHANNEL: exit and asserts on both backends, and the panic on native.  On the control the
+//   five keyed tests fail: `hash`, `sorted` and `index` panic before their assertion (the
+//   interpreter reports a panic as the test's failure, so its assertion count is the two that
+//   answered wrong — `trie` 1268 records, `spatial` 2); the vector test passes.
+// HOLDS: leak, refusals and expectations are equal on both trees and both backends.
+
+struct Rv { id: integer }
+struct Row { id: integer }
+struct RS { id: integer }
+struct RI { id: integer }
+struct Wrd { nm: text }
+struct Pt { x: integer, y: integer }
+struct In { v: vector<Rv>, h: hash<Row[id]>, s: sorted<RS[id]>, i: index<RI[id]>, t: trie<Wrd[nm]>, p: spatial<Pt[x, y]>, n: integer }
+struct Mid { inn: In, m: integer }
+struct Top { mid: Mid, k: integer }
+struct Hold { ins: vector<In> }
+
+fn mkin() -> In {
+  In { v: [Rv{id: 1}], h: [Row{id: 1}], s: [RS{id: 1}], i: [RI{id: 1}], t: [Wrd{nm: "a"}], p: [Pt{x: 1, y: 1}], n: 0 }
+}
+fn mkmid() -> Mid { Mid { inn: mkin(), m: 0 } }
+
+fn grow_h(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_hash_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.h;
+  n.inn.h += [Row{id: 2}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].h;
+  vs[0].h += [Row{id: 2}];
+  grow_h(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].h;
+  ws[0].h += [Row{id: 2}, Row{id: 3}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "hash: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}
+
+fn grow_s(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_sorted_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.s;
+  n.inn.s += [RS{id: 2}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].s;
+  vs[0].s += [RS{id: 2}];
+  grow_s(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].s;
+  ws[0].s += [RS{id: 2}, RS{id: 3}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "sorted: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}
+
+fn grow_i(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_index_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.i;
+  n.inn.i += [RI{id: 2}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].i;
+  vs[0].i += [RI{id: 2}];
+  grow_i(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].i;
+  ws[0].i += [RI{id: 2}, RI{id: 3}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "index: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}
+
+fn grow_p(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_spatial_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.p;
+  n.inn.p += [Pt{x: 2, y: 2}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].p;
+  vs[0].p += [Pt{x: 2, y: 2}];
+  grow_p(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].p;
+  ws[0].p += [Pt{x: 2, y: 2}, Pt{x: 3, y: 3}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "spatial: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}
+
+fn grow_t(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_trie_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.t;
+  n.inn.t += [Wrd{nm: "b"}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].t;
+  vs[0].t += [Wrd{nm: "b"}];
+  grow_t(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].t;
+  ws[0].t += [Wrd{nm: "b"}, Wrd{nm: "c"}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "trie: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}
+
+fn grow_v(vs: &vector<In>) {
+  for _ in 0..20 { vs += [mkin()]; }
+}
+
+fn test_a_disturbed_vector_view_keeps_the_value_at_its_bind() {
+  n = mkmid();
+  g = n.inn.v;
+  n.inn.v += [Rv{id: 2}];
+  n = mkmid();
+  vs: vector<In> = [mkin()];
+  ge = vs[0].v;
+  vs[0].v += [Rv{id: 2}];
+  grow_v(vs);
+  ws: vector<In> = [mkin(), mkin()];
+  gr = ws[0].v;
+  ws[0].v += [Rv{id: 2}, Rv{id: 3}];
+  ws.remove(0);
+  assert("{len(g)} {len(ge)} {len(gr)}" == "1 1 1", "vector: reassign, grow, remove: {len(g)} {len(ge)} {len(gr)}");
+}

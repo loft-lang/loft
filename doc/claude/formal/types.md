@@ -690,15 +690,8 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1** — D-types-17.
+**OPEN: 0.**
 
-* **D-types-17** *(opened 2026-09-29, OPEN — loft#1742)* — a tuple carrying a HEAP member
-  (so returned in its stored spelling, `__tuple<…>`) whose member widens on the way out of a
-  function is REFUSED when the returned value is a CALL: `fn back(k) -> (text, float) { mk(k) }`
-  over `mk -> (text, integer)` says *"expected (text, float), got (text, integer) on return
-  from block"*.  The same value held in a variable first returns correctly (D-types-15).  The
-  return rewrite (`rewrite_tail_tuple_with_work_ref`) stores a stored-spelling tail as it is;
-  converting it before the rewrite answered `null` — a refusal kept over a wrong answer.
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
 so `(N-Domain)`'s one promise now holds over all three families.  A comparison against zero

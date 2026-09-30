@@ -57,6 +57,43 @@ time concentrates — confirm a ratio with `compare.py` or `profile.sh`. It is n
 route: `scripts/profile.sh` is, and it perturbs nothing. PERFORMANCE.md §
 `LOFT_NATIVE_CHECKPOINTS`.
 
+## What the interpreter executes, per routine (`LOFT_OP_CENSUS`)
+
+**`LOFT_OP_CENSUS=<file>`** (`--interpret`) counts every operator exactly. There is no
+sampling. Each op is keyed by the line of the entry function it ran under (its call site
+from `main`, or its own line in `main`), by the function it belongs to, and by the operator.
+Beside each count go the bytes the op moved through the store's block routes: `copy`
+(`copy_block`), `relocate` (a record moved because it outgrew its claim) and `text` (text
+written into a store). A bench times each routine between lines of `main`, so a line is a
+routine. Only the thread that runs `main` is counted, so a `par` worker's ops are missing.
+The per-op hook rides the sampler's debugger branch, so an unarmed interpreter pays nothing
+for it. The byte counters are different. They sit in store code the native runtime shares,
+so their call sites are compiled only with `--features op-census`, and a shipped runtime
+carries none of them. `make interp-gap` builds that binary in `target/op-census`. Without
+the feature, the file's first line says the bytes were not counted. Armed, a run is
+1.6–1.8× slower (lanes 01, 14 and 16).
+
+**`LOFT_REWRITE_CENSUS_FN=<file>`** splits `LOFT_REWRITE_CENSUS` by WHERE each rewrite was
+admitted, written as `phase<TAB>function<TAB>rule<TAB>count`. The phase is `native` for the
+generator (the interpreter never gets that form), `ir` for the scope pass (both backends)
+and `parse` for everything earlier. The per-function totals equal the per-rule census.
+
+**`LOFT_OP_NGRAMS=<file>`** (with `LOFT_OP_CENSUS`) counts the runs of two to four operators
+that execute one after the other within a function, keeping only runs whose control operators
+come last — the statically adjacent ones, which a superinstruction can fuse.
+
+**`LOFT_STORE_CENSUS=<file>`** counts the work a run does on its stores, on EITHER backend:
+stores created and freed, records claimed, deleted, grown and relocated, and the bytes block
+copies and text writes move.  Each `ticks()` call appends one line (the clock value, then the
+counters so far), so the work between two calls is the difference of two lines — a bench
+routine's timed loop sits between two of them on both backends.  The counters sit in store
+code the native runtime shares, so they are compiled only with `--features op-census`, and a
+native program measured this way must link an rlib built with it (PERFORMANCE.md § Store
+work).
+
+`make interp-gap` (`scripts/interp_gap.py`) joins the two with a `stats.py` timing of both
+backends ([bench/README.md § Interpreter against native](../../bench/README.md)).
+
 ## Resident size of a `--native` run
 
 `/usr/bin/time -f %M` on `loft --native p.loft` reports the largest RSS of any process in the

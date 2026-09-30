@@ -70,6 +70,11 @@ checks live in the code behind `check-dev`; `tests/ownership_oracle.rs::oracle_d
 (`#[ignore]`) counts their findings over `tests/scripts` and asserts `≤ DEV_FP_BASELINE`. Every
 improvement LOWERS the baseline; a regression fails; at 0 they promote into `check`.
 
+**RETIRED (2026-09-29, owner).** `oracle_dev_free_check_ratchet` is removed: nothing ran it after
+July, it had drifted to 449 unexamined findings, and the checker it counted is superseded on `check`
+by the leak scan.  The leak scan's own ratchet (`oracle_leak_scan_ratchet`) is the one kept, at 0, on
+every PR (ci.yml's advisory `leak-scan` job).
+
 **RESULT — ratchet 153 → 0 (2026-07-07).** The "materialisation-aware fact" is: use the POST-codegen
 **type dep** as the ownership signal, not the flow-sensitive fact. The borrow-elision decision is
 usage-dependent (VH to replicate independently) but post-codegen it is baked into the dep — a copied

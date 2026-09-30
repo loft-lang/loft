@@ -1,0 +1,375 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index cfaac7d72..17c073dcc 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -2619,46 +2619,6 @@ impl Lexer {
+         found
+     }
+ 
+-    /// Is the vector literal whose `[` was just consumed the RECEIVER of a method chain —
+-    /// is its matching `]` followed by a `.`?  `Some(true)` / `Some(false)` when the scan
+-    /// reached that `]`, `None` when it stopped first.  The lexer is restored either way.
+-    ///
+-    /// The expected type of an argument or a tail belongs to the value the whole
+-    /// expression produces, and a literal followed by `.map(…)` is not that value: seeding
+-    /// it made `h([1, 2].map(|x| { "n{x}" }))` into a `vector<text>` refuse its integers.
+-    ///
+-    /// It stops, like [`peek_tuple_literal`](Self::peek_tuple_literal), BEFORE a string
+-    /// literal (an interpolation hole's scanner state is not part of what a revert restores)
+-    /// and at a `;` outside any group.
+-    pub fn peek_literal_receiver(&mut self) -> Option<bool> {
+-        let saved = self.link();
+-        let mut depth: i32 = 0;
+-        let mut found = None;
+-        loop {
+-            if matches!(self.peek.has, LexItem::None | LexItem::CString(_)) {
+-                break;
+-            }
+-            if depth == 0 && self.peek_token(";") {
+-                break;
+-            }
+-            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+-                depth += 1;
+-            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+-                if depth == 0 {
+-                    if self.peek_token("]") {
+-                        self.cont();
+-                        found = Some(self.peek_token("."));
+-                    }
+-                    break;
+-                }
+-                depth -= 1;
+-            }
+-            self.cont();
+-        }
+-        self.revert(saved);
+-        found
+-    }
+-
+     /// Shorthand test if the current element is a specific token and skip it if found.
+     pub fn has_token(&mut self, token: &'static str) -> bool {
+         if self.peek_token(token) {
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index d83806cfa..d42c7ba09 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3564,16 +3564,7 @@ use #count instead"
+             // loft#986 — see `in_control_head`: the `{` after the iterable opens the body.
+             let outer_head = self.in_control_head;
+             self.in_control_head = true;
+-            // The iterable is never the enclosing block's VALUE, so the block's expected type
+-            // (`seed_leaving_value_hint`, pushed before every statement because a statement
+-            // is not known to be the tail until it ends) is not its type: `for i in [0, 1]`
+-            // inside a `-> vector<Pin>` function was built as a `vector<Pin>` and refused.  The
+-            // channel is RESTORED after: a block whose own result is unknown (a `match` arm's
+-            // `{ for …; CNull }`) hands its statements the expectation it inherited, and the
+-            // tail after the loop still needs it.
+-            let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
+             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+-            self.expected = block_expected;
+             self.in_control_head = outer_head;
+             // if #fields was detected, take the compile-time unrolling path.
+             if self.fields_of != u32::MAX {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 97d34c0f2..29bc4af48 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18645,8 +18645,14 @@ impl Parser {
+                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
+                             // parameter the positional form does, so it must infer the
+                             // same way; the spelling of the argument is not the axis.
+-                            if let Some(h) = self.argument_hint(expected) {
+-                                self.expected = h;
++                            if Self::seeds_collection_hint(&expected)
++                                || self.interpolation_target(&expected) != u32::MAX
++                                || Self::seeds_lambda_hint(&expected)
++                                || self.seeds_instance_hint(&expected)
++                            {
++                                self.expected = expected;
++                            } else if let Some(tuple) = self.tuple_hint_type(&expected) {
++                                self.expected = tuple;
+                             }
+                             break;
+                         }
+@@ -18707,16 +18713,46 @@ impl Parser {
+                 } else {
+                     self.fnref_param_hint(name, arg_idx)
+                 };
+-                // Every spelling of an argument position pushes the same shapes
+-                // (`argument_hint`): a `fn(…)` for a short lambda (the fn-ref dispatch of
+-                // loft#1285 carries it), an enum for a bare variant, a collection for a bare
+-                // literal's element type (#432), a format string's target (@PLN124), and a
+-                // tuple's member types (loft#1122) — on BOTH passes, because a bare variant
+-                // seeded on one pass only becomes a stray placeholder on the other.
+-                if let Some(expected) = hinted
+-                    && let Some(h) = self.argument_hint(expected)
+-                {
+-                    self.expected = h;
++                if let Some(expected) = hinted {
++                    if Self::seeds_lambda_hint(&expected) {
++                        // A `fn(…)` parameter, so a SHORT-form lambda argument can infer its
++                        // parameter types — the fn-ref position of the push the `fn_def_nr`
++                        // block above makes for a named callee.
++                        //
++                        // This arm was held CLOSED when loft#1280 landed, because seeding it
++                        // made the short form parse and land in a dispatch that could not
++                        // carry a fn-ref argument at all (loft#1285: no output and exit 0 on
++                        // `--interpret`, E0308 on `--native`).  With that dispatch fixed —
++                        // the 20-byte pair at the interpreter's call site, the `fn_ref_context`
++                        // binding in the native emitter, and the `CallRef` arm in the
++                        // reachability walk — the refusal has nothing left to protect.
++                        self.expected = expected;
++                    } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
++                        self.expected = expected;
++                    } else if Self::seeds_collection_hint(&expected) {
++                        // #432 — seed a bare vector-literal argument's element width
++                        // from the parameter type, so it builds at the callee's
++                        // stride instead of `vector<integer>`.  Both passes (like the
++                        // enum hint): the literal's element type must agree across
++                        // passes, and the callee is already registered on pass 1.
++                        self.expected = expected;
++                    } else if self.interpolation_target(&expected) != u32::MAX {
++                        // @PLN124 — seed a format-string argument's target type, so
++                        // `f("… {x} …")` BUILDS the parameter's type instead of
++                        // rendering text the call would then reject. Both passes, for
++                        // the same reason the two hints above are: taking the branch
++                        // mints an accumulator, and a one-pass mint would shift the
++                        // name-keyed variable tables.
++                        self.expected = expected;
++                    } else if let Some(tuple) = self.tuple_hint_type(&expected) {
++                        // loft#1122 — seed a tuple argument's MEMBER types, so
++                        // `f(([], 9))` and `f((Dot, 9))` resolve against the parameter
++                        // the way the same literal does in a declared local.  Both
++                        // passes, for the reason the enum hint above states: a bare
++                        // variant seeded on one pass only becomes a stray placeholder
++                        // var that shadows the real variant on the other.
++                        self.expected = tuple;
++                    }
+                 }
+             }
+             // for map/filter/reduce, infer lambda hint from the vector
+@@ -19914,25 +19950,29 @@ impl Parser {
+         Type::Text(Deps::none())
+     }
+ 
+-    /// May a bare vector literal take its ELEMENT type from this expected type — `(T-Chk-Vec)`
+-    /// (`@FR-T-Chk-Vec`): `[e₁ … eₙ] ⇐ vector<τ>` checks each `eᵢ ⇐ τ`, so a `vector<u8>`
+-    /// parameter builds a 1-byte-stride literal (#432), a `vector<float>` one converts `[1, 2]`
+-    /// member by member (`@FR-C-Num`), and a `vector<E>` one resolves `[North, South]` against
+-    /// `E`.  A typed local already did all three through its own `var_tp`; an argument, a
+-    /// function or lambda tail and a default reach the literal only through this channel, and
+-    /// it admitted narrow integers alone — so `f([1, 2])` into a `vector<float>` was refused
+-    /// while `v: vector<float> = [1, 2]` compiled.
++    /// #432 — should a bare vector-literal argument be seeded with this parameter
++    /// type's element width (`vector_hint`)?  Only for a CONCRETE narrow-integer
++    /// element (`vector<u8>` … `vector<i32>`): an untyped integer literal infers
++    /// `vector<integer>` (8-byte stride) and the callee would reinterpret it at the
++    /// narrow stride.  Each branch below is deliberately NOT covered:
++    /// - A generic `vector<T>` (element is a `Reference` to a type-var) must NOT
++    ///   seed — the literal cannot be built at an abstract element type, and seeding
++    ///   it wrongly fails `min_of([3, 1, 2])` with "would lose precision".
++    /// - `vector<single>` is excluded on purpose: a float literal infers
++    ///   `vector<float>` and f64→f32 is rejected as precision-loss regardless of the
++    ///   constant, so seeding would turn the (separate, pre-existing) stride bug
++    ///   into a fresh compile error — out of #432's "integer-vector literal" scope.
++    /// - Struct/enum element vectors already build from their own literal.
+     ///
+-    /// The one element type that must NOT seed is one still naming a TYPE VARIABLE (a generic
+-    /// `vector<T>` parameter): the literal cannot be built at an abstract element type, and
+-    /// seeding it wrongly fails `min_of([3, 1, 2])`.  An unresolved placeholder does not seed
+-    /// either — it is the parser's, not the author's.
+-    pub(crate) fn seeds_vector_hint(&self, expected: &Type) -> bool {
++    /// Recurses through nested vector layers so `vector<vector<u8>>` seeds too (the
++    /// outer literal is seeded; inner literals thread their element type through
++    /// `var_tp`).  The leaf must be a narrow integer.
++    pub(crate) fn seeds_vector_hint(expected: &Type) -> bool {
+         match expected {
+             Type::Vector(elem, _) => {
+-                !elem.is_unknown()
+-                    && !elem.any_node(&mut |t| t.is_unknown())
+-                    && !self.data.mentions_type_var(elem)
++                // @PLN25: peel `Optional(τ)` so a `vector<u8?>` literal seeds its narrow
++                // stride like `vector<u8>` (else #432 stride-reinterpretation corruption).
++                matches!(elem.base(), Type::Integer(_)) || Self::seeds_vector_hint(elem)
+             }
+             _ => false,
+         }
+@@ -19940,13 +19980,13 @@ impl Parser {
+ 
+     /// loft#703 — may a bare `[…]` argument take its CONTAINER from this parameter type?
+     ///
+-    /// `seeds_vector_hint` above answers the narrower question — may the parameter give
+-    /// the literal's ELEMENTS their type.  A keyed parameter is a
++    /// `seeds_vector_hint` above answers the narrower #432 question — may the parameter
++    /// override the element WIDTH the literal already inferred.  A keyed parameter is a
+     /// different question with no trade-off in it: `[K { … }]` infers `vector<K>`, which
+     /// is not a `hash<K[k]>` at any width, so the parameter type is the only thing that
+     /// can say what to build and passing one was simply impossible without it.
+-    pub(crate) fn seeds_collection_hint(&self, expected: &Type) -> bool {
+-        self.seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
++    pub(crate) fn seeds_collection_hint(expected: &Type) -> bool {
++        Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
+     }
+ 
+     /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
+@@ -20211,8 +20251,12 @@ impl Parser {
+                     let a = self.data.attr(hint_nr, &arg_name);
+                     if a != usize::MAX {
+                         let expected = self.callee_param_hint(hint_nr, a, &types);
+-                        if let Some(h) = self.argument_hint(expected) {
+-                            self.expected = h;
++                        if Self::seeds_collection_hint(&expected)
++                            || self.interpolation_target(&expected) != u32::MAX
++                            || Self::seeds_lambda_hint(&expected)
++                            || self.seeds_instance_hint(&expected)
++                        {
++                            self.expected = expected;
+                         }
+                     }
+                 }
+@@ -20246,8 +20290,12 @@ impl Parser {
+                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
+                 // library API actually presents.  A `fn(…)` parameter types a short
+                 // lambda, as it does for the free spelling of the same call.
+-                if let Some(h) = self.argument_hint(expected) {
+-                    self.expected = h;
++                if Self::seeds_collection_hint(&expected)
++                    || self.interpolation_target(&expected) != u32::MAX
++                    || Self::seeds_lambda_hint(&expected)
++                    || self.seeds_instance_hint(&expected)
++                {
++                    self.expected = expected;
+                 }
+             }
+             // @PLN165 arc E — a `#builtin` method's lowering is its special form, and so are
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 1608f95aa..edf9caa4c 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -3449,28 +3449,17 @@ impl Parser {
+                 let value_start = self.lexer.link();
+                 let unresolved_before = self.unresolved_names;
+                 let unresolved_types_before = self.unresolved_types;
+-                // Parsed as a VALUE (`Null`), not into the slot `Var(arguments.len())`: no variable
+-                // occupies that number while the default is parsed, so a literal building
+-                // "into" it met its own element temporary minted at the same number, and a
+-                // seeded `vector<S>` default failed with "Variable '_elm_1' cannot change type".
+-                // The slot stays the marker for a default whose parse BUILT nothing — a pass-1
+-                // call to a function declared below (loft#1170) — which is not the `null` literal
+-                // that means "no default".
+-                let null_literal = self.lexer.peek_token("null");
+-                let mut t = Value::Null;
++                let mut t = Value::Var(arguments.len() as u16);
+                 // loft#1067 — the parameter's declared type is the expected type for its
+                 // DEFAULT, exactly as it is for an argument a caller passes: a default is
+                 // checked against it a few lines below, and `fn takes(f: fn(integer) ->
+                 // integer = |x| { x * 2 })` has no other way to say what `x` is.
+                 let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
+-                if let Some(h) = self.argument_hint(typedef.base().clone()) {
+-                    self.expected = h;
++                if Self::seeds_lambda_hint(&typedef) {
++                    self.expected = typedef.base().clone();
+                 }
+                 let dtype = self.expression(&mut t);
+                 self.expected = saved_expected;
+-                if matches!(t, Value::Null) && !null_literal {
+-                    t = Value::Var(arguments.len() as u16);
+-                }
+                 // @PLN102 arc-E (E2 Tier-0): type-check + coerce the default
+                 // expression against the parameter type, exactly as a call-site
+                 // argument is (`convert` then `validate_convert`, mod.rs:5907).
+@@ -6436,10 +6425,8 @@ impl Parser {
+         // loft#1067 — a DEFAULT is checked against the declared type, so
+         // `fn takes(f: fn(integer) -> integer = |x| { x * 2 })` infers `x`
+         // exactly as a caller passing the same lambda would.
+-        // A field default is the same position as a parameter's (`argument_hint`): a bare
+-        // `vector<E>` literal default resolves its variants against `E` as well.
+-        if let Some(h) = self.argument_hint(a_type.clone()) {
+-            self.expected = h;
++        if self.enum_context(a_type) || Self::seeds_lambda_hint(a_type) {
++            self.expected = a_type.clone();
+         }
+         // loft#698 — where the default's value is BUILT decides whether it
+         // can be replayed.  Mark the source position first: a default that
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 79f8b2986..ec992f5fb 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1027,9 +1027,8 @@ pub struct Parser {
+     /// four: readers dispatch on its SHAPE via the helpers below —
+     /// - a `Type::Function` → short-form lambda (`|x| {…}`) parameter inference ([`Self::lambda_hint`]);
+     /// - an enum type → a bare value-position variant (`f(Red)`) resolves against it ([`Self::enum_hint`]);
+-    /// - a `Type::Vector` of a concrete element type → a bare literal (`[10,255,20]`, `[1, 2]`,
+-    ///   `[North, South]`) is checked element by element against it (`(T-Chk-Vec)`,
+-    ///   [`Self::vector_hint`]);
++    /// - a `Type::Vector` of concrete narrow elements → a bare literal (`[10,255,20]`) builds at the
++    ///   element width (#432, [`Self::vector_hint`]);
+     /// - any type → an `f#read` infers its byte width from it ([`Self::read_target_type`]).
+     ///
+     /// (`var_tp` already carries the type for typed-local decls / `==` / struct-field init,
+@@ -4521,25 +4520,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// The `⇐` push an ARGUMENT or a parameter DEFAULT makes (`@FR-T-Chk`): which shapes of
+-    /// the parameter's type reach the value being parsed.  One list for every spelling of
+-    /// the position — positional or named, free function or method, or the default a caller
+-    /// omits — because the spelling is not the axis: `f(X)` resolved a bare variant against
+-    /// the parameter's enum while `f(p: X)`, `h.m(X)` and `fn f(p: B = X)` reported it
+-    /// ambiguous, and a method argument took no tuple member types (`@FR-T-Chk-Var`).
+-    pub(crate) fn argument_hint(&self, expected: Type) -> Option<Type> {
+-        if Self::seeds_lambda_hint(&expected)
+-            || self.enum_context(&expected)
+-            || self.seeds_instance_hint(&expected)
+-            || self.seeds_collection_hint(&expected)
+-            || self.interpolation_target(&expected) != u32::MAX
+-        {
+-            Some(expected)
+-        } else {
+-            self.tuple_hint_type(&expected)
+-        }
+-    }
+-
+     /// Read through `base()`, so a nullable tuple asks what its base asks — whether a slot
+     /// may be absent says nothing about what its members are.
+     pub(crate) fn tuple_hint_type(&self, tp: &Type) -> Option<Type> {
+@@ -4595,10 +4575,10 @@ impl Parser {
+         }
+     }
+ 
+-    /// Expected `vector<…>` element type for a bare literal — `expected` filtered to a vector
+-    /// whose element type names no type variable ([`Self::seeds_vector_hint`]).
++    /// Expected `vector<…>` element-width hint for a bare literal — `expected` filtered to a
++    /// concrete narrow-element vector (#432; [`Self::seeds_vector_hint`]).
+     pub(crate) fn vector_hint(&self) -> Type {
+-        if self.seeds_vector_hint(&self.expected) {
++        if Self::seeds_vector_hint(&self.expected) {
+             self.expected.without_deps()
+         } else {
+             Type::Unknown(0)
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index b3a30968a..0850aa824 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -883,20 +883,12 @@ impl Parser {
+             // `[…]` infers `vector<K>`, which is not a narrower or wider version of
+             // `hash<K[k]>` but a different container — so there is no inference to
+             // override, only the one answer.
+-            // A literal that is the RECEIVER of a chain (`[1, 2].map(…)`) is not the value the
+-            // expected type describes, so it takes none (`Lexer::peek_literal_receiver`); a
+-            // scan that cannot tell keeps the hint.
+             let hint = if is_collection(&self.expected)
+                 && (self.lexer.peek_token("]") || is_keyed(&self.expected))
+             {
+                 self.expected.without_deps()
+             } else {
+-                let seed = self.vector_hint();
+-                if !seed.is_unknown() && self.lexer.peek_literal_receiver() == Some(true) {
+-                    Type::Unknown(0)
+-                } else {
+-                    seed
+-                }
++                self.vector_hint()
+             };
+             self.expected = Type::Unknown(0);
+             // #501 — a vector literal parsed as an assignment RHS reuses the LHS var

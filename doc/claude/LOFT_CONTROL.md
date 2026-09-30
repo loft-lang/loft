@@ -296,6 +296,11 @@ match shape {
 }
 ```
 
+`Rect { width: w, height }` binds `width` as `w` — a bare lowercase name after a field is a
+binding under that name, even when a variable of that name is in scope (`@FR-P-Point`).  A
+literal, a range or `_` in that position tests the field instead (`Circle { radius: 0 }`,
+`Circle { radius: 1..4 }`).
+
 Whether a destructured field is a **view of the subject** or a **copy** depends on the
 field's type:
 
@@ -554,7 +559,9 @@ for item in shapes {
 **Disambiguation:** `if s is Circle { radius } { body }` — the parser
 uses lookahead to distinguish field capture `{ ident [, ident]* }` from
 an if-body `{ statements }`.  If the `{` is followed by an identifier
-then `,` or `}`, it is a field capture; otherwise it is the if-body.
+then `,` or `}`, it is a field capture; otherwise it is the if-body.  A capture binds each field
+under its own name; to bind one under another name (`radius: r`), use `match` — `is Circle
+{ radius: r }` is refused with that advice.
 
 ---
 

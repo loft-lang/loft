@@ -1226,3 +1226,10 @@ fn text_slot_reuse_sequential() {
 ```
 
 **Verification:** `make ci` — zero failures across all test suites.
+
+---
+
+### O1  Superinstruction merging — **Done** (moved from PLANNING_NATIVE.md)
+**Status: delivered** — operand fusion in the bytecode generator (`State::fused_int_call`),
+the fused operators in the escape range; what is fused and which switch bisects it:
+PERFORMANCE.md § Operand fusion — superinstructions.  `make interp-gap` measures what is left.

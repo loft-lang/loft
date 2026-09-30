@@ -2774,8 +2774,13 @@ use #count instead"
         if let Some(narrow) = self.data.narrow_vector_content(cont, &mut self.database) {
             return self.database.vector(narrow);
         }
-        let db_tp = if matches!(cont, Type::Vector(_, _)) {
-            self.database.db_type(cont, &self.data)
+        // @FR-N-Shape — `vector<T>?` is a nullability bit over `vector<T>`'s own row, so the
+        // shape question is asked of the peeled element (the narrow call above keeps the `?`,
+        // which picks a nullable narrow encoding).  Asked of `Optional(Vector)` the test
+        // failed and the def lookup below named another row: `vector<vector<integer>?>`
+        // printed its elements as enum values, `[?,null]` (loft#1739).
+        let db_tp = if let shape @ Type::Vector(_, _) = cont.base() {
+            self.database.db_type(shape, &self.data)
         } else {
             let d_nr = self.data.type_def_nr(cont);
             self.data.def(d_nr).known_type()
@@ -2874,10 +2879,43 @@ use #count instead"
         } else {
             "OpFormat"
         };
+        // `@FR-G-Mono` — a hole whose type is a BOUND type variable is lowered per instance,
+        // with the concrete type, by this same function: the rendering a builtin lowers to is
+        // a constant derived from the type, and the instance behaves as its hand-written twin
+        // (`{x:05}` on an integer `T` is `00042`, a `text` `T` is refused as its twin is).
+        // Lowered here, through `to_text` and a TEXT append, the template fixed text's
+        // alignment and text's zero-fill for every instance.  The hole is marked with its
+        // whole spec; `Parser::resolve_pending_formats` lowers it inside the instance.
+        if let &Type::Reference(tv, _) = tp.base()
+            && self.data.is_type_var_placeholder(tv)
+            && self.has_bound_for_method("to_text", tv, None)
+        {
+            list.push(self.cl(
+                &(start.to_owned() + "Text"),
+                &[
+                    var,
+                    format.clone(),
+                    state.width.clone(),
+                    Value::Int(state.dir),
+                    Value::Int(i32::from(
+                        state.token.as_bytes().first().copied().unwrap_or(b' '),
+                    )),
+                    Value::Int(Self::FORMAT_PENDING),
+                    Value::Int(tv as i32),
+                    Value::Int(i32::from(append_value)),
+                    Value::Int(state.radix),
+                    Value::Boolean(state.plus),
+                    Value::Boolean(state.note),
+                    Value::Boolean(state.float),
+                    Value::Text(state.spec.to_string()),
+                    Value::Text(state.token.to_string()),
+                ],
+            ));
+            return;
+        }
         // L9: escalate format-specifier mismatches to compile errors.
         // A specifier that can never have any effect on the value type is always a bug.
         if !self.first_pass {
-            let is_text = matches!(tp, Type::Text(_));
             // @FR-F-Spec — a precision reaches here in two spellings: a bare `.P` sets
             // `float` and leaves `P` in the width slot, and the dotted `W.P` — the only
             // spelling that gives both at once — arrives as one `Value::Float`.
@@ -2918,11 +2956,33 @@ use #count instead"
                     Self::radix_letter(state.radix),
                     tp.source_name(&self.data)
                 );
-            } else if is_text && state.token == "0" && state.width != Value::Int(0) {
+            } else if state.token == "0"
+                && state.width != Value::Int(0)
+                && matches!(
+                    tp.base(),
+                    Type::Text(_)
+                        | Type::Boolean
+                        | Type::Character
+                        | Type::Enum(_, _, _)
+                        | Type::Reference(_, _)
+                        | Type::Vector(_, _)
+                        | Type::Hash(_, _, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
+                )
+            {
+                // @FR-F-Spec — `0N` zero-pads a NUMBER, and `@FR-F-Spec-Exec` refuses a spec
+                // part the type cannot execute: a word, a record or a collection has no digits
+                // for the zeros to go in front of.  Rendered, they went on the wrong side of
+                // the whole text (`true00`, `[1,2]00000`, `{x:3}0000000`).  An ITERATOR is not
+                // judged here: it applies the spec to each element (`{for x in v {x}:03}`).
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Zero-padding has no effect on text"
+                    "Zero-padding has no effect on {}",
+                    tp.source_name(&self.data)
                 );
             } else if has_precision && !matches!(tp, Type::Float | Type::Single) {
                 // @FR-F-Spec — `.P` asks for fractional digits, and only `float` and
@@ -3361,6 +3421,91 @@ use #count instead"
         (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
     }
 
+    /// `@FR-R-LiteralWalk` — a `for` over a scalar vector literal of constant length walks its
+    /// items without building the vector: each item is evaluated once, in order, into its
+    /// own scalar temp before the loop, and the iterator is a counted select over the temps
+    /// (`if i == 0 { t0 } else if i == 1 { t1 } else { t2 }`).  Every value the body sees is
+    /// the one the vector would have held, `x#index` counts the same, and the literal's
+    /// per-iteration allocation, three appends and three element reads are gone on BOTH
+    /// backends.  `Some(iterator type)` and `expr` rewritten to the `Iter`, or `None` and
+    /// `expr` untouched — a `rev(…)`, a `par` walk and `LOFT_NO_LITERAL_WALK=1` keep the
+    /// vector walk.
+    pub(crate) fn literal_walk(
+        &mut self,
+        expr: &mut Value,
+        in_type: &Type,
+        id: &str,
+    ) -> Option<Type> {
+        let (block, items, elem) = self.literal_walk.take()?;
+        let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
+        if !literal_walk_enabled()
+            || self.reverse_iterator
+            || is_par
+            || *expr != block
+            || !matches!(in_type.base(), Type::Vector(_, _))
+            || !is_walkable_scalar(&elem)
+        {
+            return None;
+        }
+        let mut prelude = Vec::new();
+        let mut temps = Vec::new();
+        for item in items {
+            let t = self.create_unique("lit", &elem);
+            self.vars.defined(t);
+            prelude.push(v_set(t, item));
+            temps.push(t);
+        }
+        // The counter is the loop's `x#index`, as a range's is; `-1` seeds the step-first
+        // form so the yielded index counts 0, 1, 2 (…) like the vector walk's.
+        let ivar = if id == "_" {
+            self.create_unique("index", &I32)
+        } else {
+            self.create_var(&format!("{id}#index"), &I32)
+        };
+        self.vars.defined(ivar);
+        prelude.push(v_set(ivar, Value::Int(-1)));
+        let n = i32::try_from(temps.len()).ok()?;
+        let step = self.conv_op(
+            "+",
+            Value::Var(ivar),
+            Value::Int(1),
+            I32.clone(),
+            I32.clone(),
+        );
+        let mut ls = vec![v_set(ivar, step)];
+        let done = self.conv_op(
+            "<=",
+            Value::Int(n),
+            Value::Var(ivar),
+            I32.clone(),
+            I32.clone(),
+        );
+        ls.push(v_if(done, Value::Break(0), Value::Null));
+        let mut select = Value::Var(temps[temps.len() - 1]);
+        for (k, t) in temps.iter().enumerate().rev().skip(1) {
+            let k = i32::try_from(k).ok()?;
+            let at = self.conv_op(
+                "==",
+                Value::Var(ivar),
+                Value::Int(k),
+                I32.clone(),
+                I32.clone(),
+            );
+            select = v_if(at, Value::Var(*t), select);
+        }
+        ls.push(select);
+        *expr = Value::Iter(
+            u16::MAX,
+            Box::new(Value::Insert(prelude)),
+            Box::new(v_block(ls, elem.clone(), "Iter literal")),
+            Box::new(Value::Null),
+        );
+        if !self.first_pass {
+            crate::rewrite_census::fired("R-LiteralWalk", 1);
+        }
+        Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))
+    }
+
     /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
     /// walked through an ordered scratch of its records, built here as `fill` into a fresh
     /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
@@ -3564,7 +3709,16 @@ use #count instead"
             // loft#986 — see `in_control_head`: the `{` after the iterable opens the body.
             let outer_head = self.in_control_head;
             self.in_control_head = true;
+            // The iterable is never the enclosing block's VALUE, so the block's expected type
+            // (`seed_leaving_value_hint`, pushed before every statement because a statement
+            // is not known to be the tail until it ends) is not its type: `for i in [0, 1]`
+            // inside a `-> vector<Pin>` function was built as a `vector<Pin>` and refused.  The
+            // channel is RESTORED after: a block whose own result is unknown (a `match` arm's
+            // `{ for …; CNull }`) hands its statements the expectation it inherited, and the
+            // tail after the loop still needs it.
+            let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+            self.expected = block_expected;
             self.in_control_head = outer_head;
             // if #fields was detected, take the compile-time unrolling path.
             if self.fields_of != u32::MAX {
@@ -3573,6 +3727,9 @@ use #count instead"
                 self.vars.finish_loop(loop_nr);
                 self.parse_field_iteration(&id, &src_id, struct_def_nr, &expr, code);
                 return;
+            }
+            if let Some(walk) = self.literal_walk(&mut expr, &in_type, &id) {
+                in_type = walk;
             }
             let mut fill = Value::Null;
             // For vector loops, the iterator runs on a unique temp copy so that the loop
@@ -7818,4 +7975,20 @@ struct GroupElemSite {
     struct_tp: u16,
     byte_off: u16,
     members: Vec<(u16, u16, bool)>,
+}
+
+/// `@FR-R-LiteralWalk` — the element types a literal walk carries as scalar temps.
+pub(crate) fn is_walkable_scalar(tp: &Type) -> bool {
+    match tp {
+        Type::Integer(_) | Type::Boolean | Type::Float | Type::Single | Type::Character => true,
+        // A nullable scalar (`[a, null]`) keeps the vector: its temps would need the
+        // sentinel discipline the element slot already has.
+        Type::Optional(_) => false,
+        _ => false,
+    }
+}
+
+/// `LOFT_NO_LITERAL_WALK=1` keeps every `for x in [a, b, c]` a vector walk (BOTH backends).
+fn literal_walk_enabled() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_LITERAL_WALK").is_none())
 }

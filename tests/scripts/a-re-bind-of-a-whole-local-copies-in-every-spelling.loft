@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RE-BIND OF A WHOLE LOCAL COPIES IN EVERY SPELLING (`@FR-B-Copy`).  `bl = s` copies `s` into a
+// destination that already owns a record, and the same bind spelled through a block, a branch or
+// a variant WIDENING must copy too.  Three spellings aliased instead, with no diagnostic:
+//   * `bl = { s }` — the block's tail typed `bl` as a view of `s`, both backends;
+//   * `w = if c { circ } else { Rect {…} }` with `w: Shape` — the per-arm re-bind asked "same
+//     record?" as `d_nr == src_d`, not `Data::copies_as`, so a variant into its enum kept the
+//     join's borrow of `circ`, both backends;
+//   * a re-bind in a loop through the same branch — one copy per round, released each round.
+// A PROJECTION re-bind (`pv = v[0]`) still views the element (`@FR-B-View`).  The cast
+// spellings of the same re-bind are in `c131-a-cast-to-a-variant-answers-the-variant.loft`.
+// Values are hand-computed.
+//
+// @falsified-at: 339dd1956 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-re-bind-of-a-whole-local-copies-in-every-spelling.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the first assertion on both backends — the control's block re-bind aliases `s` (42).
+// HOLDS: leak, panic and free-refusal are clean on both trees.  The first failure stops the control
+//   run, so the later cells are not scored there; the widening and the nullable destination were
+//   measured on their own against the released build, which aliases both on both backends.
+
+struct P { x: integer }
+struct T { x: integer, name: text }
+enum Shape { Circle { radius: integer }, Rect { w: integer } }
+
+// A PARAMETER source copies exactly as a local does: the caller's record is untouched.
+fn via_param(p: T) -> text {
+  bl = T { x: 5, name: "b" };
+  println("{bl.x}");
+  bl = { p };
+  bl.name = "zz";
+  "{p.name}/{bl.name}"
+}
+
+fn main() {
+  s = P { x: 1 };
+  bl = P { x: 5 };
+  println("{bl.x}");
+  bl = { s };
+  bl.x = 42;
+  assert(s.x == 1 && bl.x == 42, "a block re-bind copies: {s.x}");
+  b2 = P { x: 5 };
+  println("{b2.x}");
+  b2 = if s.x > 0 { { s } } else { P { x: 7 } };
+  b2.x = 43;
+  assert(s.x == 1 && b2.x == 43, "a block inside a branch copies: {s.x}");
+  circ = Circle { radius: 3 };
+  w: Shape = Rect { w: 1 };
+  println("{w}");
+  w = if circ.radius > 0 { circ } else { Rect { w: 2 } };
+  circ.radius = 99;
+  assert((w as Circle?).radius == 3, "a widened re-bind copies: {(w as Circle?).radius}");
+  q: Shape = Circle { radius: 4 };
+  acc = 0;
+  b = Circle { radius: 0 };
+  for i in 0..5 {
+    b = if q is Circle { q as Circle } else { Circle { radius: 7 } };
+    b.radius += i;
+    acc += b.radius;
+  }
+  assert(acc == 30 && (q as Circle?).radius == 4, "a re-bind per round copies: {acc} {(q as Circle?).radius}");
+  // A NULLABLE destination, a record with a heap member (`text`), and a block re-bind per
+  // round of a loop: the same copy, and each round's copy released.
+  t = T { x: 1, name: "t" };
+  nb: T? = T { x: 5, name: "nb" };
+  println("{nb}");
+  nb = { t };
+  nb.name = "changed";
+  assert(t.name == "t" && nb.name == "changed", "a nullable destination copies: {t.name}");
+  assert(via_param(T { x: 2, name: "p" }) == "p/zz", "a parameter source copies");
+  for i in 0..3 {
+    k = T { x: 0, name: "k" };
+    println("{k.x}");
+    k = { t };
+    k.name = "round{i}";
+  }
+  assert(t.name == "t", "a block re-bind per round copies: {t.name}");
+  v = [P { x: 2 }, P { x: 3 }];
+  pv = P { x: 5 };
+  println("{pv.x}");
+  pv = v[0];
+  pv.x = 47;
+  assert(v[0].x == 47, "a projection re-bind views: {v[0].x}");
+}

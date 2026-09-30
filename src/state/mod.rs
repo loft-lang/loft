@@ -63,6 +63,18 @@ pub struct CallFrame {
     pub line: u32,
 }
 
+/// May the interpreter stack take its direct path (`State::fast_stack`)?  Not while any
+/// instrument that watches stack accesses is armed, and not in a debug-assertions build,
+/// whose checked path carries the `DbRef` bounds sentinels that build exists for.
+fn fast_stack_allowed() -> bool {
+    !(cfg!(debug_assertions)
+        || cfg!(feature = "stack_align_guard")
+        || crate::stack_verify::enabled()
+        || crate::stack_census::enabled()
+        || crate::keys::uaf_gen_enabled()
+        || crate::keys::strict_stores())
+}
+
 /// Reserved store number for coroutine `DbRef` encoding (CO1.1).
 /// Cannot clash with real Stores allocations (limited by `Stores::max`).
 pub const COROUTINE_STORE: u16 = u16::MAX;
@@ -243,6 +255,19 @@ pub struct State {
     /// reading the `OnceLock` there cost 2.4 % of the interpreter's instructions on a
     /// field-write loop.  Set once, at construction.
     pub(crate) verify_on: bool,
+    /// The interpreter stack is read and written directly (its buffer plus an offset) rather
+    /// than through the general store path.  The store path re-checks, on every push and pop,
+    /// what the stack guarantees by construction: that its store is live, is not foreign and
+    /// not locked, and that the offset is inside the record (`ensure_stack` grows the buffer
+    /// and the record together).  Measured 2026-09-29, that path was 43 % of the interpreter's
+    /// time on a vector-writing loop.  False whenever an instrument that watches stack
+    /// accesses is armed (`verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
+    /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
+    /// build, so each keeps its own path.
+    pub(crate) fast_stack: bool,
+    /// Codegen only: the character walks of the function being generated
+    /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
+    pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -642,6 +667,7 @@ impl State {
     #[must_use]
     pub fn new(mut db: Stores) -> State {
         let stack_cur = db.database(1000);
+        crate::store_census::set_stack_store(stack_cur.store_nr);
         db.stack_store_at_zero = true; // #306 — protect slot 0 from whole-store frees
         // @PLN154 — arm the stack shadow.  Here and only here: the shadow is what makes a
         // store the one whose slots are checked, so a heap store never carries one.
@@ -665,6 +691,8 @@ impl State {
             stack_high: 4,
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
+            fast_stack: fast_stack_allowed(),
+            walk_steps: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -761,13 +789,13 @@ impl State {
     /// When call depth exceeds `MAX_CALL_DEPTH` (possible infinite recursion).
     pub fn fn_call(&mut self, d_nr: u32, args_size: u16, to: i64) {
         let args_base = self.stack_pos - u32::from(args_size);
-        // Find the nearest source line at or before the current code position.
-        // line_numbers entries are emitted before the first instruction on each line,
-        // so after consuming a Call instruction code_pos is past the entry — use
-        // range(..=code_pos).next_back() to recover the most recent line.
+        // The line of the CALL: the nearest line entry STRICTLY before `code_pos`.  Entries
+        // sit before the first instruction of each line, and `code_pos` is already past the
+        // whole Call instruction, so an entry AT `code_pos` belongs to the next statement —
+        // the one a call that ends its statement is followed by (loft#1753).
         let line = self
             .line_numbers
-            .range(..=self.code_pos)
+            .range(..self.code_pos)
             .next_back()
             .map_or(0, |(_, &v)| v);
         // Plan-07 phase 4f.12 — stack overflow becomes a typed
@@ -1141,8 +1169,7 @@ impl State {
             self.database.call_stack_snapshot = self
                 .call_stack
                 .iter()
-                .enumerate()
-                .map(|(idx, f)| {
+                .map(|f| {
                     if let Some(data) = data_opt
                         && f.d_nr != u32::MAX
                         && (f.d_nr as usize) < data.definitions.len()
@@ -1150,23 +1177,14 @@ impl State {
                         let def = &data.definitions[f.d_nr as usize];
                         let name = def.trace_name();
                         let file = def.position().file.to_string();
-                        // Fix #92: line resolution for parallel-worker frames.
-                        // The CallFrame.line is only updated by `fn_call`, which
-                        // never runs for the worker's entry frame.  Fall back to
-                        // looking up the current bytecode position in
-                        // `line_numbers` so workers report the actual source
-                        // line they're executing rather than 0.
-                        let line = if f.line != 0 {
-                            f.line
-                        } else {
-                            let cp = if idx + 1 == self.call_stack.len() {
-                                self.code_pos
-                            } else {
-                                self.call_stack[idx + 1].call_pos
-                            };
-                            self.line_numbers.get(&cp).copied().unwrap_or(0)
-                        };
-                        (name, file, line)
+                        // A frame's `line` is the call site that ENTERED it, 0 where no loft
+                        // call did — the entry frame, a parallel worker's entry frame (its
+                        // caller is on another thread) and a compiler-synthesised call
+                        // (STACKTRACE.md ST-4).  Where such a frame is running now is the
+                        // next frame's `line`.  (loft#1753: a lookup of the next frame's
+                        // call position here named the statement AFTER a call that ended
+                        // its statement, and only then.)
+                        (name, file, f.line)
                     } else {
                         // Worker frame without Data context — use placeholder.
                         ("<worker>".to_string(), String::new(), f.line)
@@ -2559,14 +2577,23 @@ impl State {
     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
     /// release library), corrupting the heap.  Cheap in the common case:
     /// one comparison against the cached `stack_cap_bytes`.
-    #[inline]
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub(crate) fn ensure_stack(&mut self, extra: u32) {
         // Highest byte offset a write at the current top may touch:
         // addr_mut computes `rec * 8 + (pos + stack_pos)`.
         let top = self.stack_cur.rec * 8 + self.stack_cur.pos + self.stack_pos + extra;
-        if top < self.stack_cap_bytes {
-            return;
+        if top >= self.stack_cap_bytes {
+            self.grow_stack(top);
         }
+    }
+
+    /// The rare half of [`Self::ensure_stack`], out of line so the check inlines into every push.
+    #[cold]
+    #[inline(never)]
+    fn grow_stack(&mut self, top: u32) {
         // Grow with a word of slack so the exact-fit boundary still passes
         // `addr_mut`'s `offset + size <= size * 8` check.
         let needed_words = top.div_ceil(8) + 1;
@@ -2578,6 +2605,25 @@ impl State {
         // and a release build simply writes.
         store.extend_primary_to_store_end();
         self.stack_cap_bytes = store.byte_capacity() as u32;
+    }
+
+    /// The address of stack byte `off` (relative to the stack record's field base), for the
+    /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
+    /// `ensure_stack`, a read lies below `stack_pos`.
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn stack_slot(&self, off: u32) -> *mut u8 {
+        let store = &self.database.allocations[self.stack_cur.store_nr as usize];
+        let at = (self.stack_cur.rec * 8 + self.stack_cur.pos + off) as usize;
+        debug_assert!(
+            (at as u64) < store.byte_capacity(),
+            "fast stack access at byte {at} beyond the stack store's {} bytes",
+            store.byte_capacity()
+        );
+        // SAFETY: `at` is inside the stack store's buffer (above).
+        unsafe { store.ptr.add(at) }
     }
 
     /// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance, always
@@ -2804,7 +2850,10 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
         assert!(
             (size_of::<T>() as u32) < self.stack_pos,
@@ -2813,6 +2862,19 @@ impl State {
             size_of::<T>() as u32
         );
         self.stack_pos -= self.stack_step(size_of::<T>() as u32);
+        if self.fast_stack {
+            // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
+            return unsafe { self.stack_slot(self.stack_pos).cast::<T>().read_unaligned() };
+        }
+        self.get_stack_checked()
+    }
+
+    /// [`Self::get_stack`] with every instrument's hook, for a run that arms one; the pop
+    /// itself (`stack_pos`) is already done.
+    #[cold]
+    #[inline(never)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn get_stack_checked<T: 'static + Copy>(&mut self) -> T {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos);
         // @PLN154 — check high.  The pop is also a LIFO consume, so the slot's tags go
@@ -2917,7 +2979,7 @@ impl State {
                     // @PLN118 arc E — the READING op is the one currently dispatching (this
                     // pop happens inside its handler); `last_context` holds its opcode byte.
                     let (_rpc, read_op, _fd) = crate::crash_report::last_context();
-                    let read_op_str = op_name(u16::from(read_op));
+                    let read_op_str = op_name(read_op);
                     // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
                     // copy reading a stale SUB-reference: the copy is incomplete and the source
                     // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
@@ -3016,6 +3078,10 @@ impl State {
         )
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn get_var<T: 'static + Copy>(&mut self, pos: u16) -> T {
         // get_var reads T at (stack_pos - pos); pos > stack_pos would underflow.
         // pos < size_of::<T>() is also invalid (read extends before the frame base).
@@ -3026,6 +3092,21 @@ impl State {
             "get_var: pos={pos} exceeds stack_pos={} (frame underflow)",
             self.stack_pos
         );
+        if self.fast_stack {
+            // SAFETY: inside the frame, which lies inside the stack record.
+            return unsafe {
+                self.stack_slot(self.stack_pos - u32::from(pos))
+                    .cast::<T>()
+                    .read_unaligned()
+            };
+        }
+        self.get_var_checked(pos)
+    }
+
+    /// [`Self::get_var`] with every instrument's hook, for a run that arms one.
+    #[cold]
+    #[inline(never)]
+    fn get_var_checked<T: 'static + Copy>(&mut self, pos: u16) -> T {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos - u32::from(pos));
         // @PLN154 — a frame read.  No kill: the slot stays live, and a local read twice is
@@ -3073,19 +3154,11 @@ impl State {
         let ty = std::any::type_name::<T>();
         match state {
             SlotState::Unwritten => {
-                crate::stack_verify::report_uninit(what, ty, at, width, pc, line, u16::from(op));
+                crate::stack_verify::report_uninit(what, ty, at, width, pc, line, op);
             }
             SlotState::Mismatch { wrote } => {
                 crate::stack_verify::report_mismatch(
-                    what,
-                    ty,
-                    at,
-                    width,
-                    wrote,
-                    false,
-                    pc,
-                    line,
-                    u16::from(op),
+                    what, ty, at, width, wrote, false, pc, line, op,
                 );
             }
             SlotState::Stale => {
@@ -3096,7 +3169,7 @@ impl State {
                     .read::<DbRef>(self.stack_cur.rec, self.stack_cur.pos + at)
                     .rec;
                 let _ = abs;
-                crate::stack_verify::report_stale(what, ty, at, rec, pc, line, u16::from(op));
+                crate::stack_verify::report_stale(what, ty, at, rec, pc, line, op);
             }
             SlotState::Partial | SlotState::Written => {}
         }
@@ -3170,11 +3243,30 @@ impl State {
         )
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn put_var<T: 'static>(&mut self, pos: u16, value: T) {
         // @PLAN53 cluster 2 / S4: the value's footprint on the stack is its
         // stepped span (matches the get_stack/put_stack steps it pairs with);
         // identity when LOFT_ALIGN off.
         let step = self.stack_step(size_of::<T>() as u32);
+        if self.fast_stack {
+            let slot = self.stack_slot(self.stack_pos + step - u32::from(pos));
+            debug_assert_eq!(slot.align_offset(std::mem::align_of::<T>()), 0);
+            // SAFETY: a frame slot, inside the stack record and aligned (the stack is 8-aligned
+            // and every slot a multiple of 8); assigned like `addr_mut`'s reference is.
+            unsafe { *slot.cast::<T>() = value };
+            return;
+        }
+        self.put_var_checked(pos, step, value);
+    }
+
+    /// [`Self::put_var`] through the store, for a run that arms an instrument.
+    #[cold]
+    #[inline(never)]
+    fn put_var_checked<T: 'static>(&mut self, pos: u16, step: u32, value: T) {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<T>(self.stack_cur.pos + self.stack_pos + step - u32::from(pos));
         *self.database.store_mut(&self.stack_cur).addr_mut::<T>(
@@ -3287,7 +3379,30 @@ impl State {
         ) = db;
     }
 
+    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     pub fn put_stack<T: 'static>(&mut self, val: T) {
+        if self.fast_stack {
+            self.ensure_stack(self.stack_step(size_of::<T>() as u32));
+            let slot = self.stack_slot(self.stack_pos);
+            debug_assert_eq!(slot.align_offset(std::mem::align_of::<T>()), 0);
+            // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
+            unsafe { *slot.cast::<T>() = val };
+            self.stack_pos += self.stack_step(size_of::<T>() as u32);
+            if self.stack_pos > self.stack_high {
+                self.stack_high = self.stack_pos;
+            }
+            return;
+        }
+        self.put_stack_checked(val);
+    }
+
+    /// [`Self::put_stack`] with every instrument's hook, for a run that arms one.
+    #[cold]
+    #[inline(never)]
+    fn put_stack_checked<T: 'static>(&mut self, val: T) {
         #[cfg(debug_assertions)]
         {
             if std::any::TypeId::of::<T>() == std::any::TypeId::of::<DbRef>() {
@@ -5155,6 +5270,9 @@ impl State {
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             self.profile_tick(pc);
         }
+        if crate::op_census::armed() {
+            self.op_census_step(pc);
+        }
         self.profile_flush_check(data);
         let is_bp = self.debug.as_ref().is_some_and(|d| d.is_breakpoint(pc));
         // A pause from outside (`debugger::INTERRUPT`) suspends only a STEPPING run — the
@@ -5240,6 +5358,28 @@ impl State {
         if let Some(p) = self.debug.as_deref_mut().and_then(|d| d.prof.as_mut()) {
             p.record(pc, &frames);
         }
+    }
+
+    /// `LOFT_OP_CENSUS` — the op at `pc` is about to run: key it by the line of the entry
+    /// function it runs under (its call site when a callee runs, its own line when the entry
+    /// function does) and by its function.  The call site is resolved from a byte INSIDE the
+    /// call instruction, not from `CallFrame.line`, which names the next line after a
+    /// statement-final call (loft#1753).
+    fn op_census_step(&self, pc: u32) {
+        let line = match self.call_stack.get(1) {
+            Some(f) => crate::op_census::site_line(f.call_pos, || {
+                self.line_at(f.call_pos.saturating_sub(1))
+            }),
+            None => self.line_at(pc),
+        };
+        let function = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+        let at = pc as usize;
+        let opcode = match self.bytecode.get(at) {
+            Some(255) => 255 + self.bytecode.get(at + 1).map_or(0, |&e| u16::from(e)),
+            Some(&op) => u16::from(op),
+            None => return,
+        };
+        crate::op_census::step(line, function, opcode);
     }
 
     /// @PLN140 arc C — the op at `pc` allocated `stores` stores; hand the path that
@@ -5881,10 +6021,17 @@ impl State {
     /// the library are in this process.  Neither side can see the whole chain, so the
     /// two halves are joined here — the library's innermost-first, then the caller's —
     /// which is what makes a placed fault read exactly like an in-process one.
+    #[inline]
     fn note_runtime_error_halt(&mut self) {
-        if self.database.runtime_error.is_none() {
-            return;
+        if self.database.runtime_error.is_some() {
+            self.attach_halt_frames();
         }
+    }
+
+    /// The rare half of [`Self::note_runtime_error_halt`].
+    #[cold]
+    #[inline(never)]
+    fn attach_halt_frames(&mut self) {
         let wants_frames = self
             .database
             .runtime_error
@@ -6241,7 +6388,7 @@ impl State {
         // Handed over as a CLOSURE, because "once per process" is the whole licence
         // for the leak and this runs once per PROGRAM (loft#820).
         crate::crash_report::set_op_names(|| {
-            (0..=u16::from(u8::MAX))
+            (0..OPERATORS.len() as u16)
                 .map(|op| {
                     data.operator_name(op)
                         .map_or("", |n| &*Box::leak(n.to_owned().into_boxed_str()))
@@ -6366,6 +6513,49 @@ impl State {
         let census_on = crate::stack_census::enabled();
         // @PLN154 phase 1 — the same hoist for the shadow's one KILL chokepoint.
         let verify_on = self.verify_on;
+        // The lean loop: when nothing watches individual ops, each op pays only for what an
+        // ordinary run needs from the loop — the allocation site, the crash context, the
+        // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
+        // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
+        // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
+        let lean_loop = !(reload_on
+            || census_on
+            || verify_on
+            || alloc_paths_on
+            || uaf_on
+            || uaf_src_on
+            || uaf_gen_on
+            || cfg!(debug_assertions)
+            || cfg!(feature = "stack_align_guard"));
+        crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
+        if lean_loop {
+            while self.code_pos < bytecode_len && self.debug.is_none() {
+                let op_pos_rt = self.code_pos;
+                self.database.alloc_pc = op_pos_rt;
+                let op = self.code::<u8>();
+                let opcode = if op == 255 {
+                    255 + u16::from(self.code::<u8>())
+                } else {
+                    u16::from(op)
+                };
+                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
+                OPERATORS[usize::from(opcode)](self);
+                if self.database.frame_yield {
+                    return;
+                }
+                if crate::parallel::worker_fatal_pending()
+                    && let Some(err) = crate::parallel::take_worker_fatal()
+                {
+                    self.database.runtime_error = Some(err);
+                    self.database.had_fatal = true;
+                }
+                self.note_runtime_error_halt();
+                if self.code_pos == u32::MAX {
+                    break;
+                }
+            }
+        }
         while self.code_pos < bytecode_len {
             if reload_on {
                 reload_tick -= 1;
@@ -6402,8 +6592,15 @@ impl State {
             // subsequent SIGSEGV/SIGABRT prints the crash location.
             // Cheap: one thread-local store per op.
             {
+                // The full opcode: a two-byte one's second byte is next in the stream, and is
+                // read for real below.
+                let opcode = if op == 255 {
+                    255 + u16::from(self.bytecode[self.code_pos as usize])
+                } else {
+                    u16::from(op)
+                };
                 let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_context(op_pos_rt, op, "(opcode dispatch)", fn_d_nr, "");
+                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
             }
             #[cfg(debug_assertions)]
             {
@@ -6750,6 +6947,11 @@ impl State {
     /// (the two would fight over the same per-op hook, and the debugger was asked for
     /// explicitly).
     pub fn arm_profiler(&mut self) {
+        // `LOFT_OP_CENSUS` rides the same per-op branch as the sampler, so an unarmed run
+        // pays nothing for it; armed, it needs the `Debugger` that branch tests for.
+        if crate::op_census::enabled() && self.debug.is_none() {
+            self.debug = Some(Box::default());
+        }
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             return;
         }
@@ -7421,6 +7623,7 @@ impl State {
     ) -> State {
         let mut db = worker.stores;
         let stack_cur = db.database(1000);
+        crate::store_census::set_stack_store(stack_cur.store_nr);
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
@@ -7433,6 +7636,8 @@ impl State {
             stack_high: 4,
             stack_cap_bytes,
             verify_on: crate::stack_verify::enabled(),
+            fast_stack: fast_stack_allowed(),
+            walk_steps: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,

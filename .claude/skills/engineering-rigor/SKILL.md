@@ -473,5 +473,6 @@ layout.
   cost-of-next-case, one-home-per-fact, subtraction-not-a-guard, matched-to-domain)
   and the countable brittleness form.
 - **Heavyweight investigations** — `doc/claude/plans/_INVESTIGATION_TEMPLATE.md`.
-- **The deep why** — `doc/claude/GOALS.md` Goal E: robustness by *subtraction* —
-  the reason the short version is usually the robust one.
+- **The deep why** — `doc/claude/GOALS.md` § Stability trumps features: robustness by
+  *subtraction* — remove the mechanism rather than guard it; the reason the short version is
+  usually the robust one.

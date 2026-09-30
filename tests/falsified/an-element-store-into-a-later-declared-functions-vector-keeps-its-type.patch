@@ -1,0 +1,33 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index ebd4fc5b3..d489fae43 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -2439,10 +2439,7 @@ use a separate collection or add after the loop"
+         if op != "=" || var_nr != u16::MAX || self.first_pass {
+             return false;
+         }
+-        // A `never` target has no value to store into: it is what an element of an
+-        // unresolved call's result reads as (`v = missing(); v[0] = 2.5`), whose own error
+-        // is already reported, and `as never` is no cure.
+-        if f_type.is_unknown() || s_type.is_unknown() || matches!(f_type, Type::Never) {
++        if f_type.is_unknown() || s_type.is_unknown() {
+             return false;
+         }
+         // A bare `null` is exempt because the targets that legitimately take one reach
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index b46e0d080..1b76e5913 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -1762,12 +1762,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+                     self.expression(&mut pn);
+                 }
+             }
+-            // The element is not the receiver.  Left as the receiver's `Var`, a store
+-            // `v[0] = 2.5` read as `v = 2.5` and typed the variable `float` in this pass,
+-            // so pass 2 refused every later `v[i]` of a vector a forward-declared function
+-            // returned — and the refusal, a pass-1 error, hid the unknown-function error
+-            // pass 2 would have reported when the callee does not exist.
+-            *code = Value::Null;
+         } else {
+             // index_type() already emitted a diagnostic; consume the inner expression
+             // so that the caller can still parse the closing `]` without cascading errors.

@@ -76,6 +76,25 @@ argument's *nullability* is checked separately — passing a `τ?` value into a 
 warns, or errors for a narrow width: [types.md](types.md)'s `N-Store` rule at the call-argument
 site.)
 
+```
+  (F-Default)  a `= e` default fills its parameter at EACH call that omits the argument, in the
+               CALLER, with every EARLIER parameter bound to the argument that call supplied for
+               it — `h(1)` for `fn h(k: integer, t: (integer, integer) = (k, 9))` is `h(1, (1, 9))`.
+               Whatever `e`'s shape (a literal, a tuple, a record, an `if` or `match`, a call), a
+               default is well-formed exactly where the same `e` written as the argument is, and
+               it answers what that argument would.
+```
+
+**In words.** A default is shorthand for writing the argument yourself, with the earlier
+arguments already in hand.  The compiler either replays the default's expression at the call site
+(substituting the call's own arguments for the earlier parameters) or lowers it into a small
+function that takes them — which one is an implementation choice, and neither may change the
+answer.  Guarded by `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
+values) and `a-match-default-over-records-compiles.loft` (a lowered default well-formed where its
+argument is), and `1758-a-text-tuple-default-answers-what-its-argument-would.loft` (a lowered default
+returning a lifetime-bearing tuple is boxed like a declared one and unboxed where it becomes the
+argument, `@FR-F-Ret`).
+
 ### The call binds parameters and yields the return value
 
 ```
@@ -324,7 +343,7 @@ DESIGN_DECISIONS.md C123.
 
 ## Deviations
 
-**OPEN: 0.**  `D-call-24` opened and closed 2026-09-29 (a nullable vector local at the tail lost its writes).  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
+**OPEN: 0.**  `D-call-25` and `D-call-26` opened and closed 2026-09-29 (a default reading an earlier parameter through a tuple read the caller's own local; a record `match` default was refused).  `D-call-24` opened and closed 2026-09-29 (a nullable vector local at the tail lost its writes).  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
 alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
 in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
 bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,

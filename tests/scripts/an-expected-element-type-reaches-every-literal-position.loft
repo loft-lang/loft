@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-T-Chk-Vec` — `[e₁ … eₙ] ⇐ vector<τ>` checks each `eᵢ ⇐ τ` — and `@FR-T-Chk-Var` — a bare
+// variant resolves against the enum it is checked at — hold at EVERY position that has an
+// expected type, not only at a typed local (formal/types.md D-types-20, D-types-21):
+//
+//   - a function or lambda TAIL, a call ARGUMENT (positional or named, free or method) and a
+//     parameter DEFAULT refused `[1, 2]` into `vector<float>`, `[(1, 2)]` into
+//     `vector<(float, integer)>`, `[[1]]` into `vector<vector<float>>`, and reported `[X, Z]`
+//     into `vector<B>` ambiguous — the expected element type reached a literal there only when
+//     it was a narrow integer, while `v: vector<float> = [1, 2]` always compiled;
+//   - a named argument, a method argument and a parameter default reported a bare variant
+//     `X` ambiguous where a positional argument resolved it against the parameter's enum; a
+//     struct-field default did the same for a `vector<B>` literal;
+//   - a parameter default of `vector<S>` or `vector<vector<float>>` failed with "Variable
+//     '_elm_1' cannot change type" once seeded: it was parsed into a variable slot no variable
+//     occupied.
+//
+// Controls that must NOT change: a literal that is the RECEIVER of a chain takes no expected
+// type (`h([1, 2].map(…))` into `vector<text>`), and a generic `vector<T>` parameter seeds
+// nothing (`firstof([7, 2])` is an `integer`).  And a `for` iterable is not its block's value:
+// `for i in [100, 300]` inside a `-> vector<u8>` function was built as a `vector<u8>` and
+// refused, before this change as well — the block pushes its result type before EVERY
+// statement, since none is known to be the tail until it ends.
+//
+// Axes this file MOVES:  the position (tail, lambda tail, positional / named / method / named
+//                        method argument, parameter default, struct-field default), the element
+//                        type (float, single from integers, u8, enum, tuple, nested vector,
+//                        struct, optional float), a chain receiver, a generic parameter.
+// Axes it HOLDS FIXED:   non-empty literals of constants.
+//
+// @falsified-at: 22c217340 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-expected-element-type-reaches-every-literal-position.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — every defect was a refusal, so the control does not compile this file.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+enum A { X, Y }
+enum B { Z, X }
+struct S { a: float }
+struct H { n: integer }
+struct FD { n: integer, v: vector<B> = [X, Z], w: vector<float> = [1, 2] }
+
+fn tail_f() -> vector<float> { [1, 2] }
+fn tail_t() -> vector<(float, integer)> { [(1, 2), (3, 4)] }
+fn tail_e() -> vector<B> { [X, Z] }
+fn tail_n() -> vector<vector<float>> { [[1], [2, 3]] }
+fn arg_f(v: vector<float>) -> float { v[0] + v[1] + 0.5 }
+fn arg_s(v: vector<single>) -> single { v[1] + 0.5f }
+fn arg_u(v: vector<u8>) -> integer { v[1] }
+fn arg_e(v: vector<B>) -> text { "{v}" }
+fn arg_b(b: B) -> text { "{b}{b > Z}" }
+fn arg_o(v: vector<float?>) -> float { (v[0] ?? 9.0) + 0.5 }
+fn arg_st(v: vector<S>) -> float { v[1].a + 0.5 }
+fn dflt_f(v: vector<float> = [1, 2]) -> float { v[1] + 0.5 }
+fn dflt_e(v: vector<B> = [X, Z], b: B = X) -> text { "{v}{b}" }
+fn dflt_n(v: vector<vector<float>> = [[1], [2, 3]]) -> float { v[1][1] + 0.5 }
+fn dflt_s(v: vector<S> = [S { a: 1 }, S { a: 2 }]) -> float { v[1].a + 0.5 }
+fn m(self: H, v: vector<float>, b: B) -> text { "{self.n}:{v[1] + 0.5}{b}" }
+fn h(v: vector<text>) -> text { "{v}" }
+fn firstof<T>(v: vector<T>) -> T { v[0] }
+
+fn test_a_tail_takes_the_declared_element_type() {
+  f = tail_f();
+  t = tail_t();
+  e = tail_e();
+  n = tail_n();
+  g: fn() -> vector<float> = || { [1, 2] };
+  l = g();
+  assert("{f[1] + 0.5} {t[1].0 + 0.5} {e} {n[1][1] + 0.5} {l[1] + 0.5}" == "2.5 3.5 [X,Z] 3.5 2.5",
+    "tails: {f} {e} {l}");
+}
+
+fn test_an_argument_takes_the_parameter_element_type() {
+  assert("{arg_f([1, 2])} {arg_s([1, 2])} {arg_u([1, 2])} {arg_e([X, Z])} {arg_o([1, null])} {arg_st([S { a: 1 }, S { a: 2 }])}"
+    == "3.5 2.5 2 [X,Z] 1.5 2.5", "positional arguments");
+  assert("{arg_f(v: [1, 2])} {arg_e(v: [X, Z])} {arg_b(b: X)}" == "3.5 [X,Z] Xtrue", "named arguments");
+  k = H { n: 7 };
+  assert("{k.m([1, 2], X)} {k.m(v: [3, 4], b: X)}" == "7:2.5X 7:4.5X", "method arguments");
+}
+
+fn test_a_default_takes_the_parameter_element_type() {
+  assert("{dflt_f()} {dflt_e()} {dflt_n()} {dflt_s()}" == "2.5 [X,Z]X 3.5 2.5", "defaults");
+  d = FD { n: 1 };
+  assert("{d.v} {d.w[1] + 0.5}" == "[X,Z] 2.5", "field defaults: {d.v} {d.w}");
+}
+
+fn test_a_receiver_and_a_generic_take_nothing() {
+  a = firstof([7, 2]);
+  b = firstof([2.5]);
+  assert("{h([1, 2].map(|x| { "n{x}" }))} {a + 1} {b + 0.25}" == "[\"n1\",\"n2\"] 8 2.75",
+    "controls");
+}
+
+fn iterate_narrow() -> vector<u8> {
+  s = 0;
+  for i in [100, 300] { s += i; }
+  if s == 400 { [4] } else { [0] }
+}
+
+fn iterate_float() -> vector<float> {
+  s = 0;
+  for i in [100, 300] { s += i; }
+  [s]
+}
+
+fn test_a_for_iterable_is_not_the_block_value() {
+  assert("{iterate_narrow()} {iterate_float()[0] + 0.5}" == "[4] 400.5",
+    "for iterable: {iterate_narrow()} {iterate_float()}");
+}

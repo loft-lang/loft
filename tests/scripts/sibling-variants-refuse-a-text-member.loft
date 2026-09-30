@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match` arm putting a text where the arms before it put a record is refused
+// (formal/types.md D-types-23).  The scalar match has no check of its own once a `null`
+// member leaves the result open (loft#1682): the arm that did not join was kept as it was,
+// and code generation then stopped with an internal compiler error on both backends.
+// @falsified-at: b14cf5fe0 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/sibling-variants-refuse-a-text-member.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expect — the control stopped with an internal compiler error (`emit_tuple_put_ops: unsupported elem Null`) on both backends.
+// HOLDS: leak and panic are clean on both trees and both backends.
+//
+// @EXPECT_ERROR: expected (null, Circle), got (integer, text) on a match arm
+
+enum Shape { Circle { r: float }, Sq { s: float } }
+
+fn main() {
+  k = 2;
+  t = match k { 1 => (null, Circle { r: 1.5 }), _ => (3, "no") };
+  println("{t.1}");
+}

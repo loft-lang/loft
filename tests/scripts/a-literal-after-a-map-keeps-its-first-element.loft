@@ -1,0 +1,46 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An element slot lives in its container (loft#664), whatever was parsed before it.  After a
+// `.map` over one inline `vector<vector<integer>>` literal, the NEXT such literal in the function
+// lost its first inner vector: `m2 = [[1, 1, 1, 1, 1], [1]].map(|x| { len(x) })` answered
+// `[0, 1]`, and a `for` or `.reduce` over that literal read the first element as empty —
+// silently, on both backends, on released 2026.9.0.  Pass 2 found the slot still typed as pass
+// 1's placeholder `Reference(0, …)`; the inner literal's retype replaced that type wholesale and
+// dropped the slot's tie to its container, and the empty dependency list read as "owns no
+// store" (`@FR-O-Proxy`), so the element's contents went to a fresh backing.  Refining the
+// placeholder now keeps the recorded borrows (`Function::change_var_type`).
+//
+// Controls that were right: one literal alone, two `.reduce`s, two comprehensions, indexed reads.
+//
+// Axes this file MOVES:  what follows the `.map` (another `.map`, a `for`, a `.reduce`, a
+//                        literal bound to a local), the inner element kind (vector, text).
+// Axes it HOLDS FIXED:   inline literal receivers inside one function.
+//
+// @falsified-at: 699e3a484 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-literal-after-a-map-keeps-its-first-element.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: asserts on both backends — the control answered `32 01 2 3 71`.  The native "2" is
+//   the one failing test counted by both lines that report it; the controls pass on the control.
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+fn test_a_second_nested_literal_after_a_map_keeps_its_first_element() {
+  m1 = [[1, 1, 1], [1, 1]].map(|x| { len(x) });
+  m2 = [[1, 1, 1, 1, 1], [1]].map(|x| { len(x) });
+  s = 0;
+  for x in [[1, 1, 1, 1], [1, 1]] { s = s * 10 + len(x); }
+  r = [[1, 1, 1, 1, 1, 1], [1, 1, 1]].reduce(0, |a, x| { a * 10 + len(x) });
+  v = [[1, 1, 1, 1, 1, 1, 1], [1]];
+  got = "{m1[0]}{m1[1]} {m2[0]}{m2[1]} {s} {r} {len(v[0])}{len(v[1])}";
+  assert(got == "32 51 42 63 71", "after a map: {got}");
+}
+
+fn test_the_controls_stay_right() {
+  r1 = [[1, 1, 1], [1, 1]].reduce(0, |a, x| { a * 10 + len(x) });
+  r2 = [[1, 1, 1, 1, 1], [1]].reduce(0, |a, x| { a * 10 + len(x) });
+  c1 = [for x in [[1, 1, 1], [1, 1]] { len(x) }];
+  c2 = [for x in [[1, 1, 1, 1, 1], [1]] { len(x) }];
+  t = ["abc", "ab"].map(|x| { len(x) });
+  u = ["abcde", "a"].map(|x| { len(x) });
+  got = "{r1} {r2} {c1[0]}{c2[0]} {t[0]}{u[0]}";
+  assert(got == "32 51 35 35", "controls: {got}");
+}
