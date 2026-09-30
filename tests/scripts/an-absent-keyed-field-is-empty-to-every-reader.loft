@@ -25,6 +25,13 @@
 // Axes it HOLDS FIXED:   the collection is a STRUCT FIELD (a null keyed LOCAL is the value-level
 //                        null and was right); one record; the holder is a local.
 //                        The vector kind is its own file: a-vector-field-keeps-its-absence.loft.
+//
+// @falsified-at: 9a8ae1885 — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/an-absent-keyed-field-is-empty-to-every-reader.patch — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+//   CHANNEL: exit on both backends, and the panic on native — every kind's first cell panicked
+//   on the control (`rec=4294967295`), so no assertion was reached and the assertion column is
+//   0 on both trees; the interpreter reports the panic as the test's failure.
+// HOLDS: leak, refusals and expectations are equal on both trees and both backends.
 
 struct Row { id: integer, tag: text }
 struct RS { id: integer }
