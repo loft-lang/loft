@@ -502,12 +502,9 @@ discover the declared operators, so what their bodies call must exist first.
 and dispatches `OPERATORS[255 + ext]`. `ext` is a `u8`, so the addressable
 range is `0..=510`: **511 opcodes**, not 256.
 
-The table is **not** near saturation, and work parked on the belief that it
-is should be re-read: `PLANNING_NATIVE.md` § O1 and `ROADMAP.md` still defer
-superinstruction merging as *"opcode table full (254/256)"*, which describes
-a one-byte-only encoding that no longer exists. `PERFORMANCE.md` § P1
-corrected this in 2026-06 and O1 can proceed — a superinstruction lands in
-the escape range as a two-byte opcode.
+The table is **not** near saturation: the interpreter's superinstructions
+(`PERFORMANCE.md` § Operand fusion) live in the escape range as two-byte
+opcodes, declared last so they renumber no earlier operator.
 
 **No number is quoted here on purpose.** The count lived in prose in five
 documents, was hand-copied between them, and every copy drifted: the "254 of

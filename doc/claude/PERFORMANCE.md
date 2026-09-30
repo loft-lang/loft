@@ -778,6 +778,16 @@ and guarded by a COUNT, never by a time (@PLN166).
   run goes first — the first compile in a process pays one-time setup that differs by
   platform — and the two counted runs must agree wherever a pin is read or written; a
   build with no pin reports and passes.
+- **The counted compile is COLD: it parses `default/` every time.**  The window opens
+  before `parse_dir("default")`, so every row carries the whole stdlib parse.  An
+  installed `loft` never pays that per run — it loads the stdlib from the startup cache
+  (`warm_load_stdlib`, [STARTUP_CACHE.md](STARTUP_CACHE.md)) — and a dev build pays it
+  because the cache is off in a `target/` tree ([STARTUP_CACHE.md § Default-on behaviour](STARTUP_CACHE.md#default-on-behaviour-and-overrides)).  So read a
+  growth by its SHAPE: the same delta on tiny and medium is a per-compile constant, i.e.
+  the stdlib parse — a new stdlib declaration, paid once per stdlib change on a real
+  install; a delta that scales with the corpus is the front end itself.  Accept the first
+  with the declarations that caused it named in the commit (`join.py rederive --accept
+  frontend-allocations`); chase the second.
 - **The edit loop reuses the stdlib.**  A program-cache miss takes the stdlib from its own
   cache, and the program manifest pins the stdlib it was built against with a `stdk` line,
   so an edited, added or removed stdlib file is never served stale
@@ -795,7 +805,6 @@ design of each is in the record; the delivered items are listed below the table.
 
 | Item | Backend | Open because | Design |
 |---|---|---|---|
-| **P1** — superinstruction merging | interpreter | no superinstruction ops exist; nothing blocks it — the two-byte opcode escape has room ([INTERMEDIATE.md § Opcode budget](INTERMEDIATE.md#opcode-budget--and-why-the-count-is-never-written-down)) | [PERFORMANCE-history.md § Design: P1](PERFORMANCE-history.md#design-p1--superinstruction-merging) and § O1 Superinstruction Peephole |
 | **P2** — stack raw-pointer cache, the interpreter half | interpreter | the native half ships (loft#885); the interpreter half carries memory-model risk and a bounded gain | [§ Design: P2](PERFORMANCE-history.md#design-p2--reduce-store-indirection-on-the-stack) |
 | **P3** — integer paths carry no `long` sentinel | both | no audit test exists | [§ Design: P3](PERFORMANCE-history.md#design-p3--confirm-integer-paths-carry-no-long-sentinel) |
 | **P4** — block-copy slice materialisation | both | `OpAppendVectorSlice` does not exist | [§ Design: P4](PERFORMANCE-history.md#design-p4--block-copy-slice-materialisation-for-primitive-vectors) |
@@ -806,9 +815,10 @@ design of each is in the record; the delivered items are listed below the table.
 | **N3 / N5** — unchecked integer arithmetic when operands are non-null | native | the cheap version is unsound (the sentinel is core null propagation).  Counted loops already run their index chains plain behind a guard (`LOFT_NO_GUARDED_CHAIN`, [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md)); straight-line code stays checked | [§ Design: N3](PERFORMANCE-history.md#design-n3--remove-long-null-sentinel-from-generated-code), [§ N5](PERFORMANCE-history.md#design-n5--inline-integer-arithmetic-when-operands-are-provably-non-null) |
 | **W1** — wasm string representation | wasm | not built | [§ Design: W1](PERFORMANCE-history.md#design-w1--wasm-string-representation) |
 | **O8.1b / O8.2 / O8.3** — packed bytes, bulk struct vectors, zero-fill defaults | both | "not started" in O8's phase table | [§ Design: O8](PERFORMANCE-history.md#design-o8--bulk-initialisation-of-constant-data) |
+| **F2** — split the allocation gate's pin | front end | one window counts the cold stdlib parse and the program together, so stdlib growth reads as front-end growth and can mask a real front-end regression of the same size | two pins in `tests/frontend_counts.rs`: the stdlib parse alone, and the corpus compiled on top of an already-loaded stdlib (what a warm run pays) — [§ Front-end speed](#front-end-speed--how-it-is-measured-and-guarded) |
 | **Worker clone** — `Stores::types` / `names` copied per `par` worker | parallel | the fields are not `Arc`-wrapped | [§ Runtime optimisation audit](PERFORMANCE-history.md#runtime-optimisation-audit) |
 
-**Delivered, for reference:** N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
+**Delivered, for reference:** P1 (operand fusion — [§ Operand fusion](#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
 probe on a cache hit), F1 (the front end's hot spots), BUILD1 (no lib/bin double compile),
 BUILD2 (the native-test binary cache), P5/P6 (amortised vector growth, free-block coalescing),
 P7's `reserve`, O8's `const_eval`, pre-allocated vector literals and constant range
