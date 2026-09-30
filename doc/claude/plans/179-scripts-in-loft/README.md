@@ -49,10 +49,12 @@ So every port carries three verdicts, each from an instrument that can say no:
 | **performance** | the twin's wall clock on both sides, start-up included, best of 5 on an idle box | loft ≤ original; a script's start-up ≤ Python's for the same `hello` | G — the original IS the industry reference twin |
 | **clarity** | lines and a by-hand read against `loft-write`: no construct exists only to work around loft | loft ≤ original in lines; every longer port names why | F friction-free, B legible |
 
-A verdict that fails names its reason, and the reason goes into
-[`REASONS.md`](REASONS.md): one row per reason found to reach for another tool — the script,
-the axis, the reason, the fix it needs (a builtin, a library, a language change, a
-performance item) and its status.  **The register's open count is the plan's headline
+A verdict that fails names its reason, and the reason is FILED: an issue (a `bug` or an
+`enhancement`) with `hit-by:loft`, the `axis:` label of the bar it failed (LABELS.md § axis)
+and `Found-via: @PLN179 <script>` in its body.  Assessing it is ordinary triage, tracking it
+is the existing `Fixes #N` automation, and [`REASONS.md`](REASONS.md) is rendered from
+those labels by `make script-reasons` — the script, the axis, the reason, the fix it needs
+and its state, with nothing maintained by hand.  **The register's open count is the plan's headline
 number and it must reach zero**; `WORKLIST.md` is what is left to port, `REASONS.md` is what
 is left to fix, and the second is the one the goal is stated in.  Two readings keep it
 honest: a reason is recorded when a port MEETS it, never guessed in advance, and it is
