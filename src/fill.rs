@@ -1325,9 +1325,9 @@ fn math_func2_single(s: &mut State) {
         0 => v_v1.atan2(v_v2),
         1 => {
             let __b = v_v2;
-            if __b == 10.0 {
+            if __b.to_bits() == 10.0_f32.to_bits() {
                 v_v1.log10()
-            } else if __b == 2.0 {
+            } else if __b.to_bits() == 2.0_f32.to_bits() {
                 v_v1.log2()
             } else {
                 v_v1.log(__b)
@@ -1453,9 +1453,9 @@ fn math_func2_float(s: &mut State) {
         0 => v_v1.atan2(v_v2),
         1 => {
             let __b = v_v2;
-            if __b == 10.0 {
+            if __b.to_bits() == 10.0_f64.to_bits() {
                 v_v1.log10()
-            } else if __b == 2.0 {
+            } else if __b.to_bits() == 2.0_f64.to_bits() {
                 v_v1.log2()
             } else {
                 v_v1.log(__b)

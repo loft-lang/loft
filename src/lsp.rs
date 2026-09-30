@@ -245,11 +245,9 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
     // Read the definition's own source ONCE — for the `///` doc AND to locate the
     // name (the parser records `pos` at the body start, past the name).
     let src = read_def_source(text, name, stdlib_dir, &pos);
-    let doc = src
-        .as_deref()
-        .map_or_else(Vec::new, |s| {
-            doc_block_above(s, pos.line, pos.file.starts_with("default/"))
-        });
+    let doc = src.as_deref().map_or_else(Vec::new, |s| {
+        doc_block_above(s, pos.line, pos.file.starts_with("default/"))
+    });
     let def_col = src
         .as_deref()
         .and_then(|s| name_col_on_line(s, pos.line, &cname))
