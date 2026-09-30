@@ -40,9 +40,13 @@ pub fn vector_sum_int(stores: &[Store], v: &DbRef, acc: i64) -> i64 {
     }
     let header = vector::vec_header(v, stores);
     let base = vector::vec_base(&header, stores);
+    // `LOFT_NO_BOUNDED_SUM` — native's bisect switch for the block proof — sums every element
+    // through the checked add here too.
     // SAFETY: `base` is `vec_base` of the header just read; nothing below writes a store.
     let (mut acc, at) = unsafe {
-        if verify() {
+        if !crate::keys::bounded_sum_enabled() {
+            (acc, 0)
+        } else if verify() {
             vector::sum_blocks_i64::<true>(base, header.len, 0, len, acc)
         } else {
             vector::sum_blocks_i64::<false>(base, header.len, 0, len, acc)

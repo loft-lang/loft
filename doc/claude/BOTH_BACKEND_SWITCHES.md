@@ -264,6 +264,14 @@ null again and mints no snapshot — the first bisect step for a use-after-free 
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
+**A reduction loop as one kernel call (@PLN180 § Kernels, `@FR-R-BoundedNest`'s reduction
+clause, default-ON, both backends, scope pass):** `acc = acc + v[i]` over `0..v.len()` of an
+integer vector — the stdlib `sum` over integers — is one call of the loop kernel
+`vector_sum_int`, so the interpreter runs the whole sum in Rust instead of dispatching every
+element.  **`LOFT_NO_LOOP_KERNELS=1`** keeps every loop a loop; it is the first bisect step
+for a wrong sum on either backend.  `LOFT_HOIST_VERIFY=1` re-checks each plain block the
+kernel admits against the checked add.
+
 **A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
 backends, at the top of `byte_code_from`):** a function returning a flat record of scalars
 from an object literal, whose every caller only reads fields off the local it binds, returns

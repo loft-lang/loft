@@ -2034,6 +2034,18 @@ guards so both copies of a guarded loop resume from the advanced counter),
 clause, not built: a dot product (`acc += a[i] * b[i]`, bound `2^20`); `min_of` / `max_of`
 need no proof, and `product` is multiplicative and is not this.
 
+**Both backends (@PLN180 § Kernels).**  The reduction is now decided in the scope pass
+(`loop_kernels::rewrite`), where it replaces the whole loop by ONE call of the loop kernel
+`vector_sum_int(v, acc)` — an ordinary stdlib function, reached by the interpreter through its
+single native-call operator and by `--native` through `codegen_runtime`, whose body is this
+clause (the plain blocks through `vector::sum_blocks_i64`, then the checked add).  The
+interpreter stops dispatching every element: bench 14's `sum` went from 1,174,380 ns/op to
+4,830 against native's 4,300 (273× → 1.1×).  Admitted narrower than the native shape: the loop
+is exactly `end = len(v); idx = -1; loop { i = step; { acc = acc + v[i] } }` over 8-byte
+integer elements, the summed vector the ranged one, the loop's own variables mentioned nowhere
+else.  Switch `LOFT_NO_LOOP_KERNELS` (the loop stays, native's own clause then takes it);
+cells `tests/scripts/a-reduction-loop-is-one-kernel-call.loft`.
+
 ### A witnessed buffer is allocated once, not minted per call
 
 ```

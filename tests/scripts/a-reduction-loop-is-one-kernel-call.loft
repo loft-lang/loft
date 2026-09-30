@@ -9,9 +9,10 @@
 //
 // @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
 // Hand-sabotaged 2026-09-30: dropping the check that the summed vector is the ranged one
-// admits `another vector` and answers 100 where 60 is owed, on both backends.  (A loop whose
-// variable is read after it cannot be written — a loop variable is out of scope after its
-// loop — so the rule's mention check defends only its hidden index and range end.)
+// admits `another vector`, and the call sums the RANGED vector: 6 where 60 is owed, on both
+// backends.  A loop whose variable is read after it cannot be written — a loop variable is
+// out of scope after its loop — so the rule's mention check defends only its hidden index
+// and range end.
 
 fn by_hand(v: const vector<integer>, init: integer) -> integer {
   result = init;
