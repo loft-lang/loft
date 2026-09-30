@@ -13,7 +13,7 @@ nums:   vector<integer> = [1, 2, 3];
 lookup: hash<Entry[key]> = [];
 lookup += [Entry { key: "key", value: "value" }];
 scores: sorted<Score[user]> = [];
-scores += [Score { user: "ann", points: 95 }];  // O(log n) keyed insert
+scores += [Score { user: "ann", points: 95 }];  // keyed insert: binary search, kept in key order
 
 // Element type is enforced at compile time:
 // nums += ["x"];  // compile error: expected integer

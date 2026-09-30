@@ -20,7 +20,7 @@
 
 // --- as shown on 00-vs-rust.html#parameters (a verbatim window: `rule_tags.py fences`) ---
 // a plain collection parameter is already shared — the append reaches the caller
-fn push_two(v: &vector<integer>) {
+fn push_two(v: vector<integer>) {
     v += [1, 2];  // caller sees the change
 }
 // const: read-only (a write through it is a compile error)
