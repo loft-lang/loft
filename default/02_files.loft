@@ -158,8 +158,9 @@ pub fn content(self: const File) -> text?fs#read {
   result
 }
 #impure(io)
-// Private native: the lines of a text — every `\n` ends one and drops a `\r` directly before
-// it; a last line without a `\n` counts only when it is not empty.
+// A private kernel (doc/claude/KERNELS.md, a stop-gap): the lines of a text — every `\n` ends
+// one and drops a `\r` directly before it; a last line without a `\n` counts only when it is
+// not empty.
 fn text_lines(content: text) -> vector<text>;
 #rust"stores.text_lines(@content)"
 #pure

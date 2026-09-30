@@ -664,6 +664,12 @@ native code, in real time (`make interp-gap`).  A cliff is about **100×**.  A r
 is the work queue.  Faster is wanted everywhere, and no change may make any routine's ratio
 worse.
 
+A routine over the bar is closed by making its LOFT code fast, not by replacing it: a kernel
+(one Rust body standing in for a loop) is a stop-gap that fixes one name, while a faster
+interpreter fixes every loop of that shape, a program's own included.  Loft compiles through
+rustc, so unlike CPython it has no lasting need for hand-written routines.  Each kernel that
+exists, why, and when it goes: [KERNELS.md](KERNELS.md) (`make kernel-ratio`).
+
 ### What to optimise: the data that leaves the cache
 
 The interpreter's own bookkeeping — dispatch, stack slots, operand decoding — runs on a hot

@@ -2826,6 +2826,12 @@ script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (A
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
 
+.PHONY: kernel-ratio
+kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)
+	@cargo build --release --bin loft -q
+	@echo "== --interpret"; LOFT_TIMEOUT=600 target/release/loft --interpret scripts/kernel_ratio
+	@echo "== --native-release"; LOFT_TIMEOUT=600 target/release/loft --native-release scripts/kernel_ratio
+
 .PHONY: script-twin
 script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]
 	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]"; exit 2; }

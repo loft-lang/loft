@@ -394,7 +394,7 @@ that ships value; 1 and 2 are the instruments and are cheap.
 - @PLN102 arc E — `behavior_golden`'s four-channel comparison; the twin is its per-script form.
 - @PLN52 — stdlib fast start; the 75 ms start-up row is re-measured against it in strand 1.
 - @PLN91 — the self-hosting epic; this plan is the tooling floor under it, not one of its strands.
-- @PLN180 — the interpreter's kernels: a port slower than its original whose profile names one stdlib loop routes there, and the port's scoreboard row is that kernel's measurement ([§ Kernels](../180-value-records-in-ir.md#kernels)); finding 013 was the first (`split`, `lines`).
+- @PLN180 — interpreter speed: a port slower than its original whose profile names one stdlib loop routes there, and the port's scoreboard row is the measurement.  The fix wanted is fast LOFT code; a kernel is a stop-gap with a removal trigger ([KERNELS.md](../../KERNELS.md)).  Finding 013 was answered with the first two (`split`, `lines`).
 
 ## See also
 

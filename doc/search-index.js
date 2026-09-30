@@ -171,7 +171,6 @@ const SEARCH_INDEX=[
 {name:"filter",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"map",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"reduce",kind:"fn",url:"stdlib-vector-aggregates.html"},
-{name:"vector_sum_int",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"sum_of",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"Walkable",kind:"interface",url:"stdlib-vector-aggregates.html"},
 {name:"tree_walk",kind:"fn",url:"stdlib-vector-aggregates.html"},
