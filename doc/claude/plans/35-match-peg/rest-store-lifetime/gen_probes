@@ -1,0 +1,155 @@
+#!/usr/bin/env -S loft --interpret
+// Generate the ..rest store-lifetime probe corpus. One shape per file. Each carries a
+// hand-computed expected value (@EXPECT) and a leak expectation (@LEAK ok|leak) that the
+// runner checks against the ground-truth interpreter leak-check on BOTH backends.
+// The loft twin of gen_probes.py (@PLN179 strand 3): the same 33 files and manifest, byte
+// for byte.  Paths are relative to this script's own directory.
+
+struct Probe { name: text, desc: text, expect: text, leak: text, body: text }
+struct Gen { probes: vector<Probe> }
+// One element kind the A axis is swept over: its name, the type prelude it needs, a
+// four-element literal and the element type.
+struct Kind { et: text, prelude: text, mk: text, vt: text }
+
+fn add(self: Gen, name: text, desc: text, expect: text, leak: text, body: text) {
+  self.probes += [Probe { name: name, desc: desc, expect: expect, leak: leak, body: trim(body) + "\n" }];
+}
+
+fn main() {
+  mkdir_all("probes");
+  detail = "enum Detail {{ Ship {{ carrier: text }}, Pickup {{ store: integer }} }}";
+  point = "struct P {{ x: integer, y: integer }}";
+  tokp = "enum Tok {{ Kw {{ word: text }}, Ident {{ name: text }}, Num {{ value: integer }} }}";
+  stmt = "enum Stmt {{ LetS {{ name: text, count: integer }}, Other {{ count: integer }} }}";
+  g = Gen { probes: [] };
+
+  // ── AXIS A: element type × how rest is used ──
+  kinds = [
+    Kind { et: "scalar", prelude: "", mk: "[10, 20, 30, 40]", vt: "integer" },
+    Kind { et: "text", prelude: "", mk: `["a", "b", "c", "d"]`, vt: "text" },
+    Kind { et: "struct", prelude: point, mk: "[P{{x:1,y:1}}, P{{x:2,y:2}}, P{{x:3,y:3}}, P{{x:4,y:4}}]", vt: "P" },
+    Kind { et: "enum", prelude: detail, mk: `[Ship{{carrier:"A"}}, Pickup{{store:2}}, Pickup{{store:3}}, Pickup{{store:4}}]`, vt: "Detail" },
+  ];
+  for k in kinds {
+    et = k.et; prelude = k.prelude; mk = k.mk; vt = k.vt;
+    // A1 return rest
+    g.add("a-{et}-return", "return rest ({et})", "3", "ok", `
+{prelude}
+fn f(v: vector<{vt}>) -> vector<{vt}> {{ match v {{ [h, ..rest] => rest, w => w }} }}
+fn main() {{ r = f({mk}); assert(len(r) == 3, "len={{len(r)}}"); print("PASS"); }}
+`);
+    // A2 len(rest) in-arm
+    g.add("a-{et}-len", "len(rest) in-arm ({et})", "3", "ok", `
+{prelude}
+fn f(v: vector<{vt}>) -> integer {{ match v {{ [h, ..rest] => len(rest), _ => -1 }} }}
+fn main() {{ assert(f({mk}) == 3, "n={{f({mk})}}"); print("PASS"); }}
+`);
+    // A3 pass rest to a fn
+    g.add("a-{et}-pass", "pass rest to a fn ({et})", "3", "ok", `
+{prelude}
+fn nt(w: vector<{vt}>) -> integer {{ len(w) }}
+fn f(v: vector<{vt}>) -> integer {{ match v {{ [h, ..rest] => nt(rest), _ => -1 }} }}
+fn main() {{ assert(f({mk}) == 3, "n={{f({mk})}}"); print("PASS"); }}
+`);
+    // A4 rest unused, return const
+    g.add("a-{et}-unused", "rest materialised but unused ({et})", "42", "ok", `
+{prelude}
+fn f(v: vector<{vt}>) -> integer {{ match v {{ [h, ..rest] => 42, _ => -1 }} }}
+fn main() {{ assert(f({mk}) == 42, "n={{f({mk})}}"); print("PASS"); }}
+`);
+    // A5 REUSE axis — call the ..rest fn TWICE on the SAME subject; both calls must agree.
+    g.add("a-{et}-reuse", "call ..rest fn twice on the same subject ({et})", "3", "ok", `
+{prelude}
+fn f(v: vector<{vt}>) -> integer {{ match v {{ [h, ..rest] => len(rest), _ => -1 }} }}
+fn main() {{ s = {mk}; a = f(s); b = f(s); assert(a == 3 && b == 3, "reuse: {{a}},{{b}}"); print("PASS"); }}
+`);
+  }
+
+  // ── AXIS B: head capture escape (the leak zone) ──
+  g.add("b-varhead-unused-int", "variant head capture unused, len(rest) int", "3", "ok", `
+{tokp}
+fn nt(w: vector<Tok>) -> integer {{ len(w) }}
+fn f(ts: vector<Tok>) -> integer {{ match ts {{ [Kw {{ word }}, ..rest] => nt(rest), whole => -1 }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; assert(f(ts) == 3, "n={{f(ts)}}"); print("PASS"); }}
+`);
+  g.add("b-varhead-escape-text-unused", "captured head field escapes (&text), rest unused — sub-class B, FIXED", "let", "ok", `
+{tokp}
+fn f(ts: vector<Tok>) -> text {{ match ts {{ [Kw {{ word }}, ..rest] => word, whole => "none" }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}]; assert(f(ts) == "let", "w={{f(ts)}}"); print("PASS"); }}
+`);
+  g.add("b-varhead-escape-text-used", "captured field + rest into a FORMATTED text (owned, not promoted &text)", "let3", "ok", `
+{tokp}
+fn f(ts: vector<Tok>) -> text {{ match ts {{ [Kw {{ word }}, ..rest] => "{{word}}{{len(rest)}}", whole => "none" }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; assert(f(ts) == "let3", "w={{f(ts)}}"); print("PASS"); }}
+`);
+  g.add("b-varhead-escape-enum-used", "captured field + nt(rest) into an enum (p1) — sub-class A, FIXED", "3", "ok", `
+{tokp}
+{stmt}
+fn nt(w: vector<Tok>) -> integer {{ len(w) }}
+fn parse(ts: vector<Tok>) -> Stmt {{ match ts {{ [Kw {{ word }}, ..rest] => LetS {{ name: word, count: nt(rest) }}, whole => Other {{ count: -1 }} }} }}
+fn cnt(s: Stmt) -> integer {{ match s {{ LetS {{ name, count }} => count, Other {{ count }} => count }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; assert(cnt(parse(ts)) == 3, "c={{cnt(parse(ts))}}"); print("PASS"); }}
+`);
+  g.add("b-varhead-escape-struct-used", "captured field + rest into a struct — sub-class A, FIXED", "3", "ok", `
+{tokp}
+struct R {{ name: text, count: integer }}
+fn nt(w: vector<Tok>) -> integer {{ len(w) }}
+fn f(ts: vector<Tok>) -> R {{ match ts {{ [Kw {{ word }}, ..rest] => R {{ name: word, count: nt(rest) }}, whole => R {{ name: "x", count: -1 }} }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; assert(f(ts).count == 3, "c={{f(ts).count}}"); print("PASS"); }}
+`);
+  g.add("b-varhead-return-rest", "variant head capture unused, return rest vector", "3", "ok", `
+{tokp}
+fn f(ts: vector<Tok>) -> vector<Tok> {{ match ts {{ [Kw {{ word }}, ..rest] => rest, whole => whole }} }}
+fn main() {{ ts = [Kw{{word:"let"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; assert(len(f(ts)) == 3, "n={{len(f(ts))}}"); print("PASS"); }}
+`);
+
+  // ── AXIS C: name:pat element capture escape ──
+  g.add("c-namepat-escape", "name:pat ELEMENT capture escapes + ..rest (clean — element, not field)", "UPS", "ok", `
+{detail}
+fn f(ds: vector<Detail>) -> Detail {{ match ds {{ [tok:Ship, ..rest] => tok, _ => Pickup {{ store: -1 }} }} }}
+fn main() {{ ds = [Ship{{carrier:"UPS"}}, Pickup{{store:1}}, Pickup{{store:2}}];
+  match f(ds) {{ Ship {{ carrier }} => assert(carrier == "UPS", "c={{carrier}}"), _ => assert(false, "x") }} print("PASS"); }}
+`);
+
+  // ── AXIS D: nesting / multi-arm / subject ──
+  g.add("d-two-rest-arms", "two arms each with ..rest", "103", "ok", `
+fn f(v: vector<integer>) -> integer {{ match v {{ [a, b, ..r] => len(r) + 100, [a, ..r] => len(r), _ => -1 }} }}
+fn main() {{ assert(f([1,2,3,4,5]) == 103, "n={{f([1,2,3,4,5])}}"); print("PASS"); }}
+`);
+
+  // ── AXIS E: the pre-existing []-empty-heap-vector-in-match-arm native bug (isolated) ──
+  g.add("e-empty-heap-vec-match", "[] empty heap vector as a match _ arm (no ..rest)", "0", "ok", `
+{point}
+fn pick(n: integer, src: vector<P>) -> vector<P> {{ match n {{ 0 => src, _ => [] }} }}
+fn main() {{ a = [P{{x:1,y:1}}]; assert(len(pick(9, a)) == 0, "n={{len(pick(9,a))}}"); print("PASS"); }}
+`);
+  g.add("e-empty-scalar-vec-match", "[] empty scalar vector as a match _ arm (control)", "0", "ok", `
+fn pick(n: integer, src: vector<integer>) -> vector<integer> {{ match n {{ 0 => src, _ => [] }} }}
+fn main() {{ a = [1]; assert(len(pick(9, a)) == 0, "n={{len(pick(9,a))}}"); print("PASS"); }}
+`);
+  g.add("d-subject-local", "subject is a local", "3", "ok", `
+{tokp}
+fn f() -> text {{ ts = [Kw{{word:"hi"}}, Num{{value:1}}, Num{{value:2}}, Num{{value:3}}]; match ts {{ [Kw {{ word }}, ..rest] => "{{word}}{{len(rest)}}", whole => "none" }} }}
+fn main() {{ assert(f() == "hi3", "r={{f()}}"); print("PASS"); }}
+`);
+  g.add("d-nested-match", "..rest inside a match returned from an outer match", "3", "ok", `
+fn inner(v: vector<integer>) -> integer {{ match v {{ [h, ..r] => len(r), _ => -1 }} }}
+fn f(n: integer, v: vector<integer>) -> integer {{ match n {{ 0 => inner(v), _ => -9 }} }}
+fn main() {{ assert(f(0, [1,2,3,4]) == 3, "n={{f(0,[1,2,3,4])}}"); print("PASS"); }}
+`);
+  g.add("d-namepat-plus-rest-escape", "name:pat head + ..rest, name escapes as text — sub-class B, FIXED", "hi", "ok", `
+{tokp}
+fn f(ts: vector<Tok>) -> text {{ match ts {{ [k:Kw {{ word }}, ..rest] => word, whole => "none" }} }}
+fn main() {{ ts = [Kw{{word:"hi"}}, Num{{value:1}}, Num{{value:2}}]; assert(f(ts) == "hi", "r={{f(ts)}}"); print("PASS"); }}
+`);
+
+  // Emit files + manifest.
+  manifest = "name\texpect\tleak\tdesc\n";
+  for p in g.probes {
+    header = "// @DESC {p.desc}\n// @EXPECT {p.expect}\n// @LEAK {p.leak}\n";
+    file("probes/{p.name}.loft").write(header + p.body);
+    manifest += "{p.name}\t{p.expect}\t{p.leak}\t{p.desc}\n";
+  }
+  file("manifest.tsv").write(manifest);
+  println("wrote {len(g.probes)} probes to {directory()}/probes");
+}

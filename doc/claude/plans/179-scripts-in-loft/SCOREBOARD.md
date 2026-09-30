@@ -14,6 +14,7 @@ beside `00-vs-python.html` once the pairs live under `tests/comparisons/scripts/
 | original → port | behaviour | performance (orig → port, best of 2) | lines total / non-comment | clarity | reasons |
 |---|---|---|---|---|---|
 | `fuzz/seed_program_source.sh` → `fuzz/seed_program_source` (3883 files copied) | same on all four channels, on both loft backends | 17.1 s → 1.15 s interpreted, 1.5 s native | 21 / 10 → 34 / 24 | **longer**: a hand-written walk and a two-call copy | 4, 5 |
+| `…/35-match-peg/rest-store-lifetime/gen_probes.py` → `gen_probes` (33 probe files + a manifest, committed output; the twin's `--tracked` mode) | same on all four channels, on both loft backends; a one-byte wrong port goes red on `files` | 34 ms → 24 ms interpreted, 16 ms native | 171 / 125 → 155 / 127 | **equal**: a struct where Python had a tuple loop, backtick literals where it had triple quotes, the same doubled braces in both | — |
 
 How to read a row: **behaviour** is the twin's verdict (stdout, stderr, exit status and the
 written files, by content where the original's numbering follows an unordered `find`);

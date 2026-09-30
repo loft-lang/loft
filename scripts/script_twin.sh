@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # @PLN179 strand 2 — the twin: does a port leave the same world as the script it replaces?
 #
-#   scripts/script_twin.sh [--files DIR [--by-content]] [--runs N] ORIG PORT [-- ARG...]
+#   scripts/script_twin.sh [--files DIR [--by-content] | --tracked DIR] [--runs N] ORIG PORT [-- ARG...]
 #   scripts/script_twin.sh --self-test
 #
 # Runs ORIG and PORT from the repository root with the same ARGs and compares four
 # channels byte for byte: stdout, stderr, exit status and — with --files DIR — every
 # file under DIR after each run (DIR is emptied before each run and must hold nothing
 # tracked).  --by-content compares the files' contents as a multiset and ignores their
-# names, for a script whose numbering follows an unordered `find`.  --runs N times each
+# names, for a script whose numbering follows an unordered `find`.  --tracked DIR is for a
+# GENERATOR whose output is committed: each side regenerates into DIR and the channel is
+# what `git` then sees there — a clean tree on both sides means both wrote the committed
+# bytes, and a diff names the side that did not.  --runs N times each
 # side N times and reports the best wall clock, so the performance verdict is beside the
 # behaviour one.  Exit 0 when every channel agrees, 1 on a divergence, 2 on usage.
 #
@@ -18,11 +21,12 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-files_dir=""; by_content=0; runs=1
+files_dir=""; by_content=0; runs=1; tracked_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --files) files_dir="$2"; shift 2 ;;
     --by-content) by_content=1; shift ;;
+    --tracked) tracked_dir="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --self-test) exec bash "$0" --run-self-test ;;
     --run-self-test) self_test=1; shift ;;
@@ -59,6 +63,10 @@ if [ -n "$files_dir" ] && [ "$(git ls-files "$files_dir" 2>/dev/null | wc -l)" !
   echo "script_twin: $files_dir holds tracked files; a twin only empties untracked output" >&2; exit 2
 fi
 
+if [ -n "$tracked_dir" ] && [ -n "$(git status --porcelain -- "$tracked_dir" | grep -v '^??')" ]; then
+  echo "script_twin: $tracked_dir has uncommitted changes; commit them first — a tracked twin restores the directory after each side" >&2; exit 2
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -77,6 +85,10 @@ run_side() {
     [ -z "$best" ] || [ "$ms" -lt "$best" ] && best=$ms
   done
   echo "$best" > "$work/$side.ms"
+  if [ -n "$tracked_dir" ]; then
+    { git status --porcelain -- "$tracked_dir"; git diff -- "$tracked_dir"; } > "$work/$side.files"
+    [ -s "$work/$side.files" ] && git checkout -q -- "$tracked_dir" 2>/dev/null
+  fi
   if [ -n "$files_dir" ]; then
     if [ -d "$files_dir" ]; then
       if [ "$by_content" = 1 ]; then
@@ -93,7 +105,7 @@ run_side orig "$orig" "$@"
 run_side port "$port" "$@"
 
 rc=0
-for ch in out err exit ${files_dir:+files}; do
+for ch in out err exit ${files_dir:+files} ${tracked_dir:+files}; do
   if cmp -s "$work/orig.$ch" "$work/port.$ch"; then
     printf '  %-6s same\n' "$ch"
   else
