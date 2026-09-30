@@ -1,0 +1,105 @@
+diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
+index 433492197..155f35656 100644
+--- a/src/generation/coroutine.rs
++++ b/src/generation/coroutine.rs
+@@ -448,7 +448,7 @@ fn lazy_loop_body(ops: &[Value], data: &crate::data::Data) -> Option<(Vec<Value>
+             _ => {}
+         });
+     }
+-    if yields == 0 || disqualified {
++    if yields != 1 || disqualified {
+         return None;
+     }
+     // A trailing free is the compiler's statement, not the author's — hoist it above the
+@@ -461,51 +461,15 @@ fn lazy_loop_body(ops: &[Value], data: &crate::data::Data) -> Option<(Vec<Value>
+     {
+         *body_ops.last_mut()? = fixed;
+     }
+-    if yields == 1 && body_ops.last().is_some_and(tail_is_yield) {
++    if body_ops.last().is_some_and(tail_is_yield) {
+         return Some((body_ops, Vec::new()));
+     }
+-    // More than one yield is admitted only as the branches of ONE conditional
+-    // (`ends_in_its_yield`), so every yield sits before the split and the resume slice has none.
+-    let (body, resume) = split_at_yield(&body_ops)?;
+-    if yields > 1 && (body.last().is_some_and(tail_is_yield) || resume.iter().any(contains_yield)) {
+-        return None;
+-    }
+-    Some((body, resume))
+-}
+-
+-/// Does every path through `v` that reaches a `yield` END in it — the yield the tail of the
+-/// block it sits in, and, under a conditional, the tail of each branch that holds one?
+-///
+-/// `@FR-G-Next` for a CONDITIONAL yield (axis A3, loft#1798): `if c { yield v }` suspends on
+-/// the path that yields and falls through on the other, so the iteration either hands a value
+-/// over or ends without one — both of which the lazy wrapper expresses.  The same holds for a
+-/// yield in each of several branches (`if a { yield 1 } else if b { yield 2 }`, a `match`): one
+-/// of them runs per iteration at most.  A yield followed by more statements inside its branch
+-/// would have to resume INSIDE the branch, which the rotated loop cannot, so that shape stays
+-/// eager, as do two yields on one path.
+-fn ends_in_its_yield(v: &Value) -> bool {
+-    match v.unspan() {
+-        Value::Yield(inner) => !contains_yield(inner),
+-        Value::Block(bl) => match bl.operators.split_last() {
+-            Some((last, rest)) => ends_in_its_yield(last) && !rest.iter().any(contains_yield),
+-            None => false,
+-        },
+-        Value::If(cond, then, other) => {
+-            !contains_yield(cond)
+-                && [then, other]
+-                    .iter()
+-                    .all(|b| !contains_yield(b) || ends_in_its_yield(b))
+-        }
+-        _ => false,
+-    }
++    split_at_yield(&body_ops)
+ }
+ 
+ /// Split a loop body at its one `yield` into the statements up to and including it and the
+-/// statements after it — `None` when the yield is not on the body's straight line (a call
+-/// argument, a statement after the yield inside its branch), which stays eager.  A yield under
+-/// an `if` / `else if` / `match` whose branch ENDS in it is split at the whole conditional
+-/// (`ends_in_its_yield`, loft#1798): an iteration that takes the other branch runs the rest
+-/// and goes on to the next iteration within the same advance.
++/// statements after it — `None` when the yield is not on the body's straight line (inside an
++/// `if`, a `match`, a call argument), which is axis A3 and stays eager.
+ ///
+ /// The yield may sit inside nested blocks, as a `for` body's does: the block keeps its
+ /// statements up to the yield, and the ones after it join the outer statements that follow
+@@ -518,9 +482,6 @@ fn split_at_yield(ops: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
+     let mut after = Vec::new();
+     match ops[at].unspan() {
+         Value::Yield(_) => before.push(ops[at].clone()),
+-        Value::If(..) if ends_in_its_yield(&ops[at]) => {
+-            before.push(ops[at].clone());
+-        }
+         Value::Block(bl) => {
+             let (inner_before, inner_after) = split_at_yield(&bl.operators)?;
+             let mut head = bl.clone();
+@@ -1771,21 +1732,10 @@ impl Output<'_> {
+                         writeln!(w, "                    {stmt_code};")?;
+                     }
+                     self.yield_lazy_wrap = prev_wrap;
+-                    // Falling off the end means an iteration ran without reaching the yield.
+-                    // For a CONDITIONAL yield (`if c { yield v }`, loft#1798) that is the
+-                    // branch that does not yield: the iteration is not over until its rest
+-                    // runs, and then the next one starts in this same advance — the consumer
+-                    // has asked for a value and none was handed over.  For an unconditional
+-                    // yield it cannot happen (`detect_lazy_for`), and leaving the wrapper is the
+-                    // safe reading if it ever did.
+-                    if body.last().is_some_and(tail_is_yield) {
+-                        writeln!(w, "                    break 'iter;")?;
+-                    } else if resume.is_empty() {
+-                        writeln!(w, "                    continue 'iter;")?;
+-                    } else {
+-                        writeln!(w, "                    self.state = {resume_state};")?;
+-                        writeln!(w, "                    continue 'iter;")?;
+-                    }
++                    // Falling off the end means an iteration ran without reaching the yield,
++                    // which `detect_lazy_for` has already ruled out — the trailing `yield` is
++                    // unconditional.  Leaving the wrapper is the safe reading if it ever did.
++                    writeln!(w, "                    break 'iter;")?;
+                     writeln!(w, "                }}")?;
+                     writeln!(w, "                if __exhausted {{")?;
+                     for stmt in post {

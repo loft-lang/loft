@@ -27,6 +27,10 @@
 // @falsified-at: e82943091 — native 6 of 6 functions fail -> 0 (hand-measured with the control
 //   build's binary); the interpreter INERT
 //   (expected for a backend-divergence guard — only one side can move).
+// @falsified-by: tests/falsified/a-conditional-yield-in-a-loop-is-lazy-on-both-backends.patch — native exit 1 -> 0, native 12 assertion failures -> 0; interpret INERT (expected — only native moves)
+//   The patch is the fix commit cf41fe1f9's source diff reversed, since the control above lives in no
+//   pushed ref; its channels match that control's.  Re-score:
+//   scripts/falsify.sh tests/scripts/a-conditional-yield-in-a-loop-is-lazy-on-both-backends.loft --patch tests/falsified/a-conditional-yield-in-a-loop-is-lazy-on-both-backends.patch
 //   CHANNEL: assertions, native — every trace reads the eager order, and the abandoned
 //     generator counts 100000 steps where the consumer asked for nine.
 //   ARMED: nothing.

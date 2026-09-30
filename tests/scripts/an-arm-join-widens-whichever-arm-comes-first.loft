@@ -30,6 +30,10 @@
 // @falsified-at: e82943091 — interpret exit 1 -> 0 (the file is refused as parse errors on the
 //   control); native refuses the same repro cells ("on else", "on a match arm", "on if") before
 //   code generation, measured by hand on the issue's programs — the refusal is the parser's.
+// @falsified-by: tests/falsified/an-arm-join-widens-whichever-arm-comes-first.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the fix commit 3d1f03bf0's source diff reversed, since the control above lives in no
+//   pushed ref; its channels match that control's.  Re-score:
+//   scripts/falsify.sh tests/scripts/an-arm-join-widens-whichever-arm-comes-first.loft --patch tests/falsified/an-arm-join-widens-whichever-arm-comes-first.patch
 //   CHANNEL: exit — a refusal on both backends before any assertion runs.
 //   ARMED: nothing.
 //   WITNESS: on e82943091 `if c { 1 } else { 2.5 }` is refused "expected integer, got float on

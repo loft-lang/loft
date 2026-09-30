@@ -11,6 +11,10 @@
 // @falsified-at: 514f99913 — measured by hand on that build before the fix: the
 //   `x`/`s.f` pair below printed `5000000000 7`, and `fn r(a: integer) -> i32? { a }`
 //   was refused.
+// @falsified-by: tests/falsified/an-i32-nullable-slot-takes-the-checked-narrowing.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is the fix commit 30b551fcc's source diff reversed, since the control above lives in no
+//   pushed ref; its channels match that control's.  Re-score:
+//   scripts/falsify.sh tests/scripts/an-i32-nullable-slot-takes-the-checked-narrowing.loft --patch tests/falsified/an-i32-nullable-slot-takes-the-checked-narrowing.patch
 //   CHANNEL: exit — the control refuses to compile `r` and `rr`, so nothing runs; with those
 //   two removed it runs and the `x` and `s.f` assertions fail (VALUE).
 //   WITNESS: `error: cannot implicitly narrow integer to i32 (may lose data) — give it a
