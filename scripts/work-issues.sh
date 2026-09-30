@@ -92,7 +92,7 @@ if ! parked="$(gh "${parked_args[@]}" 2>&1)"; then
     exit 2
 fi
 parked_line=""
-[ "$parked" = 0 ] || parked_line="parked for the next release: $parked (label next-release — the release tag returns them here)"
+[ "$parked" = 0 ] || parked_line="parked for the next release: $parked (label next-release — publishing the release returns them here)"
 
 if [ "$count_only" = 1 ]; then echo "$n"; exit 0; fi
 
