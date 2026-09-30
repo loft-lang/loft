@@ -1245,7 +1245,47 @@ impl Parser {
                 // would shadow every later variant reference on the second pass and
                 // bury the real error under a cascade of "Unknown variable".
                 let variant_enums = self.data.enums_with_variant(name);
-                if let Some(&e_nr) = variant_enums.first() {
+                // The target HAS an enum type and the name is a variant of a DIFFERENT enum
+                // (`d: Direction = Up`, `Up` a `Compass`).  The no-context sentence below told
+                // the author to give the target an enum type it already had, and its recovery
+                // typed the value as the other enum, so the assignment added *"cannot change
+                // type from Direction to Compass"* on top.  Name the mismatch instead, and
+                // poison the value so nothing downstream reports it again.
+                let expected_enum = match parent_tp.peel_link() {
+                    Type::Enum(enr, _, _) => Some(*enr),
+                    Type::Reference(enr, _) if self.data.def_type(*enr) == DefType::Enum => {
+                        Some(*enr)
+                    }
+                    _ => None,
+                };
+                if let Some(want) = expected_enum
+                    && !variant_enums.is_empty()
+                    && !variant_enums.contains(&want)
+                {
+                    let want_name = self.data.def(want).name().to_string();
+                    let owners: Vec<String> = variant_enums
+                        .iter()
+                        .map(|&e| format!("'{}'", self.data.def(e).name()))
+                        .collect();
+                    let variants: Vec<String> = self
+                        .data
+                        .def(want)
+                        .attributes
+                        .iter()
+                        .map(|a| a.name.clone())
+                        .collect();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{name}' is not a variant of '{want_name}' — it belongs to {}. Write one \
+                         of '{want_name}''s variants ({}), or give the target the type {}",
+                        owners.join(" and "),
+                        variants.join(", "),
+                        owners.join(" or ")
+                    );
+                    *code = Value::Null;
+                    t = Type::Never;
+                } else if let Some(&e_nr) = variant_enums.first() {
                     // Emit unconditionally (not pass-2-gated): the recovery below
                     // types the target from the variant's enum, so on the SECOND
                     // pass the target has context and this branch is not re-reached
@@ -2297,6 +2337,24 @@ impl Parser {
         // mis-handle the stub and desync the parser into a spurious "Expect
         // token ;".  The stub upgrades to the real struct after this pass, so
         // pass-2 sees a concrete `DefType::Struct` here and builds for real.
+        // @F46 — an alias IS the type it names, "anywhere one works the other does too", and a
+        // construction is one of those places: `type Point = Pt; Point { x: 4 }` builds a `Pt`.
+        // The alias's def is `DefType::Type`, which the construction below never looked
+        // through, so the `{` was left in the stream as `Expect token ;`.  Redirected to the
+        // struct (or record variant) the alias resolves to; an alias whose target is still a
+        // forward stub on pass 1 lands on the stub and defers exactly as that name would.
+        if d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::Type
+            && self.lexer.peek_token("{")
+            && let Type::Reference(target, _) | Type::Unknown(target) =
+                self.data.def(d_nr).returned()
+            && matches!(
+                self.data.def_type(*target),
+                DefType::Struct | DefType::EnumValue | DefType::Unknown
+            )
+        {
+            d_nr = *target;
+        }
         if d_nr != u32::MAX && matches!(self.data.def_type(d_nr), DefType::Unknown) {
             d_nr = u32::MAX;
         }

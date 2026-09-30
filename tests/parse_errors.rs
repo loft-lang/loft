@@ -5363,3 +5363,58 @@ fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
     code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
         .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
 }
+
+// `@FR-G-Scope` — an interface is a generic BOUND, never a value type.  Both positions named
+// something else: an annotated local drew `Expect token ;`, a parameter `Expecting a type` and a
+// call-site `Too many parameters` after it.  One error each now, naming the interface and the
+// bound that replaces it.
+#[test]
+fn an_interface_as_a_local_type_names_the_bound() {
+    code!(
+        "interface Sizable { fn size(self: Self) -> integer }\n\
+         struct Bx { w: integer }\n\
+         fn size(self: Bx) -> integer { self.w }\n\
+         fn test() {\n  x: Sizable = Bx { w: 3 };\n  println(\"{x.size()}\");\n}"
+    )
+    .error(
+        "`Sizable` is an interface, not a type — a value always has a concrete type, and an \
+         interface only constrains one.  Take a type variable bounded by it, `fn f<T: \
+         Sizable>(x: T)`, or name the concrete type at \
+         an_interface_as_a_local_type_names_the_bound:5:15",
+    );
+}
+
+#[test]
+fn an_interface_as_a_parameter_type_names_the_bound() {
+    code!(
+        "interface Sizable { fn size(self: Self) -> integer }\n\
+         struct Bx { w: integer }\n\
+         fn size(self: Bx) -> integer { self.w }\n\
+         fn show(x: Sizable) -> integer { x.size() }\n\
+         fn test() {\n  println(\"{show(Bx { w: 3 })}\");\n}"
+    )
+    .error(
+        "`Sizable` is an interface, not a type — a value always has a concrete type, and an \
+         interface only constrains one.  Take a type variable bounded by it, `fn f<T: \
+         Sizable>(x: T)`, or name the concrete type at \
+         an_interface_as_a_parameter_type_names_the_bound:4:20",
+    );
+}
+
+// A bare variant of ANOTHER enum, where the target has an enum type.  The no-context sentence
+// ("has no type here … give the target an enum type") told the author to do what they had done,
+// and its recovery typed the value as the other enum, so `cannot change type from Direction to
+// Compass` followed.  One error now, naming both enums.
+#[test]
+fn a_variant_of_another_enum_names_both_enums() {
+    code!(
+        "enum Direction { North, South }\n\
+         enum Compass { Up, Down }\n\
+         fn test() {\n  d: Direction = Up;\n  println(\"{d}\");\n}"
+    )
+    .error(
+        "'Up' is not a variant of 'Direction' — it belongs to 'Compass'. Write one of \
+         'Direction''s variants (North, South), or give the target the type 'Compass' at \
+         a_variant_of_another_enum_names_both_enums:4:21",
+    );
+}

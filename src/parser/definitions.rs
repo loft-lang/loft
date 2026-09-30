@@ -4106,6 +4106,22 @@ impl Parser {
             );
         }
         let dt = self.data.def_type(tp_nr);
+        // `@FR-G-Scope` — an interface is a BOUND on a type variable, never a value type.  It
+        // fell to the `None` below, which every caller spells in its own words — `Expecting a
+        // type` for a parameter, `Expect token ;` for an annotated local — and none of them
+        // named the interface or the bound that replaces it.  Reported on BOTH passes: a
+        // local's annotation is parsed on pass 1, where the derail stops the run.  `Never`
+        // poisons the site, so the call or the assignment that follows adds no second error.
+        if tp_nr != u32::MAX && dt == DefType::Interface {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{type_name}` is an interface, not a type — a value always has a concrete \
+                 type, and an interface only constrains one.  Take a type variable bounded by \
+                 it, `fn f<T: {type_name}>(x: T)`, or name the concrete type"
+            );
+            return Some(Type::Never);
+        }
         // `D-Template` — a generic struct is not a type until its arguments are named.
         if tp_nr != u32::MAX && dt == DefType::TypeTemplate && !self.lexer.peek_token("<") {
             if !self.first_pass {
