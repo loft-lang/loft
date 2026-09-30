@@ -79,15 +79,15 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-30 | `b922fb959` |
-| `doc-quality` | 2026-09-30 | `b922fb959` |
+| `design-protocol` | 2026-09-30 | `a6e7c63a6` |
+| `doc-quality` | 2026-09-30 | `a6e7c63a6` |
 | `draw` | 2026-09-16 | `9720dfd06` |
-| `engineering-rigor` | 2026-09-30 | `b922fb959` |
-| `formal-rules` | 2026-09-30 | `b922fb959` |
-| `loft-codegen` | 2026-09-30 | `898a658e5` |
-| `loft-debug` | 2026-09-30 | `b922fb959` |
+| `engineering-rigor` | 2026-09-30 | `a6e7c63a6` |
+| `formal-rules` | 2026-09-30 | `a6e7c63a6` |
+| `loft-codegen` | 2026-09-30 | `a6e7c63a6` |
+| `loft-debug` | 2026-09-30 | `a6e7c63a6` |
 | `loft-plan-workflow` | 2026-09-30 | `f204581c1` |
-| `loft-ship` | 2026-09-30 | `898a658e5` |
+| `loft-ship` | 2026-09-30 | `a6e7c63a6` |
 | `loft-test` | 2026-09-30 | `898a658e5` |
 | `loft-write` | 2026-09-30 | `898a658e5` |
 | `split-file` | 2026-09-30 | `f204581c1` |
