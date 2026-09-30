@@ -6228,9 +6228,14 @@ impl Parser {
             // @FR-N-Store — a tuple stores ELEMENT-WISE, so each member is its own slot and
             // the diagnostic names which (`element 0 of the field`); the six tuple-literal
             // cells loft#1366 lists were silent because nothing named them.
+            // With no enclosing store named, a member is still a SLOT (`(N-Reserve)`, and
+            // `(L-Tuple)` lays it out as a field), so a narrow one keeps `(N-Store)`'s hard
+            // error: `never_error` defaulted to true here, and `t: (integer, u8) = (1, x as
+            // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
+            // integer member is affected — a heap member never escalates either way.
             let (what, at, lenient) = match self.store_ctx.last() {
                 Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
-                None => ("this tuple".to_string(), None, true),
+                None => ("this tuple".to_string(), None, false),
             };
             for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
                 let mut placeholder = Value::Null;

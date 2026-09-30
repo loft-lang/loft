@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULLABLE INTO A NON-NULL NARROW TUPLE MEMBER IS REFUSED, AS INTO A NARROW LOCAL (loft#1815).
+// `(N-Store)` makes the store a hard ERROR for the narrow widths (u8…u32): their non-null form
+// spends every bit pattern on a real value, so there is no null to hold.  A tuple member is a
+// slot like any other (`(N-Reserve)`; `(L-Tuple)` lays it out as a field), but with no named
+// enclosing store the tuple arm defaulted to never escalating — it warned and stored null, and a
+// non-null `u8` then read as null.  A heap member keeps its warning (it has a null to hold), and
+// a member declared `u8?` takes the value as before.  Each refusal is its own function (loft#1261).
+//
+// @falsified-at: PENDING
+
+fn a_nullable_narrow_value(x: integer) {
+  // @EXPECT_ERROR: cannot be stored into element 1 of this tuple of the non-null type `integer(0, 255)`
+  t: (integer, u8) = (1, x as u8?);
+  println("{t.1}");
+}
+
+fn a_runtime_index_into_a_narrow_vector(i: integer) {
+  vu: vector<u16> = [20 as u16];
+  // @EXPECT_ERROR: cannot be stored into element 0 of this tuple of the non-null type `integer(0, 65535)`
+  t: (u16, integer) = (vu[i], 2);
+  println("{t.0}");
+}
+
+fn a_null_literal() {
+  // @EXPECT_ERROR: `null` cannot be stored into element 1 of this tuple of the non-null scalar type `integer(0, 255)`
+  t: (integer, u8) = (1, null);
+  println("{t.1}");
+}
+
+fn main() {
+  a_nullable_narrow_value(-200);
+  a_runtime_index_into_a_narrow_vector(0);
+  a_null_literal();
+}
