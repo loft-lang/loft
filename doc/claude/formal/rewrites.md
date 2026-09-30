@@ -2422,7 +2422,20 @@ line in `Output::output_function`'s prelude.
                  the mint and the deep copy `@FR-B-Copy` spells for a record local are
                  the store the value form exists to drop (a generic instance's
                  selecting tail lowers as a statement join whose arms each bind the
-                 join local from a parameter's view).
+                 join local from a parameter's view).  The TUPLE lists its elements in
+                 field order, but a literal's field values run in the order the literal
+                 WRITES them: an out-of-order fill binds each value first, in that
+                 order, so a field expression with an effect runs where the program put
+                 it.  BOTH BACKENDS (@PLN180): where the whole shape is a flat record
+                 returned from an object literal to callers that only read its fields,
+                 the decision is made in the IR (`value_record::rewrite_program`, at the
+                 top of `byte_code_from`, so the closed program only): the callee
+                 returns `(a, b, …)` in fill order, the local is a tuple read by
+                 `TupleGet`, and the buffer's null init, mint guard and frees leave the
+                 IR, so the interpreter claims no store for the call.  Its candidates
+                 are this rule's admissions, and native finds only what the IR
+                 declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
+                 `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
