@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN EMPTY `Name { }` INSIDE A CALL, INDEX OR VECTOR IN A CONDITION IS A LITERAL (loft#1768).
+// In a control head the `{` after the condition opens the body, so an empty `{ }` there reads
+// as that body (loft#986) — but only at the head's own level.  Inside a call's parentheses
+// the braces cannot be the `if`'s block, and an unknown type written there was reported as
+// `Expect token )` / `Expect token ;` instead of the type.  The token after the `}` tells the
+// two apart: `)`, `]`, `,`, `.` and `??` cannot follow a body.  Each spelling below names the
+// type once; the statement form was always right and is the control.
+//
+// @falsified-at: PENDING
+
+fn w(n: integer) -> boolean { n > 0 }
+
+fn main() {
+  v: vector<integer> = [];
+  // @EXPECT_ERROR: unknown type 'Helper'
+  x = v[0] ?? Helper { };
+  // @EXPECT_ERROR: unknown type 'Helper'
+  if w(v[0] ?? Helper { }) { println("a"); }
+  // @EXPECT_ERROR: unknown type 'Helper'
+  while w(Helper { }) { break; }
+  // @EXPECT_ERROR: unknown type 'Helper'
+  if w(v[0] ?? Helper { } ?? 3) { println("b"); }
+}

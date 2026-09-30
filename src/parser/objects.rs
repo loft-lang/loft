@@ -2647,11 +2647,26 @@ impl Parser {
     /// Checked BEFORE the identifier peek, which consumes.  The caller has already ruled
     /// out a known variable (`items { … }` opening a loop body), so a bare unknown name
     /// followed by `{ }` here is a construction of a type that does not exist yet.
+    ///
+    /// In a control head (`in_control_head`) an empty `{ }` is the BODY — except where
+    /// the token after its `}` cannot follow a body: `)`, `]`, `,`, `.` or `??` put the
+    /// braces inside a call, an index or a vector in the condition, where they can only be
+    /// a literal (loft#1768: `if w(v[0] ?? Helper { })` read the `{` as the `if`'s body).
+    /// The flag cannot say that itself — it does not reset inside nested delimiters.
     fn peek_struct_literal_body(&mut self) -> bool {
         let link = self.lexer.link();
         self.lexer.token("{");
-        let looks_like_struct = (self.lexer.peek_token("}") && !self.in_control_head)
-            || (self.lexer.has_identifier().is_some()
+        let empty = self.lexer.peek_token("}");
+        let empty_literal = empty
+            && (!self.in_control_head || {
+                self.lexer.token("}");
+                [")", "]", ",", ".", "??"]
+                    .iter()
+                    .any(|t| self.lexer.peek_token(t))
+            });
+        let looks_like_struct = empty_literal
+            || (!empty
+                && self.lexer.has_identifier().is_some()
                 && ((self.lexer.peek_token(":") && !self.lexer.peek_token(":="))
                     || self.lexer.peek_token(",")));
         self.lexer.revert(link);
