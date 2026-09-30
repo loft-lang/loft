@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @FR-Col-Len — an ABSENT collection counts 0 at every kind; @FR-Col-Copy — a keyed
+// loft#1760 — @FR-Col-Len: an ABSENT collection counts 0 at every kind; @FR-Col-Copy — a keyed
 // whole-value bind copies, and a copy of an absent collection is absent (@FR-H-Copy).
 //
 // A null keyed FIELD holds the reserved id `DbRef::ABSENT_REC` in its slot (loft#917), and

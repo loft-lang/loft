@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @FR-Col-Copy / @FR-H-Copy — a whole-value copy of an absent collection is absent; @FR-Col-Cons
+// loft#1760 — @FR-Col-Copy / @FR-H-Copy: a whole-value copy of an absent collection is absent; @FR-Col-Cons
 // — `c = []` is the EMPTY collection.  A `vector<T>?` FIELD broke both, quietly, on both
 // backends (released 2026.9.0): nothing crashed and nothing was reported.
 //

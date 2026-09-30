@@ -260,7 +260,7 @@ rule already said the set; the test asked about a pair.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
-- **`D-col-14`** — opened and CLOSED 2026-09-30: **an absent keyed FIELD was followed as a
+- **`D-col-14`** — opened and CLOSED 2026-09-30 (loft#1760): **an absent keyed FIELD was followed as a
   record by nearly every reader**, against `(Col-Len)`, `(Col-Cons)` and `(Col-Copy)`.  `D-col-13`
   made the counts test the value-level null — what an absent LOCAL is — and its guard binds every
   collection to a local.  A null FIELD is not that null: its slot holds `DbRef::ABSENT_REC`

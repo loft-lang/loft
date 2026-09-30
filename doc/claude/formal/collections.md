@@ -640,7 +640,7 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
-`D-col-14` was opened and CLOSED 2026-09-30: an absent keyed FIELD was followed as a record by
+`D-col-14` (loft#1760) was opened and CLOSED 2026-09-30: an absent keyed FIELD was followed as a record by
 `len`, a clear, a copy and a remove, and an absent vector field lost its absence through `= []`
 and every whole-value copy, against `(Col-Len)`, `(Col-Cons)` and `(Col-Copy)`.
 
