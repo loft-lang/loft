@@ -4597,7 +4597,9 @@ impl Parser {
     pub(crate) fn tuple_hint_type(&self, tp: &Type) -> Option<Type> {
         match tp.base() {
             Type::Tuple(_) => Some(tp.base().clone()),
-            Type::Reference(d_nr, _) => {
+            // A tuple whose member names an undefined type has no record behind it: its
+            // reference is `u32::MAX`, and the member's own "Undefined type" is the report.
+            Type::Reference(d_nr, _) if *d_nr != u32::MAX => {
                 let group = self.data.def(*d_nr).tuple_group()?;
                 let members: Vec<Type> = group
                     .field_indices

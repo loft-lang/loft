@@ -18783,3 +18783,13 @@ fn g() -> integer {
     )
     .error("Undefined type Hexq — did you mean 'text'? at a_type_both_constructed_and_annotated_is_reported_once:3:12");
 }
+
+/// A tuple return of three or more members whose member names an undefined type is one
+/// mistake, reported once — never an internal compiler error.  Such a tuple has no record
+/// behind it (its reference is `u32::MAX`), and the tail's value hint read `def(u32::MAX)`.
+/// Two members took another path and always reported; 2026.9.0 crashed on three.
+#[test]
+fn a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash() {
+    code!("fn f(k: integer) -> (integer, text, Hexz) { (k, \"a\", Hexz { q: 1 }) }")
+        .error("Undefined type Hexz — did you mean 'text'? at a_tuple_return_naming_an_undefined_type_is_reported_not_a_crash:1:42");
+}
