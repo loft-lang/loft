@@ -1,11 +1,16 @@
-// @PLN180 § Kernels — `text.split(c)` is ONE call of a Rust kernel on both backends: the
-// interpreter no longer walks the text a character at a time in loft code.  The kernel keeps
-// loft's own answer where Rust's `str::split` differs: an EMPTY text splits into no parts
-// (Rust answers one empty part).
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `text.split(c)` keeps loft's own answers where Rust's `str::split` differs: an EMPTY text
+// splits into no parts (Rust answers one empty part), and otherwise every separator ends a
+// part, the last included when it is empty.  `split` is a loft function: an interpreted program
+// runs its body COMPILED (@PLN181, the standard library compiled like any library) and
+// `--native` compiles it in — a Rust kernel stood in for it until then (KERNELS.md § Removed).
+// The `kept` cells are the ones `--native` cannot answer from its lazy split, so the body runs.
 //
-// @falsified-at: none — it guards a kernel no earlier build has, so no control fails it.
-// Hand-sabotaged 2026-09-30: answering Rust's `str::split` for the empty text (one empty
-// part) fails `empty text` on `--interpret` and `empty text, handed on` on `--native`.
+// @falsified-at: none — the rules it pins held on every earlier build; the receipt is the plant.
+// Hand-sabotaged 2026-09-30: dropping the empty-text rule from the loft body (the trailing part
+// appended unconditionally) fails `empty text` on `--interpret` and `empty text, handed on` on
+// `--native`.
 
 fn joined(parts: vector<text>) -> text {
   out = "";

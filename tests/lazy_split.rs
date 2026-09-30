@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@FR-R-LazySplit` — the EMISSION pins.  A `for piece in text.split(c)` loop iterates
-//! `codegen_runtime::lazy_split` and never calls the `split` kernel; a parameter nothing
+//! `codegen_runtime::lazy_split` and never calls `t_4text_split`; a parameter nothing
 //! writes is borrowed and every other source is iterated as a copy; the buffer the call
 //! would have filled is never minted; a variable separator, a `rev` and a generator keep
 //! the vector; `LOFT_NO_LAZY_SPLIT=1` restores the vector everywhere.  The guard
@@ -90,7 +90,7 @@ fn a_loop_over_a_split_iterates_the_text_and_builds_no_vector() {
             "{name}: each lazy loop reads its piece from the iterator"
         );
         assert!(
-            !b.contains("split_char("),
+            !b.contains("t_4text_split("),
             "{name}: no vector is built for a lazy loop"
         );
     }
@@ -125,17 +125,15 @@ fn an_unwritten_parameter_is_borrowed_and_any_other_source_is_a_copy() {
 #[test]
 fn the_buffer_of_a_lazy_split_is_never_minted() {
     let rust = emit("buffer", &[]);
-    // `split` is a loop kernel (@PLN180 § Kernels): its call answers a vector of its own and
-    // takes no buffer, so the lazy form mints nothing at all and builds no vector.
     let lazy = body(&rust, "n_count_of");
     assert!(
-        !lazy.contains("OpDatabase(") && !lazy.contains("split_char("),
-        "count_of: the lazy split mints nothing and builds no vector"
+        lazy.contains("let mut var___ref_1: DbRef = DbRef::NULL;") && !lazy.contains("OpDatabase("),
+        "count_of: the split's buffer stays the null sentinel"
     );
     let kept = emit("buffer_off", &[("LOFT_NO_LAZY_SPLIT", "1")]);
     assert!(
-        body(&kept, "n_count_of").contains("split_char("),
-        "count_of: with the switch set the kernel builds the vector"
+        body(&kept, "n_count_of").contains("var___ref_1 = OpDatabase("),
+        "count_of: with the switch set the buffer is minted for the call"
     );
 }
 
@@ -144,13 +142,13 @@ fn a_variable_separator_a_rev_and_a_generator_keep_the_vector() {
     let rust = emit("decline", &[]);
     let by = body(&rust, "n_by");
     assert!(
-        by.contains("split_char(") && !by.contains("lazy_split("),
+        by.contains("t_4text_split(") && !by.contains("lazy_split("),
         "by: a separator that is not a constant keeps the vector"
     );
     // s17 is a filtered loop (lazy) and a `rev` over a split (the vector).
     let s17 = body(&rust, "n_s17");
     assert_eq!(
-        (count(s17, "lazy_split("), count(s17, "split_char(")),
+        (count(s17, "lazy_split("), count(s17, "t_4text_split(")),
         (1, 1),
         "s17: the filter is lazy, the `rev` keeps its vector"
     );
@@ -163,7 +161,7 @@ fn a_variable_separator_a_rev_and_a_generator_keep_the_vector() {
     // discharge, which is not the plain bind, and keeps it.
     let s21 = body(&rust, "n_opt_shape");
     assert_eq!(
-        (count(s21, "lazy_split("), count(s21, "split_char(")),
+        (count(s21, "lazy_split("), count(s21, "t_4text_split(")),
         (1, 1),
         "opt_shape: the discharged VECTOR keeps its vector"
     );

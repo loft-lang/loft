@@ -1,18 +1,19 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN180 § Kernels — `File.lines()` is ONE call of a Rust kernel (`text_lines`, private) on both
-// backends: the interpreter no longer walks the content a character at a time in loft code
-// (@PLN179 finding 013 — 91 % of `tests/dump_ignored_tests` interpreted).  The kernel keeps the
-// loop's own rules, which Rust's `str::lines` does not: every `\n` ends a line and drops ONE `\r`
-// directly before it; what follows the last `\n` is a line only when it is not empty, and keeps
-// a trailing `\r`, since no `\n` ends it; an empty or missing file has no lines.
+// `File.lines()` keeps its own line rules, which Rust's `str::lines` does not: every `\n` ends
+// a line and drops ONE `\r` directly before it; what follows the last `\n` is a line only when
+// it is not empty, and keeps a trailing `\r`, since no `\n` ends it; an empty or missing file
+// has no lines.  `lines` is a loft function: an interpreted program runs its body COMPILED
+// (@PLN181) and `--native` compiles it in — a Rust kernel stood in for it until then
+// (KERNELS.md § Removed; @PLN179 finding 013 was the reason).
 //
-// `by_hand` below IS the loop the kernel replaced, kept as the oracle: every cell compares the
-// kernel with it, and the first cells are hand-computed as well so a shared mistake cannot pass.
+// `by_hand` below is that loop written as a program's own function, which an interpreted run
+// INTERPRETS: every differential cell compares the compiled body with the interpreted one, and
+// the first cells are hand-computed as well so a shared mistake cannot pass.
 //
-// @falsified-at: none — it guards a kernel no earlier build has, so no control fails it.
-// Hand-sabotaged 2026-09-30: dropping the `\r` strip fails `crlf` and every differential cell
-// holding a `\r\n` on both backends.
+// @falsified-at: none — the rules it pins held on every earlier build; the receipt is the plant.
+// Hand-sabotaged 2026-09-30: dropping the `\r` strip from the loft body fails `crlf` and every
+// differential cell holding a `\r\n` on both backends.
 
 #cwd
 
