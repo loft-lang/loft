@@ -107,7 +107,8 @@ the mode chosen and why); a plain run prints nothing, because loft is boring.
 
 ### When a script has earned the build
 
-Defaults, overridable in `loft.toml` `[scripts]` and pinned per file by `#mode`:
+Defaults, overridable in `loft.toml` `[scripts]` and pinned per file by the flag in its
+`#!` line (below):
 
 - the hash is at least **one day** old on both clocks, and
 - the last interpreted run took at least **100 ms** — a script that runs in a millisecond
@@ -133,9 +134,11 @@ Promotion is only admissible because interpreted and native are BYTE-IDENTICAL b
 (the @PLN11 cross-mode harness; goal D).  A script that behaved differently once it aged
 would be the worst class there is — a tool that changes its answer on a Tuesday — so the twin
 (strand 2) runs every port in BOTH modes against the original, and a divergence is a
-language bug filed against parity, never a reason to pin the script.  `#mode interpret` pins
-a hook (2 ms start-up, never a compile); `#mode release` pins a CI gate (built at its first
-run, foreground); neither is the normal case.  The scoreboard shows each script's age, mode
+language bug filed against parity, never a reason to pin the script.  A pin needs no new directive: a script's
+`#!/usr/bin/env -S loft --interpret` line carries the flag, and a flag switches the policy
+off — so a hook pins `--interpret` (2 ms start-up, never a compile) and a CI gate pins
+`--native-release` (built at its first run, foreground), in the line that already names the
+interpreter; neither is the normal case.  The scoreboard shows each script's age, mode
 and the number that decided it.
 
 ### Tests are never subject to the policy (owner, 2026-09-30)
@@ -176,7 +179,7 @@ interpreter — and the policy above decides when a binary comes to exist.  `--i
 `--native` and `--native-release` keep overriding.  This is C71's steady state ("scripts
 interpret, libraries compile") with the promotion the owner asked for on top; the games
 under `engine_host` get it for free.  Items for the plan: the run record in the cache entry,
-the git-age query, the detached build, `loft build --aged`, `#mode`, the three test guards
+the git-age query, the detached build, `loft build --aged`, the three test guards
 above with their falsifier, and the census's `mode` + `age` columns — strand 3, before the first tranche is measured, because the bar's
 performance verdict is taken in the mode the policy would pick.
 
