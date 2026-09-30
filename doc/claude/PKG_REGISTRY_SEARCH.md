@@ -129,6 +129,15 @@ project, and it makes lazy auto-use ([lib_plans/59-lazy-stdlib](lib_plans/59-laz
 > embedded `default/*.loft` (`stdlib_sources::STDLIB_SOURCES` — one home shared with the WASM
 > runtime, no disk dependency).  `registry_index::search_results` is the pure, tested ranker.
 >
+> **How it ranks.**  Every word of the query (quoted or not) must START a word of an item —
+> after punctuation or `_`, at a case change, between letters and digits — so `date` does not
+> match `update`; a plural `s` is dropped.  An exact package name, then a name prefix, come
+> first; every other hit is ordered by score: 10 per query word in the package's name,
+> description or categories, then the best item's (8 exact name, 6 a word of the name, 3 the
+> signature, 1 the doc, per word), then one per matching item up to five.  The stdlib competes
+> on its items; ties go alphabetical.  Five items print per package, best first.  When no item
+> has every word, `closest_results` answers with the hits that have the most, under a note.
+>
 > **S7-CI — the no-drift trust gate.**  `loft api --json <dir>` emits a source dir's
 > function-level surface (via the same `pkg_api_items`, so it equals what publish embeds); the
 > registry's `validate.py` `gate_reproducible_build` re-derives it from the cloned source and

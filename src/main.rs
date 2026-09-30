@@ -1070,7 +1070,12 @@ fn search_registry(query: &str, json: bool) {
         .collect();
 
     let q = query.to_ascii_lowercase();
-    let results = registry_index::search_results(&index, &stdlib, &q);
+    let mut results = registry_index::search_results(&index, &stdlib, &q);
+    // Nothing has every word: offer the closest matches, and say that is what they are.
+    let closest = results.is_empty() && {
+        results = registry_index::closest_results(&index, &stdlib, &q);
+        !results.is_empty()
+    };
 
     if json {
         println!(
@@ -1083,6 +1088,9 @@ fn search_registry(query: &str, json: bool) {
     if results.is_empty() {
         println!("No packages or functions match `{query}`.");
         return;
+    }
+    if closest {
+        println!("Nothing matches every word of `{query}`; the closest matches:");
     }
     let querying = !q.is_empty();
     for r in &results {
@@ -1101,13 +1109,24 @@ fn search_registry(query: &str, json: bool) {
             }
             println!("{line}");
         }
-        // The matching functions: what it does (doc) + how to call it (sig).
-        for item in &r.fns {
+        // The matching functions, best first: what it does (doc) + how to call it (sig).
+        // Five say which package answers; the rest are one `loft api` away (and all of
+        // them travel in `--json`).
+        const SHOWN: usize = 5;
+        for item in r.fns.iter().take(SHOWN) {
             println!("    {}", item.sig);
             // Display only the first line of the (now full) doc paragraph; the
             // whole paragraph stays searchable and travels in `--json`.
             if let Some(summary) = item.doc.lines().next().filter(|l| !l.is_empty()) {
                 println!("        {summary}");
+            }
+        }
+        if r.fns.len() > SHOWN {
+            let more = r.fns.len() - SHOWN;
+            if r.is_stdlib {
+                println!("    … {more} more");
+            } else {
+                println!("    … {more} more — `loft api {}` lists them all", r.name);
             }
         }
         // How to get it.
@@ -8051,11 +8070,15 @@ fn main() {
             #[cfg(feature = "registry")]
             {
                 let json = argv[i..].iter().any(|s| s == "--json");
+                // Every word is the query: `loft search load png` means both words, as
+                // the quoted `loft search "load png"` does.  Taking only the first made
+                // the unquoted form search for `load` alone.
                 let query = argv[i..]
                     .iter()
-                    .find(|s| !s.starts_with('-'))
+                    .filter(|s| !s.starts_with('-'))
                     .cloned()
-                    .unwrap_or_default();
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 search_registry(&query, json);
                 return;
             }
