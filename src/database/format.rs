@@ -837,8 +837,18 @@ impl Stores {
         if bytes.rec == 0 || bytes.pos == 0 || length == 0 {
             return String::new();
         }
-        let lo = lo.clamp(0, length);
-        let hi = hi.clamp(0, length);
+        // @FR-Slice-Value — a negative bound counts from the END (`size + bound`, floored at the
+        // start), as `bytes[lo..hi]` does, which this function stands in for; a clamp alone read
+        // `text_from_byte_range(b, -3, 2)` as `b[0..2]` where the slice answers "".
+        let bound = |b: i64| {
+            if b < 0 {
+                (b + length).max(0)
+            } else {
+                b.min(length)
+            }
+        };
+        let lo = bound(lo);
+        let hi = bound(hi);
         if hi <= lo {
             return String::new();
         }
