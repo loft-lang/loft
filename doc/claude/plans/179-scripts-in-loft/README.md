@@ -246,11 +246,14 @@ replaces with no reason left, today.
 ## Execution modes — evaluated in [`MODES.md`](MODES.md)
 
 The dual mode the owner asked for (2026-09-30) is loft's steady state already: one source,
-`--interpret` / `--native` (default, cached by source hash) / `--native-release`.  The
-compiled version is never stored in git (3.5 GB a generation, stale weekly); the source-keyed
-cache is the store, CI warms it, a hook interprets, and the twin decides per script which
-mode it declares — short scripts opt out, long ones opt up, through a `#mode` directive
-that is a gap for strand 3.
+`--interpret` / `--native` (cached by source hash) / `--native-release`.  The compiled
+version is never stored in git (3.5 GB a generation, stale weekly); the source-keyed cache
+is the store and CI warms it.  **The rule: a script runs interpreted; a script whose source
+has stopped changing runs optimised** — loft measures the age of the hash on two clocks
+(first seen, last git change), the run count and the last interpreted duration, and when a
+script has earned it (a day old, ≥ 100 ms, run twice) builds the release binary detached
+after the run, so the next run takes it.  `#mode` pins the exceptions; the twin runs both
+modes so promotion can never change an answer.
 
 ## Phase ordering
 
