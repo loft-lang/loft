@@ -68,7 +68,13 @@ fn section<'a>(text: &'a str, name: &str) -> &'a str {
 
 fn store_mints(mode: &str, env: &[(&str, &str)]) -> usize {
     let mut cmd = loft();
-    cmd.arg(mode).arg(cells()).env("LOFT_TRACE_DB", "1");
+    // The interpreter's OWN mints: a compiled standard-library body (@PLN181) mints natively,
+    // where this trace does not count, so the census would move with the compiled set rather
+    // than with the pool it measures.
+    cmd.arg(mode)
+        .arg(cells())
+        .env("LOFT_TRACE_DB", "1")
+        .env("LOFT_NO_COMPILED_STDLIB", "1");
     with_env(&mut cmd, env);
     let out = cmd.output().expect("spawn loft");
     assert!(

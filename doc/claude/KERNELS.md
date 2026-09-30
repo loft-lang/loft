@@ -60,57 +60,21 @@ hides that gap from the measurements that should drive the general fix.  When it
 backends, the loft body returns, the kernel's Rust and its adapters go, and its entry moves to
 § Removed with the measurement.
 
-**Once the standard library is compiled like a library, the native column decides alone**: the
-interpreter then runs the same compiled loft body a native program does, so the interpreted
-ratio measures nothing the kernel buys.  By the table below, `split` and `text_lines` are due
-the moment it lands; `vector_sum_int` waits for the code generator's reduction.
+**The standard library is compiled like a library** ([@PLN181](plans/181-compiled-stdlib.md)):
+an interpreted program runs a looping standard-library function's COMPILED loft body, the one a
+native program runs.  So for a kernel whose loft body is not generic, the native column decides
+alone — the interpreter pays what native pays.  `split` and `text_lines` were retired that way
+(§ Removed).  `vector_sum_int` stays: `sum` is generic, monomorphised per program, so it cannot
+be precompiled, and its plain loop is still 4.9× the kernel compiled.
 
 | kernel | interpreted | `--native-release` |
 |---|--:|--:|
-| `split` | 12.0× — keep | 1.5× — due |
-| `text_lines` (under `lines`) | 38.6× — keep | 1.2× — due |
-| `vector_sum_int` | 172.7× — keep | 4.9× — keep |
+| `vector_sum_int` | 246× — keep | 5.0× — keep |
 
 Loft body ÷ kernel, best of 5, on this project's perf box; `make kernel-ratio` is the current
-answer, and this table is re-measured whenever an entry changes.  Native is due for both
-text kernels: rustc already runs their loft bodies close to the kernel, so on native they are
-kept only because one declaration serves both backends.
+answer, and this table is re-measured whenever an entry changes.
 
 ## The kernels
-
-### `split` — `Stores::split_char`
-
-- **Where.** `pub fn split(self: text, separator: character)` in `default/02_files.loft` is
-  body-less with a `#rust` template; the interpreter adapter is `t_4text_split` in
-  `src/native.rs`.  Native's `R-LazySplit` and `R-SplitTable` rewrites read the kernel call.
-- **Why.** @PLN179 finding 013: 73 % of `scripts/opl_points` interpreted was the loft `split`
-  body.  The bench routines moved `split` 1.83 ms → 46 µs and `split_walk` 2.15 ms → 43 µs,
-  interpreted.  The port went from 10× to 5.8× Python.
-- **What it costs.** The empty-text rule restated in Rust (Rust's `str::split` answers one empty
-  part, loft answers none), and a second spelling for native's split rewrites to match.
-- **What replaces it.** A fast character walk on the interpreter: `for c in text` with
-  `c#index`, and a slice appended to a vector, which is the loop every text-processing script
-  writes.  The fused `OpTextWalkStep` covers the walk; the slice into a fresh element does not
-  yet.
-- **Removal.** Interpreted ratio at 2× or under.  Today 12×.
-- **Guard.** `tests/scripts/text-split-is-one-kernel-call.loft`; the loft body is the oracle in
-  `scripts/kernel_ratio`.
-
-### `text_lines` — `Stores::text_lines`, under `File.lines()`
-
-- **Where.** A private `fn text_lines(content: text)` in `default/02_files.loft`; `lines` is
-  `text_lines(self.content() ?? "")`.  The interpreter adapter is `n_text_lines`.
-- **Why.** @PLN179 finding 013: 91 % of `tests/dump_ignored_tests` interpreted was the loft
-  `lines` body; the port went from 3.67 s to 0.62 s (Python 0.22 s), and the finding's probe from
-  over its 150 ms bar to 58 ms.
-- **What it costs.** The CR/LF rule restated in Rust: every `\n` ends a line and drops ONE
-  `\r` before it, and a last piece is a line only when it is not empty, keeping its `\r`.
-- **What replaces it.** The same character walk as `split`'s.  Reading a file as lines is work
-  the runtime could legitimately own (a streamed read would be one), but the loop this replaced
-  is text splitting over content already read, so it is held to the same trigger.
-- **Removal.** Interpreted ratio at 2× or under.  Today 39×.
-- **Guard.** `tests/scripts/a-file-lines-is-one-kernel-call.loft`, which carries the loft body
-  it replaced as its own oracle.
 
 ### `vector_sum_int` — `loop_kernels::vector_sum_int`
 
@@ -133,22 +97,13 @@ kept only because one declaration serves both backends.
 
 ## Open
 
-- **The standard library compiled like any other library** — the route that retires the
-  kernels, planned as [@PLN181](plans/181-compiled-stdlib.md).  Its artifact is built (P1): the
-  standard library's looping loft functions already run compiled for an interpreted program,
-  and a kernel's loft body, restored, joins them by the same rule (P2).  C71 already compiles a `use`d library for an interpreted script and dispatches its
-  functions through the shared-store bridge (`src/native_gate.rs`, `src/native_lib.rs`).  What
-  differs for the standard library: it must need no rustc on the user's machine (`--interpret`
-  never runs one), so its artifact is built with loft itself, once per loft version, and ships
-  with the binary.  That is possible where a library's is not: a library's artifact is keyed on
-  the calling program's WHOLE type layout (`type_layout_fingerprint`), one build per distinct
-  program, while the standard library's types register before any program's, so one layout
-  serves every program.  The artifact is still verified against the running program's type
-  table before use (as a library artifact is), and a mismatch runs the loft body interpreted:
-  slower, never wrong.
+- **A generic function compiled for the interpreter.**  The compiled standard library
+  (@PLN181) covers non-generic functions only; `sum<T>` is instantiated per program.  Precompiling
+  the common instances (`sum` over `integer`, `float`) the same way would retire
+  `vector_sum_int` by the route that retired `split` and `lines`.
 - **The interpreter adapter is written by hand.**  `--native` runs a kernel's `#rust` template
   directly, but the interpreter needs its own adapter in `src/native.rs` (196 such rows for
-  the standard library's `#rust` functions, the three kernels among them).  Operators already
+  the standard library's `#rust` functions, `vector_sum_int`'s among them).  Operators already
   avoid this: `make fill` generates the interpreter's side from the same template
   (`src/create.rs::generate_code_into`, kept current by `tests/issues.rs::fill_rs_up_to_date`).
   Extending that generator to body-less functions would make a kernel exactly one `#rust` line
@@ -156,4 +111,23 @@ kept only because one declaration serves both backends.
 
 ## Removed
 
-None yet.
+### `split` (`Stores::split_char`) and `text_lines` (under `File.lines()`) — retired by the compiled standard library
+
+Both were admitted for @PLN179 finding 013 — `scripts/opl_points` spent 73 % of its interpreted
+run in the loft `split` body, `tests/dump_ignored_tests` 91 % in `lines` — and both restated
+loft's rules in Rust (split's empty text answers no parts; lines drops one `\r` before each
+`\n`).  With the standard library compiled like a library (@PLN181), their loft bodies came back
+and an interpreted program runs them compiled.  Measured at the retirement, best of 5:
+
+| | the kernel | the compiled loft body |
+|---|--:|--:|
+| `split`, interpreted | 2.3 ms | 3.4 ms (1.5×) |
+| `lines`, interpreted | 1.5 ms | 2.0 ms (1.3×) |
+| `split`, `--native-release` | 2.3 ms | 0.6 ms (native's split rewrites apply again) |
+| `lines`, `--native-release` | 1.7 ms | 2.0 ms (1.2×) |
+
+The ports, through the twin: `dump_ignored_tests` 626 ms → 655 ms, `opl_points` (200k lines)
+1.77 s → 1.62 s, identical on every channel.  Their guards stay, renamed for the rules they pin
+(`tests/scripts/a-text-split-keeps-its-edge-rules.loft`,
+`tests/scripts/a-file-lines-keeps-its-line-rules.loft`), and their plants in the loft bodies
+turn them red on both backends.
