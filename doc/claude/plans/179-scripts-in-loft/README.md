@@ -246,6 +246,21 @@ because the trigger surface fires on the moved name and `std::name` / C97 keep t
 resolution rule, and it is gated the way every library is: the testbed, the twin on the
 scripts that used it, and the shipped libraries re-validated (REVALIDATE_LIBS.md).
 
+A first census by hand (2026-09-30, `default/*.loft`, 4553 lines): of 210 public functions,
+104 are runtime declarations and the rest have bodies, but most bodies are one-line opcode
+wrappers (`sin` is `OpMathFuncFloat(1, self)`) and stay.  **Pure loft over primitives, and
+so movable now**: the seven text predicates (`is_lowercase` … `is_control`; their
+`character` twins are natives and stay), `starts_with_at`, `char_slice`, `split_text`
+(called only by their own guards), the four path helpers (`resolve`, `dir`, `basename`,
+`join` on text — called by `lib/docs`, `tools/indexer`, the census), and `chr`, `sum_of`,
+`approx`, `floor_mod` — about 20 functions and 180 lines, 3 % of the definitions, so a
+clarity and ownership gain, not a start-up one.  **Library-shaped but runtime-answered**,
+the real weight: `06_json.loft` (24 declarations, the `JsonValue` type, 260 lines),
+`07_reflect.loft` (4 + 7 types, 316 lines) and `04_stacktrace.loft` — a move in the
+`engine_host` shape, natives in the binary behind a library surface, larger and later.
+What stays by the rule: operators, the opcode wrappers, file I/O, `len` / `print`,
+`content` / `lines` (the parser names `n_content`).
+
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
 loft has a wire protocol — [`16-debugger/PROTOCOL.md`](../16-debugger/PROTOCOL.md): one
