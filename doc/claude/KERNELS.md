@@ -134,7 +134,7 @@ kept only because one declaration serves both backends.
 ## Open
 
 - **The standard library compiled like any other library** — the route that retires the
-  kernels.  C71 already compiles a `use`d library for an interpreted script and dispatches its
+  kernels, planned as [@PLN181](plans/181-compiled-stdlib.md).  C71 already compiles a `use`d library for an interpreted script and dispatches its
   functions through the shared-store bridge (`src/native_gate.rs`, `src/native_lib.rs`).  What
   differs for the standard library: it must need no rustc on the user's machine (`--interpret`
   never runs one), so its artifact is built with loft itself, once per loft version, and ships
