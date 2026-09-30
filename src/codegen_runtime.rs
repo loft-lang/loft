@@ -109,6 +109,7 @@ pub const CODEGEN_RUNTIME_FNS: &[RuntimeFn] = &[
     RuntimeFn { name: "n_reflect_field",              abi: Abi::Cell },
     RuntimeFn { name: "n_reflect_field_path",         abi: Abi::Cell },
     RuntimeFn { name: "n_hash_sorted",                abi: Abi::Cell },
+    RuntimeFn { name: "n_vector_sum_int",             abi: Abi::Cell },
     RuntimeFn { name: "n_hash_unsorted",              abi: Abi::Cell },
     RuntimeFn { name: "n_radix_sorted",               abi: Abi::Cell },
     RuntimeFn { name: "n_spatial_range",              abi: Abi::Cell },
@@ -2941,6 +2942,13 @@ pub fn n_path_sep() -> i32 {
 /// path calls this with the hash's type id as a compile-time constant
 /// and iterates the result via Ordered (on=3).  Bytecode equivalent:
 /// `n_hash_sorted` in `src/native.rs`.
+/// The loop kernel `vector_sum_int` (`loop_kernels::vector_sum_int`).  Bytecode equivalent:
+/// `n_vector_sum_int` in `src/native.rs`.
+pub fn n_vector_sum_int(cell: &std::cell::UnsafeCell<Stores>, v: DbRef, acc: i64) -> i64 {
+    let stores: &Stores = unsafe { &*cell.get() };
+    crate::loop_kernels::vector_sum_int(&stores.allocations, &v, acc)
+}
+
 pub fn n_hash_sorted(cell: &std::cell::UnsafeCell<Stores>, h: DbRef, tp: i64) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     stores.build_hash_sorted_vec(&h, tp as u16)
