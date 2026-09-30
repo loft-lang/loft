@@ -261,6 +261,19 @@ the real weight: `06_json.loft` (24 declarations, the `JsonValue` type, 260 line
 What stays by the rule: operators, the opcode wrappers, file I/O, `len` / `print`,
 `content` / `lines` (the parser names `n_content`).
 
+**The collection kinds are a different question** (owner, 2026-09-30): `hash`, `sorted`,
+`index`, `spatial`, `trie` are not stdlib functions but language structures — each has
+parser syntax, typedef and scope rules, codegen, a store layout, a reflection
+`CollectionKind` and natives — so they cannot move to a library until a KIND is something
+the language loads, which is @PLN91 strand 3 (types and structures as bundles) and has no
+seam yet.  Measured weight and reach (2026-09-30): `spatial.rs` 702 lines, `trie_db.rs`
+1359 + `radix_db.rs` 1182 + `radix_tree.rs` 3382, `hash.rs` 1134; declared in 377 test
+files for `hash`, 194 `sorted`, 149 `index`, 76 `spatial`, 67 `trie`, and in the
+published libraries by none of them.  So `spatial` and `trie` are the first candidates —
+self-contained, used by tests and (to measure) the games — and `vector`, `hash`, `sorted`
+and `index` are the store's spine that lazy stores, reflection and the SQL derivation are
+built on, and stay.
+
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
 loft has a wire protocol — [`16-debugger/PROTOCOL.md`](../16-debugger/PROTOCOL.md): one
