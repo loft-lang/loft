@@ -517,28 +517,43 @@ impl Stores {
     /// answer one empty part), and otherwise every separator ends a part, the last part
     /// included even when it is empty (`"a,".split(',')` is `["a", ""]`).
     pub fn split_char(&mut self, text: &str, separator: char) -> DbRef {
-        let vec = self.database(4);
-        self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
         if text.is_empty() {
-            return vec;
+            return self.text_vector_of(std::iter::empty());
         }
-        for part in text.split(separator) {
-            let elm = vector::vector_append(&vec, 4, &mut self.allocations);
-            let s = self.store_mut(&vec).set_str(part);
-            self.store_mut(&vec).set_u32_raw(elm.rec, elm.pos, s);
-            vector::vector_finish(&vec, &mut self.allocations);
+        self.text_vector_of(text.split(separator))
+    }
+
+    /// `File.lines()` over the file's content — the loop kernel behind the stdlib `lines`
+    /// (@PLN179 finding 013: the loft loop it replaces was 91 % of a text-scanning script
+    /// interpreted).  It answers what that loop answered: every `\n` ends a line and drops
+    /// ONE `\r` directly before it; what follows the last `\n` is a line only when it is not
+    /// empty, and keeps a trailing `\r` (no `\n` ends it).  An empty text has no lines.
+    pub fn text_lines(&mut self, text: &str) -> DbRef {
+        let mut pieces = text.split('\n').peekable();
+        let mut lines = Vec::new();
+        while let Some(piece) = pieces.next() {
+            if pieces.peek().is_some() {
+                lines.push(piece.strip_suffix('\r').unwrap_or(piece));
+            } else if !piece.is_empty() {
+                lines.push(piece);
+            }
         }
-        vec
+        self.text_vector_of(lines.into_iter())
     }
 
     /// Build a `vector<text>` from an explicit string slice.
     #[must_use]
     pub fn text_vector(&mut self, args: &[String]) -> DbRef {
+        self.text_vector_of(args.iter().map(String::as_str))
+    }
+
+    /// A fresh `vector<text>` holding `parts`, in order — the one builder the text kernels share.
+    fn text_vector_of<'a>(&mut self, parts: impl Iterator<Item = &'a str>) -> DbRef {
         let vec = self.database(4);
         self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
-        for v in args {
+        for part in parts {
             let elm = vector::vector_append(&vec, 4, &mut self.allocations);
-            let s = self.store_mut(&vec).set_str(v.as_str());
+            let s = self.store_mut(&vec).set_str(part);
             self.store_mut(&vec).set_u32_raw(elm.rec, elm.pos, s);
             vector::vector_finish(&vec, &mut self.allocations);
         }

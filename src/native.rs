@@ -462,6 +462,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_hash_sorted", n_hash_sorted),
     ("n_vector_sum_int", n_vector_sum_int),
     ("t_4text_split", t_4text_split),
+    ("n_text_lines", n_text_lines),
     ("n_radix_sorted", n_radix_sorted),
     ("n_spatial_range", n_spatial_range),
     ("n_trie_prefix", n_trie_prefix),
@@ -3629,6 +3630,13 @@ fn t_4text_split(stores: &mut Stores, stack: &mut DbRef) {
     let separator = stores.get::<char>(stack);
     let text = stores.get::<Str>(stack);
     let result = stores.split_char(text.str(), separator);
+    stores.put(stack, result);
+}
+
+/// `text_lines(content)` — the kernel behind `File.lines()` (`Stores::text_lines`).
+fn n_text_lines(stores: &mut Stores, stack: &mut DbRef) {
+    let text = stores.get::<Str>(stack);
+    let result = stores.text_lines(text.str());
     stores.put(stack, result);
 }
 

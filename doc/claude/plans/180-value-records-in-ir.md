@@ -75,9 +75,33 @@ loop a kernel covers by one call, on both backends.
 | kernel | replaces | interp before → after | native |
 |---|---|--:|--:|
 | `vector_sum_int` | `acc = acc + v[i]` over `0..v.len()` (stdlib `sum` over integers) | 1,174,380 → 4,830 ns/op | 4,300 ns/op |
+| `split` (`Stores::split_char`) | the stdlib `split`'s per-character loft loop | split 1.83 ms → 46 µs, split_walk 2.15 ms → 43 µs | unchanged (native's R-LazySplit / R-SplitTable read the kernel form) |
+| `text_lines` (private, under `File.lines()`) | the stdlib `lines`'s per-character loft loop | see the ports below | — |
 
-Next, from the routines past the 100× cliff: `find` / `contains` (`str::find`), a split step
-for `split_walk` (361×, needs a text slice on the interpreter's stack), char and byte walks.
+A stdlib kernel that is not itself the public name stays private (`fn`, not `pub fn`): the
+direction of the stdlib is out, not in ([@PLN179 strand 8](179-scripts-in-loft/README.md)).
+
+**Where the next kernels come from: the @PLN179 script ports.** @PLN179 ports the project's
+own scripts to loft, each a twin run beside its original (`make script-twin`), and scores
+every port on performance against the original ([SCOREBOARD.md](179-scripts-in-loft/SCOREBOARD.md)).
+Those ports are REAL interpreter workloads — a script runs interpreted by default (MODES.md)
+— so they are the corpus this plan optimises alongside the bench routines: a port slower than
+its original with a profile naming one stdlib loop is a kernel candidate, and its scoreboard
+row is the measurement.  `LOFT_PROFILE=1` on the port finds the loop; the finding in
+[REASONS.md](179-scripts-in-loft/REASONS.md) records it (finding 013 is `split` + `lines`, the
+two kernels above).
+
+Measured on the two ports finding 013 names (interpreted, this box, same bytes out as the
+original on every run; Python is the original):
+
+| port | Python | interp before | interp after | what remains (`LOFT_PROFILE=1`) |
+|---|--:|--:|--:|---|
+| `tests/dump_ignored_tests` (584k lines through `lines()`) | 0.22 s | 3.67 s | 0.62 s | — |
+| `scripts/opl_points` (200k OPL lines through `split`) | 0.31 s | 4.13 s | 1.79 s | the per-field loop in `main` (62 %, `x = field[1..]` its top line) and the hand-written `%hex%` unescape (30 %) |
+
+Next, from the routines past the 100× cliff and the ports' profiles: `find` / `contains`
+(`str::find`), a split step for `split_walk` (361×, needs a text slice on the interpreter's
+stack), char and byte walks, and whatever the next slow port names.
 
 ## Design
 
