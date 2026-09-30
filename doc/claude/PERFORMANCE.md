@@ -22,6 +22,7 @@ read by the release checklist's `M-perf-pass`.
 
 ## Contents
 - [Where the numbers are](#where-the-numbers-are)
+- [How to optimise — the checklist](#how-to-optimise--the-checklist)
 - [Profiling a run](#profiling-a-run)
 - [Measuring native code](#measuring-native-code)
 - [How the interpreter executes](#how-the-interpreter-executes)
@@ -46,6 +47,49 @@ Ask the tool that measures:
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
 
 The rendered benchmark page for users is [doc/00-performance.html](../00-performance.html).
+
+---
+
+## How to optimise — the checklist
+
+Both backends, in this order.  Each step's detail lives where it points; the order is the rule.
+
+1. **Pick the row by measurement.**  `make interp-gap` (interpreter against native, the ~100×
+   cliff) or `make perf-portal` (native against Rust); rank by [§ The clear case
+   first](#the-clear-case-first), within [§ Wide before deep](#wide-before-deep).
+2. **Measure real time on the tier that ships**, never the semantics build (CLAUDE.md § three
+   optimisation tiers), pinned to one core (`taskset`, `perf stat -e instructions,cycles`).
+   `LOFT_PROFILE` samples by OPERATION COUNT, not time: a line full of cheap ops reads hot and
+   is not — confirm with `perf` before believing it.  Run nothing beside a gate: it perturbs
+   the timing and can starve the gate of memory.
+3. **Name the work the slow form does that the fast one does not** — a copy, a record claimed,
+   a conversion, a call frame, a store grown.  [§ Count before you
+   time](#count-before-you-time) for an asymptotic question; `LOFT_STORE_CENSUS` for data that
+   leaves the cache ([§ What to optimise](#what-to-optimise-the-data-that-leaves-the-cache)).
+4. **Hand-write the efficient form first** — in loft, or as the IR the rewrite would produce —
+   for that one case, read what it compiles to on BOTH backends (`--interpret --dump`,
+   `--native-emit`, `bench/portal/hand_price.sh`) and time it.  That is the prize, and the
+   proof the target shape is fast.  If the hand-written form is not faster, the named work was
+   not the cost: go back to step 3.
+5. **Only then build the rewrite that removes the unneeded work**, turning the natural spelling
+   (the canonical one) into that form.  Where both backends gain, in the IR phase — a native
+   rule moved there ([§ Why the interpreter is optimised at
+   all](#why-the-interpreter-is-optimised-at-all)); a runtime lever before a generator rewrite
+   ([§ Wide before deep](#wide-before-deep)).  **Never a new combined opcode or a kernel
+   standing in for the pattern**: it speeds one spelling and nothing next to it
+   ([KERNELS.md](KERNELS.md)).  Only proven situations
+   ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
+   ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
+   model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).
+6. **Verify it cannot be wrong**: a guard with hand-computed values on both backends whose
+   planted defects go red (`@falsified-at`, [GUARDS.md](GUARDS.md)), its switch A/B
+   ([formal/rewrites.md § Every rewrite is switchable and
+   falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable)),
+   `make rewrite-census`, and native's signatures unchanged — no change may make native or any
+   routine's ratio worse.  Regenerate what it derives: `make compiled-stdlib` after a change to
+   what stdlib functions compile to, `make surface-gen` after a new op or builtin.
+7. **Record it**: `make perf-check ARGS=--record` beside the change, and the measured
+   before/after in the commit and in the plan or ledger that owns the row.
 
 ---
 
@@ -665,8 +709,10 @@ consequences:
   signatures and rewrites before and after, because an IR rewrite can take away a shape a native
   rule relied on.  @PLN180's first materialisation step turned three forwarding functions back
   into record returns on native, and the fix was to support the forward in the IR.
-- Interpreter-only machinery (operand fusion, the lean loop) comes second to moving a native
-  rule into the IR.
+- Interpreter-only machinery (the lean loop, the operand fusion already built) comes second to
+  moving a native rule into the IR, and no NEW combined opcode is the answer to a hot spot
+  (owner, 2026-10-01): it is a kernel in disguise, fast for one operand shape only.  The
+  method is [§ How to optimise](#how-to-optimise--the-checklist).
 
 The bar is measured, not felt: the per-routine ratio of the OPTIMISED interpreter to OPTIMISED
 native code, in real time (`make interp-gap`).  A cliff is about **100×**.  A routine above it
