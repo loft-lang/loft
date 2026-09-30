@@ -2503,6 +2503,22 @@ fn a_diagnostic_names_its_own_line_whatever_follows_it() {
 }
 
 #[test]
+fn a_diagnostic_names_its_own_line_under_a_shebang() {
+    // The `#!` first line is skipped by the lexer and must still be COUNTED: before the
+    // fix every diagnostic in a bare script named the line above the one the editor shows
+    // (@PLN179 finding 007 — measured on the seeder port: a bad format width on line 30
+    // reported at 29).
+    code!("#!/usr/bin/env loft\nfn f(a: const integer) {\n  a = 42;\n}\nfn test() { f(1); }")
+        .error(
+            "Cannot modify const parameter 'a'; remove 'const' or use a local copy \
+             at a_diagnostic_names_its_own_line_under_a_shebang:3:9",
+        )
+        .warning(
+            "Parameter a is never read at a_diagnostic_names_its_own_line_under_a_shebang:2:25",
+        );
+}
+
+#[test]
 fn a_diagnostic_names_its_own_line_with_no_terminator() {
     code!("fn f(a: const integer) {\n  a = 42\n}\nfn test() { f(1); }")
         .error(
