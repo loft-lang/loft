@@ -444,7 +444,7 @@ For per-phase status (what's shipped, what's in flight, what's blocked) **read t
 
 | Plan | E | Depends on | Notes |
 |---|---|---|---|
-| [`plans/179-scripts-in-loft/README.md`](plans/179-scripts-in-loft/README.md) (`@PLN179`) | L, in S–M tranches | @PLN119 (typed tools), @PLN142 (installed binary for hooks) | **FUTURE.** The repo's 231 Python/bash scripts ported to loft, each proven against its original on four channels by a twin harness; the pairs become the scripting comparison beside `00-vs-python.html` |
+| [`plans/179-scripts-in-loft/README.md`](plans/179-scripts-in-loft/README.md) (`@PLN179`) | L, in S–M tranches | @PLN119 (typed tools), @PLN142 (installed binary for hooks) | **FUTURE.** The repo's 231 Python/bash scripts ported to loft, each proven against its original on four channels by a twin harness, over a `Command` typed string + `run` that drains every stream (owner-directed 2026-09-30); the pairs become the scripting comparison beside `00-vs-python.html` |
 | [`plans/34-native-debug/`](plans/34-native-debug) | XS-MH | — | NDB.0 / NDB.1 / NDB.2 — GDB / LLDB integration for `--native` |
 | [`plans/32-event-loop/`](plans/32-event-loop) | MH | **@P213 v4** (compiler bug) | Bidirectional event-loop abstraction (client + server) |
 | [`plans/33-multiplayer-editor/`](plans/33-multiplayer-editor) | M | **plans/32 TIC_TAC_TOE v2 ground layer** (now active) | First real-game milestone |

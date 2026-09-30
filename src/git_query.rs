@@ -3,11 +3,12 @@
 // @I117 — Git query natives — a repository as a typed library, not a subprocess
 // @PLN119 arc F — the git natives behind `lib/git`.
 
-//! loft has no subprocess primitive, and [@PLN119 § Why not a subprocess
-//! primitive](../doc/claude/plans/119-out-of-process-libraries/README.md)
-//! declines one: `run(cmd, args)` is a second, weaker interface beside the
-//! typed library calls loft already has, and every consumer of it re-parses
-//! text loft already knows how to type.
+//! When this was written loft had no subprocess primitive and [@PLN119 § Why not
+//! a subprocess primitive](../doc/claude/plans/119-out-of-process-libraries/README.md)
+//! declined one: `run(cmd, args)` hands back bytes every consumer re-parses.
+//! [@PLN179 strand 4](../doc/claude/plans/179-scripts-in-loft/README.md) adds
+//! `run` over a typed `Command` (2026-09-30); this module is the natives the
+//! rewritten `lib/git` is twinned against before they retire.
 //!
 //! So an external command lives INSIDE a vetted library. This module is the
 //! mechanics half of `lib/git` — the same arrangement as `lib/engine_host`,
