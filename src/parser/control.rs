@@ -2418,6 +2418,12 @@ impl Parser {
             // *"expected A, got B on else"* for a join `match` accepts (loft#1117).  The
             // arm keeps its own type and `parse_if` joins the two to their enum.
             let sibling_variant = arm_of_sibling && self.arm_joins_to_enum(t, result);
+            // @FR-I-Widen — an arm WIDER than its sibling (`if c { 1 } else { 2.5 }`) is not a
+            // conversion question either: `float ⤳ integer` is licensed by nothing, and the join
+            // is the float (`numeric_join`).  The arm keeps its own type, and the site that owns
+            // the join converts the narrower siblings to it — `parse_if` its then arm, a `match`
+            // the arms it already assembled (`join_open_arm`) — loft#1793.
+            let numeric_widen = arm_of_sibling && Self::numeric_join(result, t).is_some();
             // @FR-F-Block — the arms of a construct in STATEMENT position yield nothing
             // anybody reads, so their types need not agree.  Only one ORDER used to compile:
             // a void THEN arm makes the expected type `void`, which accepts any else arm,
@@ -2441,7 +2447,8 @@ impl Parser {
                 && !if_unified
                 && !vec_match_candidate
                 && !vec_arm_handled
-                && !sibling_variant;
+                && !sibling_variant
+                && !numeric_widen;
             // @FR-N-Store — the tail is a STORE into the return slot.  The store face asks
             // where the tail converts; a tail that does not convert (a rewritten tuple, a
             // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
@@ -2551,7 +2558,7 @@ impl Parser {
                     // E0308.  The `if`'s own join is decided in `parse_if` from the THEN
                     // arm and is unaffected.
                     t.clone()
-                } else if sibling_variant {
+                } else if sibling_variant || numeric_widen {
                     t.clone()
                 } else if let Some(w) = boxed_arm_w {
                     // The arm was boxed into `w` (loft#1350): its value is that work-ref,
@@ -5588,6 +5595,13 @@ impl Parser {
                     {
                         true_type = enum_tp.clone();
                     }
+                    // @FR-I-Widen — a chain that joined WIDER than the then arm widens the then
+                    // arm to it (loft#1793): `if a { 1 } else if b { 2.5 } else { 3 }` is float.
+                    if let Some(joined) = Self::numeric_join(&true_type, &chain_type) {
+                        let from = true_type.clone();
+                        self.convert_arm_tail(&mut true_code, &from, &joined);
+                        true_type = joined;
+                    }
                     // loft#978 — the chain's TYPE deliberately stays out of `false_type`
                     // (above), but what it BORROWS is still a value this if-expression can
                     // deliver, so it has to reach the join below.  Without it an
@@ -5646,6 +5660,14 @@ impl Parser {
                     && self.joins_to_enum(enum_tp, &true_type, &false_type)
                 {
                     true_type = enum_tp.clone();
+                }
+                // @FR-I-Widen — an else arm WIDER than the then arm (`block_result` kept its
+                // own type) makes the join that wider type, and the then arm converts to it
+                // exactly as an else arm converts to a wider then arm (loft#1793).
+                if let Some(joined) = Self::numeric_join(&true_type, &false_type) {
+                    let from = true_type.clone();
+                    self.convert_arm_tail(&mut true_code, &from, &joined);
+                    true_type = joined;
                 }
             }
             if true_type == Type::Unknown(0) {
@@ -6205,12 +6227,15 @@ impl Parser {
             };
 
             if pattern_name == "_" {
-                let before = self
-                    .tuple_join_open(&result_type)
-                    .then(|| result_type.clone());
+                // loft#1682 / loft#1793 — a result the wildcard can still widen: an open tuple
+                // member, or a numeric type a wider arm joins past.
+                let before = (self.tuple_join_open(&result_type)
+                    || matches!(result_type.base(), Type::Integer(_) | Type::Single))
+                .then(|| result_type.clone());
                 let (arm, is_exhaustive) = self.parse_match_wildcard_arm(&mut result_type);
                 if before.is_some_and(|b| !b.is_equal(&result_type)) {
-                    // loft#1682 — the wildcard arm named the member; the earlier arms follow.
+                    // The wildcard arm named the member or widened the join; the earlier arms
+                    // follow.
                     let joined = result_type.clone();
                     self.reconvert_null_tuple_arms(&mut arms, &joined);
                 }
@@ -7050,6 +7075,11 @@ impl Parser {
         // between them, so the arm keeps its own shape and the join above still sees that
         // the two differ.  `block_result` carves the same case out for `else`.
         if self.arm_joins_to_enum(&t, expected) {
+            return t;
+        }
+        // @FR-I-Widen — an arm wider than its siblings widens the join, and the match site
+        // converts the siblings (`join_open_arm`); `block_result` carves out the same case.
+        if Self::numeric_join(expected, &t).is_some() {
             return t;
         }
         // A struct-enum pattern binding yields a BORROW — `Ship { carrier } => carrier` is
@@ -10419,7 +10449,7 @@ impl Parser {
             {
                 // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                 for prev in &mut arms {
-                    if self.tuple_join_open(&prev.2) {
+                    if self.arm_takes_join(&prev.2, &joined) {
                         let prev_orig = prev.2.clone();
                         self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                         prev.2 = joined.clone();
@@ -11630,7 +11660,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if self.tuple_join_open(prev_tp) {
+                    if self.arm_takes_join(prev_tp, &joined) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -12033,7 +12063,7 @@ impl Parser {
                 self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
             {
                 for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
-                    if self.tuple_join_open(prev_tp) {
+                    if self.arm_takes_join(prev_tp, &joined) {
                         let prev_orig = prev_tp.clone();
                         self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                         *prev_tp = joined.clone();
@@ -14573,6 +14603,35 @@ impl Parser {
             .is_some_and(|e| self.joins_to_enum(&e, expected, arm))
     }
 
+    /// `@FR-I-Widen` / `(C-Num)` — the numeric JOIN of two arms when `narrow` widens to
+    /// `wide`: `integer ⊔ float = float`, `integer ⊔ single = single`, `single ⊔ float =
+    /// float`, optional when either arm is (`@FR-N-Join`).  `None` when nothing widens — the
+    /// same type, a pair `(C-Num)` does not relate, or `wide` the narrower of the two.
+    ///
+    /// The join is the least type containing both arms, so it cannot depend on which arm was
+    /// written first: `if c { 2.5 } else { 1 }` was `float` while `if c { 1 } else { 2.5 }`
+    /// was refused *"expected integer, got float on else"*, because only the else arm was
+    /// converted to its sibling and `float ⤳ integer` is no conversion (loft#1793).  The
+    /// sites that decide a join — `parse_if`, `join_arm_into` — ask this, and the arm tail
+    /// that meets a sibling keeps its own type where this answers (`block_result`).
+    pub(super) fn numeric_join(narrow: &Type, wide: &Type) -> Option<Type> {
+        let widens = matches!(
+            (narrow.base(), wide.base()),
+            (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
+        );
+        if !widens {
+            return None;
+        }
+        let joined = wide.base().clone();
+        Some(
+            if matches!(narrow, Type::Optional(_)) || matches!(wide, Type::Optional(_)) {
+                Type::optional(joined)
+            } else {
+                joined
+            },
+        )
+    }
+
     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
     /// variant?
     ///
@@ -14811,6 +14870,17 @@ impl Parser {
         arm_body: &mut Value,
         arm_type: &mut Type,
     ) -> Option<Type> {
+        // loft#1793 — the other OPEN join: an arm wider than the result so far (`match k { 1 =>
+        // 1, _ => 2.5 }`) makes the join its own type, and the arms already assembled convert
+        // to it exactly as they do for a tuple member (`arm_takes_join`).
+        if let Some(joined) = Self::numeric_join(result_type, arm_type) {
+            if !arm_type.is_equal(&joined) {
+                let orig = arm_type.clone();
+                self.convert_arm_tail(arm_body, &orig, &joined);
+            }
+            *arm_type = joined.clone();
+            return Some(joined);
+        }
         if !self.tuple_join_open(result_type) {
             return None;
         }
@@ -14847,12 +14917,19 @@ impl Parser {
     /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
     fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
         for prev in arms.iter_mut() {
-            if self.tuple_join_open(&prev.tp) {
+            if self.arm_takes_join(&prev.tp, joined) {
                 let prev_orig = prev.tp.clone();
                 self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                 prev.tp = joined.clone();
             }
         }
+    }
+
+    /// Does an arm assembled before the join was known still have to convert to it?  An arm
+    /// that left a tuple member open (loft#1682), or one narrower than a numeric join a later
+    /// arm widened to (loft#1793, `numeric_join`).
+    fn arm_takes_join(&self, arm_tp: &Type, joined: &Type) -> bool {
+        self.tuple_join_open(arm_tp) || Self::numeric_join(arm_tp, joined).is_some()
     }
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {

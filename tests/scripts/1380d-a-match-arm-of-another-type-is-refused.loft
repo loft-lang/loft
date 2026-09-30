@@ -29,12 +29,9 @@ enum Ch1380d {
 }
 fn takes1380d(c: u8) -> integer { c }
 
-// @EXPECT_ERROR: expected integer, got float on a match arm
-fn test_a_float_arm_behind_an_integer_arm() {
-  k = 2;
-  x: integer = match k { 1 => 1, _ => 2.5 };
-  assert(x == 0, "unreached");
-}
+// The float-arm cell (`x: integer = match k { 1 => 1, _ => 2.5 }`) is a PASS-1 refusal since
+// loft#1793 — the arms join to `float` and the declared `integer` refuses that store — so it
+// lives in `102b-pass1-expected-errors.loft`; the counts in the receipt above include it.
 
 // @EXPECT_ERROR: expected float, got text on a match arm
 fn test_a_text_arm_behind_a_float_arm() {
@@ -102,7 +99,6 @@ fn test_an_overflowing_arm_in_a_block_arm() {
 }
 
 fn main() {
-  test_a_float_arm_behind_an_integer_arm();
   test_a_text_arm_behind_a_float_arm();
   test_an_overflowing_arm_into_a_u8_local();
   test_a_literal_arm_that_does_not_fit();

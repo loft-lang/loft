@@ -300,3 +300,21 @@ type PeSizeThatIsNotAWidth = integer limit(10, 255) size(3);
 // punctuation error about a width they wrote deliberately.
 // @EXPECT_ERROR: a narrow integer is 1, 2, 4 or 8 bytes wide
 type PeSizeAboveI32Max = integer limit(10, 255) size(9999999999);
+
+// ── loft#1793: an integer local refuses a float JOIN in either arm order ──
+// `integer ⊔ float = float`, so the refusal is the store into the declared `integer`, whichever
+// arm is the float — moved here from 1380b / 1380d, whose other cells are pass-2 refusals.
+
+// @EXPECT_ERROR: cannot change type from integer to float
+fn test_a_float_chain_arm_behind_an_integer_then_arm_1793() {
+  k = 2;
+  x: integer = if k == 1 { 1 } else if k == 2 { 2.5 } else { 3 };
+  assert(x == 0, "unreached");
+}
+
+// @EXPECT_ERROR: cannot change type from integer to float
+fn test_a_float_match_arm_behind_an_integer_arm_1793() {
+  k = 2;
+  x: integer = match k { 1 => 1, _ => 2.5 };
+  assert(x == 0, "unreached");
+}
