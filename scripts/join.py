@@ -333,6 +333,8 @@ def resolve_union(path, keep="both"):
             side = None
             if keep == "both":
                 out += hunk["ours"] + hunk["theirs"]
+            elif keep == "ours":
+                out += hunk["ours"]
             else:
                 out += [l for l in hunk["ours"] if l in hunk["theirs"]]
             continue
@@ -341,6 +343,21 @@ def resolve_union(path, keep="both"):
         elif side is None:
             out.append(line)
     (ROOT / path).write_text("".join(out), encoding="utf-8")
+
+
+def conflicts_only_rows(path):
+    """Is every line on either side of every conflict in `path` a measured `| **N** |` row?"""
+    side, lines = None, []
+    for line in (ROOT / path).read_text(encoding="utf-8").splitlines():
+        if line.startswith("<<<<<<< "):
+            side = "in"
+        elif side and (line.startswith("=======") or line.startswith("||||||| ")):
+            continue
+        elif side and line.startswith(">>>>>>> "):
+            side = None
+        elif side:
+            lines.append(line)
+    return bool(lines) and all(re.fullmatch(r"\| \*\*\d+\*\* \|", l.strip()) for l in lines)
 
 
 def cherry_pick(commit, registry):
@@ -365,6 +382,10 @@ def cherry_pick(commit, registry):
             resolve_union(f)
             git("add", "--", f)
             print(f"      {f}: append-only — kept both sides")
+        elif f in registry.get("row_files", []) and conflicts_only_rows(f):
+            resolve_union(f, keep="ours")
+            git("add", "--", f)
+            print(f"      {f}: only measured rows conflict — kept ours, re-derived later")
         elif f in registry.get("shrink_files", []):
             resolve_union(f, keep="common")
             git("add", "--", f)
