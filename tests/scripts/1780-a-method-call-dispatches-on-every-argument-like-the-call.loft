@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1780 — `a.m(b)` and `m(a, b)` are ONE call over a `self` overload set that dispatches
+// past its receiver (@FR-F-Recv: "the two call SPELLINGS resolve identically"; @PLN162
+// `Disp-Dynamic` / `Disp-Exhaustive`: a set covering every variant tuple is admitted without
+// an enum-level definition).
+//
+// Two defects made the method spelling differ.  @F20 treated such a set as single dispatch:
+// it kept ONE definition per receiver variant, took the later parameters from those, and hung
+// the result on the enum's method slot — so `a.hits(b)` was refused on argument 2 ("expected
+// Rect, got Shape") while `hits(a, b)` dispatched, and a declaration order whose kept arms
+// disagreed on a later parameter refused the whole set.  And `select_method_def` never asked
+// the set's dispatcher when no definition takes the static types, as the bare spelling does.
+//
+// Axes this file MOVES:  the spelling (method · call), the declaration order (per-variant last
+//                        definitions agreeing or not on `b`), the static type of either side
+//                        (enum · variant), the return kind (integer · text with a scalar extra
+//                        parameter), a variant covering the second position with ONE
+//                        `Shape`-typed definition, an enum-level fallback beside a variant
+//                        pair, overloads by ARITY on each variant, and the evaluation count
+//                        (once · every pair in a loop over a `vector<Shape>`).
+// Axes it HOLDS FIXED:   one three-variant struct-enum; dense values (a nullable argument to a
+//                        set with no enum-level definition is refused in both spellings alike).
+// The refusal of an UNCOVERED pair — one message in both spellings, nothing after it — is
+// `tests/parse_errors.rs::a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call`.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, native exit 1 -> 0.
+//   CHANNEL: exit on both backends — the control refuses this file at compile time: "`hits`
+//   cannot be dispatched on `Shape`: this implementation takes `b`, which the other variants'
+//   implementations do not" (and the same for `tag`, `k`), so no assertion runs there.
+//   HOLDS: each value below is hand-computed; this tree prints them on both backends and is
+//   clean under LOFT_POISON=1 with LOFT_STRICT_STORES=1.
+
+enum Shape { Circle { r: integer }, Rect { w: integer, h: integer }, Tri { b: integer } }
+
+// A covering 3x3 set, declared so the per-variant LAST definitions differ in `b`.
+fn hits(self: Circle, b: Circle) -> integer { 11 + self.r * 0 + b.r * 0 }
+fn hits(self: Circle, b: Rect) -> integer { 12 + self.r * 0 + b.w * 0 }
+fn hits(self: Circle, b: Tri) -> integer { 13 + self.r * 0 + b.b * 0 }
+fn hits(self: Rect, b: Tri) -> integer { 23 + self.w * 0 + b.b * 0 }
+fn hits(self: Rect, b: Circle) -> integer { 21 + self.w * 0 + b.r * 0 }
+fn hits(self: Rect, b: Rect) -> integer { 22 + self.w * 0 + b.w * 0 }
+fn hits(self: Tri, b: Rect) -> integer { 32 + self.b * 0 + b.w * 0 }
+fn hits(self: Tri, b: Tri) -> integer { 33 + self.b * 0 + b.b * 0 }
+fn hits(self: Tri, b: Circle) -> integer { 31 + self.b * 0 + b.r * 0 }
+
+// A text return with a scalar extra parameter; `Rect` and `Tri` cover `b` with one definition.
+fn tag(self: Circle, b: Circle, k: integer) -> text { "cc{k}{b.r * 0}" }
+fn tag(self: Circle, b: Rect, k: integer) -> text { "cr{k}{b.w * 0}" }
+fn tag(self: Circle, b: Tri, k: integer) -> text { "ct{k}{b.b * 0}" }
+fn tag(self: Rect, b: Shape, k: integer) -> text { "r{k}{self.w * 0}" }
+fn tag(self: Tri, b: Shape, k: integer) -> text { "t{k}{self.b * 0}" }
+
+// An enum-level fallback beside one variant pair.
+fn meet(self: Circle, b: Rect) -> integer { 12 + self.r * 0 + b.w * 0 }
+fn meet(self: Shape, b: Shape) -> integer { 0 }
+
+// Overloads by arity on each variant.
+fn area(self: Circle) -> integer { self.r * 3 }
+fn area(self: Circle, k: integer) -> integer { self.r * k }
+fn area(self: Rect) -> integer { self.w * self.h }
+fn area(self: Rect, k: integer) -> integer { self.w * self.h * k }
+fn area(self: Tri) -> integer { self.b }
+fn area(self: Tri, k: integer) -> integer { self.b + k }
+
+fn main() {
+  c: Shape = Circle { r: 2 };
+  r: Shape = Rect { w: 3, h: 4 };
+  t: Shape = Tri { b: 5 };
+  vc = Circle { r: 7 };
+  m = "{c.hits(c)} {c.hits(r)} {c.hits(t)} {r.hits(c)} {r.hits(r)} {r.hits(t)} {t.hits(c)} {t.hits(r)} {t.hits(t)}";
+  f = "{hits(c, c)} {hits(c, r)} {hits(c, t)} {hits(r, c)} {hits(r, r)} {hits(r, t)} {hits(t, c)} {hits(t, r)} {hits(t, t)}";
+  assert(m == "11 12 13 21 22 23 31 32 33", "method spelling: {m}");
+  assert(f == m, "call spelling: {f}");
+  assert(vc.hits(r) == 12 && r.hits(vc) == 21 && vc.hits(vc) == 11, "a variant-typed side");
+  tm = "{c.tag(r, 1)} {c.tag(t, 2)} {r.tag(c, 3)} {t.tag(t, 4)} {c.tag(c, 5)}";
+  tf = "{tag(c, r, 1)} {tag(c, t, 2)} {tag(r, c, 3)} {tag(t, t, 4)} {tag(c, c, 5)}";
+  assert(tm == "cr10 ct20 r30 t40 cc50", "text method: {tm}");
+  assert(tf == tm, "text call: {tf}");
+  assert(c.meet(r) == 12 && c.meet(c) == 0 && r.meet(c) == 0, "fallback, method spelling");
+  assert(meet(c, r) == 12 && meet(r, r) == 0, "fallback, call spelling");
+  a = "{c.area()} {r.area()} {t.area()} {c.area(10)} {r.area(10)} {t.area(10)} {area(t)} {area(r, 2)}";
+  assert(a == "6 12 5 20 120 15 5 24", "arity: {a}");
+  vs: vector<Shape> = [c, r, t];
+  total = 0;
+  for x in vs {
+    for y in vs {
+      total += x.hits(y);
+    }
+  }
+  assert(total == 198, "every pair in a loop: {total}");
+}

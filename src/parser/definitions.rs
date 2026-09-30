@@ -309,8 +309,13 @@ impl Parser {
             }
             group.2.push(d_nr as u32);
         }
-        for ((name, _), (at_enum, at_variant, members)) in groups {
-            if !(at_enum && at_variant) {
+        for ((name, e_nr), (at_enum, at_variant, members)) in groups {
+            // A set that dispatches PAST its receiver is one set over the whole enum too: a
+            // variant whose only definition collided with none (`hits(self: Rect, b: Circle)`
+            // beside two on `Circle`) stayed a lone method outside it, so the set's
+            // dispatcher named that variant's pairs uncovered and listed the rest as all
+            // that was declared (loft#1780).
+            if !(at_variant && (at_enum || self.data.dispatches_past_receiver(&name, e_nr))) {
                 continue;
             }
             let main = self.data.def_nr(&name);
@@ -511,6 +516,7 @@ impl Parser {
         }
         self.join_enum_lattice_sets();
         let mut todo = HashMap::new();
+        let mut members: Vec<(u32, String)> = Vec::new();
         for (d_nr, d) in self.data.definitions.iter().enumerate() {
             if d.def_type != DefType::Function || d.attributes.is_empty() {
                 continue;
@@ -535,11 +541,31 @@ impl Parser {
                 // compiler. A method lives in its type's own attribute table, which is
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
+            {
                 // @PLN162 — an overload set that receives the enum, or holds a FREE
                 // definition, owns its dispatch: the enum-level definition is the author's
                 // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
-                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
-            {
+                // A `self` set that dispatches PAST its receiver owns it too, but it IS a
+                // method, so the enum still carries its NAME — membership, which is what
+                // brings `x.m(…)` to `select_method_def` and so to the set's own dispatcher
+                // (@FR-F-Recv: both spellings resolve alike, loft#1780).
+                if self
+                    .data
+                    .overload_set_owns_dispatch(&d.original_name(), *e_nr)
+                {
+                    let name = d.original_name().clone();
+                    if self.data.dispatches_past_receiver(&name, *e_nr)
+                        && !self
+                            .data
+                            .overload_routines(&name)
+                            .iter()
+                            .any(|r| self.data.def(*r).name.starts_with("f_"))
+                        && !members.contains(&(*e_nr, name.clone()))
+                    {
+                        members.push((*e_nr, name));
+                    }
+                    continue;
+                }
                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
                 // alone, an enum with two methods per variant put both lists in one bucket, so
@@ -562,6 +588,19 @@ impl Parser {
         for key in keys {
             let nrs = self.one_implementation_per_variant(&todo[&key]);
             self.create_enum_dispatch_fn(key.0, &nrs);
+        }
+        // The slot carries the set's bare dispatcher, as a `both` name's does: the call
+        // reaches it through `select_method_def`, which asks the set with the argument types.
+        for (e_nr, name) in members {
+            let main = self.data.def_nr(&name);
+            if main == u32::MAX || self.data.attr(e_nr, &name) != usize::MAX {
+                continue;
+            }
+            let a_nr = self
+                .data
+                .add_attribute(&mut self.lexer, e_nr, &name, Type::Routine(main));
+            self.data.definitions[e_nr as usize].attributes[a_nr].mutable = false;
+            self.data.definitions[e_nr as usize].attributes[a_nr].constant = true;
         }
     }
 

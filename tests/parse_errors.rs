@@ -597,6 +597,24 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call() {
+    // loft#1780 — `a.hits(b)` and `hits(a, b)` are one call (`@FR-F-Recv`): over a `self` set
+    // that dispatches past its receiver and misses the (Rd, Rd) pair, BOTH spellings are
+    // refused with the one `Disp-Exhaustive` message naming that pair and every declared
+    // definition — the lone `Rd` definition included — and nothing after it.  Before, @F20
+    // built a one-arm-per-variant dispatcher from the definitions' later parameters and
+    // refused the set as "cannot be dispatched", naming a parameter every definition has.
+    //
+    // Measured against ec35ee1de: FAILS there with *"`hits` cannot be dispatched on `Sh`: this
+    // implementation takes `b`, which the other variants' implementations do not …"*.
+    code!(
+        "enum Sh {\n    Ci { r: integer },\n    Rd { w: integer }\n}\nfn hits(self: Ci, b: Ci) -> integer { self.r + b.r }\nfn hits(self: Ci, b: Rd) -> integer { self.r + b.w }\nfn hits(self: Rd, b: Ci) -> integer { self.w + b.r }\nfn test() { a: Sh = Ci { r: 1 }; b: Sh = Rd { w: 2 }; a.hits(b); hits(a, b); }"
+    )
+    .error("`hits(Sh, Sh)` has no definition for the pair (Rd, Rd) — declared: hits(Ci, Ci), hits(Ci, Rd), hits(Rd, Ci); add one, or a definition at the enum at a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call:8:65")
+    .error("`hits(Sh, Sh)` has no definition for the pair (Rd, Rd) — declared: hits(Ci, Ci), hits(Ci, Rd), hits(Rd, Ci); add one, or a definition at the enum at a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call:8:77");
+}
+
+#[test]
 fn a_second_method_gets_its_own_missing_variant_refusal() {
     // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so coverage
     // is asked per method.  Keyed by the enum alone, `Sq` implementing `ar` silenced the

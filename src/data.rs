@@ -8213,30 +8213,75 @@ impl Data {
     /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
     /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
     /// synthesised beside either would be the same signature twice, or a method spelling for
-    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
+    /// a name that has none.  And it does when the set dispatches PAST its receiver
+    /// ([`Self::dispatches_past_receiver`]).  A `self`/`both` set with none of these keeps
+    /// @F20's runtime dispatch.
     #[must_use]
     pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
+        let routines = self.overload_routines(name);
+        routines.iter().any(|&r| {
+            self.def(r).name.starts_with("f_")
+                || self
+                    .visible_params(r)
+                    .first()
+                    .is_some_and(|t| matches!(t.base(), Type::Enum(e, _, _) if *e == e_nr))
+        }) || self.dispatches_past_receiver(name, e_nr)
+    }
+
+    /// Does the overload set of `name` hold two definitions on ONE variant of `e_nr` that
+    /// differ in a later parameter (`hits(self: Circle, b: Circle)` beside `hits(self: Circle,
+    /// b: Rect)`)?  Such a set dispatches past its receiver, which @F20's one-arm-per-variant
+    /// dispatcher cannot say: it kept one definition per variant, took the later parameters
+    /// from those, and bound the method spelling to the result — so `a.hits(b)` was refused
+    /// on argument 2 while `hits(a, b)` dispatched, and a declaration order that kept arms
+    /// with different later parameters refused the whole set (loft#1780, @FR-F-Recv).  The
+    /// `self: V` / `self: V?` pair is ONE definition per variant for this question, and so is
+    /// a pair differing only in a later parameter's nullability, so neither is compared.
+    #[must_use]
+    pub fn dispatches_past_receiver(&self, name: &str, e_nr: u32) -> bool {
+        let mut seen: Vec<(u32, Option<String>)> = Vec::new();
+        for r in self.overload_routines(name) {
+            let params = self.visible_params(r);
+            let Some(Type::Reference(v, _)) = params.first().map(|t| t.base()) else {
+                continue;
+            };
+            if self.def(*v).def_type != DefType::EnumValue || self.def(*v).parent != e_nr {
+                continue;
+            }
+            let rest = self.full_spelling(params[1..].iter().map(|t| t.base()));
+            if seen.iter().any(|(sv, sr)| sv == v && *sr != rest) {
+                return true;
+            }
+            seen.push((*v, rest));
+        }
+        false
+    }
+
+    /// The definitions of `name`'s overload set — the routines its bare `Dynamic` dispatcher
+    /// carries — or none when the name is no set.
+    pub(crate) fn overload_routines(&self, name: &str) -> Vec<u32> {
         let main = self.def_nr(name);
         if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
-            return false;
+            return Vec::new();
         }
         self.def(main)
             .attributes
             .iter()
-            .any(|a| match a.typedef.base() {
-                Type::Routine(r) => {
-                    self.def(*r).name.starts_with("f_")
-                        || self
-                            .def(*r)
-                            .attributes
-                            .iter()
-                            .find(|p| !p.hidden)
-                            .is_some_and(
-                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
-                            )
-                }
-                _ => false,
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
             })
+            .collect()
+    }
+
+    /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+    fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
+        self.def(d_nr)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| &p.typedef)
+            .collect()
     }
 
     /// The full spelling of a registered definition's declared parameters.

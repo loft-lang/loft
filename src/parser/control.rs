@@ -20496,7 +20496,33 @@ impl Parser {
                         }
                         return *fallback;
                     }
-                    _ => {}
+                    // `Disp-Exhaustive`, as the bare spelling asks it (`Parser::call`): no
+                    // definition takes the static types, but the set may cover every variant
+                    // tuple of the enum-held positions, and then its dispatcher IS the call.
+                    // Skipped here, `a.hits(b)` over a covering set fell to the slot's one
+                    // routine and was refused on argument 2 while `hits(a, b)` dispatched —
+                    // @FR-F-Recv's two spellings resolving apart (loft#1780).  A tuple the set
+                    // does not cover is reported by the dispatcher itself, and its flag is left
+                    // for `parse_method_selecting`, which ends the call there as the bare
+                    // spelling does rather than refusing the slot's routine on top of it.
+                    sel @ crate::parser::dispatch::Selection::NoneApplicable => {
+                        if let Some(dd) = self.dynamic_dispatcher(u16::MAX, name, &routed, None) {
+                            return dd;
+                        }
+                        // The slot holds the SET itself (a `self` set that dispatches past its
+                        // receiver, with no enum-level definition): there is no routine to
+                        // fall back to, and the answer is the bare spelling's refusal.
+                        if !self.reported_dynamic_refusal
+                            && self.data.def(*fallback).def_type == DefType::Dynamic
+                        {
+                            if !self.first_pass {
+                                self.report_selection(name, &routed, &sel, None);
+                            }
+                            self.reported_dynamic_refusal = true;
+                        }
+                        return *fallback;
+                    }
+                    crate::parser::dispatch::Selection::NotDecidable => {}
                 }
                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
@@ -20615,6 +20641,13 @@ impl Parser {
         let mut in_named = false;
         if self.lexer.has_token(")") {
             let selected = self.select_method_def(select, &types);
+            if std::mem::take(&mut self.reported_dynamic_refusal) {
+                return if self.first_pass {
+                    Type::Unknown(0)
+                } else {
+                    Type::Never
+                };
+            }
             if let Some(tp) =
                 self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
             {
@@ -20707,6 +20740,15 @@ impl Parser {
         }
         self.lexer.token(")");
         let selected = self.select_method_def(select, &types);
+        // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
+        // the whole answer, as `Parser::call` makes it for the bare spelling.
+        if std::mem::take(&mut self.reported_dynamic_refusal) {
+            return if self.first_pass {
+                Type::Unknown(0)
+            } else {
+                Type::Never
+            };
+        }
         if let Some(tp) =
             self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
         {
