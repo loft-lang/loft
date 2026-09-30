@@ -7,7 +7,10 @@
 // so it answered "Unknown function 'get_value'".  The worker is called with the element
 // first, which is exactly the receiver.  Extra arguments follow as for any worker.
 //
-// @falsified-at: PENDING
+// @falsified-at: 842cc4962 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1803-a-self-function-is-a-par-worker-under-both-spellings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control tree refuses `get_value(a)` inside `par` ("Unknown function").
+// HOLDS: leak and panic are equal on both trees; the method-spelling cell ran on both before.
 
 struct S { v: integer }
 fn get_value(self: S) -> integer { self.v * 2 }

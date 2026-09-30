@@ -1,0 +1,148 @@
+diff --git b/src/main.rs a/src/main.rs
+index f9bfe1e01..67ab058a6 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -9273,21 +9273,7 @@ fn main() {
+         // file lands in the program's drift manifest; otherwise use the D2b
+         // stdlib cache.
+         let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
+-        // loft#1801 — a binary with no `default/` beside it (copied onto the PATH, or
+-        // installed by `cargo install`) still carries the stdlib it was built from: the
+-        // same `include_str!` sources the browser build and `loft search` read.  Parsed
+-        // from there it cannot mismatch this binary's dispatch table, so a MISSING
+-        // directory is not an error.  A directory that is there but refused (a parse
+-        // error, a `default/` from another build) still is, below.
+-        let default_missing = !stdlib_warm && !default_dir.is_dir();
+-        if default_missing {
+-            for (name, content) in loft::stdlib_sources::STDLIB_SOURCES {
+-                if !p.parse_source(content, name, true) {
+-                    eprintln!("loft: the embedded standard library `{name}` does not parse");
+-                    std::process::exit(1);
+-                }
+-            }
+-        } else if !stdlib_warm {
++        if !stdlib_warm {
+             if let Err(e) = p.parse_dir(&default_str, true, false) {
+                 if e.kind() == std::io::ErrorKind::InvalidData {
+                     // The library was found and read, and refused: a parse error in it,
+diff --git b/src/parser/builtins.rs a/src/parser/builtins.rs
+index 3d965f4e0..41632ee50 100644
+--- b/src/parser/builtins.rs
++++ a/src/parser/builtins.rs
+@@ -235,26 +235,6 @@ impl Parser {
+                 "Expect '(' after function name '{first_id}' in parallel clause"
+             );
+         }
+-        // loft#1803 — a `self` function has both spellings everywhere, so `get_value(a)` is
+-        // `a.get_value()` here too: the worker is called with the element first, which is
+-        // exactly the receiver.  The method is filed under the element type's key
+-        // (`t_<len><Type>_<name>`) — the dense struct's for a nullable element, as the
+-        // method form resolves it — and not under the bare name this lookup asked.
+-        if d_nr == u32::MAX {
+-            let type_name = match elem_tp {
+-                Type::Enum(d, _, _) if self.data.def(*d).name().starts_with("__nullable<") => {
+-                    let nm = self.data.def(*d).name();
+-                    Some(nm["__nullable<".len()..nm.len() - 1].to_string())
+-                }
+-                Type::Reference(d, _) | Type::Enum(d, _, _) => Some(self.data.def(*d).name().to_string()),
+-                _ => None,
+-            };
+-            if let Some(type_name) = type_name {
+-                d_nr = self
+-                    .data
+-                    .def_nr(&crate::data::Data::mangle_method(&type_name, first_id));
+-            }
+-        }
+         if d_nr == u32::MAX {
+             if !self.first_pass {
+                 diagnostic!(self.lexer, Level::Error, "Unknown function '{first_id}'");
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 47c51d49d..8916981be 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3355,8 +3355,8 @@ use #count instead"
+                 Level::Error,
+                 "loop variable '{src_id}' shadows a local named '{src_id}' — \
+                  rename the loop variable (e.g. loop_{src_id}) or drop the \
+-                 outer `{src_id}` if it was a dead placeholder; a loop \
+-                 variable cannot reuse the name of a local still in scope"
++                 outer `{src_id}` if it was a dead placeholder; loft does \
++                 not block-scope loop variables"
+             );
+         }
+         if id != "_"
+@@ -4873,18 +4873,7 @@ use #count instead"
+         // `b` → `OpGetVector(results, idx)`.  build_parallel_for_ir
+         // performs the actual Var→accessor rewrite after body parse,
+         // once `idx_var` exists.
+-        // loft#1802 — the element is this loop's variable, created the way a sequential
+-        // loop's is: keyed by the LOOP (`<name>#bind`, loft#915), not by the name.  Reused
+-        // by name, pass 2's first `par` loop over `e` was handed whichever slot pass 1 left
+-        // `e` pointing at — the LAST loop's — so two `par` loops in a row shared one binding.
+-        let elem_var_nr = self.create_loop_var(elem_var, &elem_tp);
+-        // It ends with its body as a sequential loop's does (@FR-B-Scope).  Unrecorded, a
+-        // later `for e` read the par loop's `e` as "a local named 'e'" and refused as a
+-        // shadow; loft#1717 is the same mark for the unrolled `#fields` walk.
+-        self.vars.served_as_loop_var(elem_var_nr);
+-        // …and it is BOUND in the loop's body block, so the name is free again after the
+-        // loop's `}` — `e = 7` after the loop is a new binding, as after a plain `for`.
+-        self.pending_loop_binders.push(elem_var_nr);
++        let elem_var_nr = self.create_var(elem_var, &elem_tp);
+         // The body reads the name the program wrote; point it at this loop's binding
+         // and leave it there, the same as the sequential form (loft#915).
+         if elem_var != src_elem_var {
+@@ -4933,8 +4922,6 @@ use #count instead"
+                             .enumerate()
+                             .map(|(i, name)| {
+                                 let var = self.create_var(name, &elem_types[i]);
+-                                self.vars.served_as_loop_var(var);
+-                                self.pending_loop_binders.push(var);
+                                 self.vars.defined(var);
+                                 self.vars.in_use(var, true);
+                                 var
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 4f2129d8e..fe2b7caa8 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -3322,15 +3322,6 @@ impl Parser {
+             // derived from it) and has its append shape: name-keyed, idempotent, at the end.
+             let lazy_struct_instance =
+                 matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
+-            // The eighth: a DESTRUCTURING `par` loop's worker wrapper,
+-            // `__par_destructure_w_<line>_<col>_<worker>` — pass-2-only by design (pass 1
+-            // answers with the user's worker; `parse_destructure_par_worker` mints the wrapper
+-            // once the tuple's element types and offsets are final), minted once per loop site
+-            // and appended at the end.  Unrecognised, every `for (a, b) in v par(…)` stopped
+-            // the compiler with this assertion on both backends, while the `code!` harness,
+-            // which does not run H5, kept its tests green (loft#1802's matrix).
+-            let lazy_par_wrapper =
+-                matches!(dt, DefType::Function) && name.starts_with("__par_destructure_w_");
+             assert!(
+                 lazy_wrapper
+                     || lazy_instantiation
+@@ -3338,8 +3329,7 @@ impl Parser {
+                     || lazy_tuple
+                     || lazy_dispatcher
+                     || lazy_lambda_instance
+-                    || lazy_struct_instance
+-                    || lazy_par_wrapper,
++                    || lazy_struct_instance,
+                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
+                  wrapper or generic instantiation — a real cross-pass divergence \
+                  (pass1={}, pass2={})\n{}",
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index d64173330..bd0f6de85 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1320,11 +1320,6 @@ impl Parser {
+     /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
+     /// an assignment), so a missing one is named instead of read as nothing.
+     pub(crate) fn operand_absent(&mut self) -> bool {
+-        // After a fatal lexing error (an unterminated string) the input ends where the
+-        // error is, so a missing value there is that error's echo, not a second fault.
+-        if self.lexer.diagnostics().level() == Level::Fatal {
+-            return false;
+-        }
+         [";", "}", ")", "]", ","]
+             .iter()
+             .any(|t| self.lexer.peek_token(t))

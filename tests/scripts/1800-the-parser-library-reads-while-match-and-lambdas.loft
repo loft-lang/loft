@@ -18,7 +18,10 @@
 // two forms exactly (`|x|` bare and untyped, `fn(x: T)` typed).  `x = ;` only became a
 // refusal on loft's side with the same change: the compiler accepted it too.
 //
-// @falsified-at: PENDING
+// @falsified-at: 95e9fabd0 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1800-the-parser-library-reads-while-match-and-lambdas.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions — the control tree's library counts 3 errors for the first cell.
+// HOLDS: leak, panic and refusals are equal on both trees; the program itself compiles on both.
 
 use parser;
 

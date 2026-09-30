@@ -11,7 +11,11 @@
 // compiler outright: its worker wrapper is minted on pass 2 only, and the two-pass check did
 // not know it (the `code!` harness does not run that check, so its tests stayed green).
 //
-// @falsified-at: PENDING
+// @falsified-at: ce670cda8 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1802-a-par-loop-variable-ends-with-its-loop.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit — the control tree refuses the second `for e` as a shadow (and, with that
+//   cell removed, stops on H5 at the destructuring loop).
+// HOLDS: leak and panic are equal on both trees.
 
 struct E { k: integer }
 fn ev(e: E) -> integer { e.k * 2 }
