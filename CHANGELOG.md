@@ -1251,6 +1251,21 @@ parses; ordinary runs keep the cache.
 - An un-imported type names the package that has it, the way an un-imported function already
   did: *"Undefined type Canvas — the `graphics` package provides it"*.  `Rect` used to
   suggest *"did you mean 'text'?"*.
+- `x = ;` and `x += ;` are refused with *"Expected a value after `=`"*.  They compiled: the
+  first bound null, the second lost the program's later output.  `3 + ;` names the `+` too,
+  instead of an internal operator's missing argument.
+- The `parser` library reads `while`, `match`, both lambda forms, `if` and blocks as values,
+  typed locals, tuples and qualified names, as the compiler does, and it now counts an
+  invalid program (`x = ;`, a stray `}`) as invalid.  Its guide page lists what its grammar
+  does not cover yet.
+- A `loft` binary copied onto the PATH, or installed with `cargo install`, runs without a
+  `default/` directory beside it: it uses the standard library built into it.
+- A `par` loop's variable ends with the loop, as a `for` loop's does: `for e in v par(…)`
+  followed by `for e in v` compiles, and so do two `par` loops over the same name.  A
+  destructuring `par` loop, `for (a, b) in v par(r = add(a, b), 2)`, no longer stops the
+  compiler with an internal error.
+- Inside `par(…)`, a `self` function is also called by its free-function spelling:
+  `par(b = get_value(a), 2)`.
 
 ---
 
