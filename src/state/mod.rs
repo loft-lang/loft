@@ -268,6 +268,12 @@ pub struct State {
     /// Codegen only: the character walks of the function being generated
     /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
     pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
+    /// Locals whose only write a fused op of the function being generated took over, so
+    /// the slot they were given is never written (a character walk's result temp, which
+    /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
+    /// store-span check, which would otherwise take the unwritten slot for a missed
+    /// recording.  Reset with `walk_steps`, per function.
+    pub(crate) fused_away: Vec<u16>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -693,6 +699,7 @@ impl State {
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: Vec::new(),
+            fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -7638,6 +7645,7 @@ impl State {
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: Vec::new(),
+            fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
