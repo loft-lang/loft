@@ -1320,6 +1320,11 @@ impl Parser {
     /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
     /// an assignment), so a missing one is named instead of read as nothing.
     pub(crate) fn operand_absent(&mut self) -> bool {
+        // After a fatal lexing error (an unterminated string) the input ends where the
+        // error is, so a missing value there is that error's echo, not a second fault.
+        if self.lexer.diagnostics().level() == Level::Fatal {
+            return false;
+        }
         [";", "}", ")", "]", ","]
             .iter()
             .any(|t| self.lexer.peek_token(t))
