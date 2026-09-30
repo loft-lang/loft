@@ -73,6 +73,18 @@ fn carve_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_CARVE_IN_PLACE").is_ok_and(|v| v != "0"))
 }
+/// `LOFT_NO_LAZY_FREE=1` tracks every deleted block in the free tree at the delete — no lazy
+/// phase (`@FR-H-LazyFree`); the bisect step for a store-layout fault, a claim that hands
+/// out a live block, or a store that grows instead of reusing a freed block.  Read once; each
+/// store copies it at construction, so a unit test can build one of each in a process.
+fn lazy_free_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_LAZY_FREE").is_ok_and(|v| v != "0"))
+}
+/// `@FR-H-LazyFree` — a lazy store leaves the phase at the first claim its tail cannot
+/// hold once its untracked words reach this floor (2 KB): below it the sweep could never
+/// give back more than a few pages, so the store grows instead.
+const LAZY_FLOOR_WORDS: u32 = 256;
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -404,6 +416,14 @@ pub struct Store {
     /// alloc-only workload never pays for a fruitless O(n) pass.  A single
     /// flag — NOT an index; it does not grow with the free-block count.
     needs_coalesce: bool,
+    /// `@FR-H-LazyFree` — while set, a delete marks its block free and leaves it out of
+    /// the tree (a block that meets the wilderness folds into it), and a claim takes the
+    /// tail; the phase ends at the first claim the tail cannot hold once `dead_words` (the
+    /// untracked words) reach `LAZY_FLOOR_WORDS`, with the one sweep that tracks them all,
+    /// and at an explicit reclaim.  A fresh or reset store starts the phase again; a store
+    /// bound to a file never enters it.
+    lazy: bool,
+    dead_words: u32,
     /// CO1.9/S28: monotonic counter incremented on every `claim`, `resize`, and `delete`.
     /// Saved into `CoroutineFrame` at yield; compared at resume to detect store mutations
     /// that may have invalidated `DbRef` locals held by the generator.  Always compiled in
@@ -1044,6 +1064,8 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1165,6 +1187,10 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            // A store bound to a file never enters the lazy phase: it is read,
+            // reclaimed and paged by its layout (`@FR-H-LazyFree`).
+            lazy: false,
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1261,6 +1287,10 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            // A store bound to a file never enters the lazy phase: it is read,
+            // reclaimed and paged by its layout (`@FR-H-LazyFree`).
+            lazy: false,
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1365,6 +1395,8 @@ impl Store {
             wilderness: wilderness_enabled(),
             carve: carve_enabled(),
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: 0,
@@ -1406,6 +1438,9 @@ impl Store {
         self.free_root = 0;
         self.wild = 0;
         self.claims.clear();
+        // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
+        self.lazy = lazy_free_enabled();
+        self.dead_words = 0;
         // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
         // store's one FREE block, so naming it in the live-record set records a block that
         // is free.  `claims_rebuild` answers the same question off the store's own bytes for
@@ -1530,8 +1565,12 @@ impl Store {
         // below would grow the store.  Coalesce the chain (reusing the one
         // free tree — no new index) and retry once before growing.  Guarded
         // by `needs_coalesce` so an alloc-only workload never sweeps.
-        if self.needs_coalesce {
+        if self.needs_coalesce && self.sweep_due() {
             self.coalesce_free();
+            // `@FR-H-LazyFree` — one sweep ends the phase: the tree is exact from here and
+            // every later delete keeps it so.
+            self.lazy = false;
+            self.dead_words = 0;
             if let Some(result) = self.claim_best_fit(size) {
                 #[cfg(debug_assertions)]
                 self.fl_validate();
@@ -1545,6 +1584,14 @@ impl Store {
         #[cfg(debug_assertions)]
         self.fl_validate();
         self.finish_claim(result)
+    }
+
+    /// `@FR-H-LazyFree` — is the armed sweep worth running before the store grows?  An
+    /// exact store runs every armed sweep, as it always did; a lazy one only once its
+    /// untracked words reach the floor, so a store built once and freed whole never
+    /// sweeps, and a churning one sweeps once and is exact from then on.
+    fn sweep_due(&self) -> bool {
+        !self.lazy || self.dead_words >= LAZY_FLOOR_WORDS
     }
 
     /// The common claim, done without the free tree: a store that has freed nothing yet
@@ -1845,6 +1892,33 @@ impl Store {
             if let Some(log) = self.recording.as_mut() {
                 log.push(StoreChange::Free { pos: rec, before });
             }
+        }
+        // `@FR-H-LazyFree` — in the lazy phase the block is marked free at both ends and
+        // left untracked: no merge, no tree insert.  The sweep `claim` runs when growth
+        // would waste more than it saves merges and tracks every such block at once, and
+        // a store freed whole before that never pays for its deletes at all.
+        if self.lazy {
+            let words = self.read::<i32>(rec, 0);
+            self.claims.remove(rec);
+            let end = rec + words as u32;
+            if self.wilderness && self.wild != 0 && end == self.wild {
+                // The block meets the wilderness: fold it in, O(1) and tree-free, so a
+                // scratch claimed last and freed first leaves the layout as it found it.
+                let merged = words - self.read::<i32>(self.wild, 0);
+                self.set_free_header(rec, merged);
+                self.wild = rec;
+            } else if self.wilderness && self.wild == 0 && end == self.size {
+                // The block ends the store: it IS the wilderness now.
+                self.set_free_header(rec, words);
+                self.fl_insert(rec);
+            } else {
+                self.set_free_header(rec, words);
+                self.dead_words = self.dead_words.saturating_add(words as u32);
+                self.needs_coalesce = true;
+            }
+            #[cfg(debug_assertions)]
+            self.fl_validate();
+            return;
         }
         let mut claim = self.read::<i32>(rec, 0);
         self.claims.remove(rec);
@@ -2534,6 +2608,8 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -2597,6 +2673,8 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: self.needs_coalesce,
+            lazy: self.lazy,
+            dead_words: self.dead_words,
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -2641,6 +2719,8 @@ impl Store {
             wilderness: self.wilderness,
             carve: self.carve,
             needs_coalesce: false,
+            lazy: lazy_free_enabled(),
+            dead_words: 0,
             released_bytes: 0,
             claimed_end: 0,
             generation: self.generation,
@@ -2998,6 +3078,13 @@ impl Store {
         if self.free_root == 0 || self.fl_size(rec) < MIN_FREE_TREE {
             return;
         }
+        // `@FR-H-LazyFree` — a lazy store's free block may be untracked (a lazy delete
+        // beside a tree the sweep or a split left), and only a tree node leaves the tree:
+        // the exact-position claim and the chain walk's growth step both remove the free
+        // block they meet without asking.
+        if self.lazy && !self.fl_contains_node(self.free_root, rec) {
+            return;
+        }
         #[cfg(debug_assertions)]
         debug_assert!(
             self.fl_contains(rec),
@@ -3210,6 +3297,10 @@ impl Store {
         if self.needs_coalesce {
             self.coalesce_free();
         }
+        // `@FR-H-LazyFree` — an explicit reclaim asks for a compact store: every later
+        // delete is tracked at its site.
+        self.lazy = false;
+        self.dead_words = 0;
         let before = self.size;
         let mark = self.usage().live_end_words;
         // Not to the bare mark: the store stays LIVE, so it keeps allocating,
@@ -6131,10 +6222,143 @@ mod tests {
         );
     }
 
+    /// `@FR-H-LazyFree` — in the lazy phase a delete marks its block free at both ends
+    /// and tracks nothing: two adjacent deletes stay an unmerged pair, and the next claim
+    /// comes off the tail rather than out of the pair.  Nothing is lost: the usage walk
+    /// still counts the words as free.
+    #[test]
+    fn a_lazy_delete_is_untracked_and_the_claim_takes_the_tail() {
+        let mut store = Store::new(64);
+        store.free = false;
+        assert!(store.lazy, "a fresh store starts the lazy phase");
+        let _a = store.claim(5);
+        let b = store.claim(5);
+        let c = store.claim(5);
+        let d = store.claim(5);
+        store.delete(b);
+        store.delete(c);
+        assert_eq!(
+            store.usage().mergeable_free_pairs,
+            1,
+            "no merge at the delete"
+        );
+        assert_eq!(store.dead_words, 10, "the dead words are counted");
+        assert_eq!(
+            store.usage().free_words,
+            64 - 1 - 10,
+            "the usage walk sees them free"
+        );
+        let cap_before = store.byte_capacity();
+        let e = store.claim(9);
+        assert!(
+            e > d,
+            "claimed from the tail, not the freed pair (got {e}, D={d})"
+        );
+        assert_eq!(
+            store.byte_capacity(),
+            cap_before,
+            "the tail had room: no growth"
+        );
+        assert!(store.lazy, "still in the phase");
+        // The block that meets the wilderness folds into it: freed last, claimed first.
+        store.delete(e);
+        assert_eq!(store.wild, e, "folded into the wilderness");
+        assert_eq!(store.dead_words, 10, "not counted as dead");
+        assert_eq!(store.claim(9), e, "the next claim takes it back");
+    }
+
+    /// `@FR-H-LazyFree` — below the floor the store GROWS rather than sweeps: a small
+    /// store's churn is never worth an O(blocks) walk, and the phase goes on.
+    #[test]
+    fn below_the_floor_a_lazy_store_grows_rather_than_sweeps() {
+        let mut store = Store::new(64);
+        store.free = false;
+        let recs: Vec<u32> = (0..10).map(|_| store.claim(5)).collect();
+        for r in &recs[..8] {
+            store.delete(*r);
+        }
+        assert!(store.dead_words < super::LAZY_FLOOR_WORDS);
+        let cap_before = store.byte_capacity();
+        store.claim(40); // the tail (13 words) cannot hold it, the dead run (40) could
+        assert!(
+            store.byte_capacity() > cap_before,
+            "grew instead of sweeping"
+        );
+        assert!(store.lazy, "the phase goes on below the floor");
+    }
+
+    /// `@FR-H-LazyFree` — at the bound (the untracked words at the floor) the claim the
+    /// tail cannot hold sweeps ONCE instead of growing: the untracked blocks merge and
+    /// enter the tree, the claim reuses them, and the phase ends — a later delete merges
+    /// at the site again, as the exact allocator always did.
+    #[test]
+    fn at_the_growth_bound_one_sweep_ends_the_phase() {
+        let size = 4 * super::LAZY_FLOOR_WORDS;
+        let mut store = Store::new(size);
+        store.free = false;
+        // Fill three quarters of the store in 16-word blocks, then free every one of
+        // them but the last (the survivor keeps the run off the wilderness): the dead
+        // words pass the floor.
+        let recs: Vec<u32> = (0..(3 * size / 4 / 16)).map(|_| store.claim(15)).collect();
+        for r in &recs[..recs.len() - 1] {
+            store.delete(*r);
+        }
+        assert!(store.dead_words >= super::LAZY_FLOOR_WORDS);
+        assert!(store.lazy);
+        let cap_before = store.byte_capacity();
+        let big = store.claim(size / 2); // more than the tail holds, less than the merged run
+        assert_eq!(
+            store.byte_capacity(),
+            cap_before,
+            "the sweep reclaimed: no growth"
+        );
+        assert!(
+            big < recs[recs.len() - 1],
+            "placed in the merged run below the survivor"
+        );
+        assert!(!store.lazy, "the phase ended with the sweep");
+        assert_eq!(store.dead_words, 0);
+        // Exact from here: a delete beside a free block merges at the site.
+        let x = store.claim(5);
+        let y = store.claim(5);
+        store.delete(x);
+        store.delete(y);
+        assert_eq!(
+            store.usage().mergeable_free_pairs,
+            0,
+            "merged at the delete"
+        );
+    }
+
+    /// `@FR-H-LazyFree` — an untracked free block beside a NON-empty tree (with the tail
+    /// in the tree, as under `LOFT_NO_WILDERNESS=1`) leaves the tree untouched when the
+    /// exact-position claim covers it: the claim lands, the block is claimed, and the next
+    /// best-fit claim does not hand it out again.
+    #[test]
+    fn a_lazy_free_block_beside_a_tree_is_claimed_at_its_position() {
+        let mut store = Store::new(64);
+        store.free = false;
+        store.wilderness = false; // the tail is a tree node, so the tree is not empty
+        let a = store.claim(5);
+        let _b = store.claim(5);
+        store.delete(a); // lazy: free at both ends, in no tree
+        assert!(store.lazy && store.free_root != 0);
+        assert_eq!(
+            store.claim_at(a, 5),
+            a,
+            "the recorded position is claimed again"
+        );
+        assert!(store.claims.contains(a));
+        let c = store.claim(5);
+        assert_ne!(c, a, "a claimed block is never handed out");
+        store.validate(0);
+    }
+
     #[test]
     fn coalesce_free_merges_adjacent_and_reuses_space() {
         let mut store = Store::new(64);
         store.free = false;
+        store.lazy = false; // the exact allocator's merge, not the lazy phase
         let _a = store.claim(5);
         let b = store.claim(5);
         let c = store.claim(5);
@@ -6232,6 +6456,9 @@ mod tests {
         store.wilderness = wilderness;
         store.init();
         store.free = false;
+        // The seeded side-by-side tests pin the EXACT allocator's layout across its
+        // switches; the lazy phase folds a freed tail block into the wilderness only.
+        store.lazy = false;
         store
     }
 
@@ -6688,6 +6915,7 @@ mod tests {
         fn fragmented() -> (Store, Vec<u32>) {
             let mut store = Store::new(256);
             store.free = false;
+            store.lazy = false; // the exact allocator's merge, not the lazy phase
             let recs: Vec<u32> = (0..21).map(|_| store.claim(5)).collect();
             for i in (0..18).step_by(3) {
                 store.delete(recs[i]);

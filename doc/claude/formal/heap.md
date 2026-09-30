@@ -395,6 +395,25 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  and the layout is unchanged; what changes is that the claim costs no
                  tree delete, insert or rebalance.  A remainder under n words, or
                  under the tree's minimum, takes the delete and the insert.
+  (H-LazyFree)   inside one store, a delete during the store's LAZY phase marks its
+                 block free at both ends and tracks it nowhere — no merge, no tree
+                 insert — unless the block meets the wilderness, which it then joins in
+                 O(1); so a claim in the phase finds only what the tree still holds (the
+                 wilderness, and the remainders claims leave), and a block claimed last
+                 and freed first leaves the layout as it found it.  The phase ends at the
+                 first claim the wilderness cannot hold once the untracked words reach a
+                 floor (256): ONE sweep merges every free block and rebuilds the tree,
+                 and from then on each delete is tracked at its site as before; an
+                 explicit reclaim ends it the same way.  A fresh or reset store starts
+                 the phase again; a store bound to a file never enters it, because a
+                 file is read, reclaimed and paged by its layout.  Every block is still
+                 free or claimed by its header, so the usage walk, an image and the open
+                 walk read the same store; what changes is WHEN the tree learns of a
+                 free.  A store built once and released whole never pays for its deletes,
+                 a store reused by reset never sweeps, and a churning store sweeps once
+                 and holds at most the floor in untracked words before it does.  Below
+                 the floor a claim the wilderness cannot hold grows the store, or takes an
+                 untracked block the chain walk meets on its way to growing.
 ```
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to

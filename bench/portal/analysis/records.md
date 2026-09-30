@@ -824,3 +824,49 @@ advice on `return p.b` beside a second exit (r6) goes silent with the copy.
 
 What remains, in order: the arena buffer (item 3), the placed buffer's prefill (item 4), the
 match copies in `pa_get`/`pa_text` (item 5), text payloads as spans (item 6).
+
+## Built (2026-09-30) — the lazy-free phase (item 3) and the walk's enum arm
+
+Item 3 of the list, as a runtime policy of every store rather than a buffer kind: a store
+starts in a LAZY phase (`(H-LazyFree)`, `LOFT_NO_LAZY_FREE=1`) in which a delete marks its
+block free at both ends and leaves the tree alone (a block meeting the wilderness folds into
+it), and a claim takes the tail; the first claim the wilderness cannot hold once the untracked
+words reach 256 sweeps once (`coalesce_free` + `fl_rebuild`) and ends the phase.  A store
+bound to a file never enters it: the first run's six reds were the layout guards of persisted
+and paged stores (a reclaim that trimmed nothing because claims had landed on the tail, a keyed
+lookup five bytes over its page budget, a read-repeat census that differed by the scratch
+blocks) — the phase is for the store that is built and released, not the one that is kept.
+The decoder's store — nine placed buffers and the vector rungs freed per decode, the store
+released whole — never sweeps, so its claims never leave the tail and its deletes cost one
+header write.  Beside it,
+`holds_no_heap` learned the struct-enum field: a `Decoded` whose value moved out answered "may
+hold heap" and walked (allocating a `Vec` per record) to find nothing.
+
+**Measured** (this box, `--native-release`, the check driver's 40 rounds, three runs each,
+same binary, the switch as the OFF arm):
+
+| build | check_request, 40 rounds | what moved |
+|---|---:|---|
+| before (1c010450) | 0.318 s | — |
+| the enum arm | 0.30 s (−6 %) | `remove_claims_mode` 4.0 → 2.3 %, `owned_walk` 3.3 → 1.6 %; the walks left are real teardowns (a truncated frame's partial map) |
+| + the phase | 0.275 s (−8 %, −13 % in all) | `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node`, `delete`'s merge: 27 % of the samples → the tree ops gone, `claim_block` + `set_free_header` stay |
+
+**What the profile reads now** (share of the row): `read_value`'s own code 20 %, the placed
+buffer's claim and prefill (`claim_block`, `set_free_header`, `place_record_prefilled`,
+`set_default_value_nullable`, `prefill_from_image`, `enum_parent_size`) 12 %, the remaining
+walks 11 %, `store_mut` 4 %, the vector header and push path 6 %, the text payload copy 3 %.
+
+**Side-findings, each a codegen matter and not this unit's:**
+- A UNIT variant written into an enum field (`Decoded { value: CNull, … }`) mints a store
+  (`OpDatabaseNP`), writes one tag byte into it, deep-copies it into the field (`OpCopyRecord`)
+  and frees the store — on every `ok: false` exit of `read_value`.  A tag write in place is the
+  whole job.
+- `decode`'s `d = read_value(bytes, 0); …; return d` beside a literal exit orphans the
+  caller's buffer every call (`free #5 name=__shared_dest_orphan`): two store cycles per
+  check that place nothing.  The bind could take the caller's buffer as its own `__ref` when
+  the literal exit's fields read from `d` before the write and `d`'s heap is released first.
+- `owned_walk` still builds a child per FIELD, scalars included, into a `Vec` per record; the
+  enum arm removed most of its callers on this row, not the allocation.
+
+What remains of the list: the placed buffer's prefill (item 4), the match copies in
+`pa_get`/`pa_text` (item 5), text payloads as spans (item 6).

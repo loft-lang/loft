@@ -4572,9 +4572,22 @@ impl Stores {
     /// slot past the store's end — answers "may hold heap", so the full walk runs for it.
     /// A `false` here only costs the walk the release always did.
     fn holds_no_heap(&self, rec: &DbRef, tp: u16) -> bool {
-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &self.types[tp as usize].parts
-        else {
-            return false;
+        let fields = match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
+            // A struct-enum holds exactly what its LIVE variant holds, read the way the
+            // walk reads it: a null or absent tag owns no payload, a payload-less variant
+            // owns nothing, and a payload is the variant's record at the same position.
+            Parts::Enum(values) => {
+                let e_nr = self.store(rec).get_byte(rec.rec, rec.pos, -1);
+                if e_nr < 0 || (e_nr as usize) >= values.len() {
+                    return true;
+                }
+                let vtp = values[e_nr as usize].0;
+                return vtp == u16::MAX
+                    || !self.type_owns_heap(vtp)
+                    || self.holds_no_heap(rec, vtp);
+            }
+            _ => return false,
         };
         let capacity_bytes = u64::from(self.store(rec).capacity_words()) * 8;
         fields.iter().all(|f| {
@@ -4589,7 +4602,7 @@ impl Stores {
                 return false;
             }
             match &self.types[f.content as usize].parts {
-                Parts::Struct(_) | Parts::EnumValue(..) => self.holds_no_heap(
+                Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_) => self.holds_no_heap(
                     &DbRef {
                         store_nr: rec.store_nr,
                         rec: rec.rec,

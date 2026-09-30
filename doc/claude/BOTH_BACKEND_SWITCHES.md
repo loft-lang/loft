@@ -588,3 +588,17 @@ is the smallest that fits, so the remainder keeps its order, and every claim tak
 always took (`hash_text_keys` −8 %).  **`LOFT_NO_CARVE_IN_PLACE=1`** deletes and inserts again
 (read per store at construction) and is the bisect step for a store-layout fault or a corrupt
 free tree after a claim.
+
+**A store starts in a lazy-free phase (default-ON, both backends, `@FR-H-LazyFree`):** a
+delete marks its block free at both ends and leaves it out of the tree — no merge, no insert,
+except that a block meeting the wilderness folds into it — and the phase ends at the first
+claim the wilderness cannot hold once the untracked words reach 256, with one sweep that
+merges and tracks every free block, or at an explicit reclaim; a fresh or reset store starts
+the phase again, a store bound to a file never enters it.  A store built once and freed whole
+(a call's result buffer, a decoder's tree) never pays for its deletes, and its claims stay on
+the tail (pluginabi's `check_request` −8 %: the free-tree walks were a quarter of the row).
+**`LOFT_NO_LAZY_FREE=1`** tracks every delete at its site again (read per store at
+construction) and is the first bisect step for a store-layout fault, a claim that hands out a
+live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
+own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
+pin the untracked delete, the growth below the floor and the one sweep at the bound.
