@@ -5135,9 +5135,7 @@ impl Parser {
         // generic type variable"* — a name the SAME program compiles as a file.  The
         // definition's FILE is what says whose declaration it is, which is what
         // `Definition::position` is for ("only allow redefinitions within the same file").
-        if self.prelude_shadowed(&id) {
-            d_nr = u32::MAX;
-        } else if self.first_pass && self.release_unseen_stub(d_nr, &id) {
+        if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
         } else if self.placeholder_from_another_file(d_nr) {
             // The same shadow where the parse SHARES the stdlib's source id.  There the two

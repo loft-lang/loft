@@ -20482,15 +20482,28 @@ impl Parser {
         // before `resolve_deferred_unknowns` has run, and a glob import of a file that
         // names a type from its mutual-`use` partner carries that file's stub in first.
         // So count real declarations on both sides; fewer than two is no collision.
-        let is_stub = |d: u32| matches!(self.data.def(d).def_type(), DefType::Unknown);
-        let mut real: Vec<u32> = std::iter::once(winner)
-            .chain(self.data.ambiguous_with(name).iter().copied())
-            .filter(|&d| !is_stub(d))
-            .collect();
-        real.dedup();
-        if real.len() < 2 {
+        // Asked at every use of an imported name: no rival is the common answer, and it
+        // allocates nothing.
+        if self.data.ambiguous_with(name).is_empty() {
             return;
         }
+        let is_stub = |d: u32| matches!(self.data.def(d).def_type(), DefType::Unknown);
+        let candidates = || {
+            std::iter::once(winner)
+                .chain(self.data.ambiguous_with(name).iter().copied())
+                .filter(|&d| !is_stub(d))
+        };
+        // Counted before anything is collected: a rival that is only a stub is the common
+        // case under a mutual `use`, and it must not cost an allocation per use.
+        let mut seen = candidates();
+        let Some(first) = seen.next() else {
+            return;
+        };
+        if !seen.any(|d| d != first) {
+            return;
+        }
+        let mut real: Vec<u32> = candidates().collect();
+        real.dedup();
         let winner = real[0];
         let others: Vec<u32> = real[1..].to_vec();
         self.ambiguity_reported.insert(name.to_string());
