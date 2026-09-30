@@ -577,3 +577,127 @@ fn i826_mutual_use_names_the_import_cure() {
         "the import cure must compile; diagnostics: {d:?}"
     );
 }
+
+/// loft#1766 / loft#1767 — a mutual `use` pair answers the same whichever file the
+/// package entry loads first.  The pair is dryopea's: `errand` does `use spawn::*;`, and
+/// `spawn` reaches `errand` through the form each cell varies.  In the order that loads
+/// `errand` first, `spawn` is parsed while `errand` is SUSPENDED at its own `use` — it has
+/// declared nothing yet — which is where each defect lived:
+///
+/// - a QUALIFIED `errand::Errand` left its forward stub under the qualifier, so nothing
+///   adopted it and it was reported as the undefined type `errand`;
+/// - `errand`'s own forward stub for `Enemy`, imported into the test by glob, was counted
+///   as a rival declaration of `spawn`'s `Enemy`;
+/// - a BARE `Errand` behind a bare `use errand;` resolved in one order (errand's
+///   declaration adopted spawn's stub) and was refused in the other — C98 says refused;
+/// - a by-name `use errand::(Errand)` was checked while `errand` was empty.
+///
+/// Each cell is run in both orders with a hand-computed answer.
+#[test]
+fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
+    let errand = "use spawn::*;\npub struct Errand { e_n: integer }\npub enum Kind { Walk, Run }\n\
+                  pub type Id = integer;\npub fn r1(n: integer) -> Errand { Errand { e_n: n } }\n\
+                  pub fn hurt(e: Enemy) -> integer { e.e_hp - 1 + e.route.e_n }\n";
+    let plain = "e = Enemy { e_hp: 5, route: r1(10) }; println(\"{hurt(e)}\");";
+    // (tag, spawn.loft, main body, expected stdout or `Err(fragment of the refusal)`)
+    let cells: &[(&str, &str, &str, Result<&str, &str>)] = &[
+        (
+            "qualified_field",
+            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand }\n",
+            plain,
+            Ok("14"),
+        ),
+        (
+            "qualified_return_vector_enum",
+            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, \
+             more: vector<errand::Errand>, k: errand::Kind }\n\
+             pub fn mk(n: integer) -> errand::Errand { errand::r1(n * 2) }\n",
+            "e = Enemy { e_hp: 5, route: mk(21), more: [r1(100), r1(200)], k: Run }; s = 0; \
+             for m in e.more { s += m.e_n; } println(\"{hurt(e)} {s} {e.k}\");",
+            Ok("46 300 Run"),
+        ),
+        (
+            "qualified_missing",
+            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, x: errand::Nope }\n",
+            plain,
+            Err("Undefined type errand::Nope"),
+        ),
+        (
+            "bare_name_behind_bare_use",
+            "use errand;\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            plain,
+            Err("`use errand::*;`"),
+        ),
+        (
+            "bare_alias_behind_bare_use",
+            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, id: Id }\n",
+            plain,
+            Err("`use errand::*;`"),
+        ),
+        (
+            "mutual_glob",
+            "use errand::*;\npub struct Enemy { e_hp: integer, route: Errand, id: Id }\n",
+            "e = Enemy { e_hp: 5, route: r1(10), id: 3 }; println(\"{hurt(e)} {e.id}\");",
+            Ok("14 3"),
+        ),
+        (
+            "by_name",
+            "use errand::(Errand);\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            plain,
+            Ok("14"),
+        ),
+        (
+            "by_name_missing",
+            "use errand::(Errand, Nope);\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            plain,
+            Err("Name 'Nope' not found in library"),
+        ),
+    ];
+    for (tag, spawn, body, expect) in cells {
+        for (first, second) in [("errand", "spawn"), ("spawn", "errand")] {
+            let root = std::env::temp_dir()
+                .join(format!("loft_1766_{tag}_{first}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::create_dir_all(root.join("tests")).unwrap();
+            std::fs::write(
+                root.join("loft.toml"),
+                "[package]\nname = \"pkg\"\nversion = \"0.0.1\"\n[library]\nentry = \"src/pkg.loft\"\n",
+            )
+            .unwrap();
+            std::fs::write(
+                root.join("src/pkg.loft"),
+                format!("use {first};\nuse {second};\n"),
+            )
+            .unwrap();
+            std::fs::write(root.join("src/errand.loft"), errand).unwrap();
+            std::fs::write(root.join("src/spawn.loft"), spawn).unwrap();
+            std::fs::write(
+                root.join("tests/t.loft"),
+                format!("use pkg;\nuse errand::*;\nuse spawn::*;\nfn main() {{ {body} }}\n"),
+            )
+            .unwrap();
+            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+                .arg("--interpret")
+                .arg(root.join("tests/t.loft"))
+                .env("LOFT_NO_CACHE", "1")
+                .env("LOFT_TIMEOUT", "120")
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            match expect {
+                Ok(want) => assert!(
+                    out.status.success() && stdout.trim() == *want,
+                    "{tag}, `{first}` loaded first: want {want:?}, got {stdout:?}\n{stderr}"
+                ),
+                Err(frag) => assert!(
+                    !out.status.success() && stderr.contains(frag),
+                    "{tag}, `{first}` loaded first: want a refusal naming {frag:?}, got \
+                     {stdout:?}\n{stderr}"
+                ),
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}

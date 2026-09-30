@@ -999,6 +999,15 @@ pub struct Parser {
     /// NOT cleared between passes: the stub itself survives (pass 2 finds it by name
     /// rather than registering a second one), so the exemption has to survive with it.
     speculative_type_refs: std::collections::HashSet<u32>,
+    /// Forward stubs a QUALIFIED `lib::Type` left in the library's own source, with the
+    /// qualifier as written — so an unadopted one is reported as the name the author
+    /// wrote, `lib::Type`, and not as a bare `Type` in a file that never mentions it.
+    qualified_stubs: std::collections::HashMap<u32, String>,
+    /// By-name imports (`use lib::(Name)`) that found nothing while `lib` was SUSPENDED at
+    /// its own `use` of this file — a mutual `use` pair, where `lib` has declared nothing
+    /// yet.  Checked again once every file has registered (`resolve_deferred_unknowns`):
+    /// `(lib_source, into_source, name, bind, public, where the use was applied)`.
+    deferred_import_misses: Vec<(u16, u16, String, String, bool, Position)>,
     /// How many identifiers pass 1 could not resolve to anything, and so turned into a
     /// fresh variable of unknown type.
     ///
@@ -1649,6 +1658,8 @@ impl Parser {
             parsed_sources: Vec::new(),
             pass_started: None,
             speculative_type_refs: std::collections::HashSet::new(),
+            qualified_stubs: std::collections::HashMap::new(),
+            deferred_import_misses: Vec::new(),
             unresolved_names: 0,
             unresolved_types: 0,
             data,
@@ -2572,6 +2583,7 @@ impl Parser {
         self.pending_imports.clear();
         self.applied_imports.clear();
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         // @PLN86 1.2 — the def→profile side-map is keyed by def_nr, which
         // `data.reset()` reassigns; clear it so a re-parse re-derives the
@@ -2643,6 +2655,7 @@ impl Parser {
             self.iterable_context = false;
             self.applied_imports.clear();
             self.deferred_unknown.clear();
+            self.deferred_import_misses.clear();
             self.resolutions.clear();
             self.data.reset();
             if !default {
@@ -3594,6 +3607,18 @@ impl Parser {
         }
         // Keep them on the list for any later pass (pass 2 re-populates).
         self.applied_imports = applied;
+        // A by-name import deferred because its library was suspended: every file has
+        // registered now, so a name still missing really is missing.
+        for (lib, into, name, bind, public, pos) in std::mem::take(&mut self.deferred_import_misses)
+        {
+            if !self.data.import_name(lib, into, &name, &bind, public) {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &pos,
+                    &format!("Name '{name}' not found in library"),
+                );
+            }
+        }
 
         // Step 2: for each deferred stub, resolve via the post-import
         // def binding.  Three outcomes per stub:
@@ -3656,7 +3681,9 @@ impl Parser {
             self.data.source = source;
             let boundary = self.importer_boundary_note(&stub_name);
             self.data.source = saved_source;
-            let msg = if let Some(note) = boundary {
+            let msg = if let Some(q) = self.qualified_stubs.get(&stub_nr) {
+                format!("Undefined type {q}::{stub_name} — `{q}` declares no type `{stub_name}`")
+            } else if let Some(note) = boundary {
                 note
             } else if let Some(msg) = self.data.import_cure("Undefined type", &stub_name, source) {
                 msg
@@ -3765,6 +3792,7 @@ impl Parser {
         self.pending_imports.clear();
         self.applied_imports.clear();
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
         // @PLN22 — the main program parses under MAIN_SOURCE (not the prelude's
@@ -3787,6 +3815,7 @@ impl Parser {
             crate::diagnostics::set_first_pass(false);
             self.applied_imports.clear();
             self.deferred_unknown.clear();
+            self.deferred_import_misses.clear();
             self.resolutions.clear();
             self.data.reset();
             if !default {
@@ -3824,6 +3853,7 @@ impl Parser {
         self.pending_imports.clear();
         self.applied_imports.clear();
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
         self.lambda_counter = 0;
@@ -3838,6 +3868,7 @@ impl Parser {
             crate::diagnostics::set_first_pass(false);
             self.applied_imports.clear();
             self.deferred_unknown.clear();
+            self.deferred_import_misses.clear();
             self.resolutions.clear();
             self.data.reset();
             self.lambda_counter = 0;
@@ -3981,6 +4012,7 @@ impl Parser {
         self.lexer.parse_string(text, filename);
         self.applied_imports.clear();
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
         // A REPL input reuses its virtual file name with new text.
@@ -4017,6 +4049,7 @@ impl Parser {
         }
         self.applied_imports.clear();
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.data.reset();
         // Pass 2 mints the same names pass 1 did, so it starts where pass 1 started.
@@ -4065,6 +4098,7 @@ impl Parser {
         self.vars.logging = false;
         self.lexer.parse_string(text, filename);
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         // The counter continues, as `parse_str`'s does and for the same reason: the session
         // still holds the definitions the previous input minted.
@@ -4080,6 +4114,7 @@ impl Parser {
             return;
         }
         self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
         self.resolutions.clear();
         self.lambda_counter = lambda_base;
         self.fn_lambdas.clear();
@@ -17739,11 +17774,28 @@ impl Parser {
                     self.data.import_all(pi.lib_source, cur, pi.public);
                 }
                 ImportSpec::Names(names) => {
+                    // loft#1766 — the library may be suspended at its own `use` of this
+                    // file, with nothing declared yet: ask again once it has.
+                    let suspended = self.todo_files.iter().any(|(_, s)| *s == pi.lib_source);
                     for (name, bind) in &names {
-                        if !self
+                        if self
                             .data
                             .import_name(pi.lib_source, cur, name, bind, pi.public)
                         {
+                            continue;
+                        }
+                        if suspended {
+                            if self.first_pass {
+                                self.deferred_import_misses.push((
+                                    pi.lib_source,
+                                    cur,
+                                    name.clone(),
+                                    bind.clone(),
+                                    pi.public,
+                                    self.lexer.pos().clone(),
+                                ));
+                            }
+                        } else {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
@@ -20417,16 +20469,22 @@ impl Parser {
         // was going to resolve has: one still `Unknown` here declares nothing
         // and never will.  Dropping them can only remove a claim that was
         // false; a genuine two-package collision has real defs on both sides.
-        let others: Vec<u32> = self
-            .data
-            .ambiguous_with(name)
-            .iter()
-            .copied()
-            .filter(|&d| !matches!(self.data.def(d).def_type(), DefType::Unknown))
+        //
+        // The WINNER can be such a stub too (loft#1766): in pass 1 a use can be reached
+        // before `resolve_deferred_unknowns` has run, and a glob import of a file that
+        // names a type from its mutual-`use` partner carries that file's stub in first.
+        // So count real declarations on both sides; fewer than two is no collision.
+        let is_stub = |d: u32| matches!(self.data.def(d).def_type(), DefType::Unknown);
+        let mut real: Vec<u32> = std::iter::once(winner)
+            .chain(self.data.ambiguous_with(name).iter().copied())
+            .filter(|&d| !is_stub(d))
             .collect();
-        if others.is_empty() {
+        real.dedup();
+        if real.len() < 2 {
             return;
         }
+        let winner = real[0];
+        let others: Vec<u32> = real[1..].to_vec();
         self.ambiguity_reported.insert(name.to_string());
         // `n_` is the storage spelling of a function, never the source spelling —
         // a message telling someone to write `pkg::n_shared` names something

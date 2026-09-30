@@ -959,7 +959,7 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
         &format!("use fac::*;\nuse fac2::*;\n{qualified}"),
     );
     assert!(
-        err.contains("Undefined type inner"),
+        err.contains("Undefined type inner::Thing"),
         "that qualifier would not compile:\n{err}"
     );
 

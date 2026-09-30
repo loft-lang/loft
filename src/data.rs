@@ -10732,6 +10732,34 @@ impl Data {
     /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
     /// after this restores the placeholder's key; the declaration that took it is rolled
     /// back with it, which is the state they were both in before.
+    /// @C98 — can `into` name what `lib` declares as `name` UNQUALIFIED?  Only through a
+    /// glob or a by-name import of `lib`, directly or through a chain of `pub use`s; a bare
+    /// `use lib;` binds the qualifier alone.  Asked of the imports applied so far.
+    #[must_use]
+    pub fn source_sees(&self, into: u16, lib: u16, name: &str) -> bool {
+        let names = |a: &AppliedImport| a.name.as_ref().is_none_or(|(n, _)| n == name);
+        let mut reach: Vec<u16> = self
+            .applied
+            .iter()
+            .filter(|a| a.into_source == into && names(a))
+            .map(|a| a.lib_source)
+            .collect();
+        let mut i = 0;
+        while i < reach.len() {
+            if reach[i] == lib {
+                return true;
+            }
+            let x = reach[i];
+            for a in &self.applied {
+                if a.into_source == x && a.public && names(a) && !reach.contains(&a.lib_source) {
+                    reach.push(a.lib_source);
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+
     pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
         let _ = self.def_names.remove(name, source);
     }
