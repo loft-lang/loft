@@ -38,7 +38,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn split(self: text, separator: character) -&gt; vector&lt;text&gt;</code></pre>
-<p>Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens.</p>
+<p>Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens. Every separator ends a part, so a trailing separator leaves an empty last part (&quot;a,&quot;.split(',') is [&quot;a&quot;, &quot;&quot;]); an empty text has no parts at all.</p>
 </div>
 <div class="item">
 <pre><code>pub fn split_text(self: text, separator: text) -&gt; vector&lt;text&gt;</code></pre>
