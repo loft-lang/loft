@@ -9,11 +9,10 @@ Tracker: [@PLN181](https://github.com/loft-lang/plans/issues/181).
 
 ## Status
 
-Active on `laptop-superinstructions`.  **P0 (the probe) is done and green**: the unchanged
-library path, pointed at the standard library, compiled a stdlib function, wired it, and an
-interpreted program ran its compiled loft body with identical answers, 12–15× faster; the
-stdlib's types are an identical prefix of every program's table measured.  **Next:** P1, the
-artifact inside the binary.
+Active on `laptop-superinstructions`.  **P0 (the probe) and P1 (the artifact inside the
+binary) are built.**  An interpreted program dispatches the stdlib's looping loft functions
+(11 today) to their compiled bodies, built into the loft binary, with no rustc at run time.
+**Next:** P2, the kernels retire.
 
 ## Goal
 
@@ -64,7 +63,7 @@ The whole dispatch path, unchanged:
 | phase | what | validated by |
 |---|---|---|
 | **P0** probe — DONE | the existing path pointed at the stdlib, behind a probe-only switch | same answers, strict stores clean, the speed, the type prefix across programs |
-| **P1** in-binary artifact | generate the stdlib's compiled source with loft (a derived file, drift-guarded like `src/fill.rs`), build it into the binary, an in-binary bridge table, the start-up prefix check and its fall-back | every stdlib guard on both backends with the compiled set on and off (`LOFT_NO_NATIVE_LIBS` A/B); a planted prefix mismatch interprets, byte-identical |
+| **P1** in-binary artifact — BUILT | generate the stdlib's compiled source with loft (a derived file, drift-guarded like `src/fill.rs`), build it into the binary, an in-binary bridge table, the start-up prefix check and its fall-back | every stdlib guard on both backends with the compiled set on and off (`LOFT_NO_NATIVE_LIBS` A/B); a planted prefix mismatch interprets, byte-identical |
 | **P2** kernels retire | `split` and `lines` back to their loft bodies; `make kernel-ratio` and the kernel guards decide | the ratio at or under 2× from the interpreter; the guards' oracles |
 
 ## P0 — measured
@@ -89,14 +88,35 @@ types of its own).  In every one the standard library's 91 types are an identica
 program's and the libraries' types follow them.  That is what makes one artifact possible —
 and seven programs are evidence, not proof, which is why P1 checks the prefix at start-up.
 
+## P1 — built
+
+- `src/compiled_stdlib.rs`: `export_set` (dispatchable, a loft body, and the body LOOPS — a
+  one-operation body gains nothing from the bridge, and output and file primitives stay out),
+  `generate` (the library artifact adapted to the crate: an alias for `extern crate loft`, no
+  exported symbols, a name → bridge table, the type prefix and the stdlib source hash it was
+  compiled from), `mark` (an interpreted program only; declines on a prefix or source mismatch)
+  and `bridge` (the lookup `extensions::wire_shared_native_fns` tries before `dlsym`).
+- `src/compiled_stdlib_gen.rs`, `@generated` by `make compiled-stdlib`, kept current by
+  `tests/compiled_stdlib.rs::compiled_stdlib_up_to_date` and exempt from `rustfmt` so it stays
+  the generator's bytes.  Regenerate after a stdlib change or a code-generator change that alters
+  what these functions emit.
+- `LOFT_NO_COMPILED_STDLIB=1` is the A/B; its home is PERFORMANCE.md beside
+  `LOFT_NO_NATIVE_LIBS`.
+
+Validated: all 1,929 `tests/scripts` programs answer identically interpreted with it on and off
+(stdout and exit status; 30 of them call a compiled function).  The harness can fail: a planted
+defect in the compiled `split_text` turned two of them red and failed the drift test.  An edited
+stdlib and a wrong type prefix each declined all 11 and ran correctly; a warm program-cache
+start replays the marks; `mark` costs about 0.3 ms at start-up (within noise of a `hello`).
+
+Not yet covered, each simply interpreting today: `loft test`'s in-process runner, the REPL, the
+debugger, a host embedding and the browser (which has no bridge dispatcher).
+
 ## Open questions
 
-- **Where the generated source lives.**  The emitted Rust names the `loft` crate by path
-  (`extern crate loft`, `loft::…`); compiled inside that crate it needs `crate::` paths or a
-  `use crate as loft;` alias.  A separate crate would create a dependency cycle with the
-  binary.  P1 decides by trying the alias first.
-- **Start-up cost.**  Registering the bridges is a table walk; measured against finding 001
-  (REASONS.md, about 15 ms before the first statement), it must not show.
+- **Regeneration churn.**  The generated file follows the code generator, so a codegen change
+  that alters these functions' emitted Rust asks for `make compiled-stdlib` in the same commit
+  (the drift test says so).  If that proves frequent, generating it in the build is the fix.
 
 ## See also
 

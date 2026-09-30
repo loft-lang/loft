@@ -31,7 +31,7 @@ fn compiled_stdlib_up_to_date() {
 
 /// Regenerate `src/compiled_stdlib_gen.rs`.  Run with `make compiled-stdlib`.
 #[test]
-#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs — `make compiled-stdlib`"]
+#[ignore = "maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`"]
 fn regen_compiled_stdlib() {
     std::fs::write("src/compiled_stdlib_gen.rs", generated()).expect("write the generated file");
     println!("src/compiled_stdlib_gen.rs regenerated");

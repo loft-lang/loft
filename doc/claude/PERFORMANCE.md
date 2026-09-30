@@ -616,6 +616,15 @@ history is the density of the commits, which is why `--record` exists.
 > again. Attribute inside a library with `LOFT_PROFILE` under `LOFT_NO_NATIVE_LIBS=1` — the
 > sampler cannot enter a cdylib at all, so without it the library's time lands on the calling
 > line and a library doing the work reads as a hot caller.
+>
+> The standard library is compiled the same way for an interpreted program (@PLN181): the
+> functions `compiled_stdlib::export_set` picks — the ones whose loft body loops — run their
+> compiled bodies, built into the loft binary, and the sampler sees each as one call.
+> `LOFT_NO_COMPILED_STDLIB=1` interprets them instead, which is how to attribute inside one and
+> the A/B for anything the compiled bodies are suspected of.  `LOFT_TIMING=1` prints how many
+> dispatched, and 0 means declined: the program's type table does not start with the standard
+> library's, or `default/*.loft` is not the source they were compiled from (an edited stdlib
+> runs its current loft bodies until `make compiled-stdlib`).
 
 ### Validating a codegen change — the single-file Rust-emit harness
 
