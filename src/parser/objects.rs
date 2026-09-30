@@ -6247,6 +6247,36 @@ impl Parser {
         self.cl("OpSetInt4", &[code.clone(), Value::Int(item_pos), absent])
     }
 
+    /// An OMITTED nullable USER struct-enum field (`H { n: 1 }` beside `s: Shape?`) is the
+    /// literal `null` spelling loft#1071 answers in `handle_field`: the slot is a four-byte
+    /// record pointer and `0` is its absence (@FR-L-Null), so write that and say so.  Left to
+    /// `to_default` it became the discriminant-shaped `Value::Enum(0, …)`, which
+    /// `set_field_no_check` wrote as `OpCopyRecord(0u8, <field>)` — a record copy from a
+    /// source that is no record: an out-of-range store index on `--interpret`, and rustc
+    /// E0308 (`u8` where a `DbRef` is expected) on `--native` (loft#1782).
+    fn omitted_struct_enum_is_absent(
+        &mut self,
+        list: &mut Vec<Value>,
+        tp: &Type,
+        code: &Value,
+        at: u16,
+        default: &Value,
+    ) -> bool {
+        if self.first_pass
+            || !matches!(tp, Type::Optional(_))
+            || !matches!(tp.base(), Type::Enum(e, true, _)
+                if !self.data.def(*e).name.starts_with("__nullable<"))
+            || *default != Value::Null
+        {
+            return false;
+        }
+        list.push(self.cl(
+            "OpSetInt4",
+            &[code.clone(), Value::Int(i32::from(at)), Value::Int(0)],
+        ));
+        true
+    }
+
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,
@@ -6347,27 +6377,7 @@ impl Parser {
                 list.push(mark);
                 continue;
             }
-            // An OMITTED nullable USER struct-enum field (`H { n: 1 }` beside `s: Shape?`)
-            // is the literal `null` spelling loft#1071 answers in `handle_field`: the slot is
-            // a four-byte record pointer and `0` is its absence (@FR-L-Null).  Left to
-            // `to_default` it became the discriminant-shaped `Value::Enum(0, …)`, which
-            // `set_field_no_check` wrote as `OpCopyRecord(0u8, <field>)` — a record copy from
-            // a source that is no record: an out-of-range store index on `--interpret`, and
-            // rustc E0308 (`u8` where a `DbRef` is expected) on `--native`.
-            if !self.first_pass
-                && matches!(&tp, Type::Optional(_))
-                && matches!(tp.base(), Type::Enum(e, true, _)
-                    if !self.data.def(*e).name.starts_with("__nullable<"))
-                && default == Value::Null
-            {
-                list.push(self.cl(
-                    "OpSetInt4",
-                    &[
-                        code.clone(),
-                        Value::Int(i32::from(pos + fld)),
-                        Value::Int(0),
-                    ],
-                ));
+            if self.omitted_struct_enum_is_absent(list, &tp, code, pos + fld, &default) {
                 continue;
             }
             // #328/#332: a POINTER field (`reference<T>`, the u16::MAX share

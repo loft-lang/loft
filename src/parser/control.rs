@@ -20728,6 +20728,10 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the empty and the filled argument list share one selection tail"
+    )]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,

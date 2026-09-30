@@ -9113,18 +9113,20 @@ impl Data {
             // `get_fn` looks for a longer method first on pass 2, and the newcomer takes the
             // receiver key it would have held declared first: both orders make one set
             // (loft#1811).  The receiver slot keeps the incumbent — membership, not choice.
-            if (is_self || is_both) && own(self, &key) == d_nr && key == self.def(d_nr).name {
-                if let Some(inc_full) = self.def_full_spelling(d_nr) {
-                    let moved = Self::mangle_method(&inc_full, fn_name);
-                    if own(self, &moved) == u32::MAX {
-                        let src = self.def(d_nr).source;
-                        self.def_names.remove(&key, src);
-                        self.def_names.insert(&moved, src, d_nr);
-                        self.definitions[d_nr as usize].name = moved;
-                        // Already a member (a third definition): its label in the set was the
-                        // receiver spelling the newcomer is about to take, so it moves too.
-                        self.relabel_overload(fn_name, d_nr, &inc_full);
-                    }
+            if (is_self || is_both)
+                && own(self, &key) == d_nr
+                && key == self.def(d_nr).name
+                && let Some(inc_full) = self.def_full_spelling(d_nr)
+            {
+                let moved = Self::mangle_method(&inc_full, fn_name);
+                if own(self, &moved) == u32::MAX {
+                    let src = self.def(d_nr).source;
+                    self.def_names.remove(&key, src);
+                    self.def_names.insert(&moved, src, d_nr);
+                    self.definitions[d_nr as usize].name = moved;
+                    // Already a member (a third definition): its label in the set was the
+                    // receiver spelling the newcomer is about to take, so it moves too.
+                    self.relabel_overload(fn_name, d_nr, &inc_full);
                 }
             }
             if own(self, &key) == u32::MAX {
