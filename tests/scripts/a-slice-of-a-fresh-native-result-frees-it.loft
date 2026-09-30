@@ -15,6 +15,12 @@
 // @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
 // @falsified-by: tests/falsified/a-slice-of-a-fresh-native-result-frees-it.patch — interpret leaked
 //   kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
+// CHANNEL: the leak check alone, on both backends — the values are right on both trees, which is
+//   why they are asserted (a cure that sliced a different store would move them).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 24 stores left on the control — one per slice of a native result, the loop's 20
+//   among them.
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r += ["q3"]; r }
