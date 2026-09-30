@@ -277,7 +277,14 @@ derivation are built on, and go last.  **The owner's direction (2026-09-30): not
 every kind leaves the base language, and the syntax stays** — `spatial<T[x, y]>` keeps
 reading as it does, defined through a flexible kind construct a bundle supplies rather than
 by the parser knowing the word.  The design home is @PLN91 strand 3; this plan only measures
-what the kinds weigh and who uses them.
+what the kinds weigh and who uses them.  **The first concrete use of that construct is
+already known**: `spatial`'s open-ended walk (`..:n`, the `Near` form) is approximate by
+design — it follows the Morton curve, which jumps at quadrant boundaries, so a truly-near
+point can arrive late; `within` and `nearest` are exact (`src/spatial.rs`).  Agents have
+asked for a precise walk, and a slower, exact `spatial` beside the fast one is cumbersome
+today because the kind is baked into the parser, codegen and store; as a bundle it is one
+more implementation of one construct that the user chooses — as would a `spatial` over
+`float` coordinates, which the baked kind refuses (loft#1431).
 
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
