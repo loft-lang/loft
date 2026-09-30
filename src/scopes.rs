@@ -20652,24 +20652,51 @@ impl Scopes<'_> {
     /// would make the lift free the caller's record — and must itself be proven fresh, so
     /// the proof stays positive and one unreadable link refuses the chain.
     ///
-    /// One level, deliberately. A delegate that itself delegates answers `false` and keeps
-    /// its leak, which is the direction every gate here takes when it cannot name what it
-    /// would be freeing; recursing would also need a cycle guard for mutual recursion.
+    /// A delegate that is itself an instance is asked the same question, so a generic that
+    /// forwards to another generic (`diff2<T>(a, b) { diff(a, b) }`) is decided by the chain
+    /// rather than refused at its first link.  [`DELEGATION_DEPTH`] is the cycle guard mutual
+    /// recursion needs: past it the answer is `false`, the direction every gate here takes
+    /// when it cannot name what it would be freeing.
     /// No `self`: unlike the fn-ref twin, which resolves a closure through the caller's
     /// `fnref_target`, the target here is written in the IR and only `Data` is needed.
+    ///
+    /// A target that returns a BORROW of one of its parameters is fresh here too, where the
+    /// instance COPIES what it is handed (loft#1820).  An instance whose published return
+    /// carries no dep hoists a call tail into a `__ret_N` typed with that return, and a
+    /// record `Set` into an owned temp copies a borrowed source.  The hoist happens whenever
+    /// free ops follow the tail, and a target taking a `__retbuf` guarantees one: the
+    /// instance passes its own work ref and releases it after the call.  So `diff(p, q)`
+    /// over `fn OpMin(self: P, o: P?) -> P { self }` hands its caller a copy of `p`.  Declined,
+    /// that copy was owned by nobody, one record per inline call, while `(p - q).x` — which
+    /// hands back `p` itself and is read as the borrow it is — was clean.
     fn monomorph_delegated_return_is_fresh(data: &Data, def: &crate::data::Definition) -> bool {
+        Self::delegated_return_is_fresh_at(data, def, 0)
+    }
+
+    fn delegated_return_is_fresh_at(
+        data: &Data,
+        def: &crate::data::Definition,
+        depth: usize,
+    ) -> bool {
         let null_ref = data.def_nr("OpNullRefSentinel");
         let Some(targets) = def.monomorph_direct_call_return_targets(null_ref) else {
             return false;
         };
+        let instance_copies = def.returned.depend().is_empty();
         targets.iter().all(|&d_nr| {
             if d_nr as usize >= data.definitions() as usize {
                 return false;
             }
             let target = data.def(d_nr);
             target.code != Value::Null
-                && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh(null_ref)
+                && if target.returns_borrowed_view() {
+                    instance_copies && target.attr_names.contains_key("__retbuf")
+                } else {
+                    target.monomorph_return_is_fresh(null_ref)
+                        || (target.is_instance()
+                            && depth < DELEGATION_DEPTH
+                            && Self::delegated_return_is_fresh_at(data, target, depth + 1))
+                }
         })
     }
 
@@ -23879,6 +23906,11 @@ fn inject_per_arm(
 /// travels with the node, unlike a set keyed on a variable number that a re-derived `Scopes`
 /// starts empty.
 const ARMED_VIEW_RETURN: &str = "materialized_view_return_armed";
+
+/// How many generic instances deep [`Scopes::monomorph_delegated_return_is_fresh`] follows a
+/// chain of delegating tails before it answers `false`.  The bound is the cycle guard mutual
+/// recursion needs (`f<T>` forwarding to `g<T>` forwarding to `f<T>`), not a measured depth.
+const DELEGATION_DEPTH: usize = 8;
 
 /// The join feeding a `materialized_view_return`'s copy, if the return has that shape.
 ///

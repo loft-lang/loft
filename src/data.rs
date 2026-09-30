@@ -5383,6 +5383,13 @@ impl Definition {
             Value::Null => true,
             Value::Call(nr, args) if *nr == null_ref && args.is_empty() => true,
             Value::Var(n) => Self::local_owns(*n, vars, buf),
+            // A `return x` hands back `x`.  The scope pass writes one INSIDE a value block
+            // whose epilogue frees a local — an operator body that built a `??` or `if`
+            // default ends `Object { …; free(default); return __retbuf }` — and read as an
+            // unknown shape it refused a body that returns its fresh buffer, so a bounded
+            // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
+            // left its result unlifted and leaked one record per inline call (loft#1820).
+            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
