@@ -3470,3 +3470,109 @@ fn every_markdown_link_resolves() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// loft#1777 — the committed pages under `doc/` are what `gendoc` makes of this tree.
+///
+/// The stdlib reference, the guide pages, the printed reference and the site navigation are
+/// GENERATED, and a source change that is not followed by `cargo run --bin gendoc` leaves the
+/// published page telling readers the old text: `text_from_byte_range`'s corrected doc
+/// comment reached the 2026.10 candidate with the old one still on `stdlib-text.html`.
+///
+/// The check runs the built `gendoc` in a copy of the TRACKED tree, so it never writes into
+/// the checkout a parallel test is reading, and compares every file there with the committed
+/// one.  A hand-written page compares equal because `gendoc` does not touch it; a generated
+/// page that differs, or one `gendoc` creates that was never committed, is drift.
+///
+/// Not compared: what depends on the builder's registry cache (`~/.loft/registry`) rather
+/// than on the tree — the `doc/lib-*.html` pages, and the library entries of
+/// `doc/search-index.js`.  A box with an empty cache renders those differently from the same
+/// tree (measured: 84 pages plus the index), so they are regenerated with a full cache at
+/// release, under `M-doc-validation`, not on every change.
+#[test]
+fn the_generated_pages_match_their_sources() {
+    use std::path::Path;
+    use std::process::Command;
+    let registry_derived = |p: &str| p.starts_with("doc/lib-") && p.ends_with(".html");
+    let without_lib_entries = |s: &str| {
+        s.lines()
+            .filter(|l| !l.contains("url:\"lib-"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let tracked = Command::new("git")
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("git ls-files");
+    assert!(tracked.status.success(), "git ls-files failed");
+    let files: Vec<String> = tracked
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|b| !b.is_empty())
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .collect();
+    let copy = std::env::temp_dir().join(format!("loft-gendoc-drift-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&copy);
+    for f in &files {
+        let to = copy.join(f);
+        if let Some(dir) = to.parent() {
+            fs::create_dir_all(dir).expect("create the copy's directory");
+        }
+        // A tracked path can be absent from the checkout (deleted, not yet committed).
+        if Path::new(f).is_file() {
+            fs::copy(f, &to).expect("copy a tracked file");
+        }
+    }
+    let run = Command::new(env!("CARGO_BIN_EXE_gendoc"))
+        .current_dir(&copy)
+        .output()
+        .expect("run gendoc");
+    assert!(
+        run.status.success(),
+        "gendoc failed in the copy:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let mut drift = Vec::new();
+    for f in files
+        .iter()
+        .filter(|f| f.starts_with("doc/") && !registry_derived(f))
+    {
+        let (Ok(made), Ok(committed)) = (fs::read(copy.join(f)), fs::read(f)) else {
+            continue;
+        };
+        let same = if f == "doc/search-index.js" {
+            without_lib_entries(&String::from_utf8_lossy(&made))
+                == without_lib_entries(&String::from_utf8_lossy(&committed))
+        } else {
+            made == committed
+        };
+        if !same {
+            drift.push(format!("{f} differs"));
+        }
+    }
+    let tracked_set: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
+    let mut stack = vec![copy.join("doc")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read the copy's doc/").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path
+                .strip_prefix(&copy)
+                .expect("inside the copy")
+                .to_string_lossy()
+                .into_owned();
+            if !tracked_set.contains(rel.as_str()) && !registry_derived(&rel) {
+                drift.push(format!("{rel} is generated but not committed"));
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&copy);
+    assert!(
+        drift.is_empty(),
+        "the committed doc/ pages are not what gendoc makes of this tree — run \
+         `cargo run --bin gendoc` and commit the result (loft#1777):\n  {}",
+        drift.join("\n  ")
+    );
+}

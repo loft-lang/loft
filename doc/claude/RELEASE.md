@@ -43,7 +43,10 @@ ticked with the evidence of each part:
    `make libcatalogue && make libraries-review` reads clean
    ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md)).
 2. **User documentation** — the stdlib reference, the guides, the comparison pages and the
-   generated HTML: `cargo run --bin gendoc` leaves no diff (the pages match their sources),
+   generated HTML: `cargo run --bin gendoc` leaves no diff (the pages match their sources;
+   `doc_hygiene::the_generated_pages_match_their_sources` checks this on every change, except
+   the `doc/lib-*.html` pages, which depend on the registry cache — so run it here with the
+   cache holding every published library at its latest version, and commit what it writes),
    `scripts/doc_review.py` reads every section cleared, and its sign-offs are committed in
    `.doc_review_ledger`, so the next release starts from them (§ 0 below).
 3. **Feature catalogue** — `make features-review SINCE=<previous release tag>` lists every
