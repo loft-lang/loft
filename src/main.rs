@@ -313,9 +313,7 @@ fn print_help() {
     println!("  tag <@TAG> [--json]           what the tracker index knows about a tag");
     println!("                                (@F/@I feature, @P problem, @PLN/@GH issue)");
     println!("  refs <name> [root] [--json]   every occurrence of an identifier in the .loft tree");
-    println!(
-        "  sandbox-check <file>          report the @PLN86 sandbox admission verdict and STOP"
-    );
+    println!("  sandbox-check <file>          report the sandbox admission verdict and STOP");
     println!("                                (Admitted / Rejected + diagnostics; never executes)");
     println!("  build [target...]             build the project's declared / default targets");
     println!("                                build            — build [build] default-targets");
@@ -424,9 +422,7 @@ fn print_help() {
     println!("                                (PKG.REG R1 — see doc/claude/PKG_REGISTRY.md)");
     println!("  build-native [pkg-dir]        build the package's native cdylib for this host");
     println!("                                + print its path, triple, and loft-ffi fp, so CI");
-    println!(
-        "                                can publish it as a prebuilt/<triple>/ binary (@PLN21)"
-    );
+    println!("                                can publish it as a prebuilt/<triple>/ binary");
     println!("  search [query]                client-side search of the package registry");
     println!(
         "                                matches name / description / categories (case-insensitive);"
@@ -1696,7 +1692,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
         eprintln!(
             "So the binary would be replaced and the stdlib would not, leaving a new loft\n\
              reading an old standard library — which crashes rather than reporting a version\n\
-             skew (loft#1497).  Nothing was changed.\n"
+             skew.  Nothing was changed.\n"
         );
         eprintln!(
             "{} is what a source install (`make install`) creates, and a release\n\
@@ -1727,7 +1723,7 @@ fn install_staged_bundle(a: &StagedInstall) -> i32 {
                 println!(
                     "\nInstalled with --force over a SHADOWED stdlib.  The binary is new and\n\
                      {} is unchanged, so loft still reads the old\n\
-                     standard library — the loft#1497 state.  `loft verify-self` now reports it.",
+                     standard library.  `loft verify-self` reports it.",
                     loaded.display()
                 );
             } else if force {

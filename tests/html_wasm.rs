@@ -1781,7 +1781,7 @@ fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
         assert!(
             err.contains("`c_len` is bound to the C symbol 'strlen' with #c")
                 && err.contains(target)
-                && err.contains("@PLN24 arc E"),
+                && err.contains("drop the"),
             "{flag} must name the function, the symbol and the target: {err}"
         );
         // One message, not a cascade — the failure this replaced emitted one

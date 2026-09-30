@@ -545,7 +545,7 @@ fn test_a_superseded_spelling_still_answers_what_its_successor_does() {
 // build".  Measured, both halves are WARNINGS:
 //
 //   warning[lost-write]: 'd' is mutated but its value is never read — the write is
-//     LOST. A whole-value bind (`d = …`) COPIES the heap value (C86) …
+//     LOST. A whole-value bind (`d = …`) COPIES the heap value …
 //   warning[never-read]: Variable total is never read
 //
 // which is the right tier by loft's own rule — a diagnostic gates if and only if

@@ -22,7 +22,7 @@
 // `o: vector<T> = []; o += vl; o` does.
 //
 // ⚠ THE DIAGNOSTIC ALREADY SAID SO. `c = t.0; c[0] = 41` drew `warning[lost-write]: a
-// whole-value bind (`c = …`) COPIES the heap value (C86), so the mutation lands in the copy` —
+// whole-value bind (`c = …`) COPIES the heap value, so the mutation lands in the copy` —
 // while the write actually reached `vl` through two levels of binding. A shipped diagnostic
 // describing the contract WRONGLY is what makes this worth fixing beyond the aliasing itself,
 // and `test_the_bound_element_is_independent` is the cell that pins the two back together.

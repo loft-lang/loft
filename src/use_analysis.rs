@@ -6530,7 +6530,7 @@ pub fn warn_dead_stores(
             // inferred — see alias-where-correct.md: copy is the semantics, links are explicit.)
             let msg = format!(
                 "'{name}' is mutated but its value is never read — the write is LOST. A whole-value \
-                 bind (`{name} = …`) COPIES the heap value (C86), so the mutation lands in the copy, \
+                 bind (`{name} = …`) COPIES the heap value, so the mutation lands in the copy, \
                  not the source."
             );
             diags.add_at_coded(
@@ -7631,7 +7631,7 @@ pub fn warn_lost_temp_writes(
             let msg = format!(
                 "`{fn_name}` writes to `{param_name}`, but the argument here is a value RETURNED \
                  by a call — a temporary that is freed at the end of this statement, so the write \
-                 is LOST. Returning a struct hands back a COPY (C86); pass the element itself, or \
+                 is LOST. Returning a struct hands back a COPY; pass the element itself, or \
                  bind the result and read it back."
             );
             diags.add_at_coded(

@@ -2974,7 +2974,7 @@ impl Parser {
                          the closure references state owned by this function's frame, so \
                          the value cannot outlive it — construct the struct in the frame \
                          that owns the captured state and pass it down, or return the \
-                         closure itself (#318)"
+                         closure itself"
                     );
                 }
             }
@@ -4343,7 +4343,7 @@ impl Parser {
                 "collection of a struct type that holds a capturing closure is not \
                  supported — element copies would dangle into the constructing \
                  function's frame; keep closure holders in local variables and pass \
-                 them down as arguments (#318)"
+                 them down as arguments"
             );
         }
         Some(tp)

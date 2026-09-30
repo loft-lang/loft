@@ -5097,7 +5097,7 @@ use #count instead"
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par() worker {} — a par worker's captured state is READ-ONLY (@PLN102 C93): a \
+                "par() worker {} — a par worker's captured state is READ-ONLY: a \
                      write to shared parent state is a data race, which loft disallows rather \
                      than run.  Return the value from the worker and accumulate it in the fold \
                      body instead.",

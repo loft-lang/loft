@@ -1855,7 +1855,7 @@ pub(crate) fn add_native_extern_flags(
                         eprintln!(
                             "loft: native package `{crate_name}` cdylib at {} has no import \
                              library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                             DLL through its import lib, not the DLL directly (@PLN26 phase 4).  \
+                             DLL through its import lib, not the DLL directly.  \
                              Rebuild the package's cdylib with a toolchain that emits one.",
                             so_dir.display()
                         );

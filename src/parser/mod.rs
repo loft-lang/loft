@@ -14944,7 +14944,7 @@ impl Parser {
                 "field `{nm}` would store a value of a type that holds a capturing \
                  closure; such values are bound to the function frame that owns the \
                  captures and cannot be copied into another struct — keep the closure \
-                 holder in a local variable and pass it down as an argument (#318)"
+                 holder in a local variable and pass it down as an argument"
             );
             return Value::Null;
         }
@@ -15174,7 +15174,7 @@ impl Parser {
                              argument — the closure references state owned by this \
                              function's frame, which the argument's struct outlives; \
                              construct the closure in the frame that owns the captured \
-                             state (#318)"
+                             state"
                         );
                         return Value::Null;
                     }

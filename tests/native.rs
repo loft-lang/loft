@@ -3707,7 +3707,8 @@ fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
     // binding.  Without this a refusal that fired everywhere would read as a pass.
     let host = emit(false);
     assert!(
-        host.contains("#[link_name = \"strlen\"]") && !host.contains("@PLN24 arc E"),
+        host.contains("#[link_name = \"strlen\"]")
+            && !host.contains("cannot open a shared library"),
         "the host target must still emit the typed extern and no refusal"
     );
 
@@ -3716,7 +3717,7 @@ fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
         wasm.contains("`used` is bound to the C symbol 'strlen' with #c")
             && wasm.contains("wasm (wasip2)")
             && wasm.contains("--native-wasm")
-            && wasm.contains("@PLN24 arc E"),
+            && wasm.contains("cannot open a shared library"),
         "the reachable call must be refused by name: {wasm}"
     );
     assert!(

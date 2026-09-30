@@ -1404,7 +1404,7 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
             eprintln!(
                 "loft: native package `{crate_name}` cdylib at {} has no import \
                  library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                 DLL through its import lib (@PLN26 phase 4); rebuild the package's \
+                 DLL through its import lib; rebuild the package's \
                  cdylib with a toolchain that emits one.",
                 so_dir.display()
             );

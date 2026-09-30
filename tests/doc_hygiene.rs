@@ -3599,3 +3599,133 @@ fn the_generated_pages_match_their_sources() {
         drift.join("\n  ")
     );
 }
+
+/// The string literals of every compiler diagnostic in `src/` — the text of each
+/// `diagnostic!(…)` and of each `let msg = format!(…)` a lint builds its message from —
+/// with the file and line each starts on.  A `#[cfg(test)]` module is left out: its strings
+/// are assertions, not output.
+fn diagnostic_literals() -> Vec<(String, usize, String)> {
+    fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in fs::read_dir(dir).expect("src/ is readable") {
+            let p = e.expect("entry").path();
+            if p.is_dir() {
+                rs_files(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    rs_files(std::path::Path::new("src"), &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let text = fs::read_to_string(&f).expect("source");
+        let body = text.split("#[cfg(test)]").next().unwrap_or("");
+        for open in ["diagnostic!(", "let msg = format!("] {
+            let mut from = 0;
+            while let Some(at) = body[from..].find(open) {
+                let start = from + at;
+                let end = body[start..].find(");").map_or(body.len(), |e| start + e);
+                let call = &body[start..end];
+                let mut rest = call;
+                while let Some(q) = rest.find('"') {
+                    let lit = &rest[q + 1..];
+                    let mut close = None;
+                    let mut esc = false;
+                    for (i, c) in lit.char_indices() {
+                        if esc {
+                            esc = false;
+                        } else if c == '\\' {
+                            esc = true;
+                        } else if c == '"' {
+                            close = Some(i);
+                            break;
+                        }
+                    }
+                    let Some(close) = close else { break };
+                    let line = body[..start].lines().count() + 1;
+                    out.push((f.display().to_string(), line, lit[..close].to_string()));
+                    rest = &lit[close + 1..];
+                }
+                from = end.max(start + 1);
+            }
+        }
+    }
+    out
+}
+
+/// A tracker tag in a compiler diagnostic: a design-decision id, a plan or issue number.
+fn diagnostic_tag(s: &str) -> Option<&'static str> {
+    let bytes = s.as_bytes();
+    let digit_after = |i: usize| bytes.get(i).is_some_and(u8::is_ascii_digit);
+    for (i, _) in s.char_indices() {
+        let r = &s[i..];
+        if r.starts_with("@PLN") && digit_after(i + 4) {
+            return Some("@PLN<n>");
+        }
+        if r.starts_with("@PLAN") && digit_after(i + 5) {
+            return Some("@PLAN<n>");
+        }
+        if r.starts_with("loft#") && digit_after(i + 5) {
+            return Some("loft#<n>");
+        }
+        if r.starts_with("(C") && digit_after(i + 2) && digit_after(i + 3) {
+            return Some("(C<n>)");
+        }
+        if r.starts_with("(#") && digit_after(i + 2) && digit_after(i + 3) && digit_after(i + 4) {
+            return Some("(#<n>)");
+        }
+    }
+    None
+}
+
+/// A diagnostic is read by someone who has none of this repository's trackers open, so it
+/// names no plan, issue or design-decision id (CLAUDE.md § User-facing output): "(C86)" in
+/// the `lost-write` warning, "(@PLN102 C93)" in the `par` refusal and "(#318)" in the
+/// closure-lifetime refusals said nothing a reader could use.  The reasoning a tag points
+/// at belongs in the message's own words or in DIAGNOSTICS.md.
+#[test]
+fn no_diagnostic_message_carries_a_tracker_tag() {
+    let literals = diagnostic_literals();
+    assert!(
+        literals.len() > 200,
+        "found only {} diagnostic literals — the scanner lost its subject",
+        literals.len()
+    );
+    let tagged: Vec<String> = literals
+        .iter()
+        .filter_map(|(f, l, s)| diagnostic_tag(s).map(|t| format!("{f}:{l} {t}: {s}")))
+        .collect();
+    assert!(
+        tagged.is_empty(),
+        "{} diagnostic message(s) name a tracker tag — say the reason in words instead:\n  {}",
+        tagged.len(),
+        tagged.join("\n  ")
+    );
+}
+
+/// The tag test fires on each spelling it exists to catch, and not on text that only
+/// resembles one: a `#` placeholder, a store number, a width like `C99`.
+#[test]
+fn the_diagnostic_tag_test_sees_each_spelling() {
+    for leak in [
+        "a COPY (C86), so",
+        "(@PLN102 C93)",
+        "see loft#1497",
+        "(#318)",
+        "@PLAN22 phase",
+    ] {
+        assert!(diagnostic_tag(leak).is_some(), "missed {leak}");
+    }
+    for clean in [
+        "store #{}",
+        "def #{d}",
+        "rec={}",
+        "C99 printf",
+        "(a C call)",
+        "`#c`",
+    ] {
+        assert!(diagnostic_tag(clean).is_none(), "false positive on {clean}");
+    }
+}
