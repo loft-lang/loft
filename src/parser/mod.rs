@@ -10523,7 +10523,10 @@ impl Parser {
         // stub reaches runtime with no diagnostic to attach.)
         if resolved != u32::MAX {
             let want = def.attributes().iter().filter(|a| !a.hidden).count();
-            if data.attributes(resolved) != want
+            // VISIBLE on both sides: a user operator returning a struct carries a hidden
+            // return buffer, so its raw count matched the other arity's visible one and the
+            // unary `OpMin(self: V) -> V` (raw 2) was kept for a binary `a - b` (loft#1794).
+            if Self::visible_arity(data, resolved) != want
                 && let Some(by_signature) =
                     data.possible_with_signature(fn_name, want, &concrete_arg)
             {
@@ -15588,7 +15591,9 @@ impl Parser {
     /// is gone and the message named an operator the author never typed: `a >= b` on an
     /// unbounded `<T>` reported *"operator '<=' requires a concrete type"*.  `spelled` is
     /// carried for the DIAGNOSTIC only; every resolution decision still reads `op`, so the two
-    /// cannot drift into disagreeing about what is being resolved.
+    /// cannot drift into disagreeing about what is being resolved.  The prefix operators pass
+    /// the token too — `-x` resolves `Min`, `!x` `Not`, `~x` `BitNot` — so a refusal names
+    /// `-` and not the internal `Min` (loft#1807).
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call_op_as(
         &mut self,
@@ -15764,9 +15769,18 @@ impl Parser {
             // Method-only lookup (NOT full `find_fn`, whose `possible` fallback would
             // pre-empt the coercion the loop legitimately does for mixed built-in operands).
             if let Some(first) = types.first() {
-                let m = self
-                    .data
-                    .find_op_method(u16::MAX, &format!("Op{}", rename(op)), first);
+                let op_name = format!("Op{}", rename(op));
+                let mut m = self.data.find_op_method(u16::MAX, &op_name, first);
+                // The method KEY names the slot's incumbent, whatever its arity: `-` reaches
+                // here as `OpMin` at both arities, so a type defining both answered the one
+                // declared first for `a - b` and `-a` alike (loft#1794).  The arity this call
+                // has decides, as `(G-Sat)` and the monomorph ask it.
+                if m != u32::MAX && Self::visible_arity(&self.data, m) != list.len() {
+                    m = self
+                        .data
+                        .possible_with_signature(&op_name, list.len(), first)
+                        .unwrap_or(u32::MAX);
+                }
                 if m != u32::MAX {
                     let tp = self.call_nr(code, m, list, types, false, &[], None);
                     if tp != Type::Null {
@@ -15871,7 +15885,11 @@ impl Parser {
                 let user_op = self
                     .data
                     .find_fn(u16::MAX, &format!("Op{}", rename(op)), first);
-                if user_op != u32::MAX {
+                // Only at this call's arity (loft#1794): a type defining `-` at ONE arity
+                // answered the other spelling with it — `a - b` over a unary-only `OpMin`
+                // computed `-a` and dropped `b`, silently.  Refused below instead, as the
+                // operator that it is not.
+                if user_op != u32::MAX && Self::visible_arity(&self.data, user_op) == list.len() {
                     let tp = self.call_nr(code, user_op, list, types, false, &[], None);
                     if tp != Type::Null {
                         return tp;
@@ -15937,7 +15955,7 @@ impl Parser {
                 self.lexer,
                 &self.lexer.peek().clone(),
                 Level::Error,
-                "No matching operator {spelled} on {}",
+                "No matching operator '{spelled}' on '{}'",
                 types[0].source_name(&self.data)
             );
         }

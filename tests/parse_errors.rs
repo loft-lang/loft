@@ -597,6 +597,33 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn an_operator_at_an_arity_its_type_lacks_is_refused() {
+    // loft#1794 — a user type defining `-` at ONE arity is refused at the other, naming the
+    // operator the author wrote (loft#1807).  Before, the operator lookup took the receiver
+    // slot's method whatever its arity: `a - b` over a unary-only `OpMin` called it with one
+    // operand too many and answered `-a` in silence, and `-a` over a binary-only one was
+    // refused as a missing argument of `OpMin`.
+    //
+    // Measured against ec35ee1de: FAILS there — no error for `a - b` (it compiled and ran),
+    // and *"missing argument for parameter 'o' of `OpMin`"* for `-c`.
+    code!(
+        "struct Un { x: integer }\nfn OpMin(self: Un) -> Un { Un { x: 0 - self.x } }\nstruct Bi { x: integer }\nfn OpMin(self: Bi, o: Bi) -> Bi { Bi { x: self.x - o.x } }\nfn test() { a = Un { x: 3 }; b = Un { x: 1 }; d = a - b; c = Bi { x: 2 }; e = -c; }"
+    )
+    .error("No matching operator '-' on 'Un' and 'Un' at an_operator_at_an_arity_its_type_lacks_is_refused:5:56")
+    .error("No matching operator '-' on 'Bi' at an_operator_at_an_arity_its_type_lacks_is_refused:5:81");
+}
+
+#[test]
+fn a_prefix_operator_refusal_names_the_token_written() {
+    // loft#1807 — `-x`, `!x` and `~x` resolve the internal `Min`, `Not` and `BitNot`; a refusal
+    // names the token.  Measured against ec35ee1de: FAILS there with *"generic type T:
+    // operator 'Min' requires a concrete type"*.
+    code!("fn neg<T: Subtractable>(x: T) -> T { -x }\nfn bn<T: Subtractable>(x: T) -> T { ~x }")
+        .error("generic type T: operator '-' requires a concrete type at a_prefix_operator_refusal_names_the_token_written:1:41")
+        .error("generic type T: operator '~' requires a concrete type at a_prefix_operator_refusal_names_the_token_written:2:40");
+}
+
+#[test]
 fn a_method_call_over_an_uncovered_pair_is_refused_once_like_the_call() {
     // loft#1780 — `a.hits(b)` and `hits(a, b)` are one call (`@FR-F-Recv`): over a `self` set
     // that dispatches past its receiver and misses the (Rd, Rd) pair, BOTH spellings are

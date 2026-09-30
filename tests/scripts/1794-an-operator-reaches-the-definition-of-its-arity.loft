@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1794 — a user type defining an operator at BOTH arities (`OpMin(self: V)` beside
+// `OpMin(self: V, o: V)`) has `a - b` reach the binary one and `-a` the unary one, at a
+// concrete site, through a `<T: Subtractable>` / `<T: Numeric>` bound, and in `(G-Sat)`.
+//
+// `formal/interfaces.md` (G-Sat) judges a member by its SIGNATURE, so the two arities are two
+// members.  The second definition joins an overload set keyed by its full spelling (@PLN162
+// `Disp-Key`), where the operator lookup never looked: `find_op_method` / `find_fn` answer the
+// receiver slot's incumbent whatever its arity, so `a - b` called the unary member with one
+// operand too many (`-3` for `3 - 1`, both backends, no diagnostic), `(G-Sat)` reported the
+// binary member missing, and a monomorph's re-ask compared a RAW parameter count (which a
+// struct return's hidden buffer inflates) against the visible one.
+//
+// Axes this file MOVES:  the result kind (a struct · a text-carrying struct · a plain
+//                        `integer`), the operand position (a local · a vector element · a
+//                        nested expression), the arity (binary · unary · both in one
+//                        expression), the site (concrete · bounded generic · bound over a
+//                        builtin), and a type with the BINARY member only.
+// Axes it HOLDS FIXED:   declaration order unary-first (binary-first is loft#1811, a refusal).
+// A type with ONE arity used at the other is refused, naming the operator the author wrote —
+// `tests/parse_errors.rs::an_operator_at_an_arity_its_type_lacks_is_refused`.
+//
+// @falsified-at: ec35ee1de — interpret exit 1 -> 0, native exit 1 -> 0.
+//   CHANNEL: exit on both backends — the control refuses this file at compile time with
+//   "No matching operator '-' on 'N' and 'N'" (the unary `N` member, returning `integer`,
+//   does not type as a binary call).  Measured on the control with the `V` cells alone
+//   (loft#1794's own repro): `c.x` answers -3 where this file asserts 2, on both backends,
+//   with no diagnostic; and `sub(a, b)` is refused "'V' does not satisfy interface
+//   'Subtractable': missing OpMin".
+//   HOLDS: the binary-only type `W` and the builtin `sub(5, 2)` / `neg(4)` answer the same on
+//   both trees; clean under LOFT_POISON=1 with LOFT_STRICT_STORES=1 here.
+
+struct V { x: integer }
+fn OpMin(self: V) -> V { V { x: -self.x } }
+fn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }
+fn OpAdd(self: V, o: V) -> V { V { x: self.x + o.x } }
+fn OpMul(self: V, o: V) -> V { V { x: self.x * o.x } }
+
+struct W { x: integer }
+fn OpMin(self: W, o: W) -> W { W { x: self.x - o.x } }
+
+struct S { t: text }
+fn OpMin(self: S) -> S { S { t: "-{self.t}" } }
+fn OpMin(self: S, o: S) -> S { S { t: "{self.t}-{o.t}" } }
+
+struct N { x: integer }
+fn OpMin(self: N) -> integer { 0 - self.x }
+fn OpMin(self: N, o: N) -> integer { self.x - o.x }
+
+fn sub<T: Subtractable>(a: T, b: T) -> T { a - b }
+fn neg<T: Numeric>(a: T) -> T { -a }
+
+fn main() {
+  a = V { x: 3 };
+  b = V { x: 1 };
+  c = a - b;
+  d = -a;
+  e = a - b - b;
+  f = -(a - b);
+  g = a + -b;
+  assert(c.x == 2, "binary: {c.x}");
+  assert(d.x == -3, "unary: {d.x}");
+  assert(e.x == 1, "chained binary: {e.x}");
+  assert(f.x == -2, "unary over binary: {f.x}");
+  assert(g.x == 2, "unary inside another operator: {g.x}");
+  w = W { x: 9 } - W { x: 4 };
+  assert(w.x == 5, "binary-only type: {w.x}");
+  s = S { t: "p" } - S { t: "q" };
+  ns = -S { t: "p" };
+  assert(s.t == "p-q" && ns.t == "-p", "text payload: {s.t} {ns.t}");
+  n = N { x: 7 } - N { x: 2 };
+  nn = -N { x: 7 };
+  assert(n == 5 && nn == -7, "integer result: {n} {nn}");
+  gs = sub(a, b);
+  gn = neg(a);
+  assert(gs.x == 2 && gn.x == -3, "through a bound: {gs.x} {gn.x}");
+  assert(sub(5, 2) == 3 && neg(4) == -4, "the bound over integer");
+  vs = [V { x: 10 }, V { x: 4 }];
+  t = vs[0] - vs[1];
+  assert(t.x == 6, "vector elements: {t.x}");
+}

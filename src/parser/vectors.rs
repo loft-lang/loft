@@ -621,7 +621,7 @@ impl Parser {
                 *val = self.cl("OpNot", &[present]);
                 return Type::Boolean;
             }
-            self.call_op(val, "Not", &[arg], &[t])
+            self.call_op_as(val, "Not", "!", &[arg], &[t])
         } else if self.lexer.has_token("~") {
             let operand_pos = self.lexer.peek_pos().clone();
             // The operand is a SUB-expression, so the assignment's destination hint does not
@@ -631,7 +631,7 @@ impl Parser {
             self.prefix_operand = outer_prefix;
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
             let arg = val.clone();
-            self.call_op(val, "BitNot", &[arg], &[t])
+            self.call_op_as(val, "BitNot", "~", &[arg], &[t])
         } else if self.lexer.has_token("-") {
             let operand_pos = self.lexer.peek_pos().clone();
             // The operand is a SUB-expression, so the assignment's destination hint does not
@@ -673,7 +673,7 @@ impl Parser {
                 });
             }
             let arg = val.clone();
-            self.call_op(val, "Min", &[arg], &[t])
+            self.call_op_as(val, "Min", "-", &[arg], &[t])
         } else if self.lexer.has_token("(") {
             // loft#1067 — a tuple MEMBER's declared type is an expected type like any
             // other, so `t: (fn(integer) -> integer, integer) = (|x| { x * 2 }, 1)` can

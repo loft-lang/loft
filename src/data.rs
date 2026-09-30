@@ -7488,16 +7488,32 @@ impl Data {
     /// exist for an operator. `call_op` picks among them by TRYING each (`call_nr` answers
     /// `Type::Null` on a mismatch); this is that question asked statically, which is all a
     /// `&Data` resolver can do.
+    ///
+    /// A USER operator is not in that map: it is a method, and one type defining a name at
+    /// two arities (`OpMin(self: V)` beside `OpMin(self: V, o: V)`) is an overload set whose
+    /// second member is keyed by its full spelling, where `find_fn` / `find_op_method` never
+    /// look — they answer the slot's incumbent whatever the arity.  So the set is asked too,
+    /// on the VISIBLE count (a struct return carries a hidden buffer).  Without it `a - b`
+    /// called the unary member with one operand too many, `(G-Sat)` reported the binary one
+    /// missing, and a monomorph bound the unary one for `a - b` (loft#1794).
     #[must_use]
     pub fn possible_with_signature(&self, start: &str, arity: usize, first: &Type) -> Option<u32> {
         let want = self.type_def_nr(first);
-        self.possible.get(start)?.iter().copied().find(|&d| {
-            let def = &self.definitions[d as usize];
-            def.attributes().len() == arity
-                && def
-                    .attributes()
-                    .first()
-                    .is_some_and(|a| self.type_def_nr(&a.typedef) == want)
+        let builtin = self.possible.get(start).and_then(|list| {
+            list.iter().copied().find(|&d| {
+                let def = &self.definitions[d as usize];
+                def.attributes().len() == arity
+                    && def
+                        .attributes()
+                        .first()
+                        .is_some_and(|a| self.type_def_nr(&a.typedef) == want)
+            })
+        });
+        builtin.or_else(|| {
+            self.overload_routines(start).into_iter().find(|&d| {
+                let params = self.visible_params(d);
+                params.len() == arity && params.first().is_some_and(|t| self.type_def_nr(t) == want)
+            })
         })
     }
 
@@ -8275,7 +8291,7 @@ impl Data {
     }
 
     /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
-    fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
+    pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
         self.def(d_nr)
             .attributes
             .iter()
