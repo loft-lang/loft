@@ -177,7 +177,7 @@ Both ends clamp, a reversed range gives `""`, and a negative bound counts from t
 | `trim(self: text) -> text` | Removes leading and trailing whitespace. Use when processing user input or file content. |
 | `trim_start(self: text) -> text` | Removes leading whitespace only. |
 | `trim_end(self: text) -> text` | Removes trailing whitespace only. |
-| `split(self: text, separator: character) -> vector<text>` | Splits `self` on every occurrence of `separator` and returns the parts as a vector. |
+| `split(self: text, separator: character) -> vector<text>` | Splits `self` on every occurrence of `separator` and returns the parts as a vector.  An empty or absent text gives no parts. |
 | `join(self: vector<text>, separator: text) -> text` | Concatenates all elements of `self` with `separator` between each pair. Inverse of `split`. |
 
 ### Iterating over text
@@ -190,8 +190,8 @@ as `null` (guard `tests/scripts/text-nul-iteration-755.loft`).  A NUL therefore 
 through `byte_at`, not through iteration; see
 [CAVEATS.md](CAVEATS.md#accepted-trade-offs-not-scheduled-for-change).
 
-The one text this does not describe is loft's **null text**, which IS the one-byte NUL
-string: `size` answers 1 for it, and it yields nothing.
+The one text this does not describe is loft's **null text**: it has no characters, so `len`
+and `size` answer 0 for it, it yields nothing, and `split` gives no parts.
 
 Inside the loop body two positional attributes are available:
 
@@ -234,7 +234,8 @@ routes between the two views.
 surrogate (`D800`–`DFFF`), anything past `U+10FFFF`, a negative number — and `0`,
 because `character` uses 0 as its null and text ITERATION STOPS at a NUL, so a
 NUL built by `chr` could not be read back by the loop it is the inverse of. The
-byte route still carries one: `text_from_bytes([0])` is one byte long.
+byte route still carries one inside a text: `text_from_bytes([65, 0, 66])` has `len` 3 and
+`size` 3.  A lone NUL, `text_from_bytes([0])`, is the null text (`size` 0).
 
 ⚠ **`char_slice` was missing for longer than that, and three trees paid for it.**
 `text2d` hand-rolled `take_chars` only after `fit_text` had shipped cutting a

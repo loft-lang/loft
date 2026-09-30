@@ -32,7 +32,7 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 13. Judge a comment by what it says, not its length. — DOC_QUALITY rule 4
 14. Cite `@FR-<Rule>` where `formal/` states the invariant. — [formal/README](formal/README.md) § Rule tags · gate: `every_rule_citation_resolves`
 15. A doc block belongs to the item below it; insert above the neighbour's block, read with `grep -B`. — DOC_QUALITY rule 10, § Maintainer docs rule 12
-16. Every `pub` item in `default/*.loft` or a library has a doc comment above it. — [DOC](DOC.md), [API_SURFACE](API_SURFACE.md) S3 · gate: `every_published_stdlib_entry_carries_its_documentation`
+16. Every `pub` item in `default/*.loft` or a library has a doc comment above it (in `default/*.loft` a `///` comment; `//` is a maintainer note). — [DOC](DOC.md), [API_SURFACE](API_SURFACE.md) S3 · gate: `every_published_stdlib_entry_carries_its_documentation`
 17. A workaround comment names the canonical home of its defect, and goes in the commit that ships the fix. — DEVELOPMENT § Inserting Discovered Enhancements
 
 ## User-facing (guides, reference, comparison pages, READMEs, CLI output)
