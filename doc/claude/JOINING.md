@@ -39,7 +39,7 @@ this order: `DERIVED` (it touches only derived artefacts), `DUP` (an earlier sou
 subject), `HERE` (its diff applies in reverse to this tree, file by file), `SUBJECT` (this
 branch has a commit of that subject — a sibling's pick of our own work, resolved against its
 tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP` (a `wip` /
-`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), `REVERTED`
+`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), `UNDONE-PAIR`
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 

@@ -171,7 +171,7 @@ def mark_reverted(rows):
         fwd = patch_id([f"{r['sha']}^", r["sha"]])
         a = undo.get(fwd)
         if a is not None and a is not r and pending.index(a) < pending.index(r):
-            a["class"] = r["class"] = "REVERTED"
+            a["class"] = r["class"] = "UNDONE-PAIR"
             a["reverted_by"], r["reverts"] = r["sha"], a["sha"]
 
 
@@ -277,7 +277,7 @@ def cmd_survey(args):
 def print_plan(plan, verbose=False):
     marks = {"NEW": "pick", "PARTIAL": "pick", "HERE": "skip", "DUP": "skip", "DERIVED": "skip",
              "MERGE": "skip", "SUBJECT": "skip", "SQUASHED": "skip", "WIP": "stop",
-             "AFTER-WIP": "skip", "REVERTED": "skip"}
+             "AFTER-WIP": "skip", "UNDONE-PAIR": "skip"}
     for s in plan["sources"]:
         counts = {}
         for r in s["commits"]:
@@ -287,7 +287,7 @@ def print_plan(plan, verbose=False):
         print(f"== {s['name']} @ {s['sha'][:9]}: {summary or 'nothing'}{base_note}")
         for r in s["commits"]:
             if not verbose and r["class"] not in ("NEW", "PARTIAL", "MERGE", "SUBJECT", "WIP",
-                                                  "AFTER-WIP", "REVERTED"):
+                                                  "AFTER-WIP", "UNDONE-PAIR"):
                 continue
             done = "  done" if r.get("done") else ""
             extra = ""
@@ -295,7 +295,7 @@ def print_plan(plan, verbose=False):
                 extra = f"  [missing: {', '.join(r['missing'][:3])}]"
             elif r["class"] == "DUP":
                 extra = f"  [= {r['dup_of']}]"
-            elif r["class"] == "REVERTED":
+            elif r["class"] == "UNDONE-PAIR":
                 other = r.get("reverted_by") or r.get("reverts")
                 extra = f"  [a self-reverting pair with {other[:9]} — neither is taken]"
             elif r["class"] == "SUBJECT":
