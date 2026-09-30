@@ -267,6 +267,12 @@ It now builds a fresh list of independent copies, filtered or not.
 (`= mk(k)`) answered `null` members on the interpreter and did not compile with `--native`.
 Both answer what the same expression written as the argument would.
 
+**A write to something locked is refused the same way everywhere.**  A value locked with
+`#lock = true`, a constant and a mapped file cannot be written.  A development run stops at the
+write with the lock report; a `--production` run logs the write, discards it and carries on
+with the old value.  Before, a production run stopped too, a write to a locked `text` crashed
+inside loft, and a loop writing a locked list under `--native` changed it with no message.
+
 **`stack_trace()` names the line each frame was called from.**  A frame's line is the call that
 entered it, and the outermost frame answers 0, as the documentation said.  The interpreter
 gave the NEXT line when a call ended its statement, and `--native` gave each function's
