@@ -3884,6 +3884,16 @@ impl Parser {
             return Some(Type::Unknown(u_nr));
         }
         if tp_nr != u32::MAX && self.data.def_type(tp_nr) == DefType::Unknown {
+            // A WRITTEN type is the evidence a `Name { … }` construction alone is not: the
+            // stub a construction registered on speculation is now a type the author named,
+            // and `resolve_deferred_unknowns` must report it when nothing adopts it.  Kept
+            // speculative, the report was left to the construction site, the annotation
+            // carried the unresolved stub into pass 2, and `for h in d` over a
+            // `d: vector<Hex>` read `def(u32::MAX)` — an internal compiler error where
+            // "Undefined type Hex — it is in `lat` …" belonged.
+            if self.first_pass {
+                self.speculative_type_refs.remove(&tp_nr);
+            }
             let args = self.skip_forward_type_args(on_d);
             self.note_forward_return(returned, tp_nr, args);
             return Some(Type::Unknown(tp_nr));
