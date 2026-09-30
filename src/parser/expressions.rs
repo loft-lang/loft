@@ -1006,7 +1006,7 @@ impl Parser {
             && let Value::Call(d, _) = rhs.unspan()
             && !self.vars.is_argument(*p)
             && matches!(self.vars.tp(*p).base(), Type::Vector(_, _))
-            && !self.vars.tp(*p).depend().is_empty()
+            && self.vars.tp(*p).deps_ref().is_some_and(|d| !d.is_empty())
             && let returned = self.data.def(*d).returned().clone()
             && let Type::Vector(elm, deps) = returned.base()
             && deps.is_empty()

@@ -18846,7 +18846,7 @@ impl Parser {
                                 // which the raw literal is right and the caller frees it.
                                 || (!dep.is_empty()
                                     && dep.iter().all(|&d| self.vars.name(d).starts_with("__vdb_"))
-                                    && !r_type.depend().is_empty()))
+                                    && r_type.deps_ref().is_some_and(|d| !d.is_empty())))
                         {
                             (a, bv)
                         } else {

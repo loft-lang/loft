@@ -4089,7 +4089,7 @@ impl Parser {
                 // buffer (an `inline_container` block, not a bare call) and a discharge
                 // default in its work-ref, and both keep the release.
                 let fresh = matches!(data.unspan(), Value::Call(..))
-                    && subject_tp.depend().is_empty()
+                    && subject_tp.deps_ref().is_none_or(|d| d.is_empty())
                     && !matches!(subject_tp.base(), Type::Text(_));
                 if !fresh {
                     self.vars.set_skip_free(named);
