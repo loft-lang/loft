@@ -282,25 +282,6 @@ plausible-looking shortcuts both mislabel:
 **An unlabelled issue means "not established", never "nobody".**  Roughly 84 issues filed before
 this convention carry no `hit-by:`; treat any count over that period as a floor, not a total.
 
-## `axis:` — which bar a port failed (a finding's register key)
-
-A finding met while porting a script or running a bar (@PLN179 § The bar) is an issue like
-any other — a `bug` when loft answers wrong or crashes, an `enhancement` when it lacks a
-capability — and carries ONE more label naming the axis it failed, so the plan's register
-is a query rather than a table anyone maintains:
-
-| label | the bar it failed |
-|---|---|
-| `axis:behaviour` | the port does not leave the same world (stdout, stderr, exit status, files) |
-| `axis:performance` | the port is slower than the original, start-up included |
-| `axis:clarity` | the port is longer or less plain, and the extra names a construct loft lacks |
-| `axis:environment` | loft cannot be used where the original runs (a fetch, a host, a target) |
-
-`Found-via: @PLN<n> <script>` in the body names the port that met it.  Assessing a
-finding is ordinary triage (`sev:` / `area:` / `wa:`, or closed as not planned); tracking
-it is the existing `Fixes #N` → `fixed-pending-merge` → closed-on-merge path;
-`make script-reasons` renders the register from these labels.
-
 ## Cross-cutting
 
 | Label | Meaning |
