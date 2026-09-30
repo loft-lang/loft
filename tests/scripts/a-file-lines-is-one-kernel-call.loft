@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN180 § Kernels — `File.lines()` is ONE call of a Rust kernel (`text_lines`, private) on both
+// backends: the interpreter no longer walks the content a character at a time in loft code
+// (@PLN179 finding 013 — 91 % of `tests/dump_ignored_tests` interpreted).  The kernel keeps the
+// loop's own rules, which Rust's `str::lines` does not: every `\n` ends a line and drops ONE `\r`
+// directly before it; what follows the last `\n` is a line only when it is not empty, and keeps
+// a trailing `\r`, since no `\n` ends it; an empty or missing file has no lines.
+//
+// `by_hand` below IS the loop the kernel replaced, kept as the oracle: every cell compares the
+// kernel with it, and the first cells are hand-computed as well so a shared mistake cannot pass.
+//
+// @falsified-at: none — it guards a kernel no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: dropping the `\r` strip fails `crlf` and every differential cell
+// holding a `\r\n` on both backends.
+
+#cwd
+
+fn by_hand(c: text) -> vector<text> {
+  result: vector<text> = [];
+  p = 0;
+  prev_cr = false;
+  for ch in c {
+    if ch == '\n' {
+      e = ch#index;
+      if prev_cr { result += [c[p..e - 1]]; } else { result += [c[p..e]]; }
+      p = ch#next;
+    }
+    prev_cr = ch == '\r';
+  }
+  if p < c.size() { result += [c[p..c.size()]]; }
+  result
+}
+
+fn shown(v: vector<text>) -> text {
+  o = "";
+  for l in v { o += "[{l.size()}:{l.replace("\r", "R")}]"; }
+  o
+}
+
+fn read_as(content: text) -> vector<text> {
+  f = file("test_loft_lines_kernel.txt");
+  f.write(content);
+  file("test_loft_lines_kernel.txt").lines()
+}
+
+fn main() {
+  // Hand-computed: "a", "b", "", "c", "" (a bare CRLF), then "d\r" kept (no `\n` ends it).
+  crlf = read_as("a\r\nb\n\nc\r\n\r\nd\r");
+  assert(shown(crlf) == "[1:a][1:b][0:][1:c][0:][2:dR]", "crlf: {shown(crlf)}");
+  assert(len(read_as("")) == 0, "an empty file has no lines");
+  assert(shown(read_as("x\n")) == "[1:x]", "a final newline adds no line: {shown(read_as("x\n"))}");
+  assert(shown(read_as("\n\n")) == "[0:][0:]", "two empty lines: {shown(read_as("\n\n"))}");
+  // A doubled CR loses only the one before the newline.
+  assert(shown(read_as("a\r\r\nb")) == "[2:aR][1:b]", "a doubled CR: {shown(read_as("a\r\r\nb"))}");
+  assert(len(file("test_loft_lines_kernel_missing.txt").lines()) == 0, "a missing file has no lines");
+
+  cases = ["", "\n", "\r\n", "a", "a\r", "a\n", "a\r\n", "a\r\r\nb", "\n\n", "é\r\n∑", "x\ry\n", "\r", "\r\n\r\n", "last\nno newline", "é\n\n∑\r"];
+  for c in cases {
+    got = shown(read_as(c));
+    want = shown(by_hand(c));
+    assert(got == want, "differential {c.size()} bytes: kernel {got} by hand {want}");
+  }
+
+  // Repeated reads of one file keep their own vectors: 200 lines, 20 reads.
+  big = "";
+  for i in 0..200 { big += "line {i}\r\n"; }
+  total = 0;
+  for _r in 0..20 { total += len(read_as(big)); }
+  assert(total == 4000, "repeated reads: {total}");
+  delete("test_loft_lines_kernel.txt");
+}
