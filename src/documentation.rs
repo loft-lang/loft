@@ -1135,6 +1135,11 @@ pub fn build_nav(
     } else {
         parts.push("<a href=\"roadmap.html\">Roadmap</a>".to_string());
     }
+    if active == "report" {
+        parts.push("<span class=\"cur\">Report a problem</span>".to_string());
+    } else {
+        parts.push("<a href=\"report.html\">Report a problem</a>".to_string());
+    }
     // The registry catalogue. It sits with Install and Roadmap rather than under
     // "Library:" because that section is the bundled STDLIB, and a reader looking for
     // `graphics` is asking a different question from one looking for `len`.

@@ -93,6 +93,9 @@ fn main() -> std::io::Result<()> {
     }
 
     generate_stdlib_toc(&sections, &stdlib_info, &topic_info)?;
+    for page in HAND_WRITTEN_PAGES {
+        write_hand_page_nav(page, &build_nav(&topic_info, &stdlib_info, page))?;
+    }
     let registry = load_registry_index()?;
     generate_search_index(&sections, &stdlib_info, &registry)?;
 
@@ -106,6 +109,34 @@ fn main() -> std::io::Result<()> {
     println!("Generated doc/sitemap.xml ({sitemap_pages} pages) + doc/robots.txt");
     println!("Generated {} stdlib section pages", sections.len());
     println!("Generated doc/libraries.html ({libraries} registry packages)");
+    Ok(())
+}
+
+/// The site pages written by hand rather than from a `.loft` source.  Their body is theirs,
+/// but their navigation is gendoc's: a hand-kept copy went stale with every new section
+/// (loft#1810), so gendoc rewrites the `<nav>` of each on every run, and the check that the
+/// committed pages match what gendoc writes covers them like any other page.
+const HAND_WRITTEN_PAGES: [&str; 3] = ["install", "roadmap", "report"];
+
+/// Replace the contents of `doc/<page>.html`'s one `<nav>` element with `nav`.
+fn write_hand_page_nav(page: &str, nav: &str) -> std::io::Result<()> {
+    let path = format!("doc/{page}.html");
+    let html = fs::read_to_string(&path)?;
+    let (Some(open), Some(close)) = (html.find("<nav>"), html.find("</nav>")) else {
+        return Err(std::io::Error::other(format!(
+            "{path} has no <nav>…</nav> for gendoc to write its navigation into"
+        )));
+    };
+    let start = open + "<nav>".len();
+    if close < start {
+        return Err(std::io::Error::other(format!(
+            "{path}: </nav> before <nav>"
+        )));
+    }
+    let out = format!("{}{nav}{}", &html[..start], &html[close..]);
+    if out != html {
+        fs::write(&path, out)?;
+    }
     Ok(())
 }
 

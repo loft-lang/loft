@@ -77,7 +77,7 @@ Home · Language: vs Rust · Keywords · … · Library: Types · Math · … [s
 
 | File | Role |
 |---|---|
-| `src/gendoc.rs` | Binary entry point (`cargo run --bin gendoc`). Reads the default library files and suite `.loft` files, extracts public declarations and doc comments, builds the `link_map`, then calls functions in `src/documentation.rs` to emit HTML. |
+| `src/gendoc.rs` | Binary entry point (`cargo run --bin gendoc`). Reads the default library files and suite `.loft` files, extracts public declarations and doc comments, builds the `link_map`, then calls functions in `src/documentation.rs` to emit HTML.  The hand-written pages (`install`, `roadmap`, `report`) keep their own body, but gendoc writes their `<nav>` (`HAND_WRITTEN_PAGES`), so the committed-pages check covers their navigation too. |
 | `src/documentation.rs` | HTML generation library. Provides `generate_docs` (index + topic pages), `gather_topic_info`, `build_nav`, `page_html`, and `highlight_loft` (syntax highlighting with inline stdlib links). |
 
 `gendoc.rs` is the **orchestrator** — it owns the data-gathering loop and calls `documentation.rs` for all HTML emission. `documentation.rs` contains no file I/O of its own beyond writing the output files it is explicitly told to write.
