@@ -9,10 +9,18 @@ Tracker: [@PLN180](https://github.com/loft-lang/plans/issues/180).
 
 ## Status
 
-Active.  **Slice 1 built** on `laptop-superinstructions`: tuple return with read-only
-call sites, both backends (`src/value_record.rs`).  Slices 2–4 are open.
+Active on `laptop-superinstructions` (`src/value_record.rs`).  **Built:** slice 1 (tuple
+return), slice 3 (tuple parameters), and slice 4's forms that let one tuple-returning
+function serve every caller (forwards, materialisation at a site that owes a record, a tuple
+copied into a literal's inline sub-record).  **Open:** slice 2 (a written tuple local,
+`TuplePut`) and NESTED layouts (a record with an inline sub-record, `resolve_move`'s
+`MoveResult`).
 
-Building the slice also found and fixed a `--native` defect in the existing rewrite.
+The bar the interpreter work answers to is in PERFORMANCE.md § Why the interpreter is
+optimised at all: native is the target, a cliff is about 100× (optimised interpreter against
+optimised native, real time), and no change may make native or any routine's ratio worse.
+
+Building slice 1 also found and fixed a `--native` defect in the existing rewrite.
 Native built the tuple of a value-returned literal in FIELD order, so a literal whose
 fields are written out of schema order ran its field expressions reordered, and nothing
 reported it.  The fix is in `value_record_parts` and its emitter.
@@ -55,10 +63,27 @@ records.  That covers the REPL, the debugger (which runs through it), live reloa
 browser debugger panel and a host that calls functions by name.  A warm-cache start also
 keeps records, because it reads bodies from the cached store.
 
-**Tuple order is fill order.** The literal writes its fields in source order, and the
-tuple is built in that order.  Building it in schema order would reorder the evaluation of
-field expressions that have effects.  That reordering is exactly the native defect this
-slice found.
+**One tuple order per record type: schema order.** Tuples flow from returns into
+parameters, so every source of one record must agree.  A literal that writes its fields in
+another order binds each value to a temporary first, in the order it wrote them, and builds
+the tuple from those — so a field expression with an effect runs where the program put it
+(the native defect slice 1 found was exactly this reordering).
+
+**A carrier** is a local bound from an admitted call or an admitted tuple parameter.  It may
+be read field-wise, handed whole to an admitted parameter of its record, returned by a
+forward, copied into a place (as field writes), freed, and — a local — null-initialised (the
+null tuple, which is what a field read of a null record answers).  A local that cannot carry
+the tuple keeps its record, and its binds MATERIALISE: the site binds the tuple to a
+temporary, runs the record's literal header on the buffer it passes, sets each field and
+answers the buffer.  So one awkward site costs what it cost before and no longer declines the
+callee for everyone.  Only a site whose buffer is no variable declines.
+
+**Forwards** (`return g(…)` lowered three ways: a local bound in the function's own buffer,
+the same with the buffer renamed and a witness kept, and the one-buffer chain that rebinds the
+buffer itself) return the tuple too.  Materialising at a forward instead turned three bench
+functions back into record returns on `--native`, a native regression the forward rule
+removes.  `scripts/value_record_sigcheck.sh bench/*/bench.loft` is the check that no
+native tuple is lost: it compares the native signatures with the pass on and off.
 
 **Frame layout.** The rewritten functions are laid out again by the same two steps
 `scopes::check` ends with (`compute_function_intervals`, `assign_function_slots`), after
@@ -70,15 +95,16 @@ slice found.
 
 | # | Shape | Status |
 |---|---|---|
-| 1 | Tuple RETURN: the callee is not `pub`, its record is flat (8-byte integer, float, single, boolean), and its buffer appears only in object literals in result positions.  Every call is `local = f(…, __ref_N)` whose local is only read field-wise and freed.  The buffer may be the straight-line one or the loop-hoisted one (a mint guard, its free against the local in either argument order, its own exit free). | built |
-| 2 | Tuple LOCALS written to: a field write becomes `TuplePut`.  The `resolve_move` shape, where a local is adjusted and re-read. | open |
-| 3 | Tuple PARAMETERS: a by-value or const parameter of an admitted type, and a local handed to one (`blocked(from, to_x)` in the probe). | open |
-| 4 | Materialisation: a record is built where one is owed (a field or element store, a library boundary), so one such site no longer declines the whole function. | open |
+| # | Shape | Status |
+|---|---|---|
+| 1 | Tuple RETURN: the callee is not `pub`, loft calls it, its record is flat (two or more fields: 8-byte integer, float, single, boolean) and its result positions are object literals.  Buffers straight-line or loop-hoisted. | built |
+| 2 | Tuple LOCALS written to: a field write becomes `TuplePut`. | open |
+| 3 | Tuple PARAMETERS: a by-value parameter native's write gate admits; a carrier is handed on whole, a plain record local is read into a tuple at the call. | built |
+| 4 | A record built where one is owed: materialisation at a site, forwards, a tuple copied into an inline sub-record. | built (the forms above) |
+| 5 | NESTED layouts: a record with an inline sub-record returned or received as one flat tuple (`MoveResult { mr_pos: Vec3, … }`; native's `layout_into` flattens them). | open — `resolve_move`'s own return |
 
-`resolve_move`, the row that motivated the plan, needs slice 3 and an INLINE sub-record.
-Its `vec3(…)` locals are handed to `move_blocked`, and `MoveResult` holds a `Vec3`, which
-slice 1's flat-record gate declines.  So slice 3 comes before slice 2, and nested layouts
-(native's `layout_into` already flattens them) belong in slice 3.
+`resolve_move` now takes its `from` and `dxyz` as tuples and its `vec3` calls return tuples
+on both backends; its own `MoveResult` return is slice 5.
 
 After this plan, the same move applies to the push family (R-Push, R-PushFill, R-PushRec,
 R-Mint), then R-TextBorrow.  Those are separate plans.
@@ -90,8 +116,12 @@ Each slice brings: a guard with hand-computed cells, one planted defect recorded
 `@falsified-at`, the switch, `find_problems.sh --changed`, and the census row it moves.
 Slice 1 reaches every program, so it also runs the broader suite once.
 
-Slice 1's guard is `tests/scripts/a-small-record-returned-to-a-reader-is-a-tuple.loft`.
-Each plant fails exactly one cell on both backends:
+Guards (each `@falsified-at` records its plant):
+`a-small-record-returned-to-a-reader-is-a-tuple.loft` (slice 1),
+`a-small-record-parameter-is-a-tuple.loft` (slice 3 — admitting a parameter past the native
+write gate fails `aliased`), `a-small-record-is-forwarded-or-built-where-it-is-owed.loft`
+(slice 4 — a materialised field from the wrong element fails `appended`).  Slice 1's plants
+fail exactly one cell on both backends:
 
 - A tuple built in schema order runs `tick` as 3, 2, 4, 1 and fails `fill order`.
 - The old native emitter runs 7, 5, 8, 6 and fails `fill order when handed on`.
@@ -107,6 +137,7 @@ Probed, clean on both backends:
 
 ## Open questions
 
+- `LOFT_TRACE_IR_VALUEREC=1` names each declined carrier and why.
 - The rewrite census (`make rewrite-census`) will record native `R-ValueRecord` admissions
   moving to the `ir` phase.  That shows as a native DROP on the benches this slice takes, and
   the move is deliberate: bless it with this plan named.

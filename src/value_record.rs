@@ -177,9 +177,6 @@ impl Layout {
 struct Callee {
     record: u32,
     buf: u16,
-    /// The record type the function returned before the rewrite, which a site that
-    /// materialises the tuple still answers.
-    ret: Type,
     /// The locals a FORWARD returns: bound from a call built in this function's own buffer,
     /// they must carry the callee's tuple for this function to return one.
     forwards: HashSet<u16>,
@@ -190,9 +187,6 @@ struct Callee {
 struct World {
     ops: Ops,
     layouts: HashMap<u32, Layout>,
-    /// Per record, a literal's opening test and the buffer it names: what a site that
-    /// materialises runs on its own buffer.
-    headers: HashMap<u32, (Value, u16)>,
     cands: HashMap<u32, Callee>,
     /// `(function, attribute index)` → the record the parameter carries.
     params: HashMap<(u32, usize), u32>,
@@ -211,22 +205,14 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     let mut w = World {
         ops: Ops::new(data),
         layouts: HashMap::default(),
-        headers: HashMap::default(),
         cands: HashMap::default(),
         params: HashMap::default(),
     };
     for (&d, &tp) in &vr.fns {
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {
-            if let Some(h) = first_header(data.def(d).code(), c.buf, &w.layouts[&c.record], &w.ops)
-            {
-                w.headers.entry(c.record).or_insert((h, c.buf));
-            }
             w.cands.insert(d, c);
         }
     }
-    // A site materialises with its record's literal header; a record no admitted literal
-    // builds has none, and its functions keep their records.
-    w.cands.retain(|_, c| w.headers.contains_key(&c.record));
     for (&d, ps) in &vr.params {
         for (&idx, &tp) in ps {
             if let Some(record) = param_shape(data, stores, &mut w.layouts, d, idx, tp) {
@@ -234,26 +220,25 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             }
         }
     }
-    // A FIXPOINT: declining a function or a parameter turns what it carried into an ordinary
-    // value, which declines the carriers that handed it on.  Every round only removes.
-    let mut plans: Vec<(u32, Plan)>;
+    let functions: Vec<u32> = (0..data.definitions())
+        .filter(|&f| {
+            let def = data.def(f);
+            def.def_type == DefType::Function && !matches!(def.code(), Value::Null)
+        })
+        .collect();
+    // ADMISSION, a fixpoint: declining a function or a parameter turns what it carried into
+    // an ordinary value, which declines the carriers that handed it on.  Every round only
+    // removes.  A call site that cannot take the tuple declines nothing — it keeps calling
+    // the record form (below).
     loop {
-        plans = Vec::new();
         let mut bad_fns: HashSet<u32> = HashSet::default();
         let mut bad_params: HashSet<(u32, usize)> = HashSet::default();
         let mut called: HashSet<u32> = HashSet::default();
-        for f in 0..data.definitions() {
-            let def = data.def(f);
-            if def.def_type != DefType::Function || matches!(def.code(), Value::Null) {
-                continue;
-            }
-            let (plan, verdict) = plan_function(data, &w, f);
-            bad_fns.extend(verdict.bad_fns);
-            bad_params.extend(verdict.bad_params);
-            called.extend(verdict.called);
-            if !plan.carriers.is_empty() || plan.reads_at_call || plan.materialises {
-                plans.push((f, plan));
-            }
+        for &f in &functions {
+            let (_, v) = plan_function(data, &w, f, w.cands.contains_key(&f));
+            bad_fns.extend(v.bad_fns);
+            bad_params.extend(v.bad_params);
+            called.extend(v.called);
         }
         // Nothing in loft calls it: it is called from outside, by name.
         bad_fns.extend(w.cands.keys().filter(|d| !called.contains(d)));
@@ -267,14 +252,69 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
             return 0;
         }
     }
+    // TWINS, a fixpoint that only grows.  A function some site still calls for a RECORD — a
+    // local that cannot carry the tuple, an element or a field it is built into, a forward
+    // whose function keeps its record — keeps its record form for exactly those sites, and a
+    // TWIN returning the tuple serves the carriers.  A site that owes a record therefore
+    // runs the code it ran before, on both backends.  A twinned forward keeps its record,
+    // so the function it forwards is owed there in turn.
+    let mut twinned: HashSet<u32> = HashSet::default();
+    let mut plans: Vec<(u32, Plan)>;
+    let mut twin_plans: Vec<(u32, Plan)>;
+    loop {
+        plans = Vec::new();
+        twin_plans = Vec::new();
+        let mut owed: HashSet<u32> = HashSet::default();
+        for &f in &functions {
+            let tuple = w.cands.contains_key(&f) && !twinned.contains(&f);
+            let (plan, v) = plan_function(data, &w, f, tuple);
+            owed.extend(v.owed);
+            plans.push((f, plan));
+            if twinned.contains(&f) {
+                let (plan, v) = plan_function(data, &w, f, true);
+                owed.extend(v.owed);
+                twin_plans.push((f, plan));
+            }
+        }
+        let before = twinned.len();
+        twinned.extend(owed);
+        if twinned.len() == before {
+            break;
+        }
+    }
+    // The twins are cloned from the untouched bodies, before anything is rewritten.
+    let mut twins: HashMap<u32, u32> = HashMap::default();
+    let mut sorted: Vec<u32> = twinned.iter().copied().collect();
+    sorted.sort_unstable();
+    for d in sorted {
+        let t = add_twin(data, d);
+        twins.insert(d, t);
+        let own: Vec<(usize, u32)> = w
+            .params
+            .iter()
+            .filter(|((f, _), _)| *f == d)
+            .map(|((_, i), r)| (*i, *r))
+            .collect();
+        for (i, r) in own {
+            w.params.insert((t, i), r);
+        }
+    }
     let mut touched: HashSet<u32> = HashSet::default();
     for (f, plan) in plans {
-        rewrite_function(data, &w, f, &plan);
+        if plan.carriers.is_empty() && !plan.reads_at_call {
+            continue;
+        }
+        rewrite_function(data, &w, &twins, f, &plan);
         touched.insert(f);
     }
+    for (d, plan) in twin_plans {
+        rewrite_function(data, &w, &twins, twins[&d], &plan);
+        touched.insert(twins[&d]);
+    }
     for (&d, c) in &w.cands {
-        rewrite_callee(data, &w, d, c);
-        touched.insert(d);
+        let target = twins.get(&d).copied().unwrap_or(d);
+        rewrite_callee(data, &w, target, c);
+        touched.insert(target);
     }
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
     crate::rewrite_census::fired("R-ValueLocal", w.params.len());
@@ -287,6 +327,29 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         crate::scopes::assign_function_slots(data, d);
     }
     w.cands.len() + w.params.len()
+}
+
+/// A copy of function `d` under a fresh name, for the tuple form while `d` keeps its record
+/// form for the sites that owe one.
+fn add_twin(data: &mut Data, d: u32) -> u32 {
+    let base = data.def(d).name().to_string();
+    let mut name = format!("{base}_tuple");
+    let mut n = 1;
+    while data.def_nr(&name) != u32::MAX {
+        n += 1;
+        name = format!("{base}_tuple{n}");
+    }
+    let position = data.def(d).position.clone();
+    let t = data.add_def(&name, &position, DefType::Function);
+    let mut def = data.def(d).clone();
+    def.name = name;
+    def.parent = u32::MAX;
+    def.first_child = u32::MAX;
+    def.next_sibling = u32::MAX;
+    def.pub_visible = false;
+    def.synthetic = Some("the tuple twin of a small-record return (@PLN180)");
+    data.definitions[t as usize] = def;
+    t
 }
 
 /// The callee half of the shape, or `None` when `d` cannot return a tuple here.
@@ -325,7 +388,6 @@ fn callee_shape(
     Some(Callee {
         record: *record,
         buf,
-        ret: def.returned().clone(),
         forwards: sh.returned,
     })
 }
@@ -355,28 +417,6 @@ fn param_shape(
     let layout = flat_layout(data, stores, *record, tp)?;
     layouts.insert(*record, layout);
     Some(*record)
-}
-
-/// The opening test of the first literal built into `buf`.
-fn first_header(n: &Value, buf: u16, layout: &Layout, ops: &Ops) -> Option<Value> {
-    let n = n.unspan();
-    if literal_fill(n, buf, layout, ops).is_some()
-        && let Value::Block(b) = n
-    {
-        return b
-            .operators
-            .iter()
-            .map(Value::unspan)
-            .find(|o| !matches!(o, Value::Line(_)))
-            .cloned();
-    }
-    let mut found = None;
-    each_child(n, &mut |c| {
-        if found.is_none() {
-            found = first_header(c, buf, layout, ops);
-        }
-    });
-    found
 }
 
 /// The record's tuple, when it has two or more fields and every one is a scalar a tuple
@@ -672,9 +712,6 @@ struct Plan {
     /// Some admitted parameter is handed a plain record local, whose fields the rewrite
     /// reads into a tuple at the call.
     reads_at_call: bool,
-    /// Some call of an admitted function is no carrier's bind, so its tuple is written
-    /// into the buffer the site passes.
-    materialises: bool,
 }
 
 /// What one walk of a function decided against the admitted sets.
@@ -684,6 +721,8 @@ struct Verdict {
     bad_params: HashSet<(u32, usize)>,
     /// Every function this one calls.
     called: HashSet<u32>,
+    /// Admitted functions this one still calls for a RECORD: the site is no carrier's bind.
+    owed: HashSet<u32>,
 }
 
 /// Everything one walk of a function learns.
@@ -714,15 +753,17 @@ struct Scan {
     mints: Vec<u16>,
     /// Every other mention, by variable.
     other: HashSet<u16>,
-    /// Admitted functions called with a buffer that is no variable: no carrier and no
-    /// materialisation can serve that site.
-    unservable: HashSet<u32>,
+    /// Calls of each admitted function, binds included.
+    cand_calls: HashMap<u32, usize>,
     /// Admitted parameters handed something that is not a variable.
     unserved: HashSet<(u32, usize)>,
     called: HashSet<u32>,
 }
 
-fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
+/// The plan for function `f`'s body, and what it decides against the admitted sets.
+/// `tuple` says `f` itself returns the tuple — the only case a forward's local, built in
+/// `f`'s own buffer, may carry it.
+fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict) {
     let def = data.def(f);
     let vars = &def.variables;
     let mut s = Scan::default();
@@ -742,9 +783,10 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
         code => scan(code, false, w, &mut s),
     }
     let mut v = Verdict {
-        bad_fns: s.unservable.clone(),
+        bad_fns: HashSet::default(),
         bad_params: s.unserved.clone(),
         called: s.called.clone(),
+        owed: HashSet::default(),
     };
     let mut plan = Plan::default();
     // The handed uses of `x` all go to parameters of `record`.
@@ -818,7 +860,7 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
         let own = w
             .cands
             .get(&f)
-            .filter(|c| c.forwards.contains(&l))
+            .filter(|c| tuple && c.forwards.contains(&l))
             .map(|c| c.buf);
         let buffer_ok = binds.iter().all(|(d, r)| {
             w.cands[d].record == record
@@ -874,10 +916,24 @@ fn plan_function(data: &Data, w: &World, f: u32) -> (Plan, Verdict) {
             plan.buffers.extend(binds.iter().filter_map(|(_, r)| *r));
         }
     }
-    plan.materialises = s.called.iter().any(|d| w.cands.contains_key(d));
+    // Every call of an admitted function that is no carrier's bind still wants its record.
+    let mut carried_calls: HashMap<u32, usize> = HashMap::default();
+    for (l, binds) in &by_local {
+        if plan.carriers.contains_key(l) {
+            for (d, _) in binds {
+                *carried_calls.entry(*d).or_default() += 1;
+            }
+        }
+    }
+    for (d, n) in &s.cand_calls {
+        if carried_calls.get(d).copied().unwrap_or(0) < *n {
+            v.owed.insert(*d);
+        }
+    }
     // A forward returns its local: a local that cannot carry the tuple leaves nothing to
-    // return one with, so the function keeps its record (and the bind materialises).
-    if let Some(c) = w.cands.get(&f)
+    // return one with, so the function keeps its record.
+    if tuple
+        && let Some(c) = w.cands.get(&f)
         && !c.forwards.iter().all(|l| plan.carriers.contains_key(l))
     {
         if trace() {
@@ -963,9 +1019,7 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                     _ => None,
                 };
                 s.binds.push((*v, *d, r));
-                if r.is_none() {
-                    s.unservable.insert(*d);
-                }
+                *s.cand_calls.entry(*d).or_default() += 1;
                 s.called.insert(*d);
                 scan_args(*d, &args[..args.len().saturating_sub(1)], w, s);
                 return;
@@ -1020,10 +1074,8 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 return;
             }
             s.called.insert(*op);
-            if w.cands.contains_key(op)
-                && !matches!(args.last().map(Value::unspan), Some(Value::Var(_)))
-            {
-                s.unservable.insert(*op);
+            if w.cands.contains_key(op) {
+                *s.cand_calls.entry(*op).or_default() += 1;
             }
             scan_args(*op, args, w, s);
         }
@@ -1071,20 +1123,12 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
     }
 }
 
-fn rewrite_function(data: &mut Data, w: &World, f: u32, plan: &Plan) {
+/// Rewrite the body of `f` by `plan` — `f` itself, or the twin of the function whose body
+/// it copied, which is the function the plan was made for.
+fn rewrite_function(data: &mut Data, w: &World, twins: &HashMap<u32, u32>, f: u32, plan: &Plan) {
     let def = &mut data.definitions[f as usize];
     let mut code = std::mem::replace(&mut def.code, Value::Null);
-    let scope = match code.unspan() {
-        Value::Block(b) => b.scope,
-        _ => 1,
-    };
-    let mut rw = Rewrite {
-        w,
-        plan,
-        vars: &mut def.variables,
-        scope,
-    };
-    rw.uses(&mut code);
+    Rewrite { w, plan, twins }.uses(&mut code);
     def.code = code;
     for (v, record) in &plan.carriers {
         def.variables.set_type(*v, w.layouts[record].tuple_type());
@@ -1127,14 +1171,12 @@ fn dropped(n: &Value, ops: &Ops, plan: &Plan) -> bool {
     }
 }
 
-/// One function's rewrite: the admitted world, its plan, and its variables (a site that
-/// materialises adds a temporary to them).
+/// One function's rewrite: the admitted world, its plan, and the twins a carrier's bind
+/// calls instead of a function that keeps its record for other sites.
 struct Rewrite<'a> {
     w: &'a World,
     plan: &'a Plan,
-    vars: &'a mut crate::variables::Function,
-    /// The body's own scope, for the temporaries.
-    scope: u16,
+    twins: &'a HashMap<u32, u32>,
 }
 
 impl Rewrite<'_> {
@@ -1152,6 +1194,9 @@ impl Rewrite<'_> {
                 }
                 if let Value::Call(d, args) = inner.unspan_mut() {
                     args.pop();
+                    if let Some(t) = self.twins.get(d) {
+                        *d = *t;
+                    }
                     let d = *d;
                     self.args(d, args);
                 }
@@ -1168,9 +1213,6 @@ impl Rewrite<'_> {
                 }
                 let d = *op;
                 self.args(d, args);
-                if let Some(c) = w.cands.get(&d) {
-                    *n = self.materialise(d, c, std::mem::take(args));
-                }
             }
             Value::Block(b) | Value::Loop(b) => self.statements(&mut b.operators),
             Value::Insert(list) => self.statements(list),
@@ -1220,27 +1262,6 @@ impl Rewrite<'_> {
             self.uses(a);
         }
     }
-
-    /// A call of admitted `d` where no carrier takes its tuple — the record is owed.  The
-    /// site keeps its buffer and does there what the callee's literal did: the tuple is
-    /// bound to a temporary, the callee's opening test mints a record into the buffer when
-    /// it holds none, each field is set from the tuple, and the buffer is the value.  So
-    /// one such site costs what it cost before and no longer declines the function.
-    fn materialise(&mut self, d: u32, c: &Callee, mut args: Vec<Value>) -> Value {
-        let ops = &self.w.ops;
-        let layout = &self.w.layouts[&c.record];
-        let Some(Value::Var(buf)) = args.pop().map(|a| a.unspan().clone()) else {
-            unreachable!("an unservable site declines its callee")
-        };
-        let t = self.vars.add_unique("vr", &layout.tuple_type(), self.scope);
-        let (header, hbuf) = &self.w.headers[&c.record];
-        let mut header = header.clone();
-        rename_var(&mut header, *hbuf, buf);
-        let mut ops_list = vec![Value::Set(t, Box::new(Value::Call(d, args))), header];
-        ops_list.extend(write_fields(layout, &Value::Var(buf), t, ops));
-        ops_list.push(Value::Var(buf));
-        crate::data::v_block(ops_list, c.ret.clone(), "Materialise")
-    }
 }
 
 /// `OpSetX(place, off, t.i)` for every field: tuple `t` written into the record at `place`.
@@ -1260,18 +1281,6 @@ fn write_fields(layout: &Layout, place: &Value, t: u16, ops: &Ops) -> Vec<Value>
             )
         })
         .collect()
-}
-
-/// Every `Var(from)` in `n` becomes `Var(to)` — the callee's header, read on the caller's
-/// buffer.  The header mentions its buffer only as a `Var` ([`is_header`]).
-fn rename_var(n: &mut Value, from: u16, to: u16) {
-    if let Value::Var(v) = n
-        && *v == from
-    {
-        *v = to;
-        return;
-    }
-    each_child_mut(n, &mut |c| rename_var(c, from, to));
 }
 
 /// The tuple a null record reads as: each field's null — `i64::MIN`, NaN, `false`.
