@@ -3304,7 +3304,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F22</strong> — Closures &amp; lambdas (value capture, cross-scope)</li>
 <li><strong>@F23</strong> — Function references as first-class values</li>
 <li><strong>@F24</strong> — Higher-order functions (map / filter / reduce)</li>
-<li><strong>@F25</strong> — Generics — single type variable <code>&lt;T&gt;</code>, inferred</li>
+<li><strong>@F25</strong> — Generics — type variables <code>&lt;T&gt;</code>, <code>&lt;K, V&gt;</code>, inferred; generic structs</li>
 <li><strong>@F26</strong> — Interfaces &amp; bounded generics (<code>&lt;T: A + B&gt;</code>, operator interfaces)</li>
 <li><strong>@F27</strong> — <code>if</code> / <code>else</code> as an expression</li>
 <li><strong>@F28</strong> — <code>for</code>-in loops — ranges, loop attributes, filtered, <code>rev()</code></li>
@@ -3317,7 +3317,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F35</strong> — String literals — <code>{expr}</code> interpolation + backtick multiline</li>
 <li><strong>@F36</strong> — String formatting / format specifiers (+ for-expressions)</li>
 <li><strong>@F37</strong> — Operator set — arithmetic/comparison/logical/bitwise/unary, <code>**</code></li>
-<li><strong>@F38</strong> — Arithmetic safety — overflow/÷0 → null, nullable peers</li>
+<li><strong>@F38</strong> — Arithmetic safety — integer overflow/÷0 → null; null propagates through arithmetic</li>
 <li><strong>@F39</strong> — Math &amp; trigonometry library</li>
 <li><strong>@F40</strong> — File &amp; directory I/O (+ durable-store binding)</li>
 <li><strong>@F41</strong> — Environment &amp; arguments (env vars, arguments(), program dirs, path resolution)</li>
