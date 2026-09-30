@@ -18851,7 +18851,7 @@ impl Parser {
                                 // which the raw literal is right and the caller frees it.
                                 || (!dep.is_empty()
                                     && dep.iter().all(|&d| self.vars.name(d).starts_with("__vdb_"))
-                                    && matches!(&r_type, Type::Vector(_, d) if !d.is_empty())))
+                                    && !r_type.depend().is_empty()))
                         {
                             (a, bv)
                         } else {
