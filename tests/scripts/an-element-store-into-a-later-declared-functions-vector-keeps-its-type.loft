@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN ELEMENT STORE INTO A LATER-DECLARED FUNCTION'S VECTOR KEEPS THE VECTOR'S TYPE.  A local
+// bound to the result of a function declared further down has no type in the first pass, and
+// an element store `v[0] = 2.5` on it is an element store, not a store into `v`.  Read as
+// `v = 2.5`, it typed the local `float`, and the program was refused at the next `v[i]` with
+// "Indexing a non vector — keyed collections …", naming a construct it never used.  When the
+// callee did not exist at all, that pass-1 refusal also hid the unknown-function error.
+//
+// Cells: element kind (float, integer, struct), store (`=`, `+=`), path (local, field, keyed).
+
+struct R { a: integer }
+struct B { xs: vector<integer> }
+struct E { k: text, n: integer }
+
+fn main() {
+  f = floats(3);
+  f[0] = 2.5;
+  assert(f[0] == 2.5 && f[1] == 1.0 && len(f) == 3, "float element: {f}");
+
+  n = ints(3);
+  n[0] = 7;
+  x = n[0];
+  assert(x == 7 && "{n}" == "[7,2,4]", "integer element: {n}");
+
+  n[1] += 40;
+  assert("{n}" == "[7,42,4]", "compound store: {n}");
+
+  r = recs();
+  r[2] = R { a: 9 };
+  assert(r[2].a == 9 && r[0].a == 1 && len(r) == 3, "struct element");
+
+  b = holder();
+  b.xs[0] = 5;
+  assert("{b.xs}" == "[5,6]", "field path: {b.xs}");
+
+  h = keyed();
+  h["b"].n = 8;
+  assert(h["b"].n == 8 && h["a"].n == 1, "keyed path");
+}
+
+fn floats(c: integer) -> vector<float> {
+  out: vector<float> = [];
+  for i in 0..c { out += [i as float]; }
+  out
+}
+
+fn ints(c: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..c { out += [i * 2]; }
+  out
+}
+
+fn recs() -> vector<R> { [R { a: 1 }, R { a: 2 }, R { a: 3 }] }
+
+fn holder() -> B { B { xs: [4, 6] } }
+
+fn keyed() -> hash<E[k]> {
+  out: hash<E[k]> = [E { k: "a", n: 1 }, E { k: "b", n: 2 }];
+  out
+}

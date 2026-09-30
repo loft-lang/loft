@@ -2439,7 +2439,10 @@ use a separate collection or add after the loop"
         if op != "=" || var_nr != u16::MAX || self.first_pass {
             return false;
         }
-        if f_type.is_unknown() || s_type.is_unknown() {
+        // A `never` target has no value to store into: it is what an element of an
+        // unresolved call's result reads as (`v = missing(); v[0] = 2.5`), whose own error
+        // is already reported, and `as never` is no cure.
+        if f_type.is_unknown() || s_type.is_unknown() || matches!(f_type, Type::Never) {
             return false;
         }
         // A bare `null` is exempt because the targets that legitimately take one reach

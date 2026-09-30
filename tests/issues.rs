@@ -18744,3 +18744,18 @@ fn test() { w: (integer, Entity) = (1, \"x\"); bump(w); print(\"{w.0}\"); }"
 variable name or cast with 'as' at a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused:3:45",
     );
 }
+
+/// An element of an unresolved call's result reads as `never`, and a store into it is not a
+/// second mistake: the program reports the unknown function once, with its cure, and no
+/// `Cannot assign float to a field of type never — use 'as never'` beside it.
+#[test]
+fn a_store_into_an_unresolved_calls_element_reports_only_the_call() {
+    code!(
+        "fn run() -> float {
+    v = nope_rest(3);
+    v[0] = 2.5;
+    v[0]
+}"
+    )
+    .error("Unknown function nope_rest at a_store_into_an_unresolved_calls_element_reports_only_the_call:2:9");
+}

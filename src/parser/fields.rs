@@ -1762,6 +1762,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     self.expression(&mut pn);
                 }
             }
+            // The element is not the receiver.  Left as the receiver's `Var`, a store
+            // `v[0] = 2.5` read as `v = 2.5` and typed the variable `float` in this pass,
+            // so pass 2 refused every later `v[i]` of a vector a forward-declared function
+            // returned — and the refusal, a pass-1 error, hid the unknown-function error
+            // pass 2 would have reported when the callee does not exist.
+            *code = Value::Null;
         } else {
             // index_type() already emitted a diagnostic; consume the inner expression
             // so that the caller can still parse the closing `]` without cascading errors.
