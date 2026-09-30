@@ -4852,6 +4852,56 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// A text walk's end test over a text local as one compare-and-jump: `!T`
+    /// (`OpNot(OpConvBoolFromText(T))`) as `OpTextNullJump`, `size(T) <= index` as
+    /// `OpTextEndJump`.  Answers where the jump's displacement sits, or `None` — emitting
+    /// nothing — for any other test.
+    fn emit_text_end_test(&mut self, test: IrNode, stack: &mut Stack) -> Option<u32> {
+        if !fusion_enabled() || test.kind() != ValueType::Call {
+            return None;
+        }
+        let args: Vec<Value> = test
+            .call_args()
+            .iter()
+            .map(|a| a.to_owned_value())
+            .collect();
+        let inner = |v: &Value, name: &str| -> Option<u16> {
+            let Value::Call(op, a) = v.unspan() else {
+                return None;
+            };
+            let [t] = &a[..] else { return None };
+            (stack.data.def(*op).name() == name).then_some(())?;
+            text_local(stack, t)
+        };
+        let (src, idx) = match (stack.data.def(test.call_to()).name(), &args[..]) {
+            ("OpNot", [b]) => (inner(b, "OpConvBoolFromText")?, None),
+            ("OpLeInt", [size, i]) => (inner(size, "OpSizeText")?, Some(int_local(stack, i)?)),
+            _ => return None,
+        };
+        let at = self.code_pos;
+        let arg = u8::from(stack.function.is_argument(src));
+        let src_pos = stack.var_pos(src);
+        let idx_pos = idx.map(|i| stack.var_pos(i));
+        stack.add_op(
+            if idx.is_some() {
+                "OpTextEndJump"
+            } else {
+                "OpTextNullJump"
+            },
+            self,
+        );
+        self.code_add(src_pos);
+        self.code_add(arg);
+        self.vars.insert(at + 1, src);
+        if let (Some(i), Some(p)) = (idx, idx_pos) {
+            self.code_add(p);
+            self.vars.insert(at + 2, i);
+        }
+        let code_step = self.code_pos;
+        self.code_add(0i32); // temp step
+        Some(code_step)
+    }
+
     /// An integer element of a local vector at a local index as one op: `OpGetInt` over
     /// `OpGetVector[Nullable](vec, size, idx)` becomes `OpVecGetInt[Nullable]`, and `OpSetInt`
     /// over `OpGetVector` with a pure value (`fused_pure_int`) becomes the value, then
@@ -4968,6 +5018,9 @@ impl State {
         } else {
             None
         };
+        if let Some(code_step) = self.emit_text_end_test(test, stack) {
+            return code_step;
+        }
         let le_args: Vec<Value> = if test.kind() == ValueType::Call
             && stack.data.def(test.call_to()).name() == "OpLeInt"
         {
@@ -6361,6 +6414,19 @@ fn int_local(stack: &Stack, v: &Value) -> Option<u16> {
     let v = *v;
     (matches!(stack.function.tp(v).base(), Type::Integer(_))
         && stack.function.linked_narrow_slot(v).is_none()
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// A text local: one `generate_var` reads with `OpVarText` or `OpArgText`, decided on the
+/// peeled type.
+fn text_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v).base(), Type::Text(_))
         && stack.function.is_stack_allocated(v)
         && stack.function.stack(v) <= stack.position)
         .then_some(v)

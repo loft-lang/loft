@@ -1211,6 +1211,12 @@ fn OpCmpIntVCJump(kind: const u8, a: const u16, c: const integer, step: const i3
 // (`State::text_walk_step`).  `arg` is 1 when T is an argument (a borrowed `Str` slot) and 0
 // for a local (an owned `String`), the choice `OpArgText` / `OpVarText` make.
 fn OpTextWalkStep(c: const u16, index: const u16, next: const u16, src: const u16, arg: const u8);
+// A text walk's two end tests over a LOCAL text, each as one compare-and-jump: `if !T { … }`
+// jumps past its arm when T is not the null text, `if size(T) <= index { … }` when the size is
+// greater (`State::text_null_jump`, `State::text_end_jump`).  `arg` as in `OpTextWalkStep`;
+// `step` last, patched by `gen_if` like every compare-and-jump.
+fn OpTextNullJump(src: const u16, arg: const u8, step: const i32);
+fn OpTextEndJump(src: const u16, arg: const u8, idx: const u16, step: const i32);
 // An integer element of a LOCAL vector at a LOCAL index, read or written in place: the
 // `OpVarVector`, `OpVarInt`, `OpGetVector[Nullable]` and `OpGetInt` / `OpSetInt` chain as one op,
 // each step the unfused op's own expression in the same order.  `OpVecSetInt`'s value is

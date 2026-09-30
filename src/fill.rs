@@ -362,6 +362,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     cmp_int_v_v_jump,
     cmp_int_v_c_jump,
     text_walk_step,
+    text_null_jump,
+    text_end_jump,
     vec_get_int,
     vec_get_int_nullable,
     vec_set_int,
@@ -706,6 +708,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpCmpIntVVJump",
     "OpCmpIntVCJump",
     "OpTextWalkStep",
+    "OpTextNullJump",
+    "OpTextEndJump",
     "OpVecGetInt",
     "OpVecGetIntNullable",
     "OpVecSetInt",
@@ -3387,6 +3391,14 @@ fn cmp_int_v_c_jump(s: &mut State) {
 
 fn text_walk_step(s: &mut State) {
     s.text_walk_step();
+}
+
+fn text_null_jump(s: &mut State) {
+    s.text_null_jump();
+}
+
+fn text_end_jump(s: &mut State) {
+    s.text_end_jump();
 }
 
 fn vec_get_int(s: &mut State) {

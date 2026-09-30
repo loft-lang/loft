@@ -738,11 +738,7 @@ impl State {
         let arg = self.code::<u8>();
         let at = self.get_var::<i64>(next);
         let (ch, empty) = {
-            let text = if arg == 0 {
-                Str::new(self.get_var_ref::<String>(src))
-            } else {
-                self.get_var::<Str>(src)
-            };
+            let text = self.local_text(src, arg);
             let t = text.str();
             (ops::text_character(t, at), t.is_empty())
         };
@@ -762,6 +758,40 @@ impl State {
         self.put_var::<i64>(index + step, at);
         self.put_var::<i64>(next + step, moved);
         self.put_var::<char>(c + step, ch);
+    }
+
+    /// The text local at frame position `src`, borrowed as `OpVarText` (`arg == 0`: the slot
+    /// owns a `String`) or `OpArgText` (`arg != 0`: the slot holds a `Str`) would push it.
+    fn local_text(&mut self, src: u16, arg: u8) -> Str {
+        if arg == 0 {
+            Str::new(self.get_var_ref::<String>(src))
+        } else {
+            self.get_var::<Str>(src)
+        }
+    }
+
+    /// `OpTextNullJump` — `if !T { … }`: jump past the arm when T is not the null text, the
+    /// answer `OpConvBoolFromText`, `OpNot` and `OpGotoFalseWord` give together.
+    pub fn text_null_jump(&mut self) {
+        let src = self.code::<u16>();
+        let arg = self.code::<u8>();
+        let step = self.code::<i32>();
+        if self.local_text(src, arg).str() != crate::state::STRING_NULL {
+            self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
+        }
+    }
+
+    /// `OpTextEndJump` — `if size(T) <= index { … }`: jump past the arm when the size is
+    /// greater, the answer `OpSizeText`, `OpLeInt` and `OpGotoFalseWord` give together.
+    pub fn text_end_jump(&mut self) {
+        let src = self.code::<u16>();
+        let arg = self.code::<u8>();
+        let idx = self.code::<u16>();
+        let step = self.code::<i32>();
+        let size = self.local_text(src, arg).str().len() as i64;
+        if size > self.get_var::<i64>(idx) {
+            self.code_pos = (i64::from(self.code_pos) + i64::from(step)) as u32;
+        }
     }
 
     pub fn var_text(&mut self) {
