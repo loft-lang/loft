@@ -1,8 +1,8 @@
-diff --git b/default/01_code.loft a/default/01_code.loft
-index 7b2a5502a..71c962d70 100644
---- b/default/01_code.loft
-+++ a/default/01_code.loft
-@@ -785,10 +785,8 @@ fn OpConstText(_value: const text) -> text;
+diff --git a/default/01_code.loft b/default/01_code.loft
+index 164298b7e..4ceb5fa18 100644
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -789,10 +789,8 @@ fn OpConstText(_value: const text) -> text;
  #rust"s.string_from_code();"
  fn OpConvTextFromNull() -> text;
  #rust"Str::new(crate::state::STRING_NULL)"
@@ -11,10 +11,10 @@ index 7b2a5502a..71c962d70 100644
  fn OpLengthText(v1: text) -> integer;
 -#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
 +#rust"@v1.chars().count() as i64"
- // Number of characters (Unicode code points) in the text — the human
- // count, as in every mainstream language. For a byte length (bounds checks, the
- // limit of byte-positioned indexing / slicing) use `size`.
-@@ -797,9 +795,8 @@ pub fn len(self: text) -> integer {
+ /// Number of characters (Unicode code points) in the text — the human
+ /// count, as in every mainstream language. For a byte length (bounds checks, the
+ /// limit of byte-positioned indexing / slicing) use `size`.
+@@ -801,9 +799,8 @@ pub fn len(self: text) -> integer {
  }
  #pure
  
@@ -22,13 +22,13 @@ index 7b2a5502a..71c962d70 100644
  fn OpSizeText(v1: text) -> integer;
 -#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
 +#rust"@v1.len() as i64"
- // Number of bytes in the text. This is the bound for byte-positioned
- // operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
- // For the human character count use `len`.
-diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+ /// Number of bytes in the text. This is the bound for byte-positioned
+ /// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
+ /// For the human character count use `len`.
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
 index a6ea8bbcf..18bacf5d9 100644
---- b/src/codegen_runtime.rs
-+++ a/src/codegen_runtime.rs
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
 @@ -954,11 +954,11 @@ fn get_record_lookup(
  /// else can reach the vector the call would have built.
  ///
@@ -59,11 +59,11 @@ index a6ea8bbcf..18bacf5d9 100644
      LazySplit { rest, separator }
  }
  
-diff --git b/src/fill.rs a/src/fill.rs
-index bef07ac83..75c209865 100644
---- b/src/fill.rs
-+++ a/src/fill.rs
-@@ -1620,27 +1620,13 @@ fn conv_text_from_null(s: &mut State) {
+diff --git a/src/fill.rs b/src/fill.rs
+index 19e3a7393..2c3ab98ca 100644
+--- a/src/fill.rs
++++ b/src/fill.rs
+@@ -1638,27 +1638,13 @@ fn conv_text_from_null(s: &mut State) {
  
  fn length_text(s: &mut State) {
      let v_v1 = s.string();

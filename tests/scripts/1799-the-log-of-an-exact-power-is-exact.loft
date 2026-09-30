@@ -13,7 +13,7 @@
 //                        exactly, both signs for base 2), the domain edges (0, negative).
 // Axes it HOLDS FIXED:   the argument is a literal-built power; another base keeps `ln/ln`.
 //
-// @falsified-at: a9c15921c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+// @falsified-at: 17958fa95 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
 //   native exit 1 -> 0, native 1 assertion failures -> 0
 // HOLDS: leak, panic and refusals are clean on both trees and both backends; the domain
 //   edges and the other-base cell (`log(8.0, 4.0)` is 1.5) pass here unchanged.
