@@ -1466,7 +1466,7 @@
 <li>Type expressions: plain and qualified names (<code>lexer::Lexer</code>), generic types like <code>vector&lt;T&gt;</code>, keyed collections (sorted/hash/index), tuples, <code>fn(…) -&gt; T</code> and integer ranges with <code>integer limit(min, max)</code> — in parameter, field, and return position</li>
 </ul>
 <p>It reads an index expression (<code>v[0]</code>), the null-coalescing operator (<code>a ?? 0</code>) and a formatted string literal (<code>"v={n}"</code>) as the compiler does.</p>
-<p>Not yet part of its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: <code>const</code> fields and top-level <code>const</code>, <code>&amp;</code> references, <code>**</code>, <code>/=</code>, hex and <code>f</code>-suffixed literals, generic functions (<code>fn f&lt;T&gt;</code>), filtered loops (<code>for e in v if e &gt; 1</code>), <code>is</code> patterns, slices (<code>v[1..]</code>), backtick strings and <code>parallel { … }</code>.</p>
+<p>Outside its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: <code>const</code> fields and top-level <code>const</code>, <code>**</code>, <code>/=</code>, hex and <code>f</code>-suffixed literals, generic functions (<code>fn f&lt;T&gt;</code>), filtered loops (<code>for e in v if e &gt; 1</code>), <code>is</code> patterns, slices (<code>v[1..]</code>) and backtick strings.</p>
 <pre><code><span class="kw">use</span> parser;
 <span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
 <h2 id="parsing-a-minimal-function">Parsing a minimal function</h2>
@@ -1515,7 +1515,25 @@ if parser::parse("user_code", snippet) &gt; 0 {
          <span class="st">"an unterminated body reports at least one error"</span>);</code></pre>
 <p>A missing operand is an error too, and so is text after the last definition.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"no_value"</span>, <span class="st">"fn f() {{ x = ; }}"</span>) &gt; <span class="nm">0</span>, <span class="st">"a missing value is reported"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"stray"</span>, <span class="st">"fn f() {{ }} }}"</span>) &gt; <span class="nm">0</span>, <span class="st">"a stray brace is reported"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"stray"</span>, <span class="st">"fn f() {{ }} }}"</span>) &gt; <span class="nm">0</span>, <span class="st">"a stray brace is reported"</span>);</code></pre>
+<h2 id="what-it-does-not-parse">What it does not parse</h2>
+<p>Each construct in the list at the top of this page answers a non-zero count here.</p>
+<pre><code>  outside = [
+    <span class="st">"const K = 3;"</span>,
+    <span class="st">"struct S {{ const k: integer }}"</span>,
+    <span class="st">"fn f() {{ x = 2 ** 3; }}"</span>,
+    <span class="st">"fn f() {{ x = 6; x /= 2; }}"</span>,
+    <span class="st">"fn f() {{ x = 0xff; }}"</span>,
+    <span class="st">"fn f() {{ x = 1.5f; }}"</span>,
+    <span class="st">"fn f&lt;T&gt;(x: T) -&gt; T {{ x }}"</span>,
+    <span class="st">"fn f(v: vector&lt;integer&gt;) {{ for e in v if e &gt; 1 {{ }} }}"</span>,
+    <span class="st">"fn f(x: integer) {{ if x is 3 {{ }} }}"</span>,
+    <span class="st">"fn f(v: vector&lt;integer&gt;) {{ w = v[1..]; }}"</span>,
+    <span class="st">"fn f() {{ x = `a`; }}"</span>
+  ];
+  <span class="kw">for</span> snippet <span class="kw">in</span> outside {
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"outside"</span>, snippet) &gt; <span class="nm">0</span>, <span class="st">"{snippet} is outside the grammar"</span>);
+  }
   <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"parser test passed"</span>);
 }</code></pre>
 </section>

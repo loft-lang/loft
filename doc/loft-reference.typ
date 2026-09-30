@@ -3610,7 +3610,7 @@ position
 
 It reads an index expression ('v\[0\]'), the null-coalescing operator ('a ?? 0') and a formatted string literal ('"v={n}"') as the compiler does.
 
-Not yet part of its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: 'const' fields and top-level 'const', '&' references, '\*\*', '/=', hex and 'f'-suffixed literals, generic functions ('fn f\<T\>'), filtered loops ('for e in v if e \> 1'), 'is' patterns, slices ('v\[1..\]'), backtick strings and 'parallel { … }'.
+Outside its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: 'const' fields and top-level 'const', '\*\*', '/=', hex and 'f'-suffixed literals, generic functions ('fn f\<T\>'), filtered loops ('for e in v if e \> 1'), 'is' patterns, slices ('v\[1..\]') and backtick strings.
 
 ```rust
 use parser;
@@ -3711,6 +3711,29 @@ A missing operand is an error too, and so is text after the last definition.
 ```rust
   assert(parser::parse("no_value", "fn f() {{ x = ; }}") > 0, "a missing value is reported");
   assert(parser::parse("stray", "fn f() {{ }} }}") > 0, "a stray brace is reported");
+```
+
+=== What it does not parse
+
+Each construct in the list at the top of this page answers a non-zero count here.
+
+```rust
+  outside = [
+    "const K = 3;",
+    "struct S {{ const k: integer }}",
+    "fn f() {{ x = 2 ** 3; }}",
+    "fn f() {{ x = 6; x /= 2; }}",
+    "fn f() {{ x = 0xff; }}",
+    "fn f() {{ x = 1.5f; }}",
+    "fn f<T>(x: T) -> T {{ x }}",
+    "fn f(v: vector<integer>) {{ for e in v if e > 1 {{ }} }}",
+    "fn f(x: integer) {{ if x is 3 {{ }} }}",
+    "fn f(v: vector<integer>) {{ w = v[1..]; }}",
+    "fn f() {{ x = `a`; }}"
+  ];
+  for snippet in outside {
+    assert(parser::parse("outside", snippet) > 0, "{snippet} is outside the grammar");
+  }
   println("parser test passed");
 }
 ```
