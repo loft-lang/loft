@@ -90,8 +90,11 @@ original on every run; Python is the original):
 | `tests/dump_ignored_tests` (584k lines through `lines()`) | 0.22 s | 3.67 s | 0.62 s | — |
 | `scripts/opl_points` (200k OPL lines through `split`) | 0.31 s | 4.13 s | 1.79 s | the per-field loop in `main` (62 %, `x = field[1..]` its top line) and the hand-written `%hex%` unescape (30 %) |
 
-Next, in that order: the interpreter's per-character text walk and the slice appended to a
-vector (it is `opl_points`' own remaining cost, every script's text loop, and the trigger that
+The kernels' exit is the standard library compiled like any other library (C71), after which
+an interpreted script runs a kernel's compiled loft body and the Rust version goes as soon as
+that is viable ([KERNELS.md § Open](../KERNELS.md#open)); `split` and `text_lines` are already
+within 1.5× compiled.  Until then, next, in that order: the interpreter's per-character text
+walk and the slice appended to a vector (it is `opl_points`' own remaining cost, every script's text loop, and the trigger that
 retires the `split` and `text_lines` kernels); then a reduction the interpreter runs as one
 operation whatever its spelling (retires `vector_sum_int`; a program's `for x in v { r = r + x
 }` still pays over 150×); then whatever the next slow port names.
