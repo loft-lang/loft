@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-E-Left` — operands reduce LEFT TO RIGHT, and a call's arguments the same way
+// (`formal/calls.md`): in `x + { x = 50; 1 }` the `x` is read before the block runs, so the
+// answer is 1 + 1 = 2.  `--native` lifts a block argument into a `let` in front of the whole
+// statement, to keep it from borrowing `stores` twice; the operand before it stayed inline and
+// was read AFTER the block, so native answered 51 — silently, for every scalar type, at any
+// depth, and through every call form (an operator, a user function, a fn-ref).  An earlier
+// scalar operand the later one writes is now lifted first, in its own `let`.
+//
+// Every expected value is computed by hand from E-Left.
+//
+// Axes this file MOVES: the operand's type (integer, float, character, boolean, plain enum,
+//                       a nullable integer), how the later operand writes it (assignment,
+//                       compound assignment, a `&` parameter), the call form (operator,
+//                       comparison, user function, fn-ref, a tuple), the depth of the write
+//                       (the operand itself, one call deeper), and a statement `x += {…}`.
+// Axes it HOLDS FIXED:  locals only — no store element or field is written inside the block;
+//                       those cells were right before (`controls`) and stay so.
+//
+// @falsified-at: 9986ae132 — native 3 of 4 functions fail -> 0 (hand-measured with the control
+//   build's binary; `pre_eval.rs` is the same there as on the parent of this change); the
+//   fourth, `test_controls`, holds on both, as a control should.  The interpreter INERT
+//   (expected for a backend-divergence guard — only one side can move).
+//   CHANNEL: assertions, native.
+//   ARMED: nothing.
+//   WITNESS: on the control `x + { x = 50; 1 }` answers 51 where this file wants 2, and
+//     `f(x, f(2, { x = 50; 3 }))` answers 5203 where it wants 303.
+//   HOLDS: the `controls` cells answer the same on both trees; no leak or panic.
+
+enum Co1798e { Red, Green }
+
+fn f1798e(a: integer, b: integer) -> integer { a * 100 + b }
+fn set1798e(x: &integer) { x = 50; }
+
+fn test_an_operator_reads_its_left_operand_first() {
+  x = 1;
+  y = x + { x = 50; 1 };
+  assert(y == 2 && x == 50, "plus: {y} / {x}");
+  x = 1;
+  y = x + { x += 1; x };
+  assert(y == 3, "compound write: {y}");
+  x = 1;
+  y = x * 2 + { x = 50; 1 };
+  assert(y == 3, "a nested left operand: {y}");
+  x = 1;
+  y = x + (1 + { x = 50; 1 });
+  assert(y == 3, "the write one operator deeper: {y}");
+  x = 1;
+  b = x == { x = 5; 5 };
+  assert(!b, "comparison: {b}");
+  x = 1;
+  x += { x = 50; 1 };
+  assert(x == 2, "x += reads x first: {x}");
+}
+
+fn test_every_scalar_type() {
+  fl = 1.5;
+  z = fl + { fl = 10.0; 1.0 };
+  assert(z == 2.5, "float: {z}");
+  c = 'a';
+  assert(c == { c = 'b'; 'a' }, "character");
+  t = true;
+  assert(t == { t = false; true }, "boolean");
+  e = Co1798e.Red;
+  assert(e == { e = Co1798e.Green; Co1798e.Red }, "plain enum");
+  n: integer? = 1;
+  y = (n ?? 0) + { n = 50; 1 };
+  assert(y == 2, "nullable integer: {y}");
+}
+
+fn test_every_call_form_and_a_write_through_a_reference() {
+  x = 1;
+  assert(f1798e(x, { x = 50; 1 }) == 101, "user function");
+  x = 1;
+  assert(f1798e(x, f1798e(2, { x = 50; 3 })) == 303, "the write one call deeper");
+  h = fn(a: integer, b: integer) -> integer { a * 10 + b };
+  x = 1;
+  assert(h(x, { x = 50; 1 }) == 11, "fn-ref call");
+  x = 1;
+  y = x + { set1798e(x); 1 };
+  assert(y == 2 && x == 50, "a `&` parameter writes it: {y} / {x}");
+}
+
+// Right before the change and after it: a text operand, a store element and a field written
+// inside the later operand, a tuple, and arguments with no write between them.
+fn test_controls() {
+  t = "a";
+  s = t + { t = "z"; "b" };
+  assert(s == "ab", "text: {s}");
+  v = [1];
+  y = v[0] + { v[0] = 50; 1 };
+  assert(y == 2, "store element: {y}");
+  x = 1;
+  tp = (x, { x = 5; 1 });
+  assert(tp.0 == 1, "tuple: {tp.0}");
+  x = 1;
+  assert(f1798e(x + 0, 7) == 107, "no write");
+}
