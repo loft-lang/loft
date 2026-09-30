@@ -75,7 +75,7 @@ Catalogue: @F20 (variant-based dispatch), @F122 (one name, a definition per para
 
 ## Generic functions
 
-A single type variable `<T>` lets you write a function body once for any type:
+A type variable `<T>` lets you write a function body once for any type:
 
 ```
 fn identity<T>(x: T) -> T { x }
