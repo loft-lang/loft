@@ -11751,10 +11751,109 @@ impl Data {
         if let Some(q) = self.bare_use_provider(name, source) {
             return Some(Self::bare_use_cure(what, name, q));
         }
-        self.hidden_import_provider(name, source)
-            .map(|(via, module, writable)| {
-                Self::hidden_import_cure(what, name, &via, &module, writable.as_deref())
-            })
+        if let Some(msg) =
+            self.hidden_import_provider(name, source)
+                .map(|(via, module, writable)| {
+                    Self::hidden_import_cure(what, name, &via, &module, writable.as_deref())
+                })
+        {
+            return Some(msg);
+        }
+        self.unimported_provider(what, name, source)
+            .map(|q| Self::unimported_cure(what, name, &q))
+    }
+
+    /// loft#1769 — a LOADED library or module that passes on `name` publicly while nothing
+    /// this file imports passes it on to here: the qualifier to import it by, or `None`.
+    ///
+    /// The providers above look one step down this file's imports (and through `pub use`
+    /// chains).  A name two plain imports deep — `render` does `use graphics::*;`, and
+    /// `graphics` does `use mesh3d::*;` for its own use — stops at neither step, so the
+    /// reader got a bare "Undefined type Mesh — did you mean 'hash'?" while `mesh3d` was
+    /// loaded and `use mesh3d::*;` is the whole cure.
+    ///
+    /// Only a definition of the kind `what` asks about counts (a type for a type, a
+    /// function for a function, a constant for a variable), and only when exactly one
+    /// definition answers: two libraries passing on different `name`s is not a cure.
+    /// Between sources passing on the same definition, a FACADE that re-exports it wins
+    /// over the module that declares it — the package name is what a consumer imports.
+    #[must_use]
+    pub fn unimported_provider(&self, what: &str, name: &str, into_source: u16) -> Option<String> {
+        // Asked for every unresolved name, pass-1 forward references included, so the path
+        // that finds nothing allocates nothing: the kind is read off `what` in place and the
+        // `n_` key is built only for a function.
+        let has = |w: &str| what.contains(w);
+        let (types, function, variable) = (
+            has("type") || has("Type") || has("enum"),
+            has("function"),
+            has("variable"),
+        );
+        let kind_fits = |d: u32| {
+            let t = &self.definitions[d as usize].def_type;
+            if types {
+                matches!(
+                    t,
+                    DefType::Struct
+                        | DefType::Enum
+                        | DefType::Type
+                        | DefType::TypeTemplate
+                        | DefType::Interface
+                )
+            } else if function {
+                matches!(t, DefType::Function | DefType::Dynamic | DefType::Generic)
+            } else if variable {
+                matches!(t, DefType::Constant)
+            } else {
+                !matches!(t, DefType::Unknown)
+            }
+        };
+        let fn_key = if function || !(types || variable) {
+            Some(format!("n_{name}"))
+        } else {
+            None
+        };
+        // The one definition every hit must agree on, and the best (qualifier, source) so far.
+        let mut def: Option<u32> = None;
+        let mut best: Option<(bool, &str, u16)> = None;
+        for (q, &src) in &self.use_names {
+            if src == into_source
+                || src == STD_SOURCE
+                || src == u16::MAX
+                || q.is_empty()
+                || q == "std"
+            {
+                continue;
+            }
+            for key in std::iter::once(name).chain(fn_key.as_deref()) {
+                let Some(d) = self.exported(key, src).filter(|&d| kind_fits(d)) else {
+                    continue;
+                };
+                if q.contains("::") || self.get_source(q) != src {
+                    continue; // not a qualifier this file can write (`writable_qualifier`)
+                }
+                if def.is_some_and(|x| x != d) {
+                    return None; // two libraries pass on different definitions: no cure
+                }
+                def = Some(d);
+                // A facade that re-exports the name outranks the module declaring it.
+                let rank = (src == self.definitions[d as usize].source, q.as_str(), src);
+                if best.is_none_or(|b| (rank.0, rank.1.len(), rank.1) < (b.0, b.1.len(), b.1)) {
+                    best = Some(rank);
+                }
+            }
+        }
+        best.map(|b| b.1.to_string())
+    }
+
+    /// The error for a name a loaded library passes on but this file does not import
+    /// (see [`Self::unimported_provider`]).
+    #[must_use]
+    pub fn unimported_cure(what: &str, name: &str, q: &str) -> String {
+        format!(
+            "{what} {name} — it is in `{q}`, which nothing this file imports passes on: \
+             import it with `use {q}::({name});` or `use {q}::*;`, or write `{q}::{name}` \
+             after `use {q};`"
+        )
     }
 
     /// The error for a name a bare `use` did not bring in: `what` is the message's
