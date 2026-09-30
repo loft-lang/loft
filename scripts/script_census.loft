@@ -208,7 +208,7 @@ fn print_tranche(rows: vector<Row>, label: text, title: text) {
 
 fn main() {
   args = arguments();
-  count_only = len(args) > 1 && args[1] == "--count";
+  count_only = len(args) > 0 && args[0] == "--count";
 
   rows: vector<Row> = [];
   ratchet = 0;
