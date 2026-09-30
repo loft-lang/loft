@@ -1,0 +1,39 @@
+// @PLN180 § Kernels — `text.split(c)` is ONE call of a Rust kernel on both backends: the
+// interpreter no longer walks the text a character at a time in loft code.  The kernel keeps
+// loft's own answer where Rust's `str::split` differs: an EMPTY text splits into no parts
+// (Rust answers one empty part).
+//
+// @falsified-at: none — it guards a kernel no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: answering Rust's `str::split` for the empty text (one empty
+// part) fails `empty text` on both backends.
+
+fn joined(parts: vector<text>) -> text {
+  out = "";
+  for p in parts { out += "[{p}]"; }
+  out
+}
+
+fn main() {
+  assert(joined("a,b,c".split(',')) == "[a][b][c]", "three parts: {joined("a,b,c".split(','))}");
+  assert("".split(',').len() == 0, "empty text: {"".split(',').len()}");
+  assert(joined("a,".split(',')) == "[a][]", "trailing separator: {joined("a,".split(','))}");
+  assert(joined(",a".split(',')) == "[][a]", "leading separator: {joined(",a".split(','))}");
+  assert(joined("abc".split(',')) == "[abc]", "no separator: {joined("abc".split(','))}");
+  assert(joined(",,".split(',')) == "[][][]", "separators only: {joined(",,".split(','))}");
+
+  // Multi-byte text and a multi-byte separator: sizes are bytes.
+  m = "é,ü,∑".split(',');
+  assert(m.len() == 3 && m[0].size() == 2 && m[2].size() == 3, "multi-byte parts");
+  assert(joined("a∑b∑".split('∑')) == "[a][b][]", "multi-byte separator: {joined("a∑b∑".split('∑'))}");
+
+  // 200 lines of "line N": "line " is 5 bytes, plus the digits of N.
+  src = "";
+  for i in 0..200 { src += "line {i}\n"; }
+  lines = src.split('\n');
+  total = 0;
+  for l in lines { total += l.size(); }
+  // 200 lines + one empty trailing part; 10 * 6 + 90 * 7 + 100 * 8 = 1490 bytes.
+  assert(lines.len() == 201 && total == 1490, "lines: {lines.len()} {total}");
+  lines[0] = "changed";
+  assert(src.split('\n')[0] == "line 0" && lines[0] == "changed", "an independent vector");
+}

@@ -511,6 +511,26 @@ impl Stores {
         self.text_vector(&args)
     }
 
+    /// `text.split(separator)` — the loop kernel behind the stdlib `split` (a text's parts
+    /// between separators, built straight into a fresh `vector<text>`).  It answers what the
+    /// loft loop it replaced answered: an EMPTY text has no parts (Rust's `str::split` would
+    /// answer one empty part), and otherwise every separator ends a part, the last part
+    /// included even when it is empty (`"a,".split(',')` is `["a", ""]`).
+    pub fn split_char(&mut self, text: &str, separator: char) -> DbRef {
+        let vec = self.database(4);
+        self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, 0);
+        if text.is_empty() {
+            return vec;
+        }
+        for part in text.split(separator) {
+            let elm = vector::vector_append(&vec, 4, &mut self.allocations);
+            let s = self.store_mut(&vec).set_str(part);
+            self.store_mut(&vec).set_u32_raw(elm.rec, elm.pos, s);
+            vector::vector_finish(&vec, &mut self.allocations);
+        }
+        vec
+    }
+
     /// Build a `vector<text>` from an explicit string slice.
     #[must_use]
     pub fn text_vector(&mut self, args: &[String]) -> DbRef {
