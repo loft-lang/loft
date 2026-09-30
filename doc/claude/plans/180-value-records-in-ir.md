@@ -10,11 +10,10 @@ Tracker: [@PLN180](https://github.com/loft-lang/plans/issues/180).
 ## Status
 
 Active on `laptop-superinstructions` (`src/value_record.rs`).  **Built:** slice 1 (tuple
-return), slice 3 (tuple parameters), and slice 4's forms that let one tuple-returning
-function serve every caller (forwards, materialisation at a site that owes a record, a tuple
-copied into a literal's inline sub-record).  **Open:** slice 2 (a written tuple local,
-`TuplePut`) and NESTED layouts (a record with an inline sub-record, `resolve_move`'s
-`MoveResult`).
+return), slice 3 (tuple parameters), slice 4 (one tuple-returning function serves every
+caller: forwards, tuple TWINS for the sites that owe a record, a tuple copied into a place)
+and slice 5 (nested layouts).  `resolve_move` returns and receives tuples on both backends.
+**Open:** slice 2 (a written tuple local, `TuplePut`).
 
 The bar the interpreter work answers to is in PERFORMANCE.md § Why the interpreter is
 optimised at all: native is the target, a cliff is about 100× (optimised interpreter against
@@ -47,6 +46,20 @@ buffer store per call and frees it through `OpFreeRefIfDistinct`.  The store cen
 A hand-written probe computed the same hash in every cell: records took 29.8 ms and 60,000
 stores on the interpreter, tuples 13.6 ms and 0.
 
+## Measured (lane 17, `make interp-gap --only 17`, pass off → on, 2026-09-30)
+
+| routine | interpreter stores/op | interpreter time/op | native time/op | interp/native |
+|---|--:|--:|--:|--:|
+| resolve_move | 146,756 → 35,460 | 150.4 → 110.3 ms | 2.23 → 2.25 ms | 67.6× → 49.0× |
+| panel_build | 46,336 → 10,336 (native 10,003) | 50.4 → 30.9 ms | 10.25 → 10.20 ms | 4.9× → 3.0× |
+| emit_to_material | unchanged | 22.6 → 13.1 ms | 1.34 → 1.33 ms | 16.8× → 9.9× |
+| slope_path_with_undo | 4,227 (native 1) | unchanged | unchanged | 38× |
+
+Native time is unchanged within noise on every routine.  `resolve_move`'s remaining stores
+are in `map_get_hex` (a record VIEW into the map: native's view-leaf rule, @PLN164 C5) and
+`floor_y_at`; `slope_path_with_undo`'s are in functions this pass declines.  Both are the
+next candidates.
+
 ## Design
 
 **One admission.** The candidates are exactly what `generation::hoist::value_records`
@@ -70,13 +83,28 @@ the tuple from those — so a field expression with an effect runs where the pro
 (the native defect slice 1 found was exactly this reordering).
 
 **A carrier** is a local bound from an admitted call or an admitted tuple parameter.  It may
-be read field-wise, handed whole to an admitted parameter of its record, returned by a
-forward, copied into a place (as field writes), freed, and — a local — null-initialised (the
-null tuple, which is what a field read of a null record answers).  A local that cannot carry
-the tuple keeps its record, and its binds MATERIALISE: the site binds the tuple to a
-temporary, runs the record's literal header on the buffer it passes, sets each field and
-answers the buffer.  So one awkward site costs what it cost before and no longer declines the
-callee for everyone.  Only a site whose buffer is no variable declines.
+be read field-wise (through a path into an inline sub-record too), handed whole to an
+admitted parameter of its record, returned by a forward, copied into a place (as field
+writes), freed, and — a local — null-initialised (the null tuple, which is what a field read
+of a null record answers).
+
+**Twins, not materialisation.** A local that cannot carry the tuple, an element or field the
+result is built into, a forward whose function keeps its record: such a site OWES a record.
+The function keeps its record form for exactly those sites, and a TWIN (`<name>_tuple`)
+returning the tuple serves the carriers — so a site that owes a record runs the code it ran
+before, on both backends.  Twinning grows to a fixpoint: a twinned forward keeps its record,
+so the function it forwards is owed there too.  The first cut MATERIALISED the tuple at such
+a site instead (the callee's mint test run on the caller's buffer, then the field sets).  It
+was a use-after-free under the loop-pooled buffer protocol (`copy_in_place` under
+`LOFT_STRICT_STORES`), and it hid the builder call `--native`'s own rewrites place directly
+into an element (six emission-shape suites went red).
+
+**Literals as parts.** A literal is its opening test, its field FILLS (a setter on the buffer
+or on a path into its sub-records, or a copy of a record into such a place, filling every
+field of its extent), frees that only witness the buffer (free unconditionally: a tuple is
+never the freed store), and other statements.  The values run where the literal ran them,
+staged in temporaries when the fill order is not the schema order or a statement follows the
+first fill.
 
 **Forwards** (`return g(…)` lowered three ways: a local bound in the function's own buffer,
 the same with the buffer renamed and a witness kept, and the one-buffer chain that rebinds the
@@ -100,11 +128,8 @@ native tuple is lost: it compares the native signatures with the pass on and off
 | 1 | Tuple RETURN: the callee is not `pub`, loft calls it, its record is flat (two or more fields: 8-byte integer, float, single, boolean) and its result positions are object literals.  Buffers straight-line or loop-hoisted. | built |
 | 2 | Tuple LOCALS written to: a field write becomes `TuplePut`. | open |
 | 3 | Tuple PARAMETERS: a by-value parameter native's write gate admits; a carrier is handed on whole, a plain record local is read into a tuple at the call. | built |
-| 4 | A record built where one is owed: materialisation at a site, forwards, a tuple copied into an inline sub-record. | built (the forms above) |
-| 5 | NESTED layouts: a record with an inline sub-record returned or received as one flat tuple (`MoveResult { mr_pos: Vec3, … }`; native's `layout_into` flattens them). | open — `resolve_move`'s own return |
-
-`resolve_move` now takes its `from` and `dxyz` as tuples and its `vec3` calls return tuples
-on both backends; its own `MoveResult` return is slice 5.
+| 4 | One function serves every caller: forwards (three spellings), twins for the sites that owe a record, a tuple copied into a place. | built |
+| 5 | NESTED layouts: a record with inline sub-records is one flat tuple (`MoveResult { mr_pos: Vec3, … }`, two levels deep too). | built |
 
 After this plan, the same move applies to the push family (R-Push, R-PushFill, R-PushRec,
 R-Mint), then R-TextBorrow.  Those are separate plans.
@@ -120,7 +145,11 @@ Guards (each `@falsified-at` records its plant):
 `a-small-record-returned-to-a-reader-is-a-tuple.loft` (slice 1),
 `a-small-record-parameter-is-a-tuple.loft` (slice 3 — admitting a parameter past the native
 write gate fails `aliased`), `a-small-record-is-forwarded-or-built-where-it-is-owed.loft`
-(slice 4 — a materialised field from the wrong element fails `appended`).  Slice 1's plants
+(slice 4 — a materialised field from the wrong element failed `appended`; written against
+the materialising cut, the cells hold for the twins), and
+`a-small-record-with-an-inline-sub-record-is-a-tuple.loft` (slice 5 — a read through a
+sub-record that drops the path's offset fails `two sub-records`; the first attempt changed
+nothing, because every other cell's sub-record sits at offset 0).  Slice 1's plants
 fail exactly one cell on both backends:
 
 - A tuple built in schema order runs `tick` as 3, 2, 4, 1 and fails `fill order`.
