@@ -269,8 +269,16 @@ jobs:
                 else
                   fail=1
                   summary="$summary| \`$name\` | BUILD FAIL | (no tests) |\n"
-                  echo "::error title=$name: does not build on loft main::"
-                  head -40 "/tmp/$name.check.log"
+                  echo "::error title=$name: does not build on loft main::$(grep -E '^error' "/tmp/$name.check.log" | head -3 | tr '\n' ' ')"
+                  # The log opens with cargo's build of the packages' native crates, which
+                  # fills any fixed head window before loft reports a single error.  The
+                  # diagnostics are what the reader needs; the tail is the fallback when there
+                  # are none (a crash, a timeout, a failed crate build).
+                  if grep -qE '^error' "/tmp/$name.check.log"; then
+                    grep -E -A1 '^error' "/tmp/$name.check.log" | head -60
+                  else
+                    tail -25 "/tmp/$name.check.log"
+                  fi
                 fi
               fi
               echo "::endgroup::"
