@@ -770,48 +770,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 &mut tag_counter,
             );
         }
-        // Compute live intervals so validate_slots can check for slot conflicts after codegen.
-        let free_text_nr = data.def_nr("OpFreeText");
         // Plan-57 cluster I: store-lifetime guard (diagnostic, gated).
         if crate::env_once!(std::env::var("LOFT_STORE_GUARD").is_ok()) {
             let gf_nr = data.def_nr("OpGetField");
             let d = &data.definitions[d_nr as usize];
             store_lifetime_guard(&d.code, &d.variables, free_ref_nr, gf_nr, &d.name);
         }
-        let create_stack_nr = data.def_nr("OpCreateStack");
-        let mut seq = 0u32;
-        // The body is read and the variables written: two fields of one definition, so
-        // neither needs a copy of the other.
-        let def = &mut data.definitions[d_nr as usize];
-        compute_intervals(
-            &def.code,
-            &mut def.variables,
-            free_text_nr,
-            free_ref_nr,
-            create_stack_nr,
-            &mut seq,
-            0,
-        );
-        // `@FR-B-Ref-Lvalue` — a `&` link names a PLACE, so its target's slot may not be
-        // handed to another local while the link is live.  Runs right after the intervals
-        // are computed and before `assign_slots` reads them.
-        data.definitions[d_nr as usize]
-            .variables
-            .extend_links_to_their_targets();
-        // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
-        // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
-        // slot handed on after the snapshot's own initialisation would answer another
-        // variable's store.
-        let witnessed = {
-            let vars = &data.definitions[d_nr as usize].variables;
-            hidden_return_buffer_var(d_nr, vars, data)
-                .and_then(|buf| vars.entry_witness(buf).map(|w| (buf, w)))
-        };
-        if let Some((buf, w)) = witnessed {
-            data.definitions[d_nr as usize]
-                .variables
-                .extend_last_use_to(w, buf);
-        }
+        // Compute live intervals so validate_slots can check for slot conflicts after codegen.
+        compute_function_intervals(data, d_nr);
         // Plan-57 last-use freeing, Phase 1: definition-point liveness diagnostic
         // (read-only).  Reports each function-scoped owning store held past its
         // last use while later allocations run — the I-b / III-straight-line
@@ -822,54 +788,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             let d = &data.definitions[d_nr as usize];
             last_use_guard(&d.code, &d.variables, db_nr, gf_nr, free_ref_nr, &d.name);
         }
-        // Plan-04 close-out (2026-04-22): V1 remains the slot
-        // allocator.  The Phase 2h "codegen is the allocator" pivot
-        // and the V2-drive alternative both failed on variables
-        // declared at an outer scope but first-Set in an inner scope
-        // (e.g. match-arm pattern bindings lifted to body scope by
-        // `scan_if`'s `small_both` pre-registration).  V1's zone-1
-        // pre-pass is load-bearing — see
-        // `doc/claude/plans/finished/04-slot-assignment-redesign/README.md`
-        // § Status.  Invariants I1–I7 in `validate.rs` check V1's
-        // output at every codegen completion (debug / test builds).
-        // @PLAN53 cluster 2 / S4: in aligned mode each arg + the return-address
-        // slot occupies a STEPPED span, so the locals start at Σ step(arg) +
-        // step(4) — matching codegen's stepped args loop + return slot, which
-        // keeps the frame base (args_base) 8-aligned.  Identity when off.
-        let local_start: u16 = {
-            let vars = &data.definitions[d_nr as usize].variables;
-            let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s)) as u16;
-            let arg_size: u16 = vars
-                .arguments()
-                .iter()
-                .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
-                .sum();
-            arg_size + step(4) // return-address slot
-        };
-        // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
-        // V2 layout from the (immutable) function intervals, reset stale local
-        // slots, then apply it.  `apply_v2_result` also zeroes every block's
-        // var_size: V2 is scope-blind, a single function-entry reserve (frame
-        // hwm) covers all slots, so there are no per-block reserves.
-        let result = {
-            let d = &data.definitions[d_nr as usize];
-            crate::variables::assign_slots_v2(&d.variables, local_start)
-        };
-        {
-            let d = &mut data.definitions[d_nr as usize];
-            d.variables.reset_local_slots();
-            crate::variables::apply_v2_result(&mut d.variables, &mut d.code, &result);
-        }
-        #[cfg(debug_assertions)]
-        {
-            crate::variables::validate_slots(
-                &data.definitions[d_nr as usize].variables,
-                data,
-                d_nr,
-                true, // V2 is scope-blind — skip I7 (zone-frame invariant).
-            );
-            crate::variables::validate_alignment(&data.definitions[d_nr as usize].variables);
-        }
+        assign_function_slots(data, d_nr);
     }
     // @PLN94 C.0 (DEV tier) — the POST-codegen free-based checks (over-free / under-free), now that
     // `get_free_vars` has inserted the frees into `def.code` above. Self-gates on
@@ -885,6 +804,102 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
+}
+
+/// The live intervals of `d_nr`'s variables, computed off its FINAL body — the input
+/// [`assign_function_slots`] reads.  Split out of [`check`] so a whole-program rewrite that
+/// changes a settled body afterwards (`value_record::rewrite_program`) can lay the frame out
+/// again by the same two steps.
+pub(crate) fn compute_function_intervals(data: &mut Data, d_nr: u32) {
+    let free_ref_nr = data.def_nr("OpFreeRef");
+    let free_text_nr = data.def_nr("OpFreeText");
+    let create_stack_nr = data.def_nr("OpCreateStack");
+    let mut seq = 0u32;
+    // The body is read and the variables written: two fields of one definition, so
+    // neither needs a copy of the other.
+    let def = &mut data.definitions[d_nr as usize];
+    compute_intervals(
+        &def.code,
+        &mut def.variables,
+        free_text_nr,
+        free_ref_nr,
+        create_stack_nr,
+        &mut seq,
+        0,
+    );
+    // `@FR-B-Ref-Lvalue` — a `&` link names a PLACE, so its target's slot may not be
+    // handed to another local while the link is live.  Runs right after the intervals
+    // are computed and before `assign_slots` reads them.
+    data.definitions[d_nr as usize]
+        .variables
+        .extend_links_to_their_targets();
+    // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
+    // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
+    // slot handed on after the snapshot's own initialisation would answer another
+    // variable's store.
+    let witnessed = {
+        let vars = &data.definitions[d_nr as usize].variables;
+        hidden_return_buffer_var(d_nr, vars, data)
+            .and_then(|buf| vars.entry_witness(buf).map(|w| (buf, w)))
+    };
+    if let Some((buf, w)) = witnessed {
+        data.definitions[d_nr as usize]
+            .variables
+            .extend_last_use_to(w, buf);
+    }
+}
+
+/// Stack slots for `d_nr`'s variables, from the intervals [`compute_function_intervals`]
+/// left.
+pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
+    // Plan-04 close-out (2026-04-22): V1 remains the slot
+    // allocator.  The Phase 2h "codegen is the allocator" pivot
+    // and the V2-drive alternative both failed on variables
+    // declared at an outer scope but first-Set in an inner scope
+    // (e.g. match-arm pattern bindings lifted to body scope by
+    // `scan_if`'s `small_both` pre-registration).  V1's zone-1
+    // pre-pass is load-bearing — see
+    // `doc/claude/plans/finished/04-slot-assignment-redesign/README.md`
+    // § Status.  Invariants I1–I7 in `validate.rs` check V1's
+    // output at every codegen completion (debug / test builds).
+    // @PLAN53 cluster 2 / S4: in aligned mode each arg + the return-address
+    // slot occupies a STEPPED span, so the locals start at Σ step(arg) +
+    // step(4) — matching codegen's stepped args loop + return slot, which
+    // keeps the frame base (args_base) 8-aligned.  Identity when off.
+    let local_start: u16 = {
+        let vars = &data.definitions[d_nr as usize].variables;
+        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s)) as u16;
+        let arg_size: u16 = vars
+            .arguments()
+            .iter()
+            .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
+            .sum();
+        arg_size + step(4) // return-address slot
+    };
+    // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
+    // V2 layout from the (immutable) function intervals, reset stale local
+    // slots, then apply it.  `apply_v2_result` also zeroes every block's
+    // var_size: V2 is scope-blind, a single function-entry reserve (frame
+    // hwm) covers all slots, so there are no per-block reserves.
+    let result = {
+        let d = &data.definitions[d_nr as usize];
+        crate::variables::assign_slots_v2(&d.variables, local_start)
+    };
+    {
+        let d = &mut data.definitions[d_nr as usize];
+        d.variables.reset_local_slots();
+        crate::variables::apply_v2_result(&mut d.variables, &mut d.code, &result);
+    }
+    #[cfg(debug_assertions)]
+    {
+        crate::variables::validate_slots(
+            &data.definitions[d_nr as usize].variables,
+            data,
+            d_nr,
+            true, // V2 is scope-blind — skip I7 (zone-frame invariant).
+        );
+        crate::variables::validate_alignment(&data.definitions[d_nr as usize].variables);
+    }
 }
 
 fn call(to: &'static str, v: u16, data: &Data) -> Value {

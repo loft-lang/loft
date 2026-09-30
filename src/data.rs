@@ -6002,6 +6002,12 @@ impl Clone for OpSetCache {
 /// The immutable data of a parsed loft program
 pub struct Data {
     pub definitions: Vec<Definition>,
+    /// Parsing continues against this `Data` after it is compiled — the REPL, the debugger,
+    /// live reload, a host calling functions by name.  A whole-program rewrite that changes
+    /// a SIGNATURE (`value_record::rewrite_program`, `@FR-R-ValueRecord`) runs only on a
+    /// closed program: a later parse would type a call by the rewritten signature, and a
+    /// caller outside loft would read a record the function no longer returns.
+    pub open_world: bool,
     /// @PLN133 S9 — the lazy drivers, answered once per definition set.
     ///
     /// [`Data::lazy_fetch_drivers`] walks every definition, and it is asked on
@@ -6849,6 +6855,7 @@ impl Data {
     pub fn new() -> Data {
         Data {
             definitions: Vec::new(),
+            open_world: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
             use_names: HashMap::new(),

@@ -1795,6 +1795,8 @@ impl ReplSession {
     /// Returns the I/O error if the stdlib directory cannot be read.
     pub fn new(stdlib_dir: &str) -> std::io::Result<Self> {
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.parse_stdlib(stdlib_dir)?;
         Ok(Self {
             parser,
@@ -1872,7 +1874,9 @@ impl ReplSession {
     /// the program's types + functions in scope.  The accumulated body starts
     /// empty; persistence is off.
     #[must_use]
-    pub fn from_parser(parser: Parser) -> Self {
+    pub fn from_parser(mut parser: Parser) -> Self {
+        // Parsed against again from here on: no whole-program signature rewrite.
+        parser.data.open_world = true;
         Self {
             parser,
             // `from_parser` builds a debugger-eval session over an existing program, not a
@@ -2100,6 +2104,8 @@ impl ReplSession {
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.lib_dirs = lib_dirs;
         parser.parse_stdlib(&self.stdlib_dir)?;
         self.parser = parser;
@@ -2158,6 +2164,8 @@ impl ReplSession {
         let _ = std::fs::read_to_string(path)?;
         let abs = crate::portable_path::plain_canonical_str(path);
         let mut parser = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        parser.data.open_world = true;
         parser.lib_dirs.clone_from(&self.parser.lib_dirs);
         for d in extra_lib_dirs {
             if !parser.lib_dirs.contains(d) {
