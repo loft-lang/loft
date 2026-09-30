@@ -253,7 +253,9 @@ has stopped changing runs optimised** — loft measures the age of the hash on t
 (first seen, last git change), the run count and the last interpreted duration, and when a
 script has earned it (a day old, ≥ 100 ms, run twice) builds the release binary detached
 after the run, so the next run takes it.  `#mode` pins the exceptions; the twin runs both
-modes so promotion can never change an answer.
+modes so promotion can never change an answer; and a TEST is never subject to it — a
+backend flag or a test context (`LOFT_MODE_POLICY=off`, set by every runner) switches the
+policy and its bookkeeping off.
 
 ## Phase ordering
 
