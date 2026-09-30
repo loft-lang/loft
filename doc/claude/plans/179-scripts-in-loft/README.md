@@ -151,6 +151,9 @@ What writing it measured — the first gaps, each closed before strand 3 starts:
 - **The tokenizer is by hand** (a character loop) because `split` takes one separator
   character and `find` answers a byte index against `len`'s character count — a script
   wants a regex or a `split_on(predicate)`; the `regex` library is the answer to measure.
+- **An interpreter segfault** on `f(self.v[n - 1] ?? "")` inside a mutating struct method,
+  heap-state dependent, native fine — [loft#1773](https://github.com/loft-lang/loft/issues/1773),
+  REASONS.md row 3; the census carries a marked local binding until it closes.
 - **`function-complexity` nudged the first draft's `main` at 103** (nudge at 40) — the advice
   was right, and the split it asked for is the version that shipped.  A data point for the
   advice tier: a script's `main` reaches the nudge fast.
