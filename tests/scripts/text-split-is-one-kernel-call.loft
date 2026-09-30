@@ -5,7 +5,7 @@
 //
 // @falsified-at: none — it guards a kernel no earlier build has, so no control fails it.
 // Hand-sabotaged 2026-09-30: answering Rust's `str::split` for the empty text (one empty
-// part) fails `empty text` on both backends.
+// part) fails `empty text` on `--interpret` and `empty text, handed on` on `--native`.
 
 fn joined(parts: vector<text>) -> text {
   out = "";
@@ -16,6 +16,12 @@ fn joined(parts: vector<text>) -> text {
 fn main() {
   assert(joined("a,b,c".split(',')) == "[a][b][c]", "three parts: {joined("a,b,c".split(','))}");
   assert("".split(',').len() == 0, "empty text: {"".split(',').len()}");
+  // The same edge where the vector is KEPT — handed to a function, appended to — so `--native`
+  // runs the kernel too; the bare `len` above is answered by its lazy split (`R-LazySplit`).
+  assert(joined("".split(',')) == "", "empty text, handed on: {joined("".split(','))}");
+  kept = "".split(',');
+  kept += ["x"];
+  assert(kept.len() == 1, "empty text, appended to: {kept.len()}");
   assert(joined("a,".split(',')) == "[a][]", "trailing separator: {joined("a,".split(','))}");
   assert(joined(",a".split(',')) == "[][a]", "leading separator: {joined(",a".split(','))}");
   assert(joined("abc".split(',')) == "[abc]", "no separator: {joined("abc".split(','))}");
