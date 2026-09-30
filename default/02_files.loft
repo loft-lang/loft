@@ -158,26 +158,18 @@ pub fn content(self: const File) -> text?fs#read {
   result
 }
 #impure(io)
+// Private native: the lines of a text — every `\n` ends one and drops a `\r` directly before
+// it; a last line without a `\n` counts only when it is not empty.
+fn text_lines(content: text) -> vector<text>;
+#rust"stores.text_lines(@content)"
+#pure
 /// Reads the file and splits it into lines.
 /// Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce
 /// identical results. Use when processing line-by-line (logs, CSV, etc.).
 /// Example: @STD-011
 pub fn lines(self: const File) -> vector<text> fs#read {
-  result = [];
   // A missing file has no lines, which is why the result is nullable.
-  c = self.content() ?? "";
-  p = 0;
-  prev_cr = false;
-  for ch in c {
-    if ch == '\n' {
-      e = ch#index;
-      if prev_cr { result += [c[p..e - 1]]; } else { result += [c[p..e]]; }
-      p = ch#next;
-    }
-    prev_cr = ch == '\r';
-  }
-  if p < c.size() { result += [c[p..c.size()]]; }
-  result
+  text_lines(self.content() ?? "")
 }
 // Par-safe filesystem read (via content()).
 #impure(io)
