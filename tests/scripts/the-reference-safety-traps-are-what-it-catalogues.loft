@@ -101,7 +101,7 @@ fn the_reserved_null_of_each_scalar_is_the_value_the_page_names() {
   sf_text = "\0";
   assert(!sf_text, "a single NUL is not the text null");
   assert((sf_text ?? "d") == "d", "`??` does not discharge the NUL text");
-  assert(len(sf_text) == 1, "the NUL text is not one character long: {len(sf_text)}");
+  assert(len(sf_text) == 0, "the NUL text, being null, has characters: {len(sf_text)}");
   assert(!(!""), "the empty string reads as null");
 
   // Three states, and each pair of them is distinguishable.

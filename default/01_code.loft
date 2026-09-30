@@ -785,8 +785,10 @@ fn OpConstText(_value: const text) -> text;
 #rust"s.string_from_code();"
 fn OpConvTextFromNull() -> text;
 #rust"Str::new(crate::state::STRING_NULL)"
+// @FR-L-Null-Text — the absent text is stored as the `STRING_NULL` bytes, and a reader tests
+// the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> integer;
-#rust"@v1.chars().count() as i64"
+#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
 // Number of characters (Unicode code points) in the text — the human
 // count, as in every mainstream language. For a byte length (bounds checks, the
 // limit of byte-positioned indexing / slicing) use `size`.
@@ -795,8 +797,9 @@ pub fn len(self: text) -> integer {
 }
 #pure
 
+// @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
 fn OpSizeText(v1: text) -> integer;
-#rust"@v1.len() as i64"
+#rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
 // Number of bytes in the text. This is the bound for byte-positioned
 // operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
 // For the human character count use `len`.

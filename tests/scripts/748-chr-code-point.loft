@@ -43,11 +43,13 @@ fn main() {
   assert(chr(-1) == "", "a negative code point must answer empty");
   assert(chr(0) == "", "0 must answer empty — `character`'s null is 0");
 
-  // The far side of the U+0000 boundary: the BYTE route still carries a NUL, so
-  // the empty answer above is a property of the character layer, not a lost
-  // capability.  If this ever starts failing, `chr(0)` deserves re-deciding.
-  nul: vector<u8> = [0];
-  assert(size(text_from_bytes(nul)) == 1, "the byte route still carries a NUL");
+  // The far side of the U+0000 boundary: the BYTE route still carries a NUL inside a
+  // text, so the empty answer above is a property of the character layer, not a lost
+  // capability.  If this ever starts failing, `chr(0)` deserves re-deciding.  (A LONE
+  // NUL is the null text itself, which has no bytes — CAVEATS.md.)
+  nul: vector<u8> = [0, 66];
+  assert(size(text_from_bytes(nul)) == 2 && text_from_bytes(nul).byte_at(0) == 0,
+    "the byte route still carries a NUL");
 
   // --- the round trip `chr` exists for: text -> code points -> text ---
   s = "Café中!";

@@ -1620,13 +1620,27 @@ fn conv_text_from_null(s: &mut State) {
 
 fn length_text(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str().chars().count() as i64;
+    let new_value = {
+        let __t = v_v1.str();
+        if __t == crate::state::STRING_NULL {
+            0
+        } else {
+            __t.chars().count() as i64
+        }
+    };
     s.put_stack(new_value);
 }
 
 fn size_text(s: &mut State) {
     let v_v1 = s.string();
-    let new_value = v_v1.str().len() as i64;
+    let new_value = {
+        let __t = v_v1.str();
+        if __t == crate::state::STRING_NULL {
+            0
+        } else {
+            __t.len() as i64
+        }
+    };
     s.put_stack(new_value);
 }
 

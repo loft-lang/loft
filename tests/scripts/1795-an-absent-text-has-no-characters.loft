@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1795 — @FR-L-Null-Text: an absent text is one value, and a reader tests its CONTENT.
+// It has no characters: `for c in t` over it makes no trips, and `len` / `size` answer 0.
+// They answered 1, counting the `STRING_NULL` byte the absence is stored as, so the same
+// value had no characters to a loop and one to `len` — silently, on both backends.  `split`
+// decides its trailing piece with `len > 0`, so it answered the absent text one piece where
+// the empty text has none; it now agrees with the empty text, and so do the lazy split and
+// the split table (`codegen_runtime::lazy_split`).
+//
+// Axes this file MOVES:  where the absent text comes from (a call's return, a local, a
+//                        struct field, a vector element, a parameter), the reader (len,
+//                        size, iteration, split eager, split in a `for` — lazy on native —
+//                        and split kept as a table).
+// Axes it HOLDS FIXED:   the separator is one ASCII character.
+//
+// @falsified-at: 40e676d1b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 2 assertion failures -> 0
+// HOLDS: the present-text cells ("", "héllo,x", "a,") answer the same on both trees, so
+//   the fix moved only the absent text; leak, panic and refusals are clean on both.
+// @falsified-by: tests/falsified/1795-an-absent-text-has-no-characters.patch — the same channels
+
+struct R { t: text? }
+
+fn nothing() -> text? { null }
+
+// Each reader, on a plain `text` the absent value reaches past the null-into-non-null warning.
+fn reads(t: text) -> text {
+  n = 0;
+  for _c in t { n += 1; }
+  eager = len(split(t, ','));
+  lazy = 0;
+  for _p in t.split(',') { lazy += 1; }
+  parts = t.split(',');
+  "{len(t)} {size(t)} {n} {eager} {lazy} {len(parts)}"
+}
+
+fn test_an_absent_text_has_no_characters_in_every_position() {
+  r = R { t: null };
+  v: vector<text?> = [null];
+  local: text? = null;
+  want = "0 0 0 0 0 0";
+  assert(reads(nothing()) == want, "call result: {reads(nothing())}");
+  assert(reads(local) == want, "local: {reads(local)}");
+  assert(reads(r.t) == want, "field: {reads(r.t)}");
+  assert(reads(v[0]) == want, "element: {reads(v[0])}");
+}
+
+fn test_the_empty_and_a_present_text_are_unchanged() {
+  assert(reads("") == "0 0 0 0 0 0", "empty: {reads("")}");
+  assert(reads("héllo,x") == "7 8 7 2 2 2", "present: {reads("héllo,x")}");
+  assert(reads("a,") == "2 2 2 2 2 2", "trailing separator: {reads("a,")}");
+}

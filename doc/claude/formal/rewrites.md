@@ -1494,11 +1494,11 @@ take is the compiler's to change.  The conditions are the vector's TWO mentions 
 over the whole function, so a shape this rule has not met declines rather than compiles to
 a read of a vector nobody filled) and the separator's constancy — a null separator
 compares equal to a NUL inside the text, which the iterator does not model.  The NULL
-text is the edge the first build got wrong: it answered no pieces, by analogy with the
-empty text, where `split` answers one — `len(null)` is 1, so its trailing-piece rule
-fires — and lazy native disagreed with the interpreter AND with its own switch-off form
-(`count=0` for `count=1`).  The cell that found it passes a real null (s2, s21); the
-first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The source
+text is the edge that has to agree three ways: the iterator, `split` and its switch-off form
+all answer it no pieces, as for the empty text — `(L-Null-Text)` gives an absent text no
+characters, so `split`'s trailing-piece test `len > 0` does not fire.  The
+cells that pin it pass a real null (s2, s21), not `nothing ?? ""`, which is an empty text
+and cannot tell the two apart.  The source
 needs no gate because the copy is always sound; the borrow is the one case where the
 copy is provably unnecessary.  Two spellings of the `For` block reach it —
 the buffer minted at function entry, and minted at first use inside the block

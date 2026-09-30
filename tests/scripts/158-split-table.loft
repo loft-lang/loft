@@ -35,10 +35,9 @@ fn s1() {
   println("s1 {r}");
 }
 
-// s2 — an EMPTY text has no pieces; a NULL text is its sentinel's one character and is
-// its own only piece (as `split` answers, `(R-LazySplit)`'s edge).  `len` says so; the
-// walk answers the piece itself (the null text, size 1), and the discharged element read
-// `parts[0]?` reads that null as "" — as it reads the absent element of the empty split.
+// s2 — an EMPTY text has no pieces, and neither has a NULL text: it has no characters
+// (`(L-Null-Text)`, loft#1795), so the table answers what `split` answers for "".  The
+// discharged element read `parts[0]?` reads the absent element as "" in both.
 fn count_first(src: text) -> text {
   parts = src.split(',');
   out = "{len(parts)} [{parts[0]?}] [{size(parts[0]?)}]";
@@ -51,7 +50,7 @@ fn s2() {
   a = count_first("");
   b = count_first(nothing);
   c = count_first("x");
-  assert(a == "0 [] [0]" && b == "1 [] [0] <null|1>" && c == "1 [x] [1] <x|1>", "s2 {a} / {b} / {c}");
+  assert(a == "0 [] [0]" && b == "0 [] [0]" && c == "1 [x] [1] <x|1>", "s2 {a} / {b} / {c}");
   println("s2 {a} / {b} / {c}");
 }
 

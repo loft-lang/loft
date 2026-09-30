@@ -799,7 +799,7 @@ fn test_exhaustiveness_is_an_error_for_enums_and_a_type_for_everything_else() {
   // The open domain: every arm is a value, and 7 is covered by none of them.
   assert(open947(1) == "one", "a covered value answers its arm");
   assert(open947(7) == null, "an uncovered value answers null, got [{open947(7)}]");
-  assert(len(open947(7)) == 1, "and it is the text null sentinel — one NUL character");
+  assert(len(open947(7)) == 0, "and it is the absent text, which has no characters");
 
   // The same match with `_` is total, and the result is no longer nullable.
   assert(total947(7) == "rest", "`_` covers the rest, got {total947(7)}");

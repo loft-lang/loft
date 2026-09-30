@@ -954,11 +954,11 @@ fn get_record_lookup(
 /// else can reach the vector the call would have built.
 ///
 /// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
-/// empty text, and otherwise one piece per separator plus the trailing piece, which is
-/// empty when the text ends in a separator.  A NULL text is not empty — it is the one
-/// character of the null sentinel — so it answers itself as its only piece, as `split`
-/// does.  The separator is a character, so a multi-byte one splits on the whole character
-/// and never inside another.
+/// empty text or the absent one (`@FR-L-Null-Text`: an absent text has no characters, so
+/// `split`'s trailing-piece test `len > 0` does not fire — loft#1795), and otherwise one
+/// piece per separator plus the trailing piece, which is empty when the text ends in a
+/// separator.  The separator is a character, so a multi-byte one splits on the whole
+/// character and never inside another.
 pub struct LazySplit<'a> {
     rest: Option<&'a str>,
     separator: char,
@@ -984,7 +984,11 @@ impl<'a> Iterator for LazySplit<'a> {
 #[inline]
 #[must_use]
 pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
-    let rest = if text.is_empty() { None } else { Some(text) };
+    let rest = if text.is_empty() || text == crate::state::STRING_NULL {
+        None
+    } else {
+        Some(text)
+    };
     LazySplit { rest, separator }
 }
 
