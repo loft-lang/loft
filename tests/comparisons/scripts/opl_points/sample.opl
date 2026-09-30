@@ -1,0 +1,8 @@
+n1 v1 dV c0 t2024-01-01T00:00:00Z i1 uu T x4.8951 y52.3702 Tname=Amsterdam%20%Centraal,amenity=station
+n2 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tamenity=cafe x4.9 y52.37
+n3 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tname=Bar%2c%Grill,amenity=bar x4.895123456 y52.370123456
+n4 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tname=Null%09%Island x0 y0
+n5 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tname=NoCoords
+w6 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tname=AWay Nn1,n2
+n7 v1 dV c0 t2024-01-01T00:00:00Z i1 uu Tname=Caf%c3%%a9%,amenity=cafe x-4.5 y-33.123456789
+n8 v1 dV c0 t2024-01-01T00:00:00Z i1 uu xabc y1

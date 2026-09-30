@@ -34,7 +34,9 @@ VARIANT = re.compile(r"\b(?:Type|Parts)::([A-Za-z_][A-Za-z0-9_]*)")
 
 def collect(min_len):
     sites = collections.defaultdict(list)
-    for path in glob.glob(ROOT + "/**/*.rs", recursive=True):
+    # Sorted: glob answers in readdir order, so the same tree printed sites in a
+    # different order on every filesystem — a report nobody can diff.
+    for path in sorted(glob.glob(ROOT + "/**/*.rs", recursive=True)):
         src = open(path, encoding="utf-8", errors="replace").read()
         for m in MATCHES.finditer(src):
             names = frozenset(VARIANT.findall(m.group(1)))

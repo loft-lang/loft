@@ -320,7 +320,7 @@ install:
 	rm -rf "$$sdir"; mkdir -p "$$sdir/libs/smokelib/src"; \
 	printf '[package]\nname = "smokelib"\nversion = "0.1.0"\nloft = ">=0.8"\n[library]\nentry = "src/smokelib.loft"\n' > "$$sdir/libs/smokelib/loft.toml"; \
 	printf 'pub fn smoke_sum(v: vector<integer>) -> integer {\n  t = 0;\n  for e in v { t += e; }\n  t\n}\n' > "$$sdir/libs/smokelib/src/smokelib.loft"; \
-	printf 'use smokelib;\nstruct SmIn { items: vector<integer> }\nstruct SmOut { inner: SmIn }\nfn smk() -> SmOut { SmOut { inner: SmIn { items: [1, 2, 3] } } }\nfn app(f: fn(float) -> float, x: float) -> float { f(x) }\nfn main() {\n  o = smk();\n  w = o.inner;\n  g = fn(a: float) -> float { a + (len(w.items) as float) };\n  println("smoke {app(g, 1.0)} {smoke_sum([1, 2, 3])}");\n}\n' > "$$sdir/main.loft"; \
+	printf 'use smokelib::(smoke_sum);\nstruct SmIn { items: vector<integer> }\nstruct SmOut { inner: SmIn }\nfn smk() -> SmOut { SmOut { inner: SmIn { items: [1, 2, 3] } } }\nfn app(f: fn(float) -> float, x: float) -> float { f(x) }\nfn main() {\n  o = smk();\n  w = o.inner;\n  g = fn(a: float) -> float { a + (len(w.items) as float) };\n  println("smoke {app(g, 1.0)} {smoke_sum([1, 2, 3])}");\n}\n' > "$$sdir/main.loft"; \
 	if ! $(PREFIX)/bin/loft --interpret --lib "$$sdir/libs" "$$sdir/main.loft" >/dev/null 2>"$$sdir/err"; then \
 		echo "ERROR: 'make install' left a broken binary<->rlib pair —"; \
 		echo "the installed loft cannot build a library cdylib against the installed libloft.rlib:"; \
