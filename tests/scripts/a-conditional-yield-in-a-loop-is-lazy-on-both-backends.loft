@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-G-Next` — an advance runs the generator up to its NEXT `yield` and no further — for a
+// `yield` under an `if` or `match` in a loop (loft#1798).  --native lowered a loop lazily only
+// when its one yield sat on the body's straight line; a conditional yield ran the WHOLE loop
+// into a buffer before the consumer saw a value: `p0 p1 p2 g0 g2` where the interpreter prints
+// `p0 g0 p1 p2 g2`.  The values agreed and the side effects did not, and an endless
+// `while true { if ready { yield x; } }` never handed out a value at all.
+//
+// A yield that ENDS its arm — one per arm, an `if`, an `else if` chain, an `if`/`else`, a
+// `match` — is now lowered lazily: the yielding arm suspends, a non-yielding arm lets the
+// iteration run on (its rest included) into the next one within the same advance.
+//
+// Each generator stamps `p<i>` into a shared trace before its condition, `r<i>` for the
+// statements after the conditional, and the consumer stamps `g<v>`, so the trace reads the
+// interleaving directly; an eager lowering reads every `p` before the first `g`.  Every
+// expected trace is hand-derived from the interpreter's rule, not copied from a run.
+//
+// Axes this file MOVES: the conditional (if, if/else, else-if chain, match), which arm yields,
+//                       statements after the conditional (none, some, a `break`), the loop
+//                       (`for`, `while`, a long `while` abandoned by its consumer),
+//                       the yielded kind (integer, text), a local carried across iterations.
+// Axes it HOLDS FIXED:  one yield per arm, the yield the LAST statement of its arm, no nested
+//                       loop — the shapes that stay eager are listed in COROUTINE.md § CL-9.
+//
+// @falsified-at: e82943091 — native 6 of 6 functions fail -> 0 (hand-measured with the control
+//   build's binary); the interpreter INERT
+//   (expected for a backend-divergence guard — only one side can move).
+//   CHANNEL: assertions, native — every trace reads the eager order, and the abandoned
+//     generator counts 100000 steps where the consumer asked for nine.
+//   ARMED: nothing.
+//   WITNESS: on e82943091 `cond1798` traces `p0 p1 p2 g0 g2 ` where this file wants
+//     `p0 g0 p1 p2 g2 `.
+//   HOLDS: every VALUE agrees on both trees and both backends; no leak or panic.
+
+struct Tr1798 { s: text }
+
+fn cond1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..3 { t.s += "p{i} "; if i != 1 { yield i; } }
+}
+
+fn rest1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..4 { t.s += "p{i} "; if i % 2 == 0 { yield i; } t.s += "r{i} "; }
+}
+
+fn both1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..3 { t.s += "p{i} "; if i == 1 { yield 10; } else { yield 20; } t.s += "r{i} "; }
+}
+
+fn chain1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..4 { t.s += "p{i} "; if i == 0 { yield 100; } else if i == 2 { yield 200; } }
+}
+
+fn match1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..4 { t.s += "p{i} "; match i % 3 { 0 => { yield i; }, _ => {} } }
+}
+
+fn while1798(t: reference<Tr1798>) -> iterator<integer> {
+  i = 0;
+  while i < 3 { t.s += "p{i} "; if i != 0 { yield i * 10; } i += 1; }
+}
+
+fn broken1798(t: reference<Tr1798>) -> iterator<integer> {
+  for i in 0..10 { t.s += "p{i} "; if i % 2 == 0 { yield i; } if i == 3 { break; } }
+}
+
+fn words1798(t: reference<Tr1798>) -> iterator<text> {
+  for i in 0..3 { t.s += "p{i} "; if i != 1 { yield "v{i}"; } }
+}
+
+fn carried1798() -> iterator<integer> {
+  acc = 0;
+  for i in 0..4 { acc += i; if acc > 2 { if i != 3 { yield acc; } } }
+}
+
+struct Steps1798 { n: integer }
+
+fn long1798(st: reference<Steps1798>) -> iterator<integer> {
+  i = 0;
+  while i < 100000 { i += 1; st.n += 1; if i % 3 == 0 { yield i; } }
+}
+
+fn test_an_if_yield_hands_over_before_the_next_iteration() {
+  t = Tr1798 { s: "" };
+  for v in cond1798(t) { t.s += "g{v} "; }
+  assert(t.s == "p0 g0 p1 p2 g2 ", "if-yield: {t.s}");
+}
+
+fn test_the_rest_of_an_iteration_runs_on_either_arm() {
+  t = Tr1798 { s: "" };
+  for v in rest1798(t) { t.s += "g{v} "; }
+  assert(t.s == "p0 g0 r0 p1 r1 p2 g2 r2 p3 r3 ", "rest after the if: {t.s}");
+  b = Tr1798 { s: "" };
+  for v in both1798(b) { b.s += "g{v} "; }
+  assert(b.s == "p0 g20 r0 p1 g10 r1 p2 g20 r2 ", "if/else both yield: {b.s}");
+}
+
+fn test_a_chain_and_a_match_are_conditionals_too() {
+  c = Tr1798 { s: "" };
+  for v in chain1798(c) { c.s += "g{v} "; }
+  assert(c.s == "p0 g100 p1 p2 g200 p3 ", "else-if chain: {c.s}");
+  m = Tr1798 { s: "" };
+  for v in match1798(m) { m.s += "g{v} "; }
+  assert(m.s == "p0 g0 p1 p2 p3 g3 ", "match arm: {m.s}");
+}
+
+fn test_while_and_break_loops() {
+  w = Tr1798 { s: "" };
+  for v in while1798(w) { w.s += "g{v} "; }
+  assert(w.s == "p0 p1 g10 p2 g20 ", "while: {w.s}");
+  b = Tr1798 { s: "" };
+  for v in broken1798(b) { b.s += "g{v} "; }
+  assert(b.s == "p0 g0 p1 p2 g2 p3 ", "break after the if: {b.s}");
+}
+
+fn test_a_text_yield_and_a_carried_local() {
+  t = Tr1798 { s: "" };
+  for v in words1798(t) { t.s += "g{v} "; }
+  assert(t.s == "p0 gv0 p1 p2 gv2 ", "text yield: {t.s}");
+  got = "";
+  for v in carried1798() { got += "{v} "; }
+  assert(got == "3 ", "a local carried across iterations: {got}");
+}
+
+// Finite on purpose, as in `1586-…`: an eager regression then fails the STEP count instead of
+// filling memory the way an endless loop's buffer would.
+fn test_an_abandoned_conditional_generator_does_no_work_past_its_consumer() {
+  st = Steps1798 { n: 0 };
+  got = "";
+  n = 0;
+  for v in long1798(st) {
+    got += "{v} ";
+    n += 1;
+    if n == 3 { break; }
+  }
+  assert(got == "3 6 9 " && st.n == 9, "abandoned after three values: {got} / {st.n} steps");
+}

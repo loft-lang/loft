@@ -5,7 +5,9 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 ## Design: lazy loop yields (CL-9)
 
 > **Status: slice 1 built (loft#836, 2026-08-10); the `while` half of slice 3 and the statement
-> after the yield built (loft#1586, 2026-09-22); slice 2, nested loops and slice 4 open.** A loop
+> after the yield built (loft#1586, 2026-09-22); A3 built for a yield that ENDS its arm, one per
+> arm (loft#1798); A2 (two yields on one path, a statement after a yield inside its arm), nested
+> loops and slice 4 open.** A loop
 > with ONE `yield` on its body's straight line is lowered to a header+body state pair — one
 > iteration per advance, the cursor persisted — and everything else keeps the eager buffer.  A
 > `while` is the same lowering with no setup (the parser emits it as a bare `Loop`).  Statements

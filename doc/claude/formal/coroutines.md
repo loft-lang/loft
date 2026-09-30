@@ -232,8 +232,10 @@ Every deviation this doc has carried is closed; the record is in the companion
   consumer's, one value per advance. STRAIGHT-LINE yields obey this on both backends
   (`print("a"); yield 1; print("b"); yield 2` → `a g1 b g2`). A LOOP with one yield on its body's
   straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
-  so an endless one hands out each value as it is asked for.  The loop shapes CL-9 has not reached
-  (more than one yield per iteration, a yield under an `if`/`match`, a nested loop, a `continue`,
+  so an endless one hands out each value as it is asked for, and so does a yield that ENDS an
+  `if`/`match` arm — one per arm, the iteration that takes a non-yielding arm running on to the next
+  (`p0 g0 p1 p2 g2`, loft#1798).  The loop shapes CL-9 has not reached
+  (two yields on one path, a statement after a yield inside its arm, a nested loop, a `continue`,
   a tuple or record yield) still run EAGERLY on native (`y0 y1 g0 g1`):
   the values agree and the side effects do not, an interleaving difference COROUTINE.md § CL-9
   records rather than a divergence of values — and an ENDLESS loop of one of those shapes never
