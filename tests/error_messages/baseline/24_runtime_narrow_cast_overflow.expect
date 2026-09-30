@@ -1,7 +1,7 @@
 ==== exit: 1 ====
 ==== stdout ====
 ==== stderr ====
-error: narrowing cast from integer to i32 may not fit at runtime; use `i32?` for a checked cast (value or null), or guard the value (`?? d`, mask, or an `if` range check)
+error: narrowing cast from integer to i32 may not fit at runtime; use `i32?` for a checked cast (value or null), give it a fallback with `as i32 ?? <value>`, or mask it first, `(<value> & 2147483647) as i32`
   --> <cases>/24_runtime_narrow_cast_overflow.loft:3:22
   |
 3 |   small = big as i32;

@@ -4946,7 +4946,13 @@ impl Parser {
         let Some(d_width) = d.forced_size.map(std::num::NonZeroU8::get) else {
             return false;
         };
-        s.byte_width(false) > d_width
+        // Only the full integer's bounds under-report its value; any other source's range
+        // is its value's, and containment has already answered for it.  A contained
+        // `limit` range wider than 65 536 codes has no 4-byte width bucket
+        // (`range_to_width` answers 8), so asking width of it refused `x & 2147483647`
+        // into an `i32` — the mask the refusal itself offers as the cure (loft#1814).
+        let full = s.forced_size.is_none() && (s.is_signed32_template() || s.is_wide_template());
+        full && s.byte_width(false) > d_width
     }
 
     /// @PLAN48 P2: render an integer type with its explicit narrow alias
@@ -5816,7 +5822,7 @@ impl Parser {
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);
-            let cures = Self::narrowing_cures(code, &dst);
+            let cures = Self::narrowing_cures(code, should, &dst);
             diagnostic!(
                 self.lexer,
                 Level::Error,

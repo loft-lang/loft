@@ -166,8 +166,10 @@ integer limit(0, 65535)    // fits in a short
 
 A `limit` type is a narrow integer exactly as `u8` is: a value the compiler cannot prove in
 range is refused at the store, the call and the literal, and the refusal names the cure —
-write what the value becomes when it does not fit, `x ?? 0`, or take the checked cast
-`x as integer limit(0, 7)?`, which is `null` when it does not fit.  The one way an
+write what the value becomes when it does not fit, `x ?? 0`; make the slot nullable,
+`integer limit(0, 7)?`, which takes the value as a checked cast and holds `null` when it
+does not fit; or mask it, `x & 7`.  An `if` range check is not a cure: loft does not narrow
+a value's type after a test.  The one way an
 out-of-range value reaches such a slot at run time is the slot's own arithmetic stepping past
 its range (`b += 253`), and then it takes the type's default — the value nearest zero in the
 range — never a wrapped one.

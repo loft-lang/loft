@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The narrowing refusal is only ever met by a NON-null narrow slot — a nullable one takes the
+// checked narrowing (`(I-Narrow-Opt)`) — so each cure it prints has to compile THERE, and each
+// cell below writes one, in the refusal's own spelling, for every width alias:
+//   `?? <value>`            the fallback, which the root discharge supplies;
+//   the destination `τ?`    a value that does not fit reads null;
+//   the mask `& m`          the largest `2^k - 1` inside the range, printed per type.
+// Two cures it used to print did not compile there and are gone (loft#1804): an `if` range
+// check (loft does not narrow a value's type after a test) and `as τ?` on its own (a nullable
+// value into a narrow width is `(N-Store)`'s ERROR).  And the mask it printed for `i32` and
+// `u32` was itself refused, because a contained range over 65 536 codes read as 8 bytes wide
+// (loft#1814).
+//
+// @falsified-at: 514f99913 — measured by hand on that build before the fix:
+//   `b: i32 = x & 2147483647` and `b: u32 = x & 2147483647` were refused.
+//   CHANNEL: exit — the control refuses to compile `mask32`, so nothing runs.
+//   WITNESS: `error: cannot implicitly narrow integer limit(0, 2147483647) to i32 (may lose
+//   data)` at the `i32` mask, and the same for `u32`.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+// One function per width, so a refusal names the cell that caused it.  Each takes the value
+// as a parameter, so no cell is proved in range by constant folding.
+fn fallback8(x: integer) -> integer {
+  a: u8 = x ?? 9;
+  b: i8 = x ?? 9;
+  c: u16 = x ?? 9;
+  d: i16 = x ?? 9;
+  e: i32 = x ?? 9;
+  f: u32 = x ?? 9;
+  a + b + c + d + e + f
+}
+
+fn nullable_count(x: integer) -> integer {
+  a: u8? = x;
+  b: i8? = x;
+  c: u16? = x;
+  d: i16? = x;
+  e: i32? = x;
+  f: u32? = x;
+  n = 0;
+  if !a { n += 1; }
+  if !b { n += 1; }
+  if !c { n += 1; }
+  if !d { n += 1; }
+  if !e { n += 1; }
+  if !f { n += 1; }
+  n
+}
+
+fn mask8(x: integer) -> integer {
+  a: u8 = x & 255;
+  b: i8 = x & 127;
+  a * 1000 + b
+}
+
+fn mask16(x: integer) -> integer {
+  c: u16 = x & 65535;
+  d: i16 = x & 32767;
+  c * 100000 + d
+}
+
+fn mask32(x: integer) -> integer {
+  e: i32 = x & 2147483647;
+  f: u32 = x & 2147483647;
+  e + f
+}
+
+fn main() {
+  // In range everywhere: 44 is kept by every cure.
+  assert(fallback8(44) == 6 * 44, "a value that fits is kept, not the fallback");
+  assert(nullable_count(44) == 0, "a value that fits is not null");
+  // 300 fits the 16- and 32-bit widths but not the 8-bit ones.
+  assert(fallback8(300) == 9 + 9 + 4 * 300, "the fallback where it does not fit");
+  assert(nullable_count(300) == 2, "null in the two 8-bit slots");
+  // -200 fits `i16` and `i32` only — below `i8`'s -128 and every unsigned width's 0.
+  assert(fallback8(-200) == 9 + 9 + 9 + (-200) + (-200) + 9, "the other four fall back");
+  assert(nullable_count(-200) == 4, "null in the other four slots");
+  // Out of every range.
+  assert(fallback8(5000000000) == 6 * 9, "every width falls back");
+  assert(nullable_count(5000000000) == 6, "every width is null");
+  // The masks keep the low bits, and each result fits its type.
+  //   300 & 255 = 44, 300 & 127 = 44;  -200 & 255 = 56, -200 & 127 = 56.
+  assert(mask8(300) == 44 * 1000 + 44, "the 8-bit masks");
+  assert(mask8(-200) == 56 * 1000 + 56, "the 8-bit masks of a negative value");
+  //   -200 & 65535 = 65336, -200 & 32767 = 32568.
+  assert(mask16(-200) == 65336 * 100000 + 32568, "the 16-bit masks");
+  //   5000000000 & 2147483647 = 5000000000 - 2 * 2147483648 = 705032704.
+  assert(mask32(5000000000) == 2 * 705032704, "the 32-bit masks");
+  //   -200 & 2147483647 = 2147483648 - 200 = 2147483448.
+  assert(mask32(-200) == 2 * 2147483448, "the 32-bit masks of a negative value");
+}

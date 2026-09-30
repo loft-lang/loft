@@ -8673,12 +8673,27 @@ use a separate collection or add after the loop"
     ///
     /// The `??` cure is real rather than aspirational: a discharge at the ROOT of the stored
     /// expression supplies the fallback (`range_guard_inside_discharge`), so the position it
-    /// is offered in is the position it works in.
-    pub(crate) fn narrowing_cures(code: &Value, dst: &str) -> String {
+    /// is offered in is the position it works in.  Every cure here is held to that:
+    ///
+    /// - The refusal only ever meets a NON-null slot — a nullable one takes the checked
+    ///   narrowing instead (`@FR-I-Narrow-Opt`, loft#1812).  So the checked cast is offered
+    ///   as a change to the DESTINATION: `as u8?` written into a `u8` is a nullable store
+    ///   into a narrow width, which `@FR-N-Store` refuses.
+    /// - An `if` range check is not offered: loft does not narrow a value's type after a
+    ///   test, so the store inside it is refused the same way (loft#1804).
+    /// - The mask is spelled out, and only when one fits the range (`narrowing_mask`).
+    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str) -> String {
+        use std::fmt::Write as _;
         let mut out = format!(
-            "give it a fallback with `?? <value>`, take the checked cast `as {dst}?` (value or \
-             null), or make the value provably fit (a mask, or an `if` range check)"
+            "give it a fallback with `?? <value>`, or make the destination `{dst}?` so a value \
+             that does not fit reads null"
         );
+        if let Some(mask) = Self::narrowing_mask(dst_tp) {
+            let _ = write!(
+                out,
+                ", or make the value provably fit with a mask (`& {mask}`)"
+            );
+        }
         // @PLN152 N2 — a `??` that discharges a SUB-expression reads, to its author, as if it
         // should have covered the store. Only a discharge at the root does. Shallow on
         // purpose: the shape this is for is `(v[0] ?? 0) + 10`, where the discharge is a direct
@@ -8737,7 +8752,7 @@ use a separate collection or add after the loop"
             } else if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
-                let cures = Self::narrowing_cures(code, &dst);
+                let cures = Self::narrowing_cures(code, store_tp, &dst);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -8799,7 +8814,8 @@ use a separate collection or add after the loop"
                     self.lexer,
                     Level::Error,
                     "cannot implicitly narrow member {i} ({src}) to {dst} (may lose data) — build \
-                     the tuple with a value that fits, or take the checked cast `as {dst}?`"
+                     the tuple with a value that fits, or make the member `{dst}?` so a value \
+                     that does not fit reads null"
                 );
             }
         }
@@ -8813,6 +8829,24 @@ use a separate collection or add after the loop"
             (from.base(), to.base()),
             (Type::Integer(_), Type::Float | Type::Single) | (Type::Single, Type::Float)
         )
+    }
+
+    /// The mask a narrowing cure can name for `dst`: the largest `2^k - 1` inside its non-null
+    /// range, so `v & mask` provably fits whatever `v` is.  None when no such mask exists — a
+    /// range that excludes 0 (`limit(10, 20)`) holds no `v & m` for every `v`, and offering
+    /// "a mask" there names a cure that does not compile (loft#1804).
+    pub(crate) fn narrowing_mask(dst: &Type) -> Option<i64> {
+        let Type::Integer(spec) = dst.base() else {
+            return None;
+        };
+        let (lo, hi) = (i64::from(spec.usable_min(false)), spec.usable_max(false));
+        if lo > 0 || hi < 1 {
+            return None;
+        }
+        // The bit length of `hi + 1`, less one: `u8` (255) answers 255, `u32` (4294967294,
+        // one code kept back) answers 2147483647.
+        let bits = 63 - hi.checked_add(1)?.leading_zeros();
+        Some((1_i64 << bits) - 1)
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?

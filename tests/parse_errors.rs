@@ -2617,11 +2617,11 @@ fn test() {
 }"
     )
     // the return tail — the one that landed on the closing brace
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:4:3")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:4:3")
     // the three that always worked, pinned so the fix cannot quietly move them
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:8:14")
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:9:16")
-    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i32?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_narrowing_names_its_own_line_in_every_position:10:20")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:8:14")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:9:16")
+    .error("cannot implicitly narrow integer to i32 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i32?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 2147483647`) at a_narrowing_names_its_own_line_in_every_position:10:20")
     .warning("Parameter v is never read at a_narrowing_names_its_own_line_in_every_position:2:30");
 }
 
@@ -5115,7 +5115,7 @@ fn insert_refuses_an_element_of_another_type() {
 #[test]
 fn insert_refuses_an_implicit_narrowing() {
     code!("fn test() { v: vector<u8> = [1, 2]; n = 300; insert(v, 1, n); assert(len(v) == 3, \"\"); }")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at insert_refuses_an_implicit_narrowing:1:62");
 }
 
 /// @PLN165 E4 — `sort<T: Ordered>` takes what its bound says, so an element without a `<` is
@@ -5356,14 +5356,14 @@ fn a_par_method_on_a_captured_value_names_the_scalar_route() {
 #[test]
 fn a_tuple_literal_member_that_does_not_fit_is_refused() {
     code!("fn test() {\n  t: (integer, u8) = (1, 256);\n  println(\"{t.1}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_tuple_literal_member_that_does_not_fit_is_refused:2:31");
 }
 
 // A tuple whose member TYPE is wider than the slot's is refused by member (D-types-10).
 #[test]
 fn a_tuple_of_a_wider_member_type_is_refused() {
     code!("fn test() {\n  n = 3 + len(\"\");\n  a = (1, n);\n  t: (integer, u8) = a;\n  println(\"{t.1}\");\n}")
-        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or take the checked cast `as u8?` at a_tuple_of_a_wider_member_type_is_refused:4:24");
+        .error("cannot implicitly narrow member 1 (integer) to u8 (may lose data) — build the tuple with a value that fits, or make the member `u8?` so a value that does not fit reads null at a_tuple_of_a_wider_member_type_is_refused:4:24");
 }
 
 // A `??` default is stored into the slot, so a constant default must fit it (D-types-11).
@@ -5384,14 +5384,14 @@ fn a_coalesce_default_of_a_wider_type_is_refused() {
 #[test]
 fn a_field_default_that_does_not_fit_is_refused() {
     code!("struct S { f: u8 = 256, k: integer }\nfn test() {\n  s = S { k: 1 };\n  println(\"{s.f}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_field_default_that_does_not_fit_is_refused:1:24");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_field_default_that_does_not_fit_is_refused:1:24");
 }
 
 // An `if` whose arms all fit is a fitting value (D-types-13); one arm that does not is still refused.
 #[test]
 fn an_arm_that_does_not_fit_is_refused() {
     code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_arm_that_does_not_fit_is_refused:3:35");
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at an_arm_that_does_not_fit_is_refused:3:35");
 }
 
 // `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign
@@ -5400,13 +5400,13 @@ fn an_arm_that_does_not_fit_is_refused() {
 #[test]
 fn a_signed_value_does_not_widen_into_an_unsigned_one() {
     code!("fn test() {\n  a: i8 = -5;\n  x: u8 = a;\n  println(\"{x}\");\n}")
-        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
+        .error("cannot implicitly narrow i8 to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at a_signed_value_does_not_widen_into_an_unsigned_one:3:13");
 }
 
 #[test]
 fn an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width() {
     code!("fn g(p: i16) -> integer { p }\nfn test() {\n  a: u16 = 40000;\n  println(\"{g(a)}\");\n}")
-        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as i16?` (value or null), or make the value provably fit (a mask, or an `if` range check) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
+        .error("cannot implicitly narrow u16 to i16 (may lose data) — give it a fallback with `?? <value>`, or make the destination `i16?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 32767`) at an_unsigned_value_does_not_widen_into_a_signed_one_of_its_width:4:18");
 }
 
 // `@FR-G-Scope` — an interface is a generic BOUND, never a value type.  Both positions named
@@ -5491,9 +5491,9 @@ fn a_limit_narrowing_cure_is_a_spelling_that_parses() {
     )
     .error(
         "cannot implicitly narrow integer to integer limit(0, 1000000) (may lose data) — give \
-         it a fallback with `?? <value>`, take the checked cast `as integer limit(0, 1000000)?` \
-         (value or null), or make the value provably fit (a mask, or an `if` range check) at \
-         a_limit_narrowing_cure_is_a_spelling_that_parses:4:17",
+         it a fallback with `?? <value>`, or make the destination `integer limit(0, 1000000)?` \
+         so a value that does not fit reads null, or make the value provably fit with a mask \
+         (`& 524287`) at a_limit_narrowing_cure_is_a_spelling_that_parses:4:17",
     );
 }
 
@@ -5523,5 +5523,41 @@ fn replacing_a_container_under_a_live_link_says_replace() {
          element of the value `v` held before, so a write through `c` would no longer reach `v`. \
          Move it after the last use of `c`, or bind without `&` to work on a copy at \
          replacing_a_container_under_a_live_link_says_replace:5:1",
+    );
+}
+
+// An `if` range check does not narrow a value's type, so the narrowing refusal inside one must
+// not offer it as the cure; the cures it does print are the ones that compile in a non-null
+// slot (`tests/scripts/a-narrowing-cure-compiles-where-it-is-offered.loft` compiles each).
+#[test]
+fn a_narrowing_refusal_offers_no_range_check() {
+    code!("fn test() {\n  x = 200 + len(\"\");\n  if x >= 0 and x <= 255 { b: u8 = x; println(\"{b}\"); }\n}")
+        .error(
+            "cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with \
+             `?? <value>`, or make the destination `u8?` so a value that does not fit reads \
+             null, or make the value provably fit with a mask (`& 255`) at \
+             a_narrowing_refusal_offers_no_range_check:3:38",
+        );
+}
+
+// A range no `2^k - 1` mask fits (it excludes 0) is offered no mask at all.
+#[test]
+fn a_range_that_excludes_zero_is_offered_no_mask() {
+    code!("struct S { v: integer limit(10, 20) }\nfn test() {\n  n = 15 + len(\"\");\n  s = S { v: n };\n  println(\"{s.v}\");\n}")
+        .error(
+            "cannot implicitly narrow integer to integer limit(10, 20) (may lose data) — give it \
+             a fallback with `?? <value>`, or make the destination `integer limit(10, 20)?` so a \
+             value that does not fit reads null at a_range_that_excludes_zero_is_offered_no_mask:4:17",
+        );
+}
+
+// The explicit-cast refusal: its fallback is spelled directly after the cast (that `??` is the
+// one that arms it), and its mask with the parentheses `as` needs.
+#[test]
+fn a_narrowing_cast_refusal_spells_cures_that_parse() {
+    code!("fn test() {\n  x = 200 + len(\"\");\n  b: u8 = x as u8;\n  println(\"{b}\");\n}").error(
+        "narrowing cast from integer to u8 may not fit at runtime; use `u8?` for a checked \
+             cast (value or null), give it a fallback with `as u8 ?? <value>`, or mask it first, \
+             `(<value> & 255) as u8` at a_narrowing_cast_refusal_spells_cures_that_parse:3:19",
     );
 }

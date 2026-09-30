@@ -5,7 +5,9 @@
 // own spelling, and that spelling has to be one the parser reads: it printed
 // `as integer(0, 1000000)?`, the type's KEY, which does not parse.  It now prints
 // `as integer limit(0, 1000000)?` (`parse_errors::a_limit_narrowing_cure_is_a_spelling_that_parses`
-// pins the message), and each cure below is copied from it verbatim.
+// pins the message), and each cure below is copied from it verbatim.  Since loft#1804 the
+// store refusal names the nullable DESTINATION `integer limit(0, 1000000)?` and the mask
+// `& 524287` rather than the cast; the explicit-cast refusal still names `as … ?`.
 //
 // @falsified-at: ec35ee1de — measured by hand: the parent's printed cure,
 //   `n as integer(0, 1000000)?`, does not parse; the spelling printed here compiles and runs on
@@ -33,6 +35,11 @@ fn main() {
   assert(a == 5000, "a value in range passes the checked cast");
   b = Slot { v: m as integer limit(0, 1000000)? };
   assert(!b.v, "a value out of range answers null");
+  c = Slot { v: m };
+  assert(!c.v, "the nullable destination takes the checked narrowing: out of range is null");
+  d = Dense { v: m & 524287 };
+  assert(d.v == 2000000 & 524287, "the printed mask provably fits");
+  assert(d.v == 427136, "and keeps the low bits");
   assert(fallback(m) == 7, "the fallback cure answers the fallback for a value out of range");
   assert(fallback(n) == 5000, "and the value for one in range");
 }

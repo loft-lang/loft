@@ -4632,12 +4632,24 @@ impl Parser {
                                 self.lexer.peek_token("??").then(|| tp.clone());
                             tp = self.dn4_checked_cast(code, &tp, &src_base);
                         } else {
+                            // Each cure has to compile where the cast stands (loft#1804): the
+                            // `??` directly after the cast is what arms the fallback, so it
+                            // is spelled `as τ ?? <value>`; loft does not narrow after an
+                            // `if` test, so none is offered; and a mask is named only when
+                            // one fits the range.
+                            // The target is rendered, not echoed: `tps` is the one identifier
+                            // the author typed, which for `as integer limit(0, 10)` is
+                            // `integer`, and `integer?` is no cure for that cast.
+                            let dst = self.int_type_name(&tp);
+                            let mask = Self::narrowing_mask(&tp).map_or(String::new(), |m| {
+                                format!(", or mask it first, `(<value> & {m}) as {dst}`")
+                            });
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
-                                "narrowing cast from {} to {tps} may not fit at runtime; \
-                                 use `{tps}?` for a checked cast (value or null), or guard \
-                                 the value (`?? d`, mask, or an `if` range check)",
+                                "narrowing cast from {} to {dst} may not fit at runtime; \
+                                 use `{dst}?` for a checked cast (value or null), give it a \
+                                 fallback with `as {dst} ?? <value>`{mask}",
                                 self.int_type_name(&src_base),
                             );
                         }
