@@ -144,7 +144,7 @@ fn main() {
 
   // ## Manual advance with next() and exhausted()
   // 'exhausted' is true once an advance has run off the END of the body — not
-  // as soon as the last value has been handed out.  After the third value here
+  // once the last value has been handed out.  After the third value here
   // there are no more values, and 'exhausted' is still false; it takes one more
   // 'next' to discover the end, and that call answers null.
   //

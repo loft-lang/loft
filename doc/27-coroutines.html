@@ -121,7 +121,7 @@
   }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(trace.steps == <span class="nm">6</span>, <span class="st">"the body ran once per value asked for: {trace.steps}"</span>);</code></pre>
 <h2 id="manual-advance-with-next-and-exhausted">Manual advance with next() and exhausted()</h2>
-<p><code>exhausted</code> is true once an advance has run off the END of the body — not as soon as the last value has been handed out.  After the third value here there are no more values, and <code>exhausted</code> is still false; it takes one more <code>next</code> to discover the end, and that call answers null.</p>
+<p><code>exhausted</code> is true once an advance has run off the END of the body — not once the last value has been handed out.  After the third value here there are no more values, and <code>exhausted</code> is still false; it takes one more <code>next</code> to discover the end, and that call answers null.</p>
 <p>So <code>while !exhausted(g)</code> runs one iteration too many.  Drive the generator with <code>for</code>, or stop on the null that <code>next</code> answers.</p>
 <pre><code>  gen = <span class="fn-call">count_up</span>(<span class="nm">10</span>, <span class="nm">13</span>);
   a = <span class="fn-call">next</span>(gen);
@@ -330,7 +330,7 @@ fn main() {
 
   // ## Manual advance with next() and exhausted()
   // 'exhausted' is true once an advance has run off the END of the body — not
-  // as soon as the last value has been handed out.  After the third value here
+  // once the last value has been handed out.  After the third value here
   // there are no more values, and 'exhausted' is still false; it takes one more
   // 'next' to discover the end, and that call answers null.
   //

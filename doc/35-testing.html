@@ -41,7 +41,7 @@
 </code></pre>
 <p>It finds every function whose name starts with <code>test_</code>, runs it, and names the file and the functions it found. That result line does not end where it does above — there is a bracket after it, which the last section on this page is about.</p>
 <p>The underscore is part of the rule. <code>test_double</code> is a test; <code>testify</code>, or a function called exactly <code>test</code>, is not — and nothing will tell you, because the run says ok having never called it. (A camel-case <code>testDouble</code> cannot catch you out: loft refuses that as a function name.)</p>
-<p>There is one exception, and it is what makes a plain script runnable. If a file names NO <code>test_</code> function at all, loft treats every function in it that takes no parameters as something to run. That is how the pages of this reference are checked: they have a <code>main</code> and no tests. As soon as one <code>test_</code> appears in a file, it and its siblings are the whole set, and the helpers beside them go back to being helpers.</p>
+<p>There is one exception, and it is what makes a plain script runnable. If a file names NO <code>test_</code> function at all, loft treats every function in it that takes no parameters as something to run. That is how the pages of this reference are checked: they have a <code>main</code> and no tests. Once one <code>test_</code> appears in a file, it and its siblings are the whole set, and the helpers beside them go back to being helpers.</p>
 <p>Give it a directory instead of a file and it looks in every <code>.loft</code> file underneath. Give it nothing and it starts from where you are:</p>
 <pre><code>  $ loft --tests greeter
     ok    greeter/tests/greet.loft  (1 fn: test_greet_names_the_person)
@@ -137,7 +137,7 @@
 // There is one exception, and it is what makes a plain script runnable. If a
 // file names NO 'test_' function at all, loft treats every function in it that
 // takes no parameters as something to run. That is how the pages of this
-// reference are checked: they have a 'main' and no tests. As soon as one
+// reference are checked: they have a 'main' and no tests. Once one
 // 'test_' appears in a file, it and its siblings are the whole set, and the
 // helpers beside them go back to being helpers.
 //

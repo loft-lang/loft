@@ -244,7 +244,7 @@ Highest-impact areas today:
 - **WebGL backend** — closing the last gaps between native and browser rendering.
 
 [DEVELOPMENT.md](doc/claude/DEVELOPMENT.md) has the workflow; [ROADMAP.md](doc/claude/ROADMAP.md)
-has what is planned.
+lists the work ahead.
 
 ## License
 

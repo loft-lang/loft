@@ -6,7 +6,7 @@
 // Every element must have the same type — you cannot mix integers and text in one vector.
 // Write a vector literal with square brackets: '[1, 2, 3]'.
 // Loft automatically manages the storage, so vectors grow as you add elements
-// without you having to say how large they will be up front.
+// without declaring a size up front.
 // ## Transforming vectors: map, filter, reduce
 // 'map', 'filter', and 'reduce' each take a function and apply it to the vector.
 // Pass the function by writing its NAME on its own — 'map(v, triple)', with no 'fn'

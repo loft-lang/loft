@@ -13,12 +13,12 @@
 // Store the lambda, then call it by name.
 // ## Multiple integer captures
 // A lambda can read more than one outer variable at once.
-// All are captured at the moment the lambda is written.
+// All are captured when the lambda is written.
 // ## Text capture
 // Text values are captured by deep-copy, so they are independent of the
 // original variable after capture.
 // ## Capture timing
-// Scalars and text are copied at the moment the lambda is written (definition
+// Scalars and text are copied when the lambda is written (definition
 // time), not when it is called.  Changing such a variable afterwards does not
 // change what the lambda sees.
 // ## Collections and structs are shared

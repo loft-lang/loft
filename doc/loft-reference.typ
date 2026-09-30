@@ -174,7 +174,7 @@ loft ships its own editor support, so you do not need to pretend `.loft` is Rust
 - Read the language overview starting with Keywords and control flow.
 - See vs Rust if you are coming from Rust.
 - Browse the Standard Library reference for built-in functions.
-- Check the Roadmap for planned features.
+- Check the Roadmap for what comes next.
 
 
 = vs Rust
@@ -1913,7 +1913,7 @@ Use fn(...) long form when you need explicit types — for example when storing 
 
 = Vector
 
-A vector is an ordered list of values that can grow and shrink while your program runs. Every element must have the same type — you cannot mix integers and text in one vector. Write a vector literal with square brackets: '\[1, 2, 3\]'. Loft automatically manages the storage, so vectors grow as you add elements without you having to say how large they will be up front.
+A vector is an ordered list of values that can grow and shrink while your program runs. Every element must have the same type — you cannot mix integers and text in one vector. Write a vector literal with square brackets: '\[1, 2, 3\]'. Loft automatically manages the storage, so vectors grow as you add elements without declaring a size up front.
 
 === Transforming vectors: map, filter, reduce
 
@@ -5436,7 +5436,7 @@ A lambda may read any integer variable in scope. Store the lambda, then call it 
 
 === Multiple integer captures
 
-A lambda can read more than one outer variable at once. All are captured at the moment the lambda is written.
+A lambda can read more than one outer variable at once. All are captured when the lambda is written.
 
 === Text capture
 
@@ -5444,7 +5444,7 @@ Text values are captured by deep-copy, so they are independent of the original v
 
 === Capture timing
 
-Scalars and text are copied at the moment the lambda is written (definition time), not when it is called.  Changing such a variable afterwards does not change what the lambda sees.
+Scalars and text are copied when the lambda is written (definition time), not when it is called.  Changing such a variable afterwards does not change what the lambda sees.
 
 === Collections and structs are shared
 
@@ -5835,7 +5835,7 @@ Squares via for loop with index tracking.
 
 === Manual advance with next() and exhausted()
 
-'exhausted' is true once an advance has run off the END of the body — not as soon as the last value has been handed out.  After the third value here there are no more values, and 'exhausted' is still false; it takes one more 'next' to discover the end, and that call answers null.
+'exhausted' is true once an advance has run off the END of the body — not once the last value has been handed out.  After the third value here there are no more values, and 'exhausted' is still false; it takes one more 'next' to discover the end, and that call answers null.
 
 So 'while !exhausted(g)' runs one iteration too many.  Drive the generator with 'for', or stop on the null that 'next' answers.
 
@@ -7210,7 +7210,7 @@ It finds every function whose name starts with 'test\_', runs it, and names the 
 
 The underscore is part of the rule. 'test\_double' is a test; 'testify', or a function called exactly 'test', is not — and nothing will tell you, because the run says ok having never called it. (A camel-case 'testDouble' cannot catch you out: loft refuses that as a function name.)
 
-There is one exception, and it is what makes a plain script runnable. If a file names NO 'test\_' function at all, loft treats every function in it that takes no parameters as something to run. That is how the pages of this reference are checked: they have a 'main' and no tests. As soon as one 'test\_' appears in a file, it and its siblings are the whole set, and the helpers beside them go back to being helpers.
+There is one exception, and it is what makes a plain script runnable. If a file names NO 'test\_' function at all, loft treats every function in it that takes no parameters as something to run. That is how the pages of this reference are checked: they have a 'main' and no tests. Once one 'test\_' appears in a file, it and its siblings are the whole set, and the helpers beside them go back to being helpers.
 
 Give it a directory instead of a file and it looks in every '.loft' file underneath. Give it nothing and it starts from where you are:
 
@@ -9777,9 +9777,9 @@ The Moros scene editor gains a loft scripting panel with in-browser compile and 
 
 ==== Multiplayer
 
-- *Server library* — plain HTTP, HTTPS with static certs, WebSockets, CORS headers and static file serving are *shipped* (the `server` library). Planned: automatic ACME certs, JWT / session / API-key auth, rate limiting.
+- *Server library* — plain HTTP, HTTPS with static certs, WebSockets, CORS headers and static file serving are *shipped* (the `server` library). Still to build: automatic ACME certs, JWT / session / API-key auth, rate limiting.
 - *Game loop primitives* — WebSocket polling, broadcast, connection registry — *shipped* (`server`).
-- *Game client library* — the `GameEnvelope` protocol (`game_protocol`) and a fixed-timestep loop (`fixstep`) are *shipped*. Planned: lobby + matchmaking, client-side prediction and reconciliation, WASM script loading with Ed25519 verification.
+- *Game client library* — the `GameEnvelope` protocol (`game_protocol`) and a fixed-timestep loop (`fixstep`) are *shipped*. Still to build: lobby + matchmaking, client-side prediction and reconciliation, WASM script loading with Ed25519 verification.
 - *Moros multiplayer* — DM and players share a live scene hosted on a loft server.
 
 ==== Stability contract
