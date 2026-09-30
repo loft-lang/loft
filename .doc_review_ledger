@@ -181,14 +181,14 @@ doc/install.html#Verify the installation	4dd214e720ccc8098b82feecc340ea18540247e
 doc/learn-loft.md#(intro)	116fa1b011f3e9908ad417c6e7e936244c97e5106aa6e869aa87c0e756371431	2026.10.0
 doc/learn-loft.md#1. Hello, loft (3 min)	104ed995d7cded5d10fb88b8c89f30673c3f0884c9bc8d1a371e33012418af17	2026.10.0
 doc/learn-loft.md#10. Where next (2 min)	c8341b116b2821beccc4b7633163595236402bfddfbea94844a68c3538b3c33f	2026.10.0
-doc/learn-loft.md#2. Variables and types (3 min)	a73f1341f12104220204880bdadfd4e779b611eeee49db9acca254daefe41e68	2026.10.0
-doc/learn-loft.md#3. Functions (3 min)	363eced7c85f152cb3c7b9f5725241a83f4ae6359ab8ef5bd0b7c8e4245ddd26	2026.10.0
-doc/learn-loft.md#4. Control flow (3 min)	68b962a26d079c91316b0f212ed782485ac406cfe69b290ccbdce02ad93b19a0	2026.10.0
-doc/learn-loft.md#5. Strings (3 min)	1293065c70b350da204582307b61572884c9c04a8af369cd99e8ba068a3a828f	2026.10.0
-doc/learn-loft.md#6. Collections (3 min)	9ce782da13ebd94e568cd09defa9900308bff32cb6d972ecb578669cdd7d058f	2026.10.0
-doc/learn-loft.md#7. Structs (3 min)	204a7d58093281fc56649ff0302f90f90a8649fd759fc67b4fef909f8059a35b	2026.10.0
-doc/learn-loft.md#8. Enums (3 min)	191cfe5d257e830f6ccc1ace4a1ab940a189135950746c70ebbb6f3a50617d8a	2026.10.0
-doc/learn-loft.md#9. Files and JSON (3 min)	8670ab4bf4766b1ed0c5438d3fb7493b62735f1cf936f943b9f07117c6c0543c	2026.10.0
+doc/learn-loft.md#2. Variables and types (3 min)	777987c23f994bb42cdc3a7013f1865936137fa329bfd5ac8c1f2f9595573346	2026.10.0
+doc/learn-loft.md#3. Functions (3 min)	cb18f0dd9798dbb287b0b2b2eadc92c54db1448203d7b7875388d5f403aee3cf	2026.10.0
+doc/learn-loft.md#4. Control flow (3 min)	a4345c511b7c82a7e4e23fc3d6a109e360092f11454560d320589590475218ce	2026.10.0
+doc/learn-loft.md#5. Strings (3 min)	03b29c2707c8f58734d0ad409464f16d6d7b9edee24d68a29f73b79903ab3ea7	2026.10.0
+doc/learn-loft.md#6. Collections (3 min)	34d631ba5e069dda25826af3aafcb86e87a0ea9f90763c7685ac08f4729b5118	2026.10.0
+doc/learn-loft.md#7. Structs (3 min)	4e73ba6864504423748c489c3638b2262b7d15655dbe3261efdb828ad673b57c	2026.10.0
+doc/learn-loft.md#8. Enums (3 min)	aa6994cbe07b386354d02057e73bbe251ad2fc06f88ab6ab117cdb74cccfb120	2026.10.0
+doc/learn-loft.md#9. Files and JSON (3 min)	00911b4a925a7ff563c6ea811cfe3c72a3599628972fbf8010dd7f6e0c4e5e68	2026.10.0
 doc/learn-loft.md#Learn loft in 30 minutes	40b64763737509705db373c6b288035660c0b4c209f195727dfe66243fbaaf5b	2026.10.0
 doc/report.html#(intro)	0bf94687f1e319b9cc5568864516eab310fdbb79200f7df7d48323d506e774bf	2026.10.0
 doc/report.html#1. Loft version and platform	86c90254693c598c02859cc8f0eab105190cc34469d4cc897b95148c40806a07	2026.10.0

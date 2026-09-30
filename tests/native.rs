@@ -973,6 +973,20 @@ fn native_reference() -> std::io::Result<()> {
     run_native_jobs(jobs, rlib_info)
 }
 
+/// Compile and run every code sample of `doc/learn-loft.md` natively — the `--native` half of
+/// `wrap::learn_loft_samples` (loft#1809).
+#[test]
+fn native_learn_loft_samples() {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let failed: Vec<String> = common::learn_loft_samples()
+        .iter()
+        .filter_map(|s| common::check_learn_sample(s, "--native", "300").err())
+        .collect();
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
 /// Compile and run every `.loft` file in `tests/comparisons/` natively — the comparison pages'
 /// claims, the `--native` half of `wrap::comparisons`.  Every file there is script-shaped
 /// (`// @SCRIPT`), so each runs as the binary runs it.

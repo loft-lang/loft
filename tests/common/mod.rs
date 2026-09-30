@@ -652,3 +652,94 @@ pub fn expect_fail_fns(source: &str) -> (std::collections::HashSet<String>, bool
     }
     (fns, file_level)
 }
+
+/// One `loft` sample of `doc/learn-loft.md`: the line its fence opens on, its code, and the
+/// output the page shows for it — the plain fence after the next `Output:` line, when one
+/// comes before the next `loft` fence.
+#[allow(dead_code)]
+pub struct LearnSample {
+    pub line: usize,
+    pub code: String,
+    pub output: Option<String>,
+}
+
+/// Every `loft` sample of the tutorial, with the output the page claims for it (loft#1809).
+///
+/// The tutorial is the page a new user reads first, so each sample is run on both backends
+/// (`wrap::learn_loft_samples`, `native::native_learn_loft_samples`) through
+/// [`check_learn_sample`].
+#[allow(dead_code)]
+pub fn learn_loft_samples() -> Vec<LearnSample> {
+    let page = std::fs::read_to_string("doc/learn-loft.md").expect("doc/learn-loft.md");
+    let lines: Vec<&str> = page.lines().collect();
+    let fence_end = |from: usize| (from..lines.len()).find(|&j| lines[j].trim() == "```");
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() != "```loft" {
+            i += 1;
+            continue;
+        }
+        let end = fence_end(i + 1).expect("an unclosed loft fence in learn-loft.md");
+        let code = lines[i + 1..end].join("\n") + "\n";
+        let mut output = None;
+        let mut j = end + 1;
+        while j < lines.len() && lines[j].trim() != "```loft" {
+            if lines[j].trim() == "Output:" {
+                let open = (j + 1..lines.len()).find(|&k| lines[k].trim().starts_with("```"));
+                if let Some(open) = open {
+                    let close = fence_end(open + 1).expect("an unclosed output fence");
+                    output = Some(lines[open + 1..close].join("\n"));
+                }
+                break;
+            }
+            j += 1;
+        }
+        out.push(LearnSample {
+            line: i + 1,
+            code,
+            output,
+        });
+        i = end + 1;
+    }
+    out
+}
+
+/// Run one tutorial sample on `mode` (`--interpret` or `--native`): it must exit 0, print no
+/// warning, and print exactly the output the page shows for it.
+#[allow(dead_code)]
+pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_learn_{}_{}",
+        std::process::id(),
+        mode.trim_start_matches('-')
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let name = format!("learn_loft_line_{}.loft", sample.line);
+    let path = dir.join(&name);
+    std::fs::write(&path, &sample.code).map_err(|e| e.to_string())?;
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        .arg(mode)
+        .arg(&path)
+        .env("LOFT_TIMEOUT", timeout)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    let at = format!("doc/learn-loft.md:{} on {mode}", sample.line);
+    if !out.status.success() {
+        return Err(format!("{at} failed ({}):\n{stdout}{stderr}", out.status));
+    }
+    if loft_warnings(&stderr, &name) > 0 {
+        return Err(format!("{at} warns:\n{stderr}"));
+    }
+    if let Some(expected) = &sample.output
+        && stdout.trim_end() != expected.trim_end()
+    {
+        return Err(format!(
+            "{at} printed\n{stdout}\nwhere the page shows\n{expected}"
+        ));
+    }
+    Ok(())
+}

@@ -298,6 +298,24 @@ fn comparisons() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Run every code sample of `doc/learn-loft.md` — the tutorial a new user reads first — on the
+/// interpreter: each must exit 0, print no warning and print exactly the output the page shows
+/// for it (loft#1809).  `native::native_learn_loft_samples` is the `--native` half.
+#[test]
+fn learn_loft_samples() {
+    let samples = common::learn_loft_samples();
+    assert!(
+        samples.len() >= 10,
+        "learn-loft.md shows {} samples",
+        samples.len()
+    );
+    let failed: Vec<String> = samples
+        .iter()
+        .filter_map(|s| common::check_learn_sample(s, "--interpret", "60").err())
+        .collect();
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
 /// Run every `.loft` file in `tests/reference/` — the code samples of LOFT.md and STDLIB.md,
 /// as programs (@PLN176 phase 2).
 ///

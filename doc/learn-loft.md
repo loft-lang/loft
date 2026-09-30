@@ -84,6 +84,12 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+Alice is 30
+```
+
 `assert(condition, message)` is the canonical "did this hold?" probe.
 It stays active in every build, `--native-release` included: a failed
 assert stops the program with its message.
@@ -111,6 +117,14 @@ fn main() {
   print("{greet(\"world\")}\n");    // Hello, world!
   print("{greet(\"Loft\", \"Hi\")}\n");  // Hi, Loft!
 }
+```
+
+Output:
+
+```
+5
+Hello, world!
+Hi, Loft!
 ```
 
 Things to notice:
@@ -153,6 +167,26 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+1
+2
+Fizz
+4
+Buzz
+Fizz
+7
+8
+Fizz
+Buzz
+11
+Fizz
+13
+14
+FizzBuzz
+```
+
 (See `examples/fizzbuzz.loft` for the runnable version.)
 
 - `if`/`else` is an expression — chain `else if` for ladders.
@@ -184,6 +218,16 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+Hello, Loft!
+{not interpolation}
+Line one
+Line two
+len = 12
+```
+
 Loft text is **UTF-8 internally**.  `len` counts characters (Unicode
 code points), not bytes: `len("héllo")` is 5.  See
 [STDLIB.md § Text](claude/STDLIB.md) for the full string API.
@@ -212,6 +256,15 @@ fn main() {
   }
   print("Hash lookup of 'banana': count {words[\"banana\"].count}\n");
 }
+```
+
+Output:
+
+```
+apple
+banana
+cherry
+Hash lookup of 'banana': count 6
 ```
 
 (See `examples/collections.loft` for the runnable version.)
@@ -252,6 +305,12 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+d = 5
+```
+
 (See `examples/structs.loft` for the runnable version.)
 
 - **Define a struct** with `struct Name { field: type, ... }`.
@@ -290,6 +349,13 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+area = 3.14159
+area = 16
+```
+
 (See `examples/match.loft` for the runnable version.)
 
 Loft enums come in two shapes:
@@ -318,6 +384,14 @@ fn main() {
 }
 ```
 
+Output:
+
+```
+read 23 bytes:
+first line
+second line
+```
+
 (See `examples/files.loft` for a fuller version with line counting.)
 
 JSON is built in — no `use` needed.  `json_parse` returns a
@@ -330,6 +404,12 @@ fn main() {
   v = json_parse(`{{"name": "loft", "version": "2026.10.0"}}`);
   print("name = {v.field(\"name\").as_text()}\n");
 }
+```
+
+Output:
+
+```
+name = loft
 ```
 
 See [STDLIB.md § File I/O](claude/STDLIB.md) and
