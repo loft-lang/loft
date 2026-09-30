@@ -24,8 +24,1088 @@
 <h1>hex_way source</h1>
 <article>
 <p><a href="lib-hex_way.html">← hex_way</a> · <a href="lib-hex_way-api.html">API reference</a> · version 0.1.2</p>
-<p>The source for <code>hex_way</code> 0.1.2 is not on this build box, so this page could not be rendered from it. <code>loft install hex_way</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-world/tree/main/hex_way">https://github.com/loft-lang/loft-libs-world/tree/main/hex_way</a></p>
+<p class="lib-legend">3 file(s), 1047 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>WAY_STRAIGHT</code> <span class="search-kind">const</span></td><td><a href="#src-hex-way-loft-L26">26</a></td><td>—</td><td><a href="#src-hex-way-loft-L45">45</a> <a href="#src-hex-way-loft-L82">82</a> <a href="#src-hex-way-loft-L101">101</a> <a href="#src-hex-way-loft-L120">120</a> <a href="#src-hex-way-loft-L142">142</a> <a href="#src-hex-way-loft-L184">184</a> … (9 total)</td></tr>
+<tr><td><code>WAY_ARC</code> <span class="search-kind">const</span></td><td><a href="#src-hex-way-loft-L27">27</a></td><td>—</td><td><a href="#src-hex-way-loft-L54">54</a> <a href="#src-hex-way-loft-L162">162</a></td></tr>
+<tr><td><code>Track</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-way-loft-L29">29</a></td><td>—</td><td><a href="#src-hex-way-loft-L37">37</a> <a href="#src-hex-way-loft-L40">40</a> <a href="#src-hex-way-loft-L44">44</a> <a href="#src-hex-way-loft-L53">53</a> <a href="#src-hex-way-loft-L60">60</a> <a href="#src-hex-way-loft-L81">81</a> … (23 total)</td></tr>
+<tr><td><code>track_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L37">37</a></td><td>—</td><td><a href="#src-hex-way-loft-L182">182</a> <a href="#tests-01-hex-way-loft-L14">14</a> <a href="#tests-01-hex-way-loft-L19">19</a> <a href="#tests-01-hex-way-loft-L27">27</a> <a href="#tests-01-hex-way-loft-L37">37</a> <a href="#tests-01-hex-way-loft-L47">47</a> … (22 total)</td></tr>
+<tr><td><code>track_straight</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L44">44</a></td><td>—</td><td><a href="#src-hex-way-loft-L188">188</a> <a href="#tests-01-hex-way-loft-L20">20</a> <a href="#tests-01-hex-way-loft-L28">28</a> <a href="#tests-01-hex-way-loft-L48">48</a> <a href="#tests-02-worked-examples-loft-L139">139</a> <a href="#tests-02-worked-examples-loft-L144">144</a> … (13 total)</td></tr>
+<tr><td><code>track_arc</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L53">53</a></td><td>—</td><td><a href="#src-hex-way-loft-L195">195</a> <a href="#tests-01-hex-way-loft-L39">39</a> <a href="#tests-02-worked-examples-loft-L140">140</a> <a href="#tests-02-worked-examples-loft-L145">145</a> <a href="#tests-02-worked-examples-loft-L264">264</a> <a href="#tests-02-worked-examples-loft-L290">290</a> … (12 total)</td></tr>
+<tr><td><code>seg_len</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L81">81</a></td><td>—</td><td><a href="#src-hex-way-loft-L95">95</a> <a href="#src-hex-way-loft-L102">102</a> <a href="#src-hex-way-loft-L121">121</a> <a href="#src-hex-way-loft-L232">232</a> <a href="#src-hex-way-loft-L430">430</a> <a href="#tests-01-hex-way-loft-L23">23</a> … (17 total)</td></tr>
+<tr><td><code>track_len</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L93">93</a></td><td>—</td><td><a href="#tests-01-hex-way-loft-L15">15</a> <a href="#tests-01-hex-way-loft-L21">21</a> <a href="#tests-01-hex-way-loft-L40">40</a> <a href="#tests-02-worked-examples-loft-L115">115</a> <a href="#tests-02-worked-examples-loft-L282">282</a></td></tr>
+<tr><td><code>seg_point</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L100">100</a></td><td>—</td><td><a href="#src-hex-way-loft-L231">231</a> <a href="#src-hex-way-loft-L232">232</a> <a href="#tests-01-hex-way-loft-L29">29</a> <a href="#tests-02-worked-examples-loft-L45">45</a> <a href="#tests-02-worked-examples-loft-L46">46</a> <a href="#tests-02-worked-examples-loft-L154">154</a> … (13 total)</td></tr>
+<tr><td><code>seg_tangent</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L119">119</a></td><td>—</td><td><a href="#src-hex-way-loft-L185">185</a> <a href="#src-hex-way-loft-L264">264</a> <a href="#tests-01-hex-way-loft-L32">32</a></td></tr>
+<tr><td><code>seg_curvature</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L141">141</a></td><td><a href="#tests-02-worked-examples-loft-L118">HXY-001</a></td><td><a href="#tests-02-worked-examples-loft-L183">183</a> <a href="#tests-02-worked-examples-loft-L184">184</a> <a href="#tests-02-worked-examples-loft-L185">185</a> <a href="#tests-02-worked-examples-loft-L186">186</a> <a href="#tests-02-worked-examples-loft-L187">187</a></td></tr>
+<tr><td><code>offset_legal</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L158">158</a></td><td><a href="#tests-02-worked-examples-loft-L246">HXY-003</a></td><td><a href="#tests-02-worked-examples-loft-L266">266</a> <a href="#tests-02-worked-examples-loft-L267">267</a> <a href="#tests-02-worked-examples-loft-L268">268</a> <a href="#tests-02-worked-examples-loft-L269">269</a> <a href="#tests-02-worked-examples-loft-L292">292</a> <a href="#tests-02-worked-examples-loft-L293">293</a></td></tr>
+<tr><td><code>track_offset</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L181">181</a></td><td><a href="#tests-02-worked-examples-loft-L118">HXY-001</a></td><td><a href="#tests-02-worked-examples-loft-L153">153</a> <a href="#tests-02-worked-examples-loft-L162">162</a> <a href="#tests-02-worked-examples-loft-L164">164</a> <a href="#tests-02-worked-examples-loft-L166">166</a> <a href="#tests-02-worked-examples-loft-L168">168</a> <a href="#tests-02-worked-examples-loft-L175">175</a> … (12 total)</td></tr>
+<tr><td><code>seg_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L203">203</a></td><td>—</td><td><a href="#src-hex-way-loft-L244">244</a> <a href="#src-hex-way-loft-L282">282</a> <a href="#src-hex-way-loft-L428">428</a> <a href="#tests-02-worked-examples-loft-L502">502</a> <a href="#tests-02-worked-examples-loft-L503">503</a></td></tr>
+<tr><td><code>track_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L241">241</a></td><td>—</td><td><a href="#src-hex-way-loft-L305">305</a> <a href="#src-hex-way-loft-L352">352</a> <a href="#tests-01-hex-way-loft-L49">49</a> <a href="#tests-02-worked-examples-loft-L177">177</a> <a href="#tests-02-worked-examples-loft-L275">275</a> <a href="#tests-02-worked-examples-loft-L285">285</a> … (7 total)</td></tr>
+<tr><td><code>way_surfaces</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L260">260</a></td><td><a href="#tests-02-worked-examples-loft-L296">HXY-004</a></td><td><a href="#tests-02-worked-examples-loft-L318">318</a> <a href="#tests-02-worked-examples-loft-L319">319</a></td></tr>
+<tr><td><code>nearest_seg</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L278">278</a></td><td>—</td><td><a href="#src-hex-way-loft-L363">363</a></td></tr>
+<tr><td><code>way_mark</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L300">300</a></td><td><a href="#tests-02-worked-examples-loft-L296">HXY-004</a></td><td><a href="#tests-02-worked-examples-loft-L55">55</a> <a href="#tests-02-worked-examples-loft-L337">337</a> <a href="#tests-02-worked-examples-loft-L338">338</a> <a href="#tests-02-worked-examples-loft-L419">419</a> <a href="#tests-02-worked-examples-loft-L421">421</a> <a href="#tests-02-worked-examples-loft-L520">520</a> … (7 total)</td></tr>
+<tr><td><code>cut_arb</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L315">315</a></td><td><a href="#tests-02-worked-examples-loft-L296">HXY-004</a></td><td><a href="#tests-02-worked-examples-loft-L339">339</a></td></tr>
+<tr><td><code>way_stamp</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L346">346</a></td><td><a href="#tests-02-worked-examples-loft-L296">HXY-004</a></td><td><a href="#tests-02-worked-examples-loft-L327">327</a> <a href="#tests-02-worked-examples-loft-L328">328</a> <a href="#tests-02-worked-examples-loft-L332">332</a> <a href="#tests-02-worked-examples-loft-L333">333</a></td></tr>
+<tr><td><code>seg_param</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L377">377</a></td><td><a href="#tests-02-worked-examples-loft-L356">HXY-005</a></td><td><a href="#src-hex-way-loft-L433">433</a> <a href="#tests-02-worked-examples-loft-L378">378</a> <a href="#tests-02-worked-examples-loft-L382">382</a> <a href="#tests-02-worked-examples-loft-L387">387</a></td></tr>
+<tr><td><code>way_param</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L422">422</a></td><td><a href="#tests-02-worked-examples-loft-L356">HXY-005</a></td><td><a href="#src-hex-way-loft-L456">456</a></td></tr>
+<tr><td><code>way_steps</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-way-loft-L450">450</a></td><td><a href="#tests-02-worked-examples-loft-L391">HXY-006</a></td><td><a href="#tests-02-worked-examples-loft-L427">427</a> <a href="#tests-02-worked-examples-loft-L429">429</a> <a href="#tests-02-worked-examples-loft-L437">437</a> <a href="#tests-02-worked-examples-loft-L443">443</a></td></tr>
+</table>
+<h2 id="src-hex-way-loft">src/hex_way.loft</h2>
+<pre class="src"><code><span id="src-hex-way-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-hex-way-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-hex-way-loft-L3"><span class="cm">// hexway — P1: WAYS as exact curves, and the one pass that rasterises them.</span></span>
+<span id="src-hex-way-loft-L4"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L5"><span class="cm">// The loft port of plans/5-geometry/ways.py.  A way is authored as ONE exact centreline;</span></span>
+<span id="src-hex-way-loft-L6"><span class="cm">// every other line — rails, ruts, lane markings, bed edges — is an OFFSET of it.  That is</span></span>
+<span id="src-hex-way-loft-L7"><span class="cm">// what escapes the hex quantisation floor: rasterising a band bottoms out, while an offset</span></span>
+<span id="src-hex-way-loft-L8"><span class="cm">// is equidistant by construction.</span></span>
+<span id="src-hex-way-loft-L9"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L10"><span class="cm">// The floor is not one number.  It is the spacing of the cell centres ACROSS the way, so it</span></span>
+<span id="src-hex-way-loft-L11"><span class="cm">// depends on the heading: 0.866 (half a hex width) down a column, 1.5 down a row — and</span></span>
+<span id="src-hex-way-loft-L12"><span class="cm">// between two such rings every requested width gives the identical footprint.  0.5 hex</span></span>
+<span id="src-hex-way-loft-L13"><span class="cm">// widths is the best case, not the case.</span></span>
+<span id="src-hex-way-loft-L14"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L15"><span class="cm">// The load-bearing part for the rest of plan #5 is the LAST function: `way_stamp` walks</span></span>
+<span id="src-hex-way-loft-L16"><span class="cm">// the centreline once and writes the cells, the blocked edges AND the surface ids in a</span></span>
+<span id="src-hex-way-loft-L17"><span class="cm">// single pass.  The surface id is attached where it is known — at derivation time — which</span></span>
+<span id="src-hex-way-loft-L18"><span class="cm">// is why no separate index is ever needed to answer "which wall segment did I hit?".</span></span>
+<span id="src-hex-way-loft-L19"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L20"><span class="cm">// Segment record: 6 floats, uniform for both kinds (flat arrays, no vector&lt;vector&lt;&gt;&gt;).</span></span>
+<span id="src-hex-way-loft-L21"><span class="cm">//   straight: [x0, y0, x1, y1,  0,  0]</span></span>
+<span id="src-hex-way-loft-L22"><span class="cm">//   arc:      [cx, cy,  R, a0, a1,  0]</span></span>
+<span id="src-hex-way-loft-L23"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hex-way-loft-L24"><span class="kw">use</span> hex_edge::*;</span>
+<span id="src-hex-way-loft-L25"></span>
+<span id="src-hex-way-loft-L26"><span class="kw">pub</span> const <span class="en">WAY_STRAIGHT</span> = <span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L27"><span class="kw">pub</span> const <span class="en">WAY_ARC</span>      = <span class="nm">2</span>;</span>
+<span id="src-hex-way-loft-L28"></span>
+<span id="src-hex-way-loft-L29"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Track</span> {</span>
+<span id="src-hex-way-loft-L30">  tk_kind: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-way-loft-L31">  tk_p:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,      <span class="cm">// 6 per segment</span></span>
+<span id="src-hex-way-loft-L32">  tk_n:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-way-loft-L33">}</span>
+<span id="src-hex-way-loft-L34"></span>
+<span id="src-hex-way-loft-L35"><span class="cm">// An empty track.  Append straights and arcs in order; the track IS the sequence, and</span></span>
+<span id="src-hex-way-loft-L36"><span class="cm">// segment index is the only identity a caller needs.</span></span>
+<span id="src-hex-way-loft-L37"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_new</span>() -&gt; <span class="en">Track</span> {</span>
+<span id="src-hex-way-loft-L38">  k: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-way-loft-L39">  p: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [];</span>
+<span id="src-hex-way-loft-L40">  <span class="en">Track</span> { tk_kind: k, tk_p: p, tk_n: <span class="nm">0</span> }</span>
+<span id="src-hex-way-loft-L41">}</span>
+<span id="src-hex-way-loft-L42"></span>
+<span id="src-hex-way-loft-L43"><span class="cm">// Append a straight from one point to another.</span></span>
+<span id="src-hex-way-loft-L44"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_straight</span>(t: <span class="en">Track</span>, x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-way-loft-L45">  t.tk_kind += [<span class="en">WAY_STRAIGHT</span>];</span>
+<span id="src-hex-way-loft-L46">  t.tk_p += [x0]; t.tk_p += [y0]; t.tk_p += [x1]; t.tk_p += [y1];</span>
+<span id="src-hex-way-loft-L47">  t.tk_p += [<span class="nm">0.0</span>]; t.tk_p += [<span class="nm">0.0</span>];</span>
+<span id="src-hex-way-loft-L48">  t.tk_n = t.tk_n + <span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L49">}</span>
+<span id="src-hex-way-loft-L50"></span>
+<span id="src-hex-way-loft-L51"><span class="cm">// Append an arc: centre, radius and the angles it runs between.  Arcs and straights are</span></span>
+<span id="src-hex-way-loft-L52"><span class="cm">// measured and sampled through the same routines, so a mixed track needs no special case.</span></span>
+<span id="src-hex-way-loft-L53"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_arc</span>(t: <span class="en">Track</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>, r: <span class="ty"><a href="stdlib-types.html">float</a></span>, a0: <span class="ty"><a href="stdlib-types.html">float</a></span>, a1: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-way-loft-L54">  t.tk_kind += [<span class="en">WAY_ARC</span>];</span>
+<span id="src-hex-way-loft-L55">  t.tk_p += [cx]; t.tk_p += [cy]; t.tk_p += [r]; t.tk_p += [a0];</span>
+<span id="src-hex-way-loft-L56">  t.tk_p += [a1]; t.tk_p += [<span class="nm">0.0</span>];</span>
+<span id="src-hex-way-loft-L57">  t.tk_n = t.tk_n + <span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L58">}</span>
+<span id="src-hex-way-loft-L59"></span>
+<span id="src-hex-way-loft-L60"><span class="kw">fn</span> <span class="fn-call">pv</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, j: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { t.tk_p[i * <span class="nm">6</span> + j] ?? <span class="nm">0.0</span> }</span>
+<span id="src-hex-way-loft-L61"></span>
+<span id="src-hex-way-loft-L62"><span class="cm">// An angle difference brought into [0, 2pi).</span></span>
+<span id="src-hex-way-loft-L63"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L64"><span class="cm">// Example: @HXY-007</span></span>
+<span id="src-hex-way-loft-L65"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L66"><span class="cm">// ⚠ **BOTH DIRECTIONS, AND THE FILE USED TO HAVE ONE OF EACH.** `seg_param` has always</span></span>
+<span id="src-hex-way-loft-L67"><span class="cm">// wrapped up AND down; `seg_distance` wrapped only up — `while aa &lt; lo { aa += 2pi }`</span></span>
+<span id="src-hex-way-loft-L68"><span class="cm">// with no companion — so an arc authored below -2pi answered that points lying ON it</span></span>
+<span id="src-hex-way-loft-L69"><span class="cm">// were a radius away. One curve, two footprints: the same quarter arc marked 5 cells</span></span>
+<span id="src-hex-way-loft-L70"><span class="cm">// authored at [0, pi/2] and 1 at [-2pi, -2pi+pi/2]. A guard that works in one direction</span></span>
+<span id="src-hex-way-loft-L71"><span class="cm">// reads exactly like a guard.</span></span>
+<span id="src-hex-way-loft-L72"><span class="kw">fn</span> <span class="fn-call">ang_wrap</span>(d: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L73">  v = d;</span>
+<span id="src-hex-way-loft-L74">  while v &lt; <span class="nm">0.0</span> { v = v + <span class="nm">6.283185307179586</span>; }</span>
+<span id="src-hex-way-loft-L75">  while v &gt;= <span class="nm">6.283185307179586</span> { v = v - <span class="nm">6.283185307179586</span>; }</span>
+<span id="src-hex-way-loft-L76">  v</span>
+<span id="src-hex-way-loft-L77">}</span>
+<span id="src-hex-way-loft-L78"></span>
+<span id="src-hex-way-loft-L79"><span class="cm">// One segment's length.  The unit `track_len` sums and the unit a position along the track</span></span>
+<span id="src-hex-way-loft-L80"><span class="cm">// is measured in.</span></span>
+<span id="src-hex-way-loft-L81"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L82">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L83">    dx = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>);</span>
+<span id="src-hex-way-loft-L84">    dy = <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>);</span>
+<span id="src-hex-way-loft-L85">    <span class="kw">return</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L86">  }</span>
+<span id="src-hex-way-loft-L87">  d = <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>);</span>
+<span id="src-hex-way-loft-L88">  <span class="kw">if</span> d &lt; <span class="nm">0.0</span> { d = <span class="nm">0.0</span> - d; }</span>
+<span id="src-hex-way-loft-L89">  d * <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>)</span>
+<span id="src-hex-way-loft-L90">}</span>
+<span id="src-hex-way-loft-L91"></span>
+<span id="src-hex-way-loft-L92"><span class="cm">// The whole track's length, for pacing a mover or normalising a position to 0..1.</span></span>
+<span id="src-hex-way-loft-L93"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_len</span>(t: <span class="en">Track</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L94">  s = <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L95">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n { s = s + <span class="fn-call">seg_len</span>(t, i); }</span>
+<span id="src-hex-way-loft-L96">  s</span>
+<span id="src-hex-way-loft-L97">}</span>
+<span id="src-hex-way-loft-L98"></span>
+<span id="src-hex-way-loft-L99"><span class="cm">// Point at arc-length `s` along segment i.</span></span>
+<span id="src-hex-way-loft-L100"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_point</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-way-loft-L101">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L102">    seg_l = <span class="fn-call">seg_len</span>(t, i);</span>
+<span id="src-hex-way-loft-L103">    <span class="kw">if</span> seg_l &lt; <span class="nm">0.000001</span> { <span class="kw">return</span> (<span class="fn-call">pv</span>(t, i, <span class="nm">0</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>)); }</span>
+<span id="src-hex-way-loft-L104">    u = s / seg_l ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L105">    <span class="kw">return</span> (<span class="fn-call">pv</span>(t, i, <span class="nm">0</span>) + (<span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>)) * u,</span>
+<span id="src-hex-way-loft-L106">            <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>) + (<span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>)) * u);</span>
+<span id="src-hex-way-loft-L107">  }</span>
+<span id="src-hex-way-loft-L108">  r = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>);</span>
+<span id="src-hex-way-loft-L109">  a0 = <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>);</span>
+<span id="src-hex-way-loft-L110">  a1 = <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>);</span>
+<span id="src-hex-way-loft-L111">  dir = <span class="nm">1.0</span>;</span>
+<span id="src-hex-way-loft-L112">  <span class="kw">if</span> a1 &lt; a0 { dir = <span class="nm">0.0</span> - <span class="nm">1.0</span>; }</span>
+<span id="src-hex-way-loft-L113">  a = a0 + (s / r ?? <span class="nm">0.0</span>) * dir;</span>
+<span id="src-hex-way-loft-L114">  (<span class="fn-call">pv</span>(t, i, <span class="nm">0</span>) + r * <span class="bi"><a href="stdlib-math.html">cos</a></span>(a), <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>) + r * <span class="bi"><a href="stdlib-math.html">sin</a></span>(a))</span>
+<span id="src-hex-way-loft-L115">}</span>
+<span id="src-hex-way-loft-L116"></span>
+<span id="src-hex-way-loft-L117"><span class="cm">// The direction of travel a distance `s` into segment `i` — what a mover faces, and what a</span></span>
+<span id="src-hex-way-loft-L118"><span class="cm">// carriage or a camera is aligned to.</span></span>
+<span id="src-hex-way-loft-L119"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_tangent</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, s: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-way-loft-L120">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L121">    seg_l = <span class="fn-call">seg_len</span>(t, i);</span>
+<span id="src-hex-way-loft-L122">    <span class="kw">if</span> seg_l &lt; <span class="nm">0.000001</span> { <span class="kw">return</span> (<span class="nm">1.0</span>, <span class="nm">0.0</span>); }</span>
+<span id="src-hex-way-loft-L123">    <span class="kw">return</span> ((<span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>)) / seg_l ?? <span class="nm">0.0</span>,</span>
+<span id="src-hex-way-loft-L124">            (<span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) - <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>)) / seg_l ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-way-loft-L125">  }</span>
+<span id="src-hex-way-loft-L126">  r = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>);</span>
+<span id="src-hex-way-loft-L127">  a0 = <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>);</span>
+<span id="src-hex-way-loft-L128">  a1 = <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>);</span>
+<span id="src-hex-way-loft-L129">  dir = <span class="nm">1.0</span>;</span>
+<span id="src-hex-way-loft-L130">  <span class="kw">if</span> a1 &lt; a0 { dir = <span class="nm">0.0</span> - <span class="nm">1.0</span>; }</span>
+<span id="src-hex-way-loft-L131">  a = a0 + (s / r ?? <span class="nm">0.0</span>) * dir;</span>
+<span id="src-hex-way-loft-L132">  (<span class="nm">0.0</span> - <span class="bi"><a href="stdlib-math.html">sin</a></span>(a) * dir, <span class="bi"><a href="stdlib-math.html">cos</a></span>(a) * dir)</span>
+<span id="src-hex-way-loft-L133">}</span>
+<span id="src-hex-way-loft-L134"></span>
+<span id="src-hex-way-loft-L135"><span class="cm">// Signed curvature: + turning left (centre on the left of travel), - turning right.</span></span>
+<span id="src-hex-way-loft-L136"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L137"><span class="cm">// The same left-positive convention `track_offset` uses, which is why the two are checked</span></span>
+<span id="src-hex-way-loft-L138"><span class="cm">// against each other: on a turn signed positive, the positive offset is the INSIDE rail.</span></span>
+<span id="src-hex-way-loft-L139"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L140"><span class="cm">// Example: @HXY-001</span></span>
+<span id="src-hex-way-loft-L141"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_curvature</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L142">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L143">  r = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>);</span>
+<span id="src-hex-way-loft-L144">  <span class="kw">if</span> r &lt; <span class="nm">0.000001</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L145">  <span class="kw">if</span> <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>) &gt;= <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) { <span class="kw">return</span> <span class="nm">1.0</span> / r ?? <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L146">  <span class="nm">0.0</span> - (<span class="nm">1.0</span> / r ?? <span class="nm">0.0</span>)</span>
+<span id="src-hex-way-loft-L147">}</span>
+<span id="src-hex-way-loft-L148"></span>
+<span id="src-hex-way-loft-L149"><span class="cm">// I-CURV — an offset degenerates when |d| &gt;= R.  This IS the minimum curve radius, and</span></span>
+<span id="src-hex-way-loft-L150"><span class="cm">// it falls out of the geometry rather than being a tuning constant.</span></span>
+<span id="src-hex-way-loft-L151"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L152"><span class="cm">// |d|, not d, because a way has BOTH rails: the outer one is never in trouble and the</span></span>
+<span id="src-hex-way-loft-L153"><span class="cm">// inner one collapses at the tightest turn anywhere on the track.  So the question is</span></span>
+<span id="src-hex-way-loft-L154"><span class="cm">// "may this WAY be this wide", and past the answer `track_offset` still returns a Track —</span></span>
+<span id="src-hex-way-loft-L155"><span class="cm">// one whose inner arc has a NEGATIVE length and is no longer equidistant.</span></span>
+<span id="src-hex-way-loft-L156"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L157"><span class="cm">// Example: @HXY-003</span></span>
+<span id="src-hex-way-loft-L158"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">offset_legal</span>(t: <span class="en">Track</span>, d: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hex-way-loft-L159">  ad = d; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-way-loft-L160">  ok = <span class="kw">true</span>;</span>
+<span id="src-hex-way-loft-L161">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L162">    <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_ARC</span> {</span>
+<span id="src-hex-way-loft-L163">      <span class="kw">if</span> ad &gt;= <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) { ok = <span class="kw">false</span>; }</span>
+<span id="src-hex-way-loft-L164">    }</span>
+<span id="src-hex-way-loft-L165">  }</span>
+<span id="src-hex-way-loft-L166">  ok</span>
+<span id="src-hex-way-loft-L167">}</span>
+<span id="src-hex-way-loft-L168"></span>
+<span id="src-hex-way-loft-L169"><span class="cm">// The parallel track at distance d (left normal positive).  For straights and arcs the</span></span>
+<span id="src-hex-way-loft-L170"><span class="cm">// offset is again a straight / a concentric arc, so equidistance is EXACT here — the</span></span>
+<span id="src-hex-way-loft-L171"><span class="cm">// only cost anywhere is flattening, err ~ c^2/(8R).</span></span>
+<span id="src-hex-way-loft-L172"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L173"><span class="cm">// EQUIDISTANCE DOES NOT PICK A SIDE, and that is the trap this function fell into.  A</span></span>
+<span id="src-hex-way-loft-L174"><span class="cm">// left offset of a turn moves TOWARDS the centre, so its radius SHRINKS by d; only a</span></span>
+<span id="src-hex-way-loft-L175"><span class="cm">// right offset grows.  Reading the sweep direction the other way up puts every arc on</span></span>
+<span id="src-hex-way-loft-L176"><span class="cm">// the far side of the way from its straights — still exactly d from the centreline,</span></span>
+<span id="src-hex-way-loft-L177"><span class="cm">// still passing an equidistance gate, and no longer JOINED.  The number that sees it is</span></span>
+<span id="src-hex-way-loft-L178"><span class="cm">// the gap at a joint, not the distance to the line.</span></span>
+<span id="src-hex-way-loft-L179"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L180"><span class="cm">// Example: @HXY-001</span></span>
+<span id="src-hex-way-loft-L181"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_offset</span>(t: <span class="en">Track</span>, d: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Track</span> {</span>
+<span id="src-hex-way-loft-L182">  o = <span class="fn-call">track_new</span>();</span>
+<span id="src-hex-way-loft-L183">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L184">    <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L185">      (tx, ty) = <span class="fn-call">seg_tangent</span>(t, i, <span class="nm">0.0</span>);</span>
+<span id="src-hex-way-loft-L186">      nx = <span class="nm">0.0</span> - ty;</span>
+<span id="src-hex-way-loft-L187">      ny = tx;</span>
+<span id="src-hex-way-loft-L188">      <span class="fn-call">track_straight</span>(o, <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>) + nx * d, <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>) + ny * d,</span>
+<span id="src-hex-way-loft-L189">                        <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) + nx * d, <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) + ny * d);</span>
+<span id="src-hex-way-loft-L190">    } <span class="kw">else</span> {</span>
+<span id="src-hex-way-loft-L191">      dir = <span class="nm">1.0</span>;</span>
+<span id="src-hex-way-loft-L192">      <span class="kw">if</span> <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>) &lt; <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) { dir = <span class="nm">0.0</span> - <span class="nm">1.0</span>; }</span>
+<span id="src-hex-way-loft-L193">      <span class="cm">// Minus, not plus: travelling counter-clockwise the centre is on the LEFT, so the</span></span>
+<span id="src-hex-way-loft-L194">      <span class="cm">// left offset is the SMALLER concentric arc.</span></span>
+<span id="src-hex-way-loft-L195">      <span class="fn-call">track_arc</span>(o, <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) - d * dir,</span>
+<span id="src-hex-way-loft-L196">                   <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>));</span>
+<span id="src-hex-way-loft-L197">    }</span>
+<span id="src-hex-way-loft-L198">  }</span>
+<span id="src-hex-way-loft-L199">  o</span>
+<span id="src-hex-way-loft-L200">}</span>
+<span id="src-hex-way-loft-L201"></span>
+<span id="src-hex-way-loft-L202"><span class="cm">// Distance from a point to the centreline (min over segments).</span></span>
+<span id="src-hex-way-loft-L203"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_distance</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L204">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L205">    ax = <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>); ay = <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>);</span>
+<span id="src-hex-way-loft-L206">    vx = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>) - ax; vy = <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>) - ay;</span>
+<span id="src-hex-way-loft-L207">    len2 = vx * vx + vy * vy;</span>
+<span id="src-hex-way-loft-L208">    u = <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L209">    <span class="kw">if</span> len2 &gt; <span class="nm">0.000000001</span> { u = ((px - ax) * vx + (py - ay) * vy) / len2 ?? <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L210">    <span class="kw">if</span> u &lt; <span class="nm">0.0</span> { u = <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L211">    <span class="kw">if</span> u &gt; <span class="nm">1.0</span> { u = <span class="nm">1.0</span>; }</span>
+<span id="src-hex-way-loft-L212">    dx = px - (ax + u * vx);</span>
+<span id="src-hex-way-loft-L213">    dy = py - (ay + u * vy);</span>
+<span id="src-hex-way-loft-L214">    <span class="kw">return</span> <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L215">  }</span>
+<span id="src-hex-way-loft-L216">  cx = <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>); cy = <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>); r = <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>);</span>
+<span id="src-hex-way-loft-L217">  dx = px - cx; dy = py - cy;</span>
+<span id="src-hex-way-loft-L218">  dd = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L219">  a = <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(dy, dx);</span>
+<span id="src-hex-way-loft-L220">  lo = <span class="fn-call">pv</span>(t, i, <span class="nm">3</span>); hi = <span class="fn-call">pv</span>(t, i, <span class="nm">4</span>);</span>
+<span id="src-hex-way-loft-L221">  <span class="kw">if</span> hi &lt; lo { tmp = lo; lo = hi; hi = tmp; }</span>
+<span id="src-hex-way-loft-L222">  <span class="cm">// ⚠ THE OFFSET FROM `lo`, WRAPPED, AGAINST THE SPAN — never a slide up to `lo` alone.</span></span>
+<span id="src-hex-way-loft-L223">  <span class="cm">//</span></span>
+<span id="src-hex-way-loft-L224">  <span class="cm">// Example: @HXY-007</span></span>
+<span id="src-hex-way-loft-L225">  <span class="cm">// A sweep of 2pi or more covers the circle, and `da &lt;= span` says so without a case.</span></span>
+<span id="src-hex-way-loft-L226">  <span class="kw">if</span> <span class="fn-call">ang_wrap</span>(a - lo) &lt;= hi - lo {</span>
+<span id="src-hex-way-loft-L227">    v = dd - r;</span>
+<span id="src-hex-way-loft-L228">    <span class="kw">if</span> v &lt; <span class="nm">0.0</span> { v = <span class="nm">0.0</span> - v; }</span>
+<span id="src-hex-way-loft-L229">    <span class="kw">return</span> v;</span>
+<span id="src-hex-way-loft-L230">  }</span>
+<span id="src-hex-way-loft-L231">  (e0x, e0y) = <span class="fn-call">seg_point</span>(t, i, <span class="nm">0.0</span>);</span>
+<span id="src-hex-way-loft-L232">  (e1x, e1y) = <span class="fn-call">seg_point</span>(t, i, <span class="fn-call">seg_len</span>(t, i));</span>
+<span id="src-hex-way-loft-L233">  d0 = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((px - e0x) * (px - e0x) + (py - e0y) * (py - e0y)) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L234">  d1 = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((px - e1x) * (px - e1x) + (py - e1y) * (py - e1y)) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L235">  <span class="kw">if</span> d0 &lt; d1 { <span class="kw">return</span> d0; }</span>
+<span id="src-hex-way-loft-L236">  d1</span>
+<span id="src-hex-way-loft-L237">}</span>
+<span id="src-hex-way-loft-L238"></span>
+<span id="src-hex-way-loft-L239"><span class="cm">// How far a point lies from the track.  The test for "am I on the road", and the reason the</span></span>
+<span id="src-hex-way-loft-L240"><span class="cm">// per-segment distance is kept cheap.</span></span>
+<span id="src-hex-way-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">track_distance</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L242">  best = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-way-loft-L243">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L244">    d = <span class="fn-call">seg_distance</span>(t, i, px, py);</span>
+<span id="src-hex-way-loft-L245">    <span class="kw">if</span> d &lt; best { best = d; }</span>
+<span id="src-hex-way-loft-L246">  }</span>
+<span id="src-hex-way-loft-L247">  best</span>
+<span id="src-hex-way-loft-L248">}</span>
+<span id="src-hex-way-loft-L249"></span>
+<span id="src-hex-way-loft-L250"><span class="cm">// ── the one pass: cells + edges + surface ids together ───────────────────────</span></span>
+<span id="src-hex-way-loft-L251"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L252"><span class="cm">// Walks the centreline once, marks every cell within `halfwidth`, then cuts the boundary</span></span>
+<span id="src-hex-way-loft-L253"><span class="cm">// into the EdgeSet — recording, per edge, WHICH segment of the way blocks it.  That is</span></span>
+<span id="src-hex-way-loft-L254"><span class="cm">// the whole reason no lookup index is needed later.</span></span>
+<span id="src-hex-way-loft-L255"></span>
+<span id="src-hex-way-loft-L256"><span class="cm">// Register this track's segments as surfaces; returns the id of the FIRST one (ids are</span></span>
+<span id="src-hex-way-loft-L257"><span class="cm">// contiguous, so segment i has id first+i).</span></span>
+<span id="src-hex-way-loft-L258"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L259"><span class="cm">// Example: @HXY-004</span></span>
+<span id="src-hex-way-loft-L260"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_surfaces</span>(t: <span class="en">Track</span>, sf: <span class="en">Surfaces</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-way-loft-L261">  first = <span class="nm">0</span>;</span>
+<span id="src-hex-way-loft-L262">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L263">    <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L264">      (tx, ty) = <span class="fn-call">seg_tangent</span>(t, i, <span class="nm">0.0</span>);</span>
+<span id="src-hex-way-loft-L265">      id = <span class="fn-call">surf_straight</span>(sf, <span class="nm">0.0</span> - ty, tx,</span>
+<span id="src-hex-way-loft-L266">                         (<span class="nm">0.0</span> - ty) * <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>) + tx * <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>));</span>
+<span id="src-hex-way-loft-L267">      <span class="kw">if</span> i == <span class="nm">0</span> { first = id; }</span>
+<span id="src-hex-way-loft-L268">    } <span class="kw">else</span> {</span>
+<span id="src-hex-way-loft-L269">      id = <span class="fn-call">surf_arc</span>(sf, <span class="fn-call">pv</span>(t, i, <span class="nm">0</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">1</span>), <span class="fn-call">pv</span>(t, i, <span class="nm">2</span>));</span>
+<span id="src-hex-way-loft-L270">      <span class="kw">if</span> i == <span class="nm">0</span> { first = id; }</span>
+<span id="src-hex-way-loft-L271">    }</span>
+<span id="src-hex-way-loft-L272">  }</span>
+<span id="src-hex-way-loft-L273">  first</span>
+<span id="src-hex-way-loft-L274">}</span>
+<span id="src-hex-way-loft-L275"></span>
+<span id="src-hex-way-loft-L276"><span class="cm">// Which segment of the track is nearest this point?  This is the P3 arbitration rule in</span></span>
+<span id="src-hex-way-loft-L277"><span class="cm">// embryo: nearest-surface-wins, ties to the lower index — deterministic, order-free.</span></span>
+<span id="src-hex-way-loft-L278"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nearest_seg</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-way-loft-L279">  best = -<span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L280">  bd = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-way-loft-L281">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L282">    d = <span class="fn-call">seg_distance</span>(t, i, px, py);</span>
+<span id="src-hex-way-loft-L283">    <span class="kw">if</span> d &lt; bd - <span class="nm">0.000000001</span> { bd = d; best = i; }</span>
+<span id="src-hex-way-loft-L284">  }</span>
+<span id="src-hex-way-loft-L285">  best</span>
+<span id="src-hex-way-loft-L286">}</span>
+<span id="src-hex-way-loft-L287"></span>
+<span id="src-hex-way-loft-L288"><span class="cm">// MARK ONLY — phase 1 of the two-phase build.</span></span>
+<span id="src-hex-way-loft-L289"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L290"><span class="cm">// P3 lesson: marking cells and cutting edges must NOT be interleaved per part. If each</span></span>
+<span id="src-hex-way-loft-L291"><span class="cm">// part cuts its own boundary as it lands, a later part can turn an already-blocked edge</span></span>
+<span id="src-hex-way-loft-L292"><span class="cm">// into an interior one — and that stale edge is never cleared, so the result depends on</span></span>
+<span id="src-hex-way-loft-L293"><span class="cm">// which part ran first. Mark every part, THEN cut once.</span></span>
+<span id="src-hex-way-loft-L294"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L295"><span class="cm">// A cell is marked on its CENTRE, so the footprint quantises and `halfwidth` does not</span></span>
+<span id="src-hex-way-loft-L296"><span class="cm">// survive the trip: between two rings of centres, every width gives the same cells.</span></span>
+<span id="src-hex-way-loft-L297"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L298"><span class="cm">// Example: @HXY-002</span></span>
+<span id="src-hex-way-loft-L299"><span class="cm">// Example: @HXY-004</span></span>
+<span id="src-hex-way-loft-L300"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_mark</span>(t: <span class="en">Track</span>, halfwidth: <span class="ty"><a href="stdlib-types.html">float</a></span>, s: <span class="en">HexSet</span>) {</span>
+<span id="src-hex-way-loft-L301">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-way-loft-L302">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-way-loft-L303">      px = (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hex-way-loft-L304">      py = (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-way-loft-L305">      <span class="kw">if</span> <span class="fn-call">track_distance</span>(t, px, py) &lt;= halfwidth { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); }</span>
+<span id="src-hex-way-loft-L306">    }</span>
+<span id="src-hex-way-loft-L307">  }</span>
+<span id="src-hex-way-loft-L308">}</span>
+<span id="src-hex-way-loft-L309"></span>
+<span id="src-hex-way-loft-L310"><span class="cm">// CUT ONCE — phase 2. For each boundary edge of the FINAL footprint, pick the nearest</span></span>
+<span id="src-hex-way-loft-L311"><span class="cm">// surface among ALL registered ones (ties to the lower id). Order-independent by</span></span>
+<span id="src-hex-way-loft-L312"><span class="cm">// construction: it never looks at what was stamped when, only at the finished cells.</span></span>
+<span id="src-hex-way-loft-L313"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L314"><span class="cm">// Example: @HXY-004</span></span>
+<span id="src-hex-way-loft-L315"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">cut_arb</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>, sf: <span class="en">Surfaces</span>, nsurf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-way-loft-L316">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-way-loft-L317">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-way-loft-L318">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-way-loft-L319">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-way-loft-L320">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hex-way-loft-L321">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hex-way-loft-L322">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, nq, nr) {</span>
+<span id="src-hex-way-loft-L323">            (ex, ey) = <span class="fn-call">edge_point</span>(q, r, nq, nr);</span>
+<span id="src-hex-way-loft-L324">            best = -<span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L325">            bd = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-way-loft-L326">            <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">1..</span>nsurf {</span>
+<span id="src-hex-way-loft-L327">              dd = <span class="fn-call">surf_distance</span>(sf, si, ex, ey);</span>
+<span id="src-hex-way-loft-L328">              <span class="kw">if</span> dd &lt; bd - <span class="nm">0.000000001</span> { bd = dd; best = si; }</span>
+<span id="src-hex-way-loft-L329">            }</span>
+<span id="src-hex-way-loft-L330">            <span class="kw">if</span> best &gt;= <span class="nm">0</span> { <span class="fn-call">edge_block_full</span>(e, q, r, nq, nr, best, mat); }</span>
+<span id="src-hex-way-loft-L331">          }</span>
+<span id="src-hex-way-loft-L332">        }</span>
+<span id="src-hex-way-loft-L333">      }</span>
+<span id="src-hex-way-loft-L334">    }</span>
+<span id="src-hex-way-loft-L335">  }</span>
+<span id="src-hex-way-loft-L336">}</span>
+<span id="src-hex-way-loft-L337"></span>
+<span id="src-hex-way-loft-L338"><span class="cm">// Mark the way's footprint into `s`, cut its boundary into `e`, and tag every blocked</span></span>
+<span id="src-hex-way-loft-L339"><span class="cm">// edge with the surface of the NEAREST segment.  One walk, one source of truth.</span></span>
+<span id="src-hex-way-loft-L340"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L341"><span class="cm">// For ONE way.  Calling it once per part of a multi-part way is the interleaving the</span></span>
+<span id="src-hex-way-loft-L342"><span class="cm">// phase-1 note above forbids — same cells, walls left standing inside the finished</span></span>
+<span id="src-hex-way-loft-L343"><span class="cm">// footprint, and their owner decided by the stamping order.</span></span>
+<span id="src-hex-way-loft-L344"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L345"><span class="cm">// Example: @HXY-004</span></span>
+<span id="src-hex-way-loft-L346"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_stamp</span>(t: <span class="en">Track</span>, halfwidth: <span class="ty"><a href="stdlib-types.html">float</a></span>, s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>,</span>
+<span id="src-hex-way-loft-L347">                 first_surf: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mat: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-way-loft-L348">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-way-loft-L349">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-way-loft-L350">      px = (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hex-way-loft-L351">      py = (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-way-loft-L352">      <span class="kw">if</span> <span class="fn-call">track_distance</span>(t, px, py) &lt;= halfwidth { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); }</span>
+<span id="src-hex-way-loft-L353">    }</span>
+<span id="src-hex-way-loft-L354">  }</span>
+<span id="src-hex-way-loft-L355">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-way-loft-L356">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-way-loft-L357">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-way-loft-L358">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-way-loft-L359">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="src-hex-way-loft-L360">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="src-hex-way-loft-L361">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, nq, nr) {</span>
+<span id="src-hex-way-loft-L362">            (ex, ey) = <span class="fn-call">edge_point</span>(q, r, nq, nr);</span>
+<span id="src-hex-way-loft-L363">            si = <span class="fn-call">nearest_seg</span>(t, ex, ey);</span>
+<span id="src-hex-way-loft-L364">            <span class="kw">if</span> si &gt;= <span class="nm">0</span> { <span class="fn-call">edge_block_full</span>(e, q, r, nq, nr, first_surf + si, mat); }</span>
+<span id="src-hex-way-loft-L365">          }</span>
+<span id="src-hex-way-loft-L366">        }</span>
+<span id="src-hex-way-loft-L367">      }</span>
+<span id="src-hex-way-loft-L368">    }</span>
+<span id="src-hex-way-loft-L369">  }</span>
+<span id="src-hex-way-loft-L370">}</span>
+<span id="src-hex-way-loft-L371"></span>
+<span id="src-hex-way-loft-L372"><span class="cm">// ── ALONG-WAY PARAMETER, AND STEPS ──────────────────────────────────────────</span></span>
+<span id="src-hex-way-loft-L373"></span>
+<span id="src-hex-way-loft-L374"><span class="cm">// Arc length from the start of segment i to the point on it nearest (px,py).</span></span>
+<span id="src-hex-way-loft-L375"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L376"><span class="cm">// Example: @HXY-005</span></span>
+<span id="src-hex-way-loft-L377"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_param</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L378">  <span class="kw">if</span> (t.tk_kind[i] ?? <span class="nm">0</span>) == <span class="en">WAY_STRAIGHT</span> {</span>
+<span id="src-hex-way-loft-L379">    ax = t.tk_p[i * <span class="nm">6</span> + <span class="nm">0</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L380">    ay = t.tk_p[i * <span class="nm">6</span> + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L381">    bx = t.tk_p[i * <span class="nm">6</span> + <span class="nm">2</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L382">    by = t.tk_p[i * <span class="nm">6</span> + <span class="nm">3</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L383">    vx = bx - ax;</span>
+<span id="src-hex-way-loft-L384">    vy = by - ay;</span>
+<span id="src-hex-way-loft-L385">    l2 = vx * vx + vy * vy;</span>
+<span id="src-hex-way-loft-L386">    <span class="kw">if</span> l2 &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L387">    u = ((px - ax) * vx + (py - ay) * vy) / l2 ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L388">    <span class="kw">if</span> u &lt; <span class="nm">0.0</span> { u = <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L389">    <span class="kw">if</span> u &gt; <span class="nm">1.0</span> { u = <span class="nm">1.0</span>; }</span>
+<span id="src-hex-way-loft-L390">    <span class="kw">return</span> u * (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(l2) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-way-loft-L391">  }</span>
+<span id="src-hex-way-loft-L392">  cx = t.tk_p[i * <span class="nm">6</span> + <span class="nm">0</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L393">  cy = t.tk_p[i * <span class="nm">6</span> + <span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L394">  rr = t.tk_p[i * <span class="nm">6</span> + <span class="nm">2</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L395">  a0 = t.tk_p[i * <span class="nm">6</span> + <span class="nm">3</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L396">  a1 = t.tk_p[i * <span class="nm">6</span> + <span class="nm">4</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L397">  a = <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(py - cy, px - cx);</span>
+<span id="src-hex-way-loft-L398">  sweep = a1 - a0;</span>
+<span id="src-hex-way-loft-L399">  <span class="cm">// Bring the offset into [0, 2pi), then measure it ALONG the arc's own direction.</span></span>
+<span id="src-hex-way-loft-L400">  da = <span class="fn-call">ang_wrap</span>(a - a0);</span>
+<span id="src-hex-way-loft-L401">  span = sweep;</span>
+<span id="src-hex-way-loft-L402">  <span class="kw">if</span> span &lt; <span class="nm">0.0</span> { span = <span class="nm">0.0</span> - span; }</span>
+<span id="src-hex-way-loft-L403">  tp = da;</span>
+<span id="src-hex-way-loft-L404">  <span class="kw">if</span> sweep &lt; <span class="nm">0.0</span> {</span>
+<span id="src-hex-way-loft-L405">    tp = <span class="nm">6.283185307179586</span> - da;</span>
+<span id="src-hex-way-loft-L406">    <span class="kw">if</span> da &lt; <span class="nm">0.000000001</span> { tp = <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L407">  }</span>
+<span id="src-hex-way-loft-L408">  <span class="cm">// Outside the span, snap to the NEARER end.  Clamping blindly to the far end is the</span></span>
+<span id="src-hex-way-loft-L409">  <span class="cm">// trap: a point sitting just BEFORE the start wraps to nearly 2pi, and clamping that</span></span>
+<span id="src-hex-way-loft-L410">  <span class="cm">// to `span` hands the first cell of a flight the height of the last one — a full-flight</span></span>
+<span id="src-hex-way-loft-L411">  <span class="cm">// riser between two neighbouring cells.  Found by stairtest, not by inspection.</span></span>
+<span id="src-hex-way-loft-L412">  <span class="kw">if</span> tp &gt; span {</span>
+<span id="src-hex-way-loft-L413">    <span class="kw">if</span> tp - span &lt; <span class="nm">6.283185307179586</span> - tp { tp = span; } <span class="kw">else</span> { tp = <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L414">  }</span>
+<span id="src-hex-way-loft-L415">  tp * rr</span>
+<span id="src-hex-way-loft-L416">}</span>
+<span id="src-hex-way-loft-L417"></span>
+<span id="src-hex-way-loft-L418"><span class="cm">// Arc length from the START OF THE WAY to the point on it nearest (px,py).  This is the</span></span>
+<span id="src-hex-way-loft-L419"><span class="cm">// milepost: the parameter stations, signals, steps and mileage markers are all stated in.</span></span>
+<span id="src-hex-way-loft-L420"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L421"><span class="cm">// Example: @HXY-005</span></span>
+<span id="src-hex-way-loft-L422"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_param</span>(t: <span class="en">Track</span>, px: <span class="ty"><a href="stdlib-types.html">float</a></span>, py: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-way-loft-L423">  best = -<span class="nm">1</span>;</span>
+<span id="src-hex-way-loft-L424">  bd = <span class="nm">1000000000.0</span>;</span>
+<span id="src-hex-way-loft-L425">  bacc = <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L426">  acc = <span class="nm">0.0</span>;</span>
+<span id="src-hex-way-loft-L427">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>t.tk_n {</span>
+<span id="src-hex-way-loft-L428">    dd = <span class="fn-call">seg_distance</span>(t, i, px, py);</span>
+<span id="src-hex-way-loft-L429">    <span class="kw">if</span> dd &lt; bd { bd = dd; best = i; bacc = acc; }</span>
+<span id="src-hex-way-loft-L430">    acc = acc + <span class="fn-call">seg_len</span>(t, i);</span>
+<span id="src-hex-way-loft-L431">  }</span>
+<span id="src-hex-way-loft-L432">  <span class="kw">if</span> best &lt; <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-way-loft-L433">  bacc + <span class="fn-call">seg_param</span>(t, best, px, py)</span>
+<span id="src-hex-way-loft-L434">}</span>
+<span id="src-hex-way-loft-L435"></span>
+<span id="src-hex-way-loft-L436"><span class="cm">// A STAIRCASE: every `tread` of travel along the way raises the ground by `rise`.</span></span>
+<span id="src-hex-way-loft-L437"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L438"><span class="cm">// The same routine is a terraced hillside, or a ramp at rise = 0.  What makes it a good</span></span>
+<span id="src-hex-way-loft-L439"><span class="cm">// test of the whole model is that the tread is quantised by the CELL ROWS, and the row</span></span>
+<span id="src-hex-way-loft-L440"><span class="cm">// spacing depends on the direction of travel (the 24-direction tiers) — so a tread that</span></span>
+<span id="src-hex-way-loft-L441"><span class="cm">// is clean along one heading skips whole steps along another, which shows up as a DOUBLE</span></span>
+<span id="src-hex-way-loft-L442"><span class="cm">// RISER between adjacent cells.  That is a real defect (a trip hazard), and it is what</span></span>
+<span id="src-hex-way-loft-L443"><span class="cm">// sets the minimum tread per direction.</span></span>
+<span id="src-hex-way-loft-L444"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L445"><span class="cm">// The number: a flight's shortest safe tread is the spacing of its own cells along the</span></span>
+<span id="src-hex-way-loft-L446"><span class="cm">// way — sqrt(3) = 1.732 down a row, 1.5 down a column.  There is no tread that is fine</span></span>
+<span id="src-hex-way-loft-L447"><span class="cm">// enough for every heading.</span></span>
+<span id="src-hex-way-loft-L448"><span class="cm">//</span></span>
+<span id="src-hex-way-loft-L449"><span class="cm">// Example: @HXY-006</span></span>
+<span id="src-hex-way-loft-L450"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">way_steps</span>(t: <span class="en">Track</span>, s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, rise: <span class="ty"><a href="stdlib-types.html">float</a></span>, tread: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-way-loft-L451">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-way-loft-L452">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-way-loft-L453">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-way-loft-L454">        cx = ((<span class="fn-call">lattice_k</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="src-hex-way-loft-L455">        cy = ((<span class="fn-call">lattice_m</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="src-hex-way-loft-L456">        p = <span class="fn-call">way_param</span>(t, cx, cy);</span>
+<span id="src-hex-way-loft-L457">        n = (p / tread ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-hex-way-loft-L458">        <span class="fn-call">height_set</span>(f, q, r, (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * rise);</span>
+<span id="src-hex-way-loft-L459">      }</span>
+<span id="src-hex-way-loft-L460">    }</span>
+<span id="src-hex-way-loft-L461">  }</span>
+<span id="src-hex-way-loft-L462">}</span>
+</code></pre>
+<h2 id="tests-01-hex-way-loft">tests/01-hex-way.loft</h2>
+<pre class="src"><code><span id="tests-01-hex-way-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-01-hex-way-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-01-hex-way-loft-L3"><span class="cm">// hex_way — the conformance tests: a way is an exact CENTRELINE plus offsets, never a</span></span>
+<span id="tests-01-hex-way-loft-L4"><span class="cm">// rasterised band, and its arc length, tangent and offsets follow from that.</span></span>
+<span id="tests-01-hex-way-loft-L5"><span class="cm">//</span></span>
+<span id="tests-01-hex-way-loft-L6"><span class="cm">// These assert the library's CONTRACT, not its depth.  The exhaustive measurement lives in</span></span>
+<span id="tests-01-hex-way-loft-L7"><span class="cm">// hexbody's gates (`tests/line.loft`, `tests/arb.loft`), which print their evidence and carry a</span></span>
+<span id="tests-01-hex-way-loft-L8"><span class="cm">// control that must fire.  This file is what CI runs under `LOFT_DENY_WARNINGS=1`.</span></span>
+<span id="tests-01-hex-way-loft-L9"><span class="kw">use</span> hex_way::*;</span>
+<span id="tests-01-hex-way-loft-L10"><span class="kw">use</span> hex_edge::*;</span>
+<span id="tests-01-hex-way-loft-L11"><span class="kw">use</span> hex_field::*;</span>
+<span id="tests-01-hex-way-loft-L12"></span>
+<span id="tests-01-hex-way-loft-L13"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-01-hex-way-loft-L14">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-way-loft-L15">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">track_len</span>(t) == <span class="nm">0.0</span>, <span class="st">"an empty track has zero length"</span>);</span>
+<span id="tests-01-hex-way-loft-L16">}</span>
+<span id="tests-01-hex-way-loft-L17"></span>
+<span id="tests-01-hex-way-loft-L18"><span class="kw">fn</span> <span class="fn-call">test_a_straight_segment_has_its_euclidean_length</span>() {</span>
+<span id="tests-01-hex-way-loft-L19">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-way-loft-L20">  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">3.0</span>, <span class="nm">4.0</span>);          <span class="cm">// the 3-4-5 triangle</span></span>
+<span id="tests-01-hex-way-loft-L21">  l = <span class="fn-call">track_len</span>(t);</span>
+<span id="tests-01-hex-way-loft-L22">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(l &gt; <span class="nm">4.999</span> &amp;&amp; l &lt; <span class="nm">5.001</span>, <span class="st">"a 3-4 straight is 5 long, got {l}"</span>);</span>
+<span id="tests-01-hex-way-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_len</span>(t, <span class="nm">0</span>) &gt; <span class="nm">4.999</span>, <span class="st">"the one segment carries that length"</span>);</span>
+<span id="tests-01-hex-way-loft-L24">}</span>
+<span id="tests-01-hex-way-loft-L25"></span>
+<span id="tests-01-hex-way-loft-L26"><span class="kw">fn</span> <span class="fn-call">test_a_point_along_a_segment_interpolates_exactly</span>() {</span>
+<span id="tests-01-hex-way-loft-L27">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-way-loft-L28">  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-01-hex-way-loft-L29">  (x, y) = <span class="fn-call">seg_point</span>(t, <span class="nm">0</span>, <span class="nm">5.0</span>);                  <span class="cm">// halfway</span></span>
+<span id="tests-01-hex-way-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(x &gt; <span class="nm">4.999</span> &amp;&amp; x &lt; <span class="nm">5.001</span>, <span class="st">"halfway along is x = 5, got {x}"</span>);</span>
+<span id="tests-01-hex-way-loft-L31">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(y &gt; -<span class="nm">0.001</span> &amp;&amp; y &lt; <span class="nm">0.001</span>, <span class="st">"and stays on the line, got y = {y}"</span>);</span>
+<span id="tests-01-hex-way-loft-L32">  (tx, ty) = <span class="fn-call">seg_tangent</span>(t, <span class="nm">0</span>, <span class="nm">5.0</span>);</span>
+<span id="tests-01-hex-way-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tx &gt; <span class="nm">0.999</span> &amp;&amp; ty &gt; -<span class="nm">0.001</span> &amp;&amp; ty &lt; <span class="nm">0.001</span>, <span class="st">"the tangent points +x, got ({tx}, {ty})"</span>);</span>
+<span id="tests-01-hex-way-loft-L34">}</span>
+<span id="tests-01-hex-way-loft-L35"></span>
+<span id="tests-01-hex-way-loft-L36"><span class="kw">fn</span> <span class="fn-call">test_an_arc_segment_measures_its_true_arc_length</span>() {</span>
+<span id="tests-01-hex-way-loft-L37">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-way-loft-L38">  <span class="cm">// a quarter circle of radius 2: length = 2 * pi/2 = pi</span></span>
+<span id="tests-01-hex-way-loft-L39">  <span class="fn-call">track_arc</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">2.0</span>, <span class="nm">0.0</span>, <span class="nm">1.5707963267948966</span>);</span>
+<span id="tests-01-hex-way-loft-L40">  l = <span class="fn-call">track_len</span>(t);</span>
+<span id="tests-01-hex-way-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(l &gt; <span class="nm">3.140</span> &amp;&amp; l &lt; <span class="nm">3.143</span>, <span class="st">"a quarter arc of r=2 is pi long, got {l}"</span>);</span>
+<span id="tests-01-hex-way-loft-L42">}</span>
+<span id="tests-01-hex-way-loft-L43"></span>
+<span id="tests-01-hex-way-loft-L44"><span class="kw">fn</span> <span class="fn-call">test_distance_to_the_centreline_is_measured_from_the_line_not_a_band</span>() {</span>
+<span id="tests-01-hex-way-loft-L45">  <span class="cm">// `X8`: a way is a centreline plus offsets.  A point 3 off a straight run is 3 away --</span></span>
+<span id="tests-01-hex-way-loft-L46">  <span class="cm">// if the way were stored as a rasterised band this would quantise, and it must not.</span></span>
+<span id="tests-01-hex-way-loft-L47">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-way-loft-L48">  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-01-hex-way-loft-L49">  d = <span class="fn-call">track_distance</span>(t, <span class="nm">5.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-01-hex-way-loft-L50">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d &gt; <span class="nm">2.999</span> &amp;&amp; d &lt; <span class="nm">3.001</span>, <span class="st">"a point 3 off the centreline is 3 away, got {d}"</span>);</span>
+<span id="tests-01-hex-way-loft-L51">}</span>
+</code></pre>
+<h2 id="tests-02-worked-examples-loft">tests/02-worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-02-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-02-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-02-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L4"><span class="cm">// Worked examples for `hex_way` (@PLN141).  Each `test_*` below is a REAL,</span></span>
+<span id="tests-02-worked-examples-loft-L5"><span class="cm">// run-every-CI demonstration of a contract the signature cannot state; the</span></span>
+<span id="tests-02-worked-examples-loft-L6"><span class="cm">// function documents itself by CITING the tag with `// Example: @HXY-00N`, and</span></span>
+<span id="tests-02-worked-examples-loft-L7"><span class="cm">// `check_doc_drift.sh examples` fails if a citation goes dangling.  These are</span></span>
+<span id="tests-02-worked-examples-loft-L8"><span class="cm">// teaching examples, distinct from the conformance suite in `01-hex-way.loft`.</span></span>
+<span id="tests-02-worked-examples-loft-L9"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L10"><span class="cm">// THE ONE IDEA.  A way is authored as ONE exact centreline, and every other</span></span>
+<span id="tests-02-worked-examples-loft-L11"><span class="cm">// line it has — rails, kerbs, platform faces, lane markings — is an OFFSET of</span></span>
+<span id="tests-02-worked-examples-loft-L12"><span class="cm">// that centreline, computed on demand.  Nothing but the centreline is stored.</span></span>
+<span id="tests-02-worked-examples-loft-L13"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L14"><span class="cm">// WHY IT IS WORTH THE TROUBLE.  The obvious alternative is to store the band of</span></span>
+<span id="tests-02-worked-examples-loft-L15"><span class="cm">// cells and read the edges back off it.  That works, and it quantises: the cells</span></span>
+<span id="tests-02-worked-examples-loft-L16"><span class="cm">// come from a lattice, so the width you asked for is not the width you get, and</span></span>
+<span id="tests-02-worked-examples-loft-L17"><span class="cm">// the error does not shrink as you refine the request.  `test_the_rasterised</span></span>
+<span id="tests-02-worked-examples-loft-L18"><span class="cm">// _band_has_a_floor_the_offset_does_not` measures the floor — and it is not one</span></span>
+<span id="tests-02-worked-examples-loft-L19"><span class="cm">// number, it is one number PER HEADING.</span></span>
+<span id="tests-02-worked-examples-loft-L20"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L21"><span class="cm">// WHAT GOES WRONG ANYWAY.  Every trap below is the same species: a call that</span></span>
+<span id="tests-02-worked-examples-loft-L22"><span class="cm">// answers something entirely plausible, passes every cheap check, and is wrong.</span></span>
+<span id="tests-02-worked-examples-loft-L23"><span class="cm">// An offset on the far side of the way is still exactly `d` from the centreline.</span></span>
+<span id="tests-02-worked-examples-loft-L24"><span class="cm">// A band asked for at half the width comes back the same size.  A road stamped</span></span>
+<span id="tests-02-worked-examples-loft-L25"><span class="cm">// part by part covers the same cells as one stamped correctly.  In each case the</span></span>
+<span id="tests-02-worked-examples-loft-L26"><span class="cm">// number that can tell them apart is NOT the one a caller reaches for first, and</span></span>
+<span id="tests-02-worked-examples-loft-L27"><span class="cm">// naming that number is what these examples are for.</span></span>
+<span id="tests-02-worked-examples-loft-L28"><span class="kw">use</span> hex_way::*;</span>
+<span id="tests-02-worked-examples-loft-L29"><span class="kw">use</span> hex_field::*;</span>
+<span id="tests-02-worked-examples-loft-L30"><span class="kw">use</span> hex_edge::*;</span>
+<span id="tests-02-worked-examples-loft-L31"></span>
+<span id="tests-02-worked-examples-loft-L32">const <span class="en">Q0</span> = -<span class="nm">6</span>;</span>
+<span id="tests-02-worked-examples-loft-L33">const <span class="en">R0</span> = -<span class="nm">6</span>;</span>
+<span id="tests-02-worked-examples-loft-L34">const <span class="en">W</span>  = <span class="nm">13</span>;</span>
+<span id="tests-02-worked-examples-loft-L35">const <span class="en">H</span>  = <span class="nm">13</span>;</span>
+<span id="tests-02-worked-examples-loft-L36"></span>
+<span id="tests-02-worked-examples-loft-L37"><span class="cm">// The lattice -&gt; world map every distance here is measured in.  A cell is one unit</span></span>
+<span id="tests-02-worked-examples-loft-L38"><span class="cm">// from centre to corner, so it is `sqrt(3)` = 1.732 across the flats and 1.5 from</span></span>
+<span id="tests-02-worked-examples-loft-L39"><span class="cm">// one row to the next — an anisotropy two of the examples below are about.</span></span>
+<span id="tests-02-worked-examples-loft-L40"><span class="kw">fn</span> <span class="fn-call">wx</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { ((<span class="fn-call">lattice_k</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> }</span>
+<span id="tests-02-worked-examples-loft-L41"><span class="kw">fn</span> <span class="fn-call">wy</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { ((<span class="fn-call">lattice_m</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> }</span>
+<span id="tests-02-worked-examples-loft-L42"></span>
+<span id="tests-02-worked-examples-loft-L43"><span class="cm">// How far apart the end of one segment and the start of the next actually are.</span></span>
+<span id="tests-02-worked-examples-loft-L44"><span class="kw">fn</span> <span class="fn-call">joint_gap</span>(t: <span class="en">Track</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L45">  (ax, ay) = <span class="fn-call">seg_point</span>(t, i, <span class="fn-call">seg_len</span>(t, i));</span>
+<span id="tests-02-worked-examples-loft-L46">  (bx, by) = <span class="fn-call">seg_point</span>(t, i + <span class="nm">1</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L47">  <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((ax - bx) * (ax - bx) + (ay - by) * (ay - by)) ?? <span class="nm">0.0</span></span>
+<span id="tests-02-worked-examples-loft-L48">}</span>
+<span id="tests-02-worked-examples-loft-L49"></span>
+<span id="tests-02-worked-examples-loft-L50"><span class="kw">fn</span> <span class="fn-call">abs_f</span>(v: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { <span class="kw">if</span> v &lt; <span class="nm">0.0</span> { <span class="kw">return</span> <span class="nm">0.0</span> - v; } v }</span>
+<span id="tests-02-worked-examples-loft-L51"></span>
+<span id="tests-02-worked-examples-loft-L52"><span class="cm">// The cell count a band of this halfwidth rasterises to.</span></span>
+<span id="tests-02-worked-examples-loft-L53"><span class="kw">fn</span> <span class="fn-call">band_cells</span>(t: <span class="en">Track</span>, hw: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L54">  s = <span class="fn-call">hexset_chunk</span>(-<span class="nm">8</span>, -<span class="nm">8</span>, <span class="nm">17</span>, <span class="nm">17</span>);</span>
+<span id="tests-02-worked-examples-loft-L55">  <span class="fn-call">way_mark</span>(t, hw, s);</span>
+<span id="tests-02-worked-examples-loft-L56">  <span class="fn-call">hexset_count</span>(s)</span>
+<span id="tests-02-worked-examples-loft-L57">}</span>
+<span id="tests-02-worked-examples-loft-L58"></span>
+<span id="tests-02-worked-examples-loft-L59"><span class="cm">// Edges that are blocked while BOTH their cells are inside the footprint — a wall</span></span>
+<span id="tests-02-worked-examples-loft-L60"><span class="cm">// standing in the middle of the road.  Each such edge is reached from both of its</span></span>
+<span id="tests-02-worked-examples-loft-L61"><span class="cm">// cells, so the raw count is halved.</span></span>
+<span id="tests-02-worked-examples-loft-L62"><span class="kw">fn</span> <span class="fn-call">walls_inside</span>(s: <span class="en">HexSet</span>, e: <span class="en">EdgeSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L63">  n = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L64">  <span class="kw">for</span> r <span class="kw">in</span> <span class="en">R0</span>..<span class="en">R0</span> + <span class="en">H</span> {</span>
+<span id="tests-02-worked-examples-loft-L65">    <span class="kw">for</span> q <span class="kw">in</span> <span class="en">Q0</span>..<span class="en">Q0</span> + <span class="en">W</span> {</span>
+<span id="tests-02-worked-examples-loft-L66">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L67">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-02-worked-examples-loft-L68">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="tests-02-worked-examples-loft-L69">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="tests-02-worked-examples-loft-L70">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, nq, nr) &amp;&amp; <span class="fn-call">edge_blocked</span>(e, q, r, nq, nr) { n = n + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L71">        }</span>
+<span id="tests-02-worked-examples-loft-L72">      }</span>
+<span id="tests-02-worked-examples-loft-L73">    }</span>
+<span id="tests-02-worked-examples-loft-L74">  }</span>
+<span id="tests-02-worked-examples-loft-L75">  n / <span class="nm">2</span> ?? <span class="nm">0</span></span>
+<span id="tests-02-worked-examples-loft-L76">}</span>
+<span id="tests-02-worked-examples-loft-L77"></span>
+<span id="tests-02-worked-examples-loft-L78"><span class="cm">// The biggest height difference between two NEIGHBOURING cells of a flight, and how</span></span>
+<span id="tests-02-worked-examples-loft-L79"><span class="cm">// many neighbouring pairs there were to look at — a flight whose cells are not</span></span>
+<span id="tests-02-worked-examples-loft-L80"><span class="cm">// neighbours has no risers to measure, and would otherwise read as perfectly smooth.</span></span>
+<span id="tests-02-worked-examples-loft-L81"><span class="kw">fn</span> <span class="fn-call">worst_riser</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L82">  m = <span class="nm">0.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L83">  <span class="kw">for</span> r <span class="kw">in</span> <span class="en">R0</span>..<span class="en">R0</span> + <span class="en">H</span> {</span>
+<span id="tests-02-worked-examples-loft-L84">    <span class="kw">for</span> q <span class="kw">in</span> <span class="en">Q0</span>..<span class="en">Q0</span> + <span class="en">W</span> {</span>
+<span id="tests-02-worked-examples-loft-L85">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L86">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-02-worked-examples-loft-L87">          nq = <span class="fn-call">nb_q</span>(q, r, d);</span>
+<span id="tests-02-worked-examples-loft-L88">          nr = <span class="fn-call">nb_r</span>(q, r, d);</span>
+<span id="tests-02-worked-examples-loft-L89">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, nq, nr) {</span>
+<span id="tests-02-worked-examples-loft-L90">            dz = <span class="fn-call">abs_f</span>(<span class="fn-call">height_get</span>(f, q, r) - <span class="fn-call">height_get</span>(f, nq, nr));</span>
+<span id="tests-02-worked-examples-loft-L91">            <span class="kw">if</span> dz &gt; m { m = dz; }</span>
+<span id="tests-02-worked-examples-loft-L92">          }</span>
+<span id="tests-02-worked-examples-loft-L93">        }</span>
+<span id="tests-02-worked-examples-loft-L94">      }</span>
+<span id="tests-02-worked-examples-loft-L95">    }</span>
+<span id="tests-02-worked-examples-loft-L96">  }</span>
+<span id="tests-02-worked-examples-loft-L97">  m</span>
+<span id="tests-02-worked-examples-loft-L98">}</span>
+<span id="tests-02-worked-examples-loft-L99"></span>
+<span id="tests-02-worked-examples-loft-L100"><span class="kw">fn</span> <span class="fn-call">adjacent_pairs</span>(s: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L101">  n = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L102">  <span class="kw">for</span> r <span class="kw">in</span> <span class="en">R0</span>..<span class="en">R0</span> + <span class="en">H</span> {</span>
+<span id="tests-02-worked-examples-loft-L103">    <span class="kw">for</span> q <span class="kw">in</span> <span class="en">Q0</span>..<span class="en">Q0</span> + <span class="en">W</span> {</span>
+<span id="tests-02-worked-examples-loft-L104">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L105">        <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-02-worked-examples-loft-L106">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, <span class="fn-call">nb_q</span>(q, r, d), <span class="fn-call">nb_r</span>(q, r, d)) { n = n + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L107">        }</span>
+<span id="tests-02-worked-examples-loft-L108">      }</span>
+<span id="tests-02-worked-examples-loft-L109">    }</span>
+<span id="tests-02-worked-examples-loft-L110">  }</span>
+<span id="tests-02-worked-examples-loft-L111">  n</span>
+<span id="tests-02-worked-examples-loft-L112">}</span>
+<span id="tests-02-worked-examples-loft-L113"></span>
+<span id="tests-02-worked-examples-loft-L114"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-02-worked-examples-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">track_len</span>(<span class="fn-call">track_new</span>()) == <span class="nm">0.0</span>, <span class="st">"an empty way is zero long"</span>);</span>
+<span id="tests-02-worked-examples-loft-L116">}</span>
+<span id="tests-02-worked-examples-loft-L117"></span>
+<span id="tests-02-worked-examples-loft-L118"><span class="cm">// @HXY-001 — AN OFFSET HAS TO JOIN, AND EQUIDISTANCE CANNOT SEE THAT IT DOES.</span></span>
+<span id="tests-02-worked-examples-loft-L119"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L120"><span class="cm">// `track_offset` is the whole reason a way is stored as a centreline: the rail,</span></span>
+<span id="tests-02-worked-examples-loft-L121"><span class="cm">// the kerb, the platform face are all this one call at different `d`.  So the</span></span>
+<span id="tests-02-worked-examples-loft-L122"><span class="cm">// property everyone reaches for is equidistance — every point of the offset is</span></span>
+<span id="tests-02-worked-examples-loft-L123"><span class="cm">// `d` from the centreline — and it is the wrong property to check ALONE, because</span></span>
+<span id="tests-02-worked-examples-loft-L124"><span class="cm">// it holds just as exactly on the wrong side.</span></span>
+<span id="tests-02-worked-examples-loft-L125"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L126"><span class="cm">// Offset a way that goes straight and then turns.  If the turn's offset lands on</span></span>
+<span id="tests-02-worked-examples-loft-L127"><span class="cm">// the far side, the result is still a valid pair of curves, each still exactly</span></span>
+<span id="tests-02-worked-examples-loft-L128"><span class="cm">// `d` from the line, and the rail now JUMPS by `2d` where the straight meets the</span></span>
+<span id="tests-02-worked-examples-loft-L129"><span class="cm">// turn.  A train would need to be lifted over it.</span></span>
+<span id="tests-02-worked-examples-loft-L130"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L131"><span class="cm">// The number that sees it is the gap at the joint, and it is zero here for every</span></span>
+<span id="tests-02-worked-examples-loft-L132"><span class="cm">// combination of turn direction and side — which is what "left normal positive"</span></span>
+<span id="tests-02-worked-examples-loft-L133"><span class="cm">// has to mean for arcs too.  It did not: the arc branch read the sweep direction</span></span>
+<span id="tests-02-worked-examples-loft-L134"><span class="cm">// the other way up and put every turn on the far side.  Fixed in 0.1.1, and this</span></span>
+<span id="tests-02-worked-examples-loft-L135"><span class="cm">// is the test that would have caught it.  A dedicated equidistance gate did not.</span></span>
+<span id="tests-02-worked-examples-loft-L136"><span class="kw">fn</span> <span class="fn-call">test_an_offset_has_to_join_where_the_centreline_joins</span>() {</span>
+<span id="tests-02-worked-examples-loft-L137">  <span class="cm">// A left turn: 10 units of straight, then a quarter circle about (10, 5).</span></span>
+<span id="tests-02-worked-examples-loft-L138">  left = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L139">  <span class="fn-call">track_straight</span>(left, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L140">  <span class="fn-call">track_arc</span>(left, <span class="nm">10.0</span>, <span class="nm">5.0</span>, <span class="nm">5.0</span>, -<span class="nm">1.5707963267948966</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L141"></span>
+<span id="tests-02-worked-examples-loft-L142">  <span class="cm">// A right turn: the mirror, about (10, -5), swept the other way.</span></span>
+<span id="tests-02-worked-examples-loft-L143">  right = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L144">  <span class="fn-call">track_straight</span>(right, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L145">  <span class="fn-call">track_arc</span>(right, <span class="nm">10.0</span>, -<span class="nm">5.0</span>, <span class="nm">5.0</span>, <span class="nm">1.5707963267948966</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L146"></span>
+<span id="tests-02-worked-examples-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(left, <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>, <span class="st">"the centreline itself joins"</span>);</span>
+<span id="tests-02-worked-examples-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(right, <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>, <span class="st">"and so does the mirrored one"</span>);</span>
+<span id="tests-02-worked-examples-loft-L149"></span>
+<span id="tests-02-worked-examples-loft-L150">  <span class="cm">// `d` positive is the LEFT of travel, for a straight and for a turn alike, so</span></span>
+<span id="tests-02-worked-examples-loft-L151">  <span class="cm">// the left rail of the left turn starts at (10, 1) — the same point the offset</span></span>
+<span id="tests-02-worked-examples-loft-L152">  <span class="cm">// straight ends at.</span></span>
+<span id="tests-02-worked-examples-loft-L153">  lo = <span class="fn-call">track_offset</span>(left, <span class="nm">1.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L154">  (bx, by) = <span class="fn-call">seg_point</span>(lo, <span class="nm">1</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L155">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(bx - <span class="nm">10.0</span>) &lt; <span class="nm">0.000000001</span> &amp;&amp; <span class="fn-call">abs_f</span>(by - <span class="nm">1.0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L156">         <span class="st">"the left rail of a left turn starts at (10, 1), got ({bx}, {by})"</span>);</span>
+<span id="tests-02-worked-examples-loft-L157"></span>
+<span id="tests-02-worked-examples-loft-L158">  <span class="cm">// All four combinations of turn direction and side, and the gap is the check.</span></span>
+<span id="tests-02-worked-examples-loft-L159">  k = <span class="nm">1</span>;</span>
+<span id="tests-02-worked-examples-loft-L160">  while k &lt;= <span class="nm">8</span> {</span>
+<span id="tests-02-worked-examples-loft-L161">    d = (k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;                       <span class="cm">// 0.5 .. 4.0, all inside the limit</span></span>
+<span id="tests-02-worked-examples-loft-L162">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(<span class="fn-call">track_offset</span>(left, d), <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L163">           <span class="st">"left turn, left rail at d={d} joins"</span>);</span>
+<span id="tests-02-worked-examples-loft-L164">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(<span class="fn-call">track_offset</span>(left, <span class="nm">0.0</span> - d), <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L165">           <span class="st">"left turn, right rail at d={d} joins"</span>);</span>
+<span id="tests-02-worked-examples-loft-L166">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(<span class="fn-call">track_offset</span>(right, d), <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L167">           <span class="st">"right turn, left rail at d={d} joins"</span>);</span>
+<span id="tests-02-worked-examples-loft-L168">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">joint_gap</span>(<span class="fn-call">track_offset</span>(right, <span class="nm">0.0</span> - d), <span class="nm">0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L169">           <span class="st">"right turn, right rail at d={d} joins"</span>);</span>
+<span id="tests-02-worked-examples-loft-L170">    k = k + <span class="nm">1</span>;</span>
+<span id="tests-02-worked-examples-loft-L171">  }</span>
+<span id="tests-02-worked-examples-loft-L172"></span>
+<span id="tests-02-worked-examples-loft-L173">  <span class="cm">// And the property that could not tell the two apart, so nobody mistakes this</span></span>
+<span id="tests-02-worked-examples-loft-L174">  <span class="cm">// for a test of it: equidistance holds — it held before the fix too.</span></span>
+<span id="tests-02-worked-examples-loft-L175">  o = <span class="fn-call">track_offset</span>(left, <span class="nm">1.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L176">  (mx, my) = <span class="fn-call">seg_point</span>(o, <span class="nm">1</span>, <span class="fn-call">seg_len</span>(o, <span class="nm">1</span>) * <span class="nm">0.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L177">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(<span class="fn-call">track_distance</span>(left, mx, my) - <span class="nm">1.0</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L178">         <span class="st">"the offset is exactly 1.0 from the centreline"</span>);</span>
+<span id="tests-02-worked-examples-loft-L179"></span>
+<span id="tests-02-worked-examples-loft-L180">  <span class="cm">// `seg_curvature` states the same left/right convention as a number, and the two</span></span>
+<span id="tests-02-worked-examples-loft-L181">  <span class="cm">// have to agree: on a turn signed POSITIVE the positive offset is the INSIDE one,</span></span>
+<span id="tests-02-worked-examples-loft-L182">  <span class="cm">// so its rail is the shorter of the two.  Disagree, and one of them is the bug.</span></span>
+<span id="tests-02-worked-examples-loft-L183">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(<span class="fn-call">seg_curvature</span>(left, <span class="nm">1</span>) - <span class="nm">0.2</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L184">         <span class="st">"a left turn of radius 5 has curvature +0.2, got {seg_curvature(left, 1)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L185">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(<span class="fn-call">seg_curvature</span>(right, <span class="nm">1</span>) + <span class="nm">0.2</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L186">         <span class="st">"the right turn has -0.2, got {seg_curvature(right, 1)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L187">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_curvature</span>(left, <span class="nm">0</span>) == <span class="nm">0.0</span>, <span class="st">"and a straight has none"</span>);</span>
+<span id="tests-02-worked-examples-loft-L188">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_len</span>(<span class="fn-call">track_offset</span>(left, <span class="nm">1.0</span>), <span class="nm">1</span>) &lt; <span class="fn-call">seg_len</span>(left, <span class="nm">1</span>),</span>
+<span id="tests-02-worked-examples-loft-L189">         <span class="st">"the left rail of a left turn is the inside one, so it is shorter"</span>);</span>
+<span id="tests-02-worked-examples-loft-L190">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_len</span>(<span class="fn-call">track_offset</span>(right, <span class="nm">1.0</span>), <span class="nm">1</span>) &gt; <span class="fn-call">seg_len</span>(right, <span class="nm">1</span>),</span>
+<span id="tests-02-worked-examples-loft-L191">         <span class="st">"and of a right turn it is the outside one, so it is longer"</span>);</span>
+<span id="tests-02-worked-examples-loft-L192">}</span>
+<span id="tests-02-worked-examples-loft-L193"></span>
+<span id="tests-02-worked-examples-loft-L194"><span class="cm">// @HXY-002 — THE RASTERISED BAND HAS A FLOOR; THE OFFSET DOES NOT.</span></span>
+<span id="tests-02-worked-examples-loft-L195"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L196"><span class="cm">// This is why nothing but the centreline is stored.  `way_mark` marks every cell</span></span>
+<span id="tests-02-worked-examples-loft-L197"><span class="cm">// whose CENTRE is within `halfwidth` of the way, so the width you get is the</span></span>
+<span id="tests-02-worked-examples-loft-L198"><span class="cm">// width of the nearest ring of cell centres — and between two rings, a whole</span></span>
+<span id="tests-02-worked-examples-loft-L199"><span class="cm">// interval of requested widths gives the identical footprint.</span></span>
+<span id="tests-02-worked-examples-loft-L200"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L201"><span class="cm">// The interval is the floor, and the module header quotes it as "around 0.5 hex</span></span>
+<span id="tests-02-worked-examples-loft-L202"><span class="cm">// widths".  That is the best case, not the case.  Measured here: a way along a</span></span>
+<span id="tests-02-worked-examples-loft-L203"><span class="cm">// ROW cannot resolve anything finer than 1.5 (0.87 hex widths); the same way</span></span>
+<span id="tests-02-worked-examples-loft-L204"><span class="cm">// along a COLUMN resolves 0.866 (0.5 hex widths).  The floor is a function of</span></span>
+<span id="tests-02-worked-examples-loft-L205"><span class="cm">// the heading, and the two headings differ by sqrt(3).</span></span>
+<span id="tests-02-worked-examples-loft-L206"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L207"><span class="cm">// So a caller asking for a 0.1-wide footpath and a 1.4-wide lane along a row</span></span>
+<span id="tests-02-worked-examples-loft-L208"><span class="cm">// gets the same cells twice.  `track_offset` at those two widths gets two</span></span>
+<span id="tests-02-worked-examples-loft-L209"><span class="cm">// different exact lines, which is the point: the cells are a rasterisation of</span></span>
+<span id="tests-02-worked-examples-loft-L210"><span class="cm">// the way, never the way.</span></span>
+<span id="tests-02-worked-examples-loft-L211"><span class="kw">fn</span> <span class="fn-call">test_the_rasterised_band_has_a_floor_the_offset_does_not</span>() {</span>
+<span id="tests-02-worked-examples-loft-L212">  along_row = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L213">  <span class="fn-call">track_straight</span>(along_row, -<span class="nm">20.0</span>, <span class="nm">0.0</span>, <span class="nm">20.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L214">  along_col = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L215">  <span class="fn-call">track_straight</span>(along_col, <span class="nm">0.0</span>, -<span class="nm">20.0</span>, <span class="nm">0.0</span>, <span class="nm">20.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L216"></span>
+<span id="tests-02-worked-examples-loft-L217">  <span class="cm">// Along a row the rings of cell centres are 1.5 apart.</span></span>
+<span id="tests-02-worked-examples-loft-L218">  narrow = <span class="fn-call">band_cells</span>(along_row, <span class="nm">0.1</span>);</span>
+<span id="tests-02-worked-examples-loft-L219">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_row, <span class="nm">1.4999</span>) == narrow,</span>
+<span id="tests-02-worked-examples-loft-L220">         <span class="st">"a 0.1 path and a 1.4999 lane rasterise identically along a row"</span>);</span>
+<span id="tests-02-worked-examples-loft-L221">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_row, <span class="nm">1.5001</span>) &gt; narrow,</span>
+<span id="tests-02-worked-examples-loft-L222">         <span class="st">"and the footprint only grows once 1.5 is crossed"</span>);</span>
+<span id="tests-02-worked-examples-loft-L223"></span>
+<span id="tests-02-worked-examples-loft-L224">  <span class="cm">// Along a column they are sqrt(3)/2 = 0.866 apart — a finer floor, same way.</span></span>
+<span id="tests-02-worked-examples-loft-L225">  thin = <span class="fn-call">band_cells</span>(along_col, <span class="nm">0.1</span>);</span>
+<span id="tests-02-worked-examples-loft-L226">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_col, <span class="nm">0.8659</span>) == thin,</span>
+<span id="tests-02-worked-examples-loft-L227">         <span class="st">"the same two widths along a column rasterise identically too"</span>);</span>
+<span id="tests-02-worked-examples-loft-L228">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_col, <span class="nm">0.8661</span>) &gt; thin,</span>
+<span id="tests-02-worked-examples-loft-L229">         <span class="st">"and that footprint grows at 0.866, not at 1.5"</span>);</span>
+<span id="tests-02-worked-examples-loft-L230"></span>
+<span id="tests-02-worked-examples-loft-L231">  <span class="cm">// The two floors are a factor sqrt(3) apart: the SAME requested width resolves</span></span>
+<span id="tests-02-worked-examples-loft-L232">  <span class="cm">// differently depending only on which way the road points.</span></span>
+<span id="tests-02-worked-examples-loft-L233">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_row, <span class="nm">1.0</span>) == narrow, <span class="st">"1.0 is below the row floor"</span>);</span>
+<span id="tests-02-worked-examples-loft-L234">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">band_cells</span>(along_col, <span class="nm">1.0</span>) &gt; thin, <span class="st">"and above the column floor"</span>);</span>
+<span id="tests-02-worked-examples-loft-L235"></span>
+<span id="tests-02-worked-examples-loft-L236">  <span class="cm">// The offset has no floor at all: ask for the two widths, get two lines.</span></span>
+<span id="tests-02-worked-examples-loft-L237">  a = <span class="fn-call">track_offset</span>(along_row, <span class="nm">0.1</span>);</span>
+<span id="tests-02-worked-examples-loft-L238">  b = <span class="fn-call">track_offset</span>(along_row, <span class="nm">1.4999</span>);</span>
+<span id="tests-02-worked-examples-loft-L239">  (ax, ay) = <span class="fn-call">seg_point</span>(a, <span class="nm">0</span>, <span class="nm">5.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L240">  (bx, by) = <span class="fn-call">seg_point</span>(b, <span class="nm">0</span>, <span class="nm">5.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L241">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(ay - <span class="nm">0.1</span>) &lt; <span class="nm">0.000000001</span>, <span class="st">"the 0.1 offset is at y = 0.1, got {ay}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L242">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(by - <span class="nm">1.4999</span>) &lt; <span class="nm">0.000000001</span>, <span class="st">"the 1.4999 offset is at y = 1.4999, got {by}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L243">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(ax - bx) &lt; <span class="nm">0.000000001</span>, <span class="st">"both run along the same x"</span>);</span>
+<span id="tests-02-worked-examples-loft-L244">}</span>
+<span id="tests-02-worked-examples-loft-L245"></span>
+<span id="tests-02-worked-examples-loft-L246"><span class="cm">// @HXY-003 — `offset_legal` IS A WIDTH TEST, NOT AN OFFSET TEST.</span></span>
+<span id="tests-02-worked-examples-loft-L247"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L248"><span class="cm">// It takes `d` and uses `|d|`, which looks like a needless restriction until you</span></span>
+<span id="tests-02-worked-examples-loft-L249"><span class="cm">// remember what a way is: the left rail AND the right rail, at +d and -d.  The</span></span>
+<span id="tests-02-worked-examples-loft-L250"><span class="cm">// outer one is never in trouble; the inner one collapses when `|d|` reaches the</span></span>
+<span id="tests-02-worked-examples-loft-L251"><span class="cm">// tightest turn radius on the whole track.  So the question `offset_legal`</span></span>
+<span id="tests-02-worked-examples-loft-L252"><span class="cm">// answers is "may this WAY be this wide", and the answer is set by the sharpest</span></span>
+<span id="tests-02-worked-examples-loft-L253"><span class="cm">// turn anywhere along it — which is the minimum curve radius, falling out of the</span></span>
+<span id="tests-02-worked-examples-loft-L254"><span class="cm">// geometry rather than being chosen.</span></span>
+<span id="tests-02-worked-examples-loft-L255"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L256"><span class="cm">// Past the limit `track_offset` still returns a Track, and it is nonsense in two</span></span>
+<span id="tests-02-worked-examples-loft-L257"><span class="cm">// measurable ways: the inner arc's radius goes negative, so its length is</span></span>
+<span id="tests-02-worked-examples-loft-L258"><span class="cm">// NEGATIVE and the way gets shorter as it gets wider; and equidistance — the one</span></span>
+<span id="tests-02-worked-examples-loft-L259"><span class="cm">// guarantee the whole design rests on — stops holding.  Asked for 6.0 on a</span></span>
+<span id="tests-02-worked-examples-loft-L260"><span class="cm">// radius-5 turn, the "offset" sits 5.71 from the centreline.</span></span>
+<span id="tests-02-worked-examples-loft-L261"><span class="kw">fn</span> <span class="fn-call">test_offset_legal_is_a_width_test_set_by_the_sharpest_turn</span>() {</span>
+<span id="tests-02-worked-examples-loft-L262">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L263">  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">10.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L264">  <span class="fn-call">track_arc</span>(t, <span class="nm">10.0</span>, <span class="nm">5.0</span>, <span class="nm">5.0</span>, -<span class="nm">1.5707963267948966</span>, <span class="nm">0.0</span>);      <span class="cm">// R = 5</span></span>
+<span id="tests-02-worked-examples-loft-L265"></span>
+<span id="tests-02-worked-examples-loft-L266">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">offset_legal</span>(t, <span class="nm">4.5</span>), <span class="st">"a way 9 wide fits a radius-5 turn"</span>);</span>
+<span id="tests-02-worked-examples-loft-L267">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">offset_legal</span>(t, -<span class="nm">4.5</span>), <span class="st">"and the sign does not matter — it is a width"</span>);</span>
+<span id="tests-02-worked-examples-loft-L268">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">offset_legal</span>(t, <span class="nm">5.0</span>), <span class="st">"at the turn radius the inner rail is a point"</span>);</span>
+<span id="tests-02-worked-examples-loft-L269">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">offset_legal</span>(t, -<span class="nm">5.0</span>), <span class="st">"from either side"</span>);</span>
+<span id="tests-02-worked-examples-loft-L270"></span>
+<span id="tests-02-worked-examples-loft-L271">  <span class="cm">// Just inside the limit everything still holds exactly.</span></span>
+<span id="tests-02-worked-examples-loft-L272">  ok = <span class="fn-call">track_offset</span>(t, <span class="nm">4.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L273">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_len</span>(ok, <span class="nm">1</span>) &gt; <span class="nm">0.0</span>, <span class="st">"the inner arc still has a positive length"</span>);</span>
+<span id="tests-02-worked-examples-loft-L274">  (px, py) = <span class="fn-call">seg_point</span>(ok, <span class="nm">1</span>, <span class="fn-call">seg_len</span>(ok, <span class="nm">1</span>) * <span class="nm">0.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L275">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(<span class="fn-call">track_distance</span>(t, px, py) - <span class="nm">4.5</span>) &lt; <span class="nm">0.000000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L276">         <span class="st">"and is exactly 4.5 from the centreline"</span>);</span>
+<span id="tests-02-worked-examples-loft-L277"></span>
+<span id="tests-02-worked-examples-loft-L278">  <span class="cm">// Just outside it, both failures are visible.</span></span>
+<span id="tests-02-worked-examples-loft-L279">  bad = <span class="fn-call">track_offset</span>(t, <span class="nm">6.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L280">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">seg_len</span>(bad, <span class="nm">1</span>) &lt; <span class="nm">0.0</span>,</span>
+<span id="tests-02-worked-examples-loft-L281">         <span class="st">"past the limit the inner arc has a NEGATIVE length, got {seg_len(bad, 1)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L282">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">track_len</span>(bad) &lt; <span class="fn-call">track_len</span>(ok),</span>
+<span id="tests-02-worked-examples-loft-L283">         <span class="st">"so the way gets SHORTER as it gets wider"</span>);</span>
+<span id="tests-02-worked-examples-loft-L284">  (qx, qy) = <span class="fn-call">seg_point</span>(bad, <span class="nm">1</span>, <span class="fn-call">seg_len</span>(bad, <span class="nm">1</span>) * <span class="nm">0.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L285">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(<span class="fn-call">track_distance</span>(t, qx, qy) - <span class="nm">6.0</span>) &gt; <span class="nm">0.25</span>,</span>
+<span id="tests-02-worked-examples-loft-L286">         <span class="st">"and equidistance is gone: asked 6.0, sits {track_distance(t, qx, qy)} out"</span>);</span>
+<span id="tests-02-worked-examples-loft-L287"></span>
+<span id="tests-02-worked-examples-loft-L288">  <span class="cm">// It is the whole track's tightest turn that decides, not the one being read.</span></span>
+<span id="tests-02-worked-examples-loft-L289">  two = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L290">  <span class="fn-call">track_arc</span>(two, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">9.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);       <span class="cm">// a gentle sweep</span></span>
+<span id="tests-02-worked-examples-loft-L291">  <span class="fn-call">track_arc</span>(two, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">2.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);       <span class="cm">// and a tight one</span></span>
+<span id="tests-02-worked-examples-loft-L292">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">offset_legal</span>(two, <span class="nm">1.5</span>), <span class="st">"1.5 clears the tight turn as well as the gentle one"</span>);</span>
+<span id="tests-02-worked-examples-loft-L293">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">offset_legal</span>(two, <span class="nm">2.0</span>), <span class="st">"2.0 does not — the R=2 turn sets the limit for both"</span>);</span>
+<span id="tests-02-worked-examples-loft-L294">}</span>
+<span id="tests-02-worked-examples-loft-L295"></span>
+<span id="tests-02-worked-examples-loft-L296"><span class="cm">// @HXY-004 — MARK EVERY PART, THEN CUT ONCE.  STAMPING PART BY PART IS WRONG,</span></span>
+<span id="tests-02-worked-examples-loft-L297"><span class="cm">// AND THE FOOTPRINT CANNOT TELL YOU SO.</span></span>
+<span id="tests-02-worked-examples-loft-L298"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L299"><span class="cm">// `way_stamp` marks a way's cells and cuts its boundary in one call, which is</span></span>
+<span id="tests-02-worked-examples-loft-L300"><span class="cm">// exactly what you want for ONE way and exactly what you must not do for two.</span></span>
+<span id="tests-02-worked-examples-loft-L301"><span class="cm">// Cutting turns "outside the footprint" into a blocked edge — and the footprint</span></span>
+<span id="tests-02-worked-examples-loft-L302"><span class="cm">// grows when the next part lands, so an edge that was a boundary becomes an</span></span>
+<span id="tests-02-worked-examples-loft-L303"><span class="cm">// interior edge with a wall still standing in it.  Nothing ever clears it.</span></span>
+<span id="tests-02-worked-examples-loft-L304"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L305"><span class="cm">// Two lanes of a road, side by side.  All three routes below cover the SAME 23</span></span>
+<span id="tests-02-worked-examples-loft-L306"><span class="cm">// cells, so a footprint check passes on all three.  Stamping them one at a time</span></span>
+<span id="tests-02-worked-examples-loft-L307"><span class="cm">// leaves 22 walls down the middle of the road, and WHICH surface owns them</span></span>
+<span id="tests-02-worked-examples-loft-L308"><span class="cm">// depends on which lane was stamped first — the order-dependence the two-phase</span></span>
+<span id="tests-02-worked-examples-loft-L309"><span class="cm">// rule exists to remove.  `way_mark` both, then `cut_arb` once: no walls, and</span></span>
+<span id="tests-02-worked-examples-loft-L310"><span class="cm">// the answer never looks at what was stamped when.</span></span>
+<span id="tests-02-worked-examples-loft-L311"><span class="kw">fn</span> <span class="fn-call">test_mark_every_part_then_cut_once</span>() {</span>
+<span id="tests-02-worked-examples-loft-L312">  a = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L313">  <span class="fn-call">track_straight</span>(a, -<span class="nm">9.0</span>, <span class="nm">0.0</span>, <span class="nm">9.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L314">  b = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L315">  <span class="fn-call">track_straight</span>(b, -<span class="nm">9.0</span>, <span class="nm">1.5</span>, <span class="nm">9.0</span>, <span class="nm">1.5</span>);        <span class="cm">// the neighbouring row of cells</span></span>
+<span id="tests-02-worked-examples-loft-L316"></span>
+<span id="tests-02-worked-examples-loft-L317">  sf = <span class="fn-call">surfaces_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L318">  fa = <span class="fn-call">way_surfaces</span>(a, sf);</span>
+<span id="tests-02-worked-examples-loft-L319">  fb = <span class="fn-call">way_surfaces</span>(b, sf);</span>
+<span id="tests-02-worked-examples-loft-L320">  <span class="cm">// `way_surfaces` answers the FIRST id and promises the rest are contiguous, which</span></span>
+<span id="tests-02-worked-examples-loft-L321">  <span class="cm">// is what lets `way_stamp` name a segment's surface as `first + i` with no lookup.</span></span>
+<span id="tests-02-worked-examples-loft-L322">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(fa == <span class="nm">1</span> &amp;&amp; fb == fa + a.tk_n,</span>
+<span id="tests-02-worked-examples-loft-L323">         <span class="st">"ids are contiguous across parts: {fa} then {fb}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L324"></span>
+<span id="tests-02-worked-examples-loft-L325">  s1 = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L326">  e1 = <span class="fn-call">edgeset_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L327">  <span class="fn-call">way_stamp</span>(a, <span class="nm">0.7</span>, s1, e1, fa, <span class="nm">1</span>);</span>
+<span id="tests-02-worked-examples-loft-L328">  <span class="fn-call">way_stamp</span>(b, <span class="nm">0.7</span>, s1, e1, fb, <span class="nm">1</span>);</span>
+<span id="tests-02-worked-examples-loft-L329"></span>
+<span id="tests-02-worked-examples-loft-L330">  s2 = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L331">  e2 = <span class="fn-call">edgeset_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L332">  <span class="fn-call">way_stamp</span>(b, <span class="nm">0.7</span>, s2, e2, fb, <span class="nm">1</span>);              <span class="cm">// the same two lanes, other order</span></span>
+<span id="tests-02-worked-examples-loft-L333">  <span class="fn-call">way_stamp</span>(a, <span class="nm">0.7</span>, s2, e2, fa, <span class="nm">1</span>);</span>
+<span id="tests-02-worked-examples-loft-L334"></span>
+<span id="tests-02-worked-examples-loft-L335">  s3 = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L336">  e3 = <span class="fn-call">edgeset_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L337">  <span class="fn-call">way_mark</span>(a, <span class="nm">0.7</span>, s3);</span>
+<span id="tests-02-worked-examples-loft-L338">  <span class="fn-call">way_mark</span>(b, <span class="nm">0.7</span>, s3);</span>
+<span id="tests-02-worked-examples-loft-L339">  <span class="fn-call">cut_arb</span>(s3, e3, sf, fb + b.tk_n, <span class="nm">1</span>);</span>
+<span id="tests-02-worked-examples-loft-L340"></span>
+<span id="tests-02-worked-examples-loft-L341">  <span class="cm">// The check a caller would make, and it cannot see any of this.</span></span>
+<span id="tests-02-worked-examples-loft-L342">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(s1) == <span class="nm">23</span>, <span class="st">"lane A then B covers 23 cells"</span>);</span>
+<span id="tests-02-worked-examples-loft-L343">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(s2) == <span class="nm">23</span>, <span class="st">"B then A covers the same 23"</span>);</span>
+<span id="tests-02-worked-examples-loft-L344">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(s3) == <span class="nm">23</span>, <span class="st">"and so does mark-both-then-cut"</span>);</span>
+<span id="tests-02-worked-examples-loft-L345"></span>
+<span id="tests-02-worked-examples-loft-L346">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">walls_inside</span>(s1, e1) == <span class="nm">22</span>, <span class="st">"stamping part by part leaves 22 walls inside the road"</span>);</span>
+<span id="tests-02-worked-examples-loft-L347">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">walls_inside</span>(s2, e2) == <span class="nm">22</span>, <span class="st">"the other order leaves 22 as well"</span>);</span>
+<span id="tests-02-worked-examples-loft-L348">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">walls_inside</span>(s3, e3) == <span class="nm">0</span>, <span class="st">"marking both and cutting once leaves none"</span>);</span>
+<span id="tests-02-worked-examples-loft-L349"></span>
+<span id="tests-02-worked-examples-loft-L350">  <span class="cm">// And the stale walls are order-dependent: the same edge, two different owners.</span></span>
+<span id="tests-02-worked-examples-loft-L351">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">edge_surf</span>(e1, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>) == fa, <span class="st">"A stamped first owns the shared edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L352">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">edge_surf</span>(e2, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>) == fb, <span class="st">"B stamped first owns the very same edge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L353">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">edge_surf</span>(e3, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">1</span>) == <span class="nm">0</span>, <span class="st">"cut once, nothing owns it — it is not a wall"</span>);</span>
+<span id="tests-02-worked-examples-loft-L354">}</span>
+<span id="tests-02-worked-examples-loft-L355"></span>
+<span id="tests-02-worked-examples-loft-L356"><span class="cm">// @HXY-005 — A MILEPOST NEAR THE START OF A TURN SNAPS TO THE NEARER END, NOT</span></span>
+<span id="tests-02-worked-examples-loft-L357"><span class="cm">// THE FARTHER ONE.</span></span>
+<span id="tests-02-worked-examples-loft-L358"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L359"><span class="cm">// `way_param` is the parameter everything along a way is stated in — stations,</span></span>
+<span id="tests-02-worked-examples-loft-L360"><span class="cm">// signals, the steps below.  On an arc it is an ANGLE turned into a length, and</span></span>
+<span id="tests-02-worked-examples-loft-L361"><span class="cm">// an angle wraps: a point that sits just BEFORE the start of the turn is at</span></span>
+<span id="tests-02-worked-examples-loft-L362"><span class="cm">// -0.1 radians, which is 2*pi - 0.1 going the arc's way round, i.e. very nearly</span></span>
+<span id="tests-02-worked-examples-loft-L363"><span class="cm">// a full circle of travel.</span></span>
+<span id="tests-02-worked-examples-loft-L364"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L365"><span class="cm">// Clamping that into the arc's span would hand it the parameter of the END of</span></span>
+<span id="tests-02-worked-examples-loft-L366"><span class="cm">// the turn.  On a staircase that is the last step's height given to the first</span></span>
+<span id="tests-02-worked-examples-loft-L367"><span class="cm">// cell of the flight — a full-flight riser between two neighbouring cells, and</span></span>
+<span id="tests-02-worked-examples-loft-L368"><span class="cm">// the reason this is a worked example rather than a footnote.  `seg_param`</span></span>
+<span id="tests-02-worked-examples-loft-L369"><span class="cm">// instead snaps to whichever end is angularly nearer, so a point before the</span></span>
+<span id="tests-02-worked-examples-loft-L370"><span class="cm">// start reads 0.</span></span>
+<span id="tests-02-worked-examples-loft-L371"><span class="kw">fn</span> <span class="fn-call">test_a_milepost_before_a_turn_reads_zero_not_a_full_lap</span>() {</span>
+<span id="tests-02-worked-examples-loft-L372">  arc = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L373">  <span class="fn-call">track_arc</span>(arc, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">0.0</span>, <span class="nm">1.5707963267948966</span>);   <span class="cm">// R = 4, a quarter turn</span></span>
+<span id="tests-02-worked-examples-loft-L374">  span = <span class="fn-call">seg_len</span>(arc, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L375">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(span - <span class="nm">6.283185307179586</span>) &lt; <span class="nm">0.000001</span>, <span class="st">"the quarter turn is 6.283 long"</span>);</span>
+<span id="tests-02-worked-examples-loft-L376"></span>
+<span id="tests-02-worked-examples-loft-L377">  <span class="cm">// On the arc, the parameter is the arc length as expected.</span></span>
+<span id="tests-02-worked-examples-loft-L378">  mid = <span class="fn-call">seg_param</span>(arc, <span class="nm">0</span>, <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">cos</a></span>(<span class="nm">0.7853981633974483</span>), <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">sin</a></span>(<span class="nm">0.7853981633974483</span>));</span>
+<span id="tests-02-worked-examples-loft-L379">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(mid - span * <span class="nm">0.5</span>) &lt; <span class="nm">0.000001</span>, <span class="st">"halfway round reads half the length, got {mid}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L380"></span>
+<span id="tests-02-worked-examples-loft-L381">  <span class="cm">// 0.1 radians BEFORE the start.  The wrap says 6.18; the answer is 0.</span></span>
+<span id="tests-02-worked-examples-loft-L382">  before = <span class="fn-call">seg_param</span>(arc, <span class="nm">0</span>, <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">cos</a></span>(-<span class="nm">0.1</span>), <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">sin</a></span>(-<span class="nm">0.1</span>));</span>
+<span id="tests-02-worked-examples-loft-L383">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(before == <span class="nm">0.0</span>, <span class="st">"a point before the turn reads 0, got {before}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L384">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(before &lt; span * <span class="nm">0.5</span>, <span class="st">"and emphatically not the far end of the turn"</span>);</span>
+<span id="tests-02-worked-examples-loft-L385"></span>
+<span id="tests-02-worked-examples-loft-L386">  <span class="cm">// 0.1 radians after the end, which really does belong at the far end.</span></span>
+<span id="tests-02-worked-examples-loft-L387">  after = <span class="fn-call">seg_param</span>(arc, <span class="nm">0</span>, <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">cos</a></span>(<span class="nm">1.67</span>), <span class="nm">4.0</span> * <span class="bi"><a href="stdlib-math.html">sin</a></span>(<span class="nm">1.67</span>));</span>
+<span id="tests-02-worked-examples-loft-L388">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">abs_f</span>(after - span) &lt; <span class="nm">0.000001</span>, <span class="st">"a point past the turn reads the full span, got {after}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L389">}</span>
+<span id="tests-02-worked-examples-loft-L390"></span>
+<span id="tests-02-worked-examples-loft-L391"><span class="cm">// @HXY-006 — THE SHORTEST SAFE TREAD IS A FUNCTION OF THE HEADING.</span></span>
+<span id="tests-02-worked-examples-loft-L392"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L393"><span class="cm">// `way_steps` raises the ground by `rise` every `tread` of travel, which is a</span></span>
+<span id="tests-02-worked-examples-loft-L394"><span class="cm">// staircase, a terrace, or a ramp at rise 0.  The tread is continuous; the cells</span></span>
+<span id="tests-02-worked-examples-loft-L395"><span class="cm">// it is quantised onto are not, and their spacing ALONG the way depends on which</span></span>
+<span id="tests-02-worked-examples-loft-L396"><span class="cm">// way the way points — sqrt(3) = 1.732 apart down a row, 1.5 apart down a</span></span>
+<span id="tests-02-worked-examples-loft-L397"><span class="cm">// column.  Ask for a tread finer than that spacing and consecutive cells skip a</span></span>
+<span id="tests-02-worked-examples-loft-L398"><span class="cm">// step: a DOUBLE RISER between two neighbours, which is a trip hazard on a stair</span></span>
+<span id="tests-02-worked-examples-loft-L399"><span class="cm">// and a cliff on a terrace.</span></span>
+<span id="tests-02-worked-examples-loft-L400"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L401"><span class="cm">// So there is no single "fine enough" tread.  1.5 is exactly right along a</span></span>
+<span id="tests-02-worked-examples-loft-L402"><span class="cm">// column and produces double risers along a row.  Whatever the flight's heading,</span></span>
+<span id="tests-02-worked-examples-loft-L403"><span class="cm">// the shortest tread it can carry is the spacing of its own cells — and this</span></span>
+<span id="tests-02-worked-examples-loft-L404"><span class="cm">// example measures both, rather than quoting one.</span></span>
+<span id="tests-02-worked-examples-loft-L405"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L406"><span class="cm">// This is @HXY-002's anisotropy seen end-on: the lattice that makes the ACROSS</span></span>
+<span id="tests-02-worked-examples-loft-L407"><span class="cm">// resolution coarser along a row is the one that makes the ALONG spacing coarser</span></span>
+<span id="tests-02-worked-examples-loft-L408"><span class="cm">// there too.</span></span>
+<span id="tests-02-worked-examples-loft-L409"><span class="kw">fn</span> <span class="fn-call">test_the_shortest_safe_tread_depends_on_the_heading</span>() {</span>
+<span id="tests-02-worked-examples-loft-L410">  along_row = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L411">  <span class="fn-call">track_straight</span>(along_row, -<span class="nm">12.0</span>, <span class="nm">0.0</span>, <span class="nm">12.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L412">  along_col = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L413">  <span class="fn-call">track_straight</span>(along_col, <span class="nm">0.0</span>, -<span class="nm">12.0</span>, <span class="nm">0.0</span>, <span class="nm">12.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L414"></span>
+<span id="tests-02-worked-examples-loft-L415">  <span class="cm">// A halfwidth of 1.0 clears the column floor (0.866) and not the row floor</span></span>
+<span id="tests-02-worked-examples-loft-L416">  <span class="cm">// (1.5), which is what makes BOTH footprints connected — a flight whose cells</span></span>
+<span id="tests-02-worked-examples-loft-L417">  <span class="cm">// are not neighbours has no risers, and would read as flawless.</span></span>
+<span id="tests-02-worked-examples-loft-L418">  sr = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L419">  <span class="fn-call">way_mark</span>(along_row, <span class="nm">1.0</span>, sr);</span>
+<span id="tests-02-worked-examples-loft-L420">  sc = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L421">  <span class="fn-call">way_mark</span>(along_col, <span class="nm">1.0</span>, sc);</span>
+<span id="tests-02-worked-examples-loft-L422">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">adjacent_pairs</span>(sr) &gt; <span class="nm">0</span> &amp;&amp; <span class="fn-call">adjacent_pairs</span>(sc) &gt; <span class="nm">0</span>,</span>
+<span id="tests-02-worked-examples-loft-L423">         <span class="st">"both flights are connected, so there is something to measure"</span>);</span>
+<span id="tests-02-worked-examples-loft-L424"></span>
+<span id="tests-02-worked-examples-loft-L425">  <span class="cm">// A tread of 1.5: right for the column, one step short for the row.</span></span>
+<span id="tests-02-worked-examples-loft-L426">  fr = <span class="fn-call">heights_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L427">  <span class="fn-call">way_steps</span>(along_row, sr, fr, <span class="nm">1.0</span>, <span class="nm">1.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L428">  fc = <span class="fn-call">heights_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L429">  <span class="fn-call">way_steps</span>(along_col, sc, fc, <span class="nm">1.0</span>, <span class="nm">1.5</span>);</span>
+<span id="tests-02-worked-examples-loft-L430">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">worst_riser</span>(sr, fr) &gt; <span class="nm">1.5</span>,</span>
+<span id="tests-02-worked-examples-loft-L431">         <span class="st">"along a row, a 1.5 tread skips steps: riser {worst_riser(sr, fr)} for a 1.0 rise"</span>);</span>
+<span id="tests-02-worked-examples-loft-L432">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">worst_riser</span>(sc, fc) &lt; <span class="nm">1.5</span>,</span>
+<span id="tests-02-worked-examples-loft-L433">         <span class="st">"along a column the same tread is clean: riser {worst_riser(sc, fc)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L434"></span>
+<span id="tests-02-worked-examples-loft-L435">  <span class="cm">// Give the row its own cell spacing and it is clean too.</span></span>
+<span id="tests-02-worked-examples-loft-L436">  fr2 = <span class="fn-call">heights_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L437">  <span class="fn-call">way_steps</span>(along_row, sr, fr2, <span class="nm">1.0</span>, <span class="nm">1.7320508075688772</span>);</span>
+<span id="tests-02-worked-examples-loft-L438">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">worst_riser</span>(sr, fr2) &lt; <span class="nm">1.5</span>,</span>
+<span id="tests-02-worked-examples-loft-L439">         <span class="st">"at a tread of sqrt(3) the row flight is clean: riser {worst_riser(sr, fr2)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L440"></span>
+<span id="tests-02-worked-examples-loft-L441">  <span class="cm">// And the column tolerates nothing finer than its own: 1.4 breaks it.</span></span>
+<span id="tests-02-worked-examples-loft-L442">  fc2 = <span class="fn-call">heights_new</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L443">  <span class="fn-call">way_steps</span>(along_col, sc, fc2, <span class="nm">1.0</span>, <span class="nm">1.4</span>);</span>
+<span id="tests-02-worked-examples-loft-L444">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">worst_riser</span>(sc, fc2) &gt; <span class="nm">1.5</span>,</span>
+<span id="tests-02-worked-examples-loft-L445">         <span class="st">"just under 1.5 the column flight skips: riser {worst_riser(sc, fc2)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L446">}</span>
+<span id="tests-02-worked-examples-loft-L447"></span>
+<span id="tests-02-worked-examples-loft-L448"><span class="cm">// @HXY-007 — AN ANGLE IS A DIRECTION, NOT A QUANTITY, AND `seg_distance` USED TO</span></span>
+<span id="tests-02-worked-examples-loft-L449"><span class="cm">// DISAGREE.</span></span>
+<span id="tests-02-worked-examples-loft-L450"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L451"><span class="cm">// `track_arc` takes plain floats, so the angles an arc is authored with are</span></span>
+<span id="tests-02-worked-examples-loft-L452"><span class="cm">// whatever the caller had to hand: a heading that has been decremented a few</span></span>
+<span id="tests-02-worked-examples-loft-L453"><span class="cm">// times, an `atan2` result minus a turn, a sweep counted backwards from zero.</span></span>
+<span id="tests-02-worked-examples-loft-L454"><span class="cm">// Every one of those describes the same curve in the plane — an angle names a</span></span>
+<span id="tests-02-worked-examples-loft-L455"><span class="cm">// direction, and adding or removing 2*pi does not move anything.</span></span>
+<span id="tests-02-worked-examples-loft-L456"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L457"><span class="cm">// `seg_distance` normalised the point's angle in ONE direction:</span></span>
+<span id="tests-02-worked-examples-loft-L458"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L459"><span class="cm">//     while aa &lt; lo { aa = aa + 2*pi; }        // …and no companion going down</span></span>
+<span id="tests-02-worked-examples-loft-L460"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L461"><span class="cm">// which is exactly right for an arc authored ABOVE the atan2 range and silently</span></span>
+<span id="tests-02-worked-examples-loft-L462"><span class="cm">// wrong for one authored below it.  A point taken FROM the arc — by `seg_point`,</span></span>
+<span id="tests-02-worked-examples-loft-L463"><span class="cm">// so it is on the curve by construction — then reported itself as most of a</span></span>
+<span id="tests-02-worked-examples-loft-L464"><span class="cm">// radius away.</span></span>
+<span id="tests-02-worked-examples-loft-L465"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L466"><span class="cm">// WHY IT MATTERS MORE THAN A DISTANCE.  `seg_distance` is not a leaf:</span></span>
+<span id="tests-02-worked-examples-loft-L467"><span class="cm">// `track_distance`, `nearest_seg`, `way_mark`, `way_stamp`, `cut_arb` and</span></span>
+<span id="tests-02-worked-examples-loft-L468"><span class="cm">// `way_param`'s own choice of segment all reach it.  So the failure a caller</span></span>
+<span id="tests-02-worked-examples-loft-L469"><span class="cm">// actually sees is not a wrong number, it is a way rasterised somewhere else:</span></span>
+<span id="tests-02-worked-examples-loft-L470"><span class="cm">// the same quarter arc marked 5 cells authored at [0, pi/2] and 1 authored at</span></span>
+<span id="tests-02-worked-examples-loft-L471"><span class="cm">// [-2*pi, -2*pi + pi/2].  One curve, two footprints.</span></span>
+<span id="tests-02-worked-examples-loft-L472"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L473"><span class="cm">// ⚠ The file already had the right idiom TWELVE LINES AWAY — `seg_param` wraps</span></span>
+<span id="tests-02-worked-examples-loft-L474"><span class="cm">// up AND down — so this was one file carrying two normalisations, one of them</span></span>
+<span id="tests-02-worked-examples-loft-L475"><span class="cm">// half written.  Both call `ang_wrap` now, which is why there is no second place</span></span>
+<span id="tests-02-worked-examples-loft-L476"><span class="cm">// left for the pair to disagree.</span></span>
+<span id="tests-02-worked-examples-loft-L477"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L478"><span class="cm">// ⚠ THIS BLOCK DEFINES THE TAG, SO IT MUST NOT ALSO CITE ONE. The scanner's rule 4 is</span></span>
+<span id="tests-02-worked-examples-loft-L479"><span class="cm">// that a citation line anywhere in a block cancels a tag named in its earlier prose —</span></span>
+<span id="tests-02-worked-examples-loft-L480"><span class="cm">// and the first draft of this note said so IN WORDS THAT CONTAINED THE TOKEN, which</span></span>
+<span id="tests-02-worked-examples-loft-L481"><span class="cm">// tripped the rule it was describing: three citations and no fn carrying the tag.</span></span>
+<span id="tests-02-worked-examples-loft-L482"><span class="cm">// The citations live in `src/hex_way.loft`, on the two functions this is about.</span></span>
+<span id="tests-02-worked-examples-loft-L483"><span class="kw">fn</span> <span class="fn-call">test_the_same_arc_authored_a_turn_lower_is_the_same_arc</span>() {</span>
+<span id="tests-02-worked-examples-loft-L484">  <span class="cm">// Two spellings of ONE quarter turn: radius 4 about the origin, from due east</span></span>
+<span id="tests-02-worked-examples-loft-L485">  <span class="cm">// to due north.</span></span>
+<span id="tests-02-worked-examples-loft-L486">  hi = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L487">  <span class="fn-call">track_arc</span>(hi, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">0.0</span>, <span class="nm">1.5707963267948966</span>);</span>
+<span id="tests-02-worked-examples-loft-L488">  lo = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L489">  <span class="fn-call">track_arc</span>(lo, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">0.0</span> - <span class="nm">6.283185307179586</span>,</span>
+<span id="tests-02-worked-examples-loft-L490">                           <span class="nm">0.0</span> - <span class="nm">6.283185307179586</span> + <span class="nm">1.5707963267948966</span>);</span>
+<span id="tests-02-worked-examples-loft-L491"></span>
+<span id="tests-02-worked-examples-loft-L492">  <span class="cm">// ⚠ THE POINTS COME FROM `seg_point`, NOT FROM A FORMULA WRITTEN HERE. They are</span></span>
+<span id="tests-02-worked-examples-loft-L493">  <span class="cm">// on the curve by construction, so a non-zero distance is the subject's answer</span></span>
+<span id="tests-02-worked-examples-loft-L494">  <span class="cm">// and not this test's arithmetic.</span></span>
+<span id="tests-02-worked-examples-loft-L495">  span = <span class="fn-call">seg_len</span>(hi, <span class="nm">0</span>);</span>
+<span id="tests-02-worked-examples-loft-L496">  worst_hi = <span class="nm">0.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L497">  worst_lo = <span class="nm">0.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L498">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..11</span> {</span>
+<span id="tests-02-worked-examples-loft-L499">    s = span * (k <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">10.0</span> ?? <span class="nm">0.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L500">    (hx, hy) = <span class="fn-call">seg_point</span>(hi, <span class="nm">0</span>, s);</span>
+<span id="tests-02-worked-examples-loft-L501">    (lx, ly) = <span class="fn-call">seg_point</span>(lo, <span class="nm">0</span>, s);</span>
+<span id="tests-02-worked-examples-loft-L502">    dh = <span class="fn-call">abs_f</span>(<span class="fn-call">seg_distance</span>(hi, <span class="nm">0</span>, hx, hy));</span>
+<span id="tests-02-worked-examples-loft-L503">    dl = <span class="fn-call">abs_f</span>(<span class="fn-call">seg_distance</span>(lo, <span class="nm">0</span>, lx, ly));</span>
+<span id="tests-02-worked-examples-loft-L504">    <span class="kw">if</span> dh &gt; worst_hi { worst_hi = dh; }</span>
+<span id="tests-02-worked-examples-loft-L505">    <span class="kw">if</span> dl &gt; worst_lo { worst_lo = dl; }</span>
+<span id="tests-02-worked-examples-loft-L506">  }</span>
+<span id="tests-02-worked-examples-loft-L507">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(worst_hi &lt; <span class="nm">0.000001</span>, <span class="st">"a point on the [0, pi/2] arc is on it, got {worst_hi}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L508">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(worst_lo &lt; <span class="nm">0.000001</span>,</span>
+<span id="tests-02-worked-examples-loft-L509">         <span class="st">"the SAME arc authored at [-2pi, -2pi+pi/2] reports its own points "</span></span>
+<span id="tests-02-worked-examples-loft-L510">       + <span class="st">"{worst_lo} away — an angle is a direction, not a quantity"</span>);</span>
+<span id="tests-02-worked-examples-loft-L511"></span>
+<span id="tests-02-worked-examples-loft-L512">  <span class="cm">// …and the consumer-visible half: one curve, one footprint.</span></span>
+<span id="tests-02-worked-examples-loft-L513">  a = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L514">  <span class="fn-call">track_arc</span>(a, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">0.0</span>, <span class="nm">1.5707963267948966</span>);</span>
+<span id="tests-02-worked-examples-loft-L515">  b = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L516">  <span class="fn-call">track_arc</span>(b, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">4.0</span>, <span class="nm">0.0</span> - <span class="nm">6.283185307179586</span>,</span>
+<span id="tests-02-worked-examples-loft-L517">                          <span class="nm">0.0</span> - <span class="nm">6.283185307179586</span> + <span class="nm">1.5707963267948966</span>);</span>
+<span id="tests-02-worked-examples-loft-L518">  sa = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L519">  sb = <span class="fn-call">hexset_chunk</span>(<span class="en">Q0</span>, <span class="en">R0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L520">  <span class="fn-call">way_mark</span>(a, <span class="nm">0.9</span>, sa);</span>
+<span id="tests-02-worked-examples-loft-L521">  <span class="fn-call">way_mark</span>(b, <span class="nm">0.9</span>, sb);</span>
+<span id="tests-02-worked-examples-loft-L522">  na = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L523">  nb = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L524">  <span class="kw">for</span> r <span class="kw">in</span> <span class="en">R0</span>..<span class="en">R0</span> + <span class="en">H</span> {</span>
+<span id="tests-02-worked-examples-loft-L525">    <span class="kw">for</span> q <span class="kw">in</span> <span class="en">Q0</span>..<span class="en">Q0</span> + <span class="en">W</span> {</span>
+<span id="tests-02-worked-examples-loft-L526">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(sa, q, r) { na = na + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L527">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(sb, q, r) { nb = nb + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L528">    }</span>
+<span id="tests-02-worked-examples-loft-L529">  }</span>
+<span id="tests-02-worked-examples-loft-L530">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(na &gt; <span class="nm">0</span>, <span class="st">"the fixture marked nothing at all — this row cannot be surprised"</span>);</span>
+<span id="tests-02-worked-examples-loft-L531">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(na == nb,</span>
+<span id="tests-02-worked-examples-loft-L532">         <span class="st">"the same arc marks {na} cells one way and {nb} the other — the way is "</span></span>
+<span id="tests-02-worked-examples-loft-L533">       + <span class="st">"rasterised somewhere else entirely, and nothing about the shape changed"</span>);</span>
+<span id="tests-02-worked-examples-loft-L534">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

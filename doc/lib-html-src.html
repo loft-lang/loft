@@ -24,8 +24,130 @@
 <h1>html source</h1>
 <article>
 <p><a href="lib-html.html">← html</a> · <a href="lib-html-api.html">API reference</a> · version 0.1.1</p>
-<p>The source for <code>html</code> 0.1.1 is not on this build box, so this page could not be rendered from it. <code>loft install html</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-docs/tree/main/html">https://github.com/loft-lang/loft-libs-docs/tree/main/html</a></p>
+<p class="lib-legend">2 file(s), 113 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>escape_html</code> <span class="search-kind">fn</span></td><td><a href="#src-html-loft-L26">26</a></td><td>—</td><td><a href="#tests-01-escape-loft-L11">11</a> <a href="#tests-01-escape-loft-L12">12</a> <a href="#tests-01-escape-loft-L13">13</a> <a href="#tests-01-escape-loft-L14">14</a> <a href="#tests-01-escape-loft-L15">15</a> <a href="#tests-01-escape-loft-L20">20</a> … (12 total)</td></tr>
+</table>
+<h2 id="src-html-loft">src/html.loft</h2>
+<pre class="src"><code><span id="src-html-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-html-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-html-loft-L3"><span class="cm">//</span></span>
+<span id="src-html-loft-L4"><span class="cm">// html — minimal HTML helpers for loft programs that render</span></span>
+<span id="src-html-loft-L5"><span class="cm">// markup.  Drained out of the always-loaded stdlib (was</span></span>
+<span id="src-html-loft-L6"><span class="cm">// `default/03_text.loft`) under @PLAN48-lib / lib_plans/12</span></span>
+<span id="src-html-loft-L7"><span class="cm">// Phase 3.6 — HTML escaping is a library concern, not core.</span></span>
+<span id="src-html-loft-L8"></span>
+<span id="src-html-loft-L9"><span class="cm">// HTML-escape the standard five entities for safe interpolation</span></span>
+<span id="src-html-loft-L10"><span class="cm">// into HTML output:</span></span>
+<span id="src-html-loft-L11"><span class="cm">//</span></span>
+<span id="src-html-loft-L12"><span class="cm">//   &amp;  →  &amp;amp;</span></span>
+<span id="src-html-loft-L13"><span class="cm">//   &lt;  →  &amp;lt;</span></span>
+<span id="src-html-loft-L14"><span class="cm">//   &gt;  →  &amp;gt;</span></span>
+<span id="src-html-loft-L15"><span class="cm">//   "  →  &amp;quot;</span></span>
+<span id="src-html-loft-L16"><span class="cm">//   '  →  &amp;#x27;</span></span>
+<span id="src-html-loft-L17"><span class="cm">//</span></span>
+<span id="src-html-loft-L18"><span class="cm">// Use whenever user-supplied text gets dropped into an HTML</span></span>
+<span id="src-html-loft-L19"><span class="cm">// element body or attribute value.  Order matters — `&amp;` is</span></span>
+<span id="src-html-loft-L20"><span class="cm">// escaped first so the substituted entity strings don't</span></span>
+<span id="src-html-loft-L21"><span class="cm">// double-escape.</span></span>
+<span id="src-html-loft-L22"><span class="cm">//</span></span>
+<span id="src-html-loft-L23"><span class="cm">// Added in @PLAN37 phase 10.7 — closes a stdlib gap that</span></span>
+<span id="src-html-loft-L24"><span class="cm">// every loft program rendering HTML had to roll its own</span></span>
+<span id="src-html-loft-L25"><span class="cm">// escape for (the @PLAN35 viewer's `escape(s)` helper).</span></span>
+<span id="src-html-loft-L26"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">escape_html</span>(self: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-html-loft-L27">  out = <span class="st">""</span>;</span>
+<span id="src-html-loft-L28">  <span class="kw">for</span> c <span class="kw">in</span> self {</span>
+<span id="src-html-loft-L29">    <span class="kw">if</span> c == <span class="ch">'&amp;'</span> {</span>
+<span id="src-html-loft-L30">      out += <span class="st">"&amp;amp;"</span>;</span>
+<span id="src-html-loft-L31">    } <span class="kw">else</span> <span class="kw">if</span> c == <span class="ch">'&lt;'</span> {</span>
+<span id="src-html-loft-L32">      out += <span class="st">"&amp;lt;"</span>;</span>
+<span id="src-html-loft-L33">    } <span class="kw">else</span> <span class="kw">if</span> c == <span class="ch">'&gt;'</span> {</span>
+<span id="src-html-loft-L34">      out += <span class="st">"&amp;gt;"</span>;</span>
+<span id="src-html-loft-L35">    } <span class="kw">else</span> <span class="kw">if</span> c == <span class="ch">'"'</span> {</span>
+<span id="src-html-loft-L36">      out += <span class="st">"&amp;quot;"</span>;</span>
+<span id="src-html-loft-L37">    } <span class="kw">else</span> <span class="kw">if</span> c == <span class="ch">'\'</span><span class="ch">' {</span></span>
+<span id="src-html-loft-L38">      out += <span class="st">"&amp;#x27;"</span>;</span>
+<span id="src-html-loft-L39">    } <span class="kw">else</span> {</span>
+<span id="src-html-loft-L40">      out += <span class="st">"{c}"</span>;</span>
+<span id="src-html-loft-L41">    }</span>
+<span id="src-html-loft-L42">  }</span>
+<span id="src-html-loft-L43">  out</span>
+<span id="src-html-loft-L44">}</span>
+<span id="src-html-loft-L45">#pure</span>
+</code></pre>
+<h2 id="tests-01-escape-loft">tests/01-escape.loft</h2>
+<pre class="src"><code><span id="tests-01-escape-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-01-escape-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-01-escape-loft-L3"><span class="cm">//</span></span>
+<span id="tests-01-escape-loft-L4"><span class="cm">// lib/html escape_html() — migrated from tests/scripts/106-escape-html.loft</span></span>
+<span id="tests-01-escape-loft-L5"><span class="cm">// when escape_html moved out of the default stdlib into lib/html</span></span>
+<span id="tests-01-escape-loft-L6"><span class="cm">// (lib_plans/12 Phase 3.6).  Now imported explicitly via `use html;`.</span></span>
+<span id="tests-01-escape-loft-L7"></span>
+<span id="tests-01-escape-loft-L8"><span class="kw">use</span> html;</span>
+<span id="tests-01-escape-loft-L9"></span>
+<span id="tests-01-escape-loft-L10"><span class="kw">fn</span> <span class="fn-call">test_basic_entities</span>() {</span>
+<span id="tests-01-escape-loft-L11">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&lt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;lt;"</span>,   <span class="st">"lt"</span>);</span>
+<span id="tests-01-escape-loft-L12">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&gt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;gt;"</span>,   <span class="st">"gt"</span>);</span>
+<span id="tests-01-escape-loft-L13">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&amp;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;amp;"</span>,  <span class="st">"amp"</span>);</span>
+<span id="tests-01-escape-loft-L14">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"\"</span><span class="st">".escape_html() == "</span>&amp;quot;<span class="st">", "</span>quot<span class="st">");</span></span>
+<span id="tests-01-escape-loft-L15">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"'"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;#x27;"</span>, <span class="st">"apos"</span>);</span>
+<span id="tests-01-escape-loft-L16">}</span>
+<span id="tests-01-escape-loft-L17"></span>
+<span id="tests-01-escape-loft-L18"><span class="kw">fn</span> <span class="fn-call">test_safe_chars_pass_through</span>() {</span>
+<span id="tests-01-escape-loft-L19">    s = <span class="st">"Hello, World! 123 _-./"</span>;</span>
+<span id="tests-01-escape-loft-L20">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">escape_html</span>() == s, <span class="st">"safe chars unchanged"</span>);</span>
+<span id="tests-01-escape-loft-L21">}</span>
+<span id="tests-01-escape-loft-L22"></span>
+<span id="tests-01-escape-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_empty</span>() {</span>
+<span id="tests-01-escape-loft-L24">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">""</span>.<span class="fn-call">escape_html</span>() == <span class="st">""</span>, <span class="st">"empty"</span>);</span>
+<span id="tests-01-escape-loft-L25">}</span>
+<span id="tests-01-escape-loft-L26"></span>
+<span id="tests-01-escape-loft-L27"><span class="kw">fn</span> <span class="fn-call">test_amp_first</span>() {</span>
+<span id="tests-01-escape-loft-L28">    <span class="cm">// &amp; must be escaped FIRST so the substituted entity strings</span></span>
+<span id="tests-01-escape-loft-L29">    <span class="cm">// don't get re-escaped.  `&lt;` → `&amp;lt;` already starts with `&amp;`,</span></span>
+<span id="tests-01-escape-loft-L30">    <span class="cm">// and naive ordering would turn that into `&amp;amp;lt;`.</span></span>
+<span id="tests-01-escape-loft-L31">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&lt;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;lt;"</span>, <span class="st">"lt not double-escaped"</span>);</span>
+<span id="tests-01-escape-loft-L32">    <span class="cm">// Existing entity strings DO get double-escaped (intentional —</span></span>
+<span id="tests-01-escape-loft-L33">    <span class="cm">// we treat input as raw text, not pre-escaped).</span></span>
+<span id="tests-01-escape-loft-L34">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"&amp;amp;"</span>.<span class="fn-call">escape_html</span>() == <span class="st">"&amp;amp;amp;"</span>, <span class="st">"&amp;amp; double-escaped"</span>);</span>
+<span id="tests-01-escape-loft-L35">}</span>
+<span id="tests-01-escape-loft-L36"></span>
+<span id="tests-01-escape-loft-L37"><span class="kw">fn</span> <span class="fn-call">test_attribute_safe</span>() {</span>
+<span id="tests-01-escape-loft-L38">    <span class="cm">// The five entities make the output safe for both element</span></span>
+<span id="tests-01-escape-loft-L39">    <span class="cm">// bodies AND attribute values (with either quote style).</span></span>
+<span id="tests-01-escape-loft-L40">    s = <span class="st">"&lt;img src=\"</span>x\<span class="st">" alt='y'&gt;"</span>;</span>
+<span id="tests-01-escape-loft-L41">    expected = <span class="st">"&amp;lt;img src=&amp;quot;x&amp;quot; alt=&amp;#x27;y&amp;#x27;&amp;gt;"</span>;</span>
+<span id="tests-01-escape-loft-L42">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">escape_html</span>() == expected, <span class="st">"attribute-style mixed quotes"</span>);</span>
+<span id="tests-01-escape-loft-L43">}</span>
+<span id="tests-01-escape-loft-L44"></span>
+<span id="tests-01-escape-loft-L45"><span class="kw">fn</span> <span class="fn-call">test_unicode_passes_through</span>() {</span>
+<span id="tests-01-escape-loft-L46">    <span class="cm">// Non-ASCII characters don't need escaping in UTF-8 HTML.</span></span>
+<span id="tests-01-escape-loft-L47">    s = <span class="st">"→ snowman ☃"</span>;</span>
+<span id="tests-01-escape-loft-L48">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(s.<span class="fn-call">escape_html</span>() == s, <span class="st">"unicode passes through"</span>);</span>
+<span id="tests-01-escape-loft-L49">}</span>
+<span id="tests-01-escape-loft-L50"></span>
+<span id="tests-01-escape-loft-L51"><span class="kw">fn</span> <span class="fn-call">test_xss_payload</span>() {</span>
+<span id="tests-01-escape-loft-L52">    <span class="cm">// The classic &lt;script&gt; payload — safe after escape.</span></span>
+<span id="tests-01-escape-loft-L53">    payload = <span class="st">"&lt;script&gt;alert('x')&lt;/script&gt;"</span>;</span>
+<span id="tests-01-escape-loft-L54">    out = payload.<span class="fn-call">escape_html</span>();</span>
+<span id="tests-01-escape-loft-L55">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!out.<span class="fn-call"><a href="stdlib-vector-operations.html">starts_with</a></span>(<span class="st">"&lt;"</span>), <span class="st">"no leading &lt;"</span>);</span>
+<span id="tests-01-escape-loft-L56">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(out.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"&lt;script"</span>) == <span class="kw">null</span>, <span class="st">"no live script tag"</span>);</span>
+<span id="tests-01-escape-loft-L57">}</span>
+<span id="tests-01-escape-loft-L58"></span>
+<span id="tests-01-escape-loft-L59"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-01-escape-loft-L60">    <span class="fn-call">test_basic_entities</span>();</span>
+<span id="tests-01-escape-loft-L61">    <span class="fn-call">test_safe_chars_pass_through</span>();</span>
+<span id="tests-01-escape-loft-L62">    <span class="fn-call">test_empty</span>();</span>
+<span id="tests-01-escape-loft-L63">    <span class="fn-call">test_amp_first</span>();</span>
+<span id="tests-01-escape-loft-L64">    <span class="fn-call">test_attribute_safe</span>();</span>
+<span id="tests-01-escape-loft-L65">    <span class="fn-call">test_unicode_passes_through</span>();</span>
+<span id="tests-01-escape-loft-L66">    <span class="fn-call">test_xss_payload</span>();</span>
+<span id="tests-01-escape-loft-L67">    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"escape-html: ok"</span>);</span>
+<span id="tests-01-escape-loft-L68">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>
