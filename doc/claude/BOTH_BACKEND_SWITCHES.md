@@ -55,7 +55,7 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
-Since 2026-09-29 the same switch covers `(R-Place)`'s LOOP clause: a bind inside a loop whose
+The same switch covers `(R-Place)`'s LOOP clause: a bind inside a loop whose
 result's ONE heap-owning field is stored into an element appended to a parameter or to a
 local vector bound before the loop (`sub = read(…); items += [sub.value]; p = sub.next`)
 gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the lazy mint's
@@ -74,8 +74,8 @@ It is the first bisect step for a wrong or EMPTY vector field out of a callee th
 in a local, and for a leak into a caller's store; `LOFT_TRACE_PLACE=1` names each admission
 (`[exit-vector]`) and each decline (a rebind, an alias, a bare return, a copy elsewhere, a
 mention after the move, a free outside an exit, a wrapper typed a level too deep — the
-tuple-destructured local of loft#1757).  A vector placed this way is no longer a
-fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
+tuple-destructured local `tests/branch_join.rs::a_vector_local_is_backed_by_its_own_element_type`
+guards).  A vector placed this way is not a fresh store root, so the native header and base hoists (`(R-LoopBuffer)`, `(R-CompleteWrite)`,
 `(R-Base)`) decline the loops that fill it — measured on the cbor decoder's bench: decode
 34.7 ms → 26.2 ms per op, and stores per `check_request` 20 → 7.
 **`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON, parse time +
@@ -153,7 +153,7 @@ never freed — and is the first bisect step for a wrong, empty or stale vector 
 assignment from a call.  Declined where an argument reaches the destination, where the callee
 MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
-byte-identical under the switch — so the gain is structural.  Since 2026-09-29 the callee clause admits a CHAIN exit
+byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result
 that arrives through a chain is placed like a literal's; the switch covers it with the rest.
 
@@ -231,7 +231,7 @@ such a loop.  `LOFT_TRACE_REBIND=1` names each site.
 25.4 → 5.95 ms per op) — and is the first bisect step for a wrong, missing or extra element
 out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each kept.
 
-**`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON since 2026-09-29, parse time,
+**`LOFT_NO_LITERAL_WALK=1`** (`@FR-R-LiteralWalk`, default-ON, parse time,
 BOTH backends) makes `for x in [a, b, c]` build and walk the vector again — with it off, the
 items are evaluated once into scalar temps and the loop is a counted select over them, no
 vector on either backend (mesh3d's `mesh_to_floats`, whose per-triangle `[t.a, t.b, t.c]`
@@ -359,7 +359,8 @@ or more operands.  A chain the AUTHOR parenthesised still hands the parser a hoi
 is right-associated in the SCOPES pass instead (**`LOFT_NO_COALESCE_REASSOC=1`** keeps loft#1591's
 destination gate, the bisect step for that spelling).  A hoist that holds a whole LOCAL rather
 than a projection — `(e as B?) ?? d`, `(if c { s } else { null }) ?? d` — is read by the arm lift
-as that local, so the destination copies it as `(B-Copy)` says (loft#1752); a projection subject
+as that local, so the destination copies it as `(B-Copy)` says
+(`tests/scripts/1752-a-coalesce-over-a-whole-local-copies.loft`); a projection subject
 keeps the view.  Beside them,
 **`LOFT_NO_CHAIN_ARM_SINK=1`** stops a chain BLOCK being a sunk ARM of a branch — with it off,
 `x: H = if c { s.h ?? b } else { mk(3) }` writes the chain out as a statement of its own, but ONLY
@@ -405,7 +406,7 @@ the from-scratch size, @PLN123; a builder written in its element keeps the size 
 had).  First bisect step for a wrong element or a size change out of such an append;
 `store_rebuild_b1` / `store_compact_b3` are the falsifiers.
 
-**`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON since 2026-09-29)
+**`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON)
 routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the
 library idiom — through the general record dispatch again.  With it off, `record_new` and
 `record_finish` serve the shape the way they already served a bare vector's: the field's

@@ -1347,7 +1347,7 @@ mod tests {
 
     /// The wasm runtime rlib serves every loft build of one source tree: a release and a
     /// debug binary alternating keep both stamps (no lock, no cargo per call), a real
-    /// rebuild forgets the builds that no longer match, and the set stays bounded.
+    /// rebuild forgets every build that does not match it, and the set stays bounded.
     #[test]
     fn a_runtime_rlib_is_stamped_for_every_build_it_serves() {
         let dir = std::env::temp_dir().join(format!("loft_runtime_fp_{}", std::process::id()));

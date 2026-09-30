@@ -464,12 +464,12 @@ one gate the change owes for a new op.
 
 A local full suite, a corpus A/B, a second planted defect or a round-trip check is warranted
 only when the change reaches every run, or the paths the instruments depend on, or when its
-failure would be SILENT.  Measured 2026-09-29: the interpreter's operand fusion
-(superinstructions) got its guard, two planted defects, a 1,876-script fused/unfused A/B, a
-round-trip check and a full suite.  Only the guard and one plant were owed.  A wrong operand
-position breaks nearly every loop, as a wrong value or a hang, which the guard shows on its
-first run.  The fast stack path the same day did reach every interpreted run and every
-instrument's checked path, so its one full suite was owed.
+failure would be SILENT.  Operand fusion is the loud case: a wrong operand position breaks
+nearly every loop, as a wrong value or a hang, which the guard shows on its first run — so
+the guard and one plant are what it owes.  A change on the interpreter's fast stack path is
+the other case: it reaches every interpreted run and every instrument's checked path, so one
+full suite is owed.  The sizing that set this is in
+[CI_BUDGET-history.md § Sizing the superinstruction checks](CI_BUDGET-history.md#sizing-the-superinstruction-checks).
 
 **The pre-flight** runs in `ci-run.sh start` and refuses to queue a gate that would stop on one
 of its checks (`CI_NO_PREFLIGHT=1` skips it; `CI_PREFLIGHT=full` adds `doc_hygiene` and

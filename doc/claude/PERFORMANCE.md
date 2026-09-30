@@ -668,7 +668,7 @@ individual ops, and does per op only what an ordinary run needs: publish the all
 are set once per loop), dispatch, the frame yield, and the halt checks.  The **full loop**
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
 stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
-is armed, including a debugger attaching mid-run.  Measured 2026-09-29: the full loop's
+is armed, including a debugger attaching mid-run.  Measured: the full loop's
 bookkeeping was 62 of an op's 152 instructions on a vector-writing loop.
 
 ### Stack and variable access (`src/state/mod.rs`)
@@ -707,7 +707,7 @@ both are the defects the guard's planted-defect cells catch.  The shapes were ch
 `LOFT_OP_NGRAMS`, the statically adjacent operator runs over the bench lanes (PROFILING.md).
 
 What these buy is constant-factor speed on work that already runs in cache.  Measured over
-the 79 bench routines (`make interp-gap`, 2026-09-30): the fast stack path and the lean loop
+the 79 bench routines (`make interp-gap`): the fast stack path and the lean loop
 2.0× (median), the fusion above another 1.2×, 2.5× together; up to 5.2× on text walks.
 Measured the same way, **none of it changed a single store operation** — which is why the
 next work is in the section below, not in more fusion.

@@ -436,10 +436,6 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
-**D-bind-69 CLOSED 2026-09-30** (loft#1759): a keyed nested or borrowed-base projection copied
-where `(B-View-Depth)` makes it a view, its view then escaped `(H-Materialise)`, and a keyed `&`
-link was not refused when its container was reassigned — [binding-history.md](binding-history.md).
-
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
 special-cased.  THREE independent mechanisms broke that for collections and all three are now

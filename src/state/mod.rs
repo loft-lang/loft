@@ -259,7 +259,7 @@ pub struct State {
     /// than through the general store path.  The store path re-checks, on every push and pop,
     /// what the stack guarantees by construction: that its store is live, is not foreign and
     /// not locked, and that the offset is inside the record (`ensure_stack` grows the buffer
-    /// and the record together).  Measured 2026-09-29, that path was 43 % of the interpreter's
+    /// and the record together).  Measured, that path was 43 % of the interpreter's
     /// time on a vector-writing loop.  False whenever an instrument that watches stack
     /// accesses is armed (`verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
     /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
@@ -2577,7 +2577,7 @@ impl State {
     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
     /// release library), corrupting the heap.  Cheap in the common case:
     /// one comparison against the cached `stack_cap_bytes`.
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -2610,7 +2610,7 @@ impl State {
     /// The address of stack byte `off` (relative to the stack record's field base), for the
     /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
     /// `ensure_stack`, a read lies below `stack_pos`.
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -2850,7 +2850,7 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3078,7 +3078,7 @@ impl State {
         )
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3243,7 +3243,7 @@ impl State {
         )
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3379,7 +3379,7 @@ impl State {
         ) = db;
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -6515,7 +6515,7 @@ impl State {
         let verify_on = self.verify_on;
         // The lean loop: when nothing watches individual ops, each op pays only for what an
         // ordinary run needs from the loop — the allocation site, the crash context, the
-        // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
+        // dispatch, the frame yield and the halt.  Measured, the full loop's
         // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
         // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
         let lean_loop = !(reload_on

@@ -761,3 +761,13 @@ the question took fifteen minutes on seven flagged libraries: `check_request` +1
 much testing for one speed improvement.  CI_BUDGET.md § What a compiler change needs before
 its commit is the rule that came out of it.
 
+## Sizing the superinstruction checks
+
+Measured 2026-09-29.
+
+The interpreter's operand fusion (superinstructions) got its guard, two planted defects, a
+1,876-script fused/unfused A/B, a round-trip check and a full suite.  Only the guard and one
+plant were owed: a wrong operand position breaks nearly every loop, which the guard shows on
+its first run.  The fast stack path the same day did reach every interpreted run and every
+instrument's checked path, so its one full suite was owed.  CI_BUDGET.md § Sizing the checks
+for a performance change is the rule that came out of it.
