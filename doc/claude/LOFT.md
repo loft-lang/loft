@@ -592,8 +592,9 @@ If `lhs` has a statically-known `null` type (the bare `null` literal), `??` retu
 **Result type — the discharge is only as complete as the fallback.** `a ?? b` yields `a` when
 non-null else `b`, so it can still be null exactly when `b` can: the result type is the non-null
 base **only if the fallback `b` is non-null**. A nullable fallback — a bare `null` literal, or a
-`τ?`-typed expression — keeps the result `τ?`, so `y: integer = x ?? null` is a compile error (a
-null would reach the non-null slot). A chain discharges to non-null iff its *last* fallback is
+`τ?`-typed expression — keeps the result `τ?`, so `y: integer = x ?? null` stores null into the
+non-null slot and is warned (*"a nullable `integer?` is stored into the local `y` of the non-null
+type `integer` — it becomes null there"*). A chain discharges to non-null iff its *last* fallback is
 non-null: `x ?? (a / b) ?? 7` is `integer` (ends in `7`), while `x ?? null` is `integer?`. Discharge
 into a non-null slot with a real default (`x ?? 0`), or keep the slot `τ?`.
 
@@ -672,12 +673,12 @@ Used for explicit type casts and conversions:
 **`as` has two different jobs — a numeric cast vs. a fallible parse.** When the left
 operand is a *number*, `as` reinterprets it (truncate/narrow/widen). When the left
 operand is **text**, `as integer` / `as float` / `as single` is a **parse that can
-fail**, so it types `integer?` / `float?` / `single?` — you get `null` on a bad parse
-and must discharge it:
+fail**.  A bare `"42" as integer` is refused (`error[text-parse-may-fail]`), because a
+bare cast claims it cannot fail.  Say what a bad parse gives:
 ```
-n = "42" as integer          // n : integer?   (NOT integer — the parse can fail)
-n = "42" as integer ?? 0     // n : integer    (discharge with a default)
-n = s as integer?            // n : integer?   (keep it nullable, discharge later)
+n = "42" as integer          // refused: error[text-parse-may-fail]
+n = "42" as integer ?? 0     // n : integer    (0 on a bad parse)
+n = s as integer?            // n : integer?   (null on a bad parse, discharge later)
 ```
 (This is the @PLN25 `(N-Parse)` rule — a bad parse is a reachable fault like `÷0`/OOB.)
 
@@ -700,7 +701,7 @@ do by looking up the pair in this table:
 | `integer` → `u8`/`u16`/`i8`/`i16`/`u32`/`i32` | Explicit `as` at storage sites | NARROWING — a plain `integer` is 64-bit; writing one into a narrow **struct field**, local, parameter or return (any narrow storage) requires `as` ("cannot implicitly narrow integer to u16 … cast explicitly").  A **constant that provably fits** the target is exempt (`x: u16 = 5`, `f(200)`).  The check is range containment **or a drop in storage width**, so it covers every narrow alias — including `i32`, which the range half cannot see (see the row below).  (guard `tests/scripts/931-i32-narrowing-is-checked.loft`) |
 | `integer` → `i32` — why it needs the width half | Explicit `as` | `i32` spans the whole 32-bit range, which is the range a plain `integer` *reports*: the 64-bit value lives in an 8-byte slot the bounds do not describe.  So the two specs differ in `forced_size` alone and `[s.min,s.max] ⊆ [d.min,d.max]` holds for a pair whose storage drops 8 → 4 — the one alias whose NAME says "32 bits" was the one range containment never checked, so an `i32` field would take `5000000000` and store `705032704` in silence.  The **implicit** stores compare storage width; an **explicit** `as i32` keeps the range rule alone, so it stays spellable as the cure this diagnostic prescribes |
 | `float` → integer                  | Explicit `as` | `pi as integer` truncates toward zero; preserves the current sentinel semantics |
-| `text` → integer / float / single  | Explicit `as` — **a PARSE, types `τ?`** | `"42" as integer` is a fallible parse, so it types **`integer?`** (`float?` / `single?`), not `integer`. A non-numeric text yields `null`. You MUST discharge before storing into non-null: `"42" as integer ?? 0`, `s as integer?` (keep it nullable), or `match`. This is `(N-Parse)` — a bad parse is a reachable fault, exactly like `÷0` and out-of-bounds indexing (§ @PLN25). Contrast the *numeric* casts above (`float`→`integer`, width narrowing), which reinterpret an existing number rather than parse text |
+| `text` → integer / float / single  | Explicit `as` — **a PARSE: `as τ?` or `as τ ?? d`** | A text parse can fail, so a bare `"42" as integer` is refused (`error[text-parse-may-fail]`: *"a bare cast asserts it cannot"*); the same holds for `float` and `single`. Write `s as integer?` to keep the result nullable (a non-numeric text gives `null`), or `s as integer ?? 0` to supply the fallback. This is `(N-Parse)` — a bad parse is a reachable fault, exactly like `÷0` and out-of-bounds indexing (§ @PLN25). Contrast the *numeric* casts above (`float`→`integer`, width narrowing), which reinterpret an existing number rather than parse text |
 | Integer / float / boolean → `text` | **Format-only** | `"n={m}"` renders the value inline; `t = m` with `t: text` is a compile error.  If you want the rendered form as a standalone text value, assign through interpolation: `t = "{m}"` |
 | `character` → `integer` (codepoint)| Explicit `as` | `'a' as integer` yields 97 |
 | `character` ↔ `text`               | See § String literals | Indexing vs. slicing asymmetry; concatenation via interpolation |

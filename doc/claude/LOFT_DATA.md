@@ -98,9 +98,12 @@ advice: in `f`, `c` was copied out of `bx` because `bx` is reassigned while `c`
   leaves nothing for it to point at. Writes through `c` no longer reach `bx`.
 ```
 
-Three things end the place: **removing** from the container (`v.remove(i)`
-renumbers the rest), **writing a key field** through the view on a keyed
-collection, and **reassigning the container itself** (`bx = T{…}`).  After the
+Four things end the place: **removing** from the container (`v.remove(i)`
+renumbers the rest), **growing** it (`v += [x]`, an insert, a keyed add — a
+container that outgrows its room moves every element), **writing a key field**
+through the view on a keyed collection, and **reassigning the container itself**
+(`bx = T{…}`).  Each counts where it happens: in this function, or in a function it
+calls with the container.  After the
 copy, writes through the binding no longer reach the container — which is why it
 is reported and not silent.  To keep writing through, re-read the view after the
 change (`c = bx.v[0]`).
@@ -127,9 +130,9 @@ through.
 
 **Write `&` and you get an error instead of a copy.**  `c = &v[0]` says *"I want a
 live link"* — an ownership decision, not a hint — so loft will not quietly hand you a
-copy.  Where it cannot honour the link, it refuses the program instead.  All three
-things that end a place do this: removing from the container, writing a KEY field
-through the reference, and replacing the container itself.
+copy.  Where it cannot honour the link, it refuses the program instead.  All four
+things that end a place do this: removing from the container, growing it, writing a
+KEY field through the reference, and replacing the container itself.
 
 ```
 error: cannot remove from `v` while `c` references an element of it — a removal
