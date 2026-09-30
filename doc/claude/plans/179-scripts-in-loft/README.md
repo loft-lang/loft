@@ -28,10 +28,35 @@ is cleared fast.
 
 ## Goal (REQUIRED)
 
-Every script this repository runs is a loft program, and each port was proven against the
-Python or bash script it replaced by running both on the same inputs and comparing the four
-channels byte-for-byte — so the pairs are the comparison material `00-vs-python.html` never
-had: the same tool, in the language it was written in and in loft, both still runnable.
+**loft measured as a FULL replacement for this repository's scripting: when the plan closes
+there is no reason outside familiarity to reach for Python or bash** — not behaviour (the
+port leaves the same world, proven by the twin), not performance (start-up and run time at or
+below the original's), not clarity or compactness (the port reads no longer and no less
+plainly).  Every script the repository runs is then a loft program, each pair still runnable
+as the comparison `00-vs-python.html` never had, and every reason found on the way was a gap
+fixed in loft and struck from a register that reads zero.
+
+## The bar — three verdicts per script, and a register driven to zero
+
+The owner's framing (2026-09-30) makes the plan a MEASUREMENT with a fix loop under it, not
+a rewrite: a port that is slower, longer or less clear than its original is not "done with a
+note", it is a reason to reach for the other tool, and reasons are what this plan removes.
+So every port carries three verdicts, each from an instrument that can say no:
+
+| axis | instrument | the bar | goal it serves |
+|---|---|---|---|
+| **behaviour** | the twin (strand 2): stdout, stderr, exit status, written files | byte-identical | D parity, A soundness |
+| **performance** | the twin's wall clock on both sides, start-up included, best of 5 on an idle box | loft ≤ original; a script's start-up ≤ Python's for the same `hello` | G — the original IS the industry reference twin |
+| **clarity** | lines and a by-hand read against `loft-write`: no construct exists only to work around loft | loft ≤ original in lines; every longer port names why | F friction-free, B legible |
+
+A verdict that fails names its reason, and the reason goes into
+[`REASONS.md`](REASONS.md): one row per reason found to reach for another tool — the script,
+the axis, the reason, the fix it needs (a builtin, a library, a language change, a
+performance item) and its status.  **The register's open count is the plan's headline
+number and it must reach zero**; `WORKLIST.md` is what is left to port, `REASONS.md` is what
+is left to fix, and the second is the one the goal is stated in.  Two readings keep it
+honest: a reason is recorded when a port MEETS it, never guessed in advance, and it is
+struck only when the port that met it re-measures green on that axis.
 
 ## The census, as measured 2026-09-29
 
@@ -231,15 +256,17 @@ then fixes, on four questions:
    stream, spawning the server through strand 4's `run` with stdin fed and both pipes read.  Its first consumer is the
    smallest `--rpc` driver in the work list, twinned.
 
-### Strand 6 — The comparison yield (S, continuous)
+### Strand 6 — The scoreboard (S, continuous)
 
 When a port replaces its original, the original does not vanish: it moves to
 `tests/comparisons/scripts/<name>/orig.py` (or `.sh`) beside `port.loft` and the fixtures,
 so the twin keeps running and the pair stays a **claim as a program** in the
 `tests/comparisons` sense.  A generator (loft) renders the pairs as a page beside
-`00-vs-python.html`: per script the two sources, lines, the start-up and run-time row from
-the twin, and the constructs the port needed — the language comparison the owner asked for,
-made of tools that are used every day rather than of samples written to be compared.
+`00-vs-python.html`: per script the two sources, the three verdicts of the bar with their
+numbers (lines, start-up, run time), and the open `REASONS.md` rows it still carries — the
+language comparison the owner asked for, made of tools that are used every day rather than
+of samples written to be compared, and readable as a scoreboard: how many scripts loft
+replaces with no reason left, today.
 
 ## Phase ordering
 
@@ -250,6 +277,11 @@ question 4 lands with the first `--rpc` driver in the tranche.  Strand 3 is the 
 that ships value; 1 and 2 are the instruments and are cheap.
 
 ## Open design questions
+
+0. **What counts as "clear and compact" when the original is bash?**  A 30-line bash gate
+   is often three pipes; the loft port is a loop with names.  Recommendation: lines are the
+   number, but the by-hand read decides, and the bar is "no longer AND no less plain" — a
+   port may spend lines on names bash did not have, and must not spend them on ceremony.
 
 1. **Replace or accompany?**  Recommendation: replace after the shadow period, with the
    original kept under `tests/comparisons/scripts/` (strand 6).  Two live copies of one
