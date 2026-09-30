@@ -270,9 +270,10 @@ seam yet.  Measured weight and reach (2026-09-30): `spatial.rs` 702 lines, `trie
 1359 + `radix_db.rs` 1182 + `radix_tree.rs` 3382, `hash.rs` 1134; declared in 377 test
 files for `hash`, 194 `sorted`, 149 `index`, 76 `spatial`, 67 `trie`, and in the
 published libraries by none of them.  So `spatial` and `trie` are the first candidates —
-self-contained, used by tests and (to measure) the games — and `vector`, `hash`, `sorted`
-and `index` are the store's spine that lazy stores, reflection and the SQL derivation are
-built on, and go last.  **The owner's direction (2026-09-30): not a priority, but eventually
+self-contained, and lightly used but NOT unimportant: the games depend on them (owner), so
+their move is gated by the games' twins the way a library change is — and `vector`, `hash`,
+`sorted` and `index` are the store's spine that lazy stores, reflection and the SQL
+derivation are built on, and go last.  **The owner's direction (2026-09-30): not a priority, but eventually
 every kind leaves the base language, and the syntax stays** — `spatial<T[x, y]>` keeps
 reading as it does, defined through a flexible kind construct a bundle supplies rather than
 by the parser knowing the word.  The design home is @PLN91 strand 3; this plan only measures
