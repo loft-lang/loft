@@ -2,7 +2,7 @@
 axis: performance
 met-by: scripts/script_census (strand 1)
 status: open
-fix: where the interpreter's ~15 ms goes before the first statement — `LOFT_TIMING=1` on the installed binary: `parse_default` 5–10 ms for 748 stdlib defs on a WARM run, scopes 3, lints 2, codegen 3 — against the 7 ms a whole `cat \
+fix: a smaller stdlib — strand 8's direction OUT (fewer of the 748 definitions parsed before the first statement) — and where the interpreter's ~15 ms goes before the first statement — `LOFT_TIMING=1` on the installed binary: `parse_default` 5–10 ms for 748 stdlib defs on a WARM run, scopes 3, lints 2, codegen 3 — against the 7 ms a whole `cat \
 ref: 
 probe: 001.probe.loft
 expect: startup-over:12
