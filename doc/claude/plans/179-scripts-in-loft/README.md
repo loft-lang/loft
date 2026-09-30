@@ -18,7 +18,7 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 
 ## Status (REQUIRED)
 
-Open — design ready; strand 1's census ships with the plan (`scripts/script_census.loft`,
+Open — design ready; strand 1's census ships with the plan (`scripts/script_census`,
 the plan's first loft script, and `WORKLIST.md` it generates), nothing ported.  Two loft scripts already exist under `scripts/`
 (`build-gallery-examples.loft`, `build-playground-examples.loft`); nothing in the Makefile,
 CI or the hooks runs either, so they are the first two subjects for the twin harness rather
@@ -129,7 +129,7 @@ Each strand is cut so the old path and the new one run at once and are compared 
 
 ### Strand 1 — Census + ratchet (XS–S, the first loft script — SHIPPED with the plan)
 
-`scripts/script_census.loft` — in loft, because it needs only file reading and text
+`scripts/script_census` — in loft, because it needs only file reading and text
 search: per script its language, lines, callers (Makefile / CI / hook / another script), the
 external tools it names on a non-comment line, the Python modules it imports, its I/O
 contract (report · gate · writes) and the tranche it falls in.  `make script-census` writes
