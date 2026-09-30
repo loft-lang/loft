@@ -8675,7 +8675,7 @@ Reads the entire file as a UTF-8 text value. Use for small configuration files o
 pub fn lines(self: const File) -> vector<text> fs#read
 ```
 
-Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
+Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
 
 == Files and directories
 

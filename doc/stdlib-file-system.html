@@ -81,7 +81,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn lines(self: const File) -&gt; vector&lt;text&gt; fs#read</code></pre>
-<p>Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
+<p>Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
 </div>
 <div class="item">
 <pre><code>pub fn path_sep() -&gt; character</code></pre>

@@ -9,8 +9,8 @@
 //
 // @falsified-at: none — the rules it pins held on every earlier build; the receipt is the plant.
 // Hand-sabotaged 2026-09-30: dropping the empty-text rule from the loft body (the trailing part
-// appended unconditionally) fails `empty text` on `--interpret` and `empty text, handed on` on
-// `--native`.
+// appended unconditionally) fails `empty text` on both backends — the interpreted run declines
+// the compiled body, whose source no longer matches, and runs the planted one.
 
 fn joined(parts: vector<text>) -> text {
   out = "";

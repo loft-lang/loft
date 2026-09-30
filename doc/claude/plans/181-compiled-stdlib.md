@@ -9,10 +9,10 @@ Tracker: [@PLN181](https://github.com/loft-lang/plans/issues/181).
 
 ## Status
 
-Active on `laptop-superinstructions`.  **P0 (the probe) and P1 (the artifact inside the
-binary) are built.**  An interpreted program dispatches the stdlib's looping loft functions
-(11 today) to their compiled bodies, built into the loft binary, with no rustc at run time.
-**Next:** P2, the kernels retire.
+Active on `laptop-superinstructions`.  **P0, P1 and P2 are built.**  An interpreted program
+dispatches the standard library's looping loft functions (13) to their compiled bodies, built
+into the loft binary, with no rustc at run time; the `split` and `lines` kernels are retired
+(KERNELS.md § Removed).  What stays open is below.
 
 ## Goal
 
@@ -64,7 +64,7 @@ The whole dispatch path, unchanged:
 |---|---|---|
 | **P0** probe — DONE | the existing path pointed at the stdlib, behind a probe-only switch | same answers, strict stores clean, the speed, the type prefix across programs |
 | **P1** in-binary artifact — BUILT | generate the stdlib's compiled source with loft (a derived file, drift-guarded like `src/fill.rs`), build it into the binary, an in-binary bridge table, the start-up prefix check and its fall-back | every stdlib guard on both backends with the compiled set on and off (`LOFT_NO_NATIVE_LIBS` A/B); a planted prefix mismatch interprets, byte-identical |
-| **P2** kernels retire | `split` and `lines` back to their loft bodies; `make kernel-ratio` and the kernel guards decide | the ratio at or under 2× from the interpreter; the guards' oracles |
+| **P2** kernels retire — BUILT | `split` and `lines` back to their loft bodies; `make kernel-ratio` and the kernel guards decide | the ratio at or under 2× from the interpreter; the guards' oracles |
 
 ## P0 — measured
 
@@ -109,8 +109,21 @@ defect in the compiled `split_text` turned two of them red and failed the drift 
 stdlib and a wrong type prefix each declined all 11 and ran correctly; a warm program-cache
 start replays the marks; `mark` costs about 0.3 ms at start-up (within noise of a `hello`).
 
-Not yet covered, each simply interpreting today: `loft test`'s in-process runner, the REPL, the
+Not yet covered, each simply interpreting the loft bodies today: `loft test`'s in-process runner, the REPL, the
 debugger, a host embedding and the browser (which has no bridge dispatcher).
+
+## P2 — built
+
+`split` and `lines` have their loft bodies again and join the compiled set by the existing rule
+(their bodies loop): 13 functions.  Removed: `Stores::split_char`, the private `text_lines`, both
+interpreter adapters, and the second call spelling native's split rewrites had learnt for the
+kernel (they match the loft call's buffered form, as before it).  The pins the kernel had
+restated went back to the loft call's values (`split_table`, `lazy_split`, `char_walk`, the B1b
+census).  Measured against the kernels, best of 5: `split` 1.5× and `lines` 1.3× interpreted,
+`split` 3.8× FASTER and `lines` 1.2× on `--native-release`; the ports 626 → 655 ms and
+1.77 → 1.62 s, identical output.  The guards were renamed for the rules they pin and their plants
+re-run in the loft bodies: red on both backends, the interpreted run declining the compiled body
+whose source no longer matched.
 
 ## Open questions
 
