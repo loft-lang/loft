@@ -2,122 +2,122 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @F1 @F4 @F38 @F39 @F44 — catalogue anchors (@PLN92); see loft-lang/features
 // --- Types ---
-// Primitive types built into loft.
-// True or false value.
+/// Primitive types built into loft.
+/// True or false value.
 pub type boolean size(1);
-// 64-bit signed integer.
+/// 64-bit signed integer.
 pub type integer size(8);
-// 32-bit floating-point. Good for graphics and performance-sensitive math.
+/// 32-bit floating-point. Good for graphics and performance-sensitive math.
 pub type single size(4);
-// 64-bit floating-point. Use when precision matters.
+/// 64-bit floating-point. Use when precision matters.
 pub type float size(8);
-// UTF-8 string.
+/// UTF-8 string.
 pub type text size(4);
-// A single Unicode code point.
+/// A single Unicode code point.
 pub type character size(4);
-// Integer subtypes for compact storage in struct fields. Behave as integer in expressions.
-// 0 – 255, 1 byte.
+/// Integer subtypes for compact storage in struct fields. Behave as integer in expressions.
+/// 0 – 255, 1 byte.
 pub type u8 = integer limit(0, 255) size(1);
-// -128 – 127, 1 byte.
+/// -128 – 127, 1 byte.
 pub type i8 = integer limit(-128, 127) size(1);
-// 0 – 65535, 2 bytes.
+/// 0 – 65535, 2 bytes.
 pub type u16 = integer limit(0, 65535) size(2);
-// -32768 – 32767, 2 bytes.
+/// -32768 – 32767, 2 bytes.
 pub type i16 = integer limit(-32768, 32767) size(2);
-// 4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range
-// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
-//
-// `u32` reserves a code too, at the top of its range, and the two reservations LOOK alike
-// and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the
-// type's default.  That is not a claim that the reservations differ — it is C127's
-// pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the
-// one narrow type whose overflow is detectable is worth more (DESIGN_DECISIONS.md C127 §
-// Decision).  Pinned across both aliases by
-// `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
+/// 4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range
+/// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
+///
+/// `u32` reserves a code too, at the top of its range, and the two reservations LOOK alike
+/// and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the
+/// type's default.  That is not a claim that the reservations differ — it is C127's
+/// pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the
+/// one narrow type whose overflow is detectable is worth more (DESIGN_DECISIONS.md C127 §
+/// Decision).  Pinned across both aliases by
+/// `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 pub type i32 = integer size(4);
-// 4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal
-// `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is
-// NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32`
-// above says why the two differ).  size(4) forces 4-byte storage
-// and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2)
-// reads back as the same positive integer.  `u32` is for file / wire-format fields (magic
-// numbers, counts, tick fields) where the byte width is the load-bearing property; plain
-// `integer` holds the whole 0..2^32-1 range and more.
+/// 4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal
+/// `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is
+/// NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32`
+/// above says why the two differ).  size(4) forces 4-byte storage
+/// and serialisation symmetric with `i32`, and a value in the upper half (2^31..2^32-2)
+/// reads back as the same positive integer.  `u32` is for file / wire-format fields (magic
+/// numbers, counts, tick fields) where the byte width is the load-bearing property; plain
+/// `integer` holds the whole 0..2^32-1 range and more.
 pub type u32 = integer limit(0, 4294967294) size(4);
 // --- Interfaces ---
-// Standard interfaces for bounded generic functions.
-// A type satisfies an interface by defining the required operator or method.
+/// Standard interfaces for bounded generic functions.
+/// A type satisfies an interface by defining the required operator or method.
 
-// Types that support the `<` comparison operator.
-// Satisfied by integer, single, float, text, and any user type defining OpLt.
-//
-// `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no
-// ordering, so `false < true` is a refusal rather than a convention the language picks
-// for you.  A program that wants it says so — `(a as integer) < (b as integer)`.  The
-// same line bounds how null is ordered: that applies to the ordered types only, and a
-// boolean null still compares with `==` like every other scalar.
-//
-// ONE method is all a type has to define: inside a generic bounded by this, `>`, `<=` and
-// `>=` all derive from `<` — `a > b` is `b < a`, `a <= b` is `!(b < a)`, `a >= b` is
-// `!(a < b)`.  Each evaluates its operands exactly once.
+/// Types that support the `<` comparison operator.
+/// Satisfied by integer, single, float, text, and any user type defining OpLt.
+///
+/// `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no
+/// ordering, so `false < true` is a refusal rather than a convention the language picks
+/// for you.  A program that wants it says so — `(a as integer) < (b as integer)`.  The
+/// same line bounds how null is ordered: that applies to the ordered types only, and a
+/// boolean null still compares with `==` like every other scalar.
+///
+/// ONE method is all a type has to define: inside a generic bounded by this, `>`, `<=` and
+/// `>=` all derive from `<` — `a > b` is `b < a`, `a <= b` is `!(b < a)`, `a >= b` is
+/// `!(a < b)`.  Each evaluates its operands exactly once.
 pub interface Ordered {
   op < (self: Self, other: Self) -> boolean
 }
 
-// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
-// A tuple compares element by element, as its concrete `==` does.
-//
-// `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
+/// Types that support the `==` equality operator: every type (@C91), by its own OpEq or by content.
+/// A tuple compares element by element, as its concrete `==` does.
+///
+/// `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 pub interface Equatable {
   op == (self: Self, other: Self) -> boolean
 }
 
-// Types that support the `+` addition operator, returning the same type.
-// Satisfied by integer, single, float, and user types defining OpAdd.
+/// Types that support the `+` addition operator, returning the same type.
+/// Satisfied by integer, single, float, and user types defining OpAdd.
 pub interface Addable {
   op + (self: Self, other: Self) -> Self
 }
 
-// Types that support `*` and `-` (unary negation).
-// Separate from `Addable` so a generic can ask for the fewest operators it needs.
-// Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-//
-// Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
-// declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction
-// away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
-// release may not do.
+/// Types that support `*` and `-` (unary negation).
+/// Separate from `Addable` so a generic can ask for the fewest operators it needs.
+/// Satisfied by integer, single, float, and user types defining OpMul and OpMin.
+///
+/// Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
+/// declare both arities of `-`, but adding a requirement to `Numeric` would take satisfaction
+/// away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
+/// release may not do.
 pub interface Numeric {
   op * (self: Self, other: Self) -> Self
   op - (self: Self) -> Self
 }
 
-// Types that support binary `-` (subtraction), returning the same type.
-// Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-//
-// A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
-// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
-// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
-// interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type
-// satisfies one of the two: it can define `OpMin` at one arity only (a second definition is
-// refused as a redefinition), as pinned by
-// `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
+/// Types that support binary `-` (subtraction), returning the same type.
+/// Satisfied by integer, single, float, and user types defining a two-operand OpMin.
+///
+/// A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
+/// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
+/// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
+/// interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type
+/// satisfies one of the two: it can define `OpMin` at one arity only (a second definition is
+/// refused as a redefinition), as pinned by
+/// `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
 pub interface Subtractable {
   op - (self: Self, other: Self) -> Self
 }
 
-// Types that support integer scaling via a `scale` method.
-// Uses a method (not `op *`): inside a `<T: Numeric + …>` body, `*` already means
-// Numeric's `Self * Self`, so `x * 2` there is refused ("operator '*' requires a concrete
-// type") even when another bound declares `op * (self: Self, f: integer)`.
-// Two SEPARATE generics may each bound their own `T` by an interface declaring the same
-// method differently — a header binds its own type variable.
-// User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -> integer`.
+/// Types that support integer scaling via a `scale` method.
+/// Uses a method (not `op *`): inside a `<T: Numeric + …>` body, `*` already means
+/// Numeric's `Self * Self`, so `x * 2` there is refused ("operator '*' requires a concrete
+/// type") even when another bound declares `op * (self: Self, f: integer)`.
+/// Two SEPARATE generics may each bound their own `T` by an interface declaring the same
+/// method differently — a header binds its own type variable.
+/// User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -> integer`.
 pub interface Scalable {
   fn scale(self: Self, factor: integer) -> integer
 }
 
-// Types that can be converted to text via a `to_text` method.
-// User types satisfy Printable by defining `fn to_text(self: T) -> text`.
+/// Types that can be converted to text via a `to_text` method.
+/// User types satisfy Printable by defining `fn to_text(self: T) -> text`.
 pub interface Printable {
   fn to_text(self: Self) -> text
 }
@@ -160,10 +160,10 @@ fn OpPutBool(var: const u16, value: boolean);
 fn OpNot(v1: boolean) -> boolean;
 #rust"@v1 != 1"
 // --- Math ---
-// Functions for numeric computation.
-// All trigonometric functions work in radians.
-// Both single and float variants exist for every floating-point function —
-// choose single for speed, float for precision.
+/// Functions for numeric computation.
+/// All trigonometric functions work in radians.
+/// Both single and float variants exist for every floating-point function —
+/// choose single for speed, float for precision.
 
 // Integer operations
 // The declared-RANGE guard, applied to the VALUE at a store into a slot that
@@ -236,7 +236,7 @@ fn OpCastFloatFromText(v1: text) -> float;
 #rust"@v1.parse().unwrap_or(f64::NAN)"
 fn OpAbsInt(v1: integer) -> integer;
 #rust"ops::op_abs_int(@v1)"
-// Absolute value. Removes the sign from a negative integer.
+/// Absolute value. Removes the sign from a negative integer.
 pub fn abs(self: integer) -> integer {
   OpAbsInt(self)
 }
@@ -317,12 +317,12 @@ fn OpFormatStackInt(
   note: const boolean,
   dir: const i8
 );
-// Floor modulo — the remainder that takes the sign of the DIVISOR, so
-// `x.floor_mod(n)` lands in `[0, n)` for a positive `n`.  The `%` operator
-// truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`);
-// `floor_mod` wraps (`(-1).floor_mod(3) == 2`), which is what circular indexing
-// / wrap-around wants (`grid[(i - 1).floor_mod(w)]`).  `x.floor_mod(0)` is null,
-// like `%` (C80 — an undefined value is a null, never a fault).
+/// Floor modulo — the remainder that takes the sign of the DIVISOR, so
+/// `x.floor_mod(n)` lands in `[0, n)` for a positive `n`.  The `%` operator
+/// truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`);
+/// `floor_mod` wraps (`(-1).floor_mod(3) == 2`), which is what circular indexing
+/// / wrap-around wants (`grid[(i - 1).floor_mod(w)]`).  `x.floor_mod(0)` is null,
+/// like `%` (C80 — an undefined value is a null, never a fault).
 pub fn floor_mod(self: integer, divisor: integer) -> integer? {
   ((self % divisor)+divisor) % divisor
 }
@@ -339,7 +339,7 @@ fn OpConvSingleFromNull() -> single;
 #rust"f32::NAN"
 fn OpAbsSingle(v1: single) -> single;
 #rust"@v1.abs()"
-// Absolute value for single-precision floats.
+/// Absolute value for single-precision floats.
 pub fn abs(self: single) -> single {
   OpAbsSingle(self)
 }
@@ -377,62 +377,62 @@ fn OpRemSingleNullable(v1: single, v2: single) -> single;
 #rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
-// Cosine. Use for circular motion: x = r * cos(angle).
+/// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: single) -> single {
   OpMathFuncSingle(0, self)
 }
 #pure
-// Sine. Use for circular motion: y = r * sin(angle).
+/// Sine. Use for circular motion: y = r * sin(angle).
 
 pub fn sin(self: single) -> single {
   OpMathFuncSingle(1, self)
 }
 #pure
-// Tangent. Use for slopes and perspective projection.
+/// Tangent. Use for slopes and perspective projection.
 
 pub fn tan(self: single) -> single {
   OpMathFuncSingle(2, self)
 }
 #pure
-// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
+/// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
 
 pub fn acos(self: single) -> single? {
   OpMathFuncSingle(3, self)
 }
 #pure
-// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
+/// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
 
 pub fn asin(self: single) -> single? {
   OpMathFuncSingle(4, self)
 }
 #pure
-// Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
+/// Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 pub fn atan(self: single) -> single {
   OpMathFuncSingle(5, self)
 }
 #pure
-// Round up to the nearest integer value.
-// Use to compute required buffer sizes from fractional counts.
+/// Round up to the nearest integer value.
+/// Use to compute required buffer sizes from fractional counts.
 
 pub fn ceil(self: single) -> single {
   OpMathFuncSingle(6, self)
 }
 #pure
-// Round down to the nearest integer value.
-// Use to convert a float position to a tile index.
+/// Round down to the nearest integer value.
+/// Use to convert a float position to a tile index.
 
 pub fn floor(self: single) -> single {
   OpMathFuncSingle(7, self)
 }
 #pure
-// Round to the nearest integer value (half rounds away from zero).
+/// Round to the nearest integer value (half rounds away from zero).
 
 pub fn round(self: single) -> single {
   OpMathFuncSingle(8, self)
 }
 #pure
-// Square root. Use for distances and normalization. Null for a negative value.
+/// Square root. Use for distances and normalization. Null for a negative value.
 
 pub fn sqrt(self: single) -> single? {
   OpMathFuncSingle(9, self)
@@ -443,14 +443,14 @@ pub fn sqrt(self: single) -> single? {
 // logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b == 10.0 {{ @v1.log10() }} else if __b == 2.0 {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f32::NAN }}"
-// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
-// Use instead of atan when you have separate x/y components.
+/// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
+/// Use instead of atan when you have separate x/y components.
 pub fn atan2(self: single, v2: single) -> single {
   OpMathFunc2Single(0, self, v2)
 }
 #pure
-// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
-// Use for converting between scales (e.g., decibels).
+/// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
+/// Use for converting between scales (e.g., decibels).
 
 pub fn log(self: single, v2: single) -> single? {
   OpMathFunc2Single(1, self, v2)
@@ -459,9 +459,9 @@ pub fn log(self: single, v2: single) -> single? {
 
 fn OpPowSingle(v1: single, v2: single) -> single;
 #rust"@v1.powf(@v2)"
-// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
-// is not a real number (`pow(-8.0, 0.5)`).
-// Use for exponential growth curves and scaling.
+/// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
+/// is not a real number (`pow(-8.0, 0.5)`).
+/// Use for exponential growth curves and scaling.
 pub fn pow(self: single, v2: single) -> single? {
   OpPowSingle(self, v2)
 }
@@ -506,7 +506,7 @@ fn OpConvFloatFromNull() -> float;
 #rust"f64::NAN"
 fn OpAbsFloat(v1: float) -> float;
 #rust"@v1.abs()"
-// Absolute value for double-precision floats.
+/// Absolute value for double-precision floats.
 pub fn abs(self: float) -> float {
   OpAbsFloat(self)
 }
@@ -514,70 +514,70 @@ pub fn abs(self: float) -> float {
 
 fn OpMathPiFloat() -> float;
 #rust"std::f64::consts::PI"
-// The ratio of a circle's circumference to its diameter (3.14159...).
+/// The ratio of a circle's circumference to its diameter (3.14159...).
 pub PI = OpMathPiFloat();
 fn OpMathEFloat() -> float;
 #rust"std::f64::consts::E"
-// Euler's number, the base of natural logarithms (2.71828...).
+/// Euler's number, the base of natural logarithms (2.71828...).
 pub E = OpMathEFloat();
 fn OpMathFuncFloat(fn_id: const i8, v1: float) -> float;
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f64::NAN }}"
-// Cosine. Use for circular motion: x = r * cos(angle).
+/// Cosine. Use for circular motion: x = r * cos(angle).
 pub fn cos(self: float) -> float {
   OpMathFuncFloat(0, self)
 }
 #pure
-// Sine. Use for circular motion: y = r * sin(angle).
+/// Sine. Use for circular motion: y = r * sin(angle).
 
 pub fn sin(self: float) -> float {
   OpMathFuncFloat(1, self)
 }
 #pure
-// Tangent. Use for slopes and perspective projection.
+/// Tangent. Use for slopes and perspective projection.
 
 pub fn tan(self: float) -> float {
   OpMathFuncFloat(2, self)
 }
 #pure
-// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
+/// Arc cosine. Returns the angle (in radians) whose cosine is the value; null outside [-1, 1].
 
 pub fn acos(self: float) -> float? {
   OpMathFuncFloat(3, self)
 }
 #pure
-// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
+/// Arc sine. Returns the angle whose sine is the value; null outside [-1, 1].
 
 pub fn asin(self: float) -> float? {
   OpMathFuncFloat(4, self)
 }
 #pure
-// Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
+/// Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 pub fn atan(self: float) -> float {
   OpMathFuncFloat(5, self)
 }
 #pure
-// Round up to the nearest integer value.
-// Use to compute required buffer sizes from fractional counts.
+/// Round up to the nearest integer value.
+/// Use to compute required buffer sizes from fractional counts.
 
 pub fn ceil(self: float) -> float {
   OpMathFuncFloat(6, self)
 }
 #pure
-// Round down to the nearest integer value.
-// Use to convert a float position to a tile index.
+/// Round down to the nearest integer value.
+/// Use to convert a float position to a tile index.
 
 pub fn floor(self: float) -> float {
   OpMathFuncFloat(7, self)
 }
 #pure
-// Round to the nearest integer value (half rounds away from zero).
+/// Round to the nearest integer value (half rounds away from zero).
 
 pub fn round(self: float) -> float {
   OpMathFuncFloat(8, self)
 }
 #pure
-// Square root. Use for distances and normalization. Null for a negative value.
+/// Square root. Use for distances and normalization. Null for a negative value.
 
 pub fn sqrt(self: float) -> float? {
   OpMathFuncFloat(9, self)
@@ -588,14 +588,14 @@ pub fn sqrt(self: float) -> float? {
 // logarithms, which can miss an exact power by one unit in the last place (loft#1799).
 fn OpMathFunc2Float(fn_id: const i8, v1: float, v2: float) -> float;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => {{ let __b = @v2; if __b == 10.0 {{ @v1.log10() }} else if __b == 2.0 {{ @v1.log2() }} else {{ @v1.log(__b) }} }}, _ => f64::NAN }}"
-// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
-// Use instead of atan when you have separate x/y components.
+/// Arc tangent of y/x as `y.atan2(x)`, preserving the correct quadrant: `atan2(1.0, 0.0)` is PI/2.
+/// Use instead of atan when you have separate x/y components.
 pub fn atan2(self: float, v2: float) -> float {
   OpMathFunc2Float(0, self, v2)
 }
 #pure
-// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
-// Use for converting between scales (e.g., decibels).
+/// Logarithm in the base given second: `log(8.0, 2.0)` is 3. Null for a negative value, -inf at 0.
+/// Use for converting between scales (e.g., decibels).
 
 pub fn log(self: float, v2: float) -> float? {
   OpMathFunc2Float(1, self, v2)
@@ -604,58 +604,58 @@ pub fn log(self: float, v2: float) -> float? {
 
 fn OpPowFloat(v1: float, v2: float) -> float;
 #rust"@v1.powf(@v2)"
-// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
-// is not a real number (`pow(-8.0, 0.5)`).
-// Use for exponential growth curves and scaling.
+/// Raises the value to the power given second: `pow(2.0, 10.0)` is 1024. Null when the answer
+/// is not a real number (`pow(-8.0, 0.5)`).
+/// Use for exponential growth curves and scaling.
 pub fn pow(self: float, v2: float) -> float? {
   OpPowFloat(self, v2)
 }
 #pure
 // --- exp / ln / log2 / log10 ---
-// Raises E (2.71828…) to the power v. Use for exponential growth models.
+/// Raises E (2.71828…) to the power v. Use for exponential growth models.
 
 pub fn exp(self: single) -> single {
   OpPowSingle(E as single, self)
 }
 #pure
 
-// Double-precision exp (e^v).
+/// Double-precision exp (e^v).
 pub fn exp(self: float) -> float {
   OpPowFloat(E, self)
 }
 #pure
-// Natural logarithm (base E). Use for growth rates and information entropy.
+/// Natural logarithm (base E). Use for growth rates and information entropy.
 
 pub fn ln(self: single) -> single? {
   log(self, E as single)
 }
 #pure
 
-// Double-precision natural logarithm.
+/// Double-precision natural logarithm.
 pub fn ln(self: float) -> float? {
   log(self, E)
 }
 #pure
-// Base-2 logarithm. Use for bit-count calculations and information theory.
+/// Base-2 logarithm. Use for bit-count calculations and information theory.
 
 pub fn log2(self: single) -> single? {
   log(self, 2.0f)
 }
 #pure
 
-// Double-precision base-2 logarithm.
+/// Double-precision base-2 logarithm.
 pub fn log2(self: float) -> float? {
   log(self, 2.0)
 }
 #pure
-// Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
+/// Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
 
 pub fn log10(self: single) -> single? {
   log(self, 10.0f)
 }
 #pure
 
-// Double-precision base-10 logarithm.
+/// Double-precision base-10 logarithm.
 pub fn log10(self: float) -> float? {
   log(self, 10.0)
 }
@@ -713,72 +713,72 @@ fn OpLeFloat(v1: float, v2: float) -> boolean;
 fn OpFormatFloat(pos: const u16, val: float, width: integer, precision: integer, token: const u8, plus: const boolean, dir: const i8);
 fn OpFormatStackFloat(pos: const u16, val: float, width: integer, precision: integer, token: const u8, plus: const boolean, dir: const i8);
 // --- min / max / clamp ---
-// Each of these has two overloads: one over non-null values (`-> τ`) and one over nullable
-// ones (`-> τ?`).  You get the nullable overload whenever ANY argument is statically
-// nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it
-// propagates: the answer is null if either argument is null.  Otherwise you get the
-// non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge.
-// Smallest of two integer values.
+/// Each of these has two overloads: one over non-null values (`-> τ`) and one over nullable
+/// ones (`-> τ?`).  You get the nullable overload whenever ANY argument is statically
+/// nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it
+/// propagates: the answer is null if either argument is null.  Otherwise you get the
+/// non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge.
+/// Smallest of two integer values.
 pub fn min(self: integer, b: integer) -> integer {
   if self <= b { self } else { b }
 }
 #pure
-// Largest of two integer values.
+/// Largest of two integer values.
 pub fn max(self: integer, b: integer) -> integer {
   if self >= b { self } else { b }
 }
 #pure
-// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
+/// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
 pub fn clamp(self: integer, lo: integer, hi: integer) -> integer {
   min(max(self, lo), hi)
 }
 #pure
 
-// Smallest of two single-precision float values.
+/// Smallest of two single-precision float values.
 pub fn min(self: single, b: single) -> single {
   if self <= b { self } else { b }
 }
 #pure
-// Largest of two single-precision float values.
+/// Largest of two single-precision float values.
 pub fn max(self: single, b: single) -> single {
   if self >= b { self } else { b }
 }
 #pure
-// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
+/// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
 pub fn clamp(self: single, lo: single, hi: single) -> single {
   min(max(self, lo), hi)
 }
 #pure
-// Smallest of two double-precision float values.
+/// Smallest of two double-precision float values.
 pub fn min(self: float, b: float) -> float {
   if self <= b { self } else { b }
 }
 #pure
-// Largest of two double-precision float values.
+/// Largest of two double-precision float values.
 pub fn max(self: float, b: float) -> float {
   if self >= b { self } else { b }
 }
 #pure
-// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
+/// Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
 pub fn clamp(self: float, lo: float, hi: float) -> float {
   min(max(self, lo), hi)
 }
 #pure
-// Approximate equality: true when a and b differ by at most eps (inclusive).
-// `==` on float/single is EXACT IEEE equality — use `approx` when you want a
-// tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`.
-// A null (NaN) operand is not approximately equal to anything, so the result is false.
+/// Approximate equality: true when a and b differ by at most eps (inclusive).
+/// `==` on float/single is EXACT IEEE equality — use `approx` when you want a
+/// tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`.
+/// A null (NaN) operand is not approximately equal to anything, so the result is false.
 pub fn approx(self: float, b: float, eps: float) -> boolean {
   if !self || !b { false } else { abs(self - b) <= eps }
 }
 #pure
-// Approximate equality for single-precision floats (see the float overload).
+/// Approximate equality for single-precision floats (see the float overload).
 pub fn approx(self: single, b: single, eps: single) -> boolean {
   if !self || !b { false } else { abs(self - b) <= eps }
 }
 #pure
 // --- Text ---
-// Functions for working with text (UTF-8 strings) and character values.
+/// Functions for working with text (UTF-8 strings) and character values.
 
 // Read the value of a variable and put a reference to it on the stack
 
@@ -793,9 +793,9 @@ fn OpConvTextFromNull() -> text;
 // the content: it has no characters, as `for c in t` over it makes no trips (loft#1795).
 fn OpLengthText(v1: text) -> integer;
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.chars().count() as i64 }} }}"
-// Number of characters (Unicode code points) in the text — the human
-// count, as in every mainstream language. For a byte length (bounds checks, the
-// limit of byte-positioned indexing / slicing) use `size`.
+/// Number of characters (Unicode code points) in the text — the human
+/// count, as in every mainstream language. For a byte length (bounds checks, the
+/// limit of byte-positioned indexing / slicing) use `size`.
 pub fn len(self: text) -> integer {
   OpLengthText(self)
 }
@@ -804,16 +804,16 @@ pub fn len(self: text) -> integer {
 // @FR-L-Null-Text — as `OpLengthText`: the absent text holds no bytes a program can index.
 fn OpSizeText(v1: text) -> integer;
 #rust"{{ let __t = @v1; if __t == crate::state::STRING_NULL {{ 0 }} else {{ __t.len() as i64 }} }}"
-// Number of bytes in the text. This is the bound for byte-positioned
-// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
-// For the human character count use `len`.
+/// Number of bytes in the text. This is the bound for byte-positioned
+/// operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
+/// For the human character count use `len`.
 pub fn size(self: text) -> integer {
   OpSizeText(self)
 }
 #pure
 
 fn OpLengthCharacter(v1: character) -> integer;
-// Byte length of the character's UTF-8 encoding (1–4).
+/// Byte length of the character's UTF-8 encoding (1–4).
 pub fn len(self: character) -> integer {
   OpLengthCharacter(self)
 }
@@ -1117,10 +1117,10 @@ fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
 fn OpSetText(v1: reference, fld: const u16, val: text);
 #rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}"
 // --- Collections ---
-// Operations on vector<T> — the primary ordered collection type.
-// Vectors are grown by appending with += and elements are accessed by index.
-// A vector or struct passed to a function is passed by reference: the callee's appends and
-// element writes reach the caller.  Binding one to a new local (`w = v`) copies it.
+/// Operations on vector<T> — the primary ordered collection type.
+/// Vectors are grown by appending with += and elements are accessed by index.
+/// A vector or struct passed to a function is passed by reference: the callee's appends and
+/// element writes reach the caller.  Binding one to a new local (`w = v`) copies it.
 type vector size(4);
 type sorted size(4);
 // All vectors are referenced by the field that points towards them.
@@ -1162,7 +1162,7 @@ fn OpDistinctStore(a: reference, b: reference) -> boolean;
 // own owner witness, which has to point at the local's store rather than own a second one.
 fn OpRefAlias(r: reference) -> reference;
 #rust"@r"
-// Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
+/// Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
 pub fn len(self: const vector) -> integer {
   OpLengthVector(self)
 }
@@ -1200,7 +1200,7 @@ fn OpSizeScalar(v: integer, sz: const u16) -> integer;
 // helper is identical — only the parser-side type tag differs.
 fn OpLengthSorted(r: sorted) -> integer;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
-// Number of elements in a sorted collection.
+/// Number of elements in a sorted collection.
 pub fn len(self: const sorted) -> integer {
   OpLengthSorted(self)
 }
@@ -1208,7 +1208,7 @@ pub fn len(self: const sorted) -> integer {
 
 fn OpClearVector(r: vector);
 #rust"s.database.clear_vector_release(&@r);"
-// Remove all elements from the vector, setting its length to 0.
+/// Remove all elements from the vector, setting its length to 0.
 pub fn clear(self: vector) {
   OpClearVector(self)
 }
@@ -1440,7 +1440,7 @@ type index size(4);
 // the bucket array's size is read from the data record itself.
 fn OpLengthHash(r: hash) -> integer;
 #rust"i64::from(hash::count(&@r, &s.database.allocations))"
-// Number of elements in a hash collection.
+/// Number of elements in a hash collection.
 pub fn len(self: const hash) -> integer {
   OpLengthHash(self)
 }
@@ -1452,12 +1452,12 @@ fn OpReserveHash(r: hash, count: integer, db_tp: const u16);
 #rust"s.database.reserve_hash(&@r, @count, @db_tp);"
 fn OpSizeHash(r: hash) -> integer;
 #rust"i64::from(hash::table_bytes(&@r, &s.database.allocations))"
-// The byte footprint of a hash: its full bucket table, holes
-// included.  The table is the hash's own allocation — `elms` slots, each a
-// 4-byte record-id (an empty slot is a hole and still counts, because open
-// addressing's spare capacity IS the format).  Allocation-local: the entry
-// records live in separate allocations and are not counted.  Grows in steps as
-// the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
+/// The byte footprint of a hash: its full bucket table, holes
+/// included.  The table is the hash's own allocation — `elms` slots, each a
+/// 4-byte record-id (an empty slot is a hole and still counts, because open
+/// addressing's spare capacity IS the format).  Allocation-local: the entry
+/// records live in separate allocations and are not counted.  Grows in steps as
+/// the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 pub fn size(self: const hash) -> integer {
   OpSizeHash(self)
 }
@@ -1477,56 +1477,56 @@ fn OpNeBool(v1: boolean, v2: boolean) -> boolean;
 // --- Output and Diagnostics ---
 fn OpPanic(message: text);
 #rust"panic!(\"{{}}\", @message);"
-// Panics with message if test is false. Use to verify invariants during development.
-// In production mode (--production), logs an error instead of aborting.
-// The file and line are injected by the compiler; do not pass them manually.
-// Safe to call from `par` workers: failures write to the log/stderr sink,
-// which the host serialises across threads.
+/// Panics with message if test is false. Use to verify invariants during development.
+/// In production mode (--production), logs an error instead of aborting.
+/// The file and line are injected by the compiler; do not pass them manually.
+/// Safe to call from `par` workers: failures write to the log/stderr sink,
+/// which the host serialises across threads.
 pub fn assert(test: boolean, message: text, file: text, line: integer);
 #impure(host_io)
-// Immediately terminates execution with message. Use for unrecoverable error states.
-// In production mode (--production), logs a fatal entry and execution continues.
-// The file and line are injected by the compiler; do not pass them manually.
+/// Immediately terminates execution with message. Use for unrecoverable error states.
+/// In production mode (--production), logs a fatal entry and execution continues.
+/// The file and line are injected by the compiler; do not pass them manually.
 pub fn panic(message: text, file: text, line: integer);
 #impure(host_io)
-// Write a structured log record at the chosen severity.
-// The file and line are injected by the compiler; do not pass them manually.
-// Safe to call from `par` workers: the host serialises log writes across threads.
+/// Write a structured log record at the chosen severity.
+/// The file and line are injected by the compiler; do not pass them manually.
+/// Safe to call from `par` workers: the host serialises log writes across threads.
 pub fn log_info(message: text, file: text, line: integer);
 #impure(host_io)
-// Like log_info, at warning severity.
+/// Like log_info, at warning severity.
 pub fn log_warn(message: text, file: text, line: integer);
 #impure(host_io)
-// Like log_info, at error severity.
+/// Like log_info, at error severity.
 pub fn log_error(message: text, file: text, line: integer);
 #impure(host_io)
-// Like log_info, at fatal severity.
+/// Like log_info, at fatal severity.
 pub fn log_fatal(message: text, file: text, line: integer);
 #impure(host_io)
 fn OpPrint(v1: text);
 #rust"#[cfg(all(target_arch = \"wasm32\", not(target_os = \"wasi\"), not(feature = \"wasm\")))]\ncrate::loft_host_print(@v1.as_ptr(), @v1.len());\n#[cfg(all(not(feature = \"wasm\"), not(target_arch = \"wasm32\")))]\nif !crate::rpc::print_or_capture(@v1) {{ crate::codegen_runtime::host_print(@v1); }}\n#[cfg(all(not(feature = \"wasm\"), target_arch = \"wasm32\", target_os = \"wasi\"))]\ncrate::codegen_runtime::host_print(@v1);\n#[cfg(feature = \"wasm\")]\ncrate::wasm::output_push(@v1);"
-// Writes v to standard output without a newline.
-// Use for progress output and building up a line incrementally.
+/// Writes v to standard output without a newline.
+/// Use for progress output and building up a line incrementally.
 pub fn print(v1: text) {
   OpPrint(v1);
 }
 #impure(host_io)
-// Writes v followed by a newline. The standard choice for line-oriented output.
+/// Writes v followed by a newline. The standard choice for line-oriented output.
 
 pub fn println(v1: text) {
   OpPrint("{v1}\n");
 }
 #impure(host_io)
 
-// Writes v to standard ERROR without a newline.
-// Companion to print() — use to separate human-readable status
-// / progress / summary lines from machine-readable stdout
-// (JSON, structured data piped to downstream consumers).
+/// Writes v to standard ERROR without a newline.
+/// Companion to print() — use to separate human-readable status
+/// / progress / summary lines from machine-readable stdout
+/// (JSON, structured data piped to downstream consumers).
 pub fn eprint(v1: text);
 #rust"crate::codegen_runtime::host_eprint(@v1)"
 #impure(host_io)
 
-// Writes v followed by a newline to standard ERROR.
+/// Writes v followed by a newline to standard ERROR.
 pub fn eprintln(v1: text) {
   eprint("{v1}\n");
 }
@@ -1662,7 +1662,7 @@ type trie;
 // after `type spatial` so the parameter type resolves.
 fn OpLengthSpatial(r: spatial) -> integer;
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
-// Number of elements in a spatial (radix / Morton tree) collection.
+/// Number of elements in a spatial (radix / Morton tree) collection.
 pub fn len(self: const spatial) -> integer {
   OpLengthSpatial(self)
 }
@@ -1671,7 +1671,7 @@ pub fn len(self: const spatial) -> integer {
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> integer;
 #rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
-// Number of elements in the trie.
+/// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
   OpLengthTrie(self)
 }
@@ -1793,9 +1793,9 @@ fn unprotect_store_frees(r: reference);
 fn yield_frame();
 #rust"()"
 // --- Parallel ---
-// Internal: compiler-checked parallel map.
-// The compiler rewrites `par(...)` clauses into calls to this function.
-// Raw 5-arg internal signature; not callable from user code.
+/// Internal: compiler-checked parallel map.
+/// The compiler rewrites `par(...)` clauses into calls to this function.
+/// Raw 5-arg internal signature; not callable from user code.
 fn parallel_for(
   input: reference,
   element_size: integer,
@@ -1991,9 +1991,9 @@ fn OpPreAllocVector(r: vector, capacity: const u16, elem_size: const u16);
 fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
 // --- Vector aggregates ---
-// Smallest element in a vector, or null when the vector is empty (the type is
-// honest about the empty case).  Works on any Ordered type (op <).
-// Example: @STD-004
+/// Smallest element in a vector, or null when the vector is empty (the type is
+/// honest about the empty case).  Works on any Ordered type (op <).
+/// Example: @STD-004
 pub fn min_of < T: Ordered > (v: const vector<T>) -> T? {
   result = v[0];
   for i in 1..v.len() {
@@ -2002,9 +2002,9 @@ pub fn min_of < T: Ordered > (v: const vector<T>) -> T? {
   result
 }
 #pure
-// Largest element in a vector, or null when the vector is empty (the type is
-// honest about the empty case).  Works on any Ordered type (op <).
-// Example: @STD-004
+/// Largest element in a vector, or null when the vector is empty (the type is
+/// honest about the empty case).  Works on any Ordered type (op <).
+/// Example: @STD-004
 pub fn max_of < T: Ordered > (v: const vector<T>) -> T? {
   result = v[0];
   for i in 1..v.len() {
@@ -2013,43 +2013,43 @@ pub fn max_of < T: Ordered > (v: const vector<T>) -> T? {
   result
 }
 #pure
-// Sum of vector elements.  Works on any Addable type.  `init` is the identity to start
-// from; leave it out and the element type's own zero is used (0, 0.0).
-// Example: sum([10, 20, 12], 0) == 42
-// Example: sum([10, 20, 12]) == 42
-// Example: @STD-005
+/// Sum of vector elements.  Works on any Addable type.  `init` is the identity to start
+/// from; leave it out and the element type's own zero is used (0, 0.0).
+/// Example: sum([10, 20, 12], 0) == 42
+/// Example: sum([10, 20, 12]) == 42
+/// Example: @STD-005
 pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T {
   result = init?;
   for i in 0..v.len() { result = result + v[i] };
   result
 }
 #pure
-// Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on
-// `vector`, so a program may define its own `reverse` for its own types beside it.
+/// Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on
+/// `vector`, so a program may define its own `reverse` for its own types beside it.
 pub fn reverse < T > (self: vector<T>) {
   reverse(self)
 }
 #builtin
 
-// Give a vector room for `n` elements, so filling it does not grow it step by step:
-// `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count
-// the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+/// Give a vector room for `n` elements, so filling it does not grow it step by step:
+/// `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count
+/// the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
 pub fn reserve < T > (self: vector<T>, n: integer) {
   reserve(self, n)
 }
 #builtin
 
-// Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)`
-// or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element
-// read from the vector itself (`v.insert(0, v[1])`) is the one it was.
+/// Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)`
+/// or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element
+/// read from the vector itself (`v.insert(0, v[1])`) is the one it was.
 pub fn insert < T > (self: vector<T>, index: integer, elem: T) {
   insert(self, index, elem)
 }
 #builtin
 
-// Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `<`
-// (`Ordered`) — a struct defining `op <` sorts by it — and is stable: elements that compare
-// equal keep their order.  A null element sorts first.
+/// Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `<`
+/// (`Ordered`) — a struct defining `op <` sorts by it — and is stable: elements that compare
+/// equal keep their order.  A null element sorts first.
 pub fn sort < T: Ordered > (self: vector<T>) {
   // The runtime sorts integer, float, single and text itself (`#builtin`); this body is the
   // sort for every other element: a bottom-up merge that moves elements by copy, through `<`.
@@ -2085,21 +2085,21 @@ pub fn sort < T: Ordered > (self: vector<T>) {
 }
 #builtin
 
-// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
+/// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
 pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
   filter(self, f)
 }
 #builtin
 
-// What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's
-// element is what `f` returns, so a map can change the element type.
+/// What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's
+/// element is what `f` returns, so a map can change the element type.
 pub fn map < T, U > (self: vector<T>, f: fn(T) -> U) -> vector<U> {
   map(self, f)
 }
 #builtin
 
-// Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or
-// `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.
+/// Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or
+/// `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.
 pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
   // The runtime folds a scalar or `text` accumulator itself (`#builtin`); this body is the
   // fold for every other `U`.
@@ -2109,34 +2109,34 @@ pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
 }
 #builtin
 
-// Sum of all integer elements. Returns 0 for an empty vector.
-// Superseded by the general `sum(v, init)`; kept as a shim over it
-// (the old form keeps working). `sum_of(v)` == `sum(v, 0)`.
+/// Sum of all integer elements. Returns 0 for an empty vector.
+/// Superseded by the general `sum(v, init)`; kept as a shim over it
+/// (the old form keeps working). `sum_of(v)` == `sum(v, 0)`.
 pub fn sum_of(v: const vector<integer>) -> integer {
   sum(v, 0)
 }
 #superseded "sum"
 #pure
 
-// A type that can be walked as a tree.  Declaring `fn children(self: T) -> vector<T>`
-// is the whole contract — that bare function is what makes `T` walkable, with nothing to
-// register and no base type to inherit from.  `tree_walk` is what consumes it.
+/// A type that can be walked as a tree.  Declaring `fn children(self: T) -> vector<T>`
+/// is the whole contract — that bare function is what makes `T` walkable, with nothing to
+/// register and no base type to inherit from.  `tree_walk` is what consumes it.
 pub interface Walkable {
   fn children(self: Self) -> vector<Self>
 }
 
-// Every node reachable from `wk_root` in breadth-first order: the root, then its
-// children, then theirs.  `T` is any type declaring `fn children(self: T) -> vector<T>`
-// — writing that bare function is what makes a type `Walkable`, with nothing to register.
-//
-// `cap` bounds the ANSWER, not just the effort: at most `cap` nodes come back (the root
-// alone when `cap` is 0 or 1) and the walk stops there.  That bound is what makes this
-// total on a structure that has a cycle or no end, so pass a count you would accept as an
-// answer rather than a number picked to be large.
-//
-// Nodes are not de-duplicated — the walk carries no visited set, so a node reached by two
-// parents is returned twice.
-// Example: @STD-006
+/// Every node reachable from `wk_root` in breadth-first order: the root, then its
+/// children, then theirs.  `T` is any type declaring `fn children(self: T) -> vector<T>`
+/// — writing that bare function is what makes a type `Walkable`, with nothing to register.
+///
+/// `cap` bounds the ANSWER, not just the effort: at most `cap` nodes come back (the root
+/// alone when `cap` is 0 or 1) and the walk stops there.  That bound is what makes this
+/// total on a structure that has a cycle or no end, so pass a count you would accept as an
+/// answer rather than a number picked to be large.
+///
+/// Nodes are not de-duplicated — the walk carries no visited set, so a node reached by two
+/// parents is returned twice.
+/// Example: @STD-006
 pub fn tree_walk < T: Walkable > (wk_root: T, cap: integer) -> vector<T> {
   wk_order = [wk_root];
   for wk_i in 0..cap {
@@ -2151,18 +2151,18 @@ pub fn tree_walk < T: Walkable > (wk_root: T, cap: integer) -> vector<T> {
 #pure
 
 // --- Assertions that report both sides ---
-// Assert that two values are equal, naming BOTH of them when they are not.
-//
-// `assert(got == want, "…")` puts the expected value in the CONDITION, so a failure says
-// what was got and leaves the reader to recover what was wanted by reading the expression.
-// This says both.  Works on any type that is `Equatable` (op ==) and `Printable`
-// (to_text) — every built-in scalar, and a user type defining both.
-//
-// Failure behaves exactly as `assert` does, because it IS `assert`: the run aborts (and in
-// `--production` logs an error instead), and the reported position is the CALLER's, not
-// this function's.  The file and line are injected by the compiler; do not pass them
-// manually.
-//
+/// Assert that two values are equal, naming BOTH of them when they are not.
+///
+/// `assert(got == want, "…")` puts the expected value in the CONDITION, so a failure says
+/// what was got and leaves the reader to recover what was wanted by reading the expression.
+/// This says both.  Works on any type that is `Equatable` (op ==) and `Printable`
+/// (to_text) — every built-in scalar, and a user type defining both.
+///
+/// Failure behaves exactly as `assert` does, because it IS `assert`: the run aborts (and in
+/// `--production` logs an error instead), and the reported position is the CALLER's, not
+/// this function's.  The file and line are injected by the compiler; do not pass them
+/// manually.
+///
 pub fn assert_eq < AssertValue: Equatable + Printable > (got: AssertValue, want: AssertValue, what: text, file: text, line: integer) {
   // The type variable is spelled `AssertValue` and NOT `T` on purpose, and a stdlib
   // generic bound to a common method needs the same treatment.  A type variable's bound
@@ -2179,8 +2179,8 @@ pub fn assert_eq < AssertValue: Equatable + Printable > (got: AssertValue, want:
     }
   }
 }
-// Assert that two values DIFFER, naming the value both sides share when they do not.
-// The mirror of assert_eq; same bounds, same failure behaviour, same position injection.
+/// Assert that two values DIFFER, naming the value both sides share when they do not.
+/// The mirror of assert_eq; same bounds, same failure behaviour, same position injection.
 pub fn assert_ne < AssertValue: Equatable + Printable > (got: AssertValue, want: AssertValue, what: text, file: text, line: integer) {
   if got == want {
     if what == "" {
@@ -2193,7 +2193,7 @@ pub fn assert_ne < AssertValue: Equatable + Printable > (got: AssertValue, want:
 
 // --- Field iteration support types ---
 
-// Wraps a field value in a type-discriminated enum for compile-time field iteration.
+/// Wraps a field value in a type-discriminated enum for compile-time field iteration.
 pub enum FieldValue {
   FvBool { v: boolean },
   FvInt { v: integer },
@@ -2204,7 +2204,7 @@ pub enum FieldValue {
   FvText { v: text },
 }
 
-// Represents a single struct field during compile-time iteration.
+/// Represents a single struct field during compile-time iteration.
 pub struct StructField {
   name: text,
   value: FieldValue,
@@ -2221,30 +2221,30 @@ pub struct StructField {
   nullable: boolean,
 }
 
-// Converts an integer to its decimal text. Built-in types define `to_text` so
-// they satisfy the `Printable` interface (used by `print`, format strings, …).
+/// Converts an integer to its decimal text. Built-in types define `to_text` so
+/// they satisfy the `Printable` interface (used by `print`, format strings, …).
 pub fn to_text(self: integer) -> text {
   // These built-in impls sit after every OpFormat* / OpAppend* declaration above so
   // format-string interpolation in the bodies resolves to the relevant built-in.
   "{self}"
 }
-// Converts a float to its text representation.
+/// Converts a float to its text representation.
 pub fn to_text(self: float) -> text {
   "{self}"
 }
-// Converts a single-precision float to its text representation.
+/// Converts a single-precision float to its text representation.
 pub fn to_text(self: single) -> text {
   "{self}"
 }
-// Converts a boolean to "true" or "false".
+/// Converts a boolean to "true" or "false".
 pub fn to_text(self: boolean) -> text {
   "{self}"
 }
-// Converts a character to a one-character text.
+/// Converts a character to a one-character text.
 pub fn to_text(self: character) -> text {
   "{self}"
 }
-// Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.
+/// Returns the text unchanged — the identity case, so `text` satisfies `Printable` too.
 pub fn to_text(self: text) -> text {
   self
 }

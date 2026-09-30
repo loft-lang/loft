@@ -166,9 +166,13 @@ render one, and its output stays local.
 
 ## Adding documentation to the standard library
 
-Add a doc comment directly above each `pub` declaration in `default/*.loft`.  Both
-`//` and `///` lines are read as documentation (gendoc and the LSP accept either), so
-follow the file's own form.
+Add a `///` doc comment directly above each `pub` declaration in `default/*.loft`.  In
+the standard library `///` is the user's documentation and `//` the maintainer's: gendoc
+publishes only `///` lines, and a `//` line neither joins a doc block nor ends it, so a
+maintainer note may sit next to a `pub` item without reaching the reference.  The LSP
+hover follows the same rule for a `default/` definition.  A forgotten `///` leaves the item
+bare, which `every_published_stdlib_entry_carries_its_documentation` reports.  (A library
+outside `default/` documents with either spelling.)
 Use `// --- Section Name ---` lines to group related items under a heading.
 Run `cargo run --bin gendoc` to regenerate the section pages and update the link map.
 
@@ -183,7 +187,8 @@ conclude that a hover or a REPL `:doc` cannot show `///` text. That conclusion i
 Every `Definition` carries `position: Position { file, line, pos }` (set at `add_def` from
 the lexer's position) pointing into real, readable source, stdlib and library definitions
 included (a stdlib symbol resolves to e.g. `default/04_stacktrace.loft:41`; `file` is
-repo-root-relative). The `//` or `///` lines directly above that line ARE the documentation, and
+repo-root-relative). The `//` or `///` lines directly above that line ARE the documentation
+(only `///` in `default/`, see above), and
 reading them there is the same route `gendoc` takes. Do not add a doc field to `Definition`
 to serve a tool; read the source at the position it already records.
 

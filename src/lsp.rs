@@ -247,7 +247,9 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
     let src = read_def_source(text, name, stdlib_dir, &pos);
     let doc = src
         .as_deref()
-        .map_or_else(Vec::new, |s| doc_block_above(s, pos.line));
+        .map_or_else(Vec::new, |s| {
+            doc_block_above(s, pos.line, pos.file.starts_with("default/"))
+        });
     let def_col = src
         .as_deref()
         .and_then(|s| name_col_on_line(s, pos.line, &cname))
@@ -401,7 +403,12 @@ fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) 
 /// the group below it, so folding it into the first function's doc would attach a heading to
 /// one arbitrary member.  That is also the one shape a plain-`//` reading could plausibly get
 /// wrong, which is why it is excluded here rather than left to chance.
-fn doc_block_above(src: &str, decl_line: u32) -> Vec<String> {
+///
+/// The standard library (`stdlib`) keeps the two apart (loft#1808): there `///` is the
+/// user's documentation and `//` the maintainer's, so only `///` lines count and a `//` line
+/// is passed over without ending the block — the rule `gendoc` publishes by, so a hover
+/// shows what the reference shows.
+fn doc_block_above(src: &str, decl_line: u32, stdlib: bool) -> Vec<String> {
     let lines: Vec<&str> = src.lines().collect();
     let mut doc: Vec<String> = Vec::new();
     // The line above the declaration is index `decl_line - 2`.
@@ -420,10 +427,15 @@ fn doc_block_above(src: &str, decl_line: u32) -> Vec<String> {
         if is_section_marker(trimmed) {
             break;
         }
-        let Some(rest) = trimmed
-            .strip_prefix("///")
-            .or_else(|| trimmed.strip_prefix("//"))
-        else {
+        let rest = if let Some(rest) = trimmed.strip_prefix("///") {
+            rest
+        } else if let Some(rest) = trimmed.strip_prefix("//") {
+            if stdlib {
+                i -= 1;
+                continue;
+            }
+            rest
+        } else {
             break;
         };
         doc.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());

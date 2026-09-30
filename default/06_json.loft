@@ -53,7 +53,7 @@ pub struct JsonField {
 ///   _                  => println("unexpected root kind"),
 /// }
 /// ```
-// Example: @STD-007
+/// Example: @STD-007
 pub fn json_parse(raw: text) -> JsonValue;
 #impure(host_io)
 
@@ -195,7 +195,7 @@ pub fn json_string(v: text) -> JsonValue;
 /// so nested containers and arena-origin subtrees (e.g. a captured
 /// `field()` result) embed correctly.  Empty input produces a
 /// real empty JArray.
-// Example: @STD-008
+/// Example: @STD-008
 pub fn json_array(items: const vector<JsonValue>) -> JsonValue;
 #pure
 
@@ -203,7 +203,7 @@ pub fn json_array(items: const vector<JsonValue>) -> JsonValue;
 /// fields.  Each field's value deep-copies via the same `dbref_to_parsed`
 /// walker as `json_array`, so a JObject can carry captured-subtree JArray
 /// / JObject values.  Empty input produces a real empty JObject.
-// Example: @STD-008
+/// Example: @STD-008
 pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
 #pure
 
@@ -224,14 +224,14 @@ pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
 /// the walker produces — the compile-time codegen at
 /// `parse_type_parse` overrides the type to `reference[T]` for the
 /// caller while the stack accounting remains correct.
-// Example: @STD-009
+/// Example: @STD-009
 pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue;
 #impure(host_io)
 
 /// Serialise any user struct to canonical JSON (RFC 8259) — what `instance.to_json()`
 /// calls.  Text fields are escaped (`"` / `\` / control bytes); nested structs and
 /// vectors recurse; a `JsonValue`-typed field renders its subtree as it is.
-// Example: @STD-009
+/// Example: @STD-009
 pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -> text;
 
 /// As `struct_to_json` but produces a pretty (2-space-indent, one

@@ -184,11 +184,11 @@ pub fn reflect_type(kt: integer) -> TypeInfo;
 /// name — `Point`, `text`, `vector<Point>`.  A composite name such as
 /// `vector<Point>` exists only when the program uses that type somewhere; a
 /// program that never does answers `null` for it.
-//
-// Unlike `type_of`, no parser intercept: the name is a RUNTIME value, so the
-// lookup is a runtime one. It works on `--native` because the generated `init()`
-// replays the type registrations — names included — and `Stores::name` is a
-// total lookup that answers "absent" rather than minting a type for a typo.
+///
+/// Unlike `type_of`, no parser intercept: the name is a RUNTIME value, so the
+/// lookup is a runtime one. It works on `--native` because the generated `init()`
+/// replays the type registrations — names included — and `Stores::name` is a
+/// total lookup that answers "absent" rather than minting a type for a typo.
 pub fn type_named(name: text) -> TypeInfo?;
 #impure(host_io)
 

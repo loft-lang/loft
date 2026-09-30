@@ -174,9 +174,19 @@ fn parse_loft(content: &str, entries: &mut Vec<Entry>, fallback_section: &str) {
             continue;
         }
 
-        if trimmed.starts_with("//") {
+        // `///` is the user's documentation and `//` is the maintainer's (loft#1808): only a
+        // `///` line joins the block the next `pub` item publishes.  A `//` line neither joins
+        // it nor ends it, so a maintainer note may sit anywhere — above a `pub` item, between
+        // a doc block and its item — and never reaches the reference.  A forgotten `///`
+        // leaves the item bare, which `every_published_stdlib_entry_carries_its_documentation`
+        // reports; the reverse rule would leak the note silently.
+        if trimmed.starts_with("///") {
             let text = trimmed.trim_start_matches('/').trim().to_string();
             doc.push(text);
+            i += 1;
+            continue;
+        }
+        if trimmed.starts_with("//") {
             i += 1;
             continue;
         }
@@ -2302,7 +2312,34 @@ fn generate_typst(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_sig, sig_kind, sig_name};
+    use super::{Entry, collect_sig, parse_loft, sig_kind, sig_name};
+
+    /// loft#1808 — `///` is published and `//` is not, wherever the `//` note sits: above the
+    /// doc block, between the block and its item, or alone above an item.
+    #[test]
+    fn a_maintainer_note_is_not_published() {
+        let src = "// --- S ---\n\
+                   // A note on the section's layout.\n\
+                   /// Adds one.\n\
+                   // A note between the doc and its item.\n\
+                   #pure\n\
+                   pub fn inc(x: integer) -> integer { x + 1 }\n\
+                   // A note alone above an item, a blank line away.\n\
+                   \n\
+                   pub fn dec(x: integer) -> integer { x - 1 }\n";
+        let mut entries = Vec::new();
+        parse_loft(src, &mut entries, "S");
+        let docs: Vec<(String, Vec<String>)> = entries
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Item { sig, doc } => Some((sig, doc)),
+                Entry::Section(_) => None,
+            })
+            .collect();
+        assert_eq!(docs.len(), 2, "{docs:?}");
+        assert_eq!(docs[0].1, vec!["Adds one.".to_string()], "{docs:?}");
+        assert!(docs[1].1.is_empty(), "{docs:?}");
+    }
 
     /// An interface is its own kind in the search index, never mislabelled `"const"`.
     #[test]

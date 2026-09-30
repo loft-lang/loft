@@ -198,7 +198,9 @@ def prose_lines(path, block):
     """Human-readable lines of a section block (drop code / tags)."""
     if path.endswith((".html", ".htm", ".md")):
         return [re.sub(r"<[^>]+>", " ", l) for l in block]
-    return [l for l in block if l.strip().startswith("//")]
+    # The stdlib publishes `///` only; its `//` lines are maintainer notes (loft#1808).
+    mark = "///" if os.path.basename(os.path.dirname(os.path.abspath(path))) == "default" else "//"
+    return [l for l in block if l.strip().startswith(mark)]
 
 
 def hedge_hits(path, block):
