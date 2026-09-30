@@ -162,7 +162,8 @@ pub fn armed() -> bool {
 pub fn moved(route: Moved, bytes: usize) {
     use crate::store_census::{Work, note};
     match route {
-        Moved::Copy => note(Work::CopyBytes, bytes as u64),
+        // Classified by destination at the copy site (`store_census::copied_into`).
+        Moved::Copy => {}
         Moved::Text => note(Work::TextBytes, bytes as u64),
         Moved::Relocate => {
             note(Work::Relocate, 1);

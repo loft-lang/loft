@@ -120,13 +120,16 @@ def run(cmd, cwd, env, timeout):
 
 
 def op_census(loft, prog, n, timeout):
-    """The interpreter's census and the rows the run printed."""
+    """The interpreter's op census, the rows the run printed, and its store work per routine."""
     name, cwd, _src, argv = prog
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "ops.tsv"
-        p = run([loft, "--interpret", *argv, "--n", str(n)], cwd, {"LOFT_OP_CENSUS": str(out)}, timeout)
+        store = Path(tmp) / "store.tsv"
+        p = run([loft, "--interpret", *argv, "--n", str(n)], cwd,
+                {"LOFT_OP_CENSUS": str(out), "LOFT_STORE_CENSUS": str(store)}, timeout)
         if p.returncode != 0 or not out.exists():
-            return None, None, (p.stderr or p.stdout).strip().splitlines()[-1:] or ["no census written"]
+            return None, None, None, (p.stderr or p.stdout).strip().splitlines()[-1:] or ["no census written"]
+        store_work = store_by_routine(store.read_text(), p.stdout) if store.exists() else None
         rows = []
         for line in p.stdout.splitlines():
             parts = line.split("\t")
@@ -136,11 +139,67 @@ def op_census(loft, prog, n, timeout):
         for line in out.read_text().splitlines():
             if line.startswith("#"):
                 if "not counted" in line:
-                    return None, None, ["the census binary counts no bytes (build it with --features op-census)"]
+                    return None, None, None, ["the census binary counts no bytes (build it with --features op-census)"]
                 continue
             ln, fn, op, cnt, copy, reloc, text = line.split("\t")
             census.append((int(ln), fn, op, int(cnt), int(copy), int(reloc), int(text)))
-        return census, rows, None
+        return census, rows, store_work, None
+
+
+STORE_COLUMNS = ["claims", "grows", "relocations", "relocated_bytes", "copied_bytes", "text_bytes",
+                 "stores_new", "deletes", "stack_bytes"]
+# The work that moves data out of the cache: `stack_bytes` (copies into the interpreter's own
+# hot stack frame, a return value sliding down) is reported apart and never ranks a row.
+HEAP_COLUMNS = [c for c in STORE_COLUMNS if c != "stack_bytes"]
+
+
+def store_by_routine(tsv, stdout):
+    """routine -> {column: work per op} from a LOFT_STORE_CENSUS file and the rows the run
+    printed.  Each row claims the NEXT pair of consecutive ticks() lines whose clock difference
+    is the time it printed, in print order, so two routines that took the same time cannot
+    trade intervals."""
+    lines = [l for l in tsv.splitlines() if l and not l.startswith("#")]
+    if len(lines) < 2:
+        return {}
+    head = lines[0].split("\t")[1:]
+    snaps = [list(map(int, l.split("\t"))) for l in lines[1:]]
+    printed = []
+    for line in stdout.splitlines():
+        f = line.split("\t")
+        if len(f) == 7 and f[0] != "routine":
+            printed.append((f[0], int(f[1]), int(f[2])))
+    out, k = {}, 0
+    for name, iters, us in printed:
+        for i in range(k, len(snaps) - 1):
+            if snaps[i + 1][0] - snaps[i][0] == us:
+                work = dict(zip(head, ((b - a) / max(iters, 1) for a, b in zip(snaps[i][1:], snaps[i + 1][1:]))))
+                out[name] = {c: work.get(c, 0.0) for c in STORE_COLUMNS}
+                k = i + 1
+                break
+    return out
+
+
+def native_store(census_loft, prog, n, timeout):
+    """The same program built with --native against the census rlib, run with
+    LOFT_STORE_CENSUS: its store work per routine, or an error line."""
+    name, cwd, _src, argv = prog
+    lib = Path(census_loft).parent
+    if cwd != ROOT:
+        return None, "a library package's native build needs its dependencies — interpreter column only"
+    with tempfile.TemporaryDirectory() as tmp:
+        rs, exe, store = Path(tmp) / "p.rs", Path(tmp) / "p", Path(tmp) / "store.tsv"
+        p = run([census_loft, "--native-emit", str(rs), "--lean", *argv], cwd, {}, timeout)
+        if p.returncode != 0 or not rs.exists():
+            return None, "native emit failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
+        p = run(["rustc", "-C", "opt-level=3", "-C", "codegen-units=1", "--edition=2024",
+                 "--extern", f"loft={lib}/libloft.rlib", "-L", f"{lib}/deps", "-o", str(exe), str(rs)],
+                cwd, {}, timeout)
+        if p.returncode != 0:
+            return None, "native build failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
+        p = run([str(exe), "--n", str(n)], cwd, {"LOFT_STORE_CENSUS": str(store)}, timeout)
+        if p.returncode != 0 or not store.exists():
+            return None, "native run failed: " + ((p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"])[0]
+        return store_by_routine(store.read_text(), p.stdout), None
 
 
 def rewrite_census(loft, prog, timeout):
@@ -300,6 +359,7 @@ def render(recs, times, failures, a):
               "reads and writes, records = records/vectors/texts built, copied, appended, freed.  "
               "Native-only rewrites are the generator's admissions in the functions the routine ran.")
     md.append("")
+    md += store_section(recs)
     md.append("## Routines, by interp/native")
     md.append("")
     md.append("| bench | routine | interp ns/op | native ns/op | interp/native | interp ops/op | frame | store | records | "
@@ -325,6 +385,45 @@ def render(recs, times, failures, a):
             md.append(f"- {f}")
         md.append("")
     return "\n".join(md) + "\n"
+
+
+def store_extra(r):
+    """The bytes the interpreter moves out of place that native does not, per op: relocated,
+    copied and written as text, interpreter minus native."""
+    i, n = r.get("store_i"), r.get("store_n")
+    if not i or not n:
+        return None
+    moved = ("relocated_bytes", "copied_bytes", "text_bytes")
+    return sum(i[c] for c in moved) - sum(n[c] for c in moved)
+
+
+def store_section(recs):
+    """Per routine: the store work of one op on each backend — the question whether the
+    interpreter does more work on stores than the compiled code."""
+    rows = [r for r in recs if r.get("store_i") and r.get("store_n")]
+    if not rows:
+        return []
+    num = lambda v: f"{v:,.0f}" if v >= 10 or v == 0 else f"{v:.1f}"
+    def pair(r, c):
+        return f"{num(r['store_i'][c])} / {num(r['store_n'][c])}"
+    more = [r for r in rows if any(r["store_i"][c] > r["store_n"][c] + 0.5 for c in HEAP_COLUMNS)]
+    md = ["## Store work: interpreter against native", "",
+          "One op of each routine, counted by `LOFT_STORE_CENSUS` at the store chokepoints both backends "
+          "share (interpreter / native).  A row where the interpreter's figure is higher is store work a "
+          "native rule avoids — an object created, a record grown and moved, a block copied — and the data "
+          "that work moves leaves the cache.  Copies into the interpreter's own stack frame (a return "
+          "value sliding down) stay in cache and are shown apart, as `stack bytes`.  Ranked by the extra "
+          "bytes moved; "
+          f"{len(more)} of {len(rows)} routines do more store work on the interpreter.", "",
+          "| routine | extra bytes | claims | grows | relocations | relocated bytes | copied bytes | text bytes | stores created | stack bytes |",
+          "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
+    for r in sorted(rows, key=lambda r: -(store_extra(r) or 0)):
+        md.append(f"| {r['bench']}/{r['routine']} | {fmt_bytes(max(store_extra(r), 0))} | "
+                  + " | ".join(pair(r, c) for c in ("claims", "grows", "relocations", "relocated_bytes",
+                                                     "copied_bytes", "text_bytes", "stores_new",
+                                                     "stack_bytes")) + " |")
+    md.append("")
+    return md
 
 
 def port_candidates(recs):
@@ -411,7 +510,8 @@ def as_json(recs, failures, a):
         routines.append(dict(
             bench=r["bench"], routine=r["routine"], interp_ns=r["interp_ns"], native_ns=r["native_ns"],
             ratio=r["ratio"], ops=r["ops"], fam={k: r["fam"].get(k, 0) / ops for k in FAMILY_ORDER},
-            moved=r["moved"], rules=r["rules"], shared=r["shared"], functions=fns))
+            moved=r["moved"], rules=r["rules"], shared=r["shared"], functions=fns,
+            store={"interp": r.get("store_i"), "native": r.get("store_n")}))
     rules = defaultdict(lambda: dict(share=0.0, ns=0.0, routines=set(), fns=set(), sites=0))
     for r in recs:
         total = sum(f["ops"] for f in r["fns"].values()) or 1
@@ -477,14 +577,15 @@ def main():
     print(f"# census of {len(progs)} program(s): interpreter ops (--n {a.n}) and native rewrites", flush=True)
 
     def both(prog):
-        census, printed, err = op_census(a.census_loft, prog, a.n, a.timeout)
+        census, printed, store_i, err = op_census(a.census_loft, prog, a.n, a.timeout)
         rw, rerr = rewrite_census(a.census_loft, prog, a.timeout)
-        return prog, census, printed, err, rw, rerr
+        store_n, serr = native_store(a.census_loft, prog, a.n, a.timeout)
+        return prog, census, printed, err, rw, rerr, (store_i or {}, store_n or {}, serr)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         done = list(pool.map(both, progs))
     recs, failures = [], []
-    for prog, census, printed, err, rw, rerr in done:
+    for prog, census, printed, err, rw, rerr, store in done:
         if census is None:
             failures.append(f"{prog[0]}: the interpreter census failed — {err[0]}")
             continue
@@ -494,12 +595,21 @@ def main():
         if got is None:
             failures.append(f"{prog[0]}: routines not attributed — {why}")
             continue
+        store_i, store_n, serr = store
+        if serr:
+            failures.append(f"{prog[0]}: no native store census — {serr}")
+        for r in got:
+            r["store_i"] = store_i.get(r["routine"])
+            r["store_n"] = store_n.get(r["routine"])
         recs += got
     times = timing(a, progs)
     report = render(recs, times, failures, a)
     Path(a.out).write_text(report)
     Path(a.out).with_suffix(".json").write_text(json.dumps(as_json(recs, failures, a), indent=1))
     # The terminal gets the ranking; the file has the per-routine detail.
+    store_md = report.split("## Store work: interpreter against native")
+    if len(store_md) > 1:
+        print("## Store work: interpreter against native" + store_md[1].split("## Routines, by")[0].rstrip())
     table = report.split("## Native-only rewrites")[0]
     print(table.split("## Routines, by interp/native")[1].strip() if "## Routines" in table else table)
     for f in failures:

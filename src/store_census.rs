@@ -37,10 +37,13 @@ pub enum Work {
     RelocateBytes = 6,
     CopyBytes = 7,
     TextBytes = 8,
+    /// Bytes copied INTO the interpreter's stack store — a return value sliding down, an
+    /// argument copied in: work on the hot frame, which stays in cache.
+    StackBytes = 9,
 }
 
 /// The column names, in `Work` order.
-pub const COLUMNS: [&str; 9] = [
+pub const COLUMNS: [&str; 10] = [
     "stores_new",
     "stores_freed",
     "claims",
@@ -50,9 +53,31 @@ pub const COLUMNS: [&str; 9] = [
     "relocated_bytes",
     "copied_bytes",
     "text_bytes",
+    "stack_bytes",
 ];
 
-static COUNTS: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+static COUNTS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
+
+thread_local! {
+    /// This thread's interpreter stack store, so a copy into it counts as `StackBytes`.
+    static STACK_STORE: std::cell::Cell<u16> = const { std::cell::Cell::new(u16::MAX) };
+}
+
+/// A `State` on this thread keeps its stack in store `nr`.
+pub fn set_stack_store(nr: u16) {
+    STACK_STORE.with(|s| s.set(nr));
+}
+
+/// `bytes` block-copied into store `dest`: stack work when `dest` is this thread's
+/// interpreter stack, copied bytes otherwise.
+#[inline]
+pub fn copied_into(dest: u16, bytes: u64) {
+    if STACK_STORE.with(std::cell::Cell::get) == dest {
+        note(Work::StackBytes, bytes);
+    } else {
+        note(Work::CopyBytes, bytes);
+    }
+}
 /// 0 = not read yet, 1 = off, 2 = on.
 static STATE: AtomicU8 = AtomicU8::new(0);
 static STARTED: AtomicBool = AtomicBool::new(false);

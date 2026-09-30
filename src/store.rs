@@ -4235,6 +4235,8 @@ impl Store {
         }
         #[cfg(feature = "op-census")]
         crate::op_census::moved(crate::op_census::Moved::Copy, size as usize);
+        #[cfg(feature = "op-census")]
+        crate::store_census::copied_into(self.store_nr, size as u64);
         unsafe {
             std::ptr::copy(
                 self.ptr.offset(from_rec as isize * 8 + from_pos),
@@ -4300,6 +4302,8 @@ impl Store {
         }
         #[cfg(feature = "op-census")]
         crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
+        #[cfg(feature = "op-census")]
+        crate::store_census::copied_into(to_store.store_nr, len as u64);
         unsafe {
             std::ptr::copy(
                 self.block_src(from_rec, from_pos, len),

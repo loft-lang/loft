@@ -2981,6 +2981,8 @@ impl Stores {
         }
         #[cfg(feature = "op-census")]
         crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
+        #[cfg(feature = "op-census")]
+        crate::store_census::copied_into(to.store_nr, u64::from(len));
         unsafe {
             std::ptr::copy(
                 self.store(from)

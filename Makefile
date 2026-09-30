@@ -595,7 +595,7 @@ rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	python3 scripts/rewrite_census.py
 interp-gap:  ## Where the interpreter still moves data native no longer does, per bench routine (a report; ARGS="--only 14,16")
 	cargo build --release --lib --bin loft -q
-	cargo build --release --bin loft -q --features op-census --target-dir target/op-census
+	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
 	python3 scripts/interp_gap.py $(ARGS)
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
