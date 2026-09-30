@@ -1542,6 +1542,7 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
 /// [`get_elem_hoisted_cold`] gives: folded in, the hot half — a compare, a load and a slice
 /// — lost its inline and the whole read stayed a call per element (measured: 8.4 µs where
 /// the inlined form prices 6.9 on the stdlib `join`).
+#[cold]
 #[inline(never)]
 fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     let elem = get_vector(db, 4, from, stores);
@@ -1553,6 +1554,7 @@ fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
     }
 }
 
+#[cold]
 #[inline(never)]
 fn get_elem_hoisted_cold<T: Copy>(
     db: &DbRef,

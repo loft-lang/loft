@@ -2103,6 +2103,7 @@ impl Stores {
     /// whole body and decides on SIZE — and with this half folded in, the body carried another
     /// call and lost that decision, leaving every in-range element WRITE paying a call for a
     /// fast path that is a bounds test and a store.
+    #[cold]
     #[inline(never)]
     fn vec_set_hoisted_cold<T: crate::vector::HoistScalar>(
         &mut self,
