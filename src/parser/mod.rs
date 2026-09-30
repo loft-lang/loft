@@ -491,11 +491,6 @@ pub struct Parser {
     /// position of the statement whose left-hand side CREATED the variable, and both passes
     /// read it back to tell a first binding from a rebinding.
     pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
-    /// Vector locals that BORROW their store at some bind (their dep list is non-empty after
-    /// it), recorded on both passes — pass 2 reads what pass 1 saw, because a local's deps
-    /// only grow as its body parses and its FIRST bind comes before the one that borrows.
-    /// Read by `own_fresh_rebind`.
-    pub(crate) borrowing_vector_locals: HashSet<(u32, u16)>,
     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
     /// dropped, and `@FR-F-Drop` still runs the work).
@@ -1741,7 +1736,6 @@ impl Parser {
             amp_pending: false,
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
-            borrowing_vector_locals: HashSet::new(),
             stmt_if_pending: false,
             fit_candidate: None,
             fit_armed: None,

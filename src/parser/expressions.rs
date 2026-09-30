@@ -935,6 +935,7 @@ impl Parser {
         }
         if !self.first_pass {
             self.rotate_loop_retbufs(&mut v);
+            self.own_fresh_binds(&mut v);
         }
         // Plan-22 phase 02a (2026-05-12): also save body in pass 1
         // so the closure mutation walker can run in pass 1 BEFORE
@@ -959,6 +960,53 @@ impl Parser {
             self.data.definitions[self.context as usize].code = v;
         }
         result
+    }
+
+    /// A vector local that BORROWS its store at some bind — the literal `p = ["z"]` makes it a
+    /// view of the record `__vdb_N` owns — and at another bind adopts a FRESH store from a call
+    /// (`p = s.split(',')`, `p = arguments()`, `p = j.keys()`): that store gets an owner of its
+    /// own, a work-ref, and `p` views it.  A local has ONE type, so once it borrows anywhere
+    /// neither a rebind's displacement free nor the scope-exit sweep counts it as an owner
+    /// anywhere, and every store it adopted leaked — once per evaluation, on both backends,
+    /// unbounded in a loop, whichever of the two binds came first.  @FR-O-Owner: every store
+    /// has exactly one owner.  A loft function's result is already delivered this way, into
+    /// the caller buffer its call mints; this gives a native result the same shape.
+    ///
+    /// Run once the body is complete (pass 2), because only then is the local's type final:
+    /// its dep list grows as the body parses and the first bind precedes the one that borrows.
+    /// A local that never borrows is untouched — it owns what it adopts, and its rebind frees
+    /// the store it displaces.  A bare `Call` whose declared result is a dep-free vector is the
+    /// fresh-store proxy the bind itself reads; a call handing back a view carries its source
+    /// in its deps, and a loft function's buffered result arrives as a block, not a bare call.
+    fn own_fresh_binds(&mut self, node: &mut Value) {
+        if let Value::Set(p, rhs) = node
+            && let Value::Call(d, _) = rhs.unspan()
+            && !self.vars.is_argument(*p)
+            && matches!(self.vars.tp(*p), Type::Vector(_, deps) if !deps.is_empty())
+            && let Type::Vector(elm, deps) = self.data.def(*d).returned()
+            && deps.is_empty()
+        {
+            let p = *p;
+            let elm = elm.clone();
+            let w = self
+                .vars
+                .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
+            let owned = Type::Vector(elm, Deps::frame1(w));
+            let call = std::mem::replace(rhs.as_mut(), Value::Null);
+            **rhs = crate::data::v_block(
+                vec![crate::data::v_set(w, call), Value::Var(w)],
+                owned,
+                "owned_fresh_bind",
+            );
+            // Added to the local's borrow list, not in place of it: the literal's record is
+            // still a store `p` views on another path.
+            let mut on = self.vars.tp(p).depend();
+            on.push(w);
+            let tp = self.vars.tp(p).with_deps(&Deps::frame(on));
+            self.vars.set_type(p, tp);
+            return;
+        }
+        node.for_each_child_mut(&mut |c| self.own_fresh_binds(c));
     }
 
     /// H7 — give a loop-carried return buffer a partner and rotate the two.
@@ -5890,7 +5938,6 @@ use a separate collection or add after the loop"
         {
             s_type = target;
         }
-        self.own_fresh_rebind(to, code, &mut s_type, op);
         // `(E-Asgn-Compound)` — a compound write stores `v₁ op v₂`, never the right side itself,
         // so the right side's type says nothing about the place's.  Retyping the variable to it
         // refused `f += 1` on a `float` as a change "from float to integer" and `a -= 1` over
@@ -5933,11 +5980,6 @@ use a separate collection or add after the loop"
             && !matches!(s_type.base(), Type::Text(_) | Type::Character);
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
-        }
-        if let Value::Var(v) = to.unspan()
-            && matches!(self.vars.tp(*v), Type::Vector(_, d) if !d.is_empty())
-        {
-            self.borrowing_vector_locals.insert((self.context, *v));
         }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
@@ -7196,56 +7238,6 @@ use a separate collection or add after the loop"
             }
         }
         Type::Void
-    }
-
-    /// A vector local that BORROWS its store — the literal `p = ["z"]` makes it a view of the
-    /// record `__vdb_N` owns — rebound to a call that hands back a FRESH store (`p =
-    /// s.split(',')`, `p = arguments()`): that store gets an owner, a work-ref, and `p` views
-    /// it.  Adopting it bare left nobody to release it — `p`'s type still named `__vdb_N`, so
-    /// neither the rebind's displacement free nor the scope-exit sweep counted `p` as its
-    /// owner — and it leaked once per evaluation on both backends, unbounded in a loop.
-    /// @FR-O-Owner: every store has exactly one owner.  A loft function's result is already
-    /// delivered this way, into the caller buffer its call mints; this gives a native
-    /// result the same shape.
-    ///
-    /// The FIRST bind is taken too when a later bind borrows (`p = keys(); … p = ["x"]`): the
-    /// local's type is one per local, so once it borrows anywhere nothing frees it anywhere,
-    /// and the store its first bind adopted leaked on every path (`borrowing_vector_locals`
-    /// is how pass 2 knows at that first bind).  Pass 2 only (`work_refs_p2`).  A local that
-    /// never borrows is not taken: it adopts the store itself, and its rebind frees
-    /// the one it displaces.  A bare `Call` with a dep-free vector type is the fresh-store
-    /// proxy the bind reads too; a projection or a view carries its source in its deps.
-    fn own_fresh_rebind(&mut self, to: &Value, code: &mut Value, s_type: &mut Type, op: &str) {
-        if op != "=" || self.first_pass {
-            return;
-        }
-        let Value::Var(v) = to.unspan() else {
-            return;
-        };
-        let v = *v;
-        let Type::Vector(elm, deps) = s_type.clone() else {
-            return;
-        };
-        let borrows = matches!(self.vars.tp(v), Type::Vector(_, d) if !d.is_empty())
-            || self.borrowing_vector_locals.contains(&(self.context, v));
-        if !deps.is_empty()
-            || self.vars.is_argument(v)
-            || !borrows
-            || !matches!(code.unspan(), Value::Call(..))
-        {
-            return;
-        }
-        let w = self
-            .vars
-            .work_refs_p2(&Type::Vector(elm.clone(), Deps::none()), &mut self.lexer);
-        let owned = Type::Vector(elm, Deps::frame1(w));
-        let call = std::mem::replace(code, Value::Null);
-        *code = crate::data::v_block(
-            vec![crate::data::v_set(w, call), Value::Var(w)],
-            owned.clone(),
-            "owned_fresh_rebind",
-        );
-        *s_type = owned;
     }
 
     /// @PLN25 E2/E3 — rewrite a nullable struct ELEMENT type `Reference(S)` to the
