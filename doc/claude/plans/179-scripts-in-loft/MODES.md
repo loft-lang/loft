@@ -138,6 +138,36 @@ a hook (2 ms start-up, never a compile); `#mode release` pins a CI gate (built a
 run, foreground); neither is the normal case.  The scoreboard shows each script's age, mode
 and the number that decided it.
 
+### Tests are never subject to the policy (owner, 2026-09-30)
+
+A test's backend is the TEST'S claim — "this passes interpreted" or "this passes native" —
+and a policy that quietly moved a test to the other backend, or started a rustc in the
+background halfway through a suite, would turn every green into a guess.  So the policy is
+a property of ONE thing, a plain script invocation (`loft file.loft`, no backend flag, no
+test context), and the test frameworks, which already hold configuration, keep it out by
+three layers, each of which alone would do:
+
+1. **A backend flag switches the policy off, including its bookkeeping.**  `--interpret`,
+   `--native` and `--native-release` are measurements, not uses: no run record is written,
+   no age is counted, no build is started.  Every runner passes one — the Rust harness
+   already does (`run_mode("--interpret")` / `run_mode("--native")`, `tests/common/cross_mode.rs`),
+   `loft test` runs in-process on its `native_mode` and never enters the program path, and
+   the build phase's `[[test]]` targets (PACKAGES.md) become explicit for `interpret` too —
+   today that target spawns a bare `loft <run>`, which is the one shape the policy would
+   claim.
+2. **A test context is declared to every child.**  `loft test` and the build-phase runner
+   set `LOFT_MODE_POLICY=off` in the environment of everything they spawn, and the policy
+   honours it — so a script under test that itself runs `loft` (through `run`, strand 4)
+   cannot promote or build either.  A package can say the same once, for good, in its
+   manifest (`[scripts] policy = "off"`), which is what a test-only package does.
+3. **The twin runs both modes on purpose** (strand 2), each explicitly, so a port's verdict
+   is never taken in whatever mode the policy happened to pick that day.
+
+The falsifier ships with the mechanism: a script run past every threshold under `loft
+test` and under the harness, then checked — no run record, no release entry in
+`.loft/cache`, the mode still the one the runner named.  The `tests/scripts/.loft/cache`
+entries stay what `--native` puts there today.
+
 ### What it changes in loft
 
 The default backend for a program invocation is native today (`src/main.rs`, `native_mode =
@@ -146,8 +176,8 @@ interpreter — and the policy above decides when a binary comes to exist.  `--i
 `--native` and `--native-release` keep overriding.  This is C71's steady state ("scripts
 interpret, libraries compile") with the promotion the owner asked for on top; the games
 under `engine_host` get it for free.  Items for the plan: the run record in the cache entry,
-the git-age query, the detached build, `loft build --aged`, `#mode`, and the census's
-`mode` + `age` columns — strand 3, before the first tranche is measured, because the bar's
+the git-age query, the detached build, `loft build --aged`, `#mode`, the three test guards
+above with their falsifier, and the census's `mode` + `age` columns — strand 3, before the first tranche is measured, because the bar's
 performance verdict is taken in the mode the policy would pick.
 
 ## What this does NOT change
