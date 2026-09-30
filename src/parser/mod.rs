@@ -17171,8 +17171,8 @@ impl Parser {
                     // (`convert`'s stored-tuple arm); a default's call has to take the same
                     // conversion, or the callee reads the record's DbRef as its tuple — `null`
                     // members on the interpreter, a type error under `--native`.
-                    if matches!(tp, Type::Tuple(_))
-                        && matches!(all_types[a_nr], Type::Reference(_, _))
+                    if matches!(tp.base(), Type::Tuple(_))
+                        && matches!(all_types[a_nr].base(), Type::Reference(_, _))
                     {
                         let boxed = all_types[a_nr].clone();
                         self.convert(&mut substituted, &boxed, &tp);

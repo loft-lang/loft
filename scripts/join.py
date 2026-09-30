@@ -583,8 +583,10 @@ def cmd_rederive(args):
                 if art.get("on_growth") == "optional-sites":
                     new = optional_sites_diff(plan)
                     print("        the shape tests the join made opaque:")
-                    print("\n".join("          " + l for l in new) or "          (none — the "
-                          "growth is a moved test, read the audit)")
+                    print("\n".join("          " + l for l in new) or "          (none against "
+                          "the pre-join tree — the growth PREDATES this join: this branch's own "
+                          "commits since the pin added it; diff against the commit that wrote "
+                          "the pin, `git log -1 -- index/optional_ratchet.json`)")
                 print(f"        cure: {art.get('cure', '')}")
                 continue
         before = status()

@@ -175,6 +175,10 @@
       "scripts/gate_preflight.sh"
     ],
     [
+      "optional ratchet",
+      "python3 scripts/ir_walker_audit.py optional --check-ratchet"
+    ],
+    [
       "cargo check",
       "cargo check --all-targets -q"
     ],
