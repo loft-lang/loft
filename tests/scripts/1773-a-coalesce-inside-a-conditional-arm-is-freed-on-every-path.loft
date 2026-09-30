@@ -1,0 +1,100 @@
+// A `??` whose subject is an indexed text element hoists a staged temp (`__ncc_N`) that the
+// statement frees right after it.  When the statement assigns that temp only inside ONE ARM
+// of a conditional — `n > 0 && f(v[n - 1] ?? "")`, `||`, an `if` or a `match` expression —
+// the free still runs on every path, so the temp is initialised before the statement: on the
+// path that skipped the arm the interpreter otherwise freed whatever an earlier frame had left
+// in the slot (loft#1773: a SIGSEGV at `OpFreeText` in the @PLN179 census, heap-state
+// dependent; `--native` declares the temp initialised and was never wrong).
+//
+// Cells, hand-computed, both backends, each taking the NOT-taken path first: a `&&`, b `||`,
+// c an `if` expression, d a `match` arm, e an `if` statement whose block consumes the `??`, f
+// the control with the `??` on every path, g the census rhythm (200 turns, resets between).
+//
+// @falsified-at: 6fabbb996 — scored by hand: the release build of that tree segfaults at
+//   OpFreeText (rc 139), its debug-assertions build panics `double free` (text.rs, rc 101);
+//   here both exit 0, and LOFT_VERIFY_STACK=1 reads no uninitialised slot.
+// CHANNEL: exit — the control stops on the first not-taken turn.
+// HOLDS: every value cell on both backends; LOFT_POISON=1 and LOFT_STRICT_STORES=1 clean on
+//   both; native was already right on the control.
+//
+struct Lex { result: vector<text>, flag: boolean, hits: integer }
+
+fn is_call(s: text) -> boolean { s == "print" || s == "len" }
+
+// a — `&&`'s right operand (the census shape): n == 0 skips the `??`.
+fn and_arm(self: Lex) {
+  n = len(self.result);
+  self.flag = n > 0 && is_call(self.result[n - 1] ?? "");
+  self.result += ["x"];
+}
+
+// b — `||`'s right operand: n == 0 takes the left side and skips the `??`.
+fn or_arm(self: Lex) {
+  n = len(self.result);
+  self.flag = n == 0 || is_call(self.result[n - 1] ?? "");
+  self.result += ["print"];
+}
+
+// c — an `if` expression's then-arm.
+fn if_arm(self: Lex, c: boolean) {
+  n = len(self.result);
+  self.flag = if c { is_call(self.result[n - 1] ?? "") } else { false };
+  self.result += ["len"];
+}
+
+// d — a `match` arm.
+fn match_arm(self: Lex, k: integer) {
+  n = len(self.result);
+  self.flag = match k { 1 => is_call(self.result[n - 1] ?? ""), _ => false };
+  self.result += ["len"];
+}
+
+// e — an `if` statement whose then-block consumes the `??` (a block, its own scope).
+fn stmt_arm(self: Lex) {
+  n = len(self.result);
+  if n > 0 { self.hits += len(self.result[n - 1] ?? ""); }
+  self.result += ["abc"];
+}
+
+// f — control: the `??` on every path.
+fn plain(self: Lex) {
+  n = len(self.result);
+  self.hits += len(self.result[n - 1] ?? "");
+  self.result += ["xy"];
+}
+
+fn main() {
+  a = Lex { result: [], flag: true, hits: 0 };
+  and_arm(a);
+  assert(!a.flag, "a1 empty: {a.flag}");
+  and_arm(a);
+  assert(!a.flag && len(a.result) == 2, "a2 'x' is no call: {a.flag}");
+  b = Lex { result: [], flag: false, hits: 0 };
+  or_arm(b);
+  assert(b.flag, "b1 empty -> true: {b.flag}");
+  or_arm(b);
+  assert(b.flag, "b2 'print' is a call: {b.flag}");
+  c = Lex { result: [], flag: true, hits: 0 };
+  if_arm(c, false);
+  assert(!c.flag, "c1 not taken: {c.flag}");
+  if_arm(c, true);
+  assert(c.flag, "c2 'len' is a call: {c.flag}");
+  d = Lex { result: [], flag: true, hits: 0 };
+  match_arm(d, 0);
+  assert(!d.flag, "d1 other arm: {d.flag}");
+  match_arm(d, 1);
+  assert(d.flag, "d2 'len' is a call: {d.flag}");
+  e = Lex { result: [], flag: false, hits: 0 };
+  stmt_arm(e);
+  stmt_arm(e);
+  assert(e.hits == 3, "e1 len('abc') once: {e.hits}");
+  f = Lex { result: [], flag: false, hits: 0 };
+  plain(f);
+  plain(f);
+  assert(f.hits == 2, "f1 len('') + len('xy'): {f.hits}");
+  // many turns, the census's rhythm: the not-taken path between taken ones
+  g = Lex { result: [], flag: false, hits: 0 };
+  for i in 0..200 { and_arm(g); if i % 7 == 0 { g.result = []; } }
+  assert(len(g.result) == 3, "g1 three appends after the reset at 196: {len(g.result)}");
+  println("ok");
+}

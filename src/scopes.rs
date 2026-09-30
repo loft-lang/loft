@@ -16080,6 +16080,7 @@ impl Scopes<'_> {
                         let tmp = function.add_temp_var(&name, &Type::Boolean);
                         self.var_scope.insert(tmp, self.scope);
                         self.var_order.push(tmp);
+                        with_frees.extend(ncc_text_preinits(cond, function));
                         with_frees.push(v_set(tmp, (**cond).clone()));
                         with_frees.extend(cond_frees);
                         let branch =
@@ -16096,6 +16097,7 @@ impl Scopes<'_> {
                     None => inner,
                 };
                 let frees = ncc_text_frees(&stmt, function, data);
+                with_frees.extend(ncc_text_preinits(&stmt, function));
                 with_frees.push(stmt);
                 with_frees.extend(frees);
             }
@@ -16130,6 +16132,7 @@ impl Scopes<'_> {
                 let tmp = function.add_temp_var(&name, &bl.result);
                 self.var_scope.insert(tmp, self.scope);
                 self.var_order.push(tmp);
+                ls.extend(ncc_text_preinits(&inner, function));
                 ls.push(v_set(tmp, inner));
                 ls.extend(ncc_frees);
                 expr = if was_return {
@@ -22889,15 +22892,43 @@ fn delivered_binding(function: &Function, buffer: u16) -> Option<u16> {
 /// build a temp at all, and emptiness of the frees is that test.
 fn ncc_text_frees(node: &Value, function: &Function, data: &Data) -> Vec<Value> {
     let mut out = Vec::new();
-    collect_consumed_ncc_text(node, function, &mut out);
+    collect_consumed_ncc_text(node, function, false, &mut out);
     out.into_iter()
-        .map(|v| call("OpFreeText", v, data))
+        .map(|(v, _)| call("OpFreeText", v, data))
         .collect()
 }
 
-fn collect_consumed_ncc_text(node: &Value, function: &Function, out: &mut Vec<u16>) {
+/// The `__ncc_N = ""` initialisations a statement owes before it, for the `??` temps
+/// [`ncc_text_frees`] will free AFTER it but that the statement assigns only inside one arm of
+/// a conditional (`n > 0 && f(v[n - 1] ?? "")`, `||`, an `if` or `match` expression — all an
+/// `If` here).  The free after the statement runs on every path, so the slot must hold a text
+/// on every path: on the path that skips the arm it held whatever an earlier frame left there,
+/// and the interpreter freed that (loft#1773, heap-state dependent; native declares the temp
+/// initialised).  The init is the same `__ncc_N = ""` a right-nested `??` pre-declares, and
+/// the arm's own assignment then overwrites it.
+fn ncc_text_preinits(node: &Value, function: &Function) -> Vec<Value> {
+    let mut out = Vec::new();
+    collect_consumed_ncc_text(node, function, false, &mut out);
+    out.into_iter()
+        .filter(|&(_, under_arm)| under_arm)
+        .map(|(v, _)| v_set(v, Value::Text(String::new())))
+        .collect()
+}
+
+fn collect_consumed_ncc_text(
+    node: &Value,
+    function: &Function,
+    under_arm: bool,
+    out: &mut Vec<(u16, bool)>,
+) {
     match node {
-        Value::Span(b) => collect_consumed_ncc_text(&b.1, function, out),
+        Value::Span(b) => collect_consumed_ncc_text(&b.1, function, under_arm, out),
+        // The condition runs on every path through the `If`; each arm on only some.
+        Value::If(c, t, e) => {
+            collect_consumed_ncc_text(c, function, under_arm, out);
+            collect_consumed_ncc_text(t, function, true, out);
+            collect_consumed_ncc_text(e, function, true, out);
+        }
         Value::Block(bl) if bl.name == "ncc" => {
             for op in &bl.operators {
                 if let Value::Set(v, val) = op.unspan()
@@ -22913,7 +22944,7 @@ fn collect_consumed_ncc_text(node: &Value, function: &Function, out: &mut Vec<u1
                     // `??` double-free).  A subject is never a bare literal.
                     && !matches!(val.unspan(), Value::Text(_) | Value::Null)
                 {
-                    out.push(*v);
+                    out.push((*v, under_arm));
                 }
             }
             // Do NOT recurse INTO this ncc block: a nested `??` (`a ?? b ?? c`)
@@ -22928,7 +22959,7 @@ fn collect_consumed_ncc_text(node: &Value, function: &Function, out: &mut Vec<u1
             // blocks are reached exactly once.
         }
         Value::Block(_) | Value::Loop(_) => {}
-        _ => node.for_each_child(&mut |c| collect_consumed_ncc_text(c, function, out)),
+        _ => node.for_each_child(&mut |c| collect_consumed_ncc_text(c, function, under_arm, out)),
     }
 }
 
