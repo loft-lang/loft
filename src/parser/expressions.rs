@@ -978,7 +978,27 @@ impl Parser {
     /// the store it displaces.  A bare `Call` whose declared result is a dep-free vector is the
     /// fresh-store proxy the bind itself reads; a call handing back a view carries its source
     /// in its deps, and a loft function's buffered result arrives as a block, not a bare call.
-    fn own_fresh_binds(&mut self, node: &mut Value) {
+    fn own_fresh_binds(&mut self, body: &mut Value) {
+        let mut owners = Vec::new();
+        self.own_fresh_bind_sites(body, &mut owners);
+        // Each owner is declared at the top of the frame, null: it then lives as long as the
+        // frame, which outlives `p` wherever `p` is read, and its scope-exit free releases the
+        // last store it adopted (a rebind releases the one it displaces).  Declared where its
+        // bind sits instead, an owner in a branch was freed at the branch's end while `p` still
+        // viewed it.  `inline_ref`: the declaration holds the null sentinel rather than a store
+        // minted only to be displaced by the call.  `p`'s own type is left as it is — it already
+        // borrows, which is what keeps it from freeing, and a second dep would make it a
+        // multi-store local whose literal record the block-confinement pass frees at the
+        // literal's block.
+        if let Value::Block(bl) = body {
+            for w in owners.into_iter().rev() {
+                self.vars.mark_inline_ref(w);
+                bl.operators.insert(0, crate::data::v_set(w, Value::Null));
+            }
+        }
+    }
+
+    fn own_fresh_bind_sites(&mut self, node: &mut Value, owners: &mut Vec<u16>) {
         if let Value::Set(p, rhs) = node
             && let Value::Call(d, _) = rhs.unspan()
             && !self.vars.is_argument(*p)
@@ -986,7 +1006,6 @@ impl Parser {
             && let Type::Vector(elm, deps) = self.data.def(*d).returned()
             && deps.is_empty()
         {
-            let p = *p;
             let elm = elm.clone();
             let w = self
                 .vars
@@ -998,15 +1017,10 @@ impl Parser {
                 owned,
                 "owned_fresh_bind",
             );
-            // Added to the local's borrow list, not in place of it: the literal's record is
-            // still a store `p` views on another path.
-            let mut on = self.vars.tp(p).depend();
-            on.push(w);
-            let tp = self.vars.tp(p).with_deps(&Deps::frame(on));
-            self.vars.set_type(p, tp);
+            owners.push(w);
             return;
         }
-        node.for_each_child_mut(&mut |c| self.own_fresh_binds(c));
+        node.for_each_child_mut(&mut |c| self.own_fresh_bind_sites(c, owners));
     }
 
     /// H7 — give a loop-carried return buffer a partner and rotate the two.
