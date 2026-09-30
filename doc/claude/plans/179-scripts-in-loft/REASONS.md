@@ -5,34 +5,34 @@ One file per reason a port MET to prefer Python or bash over loft ([`findings/`]
 recorded when met, never guessed; assessed by editing its `status` and `fix` lines; struck when
 the port that met it re-measures green on that axis ([README § The bar](README.md)).
 
-**OPEN: 9** (open + accepted, of 9 recorded)
+**OPEN: 8** (open + accepted, of 9 recorded; 0 no longer hold — `scripts/script_recheck.sh` re-measures the probed ones)
 
 ## To assess
 
-| # | finding | axis | met by | the fix it needs | ref |
-|---|---|---|---|---|---|
-| 001 | **Start-up costs ~15 ms before the first statement** — start-up of a `hello`, INSTALLED binary, idle box, 2026-09-30, 5 runs: `--interpret` 15–22 ms (Python 15–19, bash 5) — at the bar; the DEFAULT path (native, warm cache) 32–37 ms — 2× Python.  The from-source binary's 78–84 ms was rule 4 (program cache off), not the language | performance | scripts/script_census (strand 1) | where the interpreter's ~15 ms goes before the first statement — `LOFT_TIMING=1` on the installed binary: `parse_default` 5–10 ms for 748 stdlib defs on a WARM run, scopes 3, lints 2, codegen 3 — against the 7 ms a whole `cat \ | — |
-| 002 | **Tokenising a line needs a character loop** — tokenising a line needs a character loop: `split` takes one separator and `find` answers bytes against `len`'s characters | clarity | scripts/script_census (strand 1) | a regex-shaped split in the stdlib, or the `regex` library measured for it | — |
-| 003 | **The interpreter segfaults on `f(self.v[n - 1] ?? "")` in a mutating method** — the interpreter segfaults at `OpFreeText` on `argv_call(self.result[n - 1] ?? "")` inside a struct method that also appends to `self.result`, once enough heap is behind it; `--native` runs it; four other spellings run; no extraction reproduces it yet | behaviour | scripts/script_census (strand 1) | [loft#1773](https://github.com/loft-lang/loft/issues/1773) — the census binds the element to a local first, marked to fold back | loft#1773 |
-| 004 | **No `copy(from, to)` builtin** — no `copy(from, to)`: a file is copied as `write_bytes(dst, read_bytes(src) ?? [])`, two calls and a null discharge for what `cp` says in one word | clarity | fuzz/seed_program_source (strand 3, the first port) | a `copy` builtin beside `move`, answering `FileResult` | — |
-| 005 | **No recursive directory listing** — no recursive listing: `files()` answers one level, so `find … -name '*.loft'` is a hand-written walk — the tree already carries one in `tools/indexer/src/scan.loft` (`walk_plan_dirs`), one in each of the two gallery scripts, one in the census and one in this port, none symlink-aware before `is_symlink` existed | clarity | fuzz/seed_program_source (strand 3) | a `files(dir, recursive)` or a `find(dir, suffix)` in the stdlib, symlink-aware, replacing the five copies | — |
-| 006 | **The registry is unreachable behind a TLS-intercepting proxy** — `use crypto;` cannot auto-install behind this box's TLS-intercepting proxy — loft's HTTP client trusts only its bundled roots and ignores `SSL_CERT_FILE`, where `curl` on the same box succeeds  Status note: open — the fetch itself. | environment | scripts/wasm_bundle_stamp.sh (strand 3, not yet ported) | honour `SSL_CERT_FILE` / the system root store in the registry fetch.  Interim that works: `git clone` (which the proxy allows) `loft-libs-core` and copy the package under `~/.loft/lib/<name>`; its native crate builds on first use and both backends resolve it | — |
-| 007 | **The format-width refusal points one line above the format string** — the refusal of `{n:0>5}` names the cure (`{n:05}`) but points at the line ABOVE the format string | clarity | fuzz/seed_program_source (strand 3) | the diagnostic's span | — |
-| 008 | **No path pattern: a glob is four lines** — no path pattern: bash's `default/*.loft` is a `list_dir` + an `ends_with` filter + a path join, four lines for one word | clarity | scripts/wasm_bundle_stamp (strand 3) | a glob, or a `files(dir, pattern)` in the stdlib | — |
-| 009 | **No `exit(code)`** — no `exit(code)`: `set -e`'s "stop with status 1 on the first unreadable file" is an `assert`, whose stderr and status are loft's, not the script's | behaviour | scripts/wasm_bundle_stamp (strand 3) | `exit(code)` (README § Strand 1) | — |
+| # | finding | axis | met by | the fix it needs | ref | re-measured |
+|---|---|---|---|---|---|---|
+| 001 | **Start-up costs ~15 ms before the first statement** — start-up of a `hello`, INSTALLED binary, idle box, 2026-09-30, 5 runs: `--interpret` 15–22 ms (Python 15–19, bash 5) — at the bar; the DEFAULT path (native, warm cache) 32–37 ms — 2× Python.  The from-source binary's 78–84 ms was rule 4 (program cache off), not the language  Two bars: against Python's `hello` (15–19 ms) the installed binary is AT the bar — the recheck measured 13 ms; against the bash original the stamp port was met on (a 12 ms `cat | sha256sum` pipeline) it is not, by a millisecond, which is why the probe's bar is 12.  The from-source `target/release/loft` reads 60–80 ms because its program cache is off (PERFORMANCE.md rule 4) and must never be the number quoted here. | performance | scripts/script_census (strand 1) | where the interpreter's ~15 ms goes before the first statement — `LOFT_TIMING=1` on the installed binary: `parse_default` 5–10 ms for 748 stdlib defs on a WARM run, scopes 3, lints 2, codegen 3 — against the 7 ms a whole `cat \ | — | holds at 03b3e836 |
+| 002 | **Tokenising a line needs a character loop** — tokenising a line needs a character loop: `split` takes one separator and `find` answers bytes against `len`'s characters | clarity | scripts/script_census (strand 1) | a regex-shaped split in the stdlib, or the `regex` library measured for it | — | unprobed |
+| 003 | **The interpreter segfaults on `f(self.v[n - 1] ?? "")` in a mutating method** — the interpreter segfaults at `OpFreeText` on `argv_call(self.result[n - 1] ?? "")` inside a struct method that also appends to `self.result`, once enough heap is behind it; `--native` runs it; four other spellings run; no extraction reproduces it yet | behaviour | scripts/script_census (strand 1) | [loft#1773](https://github.com/loft-lang/loft/issues/1773) — the census binds the element to a local first, marked to fold back | loft#1773 | unprobed |
+| 004 | **No `copy(from, to)` builtin** — no `copy(from, to)`: a file is copied as `write_bytes(dst, read_bytes(src) ?? [])`, two calls and a null discharge for what `cp` says in one word | clarity | fuzz/seed_program_source (strand 3, the first port) | `path.copy_to(dst) -> FileResult` in the on-demand `script` library (README § Strand 8) — expressible over `read_bytes`/`write_bytes`, so never the stdlib (owner, 2026-09-30) | — | holds at 03b3e836 |
+| 005 | **No recursive directory listing** — no recursive listing: `files()` answers one level, so `find … -name '*.loft'` is a hand-written walk — the tree already carries one in `tools/indexer/src/scan.loft` (`walk_plan_dirs`), one in each of the two gallery scripts, one in the census and one in this port, none symlink-aware before `is_symlink` existed | clarity | fuzz/seed_program_source (strand 3) | `dir.walk(suffix) -> vector<text>` in the on-demand `script` library (README § Strand 8), symlink-aware, replacing the five copies — expressible over `files()` and `is_symlink`, so never the stdlib | — | holds at 03b3e836 |
+| 006 | **The registry is unreachable behind a TLS-intercepting proxy** — `use crypto;` cannot auto-install behind this box's TLS-intercepting proxy — loft's HTTP client trusts only its bundled roots and ignores `SSL_CERT_FILE`, where `curl` on the same box succeeds  Status note: open — the fetch itself. | environment | scripts/wasm_bundle_stamp.sh (strand 3, not yet ported) | honour `SSL_CERT_FILE` / the system root store in the registry fetch.  Interim that works: `git clone` (which the proxy allows) `loft-libs-core` and copy the package under `~/.loft/lib/<name>`; its native crate builds on first use and both backends resolve it | — | unprobed |
+| 008 | **No path pattern: a glob is four lines** — no path pattern: bash's `default/*.loft` is a `list_dir` + an `ends_with` filter + a path join, four lines for one word | clarity | scripts/wasm_bundle_stamp (strand 3) | `pattern.glob() -> vector<text>` in the on-demand `script` library (README § Strand 8) — a pattern match over `list_dir`, so never the stdlib | — | holds at 03b3e836 |
+| 009 | **No `exit(code)`** — no `exit(code)`: `set -e`'s "stop with status 1 on the first unreadable file" is an `assert`, whose stderr and status are loft's, not the script's | behaviour | scripts/wasm_bundle_stamp (strand 3) | `exit(code)` in the stdlib — a primitive only the runtime can answer, which is the one kind that belongs there (README § Strand 8) | — | holds at 03b3e836 |
 
 ## Accepted — a change to loft
 
-| # | finding | axis | met by | the fix it needs | ref |
-|---|---|---|---|---|---|
+| # | finding | axis | met by | the fix it needs | ref | re-measured |
+|---|---|---|---|---|---|---|
 
 ## Fixed
 
-| # | finding | axis | met by | the fix it needs | ref |
-|---|---|---|---|---|---|
+| # | finding | axis | met by | the fix it needs | ref | re-measured |
+|---|---|---|---|---|---|---|
+| 007 | **A `#!` first line shifts every diagnostic one line up** — Met as "the refusal of `{n:0>5}` points at the line above the format string" in the seeder port; re-measured with two probe shapes: without a `#!` line the diagnostic points at the right line, with one it points one line up — every diagnostic in every bare script, not the format width's. A type error under a `#!` line pointed two lines up (at the `fn` header), which is a second shape to look at with the fix. | behaviour | fuzz/seed_program_source (strand 3) | the lexer skips the `#!` line without counting it — count it, so a bare script's diagnostics name the line the editor shows | 03b3e836 | **no longer holds** at 03b3e836 |
 
 ## Declined
 
-| # | finding | axis | met by | the fix it needs | ref |
-|---|---|---|---|---|---|
+| # | finding | axis | met by | the fix it needs | ref | re-measured |
+|---|---|---|---|---|---|---|
 

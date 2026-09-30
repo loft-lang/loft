@@ -7,12 +7,16 @@
 // NNN-<slug>.md: a title line, then one `key: value` line each for axis (behaviour ·
 // performance · clarity · environment), met-by (the script and strand), status (open ·
 // accepted · fixed · declined), fix (the loft change it needs) and ref (an issue, a
-// commit or a PR once one exists), a blank line, and the measurement in prose.  To
-// assess a finding, edit its status and fix lines; to track a fix, set ref and the
-// status; nothing else is maintained, and this file is rendered, never edited.
+// commit or a PR once one exists), optionally probe + expect (a program that re-measures
+// the finding — scripts/script_recheck.sh runs it and writes checked + holds back), a
+// blank line, and the measurement in prose.  To assess a finding, edit its status and
+// fix lines; to track a fix, set ref and the status; nothing else is maintained, and this
+// file is rendered, never edited.  A finding whose probe says `holds: no` is listed FIRST:
+// what it recorded no longer measures, so it is fixed or its probe needs a new name.
 
 struct Finding {
-  number: text, title: text, axis: text, met_by: text, status: text, fix: text, ref: text, body: text,
+  number: text, title: text, axis: text, met_by: text, status: text, fix: text, ref: text,
+  checked: text, holds: text, body: text,
 }
 
 fn field(lines: vector<text>, key: text) -> text {
@@ -36,21 +40,44 @@ fn parse(path: text) -> Finding {
   name = path.basename();
   Finding {
     number: name[0..3], title: title, axis: field(head, "axis"), met_by: field(head, "met-by"),
-    status: field(head, "status"), fix: field(head, "fix"), ref: field(head, "ref"), body: trim(body),
+    status: field(head, "status"), fix: field(head, "fix"), ref: field(head, "ref"),
+    checked: field(head, "checked"), holds: field(head, "holds"), body: trim(body),
   }
+}
+
+fn checked_text(f: Finding) -> text {
+  if f.holds == "no" { return "**no longer holds** at {f.checked}"; }
+  if f.holds == "yes" { return "holds at {f.checked}"; }
+  "unprobed"
+}
+
+fn row(f: Finding) {
+  r = f.ref;
+  if r == "" { r = "—"; }
+  c = checked_text(f);
+  println("| {f.number} | **{f.title}** — {f.body} | {f.axis} | {f.met_by} | {f.fix} | {r} | {c} |");
 }
 
 fn section(all: vector<Finding>, status: text, title: text) {
   println("## {title}");
   println("");
-  println("| # | finding | axis | met by | the fix it needs | ref |");
-  println("|---|---|---|---|---|---|");
+  println("| # | finding | axis | met by | the fix it needs | ref | re-measured |");
+  println("|---|---|---|---|---|---|---|");
   for f in all {
-    if f.status != status { continue; }
-    r = f.ref;
-    if r == "" { r = "—"; }
-    println("| {f.number} | **{f.title}** — {f.body} | {f.axis} | {f.met_by} | {f.fix} | {r} |");
+    if f.status == status && !(f.holds == "no" && (status == "open" || status == "accepted")) { row(f); }
   }
+  println("");
+}
+
+fn stale_section(all: vector<Finding>) {
+  n = 0;
+  for f in all { if f.holds == "no" && (f.status == "open" || f.status == "accepted") { n += 1; } }
+  if n == 0 { return; }
+  println("## No longer holds — the probe re-measured green: mark it fixed, or give the probe the new name");
+  println("");
+  println("| # | finding | axis | met by | the fix it needs | ref | re-measured |");
+  println("|---|---|---|---|---|---|---|");
+  for f in all { if f.holds == "no" && (f.status == "open" || f.status == "accepted") { row(f); } }
   println("");
 }
 
@@ -72,8 +99,11 @@ fn main() {
   println("recorded when met, never guessed; assessed by editing its `status` and `fix` lines; struck when");
   println("the port that met it re-measures green on that axis ([README § The bar](README.md)).");
   println("");
-  println("**OPEN: {open}** (open + accepted, of {len(all)} recorded)");
+  stale = 0;
+  for f in all { if f.holds == "no" && (f.status == "open" || f.status == "accepted") { stale += 1; } }
+  println("**OPEN: {open}** (open + accepted, of {len(all)} recorded; {stale} no longer hold — `scripts/script_recheck.sh` re-measures the probed ones)");
   println("");
+  stale_section(all);
   section(all, "open", "To assess");
   section(all, "accepted", "Accepted — a change to loft");
   section(all, "fixed", "Fixed");
