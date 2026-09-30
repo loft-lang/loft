@@ -1,0 +1,127 @@
+diff --git b/src/parser/builtins.rs a/src/parser/builtins.rs
+index 3d965f4e0..41632ee50 100644
+--- b/src/parser/builtins.rs
++++ a/src/parser/builtins.rs
+@@ -235,26 +235,6 @@ impl Parser {
+                 "Expect '(' after function name '{first_id}' in parallel clause"
+             );
+         }
+-        // loft#1803 — a `self` function has both spellings everywhere, so `get_value(a)` is
+-        // `a.get_value()` here too: the worker is called with the element first, which is
+-        // exactly the receiver.  The method is filed under the element type's key
+-        // (`t_<len><Type>_<name>`) — the dense struct's for a nullable element, as the
+-        // method form resolves it — and not under the bare name this lookup asked.
+-        if d_nr == u32::MAX {
+-            let type_name = match elem_tp {
+-                Type::Enum(d, _, _) if self.data.def(*d).name().starts_with("__nullable<") => {
+-                    let nm = self.data.def(*d).name();
+-                    Some(nm["__nullable<".len()..nm.len() - 1].to_string())
+-                }
+-                Type::Reference(d, _) | Type::Enum(d, _, _) => Some(self.data.def(*d).name().to_string()),
+-                _ => None,
+-            };
+-            if let Some(type_name) = type_name {
+-                d_nr = self
+-                    .data
+-                    .def_nr(&crate::data::Data::mangle_method(&type_name, first_id));
+-            }
+-        }
+         if d_nr == u32::MAX {
+             if !self.first_pass {
+                 diagnostic!(self.lexer, Level::Error, "Unknown function '{first_id}'");
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 4315e2efd..8916981be 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3355,8 +3355,8 @@ use #count instead"
+                 Level::Error,
+                 "loop variable '{src_id}' shadows a local named '{src_id}' — \
+                  rename the loop variable (e.g. loop_{src_id}) or drop the \
+-                 outer `{src_id}` if it was a dead placeholder; a loop \
+-                 variable cannot reuse the name of a local still in scope"
++                 outer `{src_id}` if it was a dead placeholder; loft does \
++                 not block-scope loop variables"
+             );
+         }
+         if id != "_"
+@@ -4874,11 +4874,6 @@ use #count instead"
+         // performs the actual Var→accessor rewrite after body parse,
+         // once `idx_var` exists.
+         let elem_var_nr = self.create_var(elem_var, &elem_tp);
+-        // loft#1802 — the element is this loop's variable, and ends with its body as a
+-        // sequential loop's does (@FR-B-Scope).  Unrecorded, a later `for e` read the par
+-        // loop's `e` as "a local named 'e'" and refused as a shadow; loft#1717 is the same
+-        // mark for the unrolled `#fields` walk.
+-        self.vars.served_as_loop_var(elem_var_nr);
+         // The body reads the name the program wrote; point it at this loop's binding
+         // and leave it there, the same as the sequential form (loft#915).
+         if elem_var != src_elem_var {
+@@ -4927,7 +4922,6 @@ use #count instead"
+                             .enumerate()
+                             .map(|(i, name)| {
+                                 let var = self.create_var(name, &elem_types[i]);
+-                                self.vars.served_as_loop_var(var);
+                                 self.vars.defined(var);
+                                 self.vars.in_use(var, true);
+                                 var
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 7797a7eae..82ead8d4c 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3319,15 +3319,6 @@ use a separate collection or add after the loop"
+         var_nr: u16,
+         skip_validate: bool,
+     ) -> Type {
+-        // `x = ;` and `x += ;` — an assignment with no value.  The right side parsed as
+-        // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
+-        // later output vanished (loft#1800's library parser met it: the compiler accepted
+-        // what no grammar of loft allows).
+-        if self.operand_absent() {
+-            diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
+-            *code = Value::Null;
+-            return Type::Void;
+-        }
+         // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
+         // narrowing has nothing to say about it: the proof describes what the slot currently
+         // HOLDS and it dies at this write (`parse_assign_op_inner` drops it once the store is
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index bd0f6de85..32b592f11 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1316,16 +1316,6 @@ impl Parser {
+ 
+     // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+-    /// Is the next token one that cannot begin a value — a separator, a closer, or the
+-    /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
+-    /// an assignment), so a missing one is named instead of read as nothing.
+-    pub(crate) fn operand_absent(&mut self) -> bool {
+-        [";", "}", ")", "]", ","]
+-            .iter()
+-            .any(|t| self.lexer.peek_token(t))
+-            || self.lexer.peek().has == crate::lexer::LexItem::None
+-    }
+-
+     pub(crate) fn parse_operators(
+         &mut self,
+         var_tp: &Type,
+@@ -1543,19 +1533,6 @@ impl Parser {
+                     break;
+                 }
+             }
+-            // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
+-            // the right operand is missing; left to run on, the operator's call was built with
+-            // one argument and refused as "missing argument for parameter 'v2' of `OpAddInt`".
+-            if !operator.is_empty() && self.operand_absent() {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "Expected a value after `{operator}`"
+-                );
+-                *code = Value::Null;
+-                current_type = Type::Unknown(0);
+-                continue;
+-            }
+             if operator.is_empty() {
+                 // `expr is VariantName` — variant check at comparison precedence.
+                 // Returns boolean: true if the enum value matches the named variant.

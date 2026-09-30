@@ -9,7 +9,11 @@
 // Found while fixing loft#1800: the library parser refused `x = ;`, and loft itself did not.
 // The controls — an open range (`v[2..]`), a trailing comma, `return ;` — still compile.
 //
-// @falsified-at: PENDING
+// @falsified-at: 5b7a6d711 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-missing-value-after-an-operator-is-reported.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree reports none of the four.
+// HOLDS: nothing runs on either tree (a refusal file); the open range and trailing comma
+//   above the refusals compile on both.
 
 fn main() {
   v = [1, 2, 3, 4];
