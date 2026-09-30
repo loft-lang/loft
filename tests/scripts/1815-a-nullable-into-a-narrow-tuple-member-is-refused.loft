@@ -9,7 +9,11 @@
 // non-null `u8` then read as null.  A heap member keeps its warning (it has a null to hold), and
 // a member declared `u8?` takes the value as before.  Each refusal is its own function (loft#1261).
 //
-// @falsified-at: PENDING
+// @falsified-at: e8b6a8c76 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1815-a-nullable-into-a-narrow-tuple-member-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree warns (two cells) or stays silent, and
+//   compiles each store.
+// HOLDS: nothing runs on either tree (a refusal file).
 
 fn a_nullable_narrow_value(x: integer) {
   // @EXPECT_ERROR: cannot be stored into element 1 of this tuple of the non-null type `integer(0, 255)`
