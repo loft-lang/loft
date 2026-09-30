@@ -18830,7 +18830,25 @@ impl Parser {
                                 // the caller transiently clobbered to length 0.  Reported
                                 // by the zero-trust consumer as a one-line accessor that
                                 // silently corrupted its result.
-                                || self.return_projects_into_local(&v))
+                                || self.return_projects_into_local(&v)
+                                // A vector LITERAL (`return []`, `return ["q"]`): its value is a
+                                // view of the record the literal minted (`__vdb_N`), which the
+                                // frame frees on this path, so it must reach the caller's buffer
+                                // as elements.  Returned raw, the caller took the record's store
+                                // for its answer while freeing only the buffer it handed in —
+                                // one store per call on both backends.  Reached whenever the
+                                // buffer is not renamed `__ref_1`, e.g. beside a native tail
+                                // (`if c { return []; } s.split(',')`).
+                                //
+                                // Only where the function's result IS its buffer (the return
+                                // type names it, as pass 1 left it): every return must agree
+                                // with the signature the caller reads, and a function whose
+                                // tail answers a fresh store (`… jv().keys()`, delivered
+                                // through a tail temporary) has a fresh-store signature, under
+                                // which the raw literal is right and the caller frees it.
+                                || (!dep.is_empty()
+                                    && dep.iter().all(|&d| self.vars.name(d).starts_with("__vdb_"))
+                                    && matches!(&r_type, Type::Vector(_, d) if !d.is_empty())))
                         {
                             (a, bv)
                         } else {
