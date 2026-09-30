@@ -511,36 +511,6 @@ impl Stores {
         self.text_vector(&args)
     }
 
-    /// `text.split(separator)` — the loop kernel behind the stdlib `split` (a text's parts
-    /// between separators, built straight into a fresh `vector<text>`).  It answers what the
-    /// loft loop it replaced answered: an EMPTY text has no parts (Rust's `str::split` would
-    /// answer one empty part), and otherwise every separator ends a part, the last part
-    /// included even when it is empty (`"a,".split(',')` is `["a", ""]`).
-    pub fn split_char(&mut self, text: &str, separator: char) -> DbRef {
-        if text.is_empty() {
-            return self.text_vector_of(std::iter::empty());
-        }
-        self.text_vector_of(text.split(separator))
-    }
-
-    /// `File.lines()` over the file's content — the loop kernel behind the stdlib `lines`
-    /// (@PLN179 finding 013: the loft loop it replaces was 91 % of a text-scanning script
-    /// interpreted).  It answers what that loop answered: every `\n` ends a line and drops
-    /// ONE `\r` directly before it; what follows the last `\n` is a line only when it is not
-    /// empty, and keeps a trailing `\r` (no `\n` ends it).  An empty text has no lines.
-    pub fn text_lines(&mut self, text: &str) -> DbRef {
-        let mut pieces = text.split('\n').peekable();
-        let mut lines = Vec::new();
-        while let Some(piece) = pieces.next() {
-            if pieces.peek().is_some() {
-                lines.push(piece.strip_suffix('\r').unwrap_or(piece));
-            } else if !piece.is_empty() {
-                lines.push(piece);
-            }
-        }
-        self.text_vector_of(lines.into_iter())
-    }
-
     /// Build a `vector<text>` from an explicit string slice.
     #[must_use]
     pub fn text_vector(&mut self, args: &[String]) -> DbRef {

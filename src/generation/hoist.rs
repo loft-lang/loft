@@ -6808,7 +6808,7 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     let body = def.code();
     let trace = std::env::var("LOFT_TRACE_LAZY_SPLIT").is_ok();
     let mut out: BTreeMap<u16, LazySplit> = BTreeMap::new();
-    let mut bufs: BTreeMap<u16, Option<u16>> = BTreeMap::new();
+    let mut bufs: BTreeMap<u16, u16> = BTreeMap::new();
     if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
         return out;
     }
@@ -6842,26 +6842,17 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     out.retain(|vec, _| {
         let mut mentions = 0u32;
         let mut binds = 0u32;
-        let mut frees = 0u32;
         body.any_node(&mut |n| {
             match n {
                 Value::Var(v) if v == vec => mentions += 1,
                 Value::Set(v, to) if v == vec && !matches!(to.unspan(), Value::Null) => {
                     binds += 1;
                 }
-                // The kernel's vector is freed where its block ends; the lazy form has no
-                // vector, and the emitter drops that free with it.
-                Value::Call(..)
-                    if call_named(n, data, "OpFreeRef")
-                        .is_some_and(|a| as_var(a.first()) == Some(*vec)) =>
-                {
-                    frees += 1;
-                }
                 _ => {}
             }
             false
         });
-        let ok = mentions == 2 + frees && binds == 1;
+        let ok = mentions == 2 && binds == 1;
         if !ok && trace {
             eprintln!(
                 "[lazy-split] {}: declined — {} is mentioned {mentions} times and bound {binds}",
@@ -6877,9 +6868,8 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     // reconciles a placed buffer; a buffer with any other use keeps its mint, and the loop
     // is lazy all the same.
     for (vec, ls) in &mut out {
-        if let Some(buf) = bufs[vec]
-            && buffer_serves_one_call(body, data, buf)
-        {
+        let buf = bufs[vec];
+        if buffer_serves_one_call(body, data, buf) {
             ls.dead_buf = Some(buf);
         }
         if trace {
@@ -6888,7 +6878,7 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
                 def.name(),
                 vars.name(*vec),
                 ls.separator,
-                bufs[vec].map_or("(none: the kernel's own vector)", |b| vars.name(b)),
+                vars.name(buf),
                 if ls.dead_buf.is_some() {
                     "never minted"
                 } else {
@@ -6906,8 +6896,8 @@ fn lazy_split_block(
     bl: &Block,
     data: &Data,
     vars: &crate::variables::Function,
-) -> Result<(u16, Option<u16>, char), &'static str> {
-    // ops = [.., Set(_vector, t_4text_split(src, sep[, buf])), Set(idx, -1), Loop(..)[, free]]
+) -> Result<(u16, u16, char), &'static str> {
+    // ops = [.., Set(_vector, t_4text_split(src, sep, buf)), Set(idx, -1), Loop(..)]
     // The bind, the index seed and the loop are consecutive and close the block.  What may
     // stand before them — a `#count` seed, the buffer's mint at first use — is left alone:
     // none of it can name the vector, which the mention count in `lazy_splits` holds it to.
@@ -6917,20 +6907,9 @@ fn lazy_split_block(
     }) else {
         return Err("");
     };
-    // The kernel's vector is the local's own store, so its free closes the block.
-    let ops = &bl.operators[at..];
-    let ops = match ops {
-        [bind, seed, walk, free]
-            if call_named(free, data, "OpFreeRef").is_some_and(
-                |a| matches!(bind.unspan(), Value::Set(v, _) if as_var(a.first()) == Some(*v)),
-            ) =>
-        {
-            [bind.clone(), seed.clone(), walk.clone()]
-        }
-        [bind, seed, walk] => [bind.clone(), seed.clone(), walk.clone()],
-        _ => return Err("the bind, the index seed and the loop do not close the block"),
+    let [bind, seed, walk] = &bl.operators[at..] else {
+        return Err("the bind, the index seed and the loop do not close the block");
     };
-    let [bind, seed, walk] = &ops;
     let Value::Set(vec, call) = bind.unspan() else {
         return Err("");
     };
@@ -7070,7 +7049,7 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
         return out;
     }
     // Every bind of a plain local from a constant split, with its buffer and separator.
-    let mut binds: Vec<(u16, Option<u16>, char)> = Vec::new();
+    let mut binds: Vec<(u16, u16, char)> = Vec::new();
     body.any_node(&mut |n| {
         if let Value::Set(v, call) = n
             && let Ok((buf, separator)) = split_call(call, data, vars)
@@ -7108,7 +7087,7 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
             .and_then(|()| bind_block_holds_every_mention(body, v));
         match verdict {
             Ok(()) => {
-                let dead_buf = buf.filter(|b| buffer_serves_one_call(body, data, *b));
+                let dead_buf = buffer_serves_one_call(body, data, buf).then_some(buf);
                 if trace {
                     eprintln!(
                         "[split-table] {}: `{}` is a table, separator {separator:?}, {} reads, {} walks, buffer {} {}",
@@ -7116,7 +7095,7 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
                         vars.name(v),
                         m.reads,
                         m.aliases.len(),
-                        buf.map_or("(none: the kernel's own vector)", |b| vars.name(b)),
+                        vars.name(buf),
                         if dead_buf.is_some() {
                             "never minted"
                         } else {
@@ -7148,22 +7127,15 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
 }
 
 /// The buffer and the separator of a call that is the standard library's `split` with a
-/// constant, non-null separator — the call both `(R-LazySplit)` and `(R-SplitTable)` replace
-/// — or why it is not one.  Two spellings: the loop form filled a hidden return buffer
-/// (`split(src, sep, buf)`), and the loop KERNEL answers a vector of its own
-/// (`split(src, sep)`, @PLN180 § Kernels), which has no buffer to leave unminted.
+/// constant, non-null separator and a hidden return buffer — the call both
+/// `(R-LazySplit)` and `(R-SplitTable)` replace — or why it is not one.
 fn split_call(
     call: &Value,
     data: &Data,
     vars: &crate::variables::Function,
-) -> Result<(Option<u16>, char), &'static str> {
-    let Some(args) = call_named(call, data, "t_4text_split") else {
+) -> Result<(u16, char), &'static str> {
+    let Some([_src, sep, buf]) = call_named(call, data, "t_4text_split") else {
         return Err("");
-    };
-    let (sep, buf) = match args {
-        [_src, sep] => (sep, None),
-        [_src, sep, buf] => (sep, Some(buf)),
-        _ => return Err(""),
     };
     let Value::Call(d, _) = call.unspan() else {
         return Err("");
@@ -7183,16 +7155,13 @@ fn split_call(
     let Some(separator) = char::from_u32(code).filter(|c| *c != '\0') else {
         return Err("the separator is the null character");
     };
-    let Some(buf) = buf else {
-        return Ok((None, separator));
-    };
     let Some(buf) = as_var(Some(buf)) else {
         return Err("the call's buffer is not a variable");
     };
     if buf >= vars.count() || !vars.name(buf).starts_with("__ref") {
         return Err("the call's buffer is not a hidden return buffer");
     }
-    Ok((Some(buf), separator))
+    Ok((buf, separator))
 }
 
 /// What [`table_mentions`] counted for one local.
@@ -7282,11 +7251,6 @@ fn table_mentions(
                 for a in inner.iter().skip(1).chain(args.iter().skip(1)) {
                     table_mentions(a, v, data, vars, m)?;
                 }
-                return Ok(());
-            }
-            // The `split` kernel's vector is the local's own store (@PLN180 § Kernels): its
-            // release is the table's to drop, as the emitter does, since a table has none.
-            if name == "OpFreeRef" && matches!(args.as_slice(), [a] if is_v(a)) {
                 return Ok(());
             }
             if args.iter().any(is_v) {

@@ -3396,31 +3396,6 @@ impl Output<'_> {
                     continue;
                 }
             }
-            // `@FR-R-LazySplit` / `@FR-R-SplitTable` — the `split` kernel's vector is the local's
-            // own store (@PLN180 § Kernels), freed where its block ends; the lazy form and the
-            // table have no vector, so the free goes with it.
-            // Its `= null` declaration goes too: an OWNED vector local's declaration mints an
-            // empty vector store, which the lazy form would never use or free.
-            if (!self.lazy_splits.is_empty() || !self.split_tables.is_empty())
-                && !self.in_coroutine_body
-            {
-                let gone = |x: &u16| {
-                    self.lazy_splits.contains_key(x) || self.split_table_var(*x).is_some()
-                };
-                let drop = match v.unspan() {
-                    Value::Call(d, args)
-                        if (*d as usize) < self.data.definitions.len()
-                            && self.data.def(*d).name() == "OpFreeRef" =>
-                    {
-                        matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if gone(x))
-                    }
-                    Value::Set(x, rhs) => matches!(rhs.unspan(), Value::Null) && gone(x),
-                    _ => false,
-                };
-                if drop {
-                    continue;
-                }
-            }
             // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a loop buffer's literal zero of its
             // vector field is not emitted: the first mint zero-fills the record, and every
             // later pass keeps the vector the zero would drop.
