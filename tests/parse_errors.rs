@@ -5583,3 +5583,65 @@ fn an_unknown_name_in_a_format_spec_is_an_unknown_spec() {
     );
     code!("fn test() {\n  w = 5;\n  assert(\"{42:w}\" == \"   42\", \"a variable width\");\n}");
 }
+
+// loft#1796 — `@FR-N-Reserve`: a nullable narrow slot holds its USABLE range (`u8?` is
+// 0..=254; 255 is its null), so a CONSTANT outside it could only ever be stored as null.
+// Every position that stores into such a slot refuses it: the declaration, a reassignment, a
+// struct literal field, a call argument and a return tail.  The vector literal element is
+// pinned by tests/scripts/1796-…-element.loft instead: this harness's shared cached stdlib
+// takes another conversion path for it than the compiler does (cold or warm).
+#[test]
+fn a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position() {
+    code!(
+        "struct R { b: u8? }
+fn f(p: u8?) -> boolean { p == null }
+fn g() -> u8? {
+  255
+}
+fn test() {
+  a: u8? = 255;
+  a = 300;
+  r = R { b: 255 };
+  c = f(255);
+  assert(a == null && r.b == null && c && g() == null, \"\");
+}"
+    )
+    // the return tail
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:4:3")
+    // the fixture reassigns `a` before reading it, which the dead-assignment lint reports
+    .warning("Dead assignment — 'a' is overwritten before being read at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:7:16")
+    // the declaration
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:7:16")
+    // a reassignment
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:8:11")
+    // a struct literal field
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:9:19")
+    // a call argument
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position:10:14");
+}
+
+// loft#1796 — `@FR-N-Reserve` for a DEFAULT: a nullable narrow field's or parameter's default
+// is a store into that slot, so a constant outside its usable range is refused there too —
+// once, although the default is converted both where it is written and in the function it is
+// hoisted into.  A `limit` range keeps every value (it widens rather than reserving a code), so
+// its message names the range it holds and no reserved null.
+#[test]
+fn a_nullable_narrow_field_default_that_cannot_fit_is_refused() {
+    code!(
+        "type Lim = integer limit(0, 10);
+struct D { a: u8? = 300, b: Lim? = 12, e: u16? = 70000 }
+fn p(a: u8? = 255) -> text { \"{a}\" }
+fn test() {
+  d = D {};
+  assert(\"{d.a} {d.b} {d.e} {p()}\" == \"\", \"\");
+}"
+    )
+    // the u8? field default
+    .error("300 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:25")
+    // the `limit` field default, which reserves no code
+    .error("12 does not fit `Lim?` — it holds 0..=10, so this constant would be stored as null.  Use a wider type at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:39")
+    // the u16? field default
+    .error("70000 does not fit `u16?` — a nullable u16 holds 0..=65534 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u16`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:2:57")
+    // the parameter default
+    .error("255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range at a_nullable_narrow_field_default_that_cannot_fit_is_refused:3:19");
+}

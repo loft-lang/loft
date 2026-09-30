@@ -8749,6 +8749,10 @@ use a separate collection or add after the loop"
             self.narrow_tuple_members(code, &slots, &values);
             return false;
         }
+        if let Some(msg) = self.nullable_narrow_constant_refusal(code, store_tp) {
+            self.refuse_nullable_narrow_constant(&msg);
+            return false;
+        }
         if self.range_guard_inside_discharge(code, store_tp) {
             return true;
         }

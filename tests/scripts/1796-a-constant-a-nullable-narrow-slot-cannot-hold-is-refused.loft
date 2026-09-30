@@ -1,0 +1,41 @@
+// @FR-N-Reserve — a NULLABLE narrow slot holds its USABLE range; one code at its edge is its
+// null (`u8?` holds 0..=254, `i8?` holds -127..=127).  A CONSTANT outside that range could only
+// be stored as null, which is never what the author wrote, so it is refused at compile time the
+// way its non-null twin refuses a constant that does not fit (C80's compile-time valve) — in
+// every position that stores into such a slot: a local, a reassignment, a struct literal field,
+// a vector literal element, a call argument and a return (loft#1796).  What stays: an in-range
+// constant, `null` itself, an author's own `300 as u8?` (asking for the checked cast is asking
+// for the null), a RUNTIME value outside the range (null, by design), and a wider slot (`u16?`
+// holds 255).
+//
+// @falsified-at: 40e676d1b — scored by hand on the diagnostic channel: each refused cell below
+//   compiled silently there and stored null (`x: u8? = 255; x == null` read true on both
+//   backends); here each is one `error:` naming the slot's usable range.
+// CHANNEL: the compile-time refusal of the six store positions (checked by the parse-error
+//   tests in tests/parse_errors.rs); this file pins the cases that must STILL compile and
+//   their values.
+// HOLDS: every value cell on both backends.
+
+struct R { b: u8?, s: i8? }
+
+fn f(p: u8?) -> boolean { p == null }
+
+fn main() {
+  x: u8? = 254;
+  assert(x == 254, "in range: {x}");
+  r = R { b: 0, s: -127 };
+  assert(r.b == 0 && r.s == -127, "field literals in range: {r.b} {r.s}");
+  v: vector<u8?> = [0, 254];
+  assert(v[1] == 254, "element literal in range: {v[1]}");
+  assert(!f(3), "argument in range");
+  n: u8? = null;
+  assert(n == null, "null stays null");
+  e = 300 as u8?;
+  assert(e == null, "an explicit checked cast still answers null");
+  big = 400;
+  y: u8? = big;
+  assert(y == null, "a runtime value outside the range is null, by design");
+  w: u16? = 255;
+  assert(w == 255, "a wider slot holds 255: {w}");
+  println("ok");
+}

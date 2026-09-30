@@ -37,6 +37,14 @@
 //   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.
+//
+// Since loft#1796 the CONSTANT spelling of each cell below (`x: u8? = 255`, `S { au: 255 }`,
+// `[255]`, `takes(255)`, a `255` return tail, `n[0] = 255`) is refused at compile time — a
+// constant a nullable narrow slot cannot hold could only ever be stored as null — and that
+// refusal is pinned by tests/parse_errors.rs
+// `a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_in_every_position`.  So the value
+// reaches each slot through `rt`, which the compiler cannot fold: what this file pins is the
+// RUN-TIME answer, and there the sentinel still reads null in every position.
 
 struct S1249 {
   au: u8?,    nu: u8,
@@ -49,22 +57,24 @@ struct S1249 {
 }
 
 fn takes(x: u8?) -> integer { x ?? 99 }
-fn gives() -> u8? { 255 }
+fn gives() -> u8? { rt(255) }
+// A value the compiler cannot fold, so it reaches the slot at run time.
+fn rt(n: integer) -> integer { n }
 
 fn test_the_sentinel_is_absent_from_every_position() {
   // The LOCAL is the position that disagreed: a full i64 slot that never packs.
-  x: u8? = 255;
+  x: u8? = rt(255);
   assert(x == null, "255 is the null of a u8?, in a local too, got {x}");
   assert((x ?? 99) == 99, "and `??` recovers from it like any other null, got {x ?? 99}");
 
   // …the three packed positions, which already agreed with each other.
-  s = S1249 { au: 255, nu: 1, ai: 1, ni: 1, aw: 1, nw: 1, as_: 1, ns: 1, a4: 1, al: 1, ev: [1] };
+  s = S1249 { au: rt(255), nu: 1, ai: 1, ni: 1, aw: 1, nw: 1, as_: 1, ns: 1, a4: 1, al: 1, ev: [1] };
   assert(s.au == null, "255 is the null of a u8? field, got {s.au}");
-  v: vector<u8?> = [255];
+  v: vector<u8?> = [rt(255)];
   assert(v[0] == null, "255 is the null of a u8? element, got {v[0]}");
 
   // …and the two call boundaries.
-  assert(takes(255) == 99, "255 into a u8? parameter arrives null, got {takes(255)}");
+  assert(takes(rt(255)) == 99, "255 into a u8? parameter arrives null, got {takes(rt(255))}");
   assert(gives() == null, "255 returned as a u8? is null, got {gives()}");
 
   // Not only a literal: ordinary in-range arithmetic whose result IS the sentinel.
@@ -84,15 +94,15 @@ fn test_the_sentinel_is_absent_from_every_position() {
 fn test_every_reserving_width_reserves_its_own_edge() {
   // Which edge follows the SIGN: an unsigned narrow gives up its top code, a signed one its
   // bottom.  The opposite edge stays a value, which separates this from "clamp the range".
-  a: u8? = 255;     assert(a == null,    "u8? gives up 255, got {a}");
+  a: u8? = rt(255);     assert(a == null,    "u8? gives up 255, got {a}");
   b: u8? = 0;       assert(b == 0,       "…and keeps 0, got {b}");
-  c: i8? = -128;    assert(c == null,    "i8? gives up -128, got {c}");
+  c: i8? = rt(-128);    assert(c == null,    "i8? gives up -128, got {c}");
   d: i8? = 127;     assert(d == 127,     "…and keeps 127, got {d}");
-  e: u16? = 65535;  assert(e == null,    "u16? gives up 65535, got {e}");
-  f: i16? = -32768; assert(f == null,    "i16? gives up -32768, got {f}");
+  e: u16? = rt(65535);  assert(e == null,    "u16? gives up 65535, got {e}");
+  f: i16? = rt(-32768); assert(f == null,    "i16? gives up -32768, got {f}");
   g: i16? = 32767;  assert(g == 32767,   "…and keeps 32767, got {g}");
 
-  s = S1249 { au: 255, nu: 1, ai: -128, ni: 1, aw: 65535, nw: 1, as_: -32768, ns: 1,
+  s = S1249 { au: rt(255), nu: 1, ai: rt(-128), ni: 1, aw: rt(65535), nw: 1, as_: rt(-32768), ns: 1,
               a4: 1, al: 1, ev: [1] };
   assert(s.au == null, "u8? field gives up 255, got {s.au}");
   assert(s.ai == null, "i8? field gives up -128, got {s.ai}");
@@ -144,9 +154,9 @@ fn test_a_cast_is_not_a_slot() {
   assert((((n + 60) as u8?) ?? 0) == 0, "while a genuinely out-of-range one is the default");
 
   // …and the SLOT the same value lands in is where the reservation IS spent.
-  x: u8? = 255 as u8?;
+  x: u8? = rt(255) as u8?;
   assert(x == null, "kept in a u8? slot, the cast's 255 is null, got {x}");
-  assert(takes(255 as u8?) == 99, "a u8? PARAMETER is a slot too, got {takes(255 as u8?)}");
+  assert(takes(rt(255) as u8?) == 99, "a u8? PARAMETER is a slot too, got {takes(rt(255) as u8?)}");
 
   // The non-null spellings reserve nothing, in flight or kept.
   assert((255 as u8) == 255, "255 as u8 is 255 — a non-null narrow reserves nothing");
@@ -173,7 +183,7 @@ fn test_a_non_null_element_is_not_a_nullable_slot() {
 
   // The nullable-element vector is the other side, and it DOES spend the sentinel.
   n: vector<u8?> = [1];
-  n[0] = 255;
+  n[0] = rt(255);
   assert(n[0] == null, "a vector<u8?> element does reserve 255, got {n[0]}");
 }
 

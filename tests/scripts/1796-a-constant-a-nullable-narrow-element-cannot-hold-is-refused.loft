@@ -1,0 +1,14 @@
+// @FR-N-Reserve — a vector literal element bound for a NULLABLE narrow slot is refused when
+// the constant lies outside the slot's usable range (`u8?` holds 0..=254; 255 is its null),
+// like every other store position (tests/parse_errors.rs pins the rest; loft#1796).
+//
+// @falsified-at: 40e676d1b — scored by hand: that tree compiled this file and stored null
+//   (`v[0] == null` read true, both backends); here it is refused with the message below.
+// CHANNEL: the compile-time refusal (@EXPECT_ERROR).
+// HOLDS: nothing runs — the file is a refusal fixture.
+// @EXPECT_ERROR: 255 does not fit `u8?` — a nullable u8 holds 0..=254 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `u8`, which holds its whole range
+
+fn main() {
+  v: vector<u8?> = [255];
+  assert(v[0] == null, "");
+}

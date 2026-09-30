@@ -535,6 +535,9 @@ old auto-`τ?` reading. Design record:
             spends the edge is a SLOT — a place a value is KEPT — and an expression in flight
             is not one: `e as u8?` yields `255` and `(e as u8?) ?? d` keeps it, because
             neither ever holds a `u8?`; assign the same cast into a `u8?` and it is null.
+            A CONSTANT outside a nullable narrow slot's usable range (`255`, `300` or `-1`
+            into a `u8?`, `12` into a `limit(0, 10)?`) is REFUSED at compile time, since it
+            could only be stored as null; a RUN-TIME value outside it reads null (loft#1796).
             Which types spend an edge follows from the table above: only a narrow width whose
             range exactly fills a fixed 1- or 2-byte storage — an `i32?` has a spare code
             outside its range and an `integer limit(0,255)?` widens to get one, so neither

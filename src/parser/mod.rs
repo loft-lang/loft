@@ -4868,6 +4868,14 @@ impl Parser {
         let Type::Optional(inner) = should else {
             return false;
         };
+        // The assignment seam reaches this without `convert` (whose entry asks the same
+        // question), so it asks too; the constant is then replaced by the null it would have
+        // become, so the seam's own check (`narrow_store_checks`) does not report it twice.
+        if let Some(msg) = self.nullable_narrow_constant_refusal(code, should) {
+            self.refuse_nullable_narrow_constant(&msg);
+            *code = self.cl("OpConvIntFromNull", &[]);
+            return true;
+        }
         let dst_base = inner.base().clone();
         let src_base = is_type.base().clone();
         self.dn4_checked_cast(code, &dst_base, &src_base);
@@ -5078,6 +5086,84 @@ impl Parser {
         }
     }
 
+    /// `@FR-N-Reserve` — a NULLABLE narrow slot (`u8?`, `i16?`, a nullable `limit(lo, hi)`) holds
+    /// its USABLE range: where the range fills a fixed width, one code at its edge is its null.
+    /// A CONSTANT outside that range can only be stored as null, which is never what the author
+    /// wrote, so it is refused the way its non-null twin refuses a constant that does not fit
+    /// (C80's compile-time valve) rather than becoming null in silence (loft#1796: `x: u8? =
+    /// 255`, `R { b: 255 }`, `[255]` all read null).
+    fn nullable_narrow_constant_refusal(&self, code: &Value, dst: &Type) -> Option<String> {
+        let Type::Optional(inner) = dst else {
+            return None;
+        };
+        let Type::Integer(spec) = inner.as_ref() else {
+            return None;
+        };
+        // The full integer is no narrow slot; a width alias or a user range is.
+        if spec.forced_size.is_none() && (spec.is_wide_template() || spec.is_signed32_template()) {
+            return None;
+        }
+        let n = match code.unspan() {
+            Value::Int(n) => i64::from(*n),
+            Value::Long(n) => *n,
+            Value::Null => return None,
+            other => match crate::const_eval::const_eval(other, &self.data) {
+                Some(Value::Int(n)) => i64::from(n),
+                Some(Value::Long(n)) => n,
+                _ => return None,
+            },
+        };
+        let (lo, hi) = (i64::from(spec.usable_min(true)), spec.usable_max(true));
+        if n >= lo && n <= hi {
+            return None;
+        }
+        // A range that fills a fixed width gives up one code to its null; a `limit` range
+        // widens instead and keeps every value, so its non-null twin holds no more than it.
+        if lo > i64::from(spec.min) || hi < spec.max {
+            let name = self.int_type_name(inner);
+            return Some(format!(
+                "{n} does not fit `{name}?` — a nullable {name} holds {lo}..={hi} (the remaining \
+                 code is its null), so this constant would be stored as null.  Use a wider \
+                 nullable type, or the non-null `{name}`, which holds its whole range"
+            ));
+        }
+        // A reserving alias names a FIXED width (`u8?` holds 0..=254), so a `limit` range that
+        // shares its bounds is spelled as written rather than by that alias's name.
+        let mut name = self.int_type_name(inner);
+        if matches!(name.as_str(), "u8" | "i8" | "u16" | "i16") {
+            name = format!("integer limit({lo}, {hi})");
+        }
+        Some(format!(
+            "{n} does not fit `{name}?` — it holds {lo}..={hi}, so this constant would be stored \
+             as null.  Use a wider type"
+        ))
+    }
+
+    /// Report [`Self::nullable_narrow_constant_refusal`]'s message once per source position.
+    /// A nullable narrow DEFAULT (a field's or a parameter's) is converted where it is written
+    /// and again in the function it is hoisted into, both at the default's own position, so
+    /// the second report of the same message there is dropped.
+    fn refuse_nullable_narrow_constant(&mut self, msg: &str) {
+        let mark = self.lexer.diagnostics().mark();
+        diagnostic!(self.lexer, Level::Error, "{msg}");
+        let repeated = self
+            .lexer
+            .diagnostics()
+            .entries()
+            .split_last()
+            .is_some_and(|(new, old)| {
+                old.iter().any(|e| {
+                    e.message == new.message
+                        && e.file == new.file
+                        && e.line == new.line
+                        && e.col == new.col
+                })
+            });
+        if repeated {
+            self.lexer.rewind_diagnostics(mark);
+        }
+    }
+
     /// When a literal stored into a NULLABLE narrow field fits the type's full
     /// range but lands on the reserved null sentinel (out of the usable range),
     /// return a hint explaining WHY — e.g. `255` in a nullable `u8`.  This tells
@@ -5091,8 +5177,8 @@ impl Parser {
         // @PLN25 F2 (range reconciliation): a plain (non-`Optional`) narrow integer is NON-null
         // under DN1, so it uses the FULL width — no reserved sentinel, nothing to reject. `dst`
         // here is a `Type::Integer` (an `Optional` target hit the let-else above), i.e. exactly
-        // the non-null narrow that F2 makes full-range. (Reserving the sentinel for an `Optional`
-        // narrow — rejecting the literal `255` into a `u8?` — is a separate Part-2 slice.)
+        // the non-null narrow that F2 makes full-range. (The `Optional` narrow's constant that
+        // lands outside its usable range is `nullable_narrow_constant_refusal`'s, loft#1796.)
         if crate::keys::pln25_f2_enabled() {
             return None;
         }
@@ -5800,6 +5886,21 @@ impl Parser {
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
+        // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
+        // `300`, could only ever be stored as null.  Asked at the top because a literal that
+        // fits the FULL width (`255`) needs no narrowing and takes no later branch; the
+        // assignment seam asks the same predicate (`narrow_store_checks`).  An author's own
+        // `e as u8?` never reaches a slot as a bare constant, so asking for null still works.
+        if !self.first_pass
+            && let Some(msg) = self.nullable_narrow_constant_refusal(code, should)
+        {
+            self.refuse_nullable_narrow_constant(&msg);
+            // The null it would have become, so a later check of the same value (the
+            // assignment seam's) meets a null and does not report it again.
+            *code = self.cl("OpConvIntFromNull", &[]);
+            return true;
+        }
         // @PLN167 C3 (loft#1656) — a text field or element reaching a `&text` parameter HERE
         // comes through a FUNCTION VALUE: a direct call lowers it to the place before any
         // conversion (`process_call_args`).  It is lowered the same way: the argument is the
