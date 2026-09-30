@@ -251,6 +251,27 @@ warned about it.  The check now does for a list element what it does for a varia
 `b = a as Circle` — each assigned to a `b` that already held a value — made `b` and `a` the same
 value, so a change through `b` showed up in `a`.  They copy, as `b = a` does.
 
+**A list literal after a `.map` over another keeps its first element.**  After a `.map` over
+one inline list of lists, the next such literal's first element read empty:
+`[[1,1,1,1,1], [1]].map(|x| { len(x) })` answered `[0, 1]`, and a `for` or `.reduce` over it
+summed as if it were empty — on both backends, with no message.  It answers `[5, 1]`.
+
+**A comprehension that yields a tuple element copies it.**  `[for x in pairs { x }]` over a
+`vector<(integer, integer)>` answered garbage on the interpreter; with a `text` member it
+crashed, with a list member it stopped with a store error, and `--native` did not compile it.
+It now builds a fresh list of independent copies, filtered or not.
+
+**A parameter default may read the call's earlier arguments, and a tuple default works.**
+`fn h(k: integer, t: (integer, integer) = (k, 9))` read the CALLER's first local instead of
+`k` — `h(1)` answered `(0, 9)` — and a default that builds a text-carrying tuple through a call
+(`= mk(k)`) answered `null` members on the interpreter and did not compile with `--native`.
+Both answer what the same expression written as the argument would.
+
+**`stack_trace()` names the line each frame was called from.**  A frame's line is the call that
+entered it, and the outermost frame answers 0, as the documentation said.  The interpreter
+gave the NEXT line when a call ended its statement, and `--native` gave each function's
+declaration line.
+
 **Bytes can be read without copying them.**
 
 - **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
