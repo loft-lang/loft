@@ -528,11 +528,23 @@ fn vectext_refuse_script() -> PathBuf {
 /// `run_mode` fixed to `--interpret`, parameterised by backend so the heap
 /// `store_load` path can be exercised on the native backend too.
 fn run_mode_backend(backend: &str, script: &Path, path: &Path, mode: &str) -> (String, i32) {
+    run_mode_backend_env(backend, script, path, mode, &[])
+}
+
+/// `run_mode_backend` with extra environment for the child.
+fn run_mode_backend_env(
+    backend: &str,
+    script: &Path,
+    path: &Path,
+    mode: &str,
+    env: &[(&str, &str)],
+) -> (String, i32) {
     let out = Command::new(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
         .env("LOFT_PERSIST_TEST_MODE", mode)
+        .envs(env.iter().copied())
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
@@ -691,7 +703,17 @@ fn a_rebound_store_sheds_the_slack_its_vectors_grew_to() {
     for backend in ["--interpret", "--native"] {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("store.dschema"));
-        let (w, cw) = run_mode_backend(backend, &script, &path, "write");
+        // The fixture MANUFACTURES slack through in-place vector growth, which the exact
+        // free tree gives it: the default lazy phase (`@FR-H-LazyFree`) writes the same data
+        // into a file a third smaller (1.37× content against 2.07×), below the slack floor
+        // this test needs to measure the shedding at all.  The shedding step is not pinned.
+        let (w, cw) = run_mode_backend_env(
+            backend,
+            &script,
+            &path,
+            "write",
+            &[("LOFT_NO_LAZY_FREE", "1")],
+        );
         assert_eq!(cw, 0, "{backend} write exit: {w:?}");
         let (r, cr) = run_mode_backend(backend, &script, &path, "rebind");
         assert_eq!(cr, 0, "{backend} rebind exit: {r:?}");
@@ -755,7 +777,17 @@ fn a_loaded_working_set_does_not_inherit_the_source_growth_slack() {
         let _ = fs::remove_file(path.with_extension("store.dschema"));
         let _ = fs::remove_file(format!("{}.loaded", path.display()));
         let _ = fs::remove_file(format!("{}.loaded.dschema", path.display()));
-        let (w, cw) = run_mode_backend(backend, &script, &path, "write");
+        // The fixture MANUFACTURES slack through in-place vector growth, which the exact
+        // free tree gives it: the default lazy phase (`@FR-H-LazyFree`) writes the same data
+        // into a file a third smaller (1.37× content against 2.07×), below the slack floor
+        // this test needs to measure the shedding at all.  The shedding step is not pinned.
+        let (w, cw) = run_mode_backend_env(
+            backend,
+            &script,
+            &path,
+            "write",
+            &[("LOFT_NO_LAZY_FREE", "1")],
+        );
         assert_eq!(cw, 0, "{backend} write exit: {w:?}");
         let (l, cl) = run_mode_backend(backend, &script, &path, "load");
         assert_eq!(cl, 0, "{backend} load exit: {l:?}");

@@ -395,24 +395,34 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  and the layout is unchanged; what changes is that the claim costs no
                  tree delete, insert or rebalance.  A remainder under n words, or
                  under the tree's minimum, takes the delete and the insert.
-  (H-LazyFree)   inside one store, a delete during the store's LAZY phase marks its
-                 block free at both ends and tracks it nowhere — no merge, no tree
-                 insert — unless the block meets the wilderness, which it then joins in
-                 O(1); so a claim in the phase finds only what the tree still holds (the
-                 wilderness, and the remainders claims leave), and a block claimed last
-                 and freed first leaves the layout as it found it.  The phase ends at the
-                 first claim the wilderness cannot hold once the untracked words reach a
-                 floor (256): ONE sweep merges every free block and rebuilds the tree,
-                 and from then on each delete is tracked at its site as before; an
-                 explicit reclaim ends it the same way.  A fresh or reset store starts
-                 the phase again; a store bound to a file never enters it, because a
-                 file is read, reclaimed and paged by its layout.  Every block is still
-                 free or claimed by its header, so the usage walk, an image and the open
-                 walk read the same store; what changes is WHEN the tree learns of a
-                 free.  A store built once and released whole never pays for its deletes,
-                 a store reused by reset never sweeps, and a churning store sweeps once
-                 and holds at most the floor in untracked words before it does.  Below
-                 the floor a claim the wilderness cannot hold grows the store, or takes an
+  (H-LazyFree)   inside one store, a delete of a SMALL block (at most 64 words) during
+                 the store's LAZY phase merges with its free neighbours in O(1) as the
+                 exact delete does — forward by header, backward by a footer CONFIRMED
+                 by the phase's record of lazily freed block starts (claimed data can
+                 spell a footer, and that record cannot lie) — and inserts the merged
+                 block into no tree; a block that ends the store becomes the wilderness.
+                 A larger block (a vector rung, a hash table) is tracked at its delete
+                 as ever, the tree's insert being nothing beside the block's own copy.
+                 So a claim in the phase finds what the tree holds (the wilderness, the
+                 large blocks, the remainders claims leave) or an untracked block the
+                 chain walk meets, and a scratch freed each round leaves the layout as
+                 it found it.  The count the phase is judged by is the untracked words
+                 held NOW: a claim, a resize or a merge that consumes such a block takes
+                 it off, and a tree rebuild clears the record whole.  The phase ends at the
+                 first claim once the untracked words reach a floor (256) AND a fifth of
+                 the extent written so far, whatever the wilderness holds: ONE sweep
+                 merges every free block and rebuilds the tree, and from then on each
+                 delete is tracked at its site as before; an explicit reclaim ends it
+                 the same way.  A fresh or reset store starts the phase again; a store
+                 bound to a file never enters it, because a file is read, reclaimed and
+                 paged by its layout.  Every block is still free or claimed by its
+                 header, so the usage walk, an image and the open walk read the same
+                 store; what changes is WHEN the tree learns of a free.  A store built
+                 once and released whole never pays for its deletes, a tree whose dead
+                 words stay a small share of its live ones stays lazy however big it
+                 grows, and a vector ladder — dead about half of what it wrote — sweeps
+                 within its first rungs, so the working set never doubles.  Below the
+                 bound a claim the wilderness cannot hold grows the store, or takes an
                  untracked block the chain walk meets on its way to growing.
 ```
 

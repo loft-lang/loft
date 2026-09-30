@@ -401,12 +401,11 @@ another call — used to copy that result once more where `d = decode(bytes); ch
 not; the two spellings now cost the same.  Nothing in your code changes;
 `LOFT_NO_RETURN_FIELD=1` and `LOFT_NO_ADOPT_FIRST_BIND=1` restore the copies.
 
-**Freeing records inside a store no longer updates the store's free list for each one.**  A
-store now starts in a phase where a freed block is only marked free, and the first allocation
-that would otherwise grow the store past what those blocks could give back sweeps them into
-the free list in one pass.  A store that is built and then released whole — a call's result,
+**Freeing small records inside a store no longer updates the store's free list for each one.**
+A store now starts in a phase where a freed record is merged with its free neighbours but kept
+out of the free list, and once enough has been freed one pass puts it all back.  A store that is built and then released whole — a call's result,
 a decoder's tree — never pays for its frees at all.  The pluginabi library's `check_request`
-runs 13 % faster with no change to it, together with a cheaper release of a record whose enum
+runs 10 % faster with no change to it, together with a cheaper release of a record whose enum
 field holds nothing.  `LOFT_NO_LAZY_FREE=1` restores the per-free update.
 
 **A function that builds a vector and returns it inside a record copies nothing on the way

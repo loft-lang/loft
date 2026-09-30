@@ -828,14 +828,20 @@ match copies in `pa_get`/`pa_text` (item 5), text payloads as spans (item 6).
 ## Built (2026-09-30) — the lazy-free phase (item 3) and the walk's enum arm
 
 Item 3 of the list, as a runtime policy of every store rather than a buffer kind: a store
-starts in a LAZY phase (`(H-LazyFree)`, `LOFT_NO_LAZY_FREE=1`) in which a delete marks its
-block free at both ends and leaves the tree alone (a block meeting the wilderness folds into
-it), and a claim takes the tail; the first claim the wilderness cannot hold once the untracked
-words reach 256 sweeps once (`coalesce_free` + `fl_rebuild`) and ends the phase.  A store
-bound to a file never enters it: the first run's six reds were the layout guards of persisted
-and paged stores (a reclaim that trimmed nothing because claims had landed on the tail, a keyed
-lookup five bytes over its page budget, a read-repeat census that differed by the scratch
-blocks) — the phase is for the store that is built and released, not the one that is kept.
+starts in a LAZY phase (`(H-LazyFree)`, `LOFT_NO_LAZY_FREE=1`) in which a delete of a small
+block (at most 64 words: a record, a text) merges with its neighbours as ever and leaves the
+result out of the tree (a block ending the store becomes the wilderness; a larger block — a
+rung, a table — is tracked as ever), and a claim takes the tail; the first claim once the untracked words reach 256 and a
+fifth of the extent written sweeps once (`coalesce_free` + `fl_rebuild`) and ends the phase.
+A store bound to a file never enters it: the first run's six reds were the layout guards of
+persisted and paged stores (a reclaim that trimmed nothing because claims had landed on the
+tail, a keyed lookup five bytes over its page budget, a read-repeat census that differed by the
+scratch blocks) — the phase is for the store that is built and released, not the one that is
+kept.  And the perf-check's one SLOWER row set the trigger: with the sweep gated on the
+wilderness running out, `mesh_emit` (a pooled buffer reset per round, a vector ladder per
+round) placed every rung tail-first in a wilderness that always held it — +24 %, the process
+at 10 MB against 5.9 — so the sweep now fires at the claim's entry on the dead-words bound
+alone, and the row reads −2 %.
 The decoder's store — nine placed buffers and the vector rungs freed per decode, the store
 released whole — never sweeps, so its claims never leave the tail and its deletes cost one
 header write.  Beside it,
@@ -849,7 +855,7 @@ same binary, the switch as the OFF arm):
 |---|---:|---|
 | before (1c010450) | 0.318 s | — |
 | the enum arm | 0.30 s (−6 %) | `remove_claims_mode` 4.0 → 2.3 %, `owned_walk` 3.3 → 1.6 %; the walks left are real teardowns (a truncated frame's partial map) |
-| + the phase | 0.275 s (−8 %, −13 % in all) | `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node`, `delete`'s merge: 27 % of the samples → the tree ops gone, `claim_block` + `set_free_header` stay |
+| + the phase | 0.286 s (−6 %, −10 % in all) | `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node`, `delete`'s merge: 27 % of the samples → the tree ops gone, `claim_block` + `set_free_header` stay |
 
 **What the profile reads now** (share of the row): `read_value`'s own code 20 %, the placed
 buffer's claim and prefill (`claim_block`, `set_free_header`, `place_record_prefilled`,

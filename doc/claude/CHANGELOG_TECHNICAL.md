@@ -24,26 +24,36 @@ run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off sw
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
 ### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(H-LazyFree)`: a store's small deletes merge but stay out of the free tree until one sweep, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
 
 Item 3 of `bench/portal/analysis/records.md` § check_request on the library as written, and
-the claims-walk half of item 3 of its six.  **The lazy phase** (`Store::lazy`, `dead_words`):
-`delete` marks the block free at both ends (`set_free_header`), drops it from `claims`, counts
-its words and arms the sweep — no forward or backward merge, no tree insert — unless the block
-meets the wilderness, which it joins in O(1) (a scratch claimed last and freed first leaves the
-layout as it found it; the read-repeat census guard and the released-scratch reuse guard both
-rest on that); `claim`'s armed sweep (`coalesce_free`, then `fl_rebuild`) runs only when
-`sweep_due` — the store is exact, or its untracked words reach `LAZY_FLOOR_WORDS` (256) — and
-the sweep ends the phase, as does `reclaim_tail`; `init` re-arms it; the `open` and `load`
-constructors (a store bound to a file, which is read, reclaimed and paged by its layout) never
-enter it.  Below the floor a claim the wilderness cannot hold grows the store, or takes an
-untracked block `claim_scan`'s chain walk meets, as it did; `fl_remove` leaves an untracked
-block alone (the exact-position claim and the chain walk's growth step remove what they meet).
-Every block keeps its header, so `usage`, an image and the open walk are unchanged.
+the claims-walk half of item 3 of its six.  **The lazy phase** (`Store::lazy`, `dead_words`,
+`lazy_free`): `delete` of a block of at most `LAZY_MAX_WORDS` (64) takes `lazy_delete` — it
+merges forward by header and backward by a footer confirmed by `lazy_free` or the tree, as the
+exact delete does, and records the merged block in `lazy_free` instead of the tree (a block
+ending the store becomes the wilderness).  A larger block (a vector rung, a hash table) takes
+the exact path: the tree's insert is nothing beside the block's own copy, and leaving it dead
+moved a persisted hash's layout (the paged lookup's 512 KB budget, five bytes over).  `claim`
+sweeps (`coalesce_free`, then `fl_rebuild`) and ends the phase at its entry once `sweep_due` —
+the untracked words reach `LAZY_FLOOR_WORDS` (256) and a fifth of `claimed_end` — whatever the
+wilderness holds: gated on the wilderness running out, a pooled buffer reset each round placed
+its vector ladder tail-first every round and doubled `mesh_emit`'s working set (+24 % on the
+lane, 10 MB against 5.9).  `dead_words` counts what is untracked NOW: `forget_free`, the lazy
+arm of `fl_remove` and `claim_scan`'s untracked pick take a consumed block off, and
+`fl_rebuild` clears `lazy_free` whole — without that, a scratch the chain walk reused was
+counted again at each free, and without the merge a scratch pair freed per round fragmented the
+read-repeat census's store.  `reclaim_tail` ends the phase too; `init` re-arms it; the `open`
+and `load` constructors (a store bound to a file, read, reclaimed and paged by its layout) never
+enter it.  Every block keeps its header, so `usage`, an image and the open walk are unchanged.
 `LOFT_NO_LAZY_FREE=1` restores the per-delete tracking (read per store at construction).
-Pinned by four seeded unit tests in `src/store.rs` (the untracked pair, the tail claim and the
-wilderness fold; growth below the floor; the one sweep at the floor and the exact phase after
-it; an untracked block beside a non-empty tree claimed at its position); the two tests that
-pin the exact allocator's merge at the delete build exact stores.
+Pinned by seven seeded unit tests in `src/store.rs` (the merged pair out of the tree, the tail
+claim and the wilderness fold; growth below the floor; the one sweep at the bound and the exact
+phase after it; an untracked block claimed at its position beside a non-empty tree; a block
+above the cap tracked in the phase; the backward merge confirmed by `lazy_free`; the forged
+footer refused by both deletes); the tests pinning the exact allocator's layout build exact
+stores, and the two slack fixtures of `store_persist_loft` write under `LOFT_NO_LAZY_FREE=1`,
+because the phase writes their data into a file a third smaller than the slack they exist to
+shed (1.37× content against 2.07×).
 
 **`holds_no_heap`'s enum arm** (`allocation.rs`): a `Parts::Enum` field or record answers by
 its LIVE variant the way `owned_walk` reads it — a null or absent tag, a payload-less variant,
@@ -53,9 +63,10 @@ moved out, and walked every time.
 
 Measured on pluginabi's check driver (`--native-release`, 40 rounds of 2 048 checks, three
 runs each on a quiet box): 0.318 s → 0.30 s with the enum arm (−6 %; `remove_claims_mode`
-4.0 → 2.3 % of the samples, `owned_walk` 3.3 → 1.6 %), → 0.275 s with the phase (−8 % more,
-−13 % in all; `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node` and `delete`'s
-merge were 27 % of the row's samples).  Hash unchanged; `LOFT_NO_LAZY_FREE=1` on the same
+4.0 → 2.3 % of the samples, `owned_walk` 3.3 → 1.6 %), → 0.286 s with the phase (−6 % more,
+−10 % in all; `claim_best_fit`, `fl_insert`, `fl_set_red`, `fl_delete_node` and `delete`'s
+merge were 27 % of the row's samples); `mesh_emit` level, cbor `decode` −30 % on the
+perf-check.  Hash unchanged; `LOFT_NO_LAZY_FREE=1` on the same
 binary is the OFF arm.
 
 ### `(R-ReturnField)` and the lifted bind that adopts — pluginabi's `check_request` copies nothing (2026-09-30)
