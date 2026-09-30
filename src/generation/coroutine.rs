@@ -807,7 +807,9 @@ const NO_CHANNEL: &str = "has no native transport channel — every element of a
 /// Why a yield type is refused from a LOOP body, where the collector is eager.
 const NO_EAGER_BUFFER: &str = "cannot be collected from a generator's LOOP body — the \
                                eager collector holds values by copy, and this one carries \
-                               a store handle every iteration would overwrite.";
+                               a store handle every iteration would overwrite.  The loop \
+                               runs eagerly because a `yield` sits inside an expression; \
+                               as a statement of its own it is handed over lazily.";
 
 /// The placeholder a lazily-lowered loop's iteration state gives `__y` before running the
 /// body.  The `yield` always overwrites it before it is read, so it only has to type-check
@@ -2797,15 +2799,6 @@ impl Output<'_> {
             }
         }
         if is_eager(&segments) {
-            demote_all_to_eager(&mut segments);
-        }
-        // A record, tuple or fn-ref channel keeps the eager buffer for now: re-descent hands
-        // those over through the straight-line code, which a later change admits here.
-        if !channel_can_suspend
-            && segments
-                .iter()
-                .any(|s| matches!(s, YieldSegment::Resumable { .. }))
-        {
             demote_all_to_eager(&mut segments);
         }
         // A resumable body adds the compiler temps it carries between its units; one that

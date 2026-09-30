@@ -23,6 +23,11 @@
 // Every cell hand-computes its expected value.  The harness arms the leak check on
 // `--native`, so a snapshot store left behind fails the run.
 //
+// Since loft#1798 the loops above are re-descended LAZILY on `--native` — each record handed
+// over at its yield, as the interpreter does — so they no longer reach the snapshot buffer.
+// What still runs eagerly is a `yield` inside an expression re-descent cannot hoist; the
+// `gen_eager` cells keep the snapshot store under test through that shape.
+//
 // @falsified-at: 139b02ac — interpret 1 stack-store free refusal(s) (BUG #306) -> 0 (the
 //   `yield from` inside an `if` freed the sub-generator's frame through its item binding),
 //   native exit 1 -> 0 (the loop-body record yield was refused with a compile error)
@@ -74,6 +79,17 @@ fn gen_rewrite() -> iterator<Pt> {
   yield p;                          // a straight-line yield after the loop
 }
 
+// The one loop shape `--native` still runs eagerly: the yield sits inside an expression,
+// behind a `text` operand the suspend could change (COROUTINE.md § CL-9).
+fn gen_eager(n: integer) -> iterator<Pt> {
+  s = "";
+  for i in 0..n {
+    p = Pt { x: i * 10 + 7, y: i };
+    s = s + { yield p; "x" };
+    p.x = -1;                       // an alias would read -1 for every yield
+  }
+}
+
 fn gen_outer(n: integer) -> iterator<Pt> {
   for i in 0..2 {
     if i == 0 { yield from gen_fresh(n); }
@@ -106,4 +122,12 @@ fn main() {
   s6 = 0;
   for p in gen_fresh(100) { s6 += p.x; if p.y == 1 { break; } }
   assert(s6 == 24, "break after two: {s6}");                // 7 + 17
+
+  s7 = 0;
+  for p in gen_eager(3) { s7 += p.x; }
+  assert(s7 == 51, "eager snapshots: {s7}");                // 7 + 17 + 27
+
+  s8 = 0;
+  for p in gen_eager(100) { s8 += p.x; if p.y == 1 { break; } }
+  assert(s8 == 24, "eager snapshots, abandoned: {s8}");     // 7 + 17
 }

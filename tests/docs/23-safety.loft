@@ -323,17 +323,16 @@ fn main() {
   // `match` arm or an `is` test, which is per-variant and cannot reach the
   // wrong one.
 
-  // ## Some generator loops run eagerly on --native
-  // A generator is suspended at each `yield` on the interpreter.  On --native
-  // a `for` or `while` loop is too when every `yield` in it ENDS its path: on
-  // the body's straight line, or as the last statement of an `if` or `match`
-  // arm (`if ready { yield x; }`, one yield per arm).  Two yields on one path,
-  // a statement after a yield inside its arm, a nested loop, a `continue`, or
-  // a yield of a struct, vector or tuple runs the whole loop before the first
-  // value is handed out.  The values agree, the side effects do not — and an
-  // endless loop of those shapes never hands out a value on --native, it runs
-  // until memory runs out.  End the arm with the yield and yield a number or a
-  // text: `while true { if ready { yield x; } }` is lazy on both backends.
+  // ## A yield inside an expression runs eagerly on --native
+  // A generator is suspended at each `yield` on both backends when the `yield`
+  // is a statement — in any loop, `if`, `match`, nested loop or beside a
+  // `continue`, for any yielded type.  A `yield` inside an expression is
+  // different when an operand before it could change while the generator is
+  // suspended, as in `s = s + { yield x; "b" }` with `s` a text.  On --native
+  // that loop runs to its end before the first value is handed out.  The
+  // values agree, the side effects do not, and an endless loop of that shape
+  // never hands out a value on --native: it runs until memory runs out.  Make
+  // the `yield` a statement of its own: `yield x; s = s + "b";`.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

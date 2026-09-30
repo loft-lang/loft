@@ -210,8 +210,8 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile.palette_pick == -<span class="nm">1</span>, <span class="st">"a declared default answers instead: {tile.palette_pick}"</span>);</code></pre>
 <h2 id="a-field-only-some-variants-declare-answers-null-on-the-others">A field only some variants declare answers null on the others</h2>
 <p>Enum payloads are named fields you read straight — <code>shape.radius</code>. Where every variant declares the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, a value of any other variant has no such field: the read answers null, although the field's type does not say it can, and a write to it is silently dropped. loft warns (<code>warning[variant-field-unchecked]</code>); bind the field in a <code>match</code> arm or an <code>is</code> test, which is per-variant and cannot reach the wrong one.</p>
-<h2 id="some-generator-loops-run-eagerly-on-native">Some generator loops run eagerly on --native</h2>
-<p>A generator is suspended at each <code>yield</code> on the interpreter.  On --native a <code>for</code> or <code>while</code> loop is too when every <code>yield</code> in it ENDS its path: on the body's straight line, or as the last statement of an <code>if</code> or <code>match</code> arm (<code>if ready { yield x; }</code>, one yield per arm).  Two yields on one path, a statement after a yield inside its arm, a nested loop, a <code>continue</code>, or a yield of a struct, vector or tuple runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless loop of those shapes never hands out a value on --native, it runs until memory runs out.  End the arm with the yield and yield a number or a text: <code>while true { if ready { yield x; } }</code> is lazy on both backends.</p>
+<h2 id="a-yield-inside-an-expression-runs-eagerly-on-native">A yield inside an expression runs eagerly on --native</h2>
+<p>A generator is suspended at each <code>yield</code> on both backends when the <code>yield</code> is a statement — in any loop, <code>if</code>, <code>match</code>, nested loop or beside a <code>continue</code>, for any yielded type.  A <code>yield</code> inside an expression is different when an operand before it could change while the generator is suspended, as in <code>s = s + { yield x; "b" }</code> with <code>s</code> a text.  On --native that loop runs to its end before the first value is handed out.  The values agree, the side effects do not, and an endless loop of that shape never hands out a value on --native: it runs until memory runs out.  Make the <code>yield</code> a statement of its own: <code>yield x; s = s + "b";</code>.</p>
 <h2 id="xor-is-not-exponentiation">XOR is <code>^</code>, not exponentiation</h2>
 <p>Unlike some languages where <code>^</code> means "power", in loft <code>^</code> is bitwise XOR. For exponentiation use the <code>**</code> operator (<code>2 ** 10 == 1024</code>, <code>2.0 ** 3.0 == 8.0</code>) or the <code>pow()</code> function. Watch one precedence footgun: a leading <code>-</code> binds TIGHTER than <code>**</code>, so <code>-x ** y</code> raises the NEGATED BASE. loft warns on the bare spelling; write the parentheses for whichever of the two you mean.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((<span class="nm">0b1010</span>^<span class="nm">0b1100</span>) == <span class="nm">0b0110</span>, <span class="st">"^ is XOR"</span>);
@@ -557,17 +557,16 @@ fn main() {
   // `match` arm or an `is` test, which is per-variant and cannot reach the
   // wrong one.
 
-  // ## Some generator loops run eagerly on --native
-  // A generator is suspended at each `yield` on the interpreter.  On --native
-  // a `for` or `while` loop is too when every `yield` in it ENDS its path: on
-  // the body's straight line, or as the last statement of an `if` or `match`
-  // arm (`if ready { yield x; }`, one yield per arm).  Two yields on one path,
-  // a statement after a yield inside its arm, a nested loop, a `continue`, or
-  // a yield of a struct, vector or tuple runs the whole loop before the first
-  // value is handed out.  The values agree, the side effects do not — and an
-  // endless loop of those shapes never hands out a value on --native, it runs
-  // until memory runs out.  End the arm with the yield and yield a number or a
-  // text: `while true { if ready { yield x; } }` is lazy on both backends.
+  // ## A yield inside an expression runs eagerly on --native
+  // A generator is suspended at each `yield` on both backends when the `yield`
+  // is a statement — in any loop, `if`, `match`, nested loop or beside a
+  // `continue`, for any yielded type.  A `yield` inside an expression is
+  // different when an operand before it could change while the generator is
+  // suspended, as in `s = s + { yield x; "b" }` with `s` a text.  On --native
+  // that loop runs to its end before the first value is handed out.  The
+  // values agree, the side effects do not, and an endless loop of that shape
+  // never hands out a value on --native: it runs until memory runs out.  Make
+  // the `yield` a statement of its own: `yield x; s = s + "b";`.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

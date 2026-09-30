@@ -4917,9 +4917,9 @@ Naming some fields and omitting others is legal, and each omitted field takes it
 
 Enum payloads are named fields you read straight — `shape.radius`. Where every variant declares the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, a value of any other variant has no such field: the read answers null, although the field's type does not say it can, and a write to it is silently dropped. loft warns (`warning\[variant-field-unchecked\]`); bind the field in a `match` arm or an `is` test, which is per-variant and cannot reach the wrong one.
 
-=== Some generator loops run eagerly on --native
+=== A yield inside an expression runs eagerly on --native
 
-A generator is suspended at each `yield` on the interpreter.  On --native a `for` or `while` loop is too when every `yield` in it ENDS its path: on the body's straight line, or as the last statement of an `if` or `match` arm (`if ready { yield x; }`, one yield per arm).  Two yields on one path, a statement after a yield inside its arm, a nested loop, a `continue`, or a yield of a struct, vector or tuple runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless loop of those shapes never hands out a value on --native, it runs until memory runs out.  End the arm with the yield and yield a number or a text: `while true { if ready { yield x; } }` is lazy on both backends.
+A generator is suspended at each `yield` on both backends when the `yield` is a statement — in any loop, `if`, `match`, nested loop or beside a `continue`, for any yielded type.  A `yield` inside an expression is different when an operand before it could change while the generator is suspended, as in `s = s + { yield x; "b" }` with `s` a text.  On --native that loop runs to its end before the first value is handed out.  The values agree, the side effects do not, and an endless loop of that shape never hands out a value on --native: it runs until memory runs out.  Make the `yield` a statement of its own: `yield x; s = s + "b";`.
 
 === XOR is `^`, not exponentiation
 
@@ -5743,7 +5743,7 @@ A 'for' loop drives the generator forward automatically. The body runs once per 
 
 === The body really is suspended
 
-Calling a generator runs none of its body; each advance runs exactly one more slice, up to the next 'yield'.  End each path through the loop with at most one 'yield' of a number or a text and this holds on both backends.
+Calling a generator runs none of its body; each advance runs exactly one more slice, up to the next 'yield'.  This holds on both backends for every 'yield' that is a statement of its own.
 
 === Manual advance with next() and exhausted()
 
@@ -5889,7 +5889,7 @@ Squares via for loop with index tracking.
 
 'counted' is asked for a thousand values and the loop breaks after six. Its step counter shows the body ran six times, not a thousand — the work for the values nobody asked for was never done.
 
-⚠ That holds on BOTH backends for the shape written here, a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included — and for a yield that ENDS an 'if' or 'match' arm, one per arm. Other shapes — two yields on one path, a statement after a yield inside its arm, a nested loop, a 'continue', a yield of a struct, vector or tuple — run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  End each arm with its yield, or do not put observable work in a generator body.
+⚠ That holds on BOTH backends for every 'yield' that is a statement: in a 'for' or 'while' loop, under an 'if' or 'match', in a nested loop, beside a 'continue', whatever type it yields.  A 'yield' inside an EXPRESSION, after an operand that could change while the generator waits ('s = s + { yield x; "b" }' with 's' a text), runs the whole loop eagerly on --native, so its side effects happen for values the consumer never asks for.  The VALUES are the same either way.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep each 'yield' a statement of its own.
 
 ```rust
   trace = Trace { steps: 0 };
