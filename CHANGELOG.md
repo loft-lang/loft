@@ -406,7 +406,8 @@ Each instrument keeps its checked path when you turn it on.  Integer arithmetic,
 comparisons and loop tests on local variables now run as single operations, and so do each
 step of a `for c in text` walk and each integer element read or written at a local index.
 Over the 79 bench routines the interpreter is 2.5× faster (median).  The loops gain most:
-`index_write` and `sum` 3.7×, `split` 3.5×, `push` 3.0×.  Same output everywhere.
+`split` 5.1×, `split_walk` 5.2×, `index_write` and `sum` 3.7×, `push` 3.0×.  Same output
+everywhere.
 
 **A loop that calls a helper whose `??` fallback carries a text keeps its fast paths on
 `--native`.**  `q = seqs[n] ?? Seq { first: 0, count: 1, name: "" }` inside a helper made
