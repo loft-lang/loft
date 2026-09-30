@@ -116,8 +116,24 @@ impl Output<'_> {
             }
             ValueType::Enum => return write!(w, "{}_u8", node.enum_pair().0),
             ValueType::Boolean => return write!(w, "{}", node.bool_value()),
-            ValueType::Float => return write!(w, "{}_f64", node.float_value()),
-            ValueType::Single => return write!(w, "{}_f32", node.single_value()),
+            // A NaN or an infinity has no literal form: `{}` prints `NaN` / `inf`, which is no
+            // Rust.  The float NULL is NaN, so a null carried as a constant needs this.
+            ValueType::Float => {
+                let v = node.float_value();
+                return if v.is_finite() {
+                    write!(w, "{v}_f64")
+                } else {
+                    write!(w, "{}", non_finite_literal(v.is_nan(), v > 0.0, "f64"))
+                };
+            }
+            ValueType::Single => {
+                let v = node.single_value();
+                return if v.is_finite() {
+                    write!(w, "{v}_f32")
+                } else {
+                    write!(w, "{}", non_finite_literal(v.is_nan(), v > 0.0, "f32"))
+                };
+            }
             ValueType::Null => return write!(w, "()"),
             // @PLN11 G2/M4.2 — scalar arms (no Value child).
             ValueType::Line => {
@@ -3861,4 +3877,16 @@ impl Output<'_> {
             )
         }
     }
+}
+
+/// The Rust spelling of a float that has no literal: `f64::NAN`, `f64::INFINITY`, …
+fn non_finite_literal(nan: bool, positive: bool, ty: &str) -> String {
+    let name = if nan {
+        "NAN"
+    } else if positive {
+        "INFINITY"
+    } else {
+        "NEG_INFINITY"
+    };
+    format!("{ty}::{name}")
 }

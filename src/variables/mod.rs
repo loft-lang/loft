@@ -2976,7 +2976,9 @@ impl Function {
         v
     }
 
-    #[cfg(test)]
+    /// A fresh local `_<prefix>_<n>` in `scope`, for a pass that adds one after parsing
+    /// (`value_record::literals_to_tuples` staging a literal's values in the order it wrote
+    /// them).  Its interval and slot come from the frame layout that pass re-runs.
     pub fn add_unique(&mut self, prefix: &str, type_def: &Type, scope: u16) -> u16 {
         let v = self.variables.len() as u16;
         self.variables.push(Variable {
