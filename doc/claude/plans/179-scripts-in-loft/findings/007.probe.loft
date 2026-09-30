@@ -1,0 +1,7 @@
+#!/usr/bin/env -S loft --interpret
+// finding 007 — under a #! line the diagnostic for the bad width on line 6 points at line 5;
+// the finding holds while it points anywhere but 6.
+fn main() {
+  name = "x";
+  write_bytes("{7:0>5}_{name}", [1]);
+}

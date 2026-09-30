@@ -1,0 +1,2 @@
+// finding 008 — still holds while this is refused (the script library's method shape).
+fn main() { for p in "default/*.loft".glob() { println(p); } }

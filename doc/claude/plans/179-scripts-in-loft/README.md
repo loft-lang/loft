@@ -219,6 +219,23 @@ then `gh` and `cargo` as the originals call them.
    and the registry's own maintenance — a port changes a security surface), `release-checklist.py`
    until the `github` library has carried a full release cycle, and `coop_server.py`.
 
+### Strand 8 — The `script` library: helpers on demand, the stdlib small (S–M, owner-directed 2026-09-30)
+
+**The rule: the standard library stays small and clean; every common helper lives OUTSIDE
+it and loads on demand.**  The split is mechanical: a primitive only the runtime or the OS
+can answer — `is_symlink`, `exit(code)`, a file's bytes — belongs in the stdlib; anything
+expressible in loft over such primitives — a walk, a copy, a glob, a table — belongs in a
+library, and a script that uses it must not have to say so.  That library is **`script`**,
+a `loft-libs-core` package with `[triggers] enabled = true`: its surface hangs off the
+types a script already holds — `dir.walk(suffix)`, `path.copy_to(dst)`, `pattern.glob()`,
+`rows.markdown()` — because a method on `text` or `File` is a trigger the resolver fires
+and a free function is not (@I87), so `use script;` is never written.  Its first contents
+are exactly what the ports duplicated (findings 004, 005, 008, the five hand-written
+walks); each later port that repeats itself adds a method, with the library's own testbed
+(LIBRARY_AUTHORING.md) and the twin as its gates.  Findings whose fix is a helper name the
+`script` method in their `fix:` line and keep their probe in that shape, so the register
+turns green the day the library ships it.
+
 ### Strand 7 — The RPC standard must not hamper a general script (S, evaluate then fix)
 
 loft has a wire protocol — [`16-debugger/PROTOCOL.md`](../16-debugger/PROTOCOL.md): one
@@ -289,8 +306,9 @@ policy and its bookkeeping off.
 
 ## Phase ordering
 
-1 (shipped) → 2 → 3 → (4 and 5 interleave: an interface, then the tranche it unblocks) → 6
-runs from the first replaced script onward.  7 runs beside 3: its questions 1 and 3 are met
+1 (shipped) → 2 (shipped) → 3 and 8 together (a port meets a helper, the library gains it) →
+(4 and 5 interleave: an interface, then the tranche it unblocks) → 6 runs from the first
+replaced script onward.  7 runs beside 3: its questions 1 and 3 are met
 by the first filter-shaped script, question 2 is a decision the owner takes once, and
 question 4 lands with the first `--rpc` driver in the tranche.  Strand 3 is the first tranche
 that ships value; 1 and 2 are the instruments and are cheap.
