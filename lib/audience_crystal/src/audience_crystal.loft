@@ -992,10 +992,8 @@ pub fn crystal_segments_aged_legacy(snap: CellSnap, state: CrystalState, tick: i
   deg30 = PI / 6.0;
   centre_to_centre = SQRT3 * HEX_SIZE;
   n = len(snap.xs);
-  // PF2: coord→index spatial hash, built once (O(N)) so neighbour /
-  // on-axis queries are O(1).  Now via gridmesh::build_index — @P300
-  // (hash-returning call assigned to a local) was fixed, retiring the old
-  // inline-build workaround.
+  // PF2: the coord→index spatial hash from gridmesh's `build_index`, built once
+  // (O(N)) so neighbour / on-axis queries are O(1).
   cidx = build_index(snap.xs, snap.ys);
   // Crystals grow from OLD cells to NEW: the snapshot is placement-ordered
   // (index 0 = oldest paint), so for each cell we draw a short main back to
