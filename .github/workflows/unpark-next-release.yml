@@ -1,0 +1,69 @@
+# Unpark — when a release is PUBLISHED, every open issue parked with `next-release`
+# loses the label and is pick-up work again (`make work` lists it).
+#
+# `next-release` is the one label that takes an issue off `make work` without a fix or
+# a plan behind it, so it has to expire: the release it was parked past is the only
+# moment its meaning ("not this release") stops being true.  Keyed on the owner's
+# Publish click, not on the tag push — the tag only builds a DRAFT (`release.yml`),
+# and a draft that is rebuilt or abandoned has not landed.  A prerelease is not the
+# release either, so it unparks nothing.
+#
+# Parking an issue again for the release after is a new, deliberate act — the label
+# never carries over by itself.  The label guard (`label-guard.yml`) keeps a defect
+# from carrying it at all.  Rule: `.github/LABELS.md` § Lifecycle.
+#
+# `workflow_dispatch` re-runs it by hand (a failed run, a release published before
+# this workflow existed); `dry_run` lists what it would unpark and changes nothing.
+name: Unpark next-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "list the parked issues without unparking them"
+        type: boolean
+        default: true
+
+permissions:
+  issues: write
+
+jobs:
+  unpark:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const LABEL = "next-release";
+            const MARKER = "<!-- loft-unpark -->";
+            const { owner, repo } = context.repo;
+            const dry = context.eventName === "workflow_dispatch"
+              && `${context.payload.inputs.dry_run}` === "true";
+            const release = context.payload.release
+              ? (context.payload.release.name || context.payload.release.tag_name)
+              : "the latest release";
+
+            const parked = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: "open", labels: LABEL, per_page: 100,
+            });
+            // The list endpoint answers pull requests too; a PR is never parked work.
+            const issues = parked.filter(i => !i.pull_request);
+            core.info(`${issues.length} issue(s) parked with ${LABEL}${dry ? " (dry run)" : ""}`);
+
+            for (const i of issues) {
+              core.info(`#${i.number}  ${i.title}`);
+              if (dry) continue;
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number: i.number, name: LABEL,
+              }).catch(e => { if (e.status !== 404) throw e; });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: i.number,
+                body: `${MARKER}\n${release} is published, so this issue is no longer parked: `
+                  + `\`${LABEL}\` is removed and it is pick-up work again (\`make work\`).  `
+                  + `To postpone it past the next release too, apply the label again — `
+                  + `that is a new decision, never a carry-over.`,
+              });
+            }

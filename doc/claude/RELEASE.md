@@ -189,6 +189,18 @@ plan.  Closing is explicit and cross-repo:
 - **Manual fallback:** run `scripts/close-shipped-plans.sh --range
   <prev-release>..main` once after the merge if the on-merge workflow didn't fire.
 
+### Unparking `next-release` when the release is published
+
+Work postponed past a freeze is an issue labelled `next-release` — never a defect
+([LABELS.md § Lifecycle](../../.github/LABELS.md#lifecycle-where-the-fix-is-not-what-kind-of-bug)).
+`make work` leaves it out and counts it on its last line.  When the owner PUBLISHES the
+release (not at the tag, which only builds a draft), the
+[`unpark-next-release` workflow](../../.github/workflows/unpark-next-release.yml) removes the
+label from every open issue and comments on each, so the parked work is the first thing
+`make work` lists for the next cycle.  Manual fallback: run that workflow by hand
+(`gh workflow run unpark-next-release.yml -f dry_run=false`; the default `dry_run=true`
+only lists).
+
 ## Release records — one directory per cycle
 
 What a PARTICULAR release needed, found, and decided is not process, and it does not belong

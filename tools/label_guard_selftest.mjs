@@ -16,7 +16,7 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { chooseLabels, CATEGORIES, applicable } = require(
+const { chooseLabels, CATEGORIES, applicable, nextReleaseConflicts } = require(
   path.join(here, "..", ".github", "scripts", "label-guard.js"),
 );
 
@@ -208,6 +208,23 @@ checkApplicable(
   ["hit-by:moros"],
   [],
 );
+
+// `next-release` parks work past a freeze; a DEFECT may never carry it.
+const checkParked = (name, current, want) => {
+  const got = nextReleaseConflicts(current);
+  const ok = got.length === want.length && got.every((g, i) => g === want[i]);
+  if (!ok) {
+    failed += 1;
+    console.log(`  FAIL  ${name}\n        want [${want}]\n        got  [${got}]`);
+  } else {
+    console.log(`  ok    ${name}`);
+  }
+};
+checkParked("an enhancement may be parked", ["enhancement", "next-release"], []);
+checkParked("no next-release, nothing to judge", ["bug", "sev:high"], []);
+checkParked("a bug may not be parked", ["bug", "next-release"], ["bug"]);
+checkParked("a severity makes it a defect", ["next-release", "sev:low", "area:parser"], ["sev:low"]);
+checkParked("silent-wrong least of all", ["next-release", "silent-wrong", "enhancement"], ["silent-wrong"]);
 
 console.log(failed === 0 ? "label-guard: all cases pass" : `label-guard: ${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

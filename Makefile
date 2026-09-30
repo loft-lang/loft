@@ -1016,7 +1016,7 @@ libraries-review:  ## Library review aid: which libraries owe a review + which o
 # rising class is worth one generalization is the judgement, and stays an agent task.
 #   make bug-review                       # fetch from gh and report
 #   make bug-review ARGS="--bands 6"      # finer slicing on a busy cycle
-work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge and status:planned)
+work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge, status:planned, next-release)
 	@bash scripts/work-issues.sh $(ARGS)
 
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
