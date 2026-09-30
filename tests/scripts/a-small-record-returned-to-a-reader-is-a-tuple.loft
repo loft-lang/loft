@@ -11,7 +11,9 @@
 // @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
 // Hand-sabotaged 2026-09-30: building the tuple in SCHEMA order (the literal's fields
 // sorted by offset, reads indexed to match, so every value still lands in its field) runs
-// `tick` as 3, 2, 4, 1 and fails the `fill order` assert on both backends.
+// `tick` as 3, 2, 4, 1 and fails the `fill order` assert on both backends.  And the native
+// rewrite's own out-of-order build (`--native`, before this commit) ran 7, 5, 8, 6 in
+// `handed-on`: a literal's field values were evaluated in schema order.
 
 struct V3 { x: float, y: float, z: float }
 struct Ord4 { n: integer, ok: boolean, s: single, f: float }
@@ -28,6 +30,13 @@ fn tick(log: Log, k: integer) -> integer {
 fn mk_ord(log: Log) -> Ord4 {
   Ord4 { ok: tick(log, 1) == 1, f: tick(log, 2) as float, n: tick(log, 3), s: tick(log, 4) as single }
 }
+
+// The same literal, but its one call hands the record on: this pass declines it and
+// `--native`'s own rewrite takes it, so the fill order is asked of that rewrite too.
+fn mk_ord_kept(log: Log) -> Ord4 {
+  Ord4 { ok: tick(log, 5) == 5, f: tick(log, 6) as float, n: tick(log, 7), s: tick(log, 8) as single }
+}
+fn ord_sum(o: Ord4) -> float { o.n as float + o.s as float + o.f }
 
 // A literal in an early return and one as the tail.
 fn pick(k: integer) -> V3 {
@@ -55,6 +64,10 @@ fn main() {
   o = mk_ord(log);
   assert("{log.seq}" == "[1,2,3,4]", "fill order: {log.seq}");
   assert(o.n == 3 && o.ok && o.s == 4.0 && o.f == 2.0, "mixed kinds: {o.n} {o.ok} {o.s} {o.f}");
+  // Handed on: 7 + 8 + 6, and still 5, 6, 7, 8.
+  k2 = mk_ord_kept(log);
+  assert(ord_sum(k2) == 21.0, "handed-on literal: {ord_sum(k2)}");
+  assert("{log.seq}" == "[1,2,3,4,5,6,7,8]", "fill order when handed on: {log.seq}");
 
   // Early return and tail: 0.5 + 1.5 + 2.5 + 6 + 6.
   u = 0.0;
