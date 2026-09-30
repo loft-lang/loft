@@ -730,21 +730,25 @@ def cmd_guards(args):
 
 # ── quality rows ────────────────────────────────────────────────────────────────────────
 
-# QUALITY.md's audit rows: (the row's header, the audit mode, the audit's label).  The same
-# triples `scripts/gate_preflight.sh` and doc_hygiene's `quality_*_table_matches_the_audit`
-# compare; this is the writer they lacked.
+# QUALITY.md's audit rows: (the row's header, the audit mode, the audit's label, whether the
+# count may FALL).  The same rows `scripts/gate_preflight.sh` and doc_hygiene's
+# `quality_*_table_matches_the_audit` compare; this is the writer they lacked.  A row whose
+# count must not shrink (functions handling BOTH projection spellings) is never written
+# lower: a fall there is a lost `TupleGet` arm, a code change to find, not a row to update.
 QUALITY_ROWS = (
     ("| sites a `Span` hides the shape from", "unspan",
-     "neither — a `Span` hides the shape from them"),
-    ("| opaque to a wrapped shape", "optional", "opaque to a wrapped shape"),
+     "neither — a `Span` hides the shape from them", True),
+    ("| opaque to a wrapped shape", "optional", "opaque to a wrapped shape", True),
+    ("| functions ALSO handling the `TupleGet` spelling", "spellings",
+     "ALSO handling the `TupleGet` spelling", False),
 )
 
 
 def cmd_quality_rows(args):
     path = ROOT / "doc" / "claude" / "QUALITY.md"
     lines = path.read_text(encoding="utf-8").split("\n")
-    bad = []
-    for header, mode, label in QUALITY_ROWS:
+    bad, refused = [], []
+    for header, mode, label, may_fall in QUALITY_ROWS:
         out = subprocess.run([sys.executable, "scripts/ir_walker_audit.py", mode], cwd=ROOT,
                              capture_output=True, text=True).stdout
         m = re.search(re.escape(label) + r"\s*:\s*(\d+)", out)
@@ -755,15 +759,21 @@ def cmd_quality_rows(args):
         have = [int(c.strip().strip("*")) for c in lines[i + 2].split("|")
                 if c.strip().strip("*").isdigit()]
         if have != [now]:
+            if not may_fall and have and now < have[0]:
+                refused.append(f"QUALITY.md's {mode} row says {have} and the audit reports {now}: "
+                               "it must not shrink — find the lost arm, never lower the row")
+                continue
             bad.append(f"QUALITY.md's {mode} row says {have}, the audit reports {now}")
             lines[i + 2] = f"| **{now}** |"
+    if refused:
+        print("\n".join(refused))
     if args.write:
         path.write_text("\n".join(lines), encoding="utf-8")
         for b in bad:
             print(f"  wrote: {b}")
-        return 0
+        return 1 if refused else 0
     print("\n".join(bad))
-    return 1 if bad else 0
+    return 1 if bad or refused else 0
 
 
 # ── run ─────────────────────────────────────────────────────────────────────────────────
