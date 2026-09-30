@@ -5384,6 +5384,7 @@ impl Function {
             })
     }
 
+    #[track_caller]
     pub fn set_skip_free(&mut self, v: u16) {
         if let Some(want) =
             crate::env_once!(@value Option<String>, std::env::var("LOFT_SKIPFREE_TRACE").ok())
