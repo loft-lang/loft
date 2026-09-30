@@ -1635,10 +1635,9 @@ impl<'a> SrcCursor<'a> {
         }
     }
 
-    /// The next token; a string or character literal comes back as its characters, one
-    /// `Char` each, but never as structure (`quoted` says so).
-    fn next(&mut self, quoted: &mut bool) -> SrcTok {
-        *quoted = false;
+    /// The next token.  A quote comes back as a `Char`; the caller reads the literal it
+    /// opens with [`Self::literal`], so nothing inside one is taken for structure.
+    fn next(&mut self) -> SrcTok {
         if self.col >= self.chars.len() {
             if self.line + 1 >= self.lines.len() {
                 self.line = self.lines.len();
@@ -1681,6 +1680,72 @@ fn squash(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The members of the body `cur` has just entered (past its `{`): each at brace depth 1,
+/// split at a comma — or, for an interface's methods (`split_at_eol`), at a `;` or a line
+/// end — outside any nested bracket.  A comment on the line a member ends on is that
+/// member's; comment lines before a member are its own.  Leaves `cur` on the closing `}`.
+fn read_members(cur: &mut SrcCursor<'_>, split_at_eol: bool) -> Vec<(String, String)> {
+    let mut members: Vec<(String, String)> = Vec::new();
+    let mut depth = 0i32;
+    let mut member = String::new();
+    let mut leading: Vec<String> = Vec::new();
+    let mut last_line = usize::MAX; // the line the previous member ended on
+    let finish =
+        |member: &mut String, leading: &mut Vec<String>, members: &mut Vec<(String, String)>| {
+            let m = squash(member.trim().trim_start_matches("pub ").trim());
+            if !m.is_empty() {
+                members.push((m, leading.join(" ")));
+            }
+            member.clear();
+            leading.clear();
+        };
+    loop {
+        match cur.next() {
+            SrcTok::Char(c @ ('"' | '\'')) => member.push_str(&cur.literal(c)),
+            SrcTok::Char(c) => match c {
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    member.push(c);
+                }
+                '}' if depth == 0 => {
+                    finish(&mut member, &mut leading, &mut members);
+                    break;
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    member.push(c);
+                }
+                ',' | ';' if depth == 0 => {
+                    finish(&mut member, &mut leading, &mut members);
+                    last_line = cur.line;
+                }
+                _ => member.push(c),
+            },
+            SrcTok::Comment(t) => {
+                if member.trim().is_empty() && cur.line == last_line {
+                    if let Some(prev) = members.last_mut()
+                        && prev.1.is_empty()
+                    {
+                        prev.1 = t;
+                    }
+                } else {
+                    leading.push(t);
+                }
+            }
+            SrcTok::Newline => {
+                if split_at_eol && depth == 0 && !member.trim().is_empty() {
+                    finish(&mut member, &mut leading, &mut members);
+                    last_line = cur.line - 1;
+                } else {
+                    member.push(' ');
+                }
+            }
+            SrcTok::End => break,
+        }
+    }
+    members
+}
+
 /// Read the `pub` item that starts on `lines[at]`: its whole head, its trailing comment,
 /// and a struct's, enum's or interface's members.  Returns the item and the index of the
 /// first line after what it consumed (a function body is left to the caller's walk, as
@@ -1688,7 +1753,6 @@ fn squash(s: &str) -> String {
 fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
     // `pub value struct` is a struct too.
     let kind = lines[at]
-        .trim()
         .split_whitespace()
         .skip(1)
         .find(|w| *w != "value")
@@ -1698,10 +1762,9 @@ fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
     let mut head = String::new();
     let mut depth = 0i32; // ( and [ — a line break inside them continues the head
     let mut trailing = String::new();
-    let mut quoted = false;
     let mut body = false;
     loop {
-        match cur.next(&mut quoted) {
+        match cur.next() {
             SrcTok::Char(c @ ('"' | '\'')) => head.push_str(&cur.literal(c)),
             SrcTok::Char(c) => {
                 match c {
@@ -1713,7 +1776,7 @@ fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
                     }
                     ';' if depth <= 0 => {
                         // The rest of the line may carry the item's comment.
-                        while let SrcTok::Char(_) = cur.next(&mut quoted) {}
+                        while let SrcTok::Char(_) = cur.next() {}
                         if let Some(rest) = lines.get(cur.line)
                             && cur.line == at
                             && let Some(i) = rest.find("//")
@@ -1760,68 +1823,7 @@ fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
         cur.line.max(at + 1)
     };
     if body && has_members {
-        // Members at brace depth 1, split at a comma (a `;` or a line end for an
-        // interface's methods) outside any nested bracket.  A comment on the line a
-        // member ends on is that member's; comment lines before a member are its own.
-        let mut depth = 0i32;
-        let mut member = String::new();
-        let mut leading: Vec<String> = Vec::new();
-        let mut last_line = usize::MAX; // the line the previous member ended on
-        let split_at_eol = kind == "interface";
-        let finish = |member: &mut String,
-                      leading: &mut Vec<String>,
-                      members: &mut Vec<(String, String)>| {
-            let m = squash(member.trim().trim_start_matches("pub ").trim());
-            if !m.is_empty() {
-                members.push((m, leading.join(" ")));
-            }
-            member.clear();
-            leading.clear();
-        };
-        loop {
-            match cur.next(&mut quoted) {
-                SrcTok::Char(c @ ('"' | '\'')) => member.push_str(&cur.literal(c)),
-                SrcTok::Char(c) => match c {
-                    '(' | '[' | '{' => {
-                        depth += 1;
-                        member.push(c);
-                    }
-                    '}' if depth == 0 => {
-                        finish(&mut member, &mut leading, &mut members);
-                        break;
-                    }
-                    ')' | ']' | '}' => {
-                        depth -= 1;
-                        member.push(c);
-                    }
-                    ',' | ';' if depth == 0 => {
-                        finish(&mut member, &mut leading, &mut members);
-                        last_line = cur.line;
-                    }
-                    _ => member.push(c),
-                },
-                SrcTok::Comment(t) => {
-                    if member.trim().is_empty() && cur.line == last_line {
-                        if let Some(prev) = members.last_mut()
-                            && prev.1.is_empty()
-                        {
-                            prev.1 = t;
-                        }
-                    } else {
-                        leading.push(t);
-                    }
-                }
-                SrcTok::Newline => {
-                    if split_at_eol && depth == 0 && !member.trim().is_empty() {
-                        finish(&mut member, &mut leading, &mut members);
-                        last_line = cur.line - 1;
-                    } else {
-                        member.push(' ');
-                    }
-                }
-                SrcTok::End => break,
-            }
-        }
+        members = read_members(&mut cur, kind == "interface");
         next_line = cur.line + 1;
     }
     let sig = if members.is_empty() {
@@ -1988,9 +1990,9 @@ fn item_block(item: &PkgApiItem) -> String {
     let mut out = format!("{} {{\n", item.head);
     for (m, c) in &item.members {
         if c.is_empty() {
-            out.push_str(&format!("  {m},\n"));
+            let _ = writeln!(out, "  {m},");
         } else {
-            out.push_str(&format!("  {m},  // {c}\n"));
+            let _ = writeln!(out, "  {m},  // {c}");
         }
     }
     out.push('}');
