@@ -14,9 +14,9 @@
 // The last cells are controls that were right before: a literal rebind, and a loft function's
 // result, which arrives in its own caller buffer.
 //
-// @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×34 -> clean, native leaked kt=65535 ?×34 -> clean
+// @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
 // @falsified-by: tests/falsified/a-borrowing-vector-local-owns-a-fresh-native-result.patch — interpret
-//   leaked kt=65535 ?×34 -> clean, native leaked kt=65535 ?×34 -> clean
+//   leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r }
