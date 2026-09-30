@@ -1039,9 +1039,11 @@ fn apply_block(bl: &mut Block, path: &mut Path, plan: &Plan, ops: &Ops) {
 // (`OpPlaceRecord(host, tp)`), so the callee refills a record that already lives where its
 // payload will land; the store becomes the SHALLOW move (`OpMoveField`: the bytes relocate
 // within the store, the heap handles keep their claims, the source is zeroed so the next
-// turn's `OpClear` and the callee's refill find an empty record); and the buffer's exit frees
-// become no-ops, because the host store's own release covers the block — a parameter's host
-// outlives the frame, and a `__vdb_N` host is released at the exit that already stood there.
+// turn's `OpClear` and the callee's refill find an empty record); and each exit releases the
+// buffer's record: a `__vdb_N` host is released whole at the exit that already stood there,
+// which takes the block with it, so that free stays empty — but a PARAMETER host's store is
+// the caller's, so the block is released on its own (`OpFreeRecordIn`), and a local host that
+// `(R-ExitVector)` moves into the return buffer is released by that rewrite, before its wrapper.
 // Declines, each keeping the copy: a read of the moved payload after the move, a second
 // destination, a nested loop, a `return` that names the local, an argument of the call that
 // reaches the host, a host bound after the loop or rebound anywhere, a buffer named anywhere
@@ -1056,9 +1058,13 @@ struct LoopPlan {
     mint: Path,
     /// The `OpCopyRecord` that becomes the shallow move.
     mov: Path,
-    /// The buffer's exit frees, made no-ops in place (a removal would shift the paths of
-    /// every later plan in the function).
+    /// The buffer's exit frees, rewritten in place (a removal would shift the paths of
+    /// every later plan in the function): a no-op when the host is a local, whose store's
+    /// release covers the block; `OpFreeRecordIn(buf, tp)` when the host is a PARAMETER,
+    /// whose store outlives the frame and would keep one dead record per call.
     drops: Vec<Path>,
+    /// The host is a parameter: its store is the caller's.
+    host_outlives: bool,
 }
 
 fn admitted_loops(data: &Data, d_nr: u32, code: &Value, ops: &Ops) -> Vec<LoopPlan> {
@@ -1440,6 +1446,7 @@ fn admit_loop(
         mint,
         mov,
         drops,
+        host_outlives: function.is_argument(host),
     })
 }
 
@@ -1948,17 +1955,28 @@ fn apply_loop(code: &mut Value, plan: &LoopPlan, ops: &Ops) {
         *d = ops.move_field;
         args[2] = Value::Int(i32::from(plan.move_tp));
     }
-    // The buffer's exit frees become no-ops IN PLACE: a removal would shift the statements
+    // The buffer's exit frees are rewritten IN PLACE: a removal would shift the statements
     // after it, and the paths of every later plan in this function (its mint, its move,
     // its own frees) were read off the code before any plan was applied — a second
     // buffer's free then landed one statement further on, on the next buffer's free,
     // and that one leaked its store on every call (the cbor decoder, 400 stores a round).
+    // A local host's store is released at the exit that already stands there, and the
+    // block goes with it; a parameter host's store is the caller's, so the block is
+    // released on its own (`@FR-R-Place`: each exit releases the placed record).  A local
+    // host that `(R-ExitVector)` later moves into the return buffer is released there.
     for path in &plan.drops {
         let n = node_at_mut(code, path).expect("a loop plan's free path names a node");
         assert!(
             is_buf_free(n, plan.buf, ops),
             "a loop plan's free path no longer names its buffer's free"
         );
-        *n = Value::Null;
+        *n = if plan.host_outlives {
+            Value::Call(
+                ops.free_in,
+                vec![Value::Var(plan.buf), Value::Int(i32::from(plan.tp))],
+            )
+        } else {
+            Value::Null
+        };
     }
 }

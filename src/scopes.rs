@@ -24826,7 +24826,7 @@ impl FrameReleases {
             .cloned()
             .unwrap_or_else(|| capture_build_backings(data, function, ir));
         let link_delivered = link_written_closure_records(data, function, fn_def_nr);
-        let placed = placed_buffers_released_by_their_local(ir, data);
+        let placed = placed_buffers_released_by_their_local(ir, data, function);
         FrameReleases {
             freed,
             adopted,
@@ -24899,7 +24899,11 @@ impl FrameReleases {
 /// one a call delivered into through that buffer — is released by `OpFreeRecordIn` or consumed
 /// by `OpMoveRecord` somewhere in the body.  A buffer whose local neither releases nor moves is
 /// left out, so a dropped release still reads as a leak.
-fn placed_buffers_released_by_their_local(ir: &Value, data: &Data) -> HashSet<u16> {
+fn placed_buffers_released_by_their_local(
+    ir: &Value,
+    data: &Data,
+    function: &Function,
+) -> HashSet<u16> {
     let place = data.def_nr("OpPlaceRecord");
     let mut buffers: HashSet<u16> = HashSet::default();
     ir.walk(&mut |n| {
@@ -24934,10 +24938,41 @@ fn placed_buffers_released_by_their_local(ir: &Value, data: &Data) -> HashSet<u1
         }
         _ => {}
     });
+    // …and a loop buffer (`(R-Place)`'s loop clause) claimed in a LOCAL host whose own
+    // store is freed whole: the block is released with that store, which is why the
+    // placement leaves the buffer's exit frees empty.
+    let whole = data.def_nr("OpFreeRef");
+    let mut freed_whole: HashSet<u16> = HashSet::default();
+    ir.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == whole
+            && let Some(Value::Var(s)) = args.first().map(Value::unspan)
+        {
+            freed_whole.insert(*s);
+        }
+    });
+    let mut hosted_in_freed_store: HashSet<u16> = HashSet::default();
+    ir.walk(&mut |n| {
+        if let Value::Set(b, rhs) = n.unspan()
+            && buffers.contains(b)
+            && let Value::Call(_, args) = rhs.unspan()
+            && let Some(Value::Var(h)) = args.first().map(Value::unspan)
+            && !function.is_argument(*h)
+            && (freed_whole.contains(h)
+                || function
+                    .tp(*h)
+                    .depend()
+                    .iter()
+                    .any(|s| freed_whole.contains(s)))
+        {
+            hosted_in_freed_store.insert(*b);
+        }
+    });
     adopter
         .into_iter()
         .filter(|(_, l)| released.contains(l))
         .map(|(b, _)| b)
+        .chain(hosted_in_freed_store)
         .collect()
 }
 
