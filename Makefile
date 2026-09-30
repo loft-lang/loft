@@ -2822,8 +2822,9 @@ script-census:  ## @PLN179 the work list: every Python/bash script by what a lof
 	@target/release/loft --interpret scripts/script_census --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
 
 .PHONY: script-reasons
-script-reasons:  ## @PLN179 the reasons register, rendered from the tracker's open axis:* issues (ARGS=--count prints the number instead)
-	@if [ "$(ARGS)" = "--count" ]; then scripts/script_reasons.sh --count; else scripts/script_reasons.sh > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
+script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (ARGS=--count prints the open number instead)
+	@cargo build --release --bin loft -q
+	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
 
 .PHONY: script-twin
 script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]
