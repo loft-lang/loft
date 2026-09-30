@@ -3319,6 +3319,15 @@ use a separate collection or add after the loop"
         var_nr: u16,
         skip_validate: bool,
     ) -> Type {
+        // `x = ;` and `x += ;` — an assignment with no value.  The right side parsed as
+        // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
+        // later output vanished (loft#1800's library parser met it: the compiler accepted
+        // what no grammar of loft allows).
+        if self.operand_absent() {
+            diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
+            *code = Value::Null;
+            return Type::Void;
+        }
         // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
         // narrowing has nothing to say about it: the proof describes what the slot currently
         // HOLDS and it dies at this write (`parse_assign_op_inner` drops it once the store is

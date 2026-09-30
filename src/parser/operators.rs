@@ -1316,6 +1316,16 @@ impl Parser {
 
     // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// Is the next token one that cannot begin a value — a separator, a closer, or the
+    /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
+    /// an assignment), so a missing one is named instead of read as nothing.
+    pub(crate) fn operand_absent(&mut self) -> bool {
+        [";", "}", ")", "]", ","]
+            .iter()
+            .any(|t| self.lexer.peek_token(t))
+            || self.lexer.peek().has == crate::lexer::LexItem::None
+    }
+
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
@@ -1532,6 +1542,19 @@ impl Parser {
                     operator = op;
                     break;
                 }
+            }
+            // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
+            // the right operand is missing; left to run on, the operator's call was built with
+            // one argument and refused as "missing argument for parameter 'v2' of `OpAddInt`".
+            if !operator.is_empty() && self.operand_absent() {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Expected a value after `{operator}`"
+                );
+                *code = Value::Null;
+                current_type = Type::Unknown(0);
+                continue;
             }
             if operator.is_empty() {
                 // `expr is VariantName` — variant check at comparison precedence.

@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A MISSING VALUE AFTER AN OPERATOR OR AN ASSIGNMENT IS REPORTED BY NAME.
+// `x = ;` compiled and bound null, and `x += ;` compiled to a program whose later output
+// vanished — no diagnostic either way, so the program answered wrong in silence.  `3 + ;`
+// was refused, but as "missing argument for parameter 'v2' of `OpAddInt`", a name the
+// author never wrote.  Each spelling now says what is missing and after which operator.
+// Found while fixing loft#1800: the library parser refused `x = ;`, and loft itself did not.
+// The controls — an open range (`v[2..]`), a trailing comma, `return ;` — still compile.
+//
+// @falsified-at: PENDING
+
+fn main() {
+  v = [1, 2, 3, 4];
+  w = v[2..];
+  u = [1, ];
+  x = len(w) + len(u);
+  // @EXPECT_ERROR: Expected a value after `=`
+  x = ;
+  // @EXPECT_ERROR: Expected a value after `+=`
+  x += ;
+  // @EXPECT_ERROR: Expected a value after `+`
+  y = 3 + ;
+  // @EXPECT_ERROR: Expected a value after `*`
+  z = (3 * );
+  println("{x} {y} {z}");
+}
