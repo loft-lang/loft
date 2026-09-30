@@ -9,7 +9,11 @@
 // two apart: `)`, `]`, `,`, `.` and `??` cannot follow a body.  Each spelling below names the
 // type once; the statement form was always right and is the control.
 //
-// @falsified-at: PENDING
+// @falsified-at: eb7159896 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-empty-literal-inside-a-condition-call-is-a-literal.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// CHANNEL: the expected refusals — the control tree reports punctuation for the three
+//   condition spellings, so their `unknown type` expectations are unmet there.
+// HOLDS: nothing runs on either tree (a refusal file); the statement form is the control.
 
 fn w(n: integer) -> boolean { n > 0 }
 
