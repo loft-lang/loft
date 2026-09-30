@@ -18,8 +18,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > variant does not compile. That is a promise to the user, checked before the program runs.
 >
 > **@PLN35 extension (SHIPPED):** the § *Rules — PEG patterns* below adds sequence / alternation /
-> optional / repetition / capture patterns, built in phases 1–7 + PC1–PC5 (350e660c #554, 3fda4e1e
-> #558, 50cc4c18 #561, a37917ff #562) and verified on both backends. It generalises this
+> optional / repetition / capture patterns, built in phases 1–7 + PC1–PC5 and verified on both backends. It generalises this
 > exhaustiveness guarantee to `M-Total`, so the promise survives patterns that can *fail*.
 
 ## Notation
@@ -105,17 +104,16 @@ spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as 
 ## Rules — PEG patterns (@PLN35, SHIPPED)
 
 > **@PLN35 · SHIPPED, with one exception named below.** Phases 1–7 + PC1–PC5 of the PEG
-> match-pattern extension in [../plans/35-match-peg/](../plans/35-match-peg/) landed (350e660c
-> #554, 3fda4e1e #558, 50cc4c18 #561, a37917ff #562), and `P-Seq`, `P-Alt`, `P-Opt`, `P-Rep`,
+> match-pattern extension in [../plans/35-match-peg/](../plans/35-match-peg/) landed, and `P-Seq`, `P-Alt`, `P-Opt`, `P-Rep`,
 > `P-Cap`, `P-Rest`, `P-Multi`, `P-Atomic` are verified passing on both backends via
 > `tests/scripts/35*.loft` (worklist: [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md)).
 >
 > ⚠ **`P-Anchor`, `P-Revert` and `P-IterBound` are NOT among them, and are not shipped** —
 > they describe a memoising cursor that was never built, and the ops they name exist nowhere in
 > `src/`.  The shipped design materialises an iterator subject into a vector instead, which
-> leaves `(P-IterBound)`'s bound absent and an endless source unbounded: **D-match-6**,
-> loft#1678.  The banner said SHIPPED over all fourteen rules until 2026-09-25; a section
-> banner covers the rules a reader then reads under it, so it has to name its exceptions.
+> leaves `(P-IterBound)`'s bound absent and an endless source unbounded (**D-match-6**, in
+> [matching-history.md](matching-history.md)).  A section banner covers the rules a reader then
+> reads under it, so it names its exceptions.
 > Overview + phase↔rule map: [../plans/35-match-peg/FORMAL-DESIGN.md](../plans/35-match-peg/FORMAL-DESIGN.md).
 
 PEG patterns generalise a *point* pattern (unit/struct variant, `_`) to a **sequence** that may
@@ -230,10 +228,8 @@ arm names it — a guard does not), or a final `_`; otherwise the program does n
 > position has no such form: the grammar is `pattern ::= '_' | 'null' | literal | range |
 > CamelIdent [ '{' field_bind '}' ]` (LOFT.md § Grammar), so `match c { A => 1, other => 2 }` does
 > not bind `c` to `other`; `other` is read as a variant name and there is no variant of that name.
-> The enum-subject bullet said "bare binding" for two months and the code never had it — corrected
-> 2026-09-07, together with the silence that hid it: an arm whose name resolved NOWHERE was
-> skipped without a diagnostic, so a misspelled or renamed variant fell to `_` and the program
-> answered the wildcard's value on both backends
+> An arm whose name resolves NOWHERE is a compile error, never a skipped arm: a misspelled or
+> renamed variant would otherwise fall to `_` and answer the wildcard's value
 > (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
 no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
@@ -276,93 +272,18 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — the 2026-09-29 rule-led walk of the pattern rules found `D-match-7` to `-13`,
-each a refusal of a program those rules define, and all seven closed the same day; `D-match-14`
-and `-15` opened and closed with them.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
-`D-match-4` closed 2026-09-12.
-
-The walk's finding is one shape seven times: each rule held on its own and was refused where two
-of them COMPOSE — a guard or a field sub-pattern on a multi-pattern arm, a capture inside an
-alternation, a capture a later pattern alone binds, a heap field under a repetition, a tail after
-a scalar repetition, an iterator of tuples, a tail before a rest.  Each was a refusal worded
-*"not yet supported"*, *"(yet)"* or as a plan phase, which is how the register read `OPEN: 0`
-over them: a refusal worded as pending work was never entered as a deviation.  Behind two of
-them sat a quiet wrong answer the refusal had kept out of sight — a tuple element read as garbage
-(`D-match-13`), and a second rest that dropped the first one's binding (`D-match-14`).
+OPEN: **0** — every entry, `D-match-1` to `-15`, is closed; the record is in
+[matching-history.md](matching-history.md).
 
 Cursor matches (a struct with a `vector` source and a `pos`, consumed as a PREFIX) and sub-rule
-invocation `[ name: rule ]` are shipped but have no rules here yet; `D-match-15`'s cursor half
+invocation `[ name: rule ]` are shipped but have no rules here yet; a cursor match's tail
 follows `(P-Seq)` as a prefix reading of it.
-
-- **D-match-15 — OPENED AND CLOSED 2026-09-29.** `(P-Seq)` × `(P-Rep)` × `(P-Rest)`: a fixed
-  tail after a variant repetition, with a `..rest` after the tail, was refused ("cannot combine
-  with `..rest` (yet)"), and so was any tail after a repetition in a cursor match.  By `(P-Seq)`
-  the tail follows the run and the rest takes what is left; the lowering only knew a tail read
-  from the END, which `(P-Whole)` makes right when nothing follows it.  With a rest after it, or
-  in a cursor match, the tail is now read from the run's end and the rest (or the cursor) starts
-  after it (`tests/scripts/a-tail-after-a-repetition-follows-the-run.loft`).
-- **D-match-14 — OPENED AND CLOSED 2026-09-29.** `(P-Rest)` × `(P-Rest)`: a second rest in one
-  slice was accepted and the FIRST one's binding dropped without a word — `[..a, ..b]` bound only
-  `b`, to every element, and `a` read as an unknown variable.  Found while settling D-match-12.
-  A second rest (or a scalar repetition beside one) is now refused at parse time
-  (`two_rests_are_refused`, `scalar_rep_rest_is_a_second_rest` in `tests/parse_errors.rs`).
-- **D-match-13 — OPENED AND CLOSED 2026-09-29 (loft#1737).** A `match` over an `iterator<τ>` was
-  refused for every `τ` but a scalar, text or struct-enum, where the iterator-input rule
-  materialises the subject whatever its element type.  Three defects, one composition each: the
-  stream buffer carried its own copy of the comprehension's append and wrote a `vector<τ>`
-  element as a scalar (it now appends through the comprehension's `append_element_ops`); a slice
-  element over a TUPLE read the element's DbRef instead of unboxing it — garbage on
-  `--interpret`, `DbRef as (i64, i64)` on `--native`; and `[(a, b), ..]` was read as an
-  alternation, where `(G-Pat-Group)` makes a `( … )` with no pattern operator a tuple pattern
-  (`@FR-P-Point`).  `tests/scripts/a-match-streams-an-iterator-of-any-element.loft`.  A
-  generator yielding `(integer, text)` stays refused on `--native` — by the GENERATOR, not the
-  match (coroutines-history.md D-cor-2).
-- **D-match-12 — OPENED AND CLOSED 2026-09-29 (loft#1736).** A `..rest` or a non-literal element
-  after a scalar repetition `xs:T*` was refused, over a question the rules had not answered: read
-  as `(P-Rep)`'s greedy run, `xs` takes every element and any tail never matches — which the
-  shipped literal tail already contradicted, `[xs:integer*, 9]` binding the middle exactly as
-  `[..xs, 9]` does.  The owner took the reading the code shipped (2026-09-29): `(P-Rep-Scalar)`
-  makes the run the slice's one rest, typed, so a tail of any form is `(P-Rest)`'s `t`, and a
-  `..rest` after it is the second rest `(P-Rest)` refuses.  The scalar path is now parsed AS a
-  rest rather than beside one (`tests/scripts/a-scalar-repetition-is-a-typed-rest.loft`).
-- **D-match-11 — OPENED AND CLOSED 2026-09-29 (loft#1735).** `(P-Rep-Ty)` collects a capture
-  inside `(a)*` into a `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) was
-  refused.  Admitting it answered every value right and freed the SUBJECT: the per-element read of
-  a heap field is a view into the subject's store, and typed as an owned value its scope-end free
-  released the subject's record each iteration, on both backends — a use-after-free a value check
-  on the projection alone did not see.  The read now carries the borrow dep a whole element's read carries, and each field
-  is deep-copied into the projection (`@FR-H-Alloc`)
-  (`tests/scripts/a-repetition-collects-a-heap-field-per-element.loft`).
-- **D-match-10 — OPENED AND CLOSED 2026-09-29 (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm
-  granularity, so a capture only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when
-  another pattern matched — as a single-element alternation already answered.  It was refused,
-  and so was a capture inside a later pattern's field sub-pattern (`D-match-8`'s refusal).  A
-  name a later pattern adds now gets a shared slot of its own, every pattern that lacks a name
-  stores null into it, and a name some pattern lacks is typed `τ?` before the arm body is
-  parsed.  Guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`.
-- **D-match-9 — OPENED AND CLOSED 2026-09-29.** `(G-Pat-Prec)`'s own example, `a:V | b:W`, did
-  not parse: an alternation branch was read as a variant name and failed on the `:`.  A branch's
-  capture now joins the alternation's capture unification as a whole-element entry, typed by
-  `(P-Alt-Same)` / `(P-Alt-Diff)`.  Guard
-  `tests/scripts/an-alternation-branch-may-capture-the-element-it-matched.loft`.
-- **D-match-8 — OPENED AND CLOSED 2026-09-29.** `(P-Point)` lets a field be a pattern; in a
-  multi-pattern arm that was refused in the first listed pattern and failed to parse in a later
-  one.  Each listed pattern's sub-patterns are now its own branch condition.  A sub-pattern in a
-  later pattern that BINDS a name was refused by name; `D-match-10` made that name `τ?`.
-  Guard `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
-- **D-match-7 — OPENED AND CLOSED 2026-09-29.** `(P-Guard)` × `(P-Multi)`: a guard on a
-  multi-pattern arm was refused.  Each listed pattern's arm now carries it beside its own
-  bindings, and a guarded arm covers nothing (`(M-Total)`).  Guard
-  `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
 
 - **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
   [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
-  with no standing exception since `D-match-4` closed 2026-09-12. Each rule is pinned by the
-  @PLN89 oracle in
-  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md).  This bullet read *"opens no
-  deviation"* for as long as `(P-Rest)`'s `t` was refused outright, which is the shape of claim
-  the rule-led walk exists to re-measure: a conformance line is only as strong as the oracle
-  under it, and no oracle case had ever spelled a rest with anything after it.
+  bar the three rules the section banner names. Each rule is pinned by the @PLN89 oracle in
+  [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md); a conformance line is only as
+  strong as the oracle under it.
 - **Conformance is differential** — `match` dispatch is enforced across the two backends by the
   @PLN89 oracle (D-op-1): `20-nested-enum-match` and `07-enum-match-dispatch` carry struct-payload
   variants, recursive walks, and matches whose arms return different variants, precisely because
@@ -397,11 +318,11 @@ follows `(P-Seq)` as a prefix reading of it.
   not match at all (`head + tail` is 2).  `mid` is a fresh vector, so mutating it leaves `v`
   untouched.  A tail element is any point pattern `(P-Point)` admits — a bare name, `_`, a
   literal, or a variant sub-pattern: `[Kw { word }, .., End { e }]` and `[1, .., 9]` both
-  match (D-match-4, closed 2026-09-12).
+  match (`D-match-4`, [matching-history.md](matching-history.md)).
 - **A tuple element is a point pattern (`P-Point`)** — `match (a, b) { (Fire, Wall { status })
   => … }` tag-tests both positions and binds `status` as a view of `b`'s payload; a swapped
   pair falls to `_`, and `(Bogus, _)` over an enum element is a compile error naming the enum
-  (D-match-5, closed 2026-09-14).
+  (`D-match-5`, [matching-history.md](matching-history.md)).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on which
 arm a `match` selects, on a bound payload value, or on whether a match is exhaustive is the

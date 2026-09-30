@@ -6,6 +6,91 @@
 > what it cost, and what closed it.  The rules doc carries the CURRENT state (how many are open,
 > and which); everything below is the record behind it.
 
+## Deviations carried by matching.md until 2026-09-30
+
+The register's status line, as it read: OPEN: 0 — the 2026-09-29 rule-led walk of the pattern rules found `D-match-7` to `-13`,
+each a refusal of a program those rules define, and all seven closed the same day; `D-match-14`
+and `-15` opened and closed with them.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed 2026-09-14;
+`D-match-4` closed 2026-09-12.
+
+The walk's finding is one shape seven times: each rule held on its own and was refused where two
+of them COMPOSE — a guard or a field sub-pattern on a multi-pattern arm, a capture inside an
+alternation, a capture a later pattern alone binds, a heap field under a repetition, a tail after
+a scalar repetition, an iterator of tuples, a tail before a rest.  Each was a refusal worded
+*"not yet supported"*, *"(yet)"* or as a plan phase, which is how the register read `OPEN: 0`
+over them: a refusal worded as pending work was never entered as a deviation.  Behind two of
+them sat a quiet wrong answer the refusal had kept out of sight — a tuple element read as garbage
+(`D-match-13`), and a second rest that dropped the first one's binding (`D-match-14`).
+
+The PEG extension landed in 350e660c (#554), 3fda4e1e (#558), 50cc4c18 (#561) and a37917ff
+(#562).  Its banner said SHIPPED over all fourteen rules until 2026-09-25, when `D-match-6`
+named the three it did not cover.  The conformance bullet read *"opens no deviation"* for as
+long as `(P-Rest)`'s `t` was refused outright: no oracle case had spelled a rest with anything
+after it.  The arm rule's "bare binding" wording stood for two months without the code ever
+having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
+skipped without a diagnostic).
+
+- **D-match-15 — OPENED AND CLOSED 2026-09-29.** `(P-Seq)` × `(P-Rep)` × `(P-Rest)`: a fixed
+  tail after a variant repetition, with a `..rest` after the tail, was refused ("cannot combine
+  with `..rest` (yet)"), and so was any tail after a repetition in a cursor match.  By `(P-Seq)`
+  the tail follows the run and the rest takes what is left; the lowering only knew a tail read
+  from the END, which `(P-Whole)` makes right when nothing follows it.  With a rest after it, or
+  in a cursor match, the tail is now read from the run's end and the rest (or the cursor) starts
+  after it (`tests/scripts/a-tail-after-a-repetition-follows-the-run.loft`).
+- **D-match-14 — OPENED AND CLOSED 2026-09-29.** `(P-Rest)` × `(P-Rest)`: a second rest in one
+  slice was accepted and the FIRST one's binding dropped without a word — `[..a, ..b]` bound only
+  `b`, to every element, and `a` read as an unknown variable.  Found while settling D-match-12.
+  A second rest (or a scalar repetition beside one) is now refused at parse time
+  (`two_rests_are_refused`, `scalar_rep_rest_is_a_second_rest` in `tests/parse_errors.rs`).
+- **D-match-13 — OPENED AND CLOSED 2026-09-29 (loft#1737).** A `match` over an `iterator<τ>` was
+  refused for every `τ` but a scalar, text or struct-enum, where the iterator-input rule
+  materialises the subject whatever its element type.  Three defects, one composition each: the
+  stream buffer carried its own copy of the comprehension's append and wrote a `vector<τ>`
+  element as a scalar (it now appends through the comprehension's `append_element_ops`); a slice
+  element over a TUPLE read the element's DbRef instead of unboxing it — garbage on
+  `--interpret`, `DbRef as (i64, i64)` on `--native`; and `[(a, b), ..]` was read as an
+  alternation, where `(G-Pat-Group)` makes a `( … )` with no pattern operator a tuple pattern
+  (`@FR-P-Point`).  `tests/scripts/a-match-streams-an-iterator-of-any-element.loft`.  A
+  generator yielding `(integer, text)` stays refused on `--native` — by the GENERATOR, not the
+  match (coroutines-history.md D-cor-2).
+- **D-match-12 — OPENED AND CLOSED 2026-09-29 (loft#1736).** A `..rest` or a non-literal element
+  after a scalar repetition `xs:T*` was refused, over a question the rules had not answered: read
+  as `(P-Rep)`'s greedy run, `xs` takes every element and any tail never matches — which the
+  shipped literal tail already contradicted, `[xs:integer*, 9]` binding the middle exactly as
+  `[..xs, 9]` does.  The owner took the reading the code shipped (2026-09-29): `(P-Rep-Scalar)`
+  makes the run the slice's one rest, typed, so a tail of any form is `(P-Rest)`'s `t`, and a
+  `..rest` after it is the second rest `(P-Rest)` refuses.  The scalar path is now parsed AS a
+  rest rather than beside one (`tests/scripts/a-scalar-repetition-is-a-typed-rest.loft`).
+- **D-match-11 — OPENED AND CLOSED 2026-09-29 (loft#1735).** `(P-Rep-Ty)` collects a capture
+  inside `(a)*` into a `vector<τ>`; a HEAP field under a repetition (`[(Grp { items })*]`) was
+  refused.  Admitting it answered every value right and freed the SUBJECT: the per-element read of
+  a heap field is a view into the subject's store, and typed as an owned value its scope-end free
+  released the subject's record each iteration, on both backends — a use-after-free a value check
+  on the projection alone did not see.  The read now carries the borrow dep a whole element's read carries, and each field
+  is deep-copied into the projection (`@FR-H-Alloc`)
+  (`tests/scripts/a-repetition-collects-a-heap-field-per-element.loft`).
+- **D-match-10 — OPENED AND CLOSED 2026-09-29 (loft#1734).** `(P-Multi)` is `(P-Alt)` at arm
+  granularity, so a capture only some listed patterns bind is `τ?` (`(P-Alt-Diff)`), null when
+  another pattern matched — as a single-element alternation already answered.  It was refused,
+  and so was a capture inside a later pattern's field sub-pattern (`D-match-8`'s refusal).  A
+  name a later pattern adds now gets a shared slot of its own, every pattern that lacks a name
+  stores null into it, and a name some pattern lacks is typed `τ?` before the arm body is
+  parsed.  Guard `tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft`.
+- **D-match-9 — OPENED AND CLOSED 2026-09-29.** `(G-Pat-Prec)`'s own example, `a:V | b:W`, did
+  not parse: an alternation branch was read as a variant name and failed on the `:`.  A branch's
+  capture now joins the alternation's capture unification as a whole-element entry, typed by
+  `(P-Alt-Same)` / `(P-Alt-Diff)`.  Guard
+  `tests/scripts/an-alternation-branch-may-capture-the-element-it-matched.loft`.
+- **D-match-8 — OPENED AND CLOSED 2026-09-29.** `(P-Point)` lets a field be a pattern; in a
+  multi-pattern arm that was refused in the first listed pattern and failed to parse in a later
+  one.  Each listed pattern's sub-patterns are now its own branch condition.  A sub-pattern in a
+  later pattern that BINDS a name was refused by name; `D-match-10` made that name `τ?`.
+  Guard `tests/scripts/a-listed-pattern-may-test-a-field.loft`.
+- **D-match-7 — OPENED AND CLOSED 2026-09-29.** `(P-Guard)` × `(P-Multi)`: a guard on a
+  multi-pattern arm was refused.  Each listed pattern's arm now carries it beside its own
+  bindings, and a guarded arm covers nothing (`(M-Total)`).  Guard
+  `tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft`.
+
 ## Deviations carried by matching.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
