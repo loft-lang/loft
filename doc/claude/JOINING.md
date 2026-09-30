@@ -39,8 +39,9 @@ this order: `DERIVED` (it touches only derived artefacts), `DUP` (an earlier sou
 subject), `HERE` (its diff applies in reverse to this tree, file by file), `SUBJECT` (this
 branch has a commit of that subject — a sibling's pick of our own work, resolved against its
 tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP` (a `wip` /
-`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), else `NEW`,
-or `PARTIAL` when only some of its files are here.
+`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), `REVERTED`
+(a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
+whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
 `apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
 and in an append-only changelog (both sides); a conflict in anything else STOPS with the file

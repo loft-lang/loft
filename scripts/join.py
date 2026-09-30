@@ -146,6 +146,35 @@ def reverse_applies(commit, files, index_env):
     return r.returncode == 0
 
 
+def patch_id(diff_args):
+    """`git patch-id --stable` of the diff `git diff <diff_args>` — the identity of a change,
+    independent of where it sits."""
+    diff = subprocess.run(["git", "diff", "--binary", *diff_args], cwd=ROOT,
+                          capture_output=True, check=True).stdout
+    out = subprocess.run(["git", "patch-id", "--stable"], cwd=ROOT, input=diff,
+                         capture_output=True, check=True).stdout.decode()
+    return out.split()[0] if out.strip() else None
+
+
+def mark_reverted(rows):
+    """Skip a self-reverting run whole (JOINING.md § Joining a sibling checkout): a pending
+    commit whose diff is exactly the INVERSE of an earlier pending one in the same source.
+    Replayed, the revert was written against the source's tree and can delete what this tree
+    holds; together the pair changes nothing."""
+    pending = [r for r in rows if r["class"] in ("NEW", "PARTIAL")]
+    undo = {}
+    for r in pending:
+        inv = patch_id([r["sha"], f"{r['sha']}^"])
+        if inv:
+            undo[inv] = r
+    for r in pending:
+        fwd = patch_id([f"{r['sha']}^", r["sha"]])
+        a = undo.get(fwd)
+        if a is not None and a is not r and pending.index(a) < pending.index(r):
+            a["class"] = r["class"] = "REVERTED"
+            a["reverted_by"], r["reverts"] = r["sha"], a["sha"]
+
+
 def only_rows(commit, path, registry):
     """Does `commit` change `path` only in measured audit ROWS — lines a re-derive rewrites?
 
@@ -237,6 +266,7 @@ def cmd_survey(args):
                 if r["class"] in ("NEW", "PARTIAL"):
                     scheduled[r["subject"]] = name
                 rows.append(r)
+            mark_reverted(rows)
             plan["sources"].append({"name": name, "sha": sha, "on_base": on_base,
                                     "commits": rows})
     save_plan(plan)
@@ -247,7 +277,7 @@ def cmd_survey(args):
 def print_plan(plan, verbose=False):
     marks = {"NEW": "pick", "PARTIAL": "pick", "HERE": "skip", "DUP": "skip", "DERIVED": "skip",
              "MERGE": "skip", "SUBJECT": "skip", "SQUASHED": "skip", "WIP": "stop",
-             "AFTER-WIP": "skip"}
+             "AFTER-WIP": "skip", "REVERTED": "skip"}
     for s in plan["sources"]:
         counts = {}
         for r in s["commits"]:
@@ -257,7 +287,7 @@ def print_plan(plan, verbose=False):
         print(f"== {s['name']} @ {s['sha'][:9]}: {summary or 'nothing'}{base_note}")
         for r in s["commits"]:
             if not verbose and r["class"] not in ("NEW", "PARTIAL", "MERGE", "SUBJECT", "WIP",
-                                                  "AFTER-WIP"):
+                                                  "AFTER-WIP", "REVERTED"):
                 continue
             done = "  done" if r.get("done") else ""
             extra = ""
@@ -265,6 +295,9 @@ def print_plan(plan, verbose=False):
                 extra = f"  [missing: {', '.join(r['missing'][:3])}]"
             elif r["class"] == "DUP":
                 extra = f"  [= {r['dup_of']}]"
+            elif r["class"] == "REVERTED":
+                other = r.get("reverted_by") or r.get("reverts")
+                extra = f"  [a self-reverting pair with {other[:9]} — neither is taken]"
             elif r["class"] == "SUBJECT":
                 extra = "  [this branch has a commit of that subject — check it is the same change]"
             print(f"  {marks[r['class']]:4} {r['class']:7} {r['sha'][:9]} {r['subject'][:92]}"
