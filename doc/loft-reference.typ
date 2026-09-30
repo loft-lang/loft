@@ -3572,20 +3572,32 @@ The parser handles most of Loft's syntax:
 - 'fn name(params) \[-\> type\] { body }' — functions with a block body
 - 'fn name(params) \[-\> type\]; \#rust "template"' — operator templates backed by Rust
 - 'use module;' — module imports
-- Expressions: binary operators with precedence, function calls, field access,
+- Statements: 'for' and 'while' loops, 'if' / 'else if' / 'else', 'return', typed
 
 ```
-if/else, for loops, and blocks
+locals ('c: (text?, integer) = ("c0", 3);') and expressions; a statement that ends
+in a block needs no ';'
 ```
 
-- Type expressions: plain names, generic types like 'vector\<T\>', keyed
+- Expressions: binary operators with precedence, function calls, field access
 
 ```
-collections (sorted/hash/index), and integer ranges with
-'integer limit(min, max)' — in parameter, field, and return position
+('p.x', 'pair.0'), attributes ('f#size'), 'match' with guards and patterns, both
+lambda forms ('|x| { x * 2 }' and 'fn(x: integer) -> integer { x + 1 }'), tuples,
+vectors, struct literals and blocks — each also as a value ('y = match x { … }')
 ```
 
-It reads an index expression ('v\[0\]'), the null-coalescing operator ('a ?? 0') and a formatted string literal ('"v={n}"') as the compiler does. Constructs outside this list — 'while', 'match' and lambdas among them — are reported as errors, so a validator built on it rejects valid Loft that uses them.
+- Type expressions: plain and qualified names ('lexer::Lexer'), generic types like
+
+```
+'vector<T>', keyed collections (sorted/hash/index), tuples, 'fn(…) -> T' and
+integer ranges with 'integer limit(min, max)' — in parameter, field, and return
+position
+```
+
+It reads an index expression ('v\[0\]'), the null-coalescing operator ('a ?? 0') and a formatted string literal ('"v={n}"') as the compiler does.
+
+Not yet part of its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: 'const' fields and top-level 'const', '&' references, '\*\*', '/=', hex and 'f'-suffixed literals, generic functions ('fn f\<T\>'), filtered loops ('for e in v if e \> 1'), 'is' patterns, slices ('v\[1..\]'), backtick strings and 'parallel { … }'.
 
 ```rust
 use parser;
@@ -3646,6 +3658,19 @@ This exercises the expression parser, range syntax, and a tail expression after 
          "a for loop over a range parses cleanly");
 ```
 
+=== Parsing while, match and lambdas
+
+Each of these is a value as well as a statement: a 'match' or a lambda can stand on the right of '='.
+
+```rust
+  assert(parser::parse("while", "fn f() {{ n = 0; while n < 3 {{ n += 1; }} }}") == 0,
+         "a while loop parses cleanly");
+  assert(parser::parse("match", "fn f(x: integer) -> integer {{ match x {{ 0 => 1, n if n > 9 => 2, 2 | 3 => 3, _ => 0 }} }}") == 0,
+         "a match with a guard and alternatives parses cleanly");
+  assert(parser::parse("lambdas", "fn f() {{ g = |x| {{ x * 2 }}; h = fn(x: integer) -> integer {{ x + 1 }}; }}") == 0,
+         "both lambda forms parse cleanly");
+```
+
 === Practical use: validating user-supplied code
 
 If your application lets users write Loft snippets (for scripting or configuration), you can parse them before executing:
@@ -3666,6 +3691,13 @@ The count is the whole point: a snippet that does not parse answers a NON-zero n
 ```rust
   assert(parser::parse("broken", "fn main() {{ println(\"hi\");") > 0,
          "an unterminated body reports at least one error");
+```
+
+A missing operand is an error too, and so is text after the last definition.
+
+```rust
+  assert(parser::parse("no_value", "fn f() {{ x = ; }}") > 0, "a missing value is reported");
+  assert(parser::parse("stray", "fn f() {{ }} }}") > 0, "a stray brace is reported");
   println("parser test passed");
 }
 ```
@@ -4051,7 +4083,7 @@ without `par`.  The body may still read it alongside the result.
 - \*\*Form 1\*\* — a free function: `par(b=my\_func(a), 4)`
 - \*\*Form 2\*\* — a method on the element: `par(b=a.my\_method(), 4)`
 
-These are two spellings for two kinds of declaration, not two ways to write the same call: a function whose first parameter is `self` is reachable only by Form 2, and a free function only by Form 1.  Reach for the wrong one and the compiler says the name is unknown.
+A function whose first parameter is `self` answers both forms, as it does everywhere else: `par(b=get(a), 4)` and `par(b=a.get(), 4)` are one call.  A free function answers only Form 1 — written as a method on the element, the compiler says the method is unknown.
 
 === What a worker may do
 

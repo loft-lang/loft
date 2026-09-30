@@ -41,7 +41,7 @@
 <li><strong>Form 1</strong> — a free function: <code>par(b=my_func(a), 4)</code></li>
 <li><strong>Form 2</strong> — a method on the element: <code>par(b=a.my_method(), 4)</code></li>
 </ul>
-<p>These are two spellings for two kinds of declaration, not two ways to write the same call: a function whose first parameter is <code>self</code> is reachable only by Form 2, and a free function only by Form 1.  Reach for the wrong one and the compiler says the name is unknown.</p>
+<p>A function whose first parameter is <code>self</code> answers both forms, as it does everywhere else: <code>par(b=get(a), 4)</code> and <code>par(b=a.get(), 4)</code> are one call.  A free function answers only Form 1 — written as a method on the element, the compiler says the method is unknown.</p>
 <h2 id="what-a-worker-may-do">What a worker may do</h2>
 <p>The compiler holds two of these for you, and you hold the third:</p>
 <ul>
@@ -186,10 +186,10 @@
 // - **Form 1** — a free function: `par(b=my_func(a), 4)`
 // - **Form 2** — a method on the element: `par(b=a.my_method(), 4)`
 //
-// These are two spellings for two kinds of declaration, not two ways to write
-// the same call: a function whose first parameter is `self` is reachable only
-// by Form 2, and a free function only by Form 1.  Reach for the wrong one and
-// the compiler says the name is unknown.
+// A function whose first parameter is `self` answers both forms, as it does
+// everywhere else: `par(b=get(a), 4)` and `par(b=a.get(), 4)` are one call.  A
+// free function answers only Form 1 — written as a method on the element, the
+// compiler says the method is unknown.
 //
 // ## What a worker may do
 // The compiler holds two of these for you, and you hold the third:

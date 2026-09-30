@@ -40,10 +40,12 @@
 <li><code>fn name(params) [-&gt; type] { body }</code> — functions with a block body</li>
 <li><code>fn name(params) [-&gt; type]; #rust "template"</code> — operator templates backed by Rust</li>
 <li><code>use module;</code> — module imports</li>
-<li>Expressions: binary operators with precedence, function calls, field access, if/else, for loops, and blocks</li>
-<li>Type expressions: plain names, generic types like <code>vector&lt;T&gt;</code>, keyed collections (sorted/hash/index), and integer ranges with <code>integer limit(min, max)</code> — in parameter, field, and return position</li>
+<li>Statements: <code>for</code> and <code>while</code> loops, <code>if</code> / <code>else if</code> / <code>else</code>, <code>return</code>, typed locals (<code>c: (text?, integer) = ("c0", 3);</code>) and expressions; a statement that ends in a block needs no <code>;</code></li>
+<li>Expressions: binary operators with precedence, function calls, field access (<code>p.x</code>, <code>pair.0</code>), attributes (<code>f#size</code>), <code>match</code> with guards and patterns, both lambda forms (<code>|x| { x * 2 }</code> and <code>fn(x: integer) -&gt; integer { x + 1 }</code>), tuples, vectors, struct literals and blocks — each also as a value (<code>y = match x { … }</code>)</li>
+<li>Type expressions: plain and qualified names (<code>lexer::Lexer</code>), generic types like <code>vector&lt;T&gt;</code>, keyed collections (sorted/hash/index), tuples, <code>fn(…) -&gt; T</code> and integer ranges with <code>integer limit(min, max)</code> — in parameter, field, and return position</li>
 </ul>
-<p>It reads an index expression (<code>v[0]</code>), the null-coalescing operator (<code>a ?? 0</code>) and a formatted string literal (<code>"v={n}"</code>) as the compiler does. Constructs outside this list — <code>while</code>, <code>match</code> and lambdas among them — are reported as errors, so a validator built on it rejects valid Loft that uses them.</p>
+<p>It reads an index expression (<code>v[0]</code>), the null-coalescing operator (<code>a ?? 0</code>) and a formatted string literal (<code>"v={n}"</code>) as the compiler does.</p>
+<p>Not yet part of its grammar, so a snippet using one answers a non-zero count although the compiler accepts it: <code>const</code> fields and top-level <code>const</code>, <code>&amp;</code> references, <code>**</code>, <code>/=</code>, hex and <code>f</code>-suffixed literals, generic functions (<code>fn f&lt;T&gt;</code>), filtered loops (<code>for e in v if e &gt; 1</code>), <code>is</code> patterns, slices (<code>v[1..]</code>), backtick strings and <code>parallel { … }</code>.</p>
 <pre><code><span class="kw">use</span> parser;
 <span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
 <h2 id="parsing-a-minimal-function">Parsing a minimal function</h2>
@@ -70,6 +72,14 @@
 <p>This exercises the expression parser, range syntax, and a tail expression after a loop body — the shape where a speculative struct-literal parse has to give its tokens back so the loop can claim them.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"loop"</span>, <span class="st">"fn sum(n: integer) -&gt; integer {{ t = 0; for i in 1..=n {{ t += i; }} t }}"</span>) == <span class="nm">0</span>,
          <span class="st">"a for loop over a range parses cleanly"</span>);</code></pre>
+<h2 id="parsing-while-match-and-lambdas">Parsing while, match and lambdas</h2>
+<p>Each of these is a value as well as a statement: a <code>match</code> or a lambda can stand on the right of <code>=</code>.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"while"</span>, <span class="st">"fn f() {{ n = 0; while n &lt; 3 {{ n += 1; }} }}"</span>) == <span class="nm">0</span>,
+         <span class="st">"a while loop parses cleanly"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"match"</span>, <span class="st">"fn f(x: integer) -&gt; integer {{ match x {{ 0 =&gt; 1, n if n &gt; 9 =&gt; 2, 2 | 3 =&gt; 3, _ =&gt; 0 }} }}"</span>) == <span class="nm">0</span>,
+         <span class="st">"a match with a guard and alternatives parses cleanly"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"lambdas"</span>, <span class="st">"fn f() {{ g = |x| {{ x * 2 }}; h = fn(x: integer) -&gt; integer {{ x + 1 }}; }}"</span>) == <span class="nm">0</span>,
+         <span class="st">"both lambda forms parse cleanly"</span>);</code></pre>
 <h2 id="practical-use-validating-user-supplied-code">Practical use: validating user-supplied code</h2>
 <p>If your application lets users write Loft snippets (for scripting or configuration), you can parse them before executing:</p>
 <pre><code>snippet = read_user_input();
@@ -81,7 +91,10 @@ if parser::parse("user_code", snippet) &gt; 0 {
 <h2 id="what-a-failed-parse-looks-like">What a failed parse looks like</h2>
 <p>The count is the whole point: a snippet that does not parse answers a NON-zero number, so a caller can tell the two apart. Watching the call not crash cannot.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"broken"</span>, <span class="st">"fn main() {{ println(\"</span>hi\<span class="st">");"</span>) &gt; <span class="nm">0</span>,
-         <span class="st">"an unterminated body reports at least one error"</span>);
+         <span class="st">"an unterminated body reports at least one error"</span>);</code></pre>
+<p>A missing operand is an error too, and so is text after the last definition.</p>
+<pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"no_value"</span>, <span class="st">"fn f() {{ x = ; }}"</span>) &gt; <span class="nm">0</span>, <span class="st">"a missing value is reported"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(parser::<span class="fn-call">parse</span>(<span class="st">"stray"</span>, <span class="st">"fn f() {{ }} }}"</span>) &gt; <span class="nm">0</span>, <span class="st">"a stray brace is reported"</span>);
   <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"parser test passed"</span>);
 }</code></pre>
 <section id="loft-panel" class="loft-panel" hidden>
@@ -125,16 +138,26 @@ if parser::parse("user_code", snippet) &gt; 0 {
 // * 'fn name(params) [-&gt; type] { body }' — functions with a block body
 // * 'fn name(params) [-&gt; type]; #rust "template"' — operator templates backed by Rust
 // * 'use module;' — module imports
-// * Expressions: binary operators with precedence, function calls, field access,
-//   if/else, for loops, and blocks
-// * Type expressions: plain names, generic types like 'vector&lt;T&gt;', keyed
-//   collections (sorted/hash/index), and integer ranges with
-//   'integer limit(min, max)' — in parameter, field, and return position
+// * Statements: 'for' and 'while' loops, 'if' / 'else if' / 'else', 'return', typed
+//   locals ('c: (text?, integer) = ("c0", 3);') and expressions; a statement that ends
+//   in a block needs no ';'
+// * Expressions: binary operators with precedence, function calls, field access
+//   ('p.x', 'pair.0'), attributes ('f#size'), 'match' with guards and patterns, both
+//   lambda forms ('|x| { x * 2 }' and 'fn(x: integer) -&gt; integer { x + 1 }'), tuples,
+//   vectors, struct literals and blocks — each also as a value ('y = match x { … }')
+// * Type expressions: plain and qualified names ('lexer::Lexer'), generic types like
+//   'vector&lt;T&gt;', keyed collections (sorted/hash/index), tuples, 'fn(…) -&gt; T' and
+//   integer ranges with 'integer limit(min, max)' — in parameter, field, and return
+//   position
 //
 // It reads an index expression ('v[0]'), the null-coalescing operator ('a ?? 0')
-// and a formatted string literal ('"v={n}"') as the compiler does. Constructs outside
-// this list — 'while', 'match' and lambdas among them — are reported as errors, so a
-// validator built on it rejects valid Loft that uses them.
+// and a formatted string literal ('"v={n}"') as the compiler does.
+//
+// Not yet part of its grammar, so a snippet using one answers a non-zero count although
+// the compiler accepts it: 'const' fields and top-level 'const', '&amp;' references, '**',
+// '/=', hex and 'f'-suffixed literals, generic functions ('fn f&lt;T&gt;'), filtered loops
+// ('for e in v if e &gt; 1'), 'is' patterns, slices ('v[1..]'), backtick strings and
+// 'parallel { … }'.
 use parser;
 // @PAR-001 — validate a source string before acting on it: `== 0` is good, `&gt; 0` is not
 fn main() {
@@ -166,6 +189,15 @@ fn main() {
   // tokens back so the loop can claim them.
   assert(parser::parse("loop", "fn sum(n: integer) -&gt; integer {{ t = 0; for i in 1..=n {{ t += i; }} t }}") == 0,
          "a for loop over a range parses cleanly");
+  // ## Parsing while, match and lambdas
+  // Each of these is a value as well as a statement: a 'match' or a lambda can stand on
+  // the right of '='.
+  assert(parser::parse("while", "fn f() {{ n = 0; while n &lt; 3 {{ n += 1; }} }}") == 0,
+         "a while loop parses cleanly");
+  assert(parser::parse("match", "fn f(x: integer) -&gt; integer {{ match x {{ 0 =&gt; 1, n if n &gt; 9 =&gt; 2, 2 | 3 =&gt; 3, _ =&gt; 0 }} }}") == 0,
+         "a match with a guard and alternatives parses cleanly");
+  assert(parser::parse("lambdas", "fn f() {{ g = |x| {{ x * 2 }}; h = fn(x: integer) -&gt; integer {{ x + 1 }}; }}") == 0,
+         "both lambda forms parse cleanly");
   // ## Practical use: validating user-supplied code
   //
   // If your application lets users write Loft snippets (for scripting or
@@ -183,6 +215,9 @@ fn main() {
   // number, so a caller can tell the two apart. Watching the call not crash cannot.
   assert(parser::parse("broken", "fn main() {{ println(\"hi\");") &gt; 0,
          "an unterminated body reports at least one error");
+  // A missing operand is an error too, and so is text after the last definition.
+  assert(parser::parse("no_value", "fn f() {{ x = ; }}") &gt; 0, "a missing value is reported");
+  assert(parser::parse("stray", "fn f() {{ }} }}") &gt; 0, "a stray brace is reported");
   println("parser test passed");
 }
 </pre>
