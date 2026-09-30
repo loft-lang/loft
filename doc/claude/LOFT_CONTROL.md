@@ -37,7 +37,7 @@ Ranges:
 ```
 for i in 1..10 { }            // 1 to 9 (exclusive end)
 for i in 1..=10 { }           // 1 to 10 (inclusive end)
-for i in 0..2147483647 { }    // near-unbounded (break as needed)
+for i in 0.. { }              // 0, 1, 2, … until the body breaks out (as Rust's `0..`)
 ```
 
 Text iteration yields characters:

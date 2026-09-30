@@ -1266,6 +1266,8 @@ parses; ordinary runs keep the cache.
   compiler with an internal error.
 - Inside `par(…)`, a `self` function is also called by its free-function spelling:
   `par(b = get_value(a), 2)`.
+- `for i in 0.. { … }` counts up until the body breaks out or returns, as in Rust.  It used to
+  read the body as the range's end and fail with *"Cannot break outside a loop"*.
 
 ---
 

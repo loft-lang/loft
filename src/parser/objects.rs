@@ -3918,7 +3918,19 @@ impl Parser {
         // O8.5: capture range bounds for const-unroll detection.
         self.last_range_from = Some(expr.clone());
         let mut till = Value::Null;
-        let mut till_tp = if self.lexer.peek_token("]") {
+        // `@FR-I-RangeFrom` — `for i in a.. { … }` has no end: it counts up until the body
+        // leaves (`break`, `return`), as a Rust `RangeFrom` does (loft#1813).  With nothing
+        // sliced, a `{` right after the `..` is the loop's body, never a bound — read as
+        // the bound, it made the body an expression (`break` "outside a loop") and compared
+        // the counter with its value.  Lowered as `a..=MAX`: `(I-RangeIncl)` already stops
+        // exactly after the type's maximum, so the counter never has to overflow.
+        if *data == Value::Null && !incl && self.lexer.peek_token("{") {
+            incl = true;
+            till = Value::Long(i64::MAX);
+        }
+        let mut till_tp = if till != Value::Null {
+            crate::data::I64.clone()
+        } else if self.lexer.peek_token("]") {
             till = if *data == Value::Null {
                 Value::Int(i32::MAX)
             } else {
