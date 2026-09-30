@@ -140,9 +140,11 @@ while true {           // infinite until a break
 }
 ```
 
-Repeats as long as the condition holds, and is the only unbounded loop loft has —
-`while true { }` runs until something stops it, where a `for` over a range carries
-its own upper bound. `break` and `continue` work inside it exactly as in a `for`.
+Repeats as long as the condition holds — `while true { }` runs until something stops
+it.  A `for` over a bounded range carries its own end; `for i in 0.. { }` is the other
+unbounded loop, counting up until the body breaks out (`for i in 1.. { if i * i > 50 {
+first = i; break; } }` leaves `first` at 8). `break` and `continue` work inside a `while`
+exactly as in a `for`.
 
 A `while` has no loop VARIABLE, so it cannot be named by the labelled forms below:
 there is no way to leave an outer `while` from inside an inner loop except a flag.
@@ -480,7 +482,7 @@ what lets a single arm describe the shape of a token sequence:
 | form | matches |
 |---|---|
 | `Kw { word }` | an element of that variant, binding its field |
-| `(A { n } \| B { n })` | either variant — the branches must bind the **same** field name |
+| `(A { n } \| B { m })` | either variant; a field only some branches bind is nullable, and null when a branch without it matched |
 | `(x: Num)*` | zero or more `Num` elements, collected into `x` |
 | `(x: Num)+` | one or more |
 | `(x: Num)*(Comma)` | a run with a separator between items; the separator is not collected |

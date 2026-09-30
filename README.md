@@ -102,9 +102,10 @@ cargo build --release          # binary at target/release/loft
 
 `make install-user` installs to `~/.local/bin` and `~/.local/share/loft` without root, and
 tells you if `~/.local/bin` is not on your `PATH`. `make install` (system-wide
-`/usr/local`) elevates only when the prefix is not writable. Install through one of these
-rather than copying the binary: it loads its standard library from `default/` beside the
-checkout, or from `share/loft/` beside an installed `bin/`.
+`/usr/local`) elevates only when the prefix is not writable. These are the way onto your
+`PATH`; a copied binary runs too — it uses `default/` beside a checkout or `share/loft/`
+beside an installed `bin/` when one is there, and otherwise the standard library built
+into it.
 
 ⚠ Building loft optimised hands one `rustc` a large crate (`codegen-units=1`), which can
 exhaust memory on a small machine. If a build is killed, use `CARGO_BUILD_JOBS=1` — each

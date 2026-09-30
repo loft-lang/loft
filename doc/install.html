@@ -27,7 +27,7 @@ make install-user</code></pre>
 <p>To run loft from the checkout without installing it:</p>
 <pre><code>cargo build --release
 ./target/release/loft --version</code></pre>
-<p>The binary at <code>target/release/loft</code> finds the standard library in the checkout's <code>default/</code> directory. Copying the binary on its own elsewhere leaves that library behind; use <code>make install-user</code>, or pass <code>--path &lt;checkout&gt;</code>.</p>
+<p>The binary at <code>target/release/loft</code> uses the standard library in the checkout's <code>default/</code> directory, or <code>share/loft/</code> beside an installed <code>bin/</code>. A copy with neither beside it still runs, on the standard library built into it. <code>make install-user</code> (or <code>make install</code>) is the way onto your <code>PATH</code>.</p>
 
 <h2 id="verify">Verify the installation</h2>
 <pre><code>loft --version</code></pre>

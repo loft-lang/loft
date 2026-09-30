@@ -73,8 +73,8 @@ fn main() {
   assert(first == 8, "First was {first} instead of 8");
   // ## The other loop: while
   // Loft has two loop statements: 'for', which walks a range or a collection, and
-  // 'while', which repeats as long as its condition holds. A 'for' over a range
-  // carries its own upper bound, so it is the one to reach for; a 'while' does not,
+  // 'while', which repeats as long as its condition holds. A 'for' over a BOUNDED range
+  // carries its own end, so it is the one to reach for; a 'while' does not,
   // and 'while true { }' runs until something stops it. Because nothing bounds a
   // 'while', its body must move the condition towards false — here 'n += 1' is what
   // ends the loop. This is the same sum as the 'for' above, written the other way.
