@@ -640,6 +640,10 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+`D-col-14` was opened and CLOSED 2026-09-30: an absent keyed FIELD was followed as a record by
+`len`, a clear, a copy and a remove, and an absent vector field lost its absence through `= []`
+and every whole-value copy, against `(Col-Len)`, `(Col-Cons)` and `(Col-Copy)`.
+
 `D-col-5` (loft#1576) was opened 2026-09-21 and CLOSED 2026-09-22: a repeated key displaced the
 older record from the one MEMBER of a linked group it collided in, not from the group, and a group
 with no vector member never released it, against `(Col-Group-Dup)` and `(Col-Group)`.

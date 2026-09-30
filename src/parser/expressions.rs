@@ -6093,9 +6093,19 @@ use a separate collection or add after the loop"
                     code.unspan(),
                     Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
                 );
+                // A field that may record absence takes the whole-value REPLACE for every
+                // copy below, temp fills included: an append cannot make its target absent,
+                // so `o.v = o2.v` with `o2.v` null read back `[]`.  The rule the local
+                // destination follows (`lower_vec_copy_bind`) and the keyed field's
+                // `OpReplaceKeyed` carries; a dense field keeps the append and its IR.
+                let whole = if declared_nullable {
+                    "OpReplaceVector"
+                } else {
+                    "OpAppendVector"
+                };
                 if owned_var_rhs {
                     let mut ops = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), code.clone(), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), code.clone(), rec_tp]);
                     ops.push(append);
                     *code = Value::Insert(ops);
                 } else if matches!(code.unspan(), Value::Var(_)) {
@@ -6107,19 +6117,20 @@ use a separate collection or add after the loop"
                     let dep_free_tp = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
                     let tmp = self.vars.unique("_p154_rhs", &dep_free_tp, &mut self.lexer);
                     let init_tmp = v_set(tmp, Value::Null);
-                    let fill_tmp = self.cl(
-                        "OpAppendVector",
-                        &[Value::Var(tmp), rhs_saved, rec_tp.clone()],
-                    );
+                    let fill_tmp = self.cl(whole, &[Value::Var(tmp), rhs_saved, rec_tp.clone()]);
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), Value::Var(tmp), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
                     let mut ops = vec![init_tmp, fill_tmp];
                     ops.extend(clear);
                     ops.push(append);
                     *code = Value::Insert(ops);
-                } else if let Some(ops) =
-                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+                } else if !(declared_nullable && matches!(s_type, Type::Optional(_)))
+                    && let Some(ops) = self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
                 {
+                    // Not for a `?` field fed by a `?` call: the field is handed over as the
+                    // callee's return BUFFER, and a `return null` answers the null VALUE and
+                    // leaves the buffer untouched, so the field read back `[]`.  The general
+                    // arm below binds the result and replaces, which sees the null.
                     *code = Value::Insert(ops);
                 } else {
                     let rhs_saved = code.clone();
@@ -6152,7 +6163,7 @@ use a separate collection or add after the loop"
                     }
                     let set_tmp = v_set(tmp, rhs_saved);
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
-                    let append = self.cl("OpAppendVector", &[to.clone(), Value::Var(tmp), rec_tp]);
+                    let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
                     let mut ops = vec![set_tmp];
                     ops.extend(clear);
                     ops.push(append);

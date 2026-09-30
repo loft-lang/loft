@@ -6585,8 +6585,16 @@ impl Parser {
                             Value::Int(i32::from(vec_tp)),
                         ],
                     );
+                    // A field declared `?` takes the whole-value REPLACE, which leaves it
+                    // absent when the source is — `H { xs: w }` with `w` null read back `[]`
+                    // (the `o.xs = w` assignment's twin in `expressions.rs`).
+                    let whole = if matches!(td, Type::Optional(_)) {
+                        "OpReplaceVector"
+                    } else {
+                        "OpAppendVector"
+                    };
                     list.push(self.cl(
-                        "OpAppendVector",
+                        whole,
                         &[
                             field_ref.clone(),
                             value.clone(),

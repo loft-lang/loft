@@ -147,7 +147,7 @@ pub(crate) fn key_bits(keys: &[Key]) -> u32 {
 /// entities share a bucket; no dedup here.
 pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     let store = keys::mut_store(coll, stores);
-    let mut tree = store.get_u32_raw(coll.rec, coll.pos);
+    let mut tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         tree = rt::rtree_init(store, 0);
         store.set_u32_raw(coll.rec, coll.pos, tree);
@@ -161,7 +161,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
 #[must_use]
 pub fn find(coll: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     let rec = if tree == 0 {
         0
     } else {
@@ -180,7 +180,7 @@ pub fn find(coll: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> Db
 /// match, so a same-bucket sibling is never removed by mistake).
 pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> bool {
     let store = keys::mut_store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return false;
     }
@@ -196,7 +196,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
         return 0;
     }
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         0
     } else {
@@ -209,7 +209,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
 #[must_use]
 pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     let mut out = Vec::new();
     if tree != 0 {
         let mut it = rt::rtree_first(store, tree);
@@ -295,7 +295,7 @@ pub fn range(
     limit: Option<usize>,
 ) -> Vec<u32> {
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return Vec::new();
     }
@@ -367,7 +367,7 @@ pub fn near_range(
     limit: Option<usize>,
 ) -> Vec<u32> {
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return Vec::new();
     }
@@ -763,7 +763,7 @@ pub fn box_range(
     limit: Option<usize>,
 ) -> Vec<u32> {
     let store = keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return Vec::new();
     }

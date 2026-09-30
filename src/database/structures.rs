@@ -1256,7 +1256,14 @@ impl Stores {
         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
-        if o_db.store_nr == u16::MAX {
+        // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
+        // slot, never the value-level null, so its absence is the marker the slot holds.
+        let slot_absent = o_db.store_nr != u16::MAX
+            && o_db.rec != 0
+            && o_db.pos != 0
+            && keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos)
+                == DbRef::ABSENT_REC;
+        if o_db.store_nr == u16::MAX || slot_absent {
             self.clear_vector_release(db);
             self.mark_collection_absent(db);
             return;

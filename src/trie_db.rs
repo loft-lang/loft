@@ -104,7 +104,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
         return;
     };
     let store = crate::keys::mut_store(coll, stores);
-    let mut tree = store.get_u32_raw(coll.rec, coll.pos);
+    let mut tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         tree = rt::rtree_init(store, 0);
         store.set_u32_raw(coll.rec, coll.pos, tree);
@@ -118,7 +118,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
 #[must_use]
 pub fn find(coll: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
     let store = crate::keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     let rec = match keys.first() {
         Some(k) if tree != 0 => {
             // The probe reads bytes exactly as `TextOracle` does — via the same
@@ -151,7 +151,7 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
         return false;
     };
     let store = crate::keys::mut_store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         return false;
     }
@@ -166,7 +166,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
         return 0;
     }
     let store = crate::keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     if tree == 0 {
         0
     } else {
@@ -179,7 +179,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
 #[must_use]
 pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
     let store = crate::keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     let mut out = Vec::new();
     if tree != 0 {
         let mut it = rt::rtree_first(store, tree);
@@ -218,7 +218,7 @@ pub fn prefix(
     limit: Option<usize>,
 ) -> Vec<u32> {
     let store = crate::keys::store(coll, stores);
-    let tree = store.get_u32_raw(coll.rec, coll.pos);
+    let tree = store.collection_rec(coll.rec, coll.pos);
     let mut out = Vec::new();
     let Some(key) = keys.first() else {
         return out;

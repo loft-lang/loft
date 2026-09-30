@@ -668,6 +668,13 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
         store.release_foreign();
         return;
     }
+    // A clear leaves the EMPTY collection, and an ABSENT slot is not one: `o.v = []` on a
+    // null field read back `null`, where every keyed kind's clear answers `[]`.  The empty
+    // collection is slot `0`, so the marker is replaced rather than followed.
+    if store.get_u32_raw(db.rec, db.pos) == DbRef::ABSENT_REC {
+        store.set_u32_raw(db.rec, db.pos, 0);
+        return;
+    }
     let v_rec = store.collection_rec(db.rec, db.pos);
     if v_rec != 0 {
         // Only set size of the vector to 0
