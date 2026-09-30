@@ -68,6 +68,13 @@ pub fn byte_code_from(
     // that verdict in now, while `Data` and the live schema are both in hand; this
     // is the single funnel every `byte_code*` entry point goes through.
     crate::typedef::sync_capture_ownership(data, &mut state.database);
+    // `@FR-R-ValueRecord` (@PLN180) — a small record returned to a caller that only reads
+    // its fields travels as a tuple.  Here and not in `scopes::check` because it changes
+    // signatures: this is where the program is closed.  A warm start reads its bodies from
+    // the cached store instead of `data`, so it keeps the record form.
+    if start_d_nr == 0 && warm_store.is_none() {
+        crate::value_record::rewrite_program(data, &state.database);
+    }
     // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
     for d in 0..data.definitions() {
         let def = data.def(d);

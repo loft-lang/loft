@@ -354,6 +354,7 @@ pub mod rewrite_census;
 pub mod scopes;
 pub mod siphash;
 pub mod use_analysis;
+pub mod value_record;
 mod variables;
 pub mod vec_copy;
 pub mod vector;

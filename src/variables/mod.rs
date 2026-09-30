@@ -3883,6 +3883,13 @@ impl Function {
     pub fn bind_admits_absence(&self, var: u16, src: u16) -> bool {
         matches!(self.tp(src), Type::Optional(_)) || matches!(self.tp(var), Type::Optional(_))
     }
+    /// `var_nr` stops being a parameter: the definition dropped the attribute it received
+    /// (`value_record::rewrite_program` removing a return buffer the function no longer
+    /// writes).  It stays in the table as a local nothing mentions.
+    pub fn drop_argument(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].argument = false;
+    }
+
     pub fn is_argument(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
     }
@@ -5691,6 +5698,16 @@ impl Function {
     pub fn set_type(&mut self, var_nr: u16, tp: Type) {
         self.trace_type_change(var_nr, &tp, "set_type");
         self.variables[var_nr as usize].type_def = tp;
+    }
+
+    /// Forget every variable's live interval, so `compute_intervals` can read a body that
+    /// changed after it last ran (`value_record::rewrite_program`).  The walk only ever
+    /// widens an interval, so a second walk over stale ones would keep the old extent.
+    pub fn reset_intervals(&mut self) {
+        for v in &mut self.variables {
+            v.first_def = u32::MAX;
+            v.last_use = 0;
+        }
     }
 
     /// Reset every non-argument variable's `stack_pos` and

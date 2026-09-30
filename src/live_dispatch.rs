@@ -129,6 +129,8 @@ fn bootstrap(fn_names: &'static [&'static str]) -> Result<Stores, String> {
         .map_err(|_| "LOFT_LIVE_SRC not set (run through the loft driver)".to_string())?;
     let stdlib = std::env::var("LOFT_LIVE_STDLIB").unwrap_or_else(|_| "default".to_string());
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     p.parse_stdlib(&stdlib)
         .map_err(|e| format!("stdlib `{stdlib}`: {e}"))?;
     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
@@ -162,6 +164,8 @@ pub fn bootstrap_from_bytes(
     program_src: &str,
 ) -> Result<Stores, String> {
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
         if !p.parse_source(content, name, true) {
             return Err(format!("embedded stdlib `{name}`: {}", p.diagnostics));
@@ -360,6 +364,8 @@ pub fn wasm_host_log(msg: &str) {
 pub fn wasm_debug_selftest() -> String {
     use crate::debugger::StepMode;
     let mut p = Box::new(crate::parser::Parser::new());
+    // Parsed against again after compiling: no whole-program signature rewrite.
+    p.data.open_world = true;
     for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
         if !p.parse_source(content, name, true) {
             return format!("FAIL parse-stdlib {name}");
@@ -969,6 +975,8 @@ mod tests {
     /// return `(def_count, n_main_resolves)`.
     fn parse_fs(program_path: &str) -> (u32, bool) {
         let mut p = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         p.parse_dir("default", true, false).expect("parse default/");
         assert!(p.parse(program_path, false), "fs program parses");
         crate::scopes::check(&mut p.data, &mut p.database);
@@ -980,6 +988,8 @@ mod tests {
     /// `scopes::check`.
     fn parse_embedded(program_src: &str) -> (u32, bool) {
         let mut p = Parser::new();
+        // Parsed against again after compiling: no whole-program signature rewrite.
+        p.data.open_world = true;
         for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
             assert!(
                 p.parse_source(content, name, true),
