@@ -264,6 +264,16 @@ null again and mints no snapshot — the first bisect step for a use-after-free 
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
+**A small record returned as a tuple (@PLN180, `@FR-R-ValueRecord`, default-ON, both
+backends, at the top of `byte_code_from`):** a function returning a flat record of scalars
+from an object literal, whose every caller only reads fields off the local it binds, returns
+a tuple, and its callers read tuple elements.  The call's buffer store, its mint and its
+frees leave the IR, so the interpreter claims no store per call.  A program parsed against
+again after compiling (the REPL, the debugger, live reload, a host calling by name) keeps
+records (`Data::open_world`).  **`LOFT_NO_IR_VALUE_RECORD=1`** restores the record form on
+both backends, leaving the case to `--native`'s own rewrite (`LOFT_NO_VALUE_RECORD`).  It is
+the first bisect step for a wrong field read out of a small-record call on the interpreter.
+
 **Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
 element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
 fresh literal into its hidden buffer on every exit and its return adopted raw — is handed
