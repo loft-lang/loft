@@ -355,3 +355,59 @@ fn development_halts_in_a_windowed_loop_interpreted() {
 fn development_halts_in_a_windowed_loop_native() {
     development_halts_in_a_windowed_loop("--native");
 }
+
+/// The production log line gives the advice the store's lock calls for — the same advice the
+/// development report gives for that write.  A mapped file cannot be unlocked: it was told
+/// to `#lock = false`, a cure that does not exist, while the author's own `#lock` is the one
+/// lock that advice is right for.
+fn production_logs_the_advice_its_lock_calls_for(backend: &str) {
+    let mapped = r#"
+fn main() {
+  src: vector<u8> = [1, 2, 3];
+  assert(write_bytes("locked_advice_fm.tmp", src), "write");
+  m = file_map("locked_advice_fm.tmp") ?? [];
+  m[0] = 9 as u8;
+  println("m={m}");
+}
+"#;
+    let (stdout, stderr, code, log) = run("advice_mapped", mapped, backend, true);
+    assert_eq!(
+        (stdout.as_str(), code),
+        ("m=[1,2,3]\n", 0),
+        "{backend}: {stderr}"
+    );
+    assert!(
+        log.contains("[write_to_locked_store]") && log.contains("copy them first"),
+        "{backend}: a mapped file's discarded write names the copy cure; log:\n{log}"
+    );
+    assert!(
+        !log.contains("#lock = false"),
+        "{backend}: a mapped file cannot be unlocked; log:\n{log}"
+    );
+
+    let locked = r#"
+struct B { n: integer }
+fn main() {
+  v = [B { n: 1 }];
+  v#lock = true;
+  v[0].n = 5;
+  println("n={v[0].n}");
+}
+"#;
+    let (stdout, stderr, code, log) = run("advice_locked", locked, backend, true);
+    assert_eq!((stdout.as_str(), code), ("n=1\n", 0), "{backend}: {stderr}");
+    assert!(
+        log.contains("unlock it with `#lock = false`"),
+        "{backend}: the author's own lock keeps its unlock cure; log:\n{log}"
+    );
+}
+
+#[test]
+fn production_logs_the_advice_its_lock_calls_for_interpreted() {
+    production_logs_the_advice_its_lock_calls_for("--interpret");
+}
+
+#[test]
+fn production_logs_the_advice_its_lock_calls_for_native() {
+    production_logs_the_advice_its_lock_calls_for("--native");
+}

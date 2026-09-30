@@ -3807,7 +3807,8 @@ impl Store {
             if std::env::var_os("LOFT_LOCK_BT").is_some() {
                 crate::loft_eprintln!("[locks] REFUSED in store #{}", self.store_nr);
             }
-            if crate::runtime_error::discard_locked_write_in_production(rec, fld) {
+            if crate::runtime_error::discard_locked_write_in_production(rec, fld, &self.lock_origin)
+            {
                 return;
             }
             Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
