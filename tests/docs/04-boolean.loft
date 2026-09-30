@@ -4,8 +4,9 @@
 // @TITLE: True, false, and null
 // A boolean value is either 'true' or 'false'. Booleans appear naturally
 // wherever you make a decision: in 'if' conditions, loop filters, and
-// comparisons. Loft adds a third state called 'null' — meaning "no value" —
-// which behaves like false whenever a boolean is expected.
+// comparisons. Declared as 'boolean?', a boolean gets a third state called
+// 'null' — meaning "no value" — and any null behaves like false whenever a
+// boolean is expected.
 //
 // This design means you rarely need to write a separate null-check: '!x' is
 // true both when x is false and when x is null.
@@ -25,9 +26,8 @@ fn main() {
   assert(!(1 > 2 && 3 > 2), "First false → whole 'and' is false");
   assert(!(1 > 2 || 3 > 4), "Both false → 'or' is false");
   // ## Null in boolean context
-  // Division by zero (and other failed operations) produce null when
-  // defended with `?? null` (or `if result != null { ... }` after the
-  // assignment).  Null in a boolean context is treated as false, so
+  // Division by zero (and other failed operations) produce null.
+  // Null in a boolean context is treated as false, so
   // '!' is true.  This lets you write guard clauses without a separate
   // null-check syntax:
   //   if !result { ... handle missing value ... }
@@ -56,8 +56,9 @@ fn main() {
   //   '<<' — shift bits left N positions  (×2^N)
   //   '>>' — shift bits right N positions (÷2^N)
   //
-  // Tip: '&' binds less tightly than comparison operators. Use parentheses
-  // when you mix bitwise and comparison expressions in the same condition.
+  // Tip: '&' binds more tightly than comparison operators, so 'x & 15 == 8'
+  // reads as '(x & 15) == 8'. Parentheses make that grouping visible to a
+  // reader when you mix bitwise and comparison expressions.
   assert((0x0f & 0xa8) == 8, "Bitwise AND: keeps only bits in both");
   assert((0xf0 | 0x0f) == 0xff, "Bitwise OR: combines bits from either");
   assert(1 << 4 == 16, "Left shift: 1 × 2^4 = 16");
@@ -69,7 +70,7 @@ fn main() {
   // ## Formatting booleans
   // Booleans can be embedded in a format string like any other value.
   // The '^' alignment specifier centres the value in a field of given width.
-  // '<' aligns left, '>' aligns right (right-alignment is the default).
+  // '<' aligns left, '>' aligns right (a boolean aligns left by default, like text).
   assert("1{true:^7}2" == "1 true  2", "Centred boolean in field of width 7");
   assert("{false}" == "false", "Plain boolean format");
   // ## '&' vs 'and'

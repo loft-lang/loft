@@ -81,7 +81,7 @@ fn main() {
   x += [99];
   assert(x[0] == 99, "append after clear works");
   // ## Slicing
-  // A slice gives you a window into part of a vector without copying it.
+  // A slice gives you part of a vector as a new vector.
   // 'v[a..b]' contains elements at positions a, a+1, ..., b-1 (b is excluded).
   // 'v[a..]'  goes from position a to the very last element.
   // 'v[..b]'  goes from the beginning up to (but not including) position b.
@@ -120,7 +120,7 @@ fn main() {
   assert(c == 8421, "Reverse sub-vector iteration");
   // You can fill a vector with many copies of the same value using '; count' syntax:
   //   [SomeStruct { field: value }; 16]
-  // This creates 16 identical copies in one expression. See 08-struct.loft for examples.
+  // This creates 16 identical copies in one expression. See the Struct page for examples.
   // ## Passing vectors to functions
   //
   // A vector parameter is a shared view of the caller's vector — no data is copied.
@@ -139,8 +139,8 @@ fn main() {
   //
   // A SLICE is a different thing again. 'v[2..5]' builds a FRESH vector holding
   // copies of those elements, so writing to the slice does not reach the original.
-  // A slice is also not accepted where a 'vector<T>' parameter is expected — bind
-  // it to a variable first, and remember you are then working on a copy.
+  // A slice passes directly where a 'vector<T>' parameter is expected
+  // ('total(v[1..3])'); the function then works on that copy.
   passed: vector<integer> = [1, 2, 3];
   set_first_v(passed, 99);
   assert(passed[0] == 99, "a write to an existing element reaches the caller");

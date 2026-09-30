@@ -115,8 +115,8 @@ fn main() {
   // `.N` after the colon fixes the number of decimal places.  Only `float` and
   // `single` have decimal places, so `.N` on any other type is a compile error:
   // `{7:.2}` says "a precision has no effect on integer".  That matters because
-  // the mistake is easy to make and used to be silent — a `price` you thought
-  // was a float is an integer, and `{price:.2}` rendered no decimals at all.
+  // the mistake is easy to make — a `price` you thought was a float is an
+  // integer, and `{price:.2}` would otherwise render no decimals at all.
   assert("{3.125:.1}" == "3.1", "1 decimal place");
   assert("{3.125:.2}" == "3.12", "2 decimal places");
   assert("{3.125:.0}" == "3", "0 decimal places");
@@ -214,9 +214,10 @@ fn main() {
   // Each kind goes to its own method, so the type sees the real type.
   q3: Query = "id={7} name={who}";
   assert(q3.shape() == "<id=>< name=>[7][ada]", "an integer hole calls hole_int");
-  // The type is taken from an annotated binding or a struct-literal field.  A call
-  // argument and a return position do NOT target — `db.db_rows("… {name}")` is an
-  // ordinary text and reports `expected Query, got text` — so route through a local:
+  // The type is taken from an annotated binding, a struct-literal field or the
+  // function's declared return type.  A call argument does NOT target —
+  // `db.db_rows("… {name}")` is an ordinary text and reports `expected Query, got
+  // text` — so route through a local:
   //     q: SqlText = "SELECT id FROM users WHERE name = {name}";
   //     db.db_rows(q)
   // A format spec on a target's hole is a compile error, because the value is handed

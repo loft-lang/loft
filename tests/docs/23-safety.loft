@@ -125,11 +125,11 @@ fn main() {
   // Floats store null as `NaN` internally, but null COMPARISON is uniform with
   // every other scalar type: `null == null` is TRUE, null is
   // not equal to any real value, and null orders as the low extreme. Detect a
-  // null float with `f == null` (or `!f` / `f ?? default`) — NOT the old `f != f`
-  // trick, which no longer works now that `null == null` is true.
-  // Both the defended and the undefended division yield null and continue
-  // (C80 / E-Uncomp — see tests/scripts/184-i333-div-zero-null-continues.loft);
-  // the undefended site additionally reports a warning.
+  // null float with `f == null` (or `!f` / `f ?? default`) — NOT the `f != f`
+  // trick from other languages, which never fires here because `null == null`
+  // is true.
+  // Both the defended and the undefended division yield null and the program
+  // continues; the undefended site also writes a warning to the log.
   bad = 0.0 / 0.0 ?? null;
   assert(!bad, "a null float is falsy");
   assert(bad == null, "detect a null float with `== null`");

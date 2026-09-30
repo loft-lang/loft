@@ -58,7 +58,8 @@ fn main() {
   // fields to variables in the match arm.
   //   Circle { radius } — binds the 'radius' field to a local variable
   //   Rect { w, h }     — binds both 'w' and 'h'
-  // The variable names must match the field names exactly.
+  // In this short form the variable names must match the field names exactly;
+  // write `Circle { radius: r }` to bind the field under another name.
   shape = Rect { w: 3, h: 4 };
   shape_area = match shape {
     Circle { radius } => radius * radius * 3,

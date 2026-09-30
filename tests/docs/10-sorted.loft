@@ -6,7 +6,8 @@
 // as the sort criteria (called "key fields"). You can look up a record by those
 // fields instantly and iterate all records in that order.
 // The collection stays sorted as you add new elements — no manual sorting needed.
-// Declare the key fields inside angle brackets: 'field' sorts A→Z / 0→9 (ascending),
+// Name the key fields in square brackets after the record type, as in
+// 'sorted<Elm[-key]>': 'field' sorts A→Z / 0→9 (ascending),
 // '-field' sorts Z→A / 9→0 (descending).
 struct Elm {
   key: text,
@@ -113,7 +114,7 @@ fn main() {
   assert(sum3 == 40, "Sum after key removal: {sum3}");
   // Note: '#index' works on a sorted collection — it is a sequential counter that
   // advances one per visited element (see the loop above). It is only 'index<T>'
-  // collections that reject '#index' — use '#count' there instead (see 11-index).
+  // collections that reject '#index' — use '#count' there instead (see the Index page).
   // ## Iterating a Key Range
   // The range examples live in `main_ranges` below; run them here, because a file
   // with a `main` runs only its `main`.
