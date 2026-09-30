@@ -1883,10 +1883,10 @@ impl Function {
                 result
             }
             // `τ?` over a substituted `τ` stays `τ?` (@FR-N-Shape: the arm the catch-all
-            // below would take, named so the shape test sees the wrapper).
-            Type::Optional(inner) => {
-                Type::Optional(Box::new(Self::subst_type(*inner, tv_nr, concrete)))
-            }
+            // below would take, named so the shape test sees the wrapper) — through the
+            // idempotent former, because `T? [T ↦ integer?]` is `integer?`, never `integer??`
+            // (@FR-N-Idem, loft#1771).
+            Type::Optional(inner) => Type::optional(Self::subst_type(*inner, tv_nr, concrete)),
             // An open instance of a generic ENUM (@PLN165 D8), as `Type::substitute` reads it.
             Type::Enum(d, mixed, deps) if d == tv_nr => match concrete.base() {
                 Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),

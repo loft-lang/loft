@@ -73,6 +73,10 @@ struct Plan {
     moves: Vec<Path>,
     /// Each exit free of the wrapper: becomes the block release.
     frees: Vec<Path>,
+    /// The `(R-Place)` loop buffers claimed in the local's store (`OpPlaceRecord(v, tp)`):
+    /// with the wrapper moved into the return buffer's store they would go back to the
+    /// caller as dead records, so each exit releases them first, while the store stands.
+    placed: Vec<(u16, u16)>,
 }
 
 /// Rewrite every admitted local vector of function `d_nr`; a no-op under the switch and for
@@ -161,6 +165,7 @@ fn admitted(data: &Data, d_nr: u32, ops: &Ops) -> Option<(Vec<Plan>, u16, Value)
                     mint: mint.clone(),
                     moves: cx.moves,
                     frees: cx.frees,
+                    placed: placed_in(code, v, ops),
                 });
             }
             Err(why) => {
@@ -564,6 +569,24 @@ fn node_at_mut<'a>(node: &'a mut Value, path: &[usize]) -> Option<&'a mut Value>
     }
 }
 
+/// The loop buffers `(R-Place)` claimed in local `v`'s store: `buf = OpPlaceRecord(v, tp)`.
+fn placed_in(code: &Value, v: u16, ops: &Ops) -> Vec<(u16, u16)> {
+    let mut out = Vec::new();
+    code.walk(&mut |n| {
+        if let Value::Set(buf, rhs) = n.unspan()
+            && let Value::Call(d, args) = rhs.unspan()
+            && *d == ops.place
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(h)) if *h == v)
+            && let Some(Value::Int(tp)) = args.get(1).map(Value::unspan)
+            && let Ok(tp) = u16::try_from(*tp)
+            && !out.contains(&(*buf, tp))
+        {
+            out.push((*buf, tp));
+        }
+    });
+    out
+}
+
 fn apply(code: &mut Value, plan: &Plan, rb: u16, guard: &Value, ops: &Ops) {
     let m = node_at_mut(code, &plan.mint).expect("the mint path names a node");
     *m = Value::Insert(vec![
@@ -597,5 +620,20 @@ fn apply(code: &mut Value, plan: &Plan, rb: u16, guard: &Value, ops: &Ops) {
         *d = ops.free_in;
         args.truncate(1);
         args.push(Value::Int(i32::from(plan.wtp)));
+        if !plan.placed.is_empty() {
+            let wrapper = n.unspan().clone();
+            let mut seq: Vec<Value> = plan
+                .placed
+                .iter()
+                .map(|&(buf, tp)| {
+                    Value::Call(
+                        ops.free_in,
+                        vec![Value::Var(buf), Value::Int(i32::from(tp))],
+                    )
+                })
+                .collect();
+            seq.push(wrapper);
+            *n.unspan_mut() = Value::Insert(seq);
+        }
     }
 }

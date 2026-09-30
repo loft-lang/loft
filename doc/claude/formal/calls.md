@@ -343,13 +343,7 @@ DESIGN_DECISIONS.md C123.
 
 ## Deviations
 
-**OPEN: 0.**  `D-call-25` and `D-call-26` opened and closed 2026-09-29 (a default reading an earlier parameter through a tuple read the caller's own local; a record `match` default was refused).  `D-call-24` opened and closed 2026-09-29 (a nullable vector local at the tail lost its writes).  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
-alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
-in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
-bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,
-generic and concrete) read 7, and all five of D-call-20's rows read as wanted, including the one
-that used to abort on the H5 two-pass contract.  The fixes and their guards landed in the same PR
-that opened the entries (#1490), and only the register was left behind.
+**OPEN: 0.**  Every deviation is closed; the record is in [calls-history.md](calls-history.md).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

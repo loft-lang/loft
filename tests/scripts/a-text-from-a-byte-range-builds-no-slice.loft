@@ -28,7 +28,7 @@ fn main() {
   assert(text_from_byte_range(b, 1, 3) == "el", "inner");
   assert(text_from_byte_range(b, 3, 3) == "", "empty");
   assert(text_from_byte_range(b, 4, 2) == "", "reversed");
-  assert(text_from_byte_range(b, -3, 99) == "hello", "clamped both ends");
+  assert(text_from_byte_range(b, -3, 99) == "llo", "a negative low counts from the end; high clamps");
   assert(text_from_byte_range(b, 2, 99) == "llo", "clamped high");
   assert(text_from_byte_range(bad, 0, 3) == "" && text_from_bytes(bad) == "", "invalid utf-8");
   assert(text_from_byte_range(bad, 0, 1) == "h" && text_from_byte_range(bad, 2, 3) == "o", "valid parts of an invalid buffer");

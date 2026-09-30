@@ -365,7 +365,7 @@ borrow lists stripped).  Still listed, and correct: compiler temporaries (`__ref
 `___tret`, … — a slot reused or lowered), a captured local boxed into a cell (`set_type` to a
 `Reference`), `#663`'s element-width adoption, the nullable-struct synthesis between the passes,
 and inference that COMPLETES on pass 2 (a generic resolved there, so a keyed read turns `τ?`).
-Measured 2026-09-29 over 1916 corpus files: 936 lines, about 25 on user-named variables after
+Measured over the 1916 corpus files: 936 lines, about 25 on user-named variables after
 those filters; the ones that were defects were the variant join pass 1 read through a
 `Rewritten` marker (D-types-24), and — followed to the one place pass 1's TREE is replayed, a
 parameter default — two call defects (calls.md D-call-25, D-call-26).

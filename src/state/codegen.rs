@@ -229,6 +229,7 @@ impl State {
         let logging = !crate::portable_path::is_stdlib_source(&data.def(def_nr).position().file);
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
+        self.fused_away.clear();
         self.walk_steps = if fusion_enabled() {
             crate::generation::hoist::char_walks(data, def_nr)
                 .into_values()
@@ -495,12 +496,20 @@ impl State {
         //
         // Anything a user can name is still in scope, `#`-infixed loop temps included
         // (`i#index` is a real `Set` in the IR) — those are what the check is for.
+        //
+        // **A local whose write a fused op took over is exempt too** (`fused_away`): its
+        // slot was given from the IR, before codegen chose the fused form, and no emitted
+        // code writes it — `<unset>` is then the truth, not a missed recording.
         #[cfg(debug_assertions)]
         {
             let vars = &data.definitions[def_nr as usize].variables;
             for (v_nr, &pos) in stack_pos.iter().enumerate() {
                 let v = v_nr as u16;
-                if pos == u16::MAX || vars.is_argument(v) || vars.name(v).starts_with("__") {
+                if pos == u16::MAX
+                    || vars.is_argument(v)
+                    || vars.name(v).starts_with("__")
+                    || self.fused_away.contains(&v)
+                {
                     continue;
                 }
                 assert!(
@@ -4999,6 +5008,12 @@ impl State {
         for (k, v) in [w.index, w.next, w.src].into_iter().enumerate() {
             self.vars.insert(at + 1 + k as u32, v);
         }
+        // The op writes `#index` and `#next` itself — the two `Set`s it replaces recorded
+        // their spans, so it does too (`c`'s is recorded by the `Set` this answers for).
+        // The block's result temp is not written at all: the character goes straight to `c`.
+        self.record_store_span(at, w.index);
+        self.record_store_span(at, w.next);
+        self.fused_away.push(w.result);
         true
     }
 

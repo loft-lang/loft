@@ -1,0 +1,137 @@
+diff --git b/src/data.rs a/src/data.rs
+index 28b9913cf..304d824f9 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -11750,96 +11750,10 @@ impl Data {
+         if let Some(q) = self.bare_use_provider(name, source) {
+             return Some(Self::bare_use_cure(what, name, q));
+         }
+-        if let Some(msg) =
+-            self.hidden_import_provider(name, source)
+-                .map(|(via, module, writable)| {
+-                    Self::hidden_import_cure(what, name, &via, &module, writable.as_deref())
+-                })
+-        {
+-            return Some(msg);
+-        }
+-        self.unimported_provider(what, name, source)
+-            .map(|q| Self::unimported_cure(what, name, &q))
+-    }
+-
+-    /// loft#1769 — a LOADED library or module that passes on `name` publicly while nothing
+-    /// this file imports passes it on to here: the qualifier to import it by, or `None`.
+-    ///
+-    /// The providers above look one step down this file's imports (and through `pub use`
+-    /// chains).  A name two plain imports deep — `render` does `use graphics::*;`, and
+-    /// `graphics` does `use mesh3d::*;` for its own use — stops at neither step, so the
+-    /// reader got a bare "Undefined type Mesh — did you mean 'hash'?" while `mesh3d` was
+-    /// loaded and `use mesh3d::*;` is the whole cure.
+-    ///
+-    /// Only a definition of the kind `what` asks about counts (a type for a type, a
+-    /// function for a function, a constant for a variable), and only when exactly one
+-    /// definition answers: two libraries passing on different `name`s is not a cure.
+-    /// Between sources passing on the same definition, a FACADE that re-exports it wins
+-    /// over the module that declares it — the package name is what a consumer imports.
+-    #[must_use]
+-    pub fn unimported_provider(&self, what: &str, name: &str, into_source: u16) -> Option<String> {
+-        let lower = what.to_ascii_lowercase();
+-        let kind_fits = |d: u32| {
+-            let t = &self.definitions[d as usize].def_type;
+-            if lower.contains("type") || lower.contains("enum") {
+-                matches!(
+-                    t,
+-                    DefType::Struct
+-                        | DefType::Enum
+-                        | DefType::Type
+-                        | DefType::TypeTemplate
+-                        | DefType::Interface
+-                )
+-            } else if lower.contains("function") {
+-                matches!(t, DefType::Function | DefType::Dynamic | DefType::Generic)
+-            } else if lower.contains("variable") {
+-                matches!(t, DefType::Constant)
+-            } else {
+-                !matches!(t, DefType::Unknown)
+-            }
+-        };
+-        let fn_key = format!("n_{name}");
+-        // (definition, qualifier, the source the qualifier names)
+-        let mut hits: Vec<(u32, String, u16)> = Vec::new();
+-        for (q, &src) in &self.use_names {
+-            if src == into_source
+-                || src == STD_SOURCE
+-                || src == u16::MAX
+-                || q.is_empty()
+-                || q == "std"
+-            {
+-                continue;
+-            }
+-            for key in [name, fn_key.as_str()] {
+-                if let Some(d) = self.exported(key, src)
+-                    && kind_fits(d)
+-                    && let Some(w) = self.writable_qualifier(q, src)
+-                {
+-                    hits.push((d, w, src));
+-                }
+-            }
+-        }
+-        let first = hits.first()?.0;
+-        if hits.iter().any(|h| h.0 != first) {
+-            return None;
+-        }
+-        let declared_in = self.definitions[first as usize].source;
+-        hits.into_iter()
+-            .min_by(|a, b| {
+-                (a.2 == declared_in, a.1.len(), &a.1).cmp(&(b.2 == declared_in, b.1.len(), &b.1))
++        self.hidden_import_provider(name, source)
++            .map(|(via, module, writable)| {
++                Self::hidden_import_cure(what, name, &via, &module, writable.as_deref())
+             })
+-            .map(|h| h.1)
+-    }
+-
+-    /// The error for a name a loaded library passes on but this file does not import
+-    /// (see [`Self::unimported_provider`]).
+-    #[must_use]
+-    pub fn unimported_cure(what: &str, name: &str, q: &str) -> String {
+-        format!(
+-            "{what} {name} — it is in `{q}`, which nothing this file imports passes on: \
+-             import it with `use {q}::({name});` or `use {q}::*;`, or write `{q}::{name}` \
+-             after `use {q};`"
+-        )
+     }
+ 
+     /// The error for a name a bare `use` did not bring in: `what` is the message's
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 34476585d..c66bd97a8 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -2647,26 +2647,11 @@ impl Parser {
+     /// Checked BEFORE the identifier peek, which consumes.  The caller has already ruled
+     /// out a known variable (`items { … }` opening a loop body), so a bare unknown name
+     /// followed by `{ }` here is a construction of a type that does not exist yet.
+-    ///
+-    /// In a control head (`in_control_head`) an empty `{ }` is the BODY — except where
+-    /// the token after its `}` cannot follow a body: `)`, `]`, `,`, `.` or `??` put the
+-    /// braces inside a call, an index or a vector in the condition, where they can only be
+-    /// a literal (loft#1768: `if w(v[0] ?? Helper { })` read the `{` as the `if`'s body).
+-    /// The flag cannot say that itself — it does not reset inside nested delimiters.
+     fn peek_struct_literal_body(&mut self) -> bool {
+         let link = self.lexer.link();
+         self.lexer.token("{");
+-        let empty = self.lexer.peek_token("}");
+-        let empty_literal = empty
+-            && (!self.in_control_head || {
+-                self.lexer.token("}");
+-                [")", "]", ",", ".", "??"]
+-                    .iter()
+-                    .any(|t| self.lexer.peek_token(t))
+-            });
+-        let looks_like_struct = empty_literal
+-            || (!empty
+-                && self.lexer.has_identifier().is_some()
++        let looks_like_struct = (self.lexer.peek_token("}") && !self.in_control_head)
++            || (self.lexer.has_identifier().is_some()
+                 && ((self.lexer.peek_token(":") && !self.lexer.peek_token(":="))
+                     || self.lexer.peek_token(",")));
+         self.lexer.revert(link);

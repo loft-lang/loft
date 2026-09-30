@@ -42,7 +42,7 @@ concern, so the hook is not in the repo's settings).  At most hourly, at once un
 it applies the rules above to EVERY loft checkout and worktree of the box, not only the one
 that started it. The checkout's cargo build locks are taken without waiting, so a build that
 starts meanwhile waits the seconds a sweep takes, and a checkout whose lock is held is left for
-the next round.  Measured 2026-09-29: the disk ran from 18 GB free to 0 during one test run, with
+the next round.  Measured: the disk ran from 18 GB free to 0 during one test run, with
 117 GB of artefacts no build had used for two days and 21 GB of finished runs' binaries in
 `~/.cache/loft-scratch`, which no rule was pointed at; the 19 native failures of that run were
 the full disk.  A detached run takes seconds and the caller waits about 75 ms.  Below 15 GB after
@@ -50,7 +50,7 @@ a run it raises a desktop notification naming the largest directories; `~/.cache
 records every run that freed space.
 
 **A build cleans up after the build before it, but only its own.**  The 4 259 binaries (13 GB
-of a 16 GB tmpfs) measured on 2026-09-29 were one checkout's native test cache compiled against
+of a 16 GB tmpfs) measured in one sweep were one checkout's native test cache compiled against
 the day's earlier loft builds by bare `cargo test` runs, and no rule removed them: each was
 younger than a day, and the harness only ever overwrote the entries a run reached.  The cache
 now lives in a per-checkout directory and forgets an older build at the next run's start; the

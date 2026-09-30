@@ -1228,6 +1228,16 @@ parses; ordinary runs keep the cache.
   refused with *"Indexing a non vector — keyed collections …"*, which named a construct it
   never used.  When the function does not exist, that message used to hide the
   *"Unknown function"* error, and with it the `use` cure the error names.
+- Two files that `use` each other answer the same whichever one the package loads first.
+  A qualified `errand::Errand` in one of them used to be reported as the undefined type
+  `errand`.  A bare `Errand` behind a bare `use errand;` compiled in one order and was
+  refused in the other, and is now refused in both, as a bare `use` says.  A missing
+  qualified type is named in full: *"Undefined type errand::Nope"*.
+- `if w(v[0] ?? Helper { })` with `Helper` not in scope reports the unknown type, not
+  *"Expect token )"*.
+- A name two plain imports deep (your file uses `render`, which uses `graphics`, which
+  uses `mesh3d` for itself) names the library that has it and the `use` that imports it.
+  It used to be a bare *"Undefined type Mesh — did you mean 'hash'?"*.
 
 ---
 

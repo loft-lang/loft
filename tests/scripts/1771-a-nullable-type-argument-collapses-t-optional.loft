@@ -1,0 +1,45 @@
+// A generic's `T?` at a NULLABLE type argument is that argument, never `τ??` (@FR-N-Idem), and
+// its `x?` discharges to the default of the argument's non-null base (@FR-N-Default):
+// `sum<T: Addable>(v: vector<T>, init: T? = null) -> T` over `vector<integer?>` binds
+// `T = integer?`, so `init` is `integer?` and `init?` is `0` (loft#1771).
+//
+// Cells, hand-computed, both backends: sums with no init, with an init, with a null element
+// (null propagates, @FR-N-Prop), over an empty vector (the default 0, or the init), over
+// `float?`; a user generic with the same `T?` shape at `integer?`, `text?` and the plain
+// `integer` control.
+//
+// @falsified-at: dd1e05b07 — scored by hand (a debug-assertions build of the pre-fix tree):
+//   interpret exit 1 (internal compiler error `Unknown var 'init' type integer??`) -> 0, and
+//   --native, once the substitution collapsed, failed rustc E0308 (the default built as a
+//   record) -> 0.  After a compile-time abort the cells were re-run on VALUES: 12/12, both
+//   backends, LOFT_POISON=1 clean.
+// CHANNEL: exit — the control aborts at compile time, so only the exit channel moves there.
+// HOLDS: every value cell on both backends; no leak, no panic.
+fn firstd<T>(v: vector<T>, d: T?) -> T {
+  if len(v) > 0 { return v[0]; }
+  d?
+}
+
+fn main() {
+  a: vector<integer?> = [1, 2, 3];
+  assert(sum(a) == 6, "a1 no init, no null: {sum(a)}");
+  assert(sum(a, 10) == 16, "a2 init 10: {sum(a, 10)}");
+  b: vector<integer?> = [1, null, 3];
+  assert(!sum(b, 0), "b1 a null element propagates: {sum(b, 0)}");
+  assert(!sum(b), "b2 no init, null element: {sum(b)}");
+  e: vector<integer?> = [];
+  assert(sum(e) == 0, "e1 empty, no init -> the default 0: {sum(e)}");
+  assert(sum(e, 7) == 7, "e2 empty, init 7: {sum(e, 7)}");
+  f: vector<float?> = [1.5, 2.5];
+  assert(sum(f) == 4.0, "f1 float?: {sum(f)}");
+  g: vector<integer?> = [];
+  assert(firstd(g, null) == 0, "g1 user generic, T = integer?, d null -> 0: {firstd(g, null)}");
+  assert(firstd(g, 5) == 5, "g2 d 5: {firstd(g, 5)}");
+  h: vector<text?> = [];
+  assert(firstd(h, null) == "", "h1 T = text?, d null -> empty text: '{firstd(h, null)}'");
+  k: vector<integer?> = [9, 4];
+  assert(firstd(k, null) == 9, "k1 non-empty: {firstd(k, null)}");
+  m: vector<integer> = [];
+  assert(firstd(m, null) == 0, "m1 control, T = integer: {firstd(m, null)}");
+  println("ok");
+}

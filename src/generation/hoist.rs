@@ -3470,13 +3470,16 @@ pub fn text_written(node: &Value, v: u16, data: &Data) -> bool {
 }
 
 /// `@FR-R-CharWalk` — one `for c in T` walk over a text VARIABLE: the loop variable, the
-/// `#index` and `#next` the step keeps, the text, the position of the walk's null test
-/// among the loop's statements, and whether that test may be asked once before the loop.
+/// `#index` and `#next` the step keeps, the block's result temp (the read the loop variable
+/// is bound from, which a fused step writes straight into the loop variable instead), the
+/// text, the position of the walk's null test among the loop's statements, and whether that
+/// test may be asked once before the loop.
 #[derive(Clone, Debug)]
 pub struct CharWalk {
     pub loop_var: u16,
     pub index: u16,
     pub next: u16,
+    pub result: u16,
     pub src: u16,
     pub null_test: usize,
     pub hoist_null: bool,
@@ -3635,6 +3638,7 @@ pub fn char_walks(data: &Data, def_nr: u32) -> BTreeMap<u16, CharWalk> {
                 loop_var: *loop_var,
                 index: *index,
                 next,
+                result: *res,
                 src,
                 null_test: 1,
                 hoist_null,

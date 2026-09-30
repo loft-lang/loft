@@ -567,7 +567,7 @@ hidden per-site buffer, and that allocation used to decline every header in the 
 around it — the drawing bench's polygon crossing loop hoisted nothing (`wide_line` −31 %
 when it did); since 2026-09-18 it does not block the loop's BASES either (a fresh store,
 or a clear of the buffer's own, moves no element a base addresses).
-Since 2026-09-29 the SETS into that buffer are admitted as its mint is — a `??`
+The SETS into that buffer are admitted as its mint is — a `??`
 fallback's text field (`Seq { …, name: "" }`) was written with `OpSetText`, the one op
 outside the twelve scalar setters, so a callee carrying such a fallback stayed a WRITING
 callee and the loop calling it held no header (stage's `pack_instances`, 24.3× → 8.4×).

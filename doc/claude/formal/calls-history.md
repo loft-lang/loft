@@ -965,3 +965,12 @@ unchanged; [calls.md](calls.md) now states only what is open.
 
 **0 open** (2026-08-22) — args left-to-right; scalar params by-value, heap params share (mutate-through visible, whole reassign local, `&` writes back); returns independent. `(F-Drop)` was added and D-call-1 opened and closed the same day: a function DECLARED void whose body ends in a VALUE ran on `--interpret` and would not compile on `--native` (a bare rustc `E0308` about a temporary `.rs` file). Filed as a design call; the IR had already chosen — a void tail is wrapped in `Value::Drop` on both backends — and only the BLOCK's type had not followed it. Gated on the function-body context, which is where two attempts broke: the same `Void` is a decision in a declared-void function and a PLACEHOLDER in a lambda (whose return is inferred from the block type) and in a statement-position block (which may be an enclosing block's value) (loft#1075). `(F-Block)` was written down beside it and D-call-2 opened and closed the same day: a `{ … }` block whose value someone reads dropped its OWN tail, so `fn f() -> integer { { 5 } }` answered null on `--interpret` and `0` on `--native` while the function type-checked — the block's type is its tail's type, and only the value was thrown away (loft#1076)
 
+## The OPEN line carried by calls.md until 2026-09-30
+
+`D-call-25` and `D-call-26` opened and closed 2026-09-29 (a default reading an earlier parameter through a tuple read the caller's own local; a record `match` default was refused).  `D-call-24` opened and closed 2026-09-29 (a nullable vector local at the tail lost its writes).  `D-call-22` and `D-call-23` opened and closed 2026-09-28 (a block value's null arm answered a record, loft#1722; an errored operand read as a missing argument, loft#1719).  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
+alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
+in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
+bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,
+generic and concrete) read 7, and all five of D-call-20's rows read as wanted, including the one
+that used to abort on the H5 two-pass contract.  The fixes and their guards landed in the same PR
+that opened the entries (#1490), and only the register was left behind.

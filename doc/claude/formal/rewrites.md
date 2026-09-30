@@ -699,7 +699,7 @@ still walk below the call node, so a growing op inside one blocks on its own.
 Switches `LOFT_NO_INPLACE_CALLEE_HOIST`, `LOFT_NO_RETBUF_HOIST`.  Sites:
 `hoist::in_place_only_writer`, `hoist::retbuf_only_writer`,
 `hoist::call_writes_store`.
-*The set half of the discharge allowance (2026-09-29, `hoist::discharge_buffer_set`, under
+*The set half of the discharge allowance (`hoist::discharge_buffer_set`, under
 `LOFT_NO_NULL_BUFFER_HOIST` with the mint):* a callee whose `??` fallback carries a text
 field (`Sequence { …, q_name: "" }`) wrote it with `OpSetText`, the one op outside the
 twelve scalar setters, and was a WRITING callee for it — stage's `pack_instances` called
@@ -1811,7 +1811,7 @@ item's SOURCE after the loop began never reached the built vector either.  Both 
 take the lowering at parse time, which makes their agreement no evidence — the guard's cells
 are hand-computed and the switch is the A/B.
 
-**BUILT** (2026-09-29, `Parser::literal_walk` at parse time, `LOFT_NO_LITERAL_WALK`; guard
+**BUILT** (`Parser::literal_walk` at parse time, `LOFT_NO_LITERAL_WALK`; guard
 `tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft` — 21 cells, falsified by a
 one-off in the select, which the order-sensitive cells catch and the plain sums do not — pin
 `tests/literal_walk.rs`).  mesh3d's `mesh_to_floats` (`for i in [t.a, t.b, t.c]` per
@@ -2618,7 +2618,7 @@ rule — the B2 relocation only a destination in an element appended to a PARAME
 collection, outside a loop, with no second destination or host — and a narrower admission
 costs the rewrite and never a value.  The declines written into the rules above are the
 ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
-*The chain form of the callee clause (2026-09-29, `place_result::chain_writes_buffer`):*
+*The chain form of the callee clause (`place_result::chain_writes_buffer`):*
 `return mk(n)` hands the buffer through, and the exit test read it as an exit answering
 another store, so every chain-built result cost a store of its own — the shape a decoder's
 `decode` (`return d`) and every `return build(…)` wrapper has.  Guard

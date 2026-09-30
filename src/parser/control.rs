@@ -12510,11 +12510,11 @@ impl Parser {
         }
         if let Type::Vector(t_nr, dep) = &in_type {
             // A struct-enum element stays the ENUM for the loop variable, as an index read
-            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  It used to become
-            // `Reference(E)` for a hand-written enum — a record spelling of the same value
-            // that the null tests, the `E?` parameter and the variant join of a `??` default
-            // do not recognise, so `for e in v` refused `f(e)` into an `E?` parameter and
-            // `e ?? Variant {…}`, and read an absent element as present.  Variant field
+            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  Not `Reference(E)` for a
+            // hand-written enum: that record spelling of the same value is one the null tests,
+            // the `E?` parameter and the variant join of a `??` default do not recognise, so
+            // `for e in v` would refuse `f(e)` into an `E?` parameter and `e ?? Variant {…}`,
+            // and read an absent element as present.  Variant field
             // access, narrowing, captures, `match` and writes through the variable answer
             // the same in either spelling.
             let mut t = *t_nr.clone();

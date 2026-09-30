@@ -181,8 +181,7 @@ case past it (QUALITY-history.md B8i).
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md) — the latest, D-iter-11 (a comprehension yielding a
-tuple element whole read its reference as the members), closed 2026-09-29.
+[iteration-history.md](iteration-history.md).
 
 ## Conformance
 

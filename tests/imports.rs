@@ -959,7 +959,7 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
         &format!("use fac::*;\nuse fac2::*;\n{qualified}"),
     );
     assert!(
-        err.contains("Undefined type inner"),
+        err.contains("Undefined type inner::Thing"),
         "that qualifier would not compile:\n{err}"
     );
 
@@ -1094,6 +1094,109 @@ fn a_constant_behind_a_bare_use_names_the_import_cure() {
     assert!(
         ok && cured.contains('3'),
         "the qualified spelling is the cure:\n{cured}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// loft#1769 — a name TWO plain imports deep names the loaded library that has it.  `main`
+/// does `use top::*;`, `top` does `use mid::*;`, and `mid` does `use deep::*;` for its own
+/// use: nothing passes `deep`'s names on, and each import-form cure looks only one step down,
+/// so the report was a bare "Undefined type Deep" (dryopea met it as "Undefined type Mesh —
+/// did you mean 'hash'?" through `graphics`'s own `use mesh3d::*;`).  Each kind of name gets
+/// the cure, each cure it names is compiled, and a name two loaded libraries both declare
+/// gets no cure, since naming one of them would be a guess.
+#[test]
+fn a_name_two_imports_deep_names_the_library_that_has_it() {
+    let dir = std::env::temp_dir().join(format!("loft_1769_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let libs = dir.join("libs");
+    std::fs::create_dir_all(&libs).expect("libs");
+    for (name, body) in [
+        ("top", "use mid::*;\npub fn t() -> integer { m() + 1 }\n"),
+        (
+            "mid",
+            "use deep::*;\nuse twin;\npub fn m() -> integer { make_deep(4).d }\n",
+        ),
+        (
+            "deep",
+            "pub struct Deep { d: integer }\npub struct Pair { p: integer }\n\
+             pub fn make_deep(n: integer) -> Deep { Deep { d: n * 10 } }\n\
+             pub const DEPTH: integer = 9;\n",
+        ),
+        ("twin", "pub struct Pair { q: integer }\n"),
+    ] {
+        std::fs::write(libs.join(format!("{name}.loft")), body).expect("lib");
+    }
+    let run = |name: &str, body: &str| -> (bool, String) {
+        let main = dir.join(name);
+        std::fs::write(&main, body).expect("main");
+        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&libs)
+            .arg(&main)
+            .env("LOFT_ERRORS", "compact")
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("failed to invoke the loft binary");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    for (tag, body, head) in [
+        ("type", "x: Deep = t(); ", "Undefined type Deep"),
+        (
+            "function",
+            "x = make_deep(t()); ",
+            "Unknown function make_deep",
+        ),
+        ("constant", "x = DEPTH + t(); ", "Unknown variable"),
+    ] {
+        let (ok, text) = run(
+            &format!("{tag}.loft"),
+            &format!("use top::*;\nfn main() {{ {body}print(\"x\") }}\n"),
+        );
+        assert!(!ok, "{tag}: not imported:\n{text}");
+        assert!(
+            text.contains(head)
+                && text.contains("it is in `deep`, which nothing this file imports"),
+            "{tag}: the report names the library that has it:\n{text}"
+        );
+    }
+    // The three cures the report names, each compiled and run: t() = 4 * 10 + 1.
+    for (tag, imports, expr) in [
+        (
+            "by_name",
+            "use deep::(make_deep, DEPTH);",
+            "make_deep(t()).d + DEPTH",
+        ),
+        ("glob", "use deep::*;", "make_deep(t()).d + DEPTH"),
+        (
+            "qualified",
+            "use deep;",
+            "deep::make_deep(t()).d + deep::DEPTH",
+        ),
+    ] {
+        let (ok, text) = run(
+            &format!("cure_{tag}.loft"),
+            &format!("use top::*;\n{imports}\nfn main() {{ print(\"{{{expr}}}\") }}\n"),
+        );
+        assert!(
+            ok && text.contains("419"),
+            "{tag}: the cure compiles:\n{text}"
+        );
+    }
+    // `Pair` is declared by `deep` AND `twin`: no single library is the answer.
+    let (ok, text) = run(
+        "twin.loft",
+        "use top::*;\nfn main() { x: Pair = t(); print(\"x\") }\n",
+    );
+    assert!(
+        !ok && text.contains("Undefined type Pair") && !text.contains("it is in `"),
+        "two libraries declare it, so no cure is guessed:\n{text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

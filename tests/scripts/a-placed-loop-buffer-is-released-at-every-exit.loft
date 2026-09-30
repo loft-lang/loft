@@ -1,0 +1,126 @@
+// `@FR-R-Place`'s loop clause claims each turn's buffer IN THE HOST'S STORE, and every exit
+// releases that record.  Whether the placement may leave the buffer's exit frees empty
+// depends on whose store the host's is: a local host freed whole at the exit takes the
+// block with it (b), while a PARAMETER's store is the caller's (a) and a local vector the
+// exit literal takes over (`(R-ExitVector)`) becomes the caller's too (c) — there an empty
+// exit free left one dead record per call in the caller's store, which a store-count leak
+// check cannot see and the ownership oracle's leak scan can
+// (`LOFT_OWN_ORACLE=check-leak`, ci.yml's `ownership leak scan` over tests/scripts).
+//
+// Cells, hand-computed, both backends: a — a parameter record's field as host; b — a local
+// host freed whole; c — a local host the exit literal takes over; d — a parameter host left
+// by an early return (declined today, kept as a value cell); e — each with the loop storing
+// nothing; r — fifty calls on ONE parameter host grow it by exactly the elements stored.
+// Every turn's last read answers `ok: false` with a heap `tag`, so the record released at
+// the exit still holds a claim.
+//
+// @falsified-at: dd1e05b07 — scored by hand on the leak-oracle channel (make falsify does not
+// arm it): LOFT_OWN_ORACLE=check-leak --interpret RED n_fillp, n_local_sum, n_bag -> 0 REDs;
+// values ok 3 18 3 1 150 on both trees and both backends.
+// CHANNEL: the ownership oracle's leak scan (`LOFT_OWN_ORACLE=check-leak --interpret <this>`,
+//   stderr `RED …: leak __ref_1`) — the dead record lives inside a store that is still
+//   freed, so exit code, assertions and the store-count leak check cannot move.
+// HOLDS: values, exit, panic and the store-count leak check are clean on both trees and both
+//   backends; LOFT_POISON=1 and LOFT_STRICT_STORES=1 runs are clean here.
+struct Val { n: integer, tag: text }
+struct Wrap { value: Val, next: integer, ok: boolean }
+struct Bag { items: vector<Val>, count: integer }
+
+fn read1(xs: vector<integer>, p: integer) -> Wrap {
+  if p >= len(xs) { return Wrap { value: Val { n: 0, tag: "end{p}" }, next: p, ok: false }; }
+  v = xs[p] ?? 0;
+  return Wrap { value: Val { n: v, tag: "v{v}" }, next: p + 1, ok: true };
+}
+
+// a — the host is a PARAMETER record's field: its store is the caller's.
+fn fillp(h: Bag, xs: vector<integer>) -> integer {
+  p = 0;
+  cnt = 0;
+  for _ in 0..len(xs) + 1 {
+    sub = read1(xs, p);
+    if sub.ok {
+      h.items += [sub.value];
+      p = sub.next;
+      cnt += 1;
+    }
+  }
+  cnt
+}
+
+// b — a LOCAL host whose store is freed whole at the exit.
+fn local_sum(xs: vector<integer>) -> integer {
+  items: vector<Val> = [];
+  p = 0;
+  for _ in 0..len(xs) + 1 {
+    sub = read1(xs, p);
+    if sub.ok {
+      items += [sub.value];
+      p = sub.next;
+    }
+  }
+  s = 0;
+  for it in items { s += it.n; }
+  s
+}
+
+// c — a LOCAL host the exit literal takes over (R-ExitVector): its store becomes the caller's.
+fn bag(xs: vector<integer>) -> Bag {
+  items: vector<Val> = [];
+  p = 0;
+  cnt = 0;
+  for _ in 0..len(xs) + 1 {
+    sub = read1(xs, p);
+    if sub.ok {
+      items += [sub.value];
+      p = sub.next;
+      cnt += 1;
+    }
+  }
+  return Bag { items: items, count: cnt };
+}
+
+// d — a PARAMETER host left by an early return inside the loop.
+fn fillp_early(h: Bag, xs: vector<integer>, stop: integer) -> integer {
+  p = 0;
+  cnt = 0;
+  for _ in 0..len(xs) + 1 {
+    sub = read1(xs, p);
+    if sub.ok {
+      if sub.value.n == stop { return cnt; }
+      h.items += [sub.value];
+      p = sub.next;
+      cnt += 1;
+    }
+  }
+  cnt
+}
+
+fn main() {
+  xs = [5, 6, 7];
+  ab = Bag { items: [], count: 0 };
+  na = fillp(ab, xs);
+  a = ab.items;
+  assert(na == 3 && len(a) == 3, "A: n={na} len={len(a)}");
+  assert(a[0].tag == "v5" && a[1].tag == "v6" && a[2].tag == "v7", "A: tags {a[0].tag} {a[1].tag} {a[2].tag}");
+  sa = 0;
+  for it in a { sa += it.n; }
+  assert(sa == 18, "A: sum {sa}");
+  assert(local_sum(xs) == 18, "B: sum {local_sum(xs)}");
+  b = bag(xs);
+  assert(len(b.items) == 3 && b.count == 3 && b.items[2].tag == "v7", "C: len={len(b.items)} count={b.count}");
+  db = Bag { items: [], count: 0 };
+  nd = fillp_early(db, xs, 6);
+  assert(nd == 1 && len(db.items) == 1 && db.items[0].n == 5, "D: n={nd} len={len(db.items)}");
+  // e — the loop body never stores: the buffer is minted but nothing lands.
+  e = Bag { items: [], count: 0 };
+  assert(fillp(e, []) == 0 && len(e.items) == 0, "E-A");
+  assert(local_sum([]) == 0, "E-B");
+  eb = bag([]);
+  assert(len(eb.items) == 0 && eb.count == 0, "E-C");
+  assert(fillp_early(e, [], 1) == 0, "E-D");
+  // r — repeated calls on ONE parameter host: its length grows by exactly the elements stored.
+  r = Bag { items: [], count: 0 };
+  for _ in 0..50 { fillp(r, xs); }
+  assert(len(r.items) == 150, "R: len {len(r.items)}");
+  println("ok {na} {sa} {len(b.items)} {nd} {len(r.items)}");
+}

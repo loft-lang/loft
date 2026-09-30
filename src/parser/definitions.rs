@@ -704,7 +704,10 @@ impl Parser {
                 // as `unknown type 'Circle'` even though the declaration is right there
                 // (loft#1046).  A plain `struct` forward reference already worked for this
                 // reason; the enum VARIANT was the one declaration kind that did not adopt.
-                let existing = self.data.def_nr(&value_name);
+                let mut existing = self.data.def_nr(&value_name);
+                if self.release_unseen_stub(existing, &value_name) {
+                    existing = u32::MAX;
+                }
                 let v = if existing != u32::MAX
                     && self.data.def_type(existing) == DefType::Unknown
                     && matches!(
@@ -926,6 +929,32 @@ impl Parser {
             && self.data.def(d_nr).position.file != self.lexer.pos().file
     }
 
+    /// @C98 — `d_nr` is a forward-reference stub ANOTHER file left under `name`, bound here
+    /// only because this file imports that one, while that file imports THIS one with a bare
+    /// `use` — the qualifier alone — and no glob or by-name import that would carry `name`.
+    /// Adopting it would resolve the other file's bare name to this declaration, which its
+    /// own `use` says it does not import — and only when this file happens to load after it
+    /// (loft#1767).  Releases the imported binding so the declaration takes a definition of
+    /// its own, and answers whether it did; the stub is then reported where it was written,
+    /// with the import cure.
+    ///
+    /// A file with no `use` of this one at all keeps the adoption: that is a module naming
+    /// a type its entry declares after pulling it in (loft#797, loft#801).
+    fn release_unseen_stub(&mut self, d_nr: u32, name: &str) -> bool {
+        if d_nr == u32::MAX || self.data.def_type(d_nr) != DefType::Unknown {
+            return false;
+        }
+        let (here, there) = (self.data.source, self.data.def(d_nr).source);
+        if there == here
+            || self.data.bare_use_qualifier(there, here).is_none()
+            || self.data.source_sees(there, here, name)
+        {
+            return false;
+        }
+        self.data.release_def_name(name, here);
+        true
+    }
+
     fn prelude_shadowed(&self, name: &str) -> bool {
         let cur = self.data.source;
         // the stdlib itself (source 0) never shadows; and a name already in THIS
@@ -974,7 +1003,9 @@ impl Parser {
         };
         let mut d_nr = self.data.def_nr(&type_name);
         // @PLN22 Phase 2 — shadow a prelude/import name of the same key.
-        if self.prelude_shadowed(&type_name) {
+        if self.prelude_shadowed(&type_name)
+            || (self.first_pass && self.release_unseen_stub(d_nr, &type_name))
+        {
             d_nr = u32::MAX;
         }
         let mut conflict = false;
@@ -1065,7 +1096,7 @@ impl Parser {
             let mut existing = self.data.def_nr(&type_name);
             // @PLN22 Phase 2 — shadow a prelude/import name (but not a built-in
             // type-keyword, which prelude_shadowed excludes).
-            if self.prelude_shadowed(&type_name) {
+            if self.prelude_shadowed(&type_name) || self.release_unseen_stub(existing, &type_name) {
                 existing = u32::MAX;
             }
             if existing != u32::MAX
@@ -3846,10 +3877,17 @@ impl Parser {
         // type.  Callers now use `integer` everywhere; if anyone still
         // writes `long` it parses as an unknown identifier and fails
         // normally via the standard `data.def_nr` lookup path below.
+        // The library source and type name of a qualified `lib::Type`, when `lib` names a
+        // loaded library — where a pass-1 forward stub for it belongs.
+        let mut qualified: Option<(u16, String)> = None;
         let tp_nr = if self.lexer.has_token("::") {
             if let Some(name) = self.lexer.has_identifier() {
                 let source = self.data.get_source(type_name);
-                self.data.source_nr(source, &name)
+                let nr = self.data.source_nr(source, &name);
+                if source != u16::MAX {
+                    qualified = Some((source, name));
+                }
+                nr
             } else {
                 diagnostic!(self.lexer, Level::Error, "Expect type from {type_name}");
                 return None;
@@ -3872,6 +3910,28 @@ impl Parser {
             // type once the lib is fully parsed.  (The non-qualified path
             // already dedups via `tp_nr` below, so this only affects the
             // qualified shape.)
+            // loft#1766 — a qualified `lib::Type` whose library is loaded but has not reached
+            // that declaration yet (a mutual `use` pair: the library is suspended at its own
+            // `use` of this file) is a forward reference INTO the library.  The stub belongs
+            // there, under the type's own name, so the library's `struct Type` adopts it in
+            // place like any forward reference.  Keyed on the prefix instead, nothing could
+            // ever adopt it, and it was reported as the undefined type `lib`.
+            if let Some((lib_source, name)) = qualified {
+                let saved = self.data.source;
+                self.data.source = lib_source;
+                let existing = self.data.source_nr(lib_source, &name);
+                let u_nr = if existing == u32::MAX {
+                    let u = self.data.add_def(&name, self.lexer.pos(), DefType::Unknown);
+                    self.qualified_stubs.insert(u, type_name.to_string());
+                    u
+                } else {
+                    existing
+                };
+                self.data.source = saved;
+                let args = self.skip_forward_type_args(on_d);
+                self.note_forward_return(returned, u_nr, args);
+                return Some(Type::Unknown(u_nr));
+            }
             let existing = self.data.def_nr(type_name);
             let u_nr = if existing != u32::MAX && self.data.def_type(existing) == DefType::Unknown {
                 existing
@@ -5075,7 +5135,7 @@ impl Parser {
         // generic type variable"* — a name the SAME program compiles as a file.  The
         // definition's FILE is what says whose declaration it is, which is what
         // `Definition::position` is for ("only allow redefinitions within the same file").
-        if self.prelude_shadowed(&id) {
+        if self.prelude_shadowed(&id) || (self.first_pass && self.release_unseen_stub(d_nr, &id)) {
             d_nr = u32::MAX;
         } else if self.placeholder_from_another_file(d_nr) {
             // The same shadow where the parse SHARES the stdlib's source id.  There the two
@@ -8108,6 +8168,14 @@ impl Parser {
         }
         let elems = elems.clone();
         let synthetic_d_nr = self.data.tuple_def(&mut self.lexer, &elems);
+        // No record while a member is unresolved (`Data::tuple_def`).  The return stays the
+        // tuple it was declared as, which is what the between-passes check reads: a member
+        // declared later in the file is refused there with its cure, an undefined one is
+        // reported as undefined.  Boxed as `Reference(u32::MAX)` it reached neither, and the
+        // first read of the result dereferenced no definition — an internal compiler error.
+        if synthetic_d_nr == u32::MAX {
+            return result;
+        }
         Type::Reference(synthetic_d_nr, crate::data::Deps::none())
     }
 }

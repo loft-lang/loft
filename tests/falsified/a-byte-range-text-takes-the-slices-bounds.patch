@@ -1,0 +1,153 @@
+diff --git b/default/03_text.loft a/default/03_text.loft
+index 6decbbed4..7aec8c2e2 100644
+--- b/default/03_text.loft
++++ a/default/03_text.loft
+@@ -261,11 +261,9 @@ pub fn text_from_bytes(bytes: const vector<u8>) -> text;
+ #pure
+ // The same over the byte RANGE `lo..hi` of the buffer, read in place: what a decoder
+ // that has found a text's span writes instead of `text_from_bytes(bytes[lo..hi])`,
++// (its own name: a native is dispatched by name, so an arity overload cannot be one)
+ // whose slice is a fresh vector (`(Slice-Value)`) built only to be read once.  The
+-// bounds are the slice's: a negative one counts from the end, both clamp to the
+-// buffer, and a reversed or empty range is "".  Bytes that are not valid UTF-8 yield
+-// the empty text, as text_from_bytes' do.  (Its own name, not an overload: a native is
+-// dispatched by name.)
++// bounds clamp to the buffer as a slice's do; a reversed or empty range is "".
+ pub fn text_from_byte_range(bytes: const vector<u8>, lo: integer, hi: integer) -> text;
+ #rust"stores.text_from_bytes_range(@bytes, @lo, @hi)"
+ #pure
+diff --git b/src/cache.rs a/src/cache.rs
+index 7729672cf..e8d40276d 100644
+--- b/src/cache.rs
++++ a/src/cache.rs
+@@ -1347,7 +1347,7 @@ mod tests {
+ 
+     /// The wasm runtime rlib serves every loft build of one source tree: a release and a
+     /// debug binary alternating keep both stamps (no lock, no cargo per call), a real
+-    /// rebuild forgets the builds that do not match it, and the set stays bounded.
++    /// rebuild forgets the builds that no longer match, and the set stays bounded.
+     #[test]
+     fn a_runtime_rlib_is_stamped_for_every_build_it_serves() {
+         let dir = std::env::temp_dir().join(format!("loft_runtime_fp_{}", std::process::id()));
+diff --git b/src/database/format.rs a/src/database/format.rs
+index 55ffb28d4..5bf3f85c1 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -837,18 +837,8 @@ impl Stores {
+         if bytes.rec == 0 || bytes.pos == 0 || length == 0 {
+             return String::new();
+         }
+-        // @FR-Slice-Value — a negative bound counts from the END (`size + bound`, floored at the
+-        // start), as `bytes[lo..hi]` does, which this function stands in for; a clamp alone read
+-        // `text_from_byte_range(b, -3, 2)` as `b[0..2]` where the slice answers "".
+-        let bound = |b: i64| {
+-            if b < 0 {
+-                (b + length).max(0)
+-            } else {
+-                b.min(length)
+-            }
+-        };
+-        let lo = bound(lo);
+-        let hi = bound(hi);
++        let lo = lo.clamp(0, length);
++        let hi = hi.clamp(0, length);
+         if hi <= lo {
+             return String::new();
+         }
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 91224c705..fb3296428 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -12510,11 +12510,11 @@ impl Parser {
+         }
+         if let Type::Vector(t_nr, dep) = &in_type {
+             // A struct-enum element stays the ENUM for the loop variable, as an index read
+-            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  Not `Reference(E)` for a
+-            // hand-written enum: that record spelling of the same value is one the null tests,
+-            // the `E?` parameter and the variant join of a `??` default do not recognise, so
+-            // `for e in v` would refuse `f(e)` into an `E?` parameter and `e ?? Variant {…}`,
+-            // and read an absent element as present.  Variant field
++            // (`x = v[i]`) and a `vector<E?>` loop variable keep it.  It used to become
++            // `Reference(E)` for a hand-written enum — a record spelling of the same value
++            // that the null tests, the `E?` parameter and the variant join of a `??` default
++            // do not recognise, so `for e in v` refused `f(e)` into an `E?` parameter and
++            // `e ?? Variant {…}`, and read an absent element as present.  Variant field
+             // access, narrowing, captures, `match` and writes through the variable answer
+             // the same in either spelling.
+             let mut t = *t_nr.clone();
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 4378e0a9c..73bc31501 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -259,7 +259,7 @@ pub struct State {
+     /// than through the general store path.  The store path re-checks, on every push and pop,
+     /// what the stack guarantees by construction: that its store is live, is not foreign and
+     /// not locked, and that the offset is inside the record (`ensure_stack` grows the buffer
+-    /// and the record together).  Measured, that path was 43 % of the interpreter's
++    /// and the record together).  Measured 2026-09-29, that path was 43 % of the interpreter's
+     /// time on a vector-writing loop.  False whenever an instrument that watches stack
+     /// accesses is armed (`verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
+     /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
+@@ -2577,7 +2577,7 @@ impl State {
+     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
+     /// release library), corrupting the heap.  Cheap in the common case:
+     /// one comparison against the cached `stack_cap_bytes`.
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -2610,7 +2610,7 @@ impl State {
+     /// The address of stack byte `off` (relative to the stack record's field base), for the
+     /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
+     /// `ensure_stack`, a read lies below `stack_pos`.
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -2850,7 +2850,7 @@ impl State {
+     When the stack has no values left
+     */
+     #[must_use]
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -3078,7 +3078,7 @@ impl State {
+         )
+     }
+ 
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -3243,7 +3243,7 @@ impl State {
+         )
+     }
+ 
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -3379,7 +3379,7 @@ impl State {
+         ) = db;
+     }
+ 
+-    // Measured: as a hint these stayed out of line in the operator functions, and
++    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
+     #[allow(clippy::inline_always)]
+     #[inline(always)]
+@@ -6515,7 +6515,7 @@ impl State {
+         let verify_on = self.verify_on;
+         // The lean loop: when nothing watches individual ops, each op pays only for what an
+         // ordinary run needs from the loop — the allocation site, the crash context, the
+-        // dispatch, the frame yield and the halt.  Measured, the full loop's
++        // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
+         // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
+         // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
+         let lean_loop = !(reload_on

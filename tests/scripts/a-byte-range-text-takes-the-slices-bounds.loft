@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `text_from_byte_range(bytes, lo, hi)` stands in for `text_from_bytes(bytes[lo..hi])` without
+// building the slice, and its doc says the bounds are the slice's.  @FR-Slice-Value makes a
+// NEGATIVE bound count from the end (`size + bound`, floored at the start); the function
+// clamped a negative bound to 0 instead, so `text_from_byte_range(b, -3, 9)` answered the
+// whole buffer where the slice answers its last three bytes — silently, on both backends,
+// found by the release's reference review before the function shipped.  Each cell's oracle
+// is the slice spelling it replaces, so "what should this answer?" is never a judgement.
+//
+// Axes this file MOVES:  lo and hi each in range / negative / past either end, a reversed
+//                        and an empty range, a range cutting a multi-byte character, an
+//                        empty buffer.
+// Axes it HOLDS FIXED:   one nine-byte buffer holding one two-byte character.
+//
+// @falsified-at: 40d86be3e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-byte-range-text-takes-the-slices-bounds.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: asserts on both backends — the negative-bound test fails on the control (native
+//   counts it twice); the other-bounds test passes there, which is its job: the slice's other
+//   bounds were right and must stay right.
+// HOLDS: leak, panic, refusals and expectations are equal on both trees and both backends.
+
+fn same(b: vector<u8>, lo: integer, hi: integer) -> boolean {
+  text_from_byte_range(b, lo, hi) == text_from_bytes(b[lo..hi])
+}
+
+fn test_a_negative_bound_counts_from_the_end() {
+  b: vector<u8> = [104, 101, 108, 108, 111, 32, 195, 169, 33];   // "hello é!"
+  assert(text_from_byte_range(b, -3, 9) == "é!", "negative lo: {text_from_byte_range(b, -3, 9)}");
+  assert(text_from_byte_range(b, 0, -4) == "hello", "negative hi: {text_from_byte_range(b, 0, -4)}");
+  assert(text_from_byte_range(b, -4, -1) == " é", "both negative: {text_from_byte_range(b, -4, -1)}");
+  assert(text_from_byte_range(b, -30, 2) == "he", "negative past the start floors at 0");
+  assert(same(b, -3, 9) && same(b, 0, -4) && same(b, -4, -1) && same(b, -30, 2), "as the slice");
+}
+
+fn test_the_other_bounds_are_the_slices_too() {
+  b: vector<u8> = [104, 101, 108, 108, 111, 32, 195, 169, 33];
+  assert(text_from_byte_range(b, 0, 5) == "hello", "in range");
+  assert(text_from_byte_range(b, 5, 99) == " é!", "hi past the end clamps");
+  assert(text_from_byte_range(b, 4, 2) == "", "reversed is empty");
+  assert(text_from_byte_range(b, 3, 3) == "", "empty is empty");
+  assert(text_from_byte_range(b, 6, 7) == "", "half a character is not valid UTF-8: empty");
+  e: vector<u8> = [];
+  assert(text_from_byte_range(e, 0, 3) == "", "an empty buffer");
+  assert(same(b, 0, 5) && same(b, 5, 99) && same(b, 4, 2) && same(b, 6, 7), "as the slice");
+}

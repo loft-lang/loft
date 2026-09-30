@@ -799,19 +799,17 @@ Wasm bridges, the OpenGL case study and the security model are in [PACKAGES_TARG
 
 ## Open work
 
-The package **format, registry, and signing are SHIPPED**: `loft.toml`
+The package **format, registry, and signing work today**: `loft.toml`
 manifests, `loft package`/`install`/`search`/`info`, `loft.lock`, Ed25519
-index signing, and a bootstrapped 3-key trust root all work today —
+index signing, and a bootstrapped 3-key trust root —
 **13 libraries are live in [loft-lang/registry](https://github.com/loft-lang/registry)**
 and `loft install <name>` resolves + verifies + extracts them.  What remains is
 the native-prebuilt **distribution** glue, a release to activate the trust root,
-and the library-extraction arc.
+and the library-extraction arc.  The finished rows are in
+[PACKAGES-history.md](PACKAGES-history.md).
 
 | Item | Status |
 |---|---|
-| **PKG.REG** — registry MVP (`loft package`/`install`/`search`/`info`, resolve, sig-verify) | **SHIPPED 2026-05-24** — [PKG_REGISTRY.md](PKG_REGISTRY.md) R1–R9; 13 libs published. |
-| **PKG.7** — `loft.lock` reproducible builds | **SHIPPED 2026-05-24** — `src/lockfile.rs` (= R2). |
-| **PKG.SIGN** — Ed25519 trust root | **SHIPPED + MERGED 2026-06-14** — PR #371: three independent keys in `registry_keys.rs`, `scripts/registry-sign.sh` review-then-sign tool, live index signed ([REGISTRY_BOOTSTRAP.md](REGISTRY_BOOTSTRAP.md)).  Fully active once a loft **release** ships the embedded keys. |
 | **PKG.PREBUILT** (@PLN21) — native prebuilts, no rustc to *use* a lib | **Producer SHIPPED, distribution glue OPEN.** `loft build-native` + the 4-OS `prebuild-native.yml` build cdylibs; consumer `fetch_prebuilt` loads a host-matching one.  Remaining: wire workflow artifacts → `index.json binaries[<triple>]`, the submit-CI gates, and a manylinux glibc baseline.  Scoped to **hand-written** native libs (auto-compiled libs are loft-build-locked — [plans/21](plans/21-prebuilt-native-libs/README.md)). |
 | **PKG.EXTRACT** — move `lib/*/` to per-family GitHub repos | **In progress.** Libraries already live in `loft-lang/loft-libs-*` + published; the prerequisite arc (drain library `#native` code out of the compiler crate) is active — [`lib_plans/12-library-extraction/`](lib_plans/12-library-extraction). |
 | **PKG.STUB** — generated API stubs + `loft api` | **SHIPPED** (stubs on install/update/pin, `loft api [name]`, `tests/api_discovery.rs`).  Remaining: parser-walk upgrade shared with [API_SURFACE.md](API_SURFACE.md) `api-lint`. |

@@ -101,6 +101,11 @@ jobs:
             ref: main
             packages: '.'
             private: false
+            # Import dirs the consumer's own build passes as `--lib` (its Makefile's
+            # BUNDLE_LIBS and LIB_DEPS): unpublished bundles, and engine_host from loft's
+            # own lib/.  A manifest cannot name them (`lib_dirs` is flags only), so without
+            # these the check refuses every bundle `use` — the consumer's layout, not loft.
+            libs: 'bundles/*/ bundles/*/items/ ../loft-src/lib/'
     steps:
       - name: Selected?
         id: sel
@@ -227,6 +232,8 @@ jobs:
               name=${name:-$dir}
               echo "::group::$name"
               ( cd "$dir" && loft install >/dev/null 2>&1 ) || true
+              # The matrix `libs` patterns, expanded inside the package dir.
+              libargs=$(cd "$dir" && for d in ${{ matrix.libs }}; do [ -d "$d" ] && printf -- '--lib %s ' "$d"; done)
               # dryopea's runner writes into tests/actual/; a fresh clone has none.
               [ -d "$dir/tests" ] && mkdir -p "$dir/tests/actual"
               if [ -d "$dir/tests" ]; then
@@ -239,7 +246,7 @@ jobs:
                   # previous pass's file, reported as a native-only break.  `git clean`
                   # removes only what git does not track, so a tracked golden file stays.
                   ( cd "$dir" && git clean -fdxq -- tests/actual 2>/dev/null; mkdir -p tests/actual )
-                  if ( cd "$dir" && LOFT_TIMEOUT=600 xvfb-run -a loft test $mode > "/tmp/$name$mode.log" 2>&1 ); then
+                  if ( cd "$dir" && LOFT_TIMEOUT=600 xvfb-run -a loft test $mode $libargs > "/tmp/$name$mode.log" 2>&1 ); then
                     legs="$legs ok |"
                   else
                     legs="$legs FAIL |"; fail=1
@@ -264,7 +271,7 @@ jobs:
               else
                 entry=$(sed -n 's/^ *entry *= *"\(.*\)".*/\1/p' "$dir/loft.toml" | head -1)
                 entry=${entry:-src/$name.loft}
-                if ( cd "$dir" && LOFT_TIMEOUT=600 loft --check "$entry" > "/tmp/$name.check.log" 2>&1 ); then
+                if ( cd "$dir" && LOFT_TIMEOUT=600 loft $libargs --check "$entry" > "/tmp/$name.check.log" 2>&1 ); then
                   summary="$summary| \`$name\` | builds | (no tests) |\n"
                 else
                   fail=1

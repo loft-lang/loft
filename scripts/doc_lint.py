@@ -149,8 +149,19 @@ def check_code(path, lines):
             yield n, "narration", "describes a change or an incident, not the code (DOC_QUALITY § B, B2)"
 
 
+# A `## Watermarks` section is a record inside a contract doc: its rows are (subject, date
+# reviewed, commit), and the date and hash ARE the data a review tool reads back
+# (`scripts/skills-review.py`, `scripts/reference-review.py`).  Only that heading, at h2.
+RECORD_SECTION = re.compile(r"^##\s+Watermarks\s*$")
+
+
 def check_contract(path, lines):
+    in_record = False
     for n, line in prose_lines(lines):
+        if line.startswith("## "):
+            in_record = bool(RECORD_SECTION.match(line))
+        if in_record:
+            continue
         if "<!--noindex-->" in line or LINE_OK in line:
             continue
         voice = QUOTED.sub("", line)

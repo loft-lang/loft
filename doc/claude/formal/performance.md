@@ -113,7 +113,7 @@ and `(R-ExitVector)` came from exactly that row.  A hand-written faster form (a 
 skips instead of decoding, 49.6× → 5.3× on pluginabi's `check_request`) is measured as a
 CEILING and kept beside the row, and reaches the library only when the compiler cannot
 close the gap AND an `advice` can point a user at it — then it is an API with a diagnostic
-naming it, never a private fast path.  Owner's rule, 2026-09-30.
+naming it, never a private fast path (owner's rule).
 A native rewrite remains available for the edge case that genuinely needs it, taken per
 routine, with the reason recorded beside it — an exception with a receipt, not a habit.
 loft#1426 is the rule applied: the profiler showed the loft hot loop matching the
@@ -153,7 +153,7 @@ different matter and `(Perf-Like)`'s.
 
 OPEN: **1**
 
-- **D-perf-2 (OPEN, loft#1743, @PLN158) — not resolvable in a release** (owner, 2026-09-29) —
+- **D-perf-2 (OPEN, [#1743](https://github.com/loft-lang/loft/issues/1743), @PLN158) — not resolvable in a release** (owner's ruling) —
   violates (Perf-Weight): the shipped routines as a POPULATION are over both bars.  The bar spans
   every public routine of the stdlib and of every shipped library, and the routines over it fall
   into mechanism classes whose cures are engine work measured in cycles (@PLN158, the native

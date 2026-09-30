@@ -284,5 +284,8 @@ adding the missing arm at the site that happened to break.
 - [CODEGEN_METHOD.md](../../../doc/claude/CODEGEN_METHOD.md) — the full method
 - [OWNERSHIP_MODEL.md](../../../doc/claude/OWNERSHIP_MODEL.md) — `deps` as loft's borrow checker (the north star for store-lifetime work)
 - Worked example + rungs: `doc/claude/plans/85-store-lifetime-retirement/` (`bytecode-comparisons/`, `type-ownership-design.md`); probe 05 = method followed (clean), probe 04 = method skipped (regressed) — read both
-- [DEBUG_INTROSPECT.md § Introspection CLI](../../../doc/claude/DEBUG_INTROSPECT.md) — `loft introspect` / `LOFT_LOG`
+- [DEBUG_INTROSPECT.md § Introspection CLI](../../../doc/claude/DEBUG_INTROSPECT.md) — `loft introspect` / `LOFT_LOG`;
+  `LOFT_AUDIT_RETYPE=1` names every expression the two passes type as different shapes (a
+  `cannot change type` refusal on an internal name starts there), `LOFT_AUDIT_PASS1=1` the
+  refusals reachable before types resolve
 - DESIGN/diagnosis siblings: the `engineering-rigor` and `design-protocol` skills

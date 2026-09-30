@@ -259,7 +259,7 @@ pub struct State {
     /// than through the general store path.  The store path re-checks, on every push and pop,
     /// what the stack guarantees by construction: that its store is live, is not foreign and
     /// not locked, and that the offset is inside the record (`ensure_stack` grows the buffer
-    /// and the record together).  Measured 2026-09-29, that path was 43 % of the interpreter's
+    /// and the record together).  Measured, that path was 43 % of the interpreter's
     /// time on a vector-writing loop.  False whenever an instrument that watches stack
     /// accesses is armed (`verify_on`, `LOFT_STACK_CENSUS`, `LOFT_UAF_GEN`,
     /// `LOFT_STRICT_STORES`, the `stack_align_guard` feature) and in a debug-assertions
@@ -268,6 +268,12 @@ pub struct State {
     /// Codegen only: the character walks of the function being generated
     /// (`hoist::char_walks`), whose step is emitted as one `OpTextWalkStep`.
     pub(crate) walk_steps: Vec<crate::generation::hoist::CharWalk>,
+    /// Locals whose only write a fused op of the function being generated took over, so
+    /// the slot they were given is never written (a character walk's result temp, which
+    /// `OpTextWalkStep` writes straight into the loop variable).  Read by the @PLN120 A
+    /// store-span check, which would otherwise take the unwritten slot for a missed
+    /// recording.  Reset with `walk_steps`, per function.
+    pub(crate) fused_away: Vec<u16>,
     /// @P294: cached byte-capacity of the value-stack store (`stack_cur`).
     /// The stack store is allocated once and never re-`claim`s, so its
     /// buffer only grows through `ensure_stack`; this cache lets the hot
@@ -693,6 +699,7 @@ impl State {
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: Vec::new(),
+            fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
@@ -2577,7 +2584,7 @@ impl State {
     /// check in `Store::addr_mut` is a `debug_assert!`, compiled out in the
     /// release library), corrupting the heap.  Cheap in the common case:
     /// one comparison against the cached `stack_cap_bytes`.
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -2610,7 +2617,7 @@ impl State {
     /// The address of stack byte `off` (relative to the stack record's field base), for the
     /// `fast_stack` path.  In bounds by the stack's own invariant: a write is preceded by
     /// `ensure_stack`, a read lies below `stack_pos`.
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -2850,7 +2857,7 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3078,7 +3085,7 @@ impl State {
         )
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3243,7 +3250,7 @@ impl State {
         )
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -3379,7 +3386,7 @@ impl State {
         ) = db;
     }
 
-    // Measured 2026-09-29: as a hint these stayed out of line in the operator functions, and
+    // Measured: as a hint these stayed out of line in the operator functions, and
     // the stack path cost 30 % there; inlined, the vector-writing probe went 0.93 s -> 0.70 s.
     #[allow(clippy::inline_always)]
     #[inline(always)]
@@ -6515,7 +6522,7 @@ impl State {
         let verify_on = self.verify_on;
         // The lean loop: when nothing watches individual ops, each op pays only for what an
         // ordinary run needs from the loop — the allocation site, the crash context, the
-        // dispatch, the frame yield and the halt.  Measured 2026-09-29, the full loop's
+        // dispatch, the frame yield and the halt.  Measured, the full loop's
         // per-op bookkeeping was 62 instructions of an op's 152 on a vector-writing loop.
         // A debugger that attaches mid-run sets `debug`, and the full loop takes over.
         let lean_loop = !(reload_on
@@ -7638,6 +7645,7 @@ impl State {
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: Vec::new(),
+            fused_away: Vec::new(),
             code_pos: 0,
             def_pos: 0,
             source: u16::MAX,
