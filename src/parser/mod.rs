@@ -5096,7 +5096,7 @@ impl Parser {
         let Type::Optional(inner) = dst else {
             return None;
         };
-        let Type::Integer(spec) = inner.as_ref() else {
+        let Type::Integer(spec) = inner.base() else {
             return None;
         };
         // The full integer is no narrow slot; a width alias or a user range is.
