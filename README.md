@@ -77,11 +77,11 @@ unzip loft-*.zip && cd loft-*/                        # then run it in place:
 bin/loft --interpret examples/hello.loft              # bin\loft.exe on Windows
 ```
 
-⚠ **Use `--interpret` if you have no Rust toolchain.** loft's default mode is `--native`,
-which compiles your program through `rustc` for speed — so it needs a toolchain that a
-downloaded bundle deliberately does not carry. `--interpret` is the standalone runtime and
-needs nothing but the bundle. Keep `bin/` and `default/` together whichever you use: the
-binary loads the standard library from `<binary-dir>/../default`.
+**A downloaded bundle runs your program on the interpreter.** loft's default mode compiles
+through `rustc` when it can, and a bundle deliberately carries no native runtime, so it
+interprets instead — that is normal, not a fault to fix. `--interpret` asks for the
+interpreter directly and needs nothing but the bundle. Keep `bin/` and `default/` together:
+the binary loads the standard library from `<binary-dir>/../default`.
 
 Two things worth knowing about daily builds. **GitHub requires you to be signed in to
 download a workflow artifact** — they are not anonymous links, which is the one way they
@@ -93,10 +93,7 @@ release checklist — for anything you depend on, use a release.
 ### Or build it yourself
 
 ```sh
-# one-line install (requires a Rust toolchain)
-cargo install --git https://github.com/loft-lang/loft --bin loft
-
-# or clone + build
+# requires a Rust toolchain (1.96 or later)
 git clone https://github.com/loft-lang/loft
 cd loft
 cargo build --release          # binary at target/release/loft
@@ -104,8 +101,10 @@ cargo build --release          # binary at target/release/loft
 ```
 
 `make install-user` installs to `~/.local/bin` and `~/.local/share/loft` without root, and
-tells you if `~/.local/bin` is not yet on your `PATH`. `make install` (system-wide
-`/usr/local`) elevates only when the prefix is not writable.
+tells you if `~/.local/bin` is not on your `PATH`. `make install` (system-wide
+`/usr/local`) elevates only when the prefix is not writable. Install through one of these
+rather than copying the binary: it loads its standard library from `default/` beside the
+checkout, or from `share/loft/` beside an installed `bin/`.
 
 ⚠ Building loft optimised hands one `rustc` a large crate (`codegen-units=1`), which can
 exhaust memory on a small machine. If a build is killed, use `CARGO_BUILD_JOBS=1` — each
@@ -125,7 +124,7 @@ Then:
 ```sh
 loft prog.loft                 # compile to a native binary and run it
 loft --interpret prog.loft     # skip the compile, start now
-loft --html prog.loft          # a directory of static files you can host
+loft --html prog.loft          # one self-contained page you can host
 loft repl                      # an interactive session
 loft test                      # run a package's tests
 loft debug prog.loft:12        # stop at line 12, read and edit the live frame
@@ -133,8 +132,9 @@ loft debug prog.loft:12        # stop at line 12, read and edit the live frame
 
 ## The distribution
 
-`loft install <name>` pulls a library from the registry into `~/.loft/lib/`. Every one of
-them is written in loft — no C, no FFI glue — so they read, debug and ship like your own
+`loft install <name>` pulls a library from the registry into `~/.loft/registry/`. Every one
+of them is written in loft — a few add a small Rust bridge for a window, audio, sockets or
+cryptography — so they read, debug and ship like your own
 code. Each is tested to produce identical results on the interpreter and the native backend,
 and is cross-built for WebAssembly unless it needs a device the browser does not have — in
 which case it says so, and CI prints the reason.
@@ -208,10 +208,11 @@ merely honoured it.
 Full reference, tutorial, feature catalogue and a printable PDF at
 <https://loft-lang.org/loft/>.
 
-- **[Language reference](https://loft-lang.org/loft/)** — 40 topic pages. On the 37 numbered
+- **[Language reference](https://loft-lang.org/loft/)** — 38 topic pages. On the 35 numbered
   ones every code example is executed as a test on both backends, so what you read is what
-  runs; the three comparison and performance pages are hand-written and checked by hand.
-- **[Feature catalogue](https://loft-lang.org/loft/33-features.html)** — 117 entries: what
+  runs; the two comparison pages are hand-written and each claim on them runs as a test
+  program, and the performance page is hand-written and checked by hand.
+- **[Feature catalogue](https://loft-lang.org/loft/33-features.html)** — 123 entries: what
   each feature is, how it helps, and a runnable example.
 - **`loft doc <package>`** — render any installed library's guide and API reference as HTML.
 
@@ -222,7 +223,7 @@ and open `doc/index.html`.
 
 loft is developed almost entirely by AI coding agents, steered by one person who put
 **documentation and tooling above writing code**. So everything needed to work on loft is in
-this public repository: the full source, ~115,000 lines of documentation, and ten
+this public repository: the full source, over 350,000 lines of documentation, and twelve
 **executable skills** that teach an agent *how* to fix a bug, change code generation, or ship
 a library. Point any capable coding agent at the repo, let it load the skills, and it can
 continue the work — investigate, fix, verify on both backends, and land through `make ci`.
