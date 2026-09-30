@@ -1350,7 +1350,7 @@ impl Parser {
         // arm decides a join.
         if diverged
             && context == "return from block"
-            && matches!(t, Type::Void)
+            && matches!(t.base(), Type::Void)
             && let Some(at) = l
                 .iter()
                 .position(|s| matches!(s, Value::Return(_) | Value::Break(_) | Value::Continue(_)))

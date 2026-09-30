@@ -2347,7 +2347,7 @@ impl Parser {
             && self.data.def_type(d_nr) == DefType::Type
             && self.lexer.peek_token("{")
             && let Type::Reference(target, _) | Type::Unknown(target) =
-                self.data.def(d_nr).returned()
+                self.data.def(d_nr).returned().base()
             && matches!(
                 self.data.def_type(*target),
                 DefType::Struct | DefType::EnumValue | DefType::Unknown
