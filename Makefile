@@ -2804,6 +2804,11 @@ script-census:  ## @PLN179 the work list: every Python/bash script by what a lof
 	@target/release/loft --interpret scripts/script_census > doc/claude/plans/179-scripts-in-loft/WORKLIST.md
 	@target/release/loft --interpret scripts/script_census --count | sed 's/^/scripts\/ Python+bash lines (the ratchet): /'
 
+.PHONY: script-twin
+script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG=<script> PORT=<script> [ARGS="…"] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]
+	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [RUNS=n]"; exit 2; }
+	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twin.sh $(if $(FILES),--files $(FILES)) $(if $(BY_CONTENT),--by-content) --runs $(or $(RUNS),1) $(ORIG) $(PORT) -- $(ARGS)
+
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
 	@python3 scripts/falsify-review.py $(ARGS)

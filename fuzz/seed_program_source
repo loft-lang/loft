@@ -1,0 +1,34 @@
+#!/usr/bin/env -S loft --interpret
+// Seed the program-source fuzz corpus: every `.loft` under tests/, doc/, examples/ and
+// lib/ copied into fuzz/corpus/program_source as `NNNNN_<name>`.  The loft twin of
+// fuzz/seed_program_source.sh (@PLN179 strand 3): same files, same names, same message —
+// numbered in sorted path order where the original numbered in `find`'s directory order,
+// so a twin compares the copies by content.
+// Paths are relative to this script's own directory (loft's default), so it runs from
+// anywhere, as the original's `cd "$(dirname "$0")/.."` let it.
+
+fn walk(dir: text, out: vector<text>) -> vector<text> {
+  result = out;
+  if !is_dir(dir) { return result; }
+  for f in file(dir).files() {
+    if is_symlink(f.path) { continue; }
+    if f.format == Format.Directory { result = walk(f.path, result); }
+    else if f.path.ends_with(".loft") { result += [f.path]; }
+  }
+  result
+}
+
+fn main() {
+  dst = "../fuzz/corpus/program_source";
+  mkdir_all(dst);
+  paths: vector<text> = [];
+  for root in ["../tests", "../doc", "../examples", "../lib"] { paths = walk(root, paths); }
+  n = 0;
+  for p in paths {
+    bytes = read_bytes(p) ?? [];
+    name = p.basename();
+    write_bytes("{dst}/{n:05}_{name}", bytes);
+    n += 1;
+  }
+  println("seeded {n} .loft files into fuzz/corpus/program_source");
+}
