@@ -2575,6 +2575,10 @@ impl Parser {
                     .import_cure("unknown type", name, self.data.source)
                 {
                     diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                } else if let Some(msg) =
+                    super::registry_type_hint("unknown type", name, &self.data.resolved_libraries())
+                {
+                    diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                 } else if let Some(s) = self.suggest_type_name(name) {
                     diagnostic_at!(
                         self.lexer,

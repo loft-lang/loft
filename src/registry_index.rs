@@ -726,6 +726,20 @@ pub fn registry_url() -> String {
 /// bare call could actually have meant is offered.
 #[must_use]
 pub fn packages_exporting_fn(name: &str) -> Vec<String> {
+    packages_exporting(name, exports_free_fn)
+}
+
+/// The published packages whose newest version declares a TYPE called `name` — a
+/// `struct`, `enum`, `type`/`typedef` or `interface` — sorted, deduplicated.  The type
+/// half of [`packages_exporting_fn`]: an un-imported `Rect` or `Canvas` said "did you
+/// mean 'text'?" or a bare "Undefined type" while the same file's un-imported `canvas(…)`
+/// call named its package.
+#[must_use]
+pub fn packages_exporting_type(name: &str) -> Vec<String> {
+    packages_exporting(name, exports_type)
+}
+
+fn packages_exporting(name: &str, declares: fn(&str, &str) -> bool) -> Vec<String> {
     if name.is_empty() {
         return Vec::new();
     }
@@ -746,19 +760,38 @@ pub fn packages_exporting_fn(name: &str) -> Vec<String> {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         })
         .filter(|(_, p)| {
-            // Newest version wins: an old pin may still list a function the
-            // package has since dropped, and suggesting that would send the
-            // reader to an API they cannot install today.
-            p.versions
-                .values()
-                .next_back()
-                .is_some_and(|v| v.api.iter().any(|item| exports_free_fn(&item.sig, name)))
+            // Newest version wins: an old pin may still list a name the package has
+            // since dropped, and suggesting that would send the reader to an API they
+            // cannot install today.  Newest by version, not by the map's string order,
+            // which puts `0.10.0` before `0.9.4`.
+            find_best_version(p, "*", false)
+                .is_some_and(|v| v.api.iter().any(|item| declares(&item.sig, name)))
         })
         .map(|(pkg, _)| pkg.clone())
         .collect();
     hits.sort();
     hits.dedup();
     hits
+}
+
+/// Does the API signature `sig` declare a type called `name`?  The name must end there:
+/// `Rect` is not `RectSet`.
+fn exports_type(sig: &str, name: &str) -> bool {
+    let sig = sig.trim_start();
+    [
+        "pub struct ",
+        "pub value struct ",
+        "pub enum ",
+        "pub type ",
+        "pub typedef ",
+        "pub interface ",
+    ]
+    .iter()
+    .filter_map(|kw| sig.strip_prefix(kw))
+    .any(|rest| {
+        rest.strip_prefix(name)
+            .is_some_and(|after| !after.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+    })
 }
 
 /// Does the API signature `sig` declare a free function called `name`?
@@ -771,6 +804,11 @@ fn exports_free_fn(sig: &str, name: &str) -> bool {
     };
     let Some(args) = rest.strip_prefix(name) else {
         return false;
+    };
+    // A generic function names its type variables first: `pub fn first<T>(v: …)`.
+    let args = match args.strip_prefix('<') {
+        Some(generic) => generic.split_once('>').map_or("", |(_, rest)| rest),
+        None => args,
     };
     let Some(args) = args.strip_prefix('(') else {
         return false;

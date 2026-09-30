@@ -1686,7 +1686,13 @@ fn squash(s: &str) -> String {
 /// first line after what it consumed (a function body is left to the caller's walk, as
 /// before: its lines hold no `pub` item and clear any pending doc).
 fn read_pub_item(lines: &[&str], at: usize) -> (PkgApiItem, usize) {
-    let kind = lines[at].trim().split_whitespace().nth(1).unwrap_or("");
+    // `pub value struct` is a struct too.
+    let kind = lines[at]
+        .trim()
+        .split_whitespace()
+        .skip(1)
+        .find(|w| *w != "value")
+        .unwrap_or("");
     let has_members = matches!(kind, "struct" | "enum" | "interface");
     let mut cur = SrcCursor::new(lines, at);
     let mut head = String::new();
@@ -1927,9 +1933,13 @@ pub fn extract_api_items(content: &str) -> Vec<crate::registry_index::ApiItem> {
         .flat_map(|s| s.items)
         .filter(|item| {
             let sig = &item.sig;
+            // `pub type` is how a type alias is written; `pub value struct` is a struct
+            // (`time::DateTime`) — both were missing from search.
             sig.starts_with("pub fn ")
                 || sig.starts_with("pub struct ")
+                || sig.starts_with("pub value struct ")
                 || sig.starts_with("pub enum ")
+                || sig.starts_with("pub type ")
                 || sig.starts_with("pub typedef ")
                 || sig.starts_with("pub interface ")
         })
@@ -2354,6 +2364,19 @@ pub const TAU = 6.28;
 pub enum Shape { Circle, Square }
 ";
         let sigs: Vec<String> = extract_api_items(src).into_iter().map(|i| i.sig).collect();
+        let valued: Vec<String> =
+            extract_api_items("pub value struct Ms { ms: integer }\npub type Id = integer;\n")
+                .into_iter()
+                .map(|i| i.sig)
+                .collect();
+        assert_eq!(
+            valued,
+            [
+                "pub value struct Ms { ms: integer }",
+                "pub type Id = integer"
+            ],
+            "a value struct and a type alias are part of the usable surface"
+        );
         // Types carry their members: a program has to name a field to build one, and a
         // head alone (`pub struct Rect`) sent a reader guessing `x` for `rx`.
         assert!(

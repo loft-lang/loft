@@ -1238,6 +1238,19 @@ parses; ordinary runs keep the cache.
 - A name two plain imports deep (your file uses `render`, which uses `graphics`, which
   uses `mesh3d` for itself) names the library that has it and the `use` that imports it.
   It used to be a bare *"Undefined type Mesh — did you mean 'hash'?"*.
+- `loft api <lib>` and `loft doc <lib>` show every field of a struct and every variant of an
+  enum, with their comments, and a signature that spans several lines in full — its return
+  type was cut off at the first line break.  A constant documented by a comment at the end
+  of its line shows that comment.  `loft search` gets the same, library by library, as each
+  one is next published.
+- `loft search` puts the package that answers first: `load png` finds `imaging`, `format
+  date` finds `time`, `overlap` finds `shapes`.  It used to list every package with a
+  passing mention alphabetically, matched `date` inside `update`, and read only the first
+  word of an unquoted query.  Five functions print per package, best first; when nothing
+  has every word, the closest matches are shown and labelled as such.
+- An un-imported type names the package that has it, the way an un-imported function already
+  did: *"Undefined type Canvas — the `graphics` package provides it"*.  `Rect` used to
+  suggest *"did you mean 'text'?"*.
 
 ---
 

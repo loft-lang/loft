@@ -43,7 +43,9 @@ const INDEX: &str = r#"{
           "published": "2026-07-23",
           "api": [
             { "sig": "pub fn rand(low: integer, high: integer) -> integer", "doc": "A number." },
-            { "sig": "pub fn matches(self: text, pattern: text) -> boolean", "doc": "A method." }
+            { "sig": "pub fn matches(self: text, pattern: text) -> boolean", "doc": "A method." },
+            { "sig": "pub struct RandStream { s1: integer }", "doc": "A stream." },
+            { "sig": "pub value struct Seed { v: integer }", "doc": "A seed." }
           ]
         }
       }
@@ -59,7 +61,8 @@ const INDEX: &str = r#"{
           "loft": "2026.7.2",
           "published": "2026-07-23",
           "api": [
-            { "sig": "pub fn dup(v: integer) -> integer", "doc": "Also here." }
+            { "sig": "pub fn dup(v: integer) -> integer", "doc": "Also here." },
+            { "sig": "pub struct Die { sides: integer }", "doc": "A die." }
           ]
         }
       }
@@ -75,8 +78,32 @@ const INDEX: &str = r#"{
           "loft": "2026.7.2",
           "published": "2026-07-23",
           "api": [
-            { "sig": "pub fn dup(v: integer) -> integer", "doc": "And here." }
+            { "sig": "pub fn dup(v: integer) -> integer", "doc": "And here." },
+            { "sig": "pub enum Die { D4, D6 }", "doc": "Dice kinds." }
           ]
+        }
+      }
+    },
+    "shaper": {
+      "name": "shaper",
+      "versions": {
+        "0.9.0": {
+          "version": "0.9.0",
+          "url": "https://example.invalid/shaper-0.9.0.tar.gz",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "size": 1,
+          "loft": "2026.7.2",
+          "published": "2026-07-23",
+          "api": [ { "sig": "pub struct OldShape { a: integer }", "doc": "Dropped in 0.10." } ]
+        },
+        "0.10.0": {
+          "version": "0.10.0",
+          "url": "https://example.invalid/shaper-0.10.0.tar.gz",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "size": 1,
+          "loft": "2026.7.2",
+          "published": "2026-07-24",
+          "api": [ { "sig": "pub struct NewShape { a: integer }", "doc": "Added in 0.10." } ]
         }
       }
     }
@@ -242,5 +269,94 @@ fn the_plain_import_advice_survives_when_nothing_collides() {
     assert!(
         d.contains("add `use random::(rand);`"),
         "an unimported package is still the answer; got:\n{d}"
+    );
+}
+
+// ── The type half: an un-imported TYPE names its package too ─────────────────
+
+/// A type written in a signature, a construction and a value struct each name the package
+/// that declares it — the same advice an un-imported function already had.  Before, `Rect`
+/// read "did you mean 'text'?" and `Canvas` a bare "Undefined type".
+#[test]
+fn an_unresolved_type_names_the_package_that_provides_it() {
+    for (tag, src, head) in [
+        (
+            "sig",
+            "fn f(r: RandStream) -> integer { 1 }\nfn main() {}\n",
+            "Undefined type RandStream",
+        ),
+        (
+            "construct",
+            "fn main() {\n    r = RandStream { s1: 1 };\n}\n",
+            "unknown type RandStream",
+        ),
+        (
+            "value",
+            "fn f(s: Seed) -> integer { 1 }\nfn main() {}\n",
+            "Undefined type Seed",
+        ),
+    ] {
+        let d = diagnostics_for(&format!("type_{tag}"), src, true);
+        let name = head.rsplit(' ').next().unwrap_or("");
+        assert!(
+            d.contains(head)
+                && d.contains("the `random` package provides it")
+                && d.contains(&format!("use random::({name});")),
+            "{tag}: the message names the package and the import; got:\n{d}"
+        );
+    }
+}
+
+/// Two packages declaring a type of that name are both named; one declares a struct and
+/// the other an enum, which the lookup reads alike.
+#[test]
+fn an_ambiguous_type_lists_every_provider() {
+    let d = diagnostics_for(
+        "type_dup",
+        "fn f(d: Die) -> integer { 1 }\nfn main() {}\n",
+        true,
+    );
+    assert!(
+        d.contains("`dicer`") && d.contains("`duper`"),
+        "both providers should be named; got:\n{d}"
+    );
+}
+
+/// The NEWEST version decides — by version, not by the index map's string order, which
+/// sorts `0.10.0` before `0.9.0` and so took `0.9.0` for the newest.
+#[test]
+fn only_the_newest_version_by_semver_is_offered() {
+    let d = diagnostics_for(
+        "type_new",
+        "fn f(s: NewShape) -> integer { 1 }\nfn main() {}\n",
+        true,
+    );
+    assert!(
+        d.contains("the `shaper` package provides it"),
+        "0.10.0 is the newest and declares it; got:\n{d}"
+    );
+    let d = diagnostics_for(
+        "type_old",
+        "fn f(s: OldShape) -> integer { 1 }\nfn main() {}\n",
+        true,
+    );
+    assert!(
+        !d.contains("provides it"),
+        "only 0.9.0 declared it, and 0.9.0 is not the newest; got:\n{d}"
+    );
+}
+
+/// A misspelling no package declares keeps its "did you mean" — the registry is asked
+/// only for a name that matches a declaration exactly.
+#[test]
+fn a_type_typo_keeps_its_suggestion() {
+    let d = diagnostics_for(
+        "type_typo",
+        "struct Mine { a: integer }\nfn f(m: Minee) -> integer { 1 }\nfn main() {}\n",
+        true,
+    );
+    assert!(
+        d.contains("did you mean 'Mine'") && !d.contains("provides it"),
+        "the typo suggestion survives; got:\n{d}"
     );
 }

@@ -68,6 +68,38 @@ fn registry_fn_hint(_name: &str, _resolved: &[String]) -> Option<String> {
     None
 }
 
+/// The type half of [`registry_fn_hint`]: the message for an unresolved TYPE that a
+/// published package declares — `what` is the message's head (`Undefined type`, `unknown
+/// type`, …).  Without it an un-imported `Rect` read "did you mean 'text'?" and `Canvas` a
+/// bare "Undefined type", while the same file's un-imported `canvas(…)` named its package.
+#[cfg(feature = "registry")]
+pub(crate) fn registry_type_hint(what: &str, name: &str, resolved: &[String]) -> Option<String> {
+    let pkgs = crate::registry_index::packages_exporting_type(name);
+    let first = pkgs.first()?;
+    if let Some(here) = pkgs.iter().find(|p| resolved.iter().any(|r| &r == p)) {
+        return Some(format!(
+            "{what} {name} — the `{here}` this build resolved does not have it, and the \
+             registry's `{here}` does. These are different packages of the same name"
+        ));
+    }
+    let provider = if pkgs.len() == 1 {
+        format!("the `{first}` package provides it")
+    } else {
+        let names: Vec<String> = pkgs.iter().map(|p| format!("`{p}`")).collect();
+        format!("the {} packages provide it", names.join(" / "))
+    };
+    Some(format!(
+        "{what} {name} — {provider}; write `{first}::{name}` after `use {first};`, or add \
+         `use {first}::({name});` and write it bare"
+    ))
+}
+
+/// Registry-less build: no index to consult, so no hint.
+#[cfg(not(feature = "registry"))]
+pub(crate) fn registry_type_hint(_what: &str, _name: &str, _resolved: &[String]) -> Option<String> {
+    None
+}
+
 /// Where a value is handed to a parameter, for [`Parser::report_const_argument`] (loft#1540,
 /// C124): which signature is asked, and how the diagnostic names it.
 #[derive(Clone, Copy)]
@@ -3686,6 +3718,12 @@ impl Parser {
             } else if let Some(note) = boundary {
                 note
             } else if let Some(msg) = self.data.import_cure("Undefined type", &stub_name, source) {
+                msg
+            } else if let Some(msg) = registry_type_hint(
+                "Undefined type",
+                &stub_name,
+                &self.data.resolved_libraries(),
+            ) {
                 msg
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
