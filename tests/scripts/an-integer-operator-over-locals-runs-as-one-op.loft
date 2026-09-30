@@ -7,7 +7,8 @@
 // into a single op that reads its operands in place instead of pushing them first
 // (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`), and an `if`
 // or loop test into one compare-and-jump (`OpCmpIntVVJump`, `OpCmpIntVCJump`), and the step
-// of a `for c in text` walk into `OpTextWalkStep`; an integer element of a local vector at a
+// of a `for c in text` walk into `OpTextWalkStep` and its two end tests into `OpTextNullJump`
+// and `OpTextEndJump`; an integer element of a local vector at a
 // local index is read or written as one op (`OpVecGetInt[Nullable]`, `OpVecSetInt`), and
 // `for x in v`'s end test is one compare-and-jump (`OpVecEndJump`).  Each fused
 // op calls the unfused operator's own function, so what can go wrong is WHERE its operands
@@ -31,6 +32,8 @@
 //   since the per-character count and rebuild: the separator counts alone passed it.
 //   `OpVecSetInt` with its local positions taken after the value's push (the defect its
 //   first build had, which crashed the probe) fails `test_vector_elements`.
+//   `OpTextEndJump` continuing at `size == index` (one step past the end) fails
+//   `test_char_walk`.
 
 fn arith(a: integer, b: integer) -> text {
   x = a + b;
