@@ -4276,6 +4276,9 @@ impl State {
             self.emit_fused_int(stack, &f, None);
             return stack.data.def(op).returned().clone();
         }
+        if self.emit_fused_vec(stack, op, parameters) {
+            return stack.data.def(op).returned().clone();
+        }
         let mut tps = Vec::new();
         let mut last = 0;
         let mut was_stack = u16::MAX;
@@ -4849,6 +4852,64 @@ impl State {
     ///
     /// Use when the callee is `Value::CallRef(v_nr, args)` — the fn-ref is stored as an
     /// i32 `d_nr` in a local variable; arguments are already type-checked by the parser.
+    /// An integer element of a local vector at a local index as one op: `OpGetInt` over
+    /// `OpGetVector[Nullable](vec, size, idx)` becomes `OpVecGetInt[Nullable]`, and `OpSetInt`
+    /// over `OpGetVector` with a pure value (`fused_pure_int`) becomes the value, then
+    /// `OpVecSetInt`.  Answers `false`, emitting nothing, for any other shape.
+    fn emit_fused_vec(&mut self, stack: &mut Stack, op: u32, params: &[Value]) -> bool {
+        if !fusion_enabled() {
+            return false;
+        }
+        let name = stack.data.def(op).name();
+        let (get, value) = match (name, params) {
+            ("OpGetInt", [elem, Value::Int(fld)]) => (true, (elem, *fld, None)),
+            ("OpSetInt", [elem, Value::Int(fld), val]) if fused_pure_int(stack, val) => {
+                (false, (elem, *fld, Some(val)))
+            }
+            _ => return false,
+        };
+        let (elem, fld, val) = value;
+        let Value::Call(g, g_args) = elem.unspan() else {
+            return false;
+        };
+        let nullable = match stack.data.def(*g).name() {
+            "OpGetVector" => false,
+            "OpGetVectorNullable" if get => true,
+            _ => return false,
+        };
+        let [vec, Value::Int(size), idx] = &g_args[..] else {
+            return false;
+        };
+        let (Some(vec), Some(idx)) = (vector_local(stack, vec), int_local(stack, idx)) else {
+            return false;
+        };
+        let (Ok(size), Ok(fld)) = (u16::try_from(*size), u16::try_from(fld)) else {
+            return false;
+        };
+        // Taken BEFORE the value is pushed: `OpVecSetInt` pops its value first and reads the
+        // locals after, at the height the value was pushed from.
+        let (vp, ip) = (stack.var_pos(vec), stack.var_pos(idx));
+        if let Some(v) = val {
+            self.generate(v, stack, false);
+        }
+        let at = self.code_pos;
+        stack.add_op(
+            match (get, nullable) {
+                (true, false) => "OpVecGetInt",
+                (true, true) => "OpVecGetIntNullable",
+                (false, _) => "OpVecSetInt",
+            },
+            self,
+        );
+        self.code_add(vp);
+        self.code_add(size);
+        self.code_add(ip);
+        self.code_add(fld);
+        self.vars.insert(at + 1, vec);
+        self.vars.insert(at + 2, idx);
+        true
+    }
+
     /// `c = {for text next …}` of a character walk (`hoist::char_walks`) as one
     /// `OpTextWalkStep`.  The index, next and text variables already hold their slots; `c`
     /// may be taking its first assignment, which does what `generate_set`'s first-assignment
@@ -4907,6 +4968,35 @@ impl State {
         } else {
             None
         };
+        let le_args: Vec<Value> = if test.kind() == ValueType::Call
+            && stack.data.def(test.call_to()).name() == "OpLeInt"
+        {
+            test.call_args()
+                .iter()
+                .map(|a| a.to_owned_value())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if fusion_enabled()
+            && let [len, idx] = &le_args[..]
+            && let Value::Call(len_op, len_args) = len.unspan()
+            && stack.data.def(*len_op).name() == "OpLengthVector"
+            && let [vec] = &len_args[..]
+            && let Some(vec) = vector_local(stack, vec)
+            && let Some(idx) = int_local(stack, idx)
+        {
+            let at = self.code_pos;
+            let (vp, ip) = (stack.var_pos(vec), stack.var_pos(idx));
+            stack.add_op("OpVecEndJump", self);
+            self.code_add(vp);
+            self.code_add(ip);
+            self.vars.insert(at + 1, vec);
+            self.vars.insert(at + 2, idx);
+            let code_step = self.code_pos;
+            self.code_add(0i32); // temp step
+            return code_step;
+        }
         if let Some(f) = fused {
             let at = self.code_pos;
             let a = stack.var_pos(f.a);
@@ -6271,6 +6361,49 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
         a,
         b,
     })
+}
+
+/// A plain integer local — one `generate_var` reads with `OpVarInt` (see [`fusable_int`]).
+fn int_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v), Type::Integer(_))
+        && stack.function.linked_narrow_slot(v).is_none()
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// A vector local — one `generate_var` reads with `OpVarVector`.
+fn vector_local(stack: &Stack, v: &Value) -> Option<u16> {
+    let Value::Var(v) = v.unspan() else {
+        return None;
+    };
+    let v = *v;
+    (matches!(stack.function.tp(v), Type::Vector(_, _))
+        && stack.function.is_stack_allocated(v)
+        && stack.function.stack(v) <= stack.position)
+        .then_some(v)
+}
+
+/// An integer value that can neither fault nor reach a store: literals, plain integer
+/// locals, and the integer operators the fused ops carry (`ops::fused`), which answer null
+/// on overflow instead of raising.  Evaluating one before an element lookup rather than
+/// after it therefore changes nothing a program can see.
+fn fused_pure_int(stack: &Stack, v: &Value) -> bool {
+    match v.unspan() {
+        Value::Int(_) | Value::Long(_) => true,
+        Value::Var(_) => int_local(stack, v).is_some(),
+        Value::Call(op, args) => {
+            matches!(
+                stack.data.def(*op).name(),
+                "OpAddInt" | "OpMinInt" | "OpMulInt" | "OpLandInt" | "OpLorInt" | "OpEorInt"
+            ) && args.iter().all(|a| fused_pure_int(stack, a))
+        }
+        _ => false,
+    }
 }
 
 fn is_divergent(node: IrNode) -> bool {

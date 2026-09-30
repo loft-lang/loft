@@ -7,7 +7,9 @@
 // into a single op that reads its operands in place instead of pushing them first
 // (`OpIntVV`, `OpIntVC`, `OpCmpIntVV`, `OpCmpIntVC`, `OpIntVVPut`, `OpIntVCPut`), and an `if`
 // or loop test into one compare-and-jump (`OpCmpIntVVJump`, `OpCmpIntVCJump`), and the step
-// of a `for c in text` walk into `OpTextWalkStep`.  Each fused
+// of a `for c in text` walk into `OpTextWalkStep`; an integer element of a local vector at a
+// local index is read or written as one op (`OpVecGetInt[Nullable]`, `OpVecSetInt`), and
+// `for x in v`'s end test is one compare-and-jump (`OpVecEndJump`).  Each fused
 // op calls the unfused operator's own function, so what can go wrong is WHERE its operands
 // come from: every position is taken at the stack height the op starts at, where the unfused
 // second read was taken eight bytes higher, and a fused store addresses its target as the
@@ -100,6 +102,29 @@ fn test_char_walk() {
   assert(count("", ',') == 0, "an empty text walks nothing");
   parts = "x,yé,z".split(',');
   assert("{parts}" == "[\"x\",\"yé\",\"z\"]", "split walks the same way");
+}
+
+fn vec_sum(v: const vector<integer>) -> integer {
+  acc = 0;
+  for x in v { acc += x; }
+  acc
+}
+
+fn vec_fill(v: vector<integer>, salt: integer) -> integer {
+  for i in 0..len(v) { v[i] = i * 10 + salt; }
+  v[0] + v[len(v) - 1]
+}
+
+fn test_vector_elements() {
+  w = [5, 7, 11, 13];
+  assert(vec_sum(w) == 36, "5 + 7 + 11 + 13");
+  // v[i] = 10i + 3: 3, 13, 23, 33.
+  assert(vec_fill(w, 3) == 36, "the first plus the last written element");
+  assert(vec_sum(w) == 72, "3 + 13 + 23 + 33: every write landed in its own element");
+  k = 2;
+  far = 10;
+  assert(w[k] == 23, "an element at a local index");
+  assert((w[far] ?? -1) == -1, "an element past the end reads null");
 }
 
 fn test_arith_positive() {
