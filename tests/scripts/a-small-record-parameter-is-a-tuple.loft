@@ -8,6 +8,10 @@
 // The cell that pins soundness is `aliased`: a by-value record parameter is a VIEW of the
 // argument's place, so `bump(a, a)` must see its own write through the other parameter.
 // Reading the fields at the call would answer 1; the parameter gate declines it.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// Hand-sabotaged 2026-09-30: admitting `bump`'s parameters past the native write gate makes
+// `p` a tuple read at the call, and `aliased` fails on both backends (bump answers 1).
 
 struct V3 { x: float, y: float, z: float }
 struct Ord4 { n: integer, ok: boolean, s: single, f: float }
