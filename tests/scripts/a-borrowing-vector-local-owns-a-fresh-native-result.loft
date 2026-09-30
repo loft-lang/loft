@@ -50,6 +50,15 @@ fn main() {
   for i in 0..10 { u = j.keys(); if i % 2 == 0 { u = ["x", "y"]; } t += u.len(); }
   assert(t == 25, "a literal over a native, per iteration: {t}");
 
+  // `vector<text>?` is the same store (`@FR-N-Shape`): 10 rebinds, and a first bind a literal
+  // displaces in a branch.
+  np: vector<text>? = ["z"];
+  for _i in 0..10 { np = j.keys(); }
+  nq: vector<text>? = j.keys();
+  if nq?.len() == 3 { nq = ["x", "y"]; }
+  nr = ["k"];
+  assert(np?.len() == 3 && nq?.len() == 2 && nq?[0] == "x" && nr[0] == "k", "the nullable spelling: {np?.len()} {nq?.len()}");
+
   c = ["z"];
   c = ["x", "y"];
   assert(c.len() == 2, "control, a literal rebind: {c.len()}");
