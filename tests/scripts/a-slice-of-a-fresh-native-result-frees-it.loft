@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-O-Owner` — A SLICE OF A FRESH NATIVE RESULT FREES IT.  `v[a..b]` names a subject that is
+// not free to repeat once, in the slice's prelude (loft#1521), and that name BORROWS: a loft
+// function's result arrives in its caller buffer, a `??` default in its work-ref, and either
+// keeps the release.  A native returning a vector (`arguments()`, `j.keys()`, `s.split(',')`)
+// hands back a FRESH store that nothing else names, so the borrowing name left it to nobody:
+// one store per evaluation, on both backends.  The name now owns a bare call's dep-free result,
+// as the bind `x = j.keys()` owns it.
+//
+// The values are asserted too, so a cure that sliced a different store would fail; the loop cell
+// makes the leak count grow with the evaluations rather than stand at one.  The last cell is the
+// control that was right before: a slice of a loft function's result.
+
+fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
+fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r += ["q3"]; r }
+
+fn main() {
+  j = jv();
+  c = j.keys()[1..3];
+  assert(c.len() == 2 && c[0] == "k2" && c[1] == "k3", "a closed slice: {c.len()}");
+  o = j.keys()[1..];
+  assert(o.len() == 2 && o[1] == "k3", "an open slice: {o.len()}");
+  e = arguments()[0..0];
+  assert(e.len() == 0, "an empty slice of arguments(): {e.len()}");
+  // 20 evaluations of a two-element slice.
+  t = 0;
+  for _i in 0..20 { s = j.keys()[0..2]; t += s.len(); }
+  assert(t == 40, "a slice per iteration: {t}");
+  w = "";
+  for k in j.keys()[1..] { w += k; }
+  assert(w == "k2k3", "a walked slice: {w}");
+  m = mk()[1..3];
+  assert(m.len() == 2 && m[0] == "q2", "control, a loft function's result: {m.len()}");
+}

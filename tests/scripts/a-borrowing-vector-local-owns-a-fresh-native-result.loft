@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-O-Owner` — A VECTOR LOCAL THAT BORROWS SOMEWHERE STILL FREES A FRESH NATIVE RESULT.  A
+// literal bind (`p = ["z"]`) makes `p` a view of the record that holds the literal, and a local
+// has ONE type, so once it borrows at any bind, nothing frees what it holds at any bind.  A
+// rebind to a native's fresh store (`p = j.keys()`), or a first bind to one followed by a
+// literal, left that store to nobody: one store per evaluation, on both backends, unbounded in a
+// loop.  Each such bind now hands its store to an owner of its own, declared at the frame's top.
+//
+// The `after the branch` cells read `p` after a branch rebound it to a literal and after another
+// literal was built: an earlier cure gave `p` two deps, the block-confinement pass then freed the
+// literal's record at the branch's end, and `p` answered `1 k k` where `2 x k` is owed.
+//
+// The last cells are controls that were right before: a literal rebind, and a loft function's
+// result, which arrives in its own caller buffer.
+
+fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
+fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r }
+
+fn main() {
+  j = jv();
+  p = ["z"];
+  p = j.keys();
+  assert(p.len() == 3 && p[0] == "k1", "a literal, then a native: {p.len()}");
+  b = ["z"];
+  if j.keys().len() == 3 { b = j.keys(); }
+  assert(b.len() == 3, "a native in a taken branch: {b.len()}");
+  n = ["z"];
+  if j.keys().len() == 4 { n = j.keys(); }
+  assert(n.len() == 1 && n[0] == "z", "a native in a branch not taken: {n.len()}");
+  // 20 rebinds of one local.
+  l = ["z"];
+  for _i in 0..20 { l = j.keys(); l += ["x"]; }
+  assert(l.len() == 4, "a rebind per iteration: {l.len()}");
+
+  r = j.keys();
+  if r.len() == 3 { r = ["x", "y"]; }
+  q = ["k"];
+  assert(r.len() == 2 && r[0] == "x" && q[0] == "k", "after the branch, a literal: {r.len()} {r[0]} {q[0]}");
+  s = j.keys();
+  if s.len() == 4 { s = ["x", "y"]; }
+  q2 = ["k"];
+  assert(s.len() == 3 && s[0] == "k1" && q2[0] == "k", "after the branch, not taken: {s.len()} {s[0]}");
+  // 10 iterations: the even ones rebind to two elements, the odd ones keep three.
+  t = 0;
+  for i in 0..10 { u = j.keys(); if i % 2 == 0 { u = ["x", "y"]; } t += u.len(); }
+  assert(t == 25, "a literal over a native, per iteration: {t}");
+
+  c = ["z"];
+  c = ["x", "y"];
+  assert(c.len() == 2, "control, a literal rebind: {c.len()}");
+  f = ["z"];
+  if f.len() == 1 { f = mk(); }
+  assert(f.len() == 2 && f[1] == "q2", "control, a loft function's result: {f.len()}");
+}
