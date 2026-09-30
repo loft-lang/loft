@@ -17,6 +17,12 @@
 // @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
 // @falsified-by: tests/falsified/a-borrowing-vector-local-owns-a-fresh-native-result.patch — interpret
 //   leaked kt=65535 ?×45 -> clean, native leaked kt=65535 ?×45 -> clean
+// CHANNEL: the leak check alone, on both backends — the values are right on both trees, which is
+//   why they are asserted (the first cure of this defect moved a VALUE, `after the branch`).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 45 stores left on the control, each a native's `vector<text>` that a borrowing local
+//   took and nothing freed (`kt=65535` is the census's untyped main vector).
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 fn mk() -> vector<text> { r: vector<text> = []; r += ["q1"]; r += ["q2"]; r }

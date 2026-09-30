@@ -27,6 +27,11 @@
 // @falsified-by: tests/falsified/a-returned-vector-bound-from-a-native-call-frees-it.patch — native
 //   leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a backend-divergence guard — only
 //   one side can move)
+// CHANNEL: the leak check on `--native`; the interpreter's control reads clean (see the ⚠ above).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 17 stores left on the native control, each an answer the caller never handed in — a
+//   native's fresh store, or an early literal's record.
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
 
 fn jv() -> JsonValue { json_parse("{{\"k1\":1,\"k2\":2,\"k3\":3}}") }
 
