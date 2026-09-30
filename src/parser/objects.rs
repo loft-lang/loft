@@ -1056,6 +1056,13 @@ impl Parser {
                              }}`, or declare the function with a plain first-parameter name \
                              (not `self`), which makes it a free function and a usable fn-ref"
                         );
+                    } else if let Some(msg) =
+                        self.data
+                            .import_cure("Unknown variable", name, self.data.source)
+                    {
+                        // A constant a bare `use` did not bring in (@C98) — the same cure the
+                        // function and type reports name, rather than a spelling guess.
+                        diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                     } else if let Some(s) = suggestion {
                         diagnostic_at!(
                             self.lexer,
@@ -1305,12 +1312,19 @@ impl Parser {
                         if let Some(msg) = self.generic_value_refusal(name) {
                             diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                         } else if receivers.is_empty() {
-                            diagnostic_at!(
-                                self.lexer,
-                                name_pos,
-                                Level::Error,
-                                "Unknown variable '{name}'"
-                            );
+                            if let Some(msg) =
+                                self.data
+                                    .import_cure("Unknown variable", name, self.data.source)
+                            {
+                                diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                            } else {
+                                diagnostic_at!(
+                                    self.lexer,
+                                    name_pos,
+                                    Level::Error,
+                                    "Unknown variable '{name}'"
+                                );
+                            }
                         } else {
                             let on = receivers.join("`, `");
                             diagnostic_at!(

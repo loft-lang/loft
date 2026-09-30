@@ -1805,7 +1805,14 @@ impl Parser {
                 if let Some(msg) = self.generic_value_refusal(&name) {
                     diagnostic!(self.lexer, Level::Error, "{msg}");
                 } else if receivers.is_empty() {
-                    diagnostic!(self.lexer, Level::Error, "Unknown variable '{name}'");
+                    if let Some(msg) =
+                        self.data
+                            .import_cure("Unknown variable", &name, self.data.source)
+                    {
+                        diagnostic!(self.lexer, Level::Error, "{msg}");
+                    } else {
+                        diagnostic!(self.lexer, Level::Error, "Unknown variable '{name}'");
+                    }
                 } else {
                     let on = receivers.join("`, `");
                     diagnostic!(

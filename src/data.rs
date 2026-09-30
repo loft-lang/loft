@@ -11555,6 +11555,15 @@ impl Data {
         }
     }
 
+    /// The qualifier `into_source` names `lib_source` by through a bare `use`, if it has one.
+    #[must_use]
+    pub fn bare_use_qualifier(&self, into_source: u16, lib_source: u16) -> Option<&str> {
+        self.bare_uses
+            .iter()
+            .find(|(into, _, lib)| *into == into_source && *lib == lib_source)
+            .map(|(_, q, _)| q.as_str())
+    }
+
     /// The qualifier of a library `into_source` imported with a bare `use`, and that
     /// declares a public `name` (a type, constant or function), or `None`.  A bare `use`
     /// brings in only the qualifier (@C98), so this answers "is this unresolved name

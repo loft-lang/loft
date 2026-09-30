@@ -1022,7 +1022,10 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
         )
     };
     let (ok, bare) = run("bare.loft", &body("Hex"));
-    assert!(!ok, "`Hex` is not imported, so the program is refused:\n{bare}");
+    assert!(
+        !ok,
+        "`Hex` is not imported, so the program is refused:\n{bare}"
+    );
     assert!(
         !bare.contains("internal compiler error"),
         "an unresolved type is a user error, not a compiler fault:\n{bare}"
@@ -1039,6 +1042,58 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
     // The cure the error names compiles and answers the hand-computed values:
     // g() = 0 + 1 + 2, a(5) = 5 + 1.
     let (ok, cured) = run("cured.loft", &body("lat::Hex"));
-    assert!(ok && cured.contains("3 6"), "the qualified spelling is the cure:\n{cured}");
+    assert!(
+        ok && cured.contains("3 6"),
+        "the qualified spelling is the cure:\n{cured}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A CONSTANT behind a bare `use` gets the same cure as a function or a type (@C98): the
+/// report names the library and both spellings, not a bare "Unknown variable".  dryopea's
+/// `CLOCK_UNITS_PER_SECOND` after `use fixstep;` is the shape.
+#[test]
+fn a_constant_behind_a_bare_use_names_the_import_cure() {
+    let dir = std::env::temp_dir().join(format!("loft_c98_const_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let libs = dir.join("libs");
+    std::fs::create_dir_all(&libs).expect("libs");
+    std::fs::write(libs.join("clk.loft"), "pub const UNITS: integer = 3000;\n").expect("clk");
+    let run = |name: &str, body: &str| -> (bool, String) {
+        let main = dir.join(name);
+        std::fs::write(&main, body).expect("main");
+        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&libs)
+            .arg(&main)
+            .env("LOFT_ERRORS", "compact")
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("failed to invoke the loft binary");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    let (ok, bare) = run(
+        "bare.loft",
+        "use clk;\nfn main() { print(\"{UNITS / 1000}\") }\n",
+    );
+    assert!(!ok, "`UNITS` is not imported:\n{bare}");
+    assert!(
+        bare.contains("it is in `clk`") && bare.contains("`clk::UNITS`"),
+        "the report names the library and the qualified spelling:\n{bare}"
+    );
+    let (ok, cured) = run(
+        "cured.loft",
+        "use clk;\nfn main() { print(\"{clk::UNITS / 1000}\") }\n",
+    );
+    assert!(
+        ok && cured.contains('3'),
+        "the qualified spelling is the cure:\n{cured}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

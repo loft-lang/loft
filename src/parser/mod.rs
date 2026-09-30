@@ -20492,6 +20492,18 @@ impl Parser {
             || pos.file.to_string(),
             |f| f.to_string_lossy().into_owned(),
         );
+        // When this file ALSO has a bare `use` of that file, the two files already `use`
+        // each other, and a mutual import resolves both ways (the p173 cycle): the cure is
+        // to import the name, `use errand::*;` or `use errand::(Errand);`, with no file moved.
+        let def_source = self.data.def(d_nr).source;
+        if let Some(q) = self.data.bare_use_qualifier(self.data.source, def_source) {
+            return Some(format!(
+                "`{bare}` is declared in {file}:{}, which this file `use`s bare — a bare \
+                 `use {q};` brings in only the `{q}::` qualifier.  Import the name: \
+                 `use {q}::*;` or `use {q}::({bare});`.",
+                pos.line
+            ));
+        }
         Some(format!(
             "`{bare}` is declared in {file}:{}, which `use`s this file — a `use` \
              imports the used file's names into the file that used it, never the \
