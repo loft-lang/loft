@@ -128,6 +128,15 @@
     t = t * <span class="nm">10</span> + i;
   }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t == <span class="nm">54321</span>, <span class="st">"Result was {t} instead of 54321"</span>);</code></pre>
+<p>A range with no upper bound, <code>a..</code>, counts up until the body leaves it with <code>break</code> or <code>return</code> — the first square above 50 is 64, found at i = 8.</p>
+<pre><code>  first = <span class="nm">0</span>;
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">1..</span> {
+    <span class="kw">if</span> i * i &gt; <span class="nm">50</span> {
+      first = i;
+      <span class="kw">break</span>;
+    }
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(first == <span class="nm">8</span>, <span class="st">"First was {first} instead of 8"</span>);</code></pre>
 <h2 id="the-other-loop-while">The other loop: while</h2>
 <p>Loft has two loop statements: <code>for</code>, which walks a range or a collection, and <code>while</code>, which repeats as long as its condition holds. A <code>for</code> over a range carries its own upper bound, so it is the one to reach for; a <code>while</code> does not, and <code>while true { }</code> runs until something stops it. Because nothing bounds a <code>while</code>, its body must move the condition towards false — here <code>n += 1</code> is what ends the loop. This is the same sum as the <code>for</code> above, written the other way.</p>
 <pre><code>  n = <span class="nm">1</span>;
