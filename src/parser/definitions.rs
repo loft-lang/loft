@@ -489,12 +489,17 @@ impl Parser {
         let get_enum = self.cl("OpGetEnum", &[Value::Var(0), Value::Int(0)]);
         let get_int = self.cl("OpConvIntFromEnum", &[get_enum]);
         self.enum_numbers(nrs.to_vec(), &name, &mut ls, &get_int, &forwarded);
-        // No-variant-matched fallback: an explicit `return null`, not a bare
-        // `Null` tail. As the tail of a value-typed (e.g. text) block the bare
-        // Null was wrapped in `Str::new(<dispatch if>)` and emitted `Str::new(())`
-        // (E0308) under --native; `Return(Null)` routes through the typed-null
-        // return path (STRING_NULL for text, i64::MIN for int, …) on both backends.
-        ls.push(Value::Return(Box::new(Value::Null)));
+        // No-variant-matched fallback, which only an ABSENT receiver reaches: discriminant 0
+        // is no variant, and an uncovered variant is refused (`Disp-Exhaustive`).  An explicit
+        // `return`, not a bare tail — as the tail of a value-typed block a bare Null was
+        // wrapped in `Str::new(<dispatch if>)` (E0308 under --native).  And the returned
+        // null is the TYPED one (`null_value`, what a user `return null` gets): the match
+        // this dispatcher is answers null for an absent subject (@FR-M-Variant, the
+        // nullable-subject paragraph), and an untyped `Value::Null` pushes nothing — the
+        // interpreter returned stale eval-stack bytes and native `return 0` (loft#1778).
+        let returned = self.data.def(from_nr).returned().clone();
+        let null = self.null_value(&returned);
+        ls.push(Value::Return(Box::new(null)));
         self.data.definitions[fn_nr as usize].code =
             v_block(ls, self.data.def(from_nr).returned().clone(), "dynamic_fn");
         self.data.definitions[self.context as usize].variables = self.vars.clone();
