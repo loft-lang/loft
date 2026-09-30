@@ -1314,8 +1314,6 @@ impl Parser {
         }
     }
 
-    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// Is the next token one that cannot begin a value — a separator, a closer, or the
     /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
     /// an assignment), so a missing one is named instead of read as nothing.
@@ -1331,6 +1329,8 @@ impl Parser {
             || self.lexer.peek().has == crate::lexer::LexItem::None
     }
 
+    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
