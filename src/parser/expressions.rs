@@ -1875,9 +1875,9 @@ use a separate collection or add after the loop"
         let owned_field_read = if let Value::Call(d, args) = code.unspan()
             && *d == self.data.def_nr("OpGetField")
             && let Some(Value::Var(bv)) = args.first().map(Value::unspan)
-            && matches!(self.vars.tp(*bv), Type::Reference(_, _))
+            && matches!(self.vars.tp(*bv).base(), Type::Reference(_, _))
         {
-            self.vars.tp(*bv).depend().is_empty()
+            self.vars.tp(*bv).base().depend().is_empty()
         } else {
             false
         };
@@ -1889,7 +1889,7 @@ use a separate collection or add after the loop"
         // on the store it was copied into), never a borrow of another variable — a `&` link
         // is a `RefVar`, not a `Tuple` — so ownership here is "a local that is not a parameter".
         let owned_tuple_member = matches!(code.unspan(), Value::TupleGet(bv, _)
-            if matches!(self.vars.tp(*bv), Type::Tuple(_)) && !self.vars.is_argument(*bv));
+            if matches!(self.vars.tp(*bv).base(), Type::Tuple(_)) && !self.vars.is_argument(*bv));
         if is_bare_var {
             if matches!(code.unspan(), Value::Var(rhs) if *rhs == var_nr) {
                 return VecBind::SelfAssign;
