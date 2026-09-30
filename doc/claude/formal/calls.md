@@ -283,7 +283,11 @@ dense one's.
 
 So the attribute slot carries a method's NAME — membership, and what every enumeration site
 reads — and never the choice between its overloads. That choice has one home, and both call
-spellings ask it.
+spellings ask it.  An operator is a third spelling of its `Op<Name>` call and asks it too
+(`Parser::user_op_method`), and so does a bounded generic's monomorph: the slot's incumbent is
+only the overload declared FIRST, so `a - 1` reaches `OpMin(self: V, o: integer)` in either
+declaration order beside `OpMin(self: V, o: V)`
+(`tests/scripts/1817-an-operator-reaches-every-overload-of-its-second-operand.loft`).
 
 The site this rule is about is the one that ENUMERATES: the synthesised variant dispatcher
 (@F20) walks the implementations of an enum's variants, and asked for a bare

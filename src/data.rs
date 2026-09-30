@@ -7524,6 +7524,40 @@ impl Data {
         })
     }
 
+    /// Does `name` carry an overload set — a `Dynamic` definition listing its members?  Asked
+    /// before any work that only a set needs, so a name without one allocates nothing.
+    #[must_use]
+    pub fn has_overload_set(&self, name: &str) -> bool {
+        let main = self.def_nr(name);
+        main != u32::MAX && self.def(main).def_type == DefType::Dynamic
+    }
+
+    /// Does `d_nr` declare the visible parameters `params` — compared by type definition, at
+    /// every position whose wanted type is concrete (a type variable or an unknown there asks
+    /// nothing)?
+    #[must_use]
+    pub fn params_fit(&self, d_nr: u32, params: &[Type]) -> bool {
+        let have = self.visible_params(d_nr);
+        have.len() == params.len()
+            && have.iter().zip(params).all(|(h, w)| {
+                w.is_unknown()
+                    || self.mentions_type_var(w)
+                    || self.type_def_nr(h) == self.type_def_nr(w)
+            })
+    }
+
+    /// The member of `start`'s overload set whose visible parameters are `params`
+    /// ([`Self::params_fit`]) — `None` when the name has no set or no member fits.  What
+    /// [`Self::possible_with_signature`] asks by arity and receiver, asked of the whole
+    /// parameter list, so a set overloaded on a LATER operand is not answered by whichever
+    /// member was declared first (`@FR-F-Recv`, loft#1817).
+    #[must_use]
+    pub fn overload_with_params(&self, start: &str, params: &[Type]) -> Option<u32> {
+        self.overload_routines(start)
+            .into_iter()
+            .find(|&d| self.params_fit(d, params))
+    }
+
     /// @PLN99 Arc C — register `d_nr` into the `possible[prefix]` operator map.
     /// A user-defined conversion (`fn OpConvXFromY`) is a global stored `n_OpConv…`,
     /// so it skips `add_op`'s name-gated registration and never entered `possible` —

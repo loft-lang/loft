@@ -10709,6 +10709,27 @@ impl Parser {
             {
                 resolved = by_signature;
             }
+            // `@FR-F-Recv` — at ONE arity the incumbent is still only the member declared
+            // first: over `OpMin(self: V, o: integer)` declared before `OpMin(self: V, o: V)`,
+            // `diff<T: Subtractable>(a, b)` at `V` bound the integer member and passed it a
+            // record (loft#1817).  The stub's own parameters, at this instance, name the member.
+            if data.has_overload_set(fn_name) {
+                let params: Vec<Type> = def
+                    .attributes()
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .map(|a| {
+                        Self::substitute_type(a.typedef.clone(), tv_nr, concrete)
+                            .base()
+                            .clone()
+                    })
+                    .collect();
+                if !data.params_fit(resolved, &params)
+                    && let Some(by_params) = data.overload_with_params(fn_name, &params)
+                {
+                    resolved = by_params;
+                }
+            }
         }
         // @PLN25 E2 — a bounded-generic method call whose receiver monomorphises to a synth
         // `__nullable<S>` (a nullable vector element, e.g. `for x in v: vector<T>` where
@@ -15760,6 +15781,53 @@ impl Parser {
         );
     }
 
+    /// The user operator METHOD `op_name` a concrete operator site reaches for operands of
+    /// `types` — `u32::MAX` when the first operand's type defines none, `None` when the
+    /// overload set ties and the tie was reported.
+    ///
+    /// `@FR-F-Recv` — `a - 1` is a third spelling of the call `OpMin(a, 1)`, and the spellings
+    /// of one call resolve identically.  The method KEY names only the slot's incumbent, the
+    /// definition declared FIRST, so an operator overloaded on its second operand reached that
+    /// one alone and refused the rest, while `OpMin(a, 1)` and `a.OpMin(1)` dispatched both
+    /// (loft#1817).  Where the name carries an overload set the call spelling's own selection
+    /// (`Disp-Select`) decides; the incumbent, re-asked at this call's arity (loft#1794),
+    /// answers only a name with no set, or a set that no member of takes the operands — the
+    /// mismatch the caller then reports as "No matching operator".
+    fn user_op_method(&mut self, op_name: &str, types: &[Type]) -> Option<u32> {
+        let first = types.first()?;
+        let mut m = self.data.find_op_method(u16::MAX, op_name, first);
+        if m == u32::MAX {
+            return Some(m);
+        }
+        if !self.data.has_overload_set(op_name) {
+            if Self::visible_arity(&self.data, m) != types.len() {
+                m = self
+                    .data
+                    .possible_with_signature(op_name, types.len(), first)
+                    .unwrap_or(u32::MAX);
+            }
+            return Some(m);
+        }
+        let routed = self.data.routed_types(types);
+        match self.select_overload(u16::MAX, op_name, &routed) {
+            crate::parser::dispatch::Selection::One(d) => return Some(d),
+            sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                if !self.first_pass {
+                    self.report_selection(op_name, &routed, &sel, None);
+                }
+                return None;
+            }
+            _ => {}
+        }
+        if Self::visible_arity(&self.data, m) != types.len() {
+            m = self
+                .data
+                .possible_with_signature(op_name, types.len(), first)
+                .unwrap_or(u32::MAX);
+        }
+        Some(m)
+    }
+
     /// [`Self::call_op`] where the operator the author WROTE differs from the one being
     /// resolved (loft#1151).
     ///
@@ -15945,19 +16013,15 @@ impl Parser {
             // A built-in `integer` never coerces itself away; a user type must not either.
             // Method-only lookup (NOT full `find_fn`, whose `possible` fallback would
             // pre-empt the coercion the loop legitimately does for mixed built-in operands).
-            if let Some(first) = types.first() {
+            if !types.is_empty() {
                 let op_name = format!("Op{}", rename(op));
-                let mut m = self.data.find_op_method(u16::MAX, &op_name, first);
-                // The method KEY names the slot's incumbent, whatever its arity: `-` reaches
-                // here as `OpMin` at both arities, so a type defining both answered the one
-                // declared first for `a - b` and `-a` alike (loft#1794).  The arity this call
-                // has decides, as `(G-Sat)` and the monomorph ask it.
-                if m != u32::MAX && Self::visible_arity(&self.data, m) != list.len() {
-                    m = self
-                        .data
-                        .possible_with_signature(&op_name, list.len(), first)
-                        .unwrap_or(u32::MAX);
-                }
+                let Some(m) = self.user_op_method(&op_name, types) else {
+                    return if self.first_pass {
+                        Type::Unknown(0)
+                    } else {
+                        Type::Never
+                    };
+                };
                 if m != u32::MAX {
                     let tp = self.call_nr(code, m, list, types, false, &[], None);
                     if tp != Type::Null {
@@ -15973,16 +16037,14 @@ impl Parser {
             // and `a != b` both true.
             if op == "!="
                 && list.len() == 2
-                && let Some(first) = types.first()
+                && let Some(eq) = self.user_op_method("OpEq", types)
+                && eq != u32::MAX
             {
-                let eq = self.data.find_op_method(u16::MAX, "OpEq", first);
-                if eq != u32::MAX {
-                    let mut eq_code = Value::Null;
-                    let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
-                    if tp != Type::Null {
-                        *code = self.cl("OpNot", &[eq_code]);
-                        return Type::Boolean;
-                    }
+                let mut eq_code = Value::Null;
+                let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
+                if tp != Type::Null {
+                    *code = self.cl("OpNot", &[eq_code]);
+                    return Type::Boolean;
                 }
             }
             // `@FR-E-Eq`, @C91 — vectors, keyed collections and struct-enum values compare by

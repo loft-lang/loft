@@ -597,6 +597,19 @@ fn nullable_receiver_implements_its_variant() {
 }
 
 #[test]
+fn an_operator_no_overload_takes_is_refused() {
+    // loft#1817 — an operator reaches every member of its overload set (`@FR-F-Recv`), and a
+    // second operand NO member takes is still refused naming both operand types, in either
+    // declaration order.  The refusal is the incumbent's own mismatch, reached once the set's
+    // selection finds no applicable member.
+    code!(
+        "struct V { x: integer }\nfn OpMin(self: V, o: V) -> V { V { x: self.x - o.x } }\nfn OpMin(self: V, o: integer) -> V { V { x: self.x - o } }\nstruct W { x: integer }\nfn OpMin(self: W, o: integer) -> W { W { x: self.x - o } }\nfn OpMin(self: W, o: W) -> W { W { x: self.x - o.x } }\nfn test() { a = V { x: 1 }; b = a - \"t\"; c = W { x: 1 }; d = c - \"t\"; }"
+    )
+    .error("No matching operator '-' on 'V' and 'text' at an_operator_no_overload_takes_is_refused:7:40")
+    .error("No matching operator '-' on 'W' and 'text' at an_operator_no_overload_takes_is_refused:7:69");
+}
+
+#[test]
 fn an_operator_at_an_arity_its_type_lacks_is_refused() {
     // loft#1794 — a user type defining `-` at ONE arity is refused at the other, naming the
     // operator the author wrote (loft#1807).  Before, the operator lookup took the receiver

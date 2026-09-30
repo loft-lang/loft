@@ -460,10 +460,12 @@ rather than a bag of functions.  Mark the type and these functions `pub` to use 
 - **Operators** — define `fn OpLt(self: T, other: T) -> boolean` (and `OpLe/OpGt/OpGe/OpEq/OpNe`),
   `fn OpAdd/OpMin/OpMul(self: T, …) -> …`, etc., and `a < b` / `a - b` dispatch them **directly**
   (not only inside `<T: Ordered>`).  `OpMin` is the `-` operator (subtraction), `OpAdd` is `+`.
-  **Operators key on `(OpName, receiver type)`** — you cannot overload the *same* operator by the
-  *second* operand's type (e.g. one `OpMin(T, T)` and one `OpMin(T, U)` collide); give the second
-  form a named method instead.  A type with no such op errors as before (`dt + 5` stays a compile
-  error — distinct-type safety is free).
+  **One operator may be overloaded on its second operand's type** — `OpMin(self: T, o: T)` beside
+  `OpMin(self: T, o: integer)`, in either order: `a - b` reaches the one the call `OpMin(a, b)`
+  would, the exact type preferred over a conversion ((F-Recv), `formal/calls.md`), and a
+  `<T: Subtractable>` body takes the `(T, T)` one.  A second operand no overload takes errors
+  (`No matching operator '-' on 'T' and 'text'`), and so does a type with no such op (`dt + 5`
+  stays a compile error — distinct-type safety is free).
 - **Scope end** — define `fn OpDrop(self: T)` and it runs when the value's OWNER dies: the
   binding's own scope exit, the early-`return`/`break` paths, reverse-declaration order within a
   scope (@PLN125 arc B), and a REASSIGNMENT of the binding, which releases the record it
