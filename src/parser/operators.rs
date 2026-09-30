@@ -4622,7 +4622,14 @@ impl Parser {
                             // Remember the narrow target so the discharging `??` types its
                             // result as `N` (build_null_coalesce_default); the cast BLOCK
                             // itself stays `integer` to keep the null sentinel at full width.
-                            self.dn4_checked_narrow = Some(tp.clone());
+                            //
+                            // Armed only when that `??` is the very next token: a cast that
+                            // ends its operand (`D { w: n as u8?, v: n ?? 7 }`, or the end of
+                            // a statement) has no discharge, and a target left armed was taken
+                            // by the next unrelated `??`, which then refused its own store
+                            // with the `?? <value>` cure it was written with (loft#1791).
+                            self.dn4_checked_narrow =
+                                self.lexer.peek_token("??").then(|| tp.clone());
                             tp = self.dn4_checked_cast(code, &tp, &src_base);
                         } else {
                             diagnostic!(

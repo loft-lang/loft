@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1791 — a checked narrowing cast (`e as N?`, or `e as N` directly left of `??`) hands
+// its narrow target to the `??` that DISCHARGES it, so that `??` can type its result as `N`.
+// The target was armed whether or not a `??` followed, and it waited for the next `??` in the
+// function — across a field separator or a statement end.  An unrelated `n ?? 7` then took it,
+// was guarded a second time, and the store was refused with the very `?? <value>` cure it was
+// written with.  The target is now armed only when the `??` is the next token.
+//
+// Cells: the cast ends its statement; the cast ends a field of the same literal; and the
+// discharges the target exists for (direct, after `?`, and parenthesised).  Hand-computed:
+// 5000 does not fit `u8`, 20 does.
+//
+// @falsified-at: ec35ee1de — measured by hand: the parent refuses `D { v: n ?? 7 }` after
+//   `a = n as u8?;` and after `w: n as u8?,` with "cannot implicitly narrow integer to u8"
+//   on both backends; here every cell compiles and asserts clean on both.
+//   CHANNEL: exit — the control refuses to compile, so nothing runs.
+//   WITNESS: two `cannot implicitly narrow integer to u8` errors, at `c = D { v: n ?? 7, … }`
+//   and at `d = D { w: n as u8?, v: n ?? 7 }`.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+struct D { v: u8, w: u8? }
+
+fn main() {
+  n = 5000;
+  k = 20;
+  a = n as u8?;
+  c = D { v: n ?? 7, w: a };
+  assert(c.v == 7 && !c.w, "after a cast that ends its statement");
+  d = D { w: n as u8?, v: n ?? 7 };
+  assert(d.v == 7 && !d.w, "after a cast that ends a field, out of range");
+  e = D { w: k as u8?, v: k ?? 7 };
+  assert(e.v == 20 && e.w == 20, "after a cast that ends a field, in range");
+  x: u8 = (n as u8?) ?? 7;
+  y: u8 = (k as u8?) ?? 7;
+  z: u8 = n as u8? ?? 9;
+  w: u8 = n as u8 ?? 8;
+  assert(x == 7 && y == 20 && z == 9 && w == 8, "the discharges the target exists for");
+}

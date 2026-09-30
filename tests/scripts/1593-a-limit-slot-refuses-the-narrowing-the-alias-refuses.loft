@@ -24,11 +24,11 @@
 //   below with no diagnostic and prints `0 0 0 0 0 1000`; here each is refused with the cure
 //   named.  The four stores and the call share the message the alias gives; the literal and
 //   the checked cast are the same predicate's other two answers.
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
-// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer limit(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer limit(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer limit(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer limit(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer limit(0, 7) (may lose data)
 struct S1593 { m: integer limit(0, 7) }
 fn id1593(m: integer limit(0, 7)) -> integer { m }
 

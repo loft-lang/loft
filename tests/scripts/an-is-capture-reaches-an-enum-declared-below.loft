@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1790 — an `is` field capture on a subject whose enum is declared FURTHER DOWN.  Pass 1
+// meets the subject as a forward stub, so it cannot tell which fields the variant has; it
+// returned before the capture list, which was then read as the body and reported as
+// `Expect token ;`.  Pass 1 now steps over braces with a capture list's shape, and pass 2,
+// which knows the enum, binds them.  Cells: a two-field capture in a function body, a capture
+// as a value `if`, a capture on a FIELD subject, a plain body with no capture, and a subject
+// typed through an alias of the enum.  Hand-computed values.
+//
+// @falsified-at: ec35ee1de — measured by hand: the parent refuses every capture cell with
+//   `Expect token ;` on both backends; here each runs and asserts clean on both.
+//   CHANNEL: exit — the control refuses to compile, so nothing runs.
+//   WITNESS: `error: Expect token ;` at the capture's closing `}` in `area`.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+struct W { st: Shape, t: integer }
+
+fn area(s: Shape) -> integer {
+  if s is Rect { w, h } { w * h } else { 0 }
+}
+
+fn main() {
+  s: Shape = Rect { w: 3, h: 4 };
+  assert(area(s) == 12, "a two-field capture");
+  t = if s is Circ { r } { r } else { -1 };
+  assert(t == -1, "a capture as a value if, other variant");
+  q = W { st: Circ { r: 6 }, t: 1 };
+  got = 0;
+  if q.st is Circ { r } { got = r; }
+  assert(got == 6, "a capture on a field subject");
+  plain = 0;
+  if s is Rect { plain = 1; }
+  assert(plain == 1, "a plain body is still a body");
+  a: Sh = Circ { r: 5 };
+  via = 0;
+  if a is Circ { r } { via = r; }
+  assert(via == 5, "a subject typed through an alias of the enum");
+}
+
+enum Shape { Circ { r: integer }, Rect { w: integer, h: integer } }
+type Sh = Shape;

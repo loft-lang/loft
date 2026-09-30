@@ -5418,3 +5418,49 @@ fn a_variant_of_another_enum_names_both_enums() {
          a_variant_of_another_enum_names_both_enums:4:21",
     );
 }
+
+// A field capture followed by `and` / `or`: the capture binds for the body alone, so the fault
+// is combining it with a condition — not a missing block, which is what the message said.
+#[test]
+fn a_capture_combined_with_a_condition_names_the_nesting() {
+    code!(
+        "enum Shape { Circle { radius: integer }, Square { side: integer } }\n\
+         fn test() {\n  s = Circle { radius: 5 };\n  if s is Circle { radius } and radius > 3 {\n    println(\"big {radius}\");\n  }\n}"
+    )
+    .error(
+        "a field capture cannot be combined with a condition — `is Circle { radius }` binds its \
+         fields for the body that follows it, and nowhere else.  Nest the test, `if s is Circle \
+         { radius } { if … { … } }`, or use a `match` guard, `match s { Circle { radius } if … \
+         => …, _ => … }` at a_capture_combined_with_a_condition_names_the_nesting:4:32",
+    );
+}
+
+// The narrowing refusal's checked-cast cure for an inline `limit` field is a spelling the parser
+// reads: it printed `as integer(0, 1000000)?`, the type's key, which does not parse.  The cure
+// as printed compiles (`tests/scripts/a-limit-narrowing-cure-compiles-as-printed.loft`).
+#[test]
+fn a_limit_narrowing_cure_is_a_spelling_that_parses() {
+    code!(
+        "struct S { v: integer limit(0, 1000000) }\n\
+         fn test() {\n  n = 5000;\n  s = S { v: n };\n  println(\"{s.v}\");\n}"
+    )
+    .error(
+        "cannot implicitly narrow integer to integer limit(0, 1000000) (may lose data) — give \
+         it a fallback with `?? <value>`, take the checked cast `as integer limit(0, 1000000)?` \
+         (value or null), or make the value provably fit (a mask, or an `if` range check) at \
+         a_limit_narrowing_cure_is_a_spelling_that_parses:4:17",
+    );
+}
+
+// A function body whose last statements follow a `return` cannot fall off its end: the
+// unreachable-code warning is the one diagnostic, with no false `got void on return` beside it.
+#[test]
+fn statements_after_a_return_do_not_make_the_body_fall_off() {
+    code!(
+        "fn f() -> integer { return 3; println(\"after\"); }\nfn test() {\n  println(\"{f()}\");\n}"
+    )
+    .warning(
+        "Unreachable code after return at \
+             statements_after_a_return_do_not_make_the_body_fall_off:1:31",
+    );
+}

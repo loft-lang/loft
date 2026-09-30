@@ -836,6 +836,9 @@ impl Parser {
         let mut t = Type::Void;
         let mut l = Vec::new();
         let mut terminated: Option<&str> = None;
+        // Whether a statement of THIS block left it unconditionally — `terminated` is cleared
+        // once its warning is out, and this is the fact that outlives the warning.
+        let mut diverged = false;
         // @PLN25/#585 guard-clause flow-narrowing: a `narrowed_non_null` push made INSIDE this
         // block (by a fall-through guard, below) holds only for the rest of THIS block, so record
         // the entry depth and restore it before returning. Without the restore the proof leaks to
@@ -1130,6 +1133,7 @@ impl Parser {
                 Value::Continue(_) => terminated = Some("continue"),
                 _ => {}
             }
+            diverged |= terminated.is_some();
             // A PROJECTION proof holds for the first statement of the block and no further.
             // Unlike a name's, its lifetime cannot be tracked — anything reaching any part of
             // the path invalidates it, including a call the parser cannot see through — so it
@@ -1333,6 +1337,26 @@ impl Parser {
         self.lexer.token("}");
         if matches!(l.last(), Some(Value::Line(_))) {
             l.pop();
+        }
+        // A function body that RETURNED before its last statement cannot fall off its end:
+        // the statements after the `return` are the `unreachable-code` warning's, and the
+        // body's value is the returned one.  Typed by its last statement instead, `fn f() ->
+        // integer { return 3; println("after"); }` drew a second, false error — *"expected
+        // integer, got void on return from block"* — about a fall-off no path reaches.  The
+        // unreachable statements are dropped with it, so the body is exactly the one that
+        // ends at its `return`: kept, `--native` emitted the last of them as the function's
+        // `return` value and rustc refused the file.  Only the function body: a loop body or
+        // a branch arm is typed for its enclosing construct, and `Never` there changes which
+        // arm decides a join.
+        if diverged
+            && context == "return from block"
+            && matches!(t, Type::Void)
+            && let Some(at) = l
+                .iter()
+                .position(|s| matches!(s, Value::Return(_) | Value::Break(_) | Value::Continue(_)))
+        {
+            l.truncate(at + 1);
+            t = Type::Never;
         }
         // A block that YIELDS a value must not have dropped its own tail.
         //
@@ -7642,6 +7666,35 @@ impl Parser {
     /// rather than a body opening with a declaration?  Only when `field` is a field of the
     /// variant and `name` is not a type — `{ radius: integer }` stays a body.  Called inside a
     /// lookahead the caller reverts, after `field` has been read.
+    /// Pass 1 over `is V { a, b: c }` whose subject's enum is not declared yet: consume the
+    /// braces when they have a capture list's SHAPE — names, each optionally renamed, separated
+    /// by `,` — and leave anything else (a body) where it is.  The same lookahead the known-enum
+    /// path uses, minus the field names it cannot see yet.
+    fn skip_forward_capture_list(&mut self) {
+        if !self.lexer.peek_token("{") {
+            return;
+        }
+        let link = self.lexer.link();
+        self.lexer.token("{");
+        loop {
+            if self.lexer.has_identifier().is_none() {
+                self.lexer.revert(link);
+                return;
+            }
+            if self.lexer.has_token(":") && self.lexer.has_identifier().is_none() {
+                self.lexer.revert(link);
+                return;
+            }
+            if self.lexer.has_token("}") {
+                return;
+            }
+            if !self.lexer.has_token(",") {
+                self.lexer.revert(link);
+                return;
+            }
+        }
+    }
+
     fn is_capture_rename_attempt(&mut self, variant_def_nr: u32, field: Option<&str>) -> bool {
         let Some(field) = field else {
             return false;
@@ -12229,6 +12282,13 @@ impl Parser {
                         "'is' requires an enum type, got {}",
                         subject_type.source_name(&self.data)
                     );
+                } else if matches!(subject_type, Type::Unknown(_)) {
+                    // A subject whose enum is declared further down is a forward stub on
+                    // pass 1, so nothing here can say which fields the variant has — but the
+                    // capture list is still in the stream, and left there it was read as the
+                    // body and reported as `Expect token ;` (loft#1790).  Step over it by its
+                    // shape; pass 2 knows the enum and binds it for real.
+                    self.skip_forward_capture_list();
                 }
                 return Type::Boolean;
             }
@@ -12463,7 +12523,36 @@ impl Parser {
             // generic `Expect token {` the caller raises on pass 1 is the error the run stops
             // on and pass 2 never sees the file (slice 7's fallback-parser lesson, from the
             // other side).
-            if !self.lexer.peek_token("{") {
+            // A capture followed by `and` / `or` is a different mistake with a different cure:
+            // the author wanted the captured name in a CONDITION, and the block-has-to-follow
+            // sentence above would only send them to write the same thing again.  The capture
+            // binds for the body alone, so the condition has to move inside it — or into a
+            // `match` guard, which is the construct built for exactly this.
+            if ["and", "or", "&&", "||"]
+                .iter()
+                .any(|op| self.lexer.peek_token(op))
+            {
+                let variant = self.data.def(variant_def_nr).name().to_string();
+                // The subject as the author wrote it when it is a plain name; a call or a
+                // projection was stabilised into a compiler temp, whose name means nothing.
+                let subject = match stable_subject.unspan() {
+                    Value::Var(v) if !self.vars.name(*v).starts_with('_') => {
+                        self.vars.name(*v).to_string()
+                    }
+                    _ => "…".to_string(),
+                };
+                let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
+                let captured = names.join(", ");
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a field capture cannot be combined with a condition — `is {variant} \
+                     {{ {captured} }}` binds its fields for the body that follows it, and \
+                     nowhere else.  Nest the test, `if {subject} is {variant} {{ {captured} }} \
+                     {{ if … {{ … }} }}`, or use a `match` guard, `match {subject} {{ \
+                     {variant} {{ {captured} }} if … => …, _ => … }}`"
+                );
+            } else if !self.lexer.peek_token("{") {
                 let names: Vec<&str> = seen_fields.iter().map(String::as_str).collect();
                 let captured = names.join(", ");
                 diagnostic!(

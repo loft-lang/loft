@@ -4957,10 +4957,14 @@ impl Parser {
             if s.is_wide_template() || s.is_signed32_template() {
                 return t.source_name(&self.data);
             }
-            return self
-                .data
-                .integer_alias_any_source(s, false)
-                .map_or_else(|| t.source_name(&self.data), str::to_string);
+            // With no alias to name it — an inline `integer limit(0, 1000000)` field — the
+            // range is spelled the way the author wrote it.  `t.source_name` answers
+            // `integer(0, 1000000)`, the type's own key, and the cure built from it
+            // (`as integer(0, 1000000)?`) did not parse.
+            return self.data.integer_alias_any_source(s, false).map_or_else(
+                || format!("integer limit({}, {})", s.min, s.max),
+                str::to_string,
+            );
         }
         // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
         // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases

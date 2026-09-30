@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The narrowing refusal on an inline `integer limit(lo, hi)` slot names its cures in the type's
+// own spelling, and that spelling has to be one the parser reads: it printed
+// `as integer(0, 1000000)?`, the type's KEY, which does not parse.  It now prints
+// `as integer limit(0, 1000000)?` (`parse_errors::a_limit_narrowing_cure_is_a_spelling_that_parses`
+// pins the message), and each cure below is copied from it verbatim.
+//
+// @falsified-at: ec35ee1de — measured by hand: the parent's printed cure,
+//   `n as integer(0, 1000000)?`, does not parse; the spelling printed here compiles and runs on
+//   both backends with the values below.
+//   CHANNEL: expectations — the control's printed cure `as integer(0, 1000000)?` fails to parse
+//   when typed in; this file holds the spelling printed HERE, which the control's message
+//   never offers.
+//   WITNESS: the control's refusal text names `as integer(0, 1000000)?`.
+//   HOLDS: here no diagnostic, every assertion passes and nothing leaks, on both backends.
+
+struct Slot { v: integer limit(0, 1000000)? }
+struct Dense { v: integer limit(0, 1000000) }
+
+// Its own function, so this cell measures the printed cure and nothing a cast earlier in the
+// body could arm (loft#1791 is pinned by `a-checked-cast-arms-only-the-discharge-that-follows-it`).
+fn fallback(m: integer) -> integer {
+  d = Dense { v: m ?? 7 };
+  d.v
+}
+
+fn main() {
+  n = 5000;
+  m = 2000000;
+  a = n as integer limit(0, 1000000)?;
+  assert(a == 5000, "a value in range passes the checked cast");
+  b = Slot { v: m as integer limit(0, 1000000)? };
+  assert(!b.v, "a value out of range answers null");
+  assert(fallback(m) == 7, "the fallback cure answers the fallback for a value out of range");
+  assert(fallback(n) == 5000, "and the value for one in range");
+}

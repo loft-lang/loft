@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function body whose last statements follow a top-level `return` cannot fall off its end,
+// so the only diagnostic it earns is `unreachable-code`.  It also drew a false ERROR —
+// "expected integer, got void on return from block" — because the body was typed by its last,
+// unreachable statement.  The unreachable statements are dropped with the warning, so the body
+// is exactly the one that ends at its `return` on both backends (kept, `--native` emitted the
+// last of them as the function's value and rustc refused the file).
+//
+// @EXPECT_WARNING: Unreachable code after return
+// @EXPECT_WARNING: Unreachable code after return
+//
+// @falsified-at: ec35ee1de — measured by hand: the parent refuses `after_return` with
+//   `expected integer, got void on return from block`; here it runs on both backends and
+//   answers 3, 1 and 3.
+//   CHANNEL: exit — the control refuses to compile, so nothing runs.
+//   WITNESS: `error: expected integer, got void on return from block` at `println("never")`.
+//   HOLDS: here the two `unreachable-code` warnings are the only diagnostics, every assertion
+//   passes and nothing leaks, on both backends.
+
+fn after_return() -> integer { return 3; println("never"); }
+
+fn guarded(n: integer) -> integer {
+  if n > 0 { return 1; }
+  return 3;
+  x = n * 2;
+  println("never {x}");
+}
+
+fn main() {
+  assert(after_return() == 3, "the returned value, not the unreachable tail");
+  assert(guarded(1) == 1, "the early return");
+  assert(guarded(0) == 3, "the top-level return, with a declaration after it");
+}
