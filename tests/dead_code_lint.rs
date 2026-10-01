@@ -968,3 +968,38 @@ fn a_whole_write_through_a_keyed_link_is_not_a_dead_store() {
         "the copy `d` is still a dead store\n{diag}"
     );
 }
+
+/// loft#1837 — a `text` parameter replaced before it is read is the same lost value whether or
+/// not the function returns it.  Returned, its shadow IS the return buffer (a hidden `&text`),
+/// and three gates read that buffer's `&` as the author's: the incoming seed, the write-through
+/// test and the extra use a `&` left side counts.  The other cells must stay silent — each reads
+/// the incoming value, or writes it only on one branch, or is a `&` parameter (its write is the
+/// caller's).
+const RETURNED_TEXT_PARAM: &str = "fn read_after(t: text) -> text { t = \"x\"; t }\n\
+fn read_before(t: text) -> text { y = t; t = \"x\"; \"{t}{y}\" }\n\
+fn self_read(t: text) -> text { t = t + \"x\"; t }\n\
+fn appended(t: text) -> text { t += \"x\"; t }\n\
+fn linked(t: &text) -> text { t = \"x\"; t }\n\
+fn branch(t: text, b: boolean) -> text { if b { t = \"x\"; } t }\n\
+fn main() { s = \"q\"; print(\"r={read_after(\"a\")},{read_before(\"a\")},{self_read(\"a\")},{appended(\"a\")},{linked(s)},{s},{branch(\"a\", true)}\"); }\n";
+
+#[test]
+fn a_returned_text_parameter_replaced_unread_is_reported() {
+    // The lints run in the front end, which both backends share: one backend measures them.
+    let (out, diag) = run_body(RETURNED_TEXT_PARAM, "--interpret", "ret_text_param");
+    assert!(
+        out.contains("r=x,xa,ax,ax,x,x,x"),
+        "values: {out:?}\n{diag}"
+    );
+    let reported = diag
+        .matches("The value parameter 't' receives is never read")
+        .count();
+    assert_eq!(
+        reported, 1,
+        "only `read_after` loses its incoming value\n{diag}"
+    );
+    assert!(
+        diag.contains("fn read_after"),
+        "the warning names `read_after`\n{diag}"
+    );
+}

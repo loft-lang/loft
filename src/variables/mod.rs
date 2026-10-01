@@ -2340,8 +2340,8 @@ impl Function {
                     && !name.contains('#')
                     && !var.const_binding
                     && !var.value_const
-                    && !var.caller_hidden_buf
-                    && !matches!(var.type_def.base(), Type::RefVar(_))
+                    && (!var.caller_hidden_buf || var.promoted_from != u16::MAX)
+                    && !matches!(self.declared_type(nr as u16).base(), Type::RefVar(_))
             };
             if eligible {
                 let var = &mut self.variables[nr];
@@ -2349,6 +2349,18 @@ impl Function {
                 var.write_source = var.source;
                 var.incoming_seed = true;
             }
+        }
+    }
+
+    /// The type the author DECLARED for `v`: a promoted `text` shadow's is its parameter's.
+    /// loft#1837 — when the function returns that text the shadow IS the return buffer, a
+    /// hidden `&text` argument, and the `&` there is the buffer's, never the author's.
+    pub fn declared_type(&self, v: u16) -> &Type {
+        let var = &self.variables[v as usize];
+        if var.promoted_from == u16::MAX {
+            &var.type_def
+        } else {
+            &self.variables[var.promoted_from as usize].type_def
         }
     }
 

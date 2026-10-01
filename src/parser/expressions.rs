@@ -3345,6 +3345,15 @@ use a separate collection or add after the loop"
         }
         if untaken {
             self.vars.add_target_mention(target);
+            // loft#1837 — a returned `text` parameter's shadow is the return buffer, typed
+            // `&text`, and `parse_assign_inner` counts a `&` left side once more (a link's
+            // write reads its binding).  That `&` is the buffer's, not the author's: the
+            // statement wrote the parameter and read nothing, so take that use back too.
+            if matches!(self.vars.tp(target).base(), Type::RefVar(_))
+                && !matches!(self.vars.declared_type(target).base(), Type::RefVar(_))
+            {
+                self.vars.add_target_mention(target);
+            }
         }
         if !self.first_pass && self.vars.exists(target) {
             self.vars.track_write(target, &mut self.lexer);
@@ -3359,7 +3368,9 @@ use a separate collection or add after the loop"
     fn assign_writes_through(&self, v: u16) -> bool {
         // Through `base()` (`@FR-N-Shape`): a link to a `vector<T>?` is a link all the same.
         let tp = self.vars.tp(v).base();
-        matches!(tp, Type::RefVar(_))
+        // The DECLARED type for the `&`: a returned `text` parameter's shadow is the return
+        // buffer, typed `&text`, and that `&` is the buffer's, not the author's (loft#1837).
+        matches!(self.vars.declared_type(v).base(), Type::RefVar(_))
             || self.vars.is_store_text_link(v)
             || self.vars.is_amp_container_link(v)
             || (matches!(tp, Type::Vector(..)) && {
