@@ -1,0 +1,8 @@
+// loft#1828 — the carry-on hides nothing: a real error after the capture is still reported.
+enum Shape { Circle { radius: float }, Square { side: float } }
+fn main() {
+  c = Circle { radius: 2.0 };
+  v = if c is Circle { radius } else { 0.0 };
+  w = 1 +;
+  println("{v}");
+}

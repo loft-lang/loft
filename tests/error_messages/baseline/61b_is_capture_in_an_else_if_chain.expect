@@ -1,0 +1,16 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `{ radius }` after `is Circle` is the field-capture list, not the body — a block has to follow it. Write `is Circle { radius } { … }`, repeating the name if the body is just that value, or use `match`, which takes captures and IS an expression
+  --> <cases>/61b_is_capture_in_an_else_if_chain.loft:3:57
+  |
+3 | fn f(c: Shape) -> float { if c is Circle { radius } else if c is Square { side } else { 0.0 } }
+  |                                                         ^
+
+error: `{ side }` after `is Square` is the field-capture list, not the body — a block has to follow it. Write `is Square { side } { … }`, repeating the name if the body is just that value, or use `match`, which takes captures and IS an expression
+  --> <cases>/61b_is_capture_in_an_else_if_chain.loft:3:86
+  |
+3 | fn f(c: Shape) -> float { if c is Circle { radius } else if c is Square { side } else { 0.0 } }
+  |                                                                                      ^
+
+error: aborting due to 2 previous errors

@@ -1284,6 +1284,11 @@ pub struct Parser {
     /// Field-capture aliases created by `if expr is Variant { field } { body }`.
     /// Drained by `parse_if` after the body to restore previous name mappings.
     pub(crate) is_capture_aliases: Vec<(String, Option<u16>)>,
+    /// Where a field-capture list that was reported as standing in the body's place ended
+    /// (loft#1828): the next token, when it is not `{`.  `parse_block` reads a body that
+    /// starts at exactly this token as the one the capture already stood for, so the
+    /// construct's own `{` demand does not report the same mistake again.
+    pub(crate) capture_took_body: Option<crate::lexer::Position>,
     /// Post-2c: captures the most recently parsed `as <alias>` cast target's
     /// def_nr when the alias has a `size(N)` annotation.  Consumed by
     /// `append_to_file` so that `f += x as i32` narrows the serialised
@@ -1871,6 +1876,7 @@ impl Parser {
             init_reads_record: false,
             in_par_body: false,
             is_capture_aliases: Vec::new(),
+            capture_took_body: None,
             is_capture_bindings: Vec::new(),
             last_cast_alias: u32::MAX,
             dn4_checked_narrow: None,
