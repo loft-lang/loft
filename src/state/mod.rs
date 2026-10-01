@@ -59,8 +59,6 @@ pub struct CallFrame {
     pub args_base: u32,
     /// Total byte size of all parameters.
     pub args_size: u16,
-    /// Source line number of the call site (TR1.4).  0 if unknown.
-    pub line: u32,
 }
 
 /// May the interpreter stack take its direct path (`State::fast_stack`)?  Not while any
@@ -786,6 +784,19 @@ impl State {
         }
     }
 
+    /// The source line of the call made at `call_pos`: the nearest line entry STRICTLY before
+    /// it.  Entries sit before the first instruction of each line, and a frame's `call_pos` is
+    /// already past the whole Call instruction, so an entry AT it belongs to the next statement
+    /// (loft#1753).  0 for a frame with no call site (`call_pos` 0).  Asked when a stack is
+    /// rendered, not at every call: the lookup was 8 % of a call-heavy interpreted loop.
+    #[must_use]
+    pub fn call_line(&self, call_pos: u32) -> u32 {
+        self.line_numbers
+            .range(..call_pos)
+            .next_back()
+            .map_or(0, |(_, &v)| v)
+    }
+
     /// Call a function, remember the current code position on the stack.
     ///
     /// * `d_nr` - definition number of the called function.
@@ -800,11 +811,6 @@ impl State {
         // sit before the first instruction of each line, and `code_pos` is already past the
         // whole Call instruction, so an entry AT `code_pos` belongs to the next statement —
         // the one a call that ends its statement is followed by (loft#1753).
-        let line = self
-            .line_numbers
-            .range(..self.code_pos)
-            .next_back()
-            .map_or(0, |(_, &v)| v);
         // Plan-07 phase 4f.12 — stack overflow becomes a typed
         // RuntimeError instead of an opaque Rust panic.  Detect at
         // call entry, raise StackOverflow.  Production logs +
@@ -853,7 +859,6 @@ impl State {
             call_pos: self.code_pos,
             args_base,
             args_size,
-            line,
         });
         self.put_stack(self.code_pos);
         self.code_pos = to as u32;
@@ -1197,10 +1202,10 @@ impl State {
                         // next frame's `line`.  (loft#1753: a lookup of the next frame's
                         // call position here named the statement AFTER a call that ended
                         // its statement, and only then.)
-                        (name, file, f.line)
+                        (name, file, self.call_line(f.call_pos))
                     } else {
                         // Worker frame without Data context — use placeholder.
-                        ("<worker>".to_string(), String::new(), f.line)
+                        ("<worker>".to_string(), String::new(), self.call_line(f.call_pos))
                     }
                 })
                 .collect();
@@ -6419,7 +6424,6 @@ impl State {
             call_pos: 0,
             args_base: entry_base,
             args_size: 0,
-            line: 0,
         });
         // If fn main declares a vector<text> parameter, push argv before the return address.
         //
@@ -7300,7 +7304,6 @@ impl State {
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7345,7 +7348,6 @@ impl State {
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7429,7 +7431,6 @@ impl State {
             call_pos: 0,
             args_base: base,
             args_size: 0,
-            line: 0,
         });
         self.put_stack(u32::MAX);
         self.code_pos = code_position;
@@ -7825,7 +7826,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(*arg); // 12 bytes → stack_pos = 16
@@ -7862,7 +7862,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         // Push extra context args first (they precede the element arg in the
@@ -7919,7 +7918,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: input_size as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         // Push the primitive input value at its native byte width.
@@ -8027,7 +8025,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: stepped_size as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.ensure_stack(stepped_size);
@@ -8108,7 +8105,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size: 12,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(*arg);
@@ -8179,7 +8175,6 @@ impl State {
             // variable-snapshot readers scan `args_size` bytes of the frame, so a
             // hardcoded 16 sends them past the argument in a browser build.
             args_size: size_of::<Str>() as u16,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.put_stack(input_str);
@@ -8289,7 +8284,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         self.stack_pos = self.stack_step(4); // @PLAN53 2j: stepped par-worker entry base (guard-clean; identity flag-OFF)
         self.push_worker_arg(arg);
@@ -8340,7 +8334,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         // Allocate String buffers for hidden RefVar(Text) params in the stack store.
         let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
@@ -8441,7 +8434,6 @@ impl State {
             call_pos: 0,
             args_base: self.stack_step(4),
             args_size,
-            line: 0,
         });
         // Hidden text work-buffers (String allocated in the stack store), mirroring
         // `execute_at_text` — a `-> text` callee reads/writes these before the return.
