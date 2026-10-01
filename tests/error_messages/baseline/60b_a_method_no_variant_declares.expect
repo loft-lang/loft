@@ -1,0 +1,10 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: Unknown field Tri.nothing
+  --> <cases>/60b_a_method_no_variant_declares.loft:3:60
+  |
+3 | fn main() { s = Shape::Tri { a: 1.0 }; println("{s.nothing()}"); }
+  |                                                            ^
+
+error: aborting due to 1 previous error

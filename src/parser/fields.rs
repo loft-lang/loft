@@ -646,6 +646,21 @@ impl Parser {
                             concept: "struct fields",
                             concept_ref: "@F12",
                         });
+                    } else if let Some(declared) = self.sibling_variants_with_method(&t, &field) {
+                        // A variant value whose method is declared for its SIBLINGS: the
+                        // author called a method, so "Unknown field" names the wrong thing,
+                        // and the two cures are a method of its own or a fallback on the enum.
+                        let variant = t.source_name(&self.data);
+                        let parent = self.data.def(self.data.type_def_nr(&t)).parent();
+                        let enum_name = self.data.def(parent).name().to_string();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{variant}` has no method `{field}` — it is declared for {declared} \
+                             only.  Give `{variant}` its own `fn {field}(self: {variant})`, or \
+                             declare a fallback `fn {field}(self: {enum_name})` for the variants \
+                             without one"
+                        );
                     } else {
                         diagnostic!(
                             self.lexer,
@@ -2664,6 +2679,31 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// half means split, an `OpNullRefSentinel` means the legacy four bytes. That is the
     /// same source of truth the reader used, so reader and writer cannot disagree about
     /// where the closure half lives (or whether there is one).
+    /// The sibling variants that declare `method`, when `t` is a struct-enum VARIANT value
+    /// that does not — named for a refusal ("declared for Circle, Square"), or `None` when
+    /// `t` is no variant or no sibling declares it.
+    fn sibling_variants_with_method(&self, t: &Type, method: &str) -> Option<String> {
+        let Type::Reference(child, _) = t.base() else {
+            return None;
+        };
+        let parent = self.data.def(*child).parent();
+        if parent == u32::MAX || !matches!(self.data.def_type(parent), DefType::Enum) {
+            return None;
+        }
+        let declared: Vec<String> = self
+            .data
+            .children_of(parent)
+            .filter(|&c| c != *child && self.data.def_type(c) == DefType::EnumValue)
+            .filter(|&c| {
+                let m = self.data.def_nr(&self.data.method_key(c, method, 0));
+                m != u32::MAX
+                    && matches!(self.data.def_type(m), DefType::Function | DefType::Generic)
+            })
+            .map(|c| self.data.def(c).name().to_string())
+            .collect();
+        (!declared.is_empty()).then(|| declared.join(", "))
+    }
+
     pub(crate) fn fn_ref_place(&self, code: &Value) -> Option<(Value, Value, bool)> {
         let Value::Block(b) = code.unspan() else {
             return None;

@@ -1,0 +1,3 @@
+// The control: a method NO variant declares stays an unknown field.
+enum Shape { Circle { r: float }, Tri { a: float } }
+fn main() { s = Shape::Tri { a: 1.0 }; println("{s.nothing()}"); }

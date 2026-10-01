@@ -865,7 +865,11 @@ fn direct_call_unimplemented_variant() {
 fn area(self: Circle) -> float { self.r * self.r }
 fn test() { r = Rect { w: 3.0, h: 4.0 }; r.area(); }"
     )
-    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49");
+    .error(
+        "`Rect` has no method `area` — it is declared for Circle only.  Give `Rect` its own \
+         `fn area(self: Rect)`, or declare a fallback `fn area(self: Shape)` for the variants \
+         without one at direct_call_unimplemented_variant:3:49",
+    );
 }
 
 // --- parallel_for: extra context-argument count validation ---

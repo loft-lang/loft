@@ -1,0 +1,6 @@
+// A variant value calling a method only its siblings declare: the refusal names the method,
+// the variants that declare it, and the two cures.
+enum Shape { Circle { r: float }, Square { s: float }, Tri { a: float } }
+fn area(self: Circle) -> float { self.r }
+fn area(self: Square) -> float { self.s }
+fn main() { s = Shape::Tri { a: 1.0 }; println("{s.area()}"); }
