@@ -912,6 +912,7 @@ impl WorkerStores {
             pos < self.stores.allocations.len(),
             "take_slot: slot {slot_nr} out of range",
         );
+        crate::store::refuse_stack_buffer(self.stores.allocations[pos].stack_buffer, "take_slot");
         let sentinel = crate::store::Store::new_freed_sentinel();
         std::mem::replace(&mut self.stores.allocations[pos], sentinel)
     }
@@ -1134,6 +1135,7 @@ impl Stores {
             pos < self.allocations.len(),
             "take_store: slot {slot_nr} out of range"
         );
+        crate::store::refuse_stack_buffer(self.allocations[pos].stack_buffer, "take_store");
         let sentinel = crate::store::Store::new_freed_sentinel();
         std::mem::replace(&mut self.allocations[pos], sentinel)
     }

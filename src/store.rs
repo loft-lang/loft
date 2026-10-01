@@ -313,6 +313,10 @@ pub struct Store {
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
     claims: Claims,
+    /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
+    /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
+    /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
+    pub(crate) stack_buffer: bool,
     size: u32,
     #[cfg(feature = "mmap")]
     file: Option<MmapStorage>,
@@ -1030,6 +1034,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1166,6 +1171,7 @@ impl Store {
             recording: None,
             tag: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1245,6 +1251,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1348,6 +1355,7 @@ impl Store {
             foreign: None,
             free_protect_depth: 0,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -1678,6 +1686,7 @@ impl Store {
     /// Grow the store to accommodate `size` words and return the position of the
     /// new free block (either the extended last block or a fresh one).
     fn claim_grow(&mut self, size: u32, last: u32, last_claim: i32) -> u32 {
+        refuse_stack_buffer(self.stack_buffer, "claim_grow");
         let cur = self.size;
         let new_size = if last_claim < 0 {
             (self.size as i32 + size as i32 + last_claim) as u32
@@ -2531,6 +2540,7 @@ impl Store {
             recording: None,
             tag: self.tag,
             borrowed: false,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -2577,6 +2587,7 @@ impl Store {
             foreign: self.foreign.clone(),
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
+            stack_buffer: false,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             created_at: self.created_at,
@@ -2636,6 +2647,7 @@ impl Store {
             recording: None,
             tag: self.tag,
             borrowed: true,
+            stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             created_at: 0,
@@ -3067,6 +3079,7 @@ impl Store {
     /// Without it the tail is whatever this buffer held, and a zero word there
     /// reads as a zero-size block: the chain walk then never terminates.
     pub fn adopt_image(&mut self, bytes: &[u8]) {
+        refuse_stack_buffer(self.stack_buffer, "adopt_image");
         let words = u32::try_from(bytes.len() / 8)
             .unwrap_or(u32::MAX)
             .max(PRIMARY + 1);
@@ -3193,6 +3206,7 @@ impl Store {
     /// free path ever walks the chain.
     #[allow(dead_code)] // @PLN123 A2 lands inert: A3 is what calls it.
     pub fn reclaim_tail(&mut self) -> u32 {
+        refuse_stack_buffer(self.stack_buffer, "reclaim_tail");
         if self.needs_coalesce {
             self.coalesce_free();
         }
@@ -6826,5 +6840,48 @@ mod tests {
             0,
             "absorbed region must be zeroed (kept 0xCAFE pre-fix)"
         );
+    }
+
+    /// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than the
+    /// stack's own growth panics, so a cached stack base can never be left dangling.
+    #[test]
+    #[should_panic(expected = "only State::grow_stack may move its buffer")]
+    fn a_claim_that_grows_the_stack_store_is_refused() {
+        let mut store = Store::new(16);
+        store.stack_buffer = true;
+        for _ in 0..64 {
+            store.claim(8);
+        }
+    }
+
+    /// The control: the same claims on any other store grow it as always.
+    #[test]
+    fn a_claim_that_grows_another_store_is_allowed() {
+        let mut store = Store::new(16);
+        for _ in 0..64 {
+            store.claim(8);
+        }
+    }
+}
+
+/// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than
+/// `State::grow_stack` would leave `State::stack_base` pointing into a freed buffer, so the
+/// moves that are not the stack's own refuse it.  None reaches the stack store today (nothing
+/// claims into it, adopts an image into it, trims it or takes it out of the table); this
+/// makes that a checked fact rather than a convention.  The paths are rare, so the check
+/// costs nothing a run can measure.
+#[cold]
+#[inline(never)]
+fn refuse_stack_buffer_failed(what: &str) -> ! {
+    panic!(
+        "{what} on the interpreter's stack store: only State::grow_stack may move its buffer \
+         (@FR-R-StackBase)"
+    )
+}
+
+#[inline]
+pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
+    if is_stack {
+        refuse_stack_buffer_failed(what);
     }
 }
