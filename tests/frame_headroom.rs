@@ -37,3 +37,28 @@ fn a_frame_reaches_the_call_stack_only_through_push_frame() {
     );
     assert!(sites[0].contains("state/mod.rs"), "{sites:?}");
 }
+
+/// The guard program under `LOFT_HEADROOM_VERIFY=1`: after every op, the stack top lies in
+/// the running frame's room, and the room in the stack buffer.  The value cells alone cannot
+/// see a missing room — the store grows by 7/3 when it grows, so a push past the room
+/// usually lands in slack — so this is the run that fails when a height is recorded too low
+/// or a frame enters without its room.
+#[test]
+fn the_guard_program_holds_every_frame_inside_its_room() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg(&file)
+        .env("LOFT_HEADROOM_VERIFY", "1")
+        .env("LOFT_TIMEOUT", "300")
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("spawn loft");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.trim_end().ends_with("ok"),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
