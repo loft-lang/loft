@@ -395,9 +395,9 @@ def check_reference_pdf():
 
     `make-release.sh` copies this file into every bundle when it exists, and never
     builds it -- so a stale one ships a reference that does not describe the release, in
-    all four zips, silently.  Unlike the HTML docs, which the tag's `docs` job
-    regenerates from source, nothing rebuilds this: `make pdf` (after `gendoc`) is a
-    hand-run step, RELEASE.md § 9.
+    all four zips, silently.  Unlike the HTML docs, which Pages serves from `main:/docs`
+    as committed, this is copied into a bundle: `make pdf` (after `gendoc`) is a hand-run
+    step, RELEASE.md § 9.
     """
     pdf = os.path.join(ROOT, PDF)
     if not os.path.isfile(pdf):
@@ -1737,8 +1737,8 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "M-pages",
             "The deployed docs site boots in a browser",
             "open the Pages gallery.html and brick-buster.html, watch the console",
-            "the release docs job rebuilds the wasm and deploys without loading it; a "
-            "glue/wasm mismatch has shipped this way before",
+            "Pages serves the committed main:/docs and nothing loads the page before a "
+            "user does; a glue/wasm mismatch has shipped this way before",
         ),
     ]
 

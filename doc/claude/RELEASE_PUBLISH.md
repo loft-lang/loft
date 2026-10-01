@@ -143,10 +143,10 @@ so the tag run is the only place they can be checked.
 ## The reference PDF
 
 **`make-release.sh` copies `doc/loft-reference.pdf` into all four bundles and never builds it.**
-The HTML docs are committed and served from `main:/docs`, rebuilt on every push, so they cannot
-go stale at a tag.  (The tag's `docs` job builds them again for a `gh-pages` branch nothing
-serves, and fails on every release run; deleting it is the owner's call.)  The PDF is a
-committed file only `gendoc` + `make pdf` update, so three checklist items guard it:
+The HTML docs are committed and GitHub Pages serves them from `main:/docs` (the `docs -> doc`
+symlink), republished on every push to `main`, so they cannot go stale at a tag and the tag
+pipeline has no docs step.  The PDF is a committed file only `gendoc` + `make pdf` update, so
+three checklist items guard it:
 
 - **`A-pdf`** — current against what decides its content: `tests/docs/`, `default/`,
   `src/gendoc.rs`, `src/documentation.rs` and `Cargo.toml`.  Not against

@@ -53,7 +53,7 @@ the work.
 
 | Gotcha | Why | Action |
 |---|---|---|
-| **GitHub Pages** | `jjstwerff.github.io/loft` (playground/gallery/brick-buster, 14 refs) is **owner-scoped** and does **not** redirect. | Set a **custom domain** (moves with you) — best — or accept `loft-lang.github.io/loft` and rewrite the 14 refs. The release workflow's `peaceiris/actions-gh-pages` re-publishes under the new owner automatically. |
+| **GitHub Pages** | `jjstwerff.github.io/loft` (playground/gallery/brick-buster, 14 refs) is **owner-scoped** and does **not** redirect. | Set a **custom domain** (moves with you) — best — or accept `loft-lang.github.io/loft` and rewrite the 14 refs. Pages serves `main:/docs` (the repository's Pages source setting, no workflow), so check that setting is still on after the move. |
 | **Org Actions permissions** | The `apply`/`strip` workflows need `issues: write` from `GITHUB_TOKEN`; orgs often default workflow permissions to **read-only**. | Enable read/write (or the `issues: write` scope) in `loft-lang` org → Settings → Actions, else the lifecycle automation silently no-ops. |
 | **`registry.rs` raw URL** | `raw.githubusercontent.com/jjstwerff/loft-registry/main/registry.txt` — raw URLs are not guaranteed to redirect, and the repo is **renamed** `loft-registry`→`registry`. | Update `src/registry.rs:10` (the rewrite script does this). |
 | **Collaborators / secrets / branch protection / environments** | Access becomes org-team-based; some settings re-set on transfer. | Re-grant via org teams; re-check repo secrets, branch protection, and environments after the move. |

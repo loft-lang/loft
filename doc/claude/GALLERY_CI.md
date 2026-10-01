@@ -151,13 +151,14 @@ This catches the case where a developer changes loft source, the
 graphics library, or `lib/graphics/examples/25-brick-buster.loft`
 without rebuilding the corresponding browser artefact.
 
-### 3. Release-time rebuild (`.github/workflows/release.yml::docs` job)
+### 3. What Pages serves (`main:/docs`)
 
-The Pages-deploy job now runs `make gallery` and `make game` in
-sequence before publishing.  Pages therefore always serves a wasm
-bundle + JS glue generated from the same commit — regardless of what
-was committed in `doc/pkg/` or `doc/brick-buster.html`.  This is the
-last line of defence if stale files slipped past PR review somehow.
+GitHub Pages serves the committed `doc/` from `main` (the `docs -> doc`
+symlink is its source), republished on every push to `main`.  Nothing
+rebuilds the bundle on the way out: the page a user opens is exactly the
+`doc/pkg/` and `doc/brick-buster.html` that `main` commits.  So the
+layers that keep those files current — the PR `gallery` job above and the
+build stamp below — are the whole defence.
 
 ### 3b. Build stamp (`scripts/wasm_bundle_stamp.sh`)
 
@@ -219,7 +220,7 @@ to an ignored-but-rebuilt-on-deploy model is the cleanest next step.
 | Suite runs the browser tests | `doc/pkg-src.stamp` — they refuse a bundle built from another tree |
 | Dev opens a PR | CI `gallery` job runs **both** `make gallery` and `make game` |
 | PR merged to main | CI `gallery` re-runs post-merge |
-| Tag pushed, Pages deploys | Release workflow runs `make gallery` + `make game` before `gh-pages` deploy |
+| Push to main, Pages republishes | Pages serves the committed `main:/docs`, so it is exactly what the PR's `gallery` job and the stamp passed |
 | User opens the deployed page | Runtime `explainLoadError` surfaces the classic LinkError as an actionable message in `gallery.html` |
 
 ## See also
