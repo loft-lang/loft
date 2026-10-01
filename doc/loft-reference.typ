@@ -7422,10 +7422,10 @@ The first three only differ when there IS a call, so the program here is 'steps.
 
 ```
   $ printf ':next\n:quit\n' | loft debug steps.loft:9
-  ⏸ paused in main | total = 2, i = <unset>
+  ⏸ paused in main | total = 2, i = 1
 ```
 
-'\<unset\>' is not an error. The loop variable has been consumed for this turn and the next one has not begun, so there is nothing to show.
+The program is now on the 'for' line, about to start the next turn: 'total' already holds this turn's result, and 'i' still holds this turn's value.
 
 And from inside 'add\_up', ':finish' runs it out and lands back in the caller:
 
@@ -7455,6 +7455,13 @@ You can write to a local, not only read it. This answers "would it work if this 
 ```
 
 The program carries on with the value you gave it. It finished with 106 instead of 6, because the loop still had 2 and 3 to add after the change.
+
+Changing the loop variable moves the loop itself. Set 'i' to 3 on the first turn and that turn adds 3 and is the last one, because the loop counts on from the value you gave it:
+
+```
+  $ printf 'i = 3\n:continue\n' | loft debug count.loft:4
+  total=3
+```
 
 ':undo' takes an edit back, and ':redo' puts it on again:
 

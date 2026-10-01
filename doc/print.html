@@ -3636,9 +3636,9 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 </code></pre>
 <p><code>:next</code> at the same place runs the whole call and stays where you are:</p>
 <pre><code>  $ printf ':next\n:quit\n' | loft debug steps.loft:9
-  ⏸ paused in main | total = 2, i = &lt;unset&gt;
+  ⏸ paused in main | total = 2, i = 1
 </code></pre>
-<p><code>&lt;unset&gt;</code> is not an error. The loop variable has been consumed for this turn and the next one has not begun, so there is nothing to show.</p>
+<p>The program is now on the <code>for</code> line, about to start the next turn: <code>total</code> already holds this turn's result, and <code>i</code> still holds this turn's value.</p>
 <p>And from inside <code>add_up</code>, <code>:finish</code> runs it out and lands back in the caller:</p>
 <pre><code>  $ printf ':finish\n:quit\n' | loft debug steps.loft:2
   ⏸ paused in main | total = 0, i = 1
@@ -3656,6 +3656,10 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
   run finished
 </code></pre>
 <p>The program carries on with the value you gave it. It finished with 106 instead of 6, because the loop still had 2 and 3 to add after the change.</p>
+<p>Changing the loop variable moves the loop itself. Set <code>i</code> to 3 on the first turn and that turn adds 3 and is the last one, because the loop counts on from the value you gave it:</p>
+<pre><code>  $ printf 'i = 3\n:continue\n' | loft debug count.loft:4
+  total=3
+</code></pre>
 <p><code>:undo</code> takes an edit back, and <code>:redo</code> puts it on again:</p>
 <pre><code>  $ printf 'total = 100\n:undo\ntotal + 55\n:quit\n' | loft debug count.loft:4
   55

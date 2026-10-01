@@ -93,6 +93,22 @@ by `v_size` after each placement.
 
 ---
 
+### A loop variable in its index's slot
+
+`for i in a..b` steps a hidden index (`i#index`) and copied it into `i` every round.  Where
+nothing but that copy writes `i` (no second assignment, no `&i` argument or link) and nothing in
+the body writes the index, `slot_alias::range_slot_aliases` pairs them, `assign_slots_v2` gives
+`i` no interval of its own and places it on the index's slot, and the bytecode generator emits
+no copy: it sees the two positions agree.  This adds no conflict, because the index is bound
+before the loop and read by every round's test, so it straddles the loop and I6 already keeps
+every other local off its slot for the loop's whole extent, where all of `i`'s uses lie.
+
+The pair is ONE value under two names, so the three readers of the layout treat it as one:
+`validate_slots` accepts it under I1 and I6, and the debugger's `frame_view` never reports one
+name as `<reused by>` the other.  Editing `i` in the live debugger therefore edits the loop's
+counter: the loop continues from the edited value, as a C `for` would.
+`LOFT_NO_LOOP_VAR_ALIAS=1` gives every loop variable its own slot again.
+
 ## Codegen Invariants
 
 ### `gen_set_first_at_tos` — positional write
