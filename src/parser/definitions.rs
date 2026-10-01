@@ -2037,6 +2037,132 @@ impl Parser {
     /// Read the function name after `fn`.  In user code only identifiers are accepted.
     /// In the default library, `assert` and `panic` are also allowed even though they are
     /// keywords — they remain real functions with call-site file/line injection.
+    /// `@FR-Op-Def` (@PLN182) — an `operator` definition is checked where it is written, so
+    /// one that compiles backs its form: its name is a form the language offers today, its
+    /// first parameter is `self` of a type declared in the same source (`@FR-Op-Home`), and
+    /// its shape is the form's (`@FR-Op-Shape`).  The forms not built yet are refused here by
+    /// name, with what each will back.
+    fn check_operator_definition(
+        &mut self,
+        fn_name: &str,
+        arguments: &[crate::data::Argument],
+        result: &Type,
+    ) {
+        if self.refuse_operator_name(fn_name) {
+            return;
+        }
+        let visible: Vec<&crate::data::Argument> = arguments
+            .iter()
+            .filter(|a| !a.name.starts_with("__"))
+            .collect();
+        let Some(first) = visible.first().filter(|a| a.name == "self") else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator compare` is a method: its first parameter is `self`, the type `<` is \
+                 written on — `operator compare(self: T, other: T) -> Ordering`"
+            );
+            return;
+        };
+        let own = match first.typedef.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => Some(*d),
+            _ => None,
+        }
+        .filter(|d| {
+            self.default
+                || !crate::portable_path::is_stdlib_source(&self.data.def(*d).position().file)
+        });
+        let Some(own) = own else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator compare` defines `<` for a type of its own package, and `{}` is not \
+                 one; a built-in type already has its order",
+                first.typedef.source_name(&self.data)
+            );
+            return;
+        };
+        if self.data.def(own).source != self.data.def(self.context).source {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator compare` on `{}` can only be defined where `{}` is declared; call \
+                 an ordinary method by name instead",
+                self.data.def(own).name(),
+                self.data.def(own).name()
+            );
+            return;
+        }
+        let ordering = self.data.def_nr("Ordering");
+        let answers_ordering = matches!(result, Type::Enum(d, false, _) if *d == ordering);
+        if visible.len() != 2 || !answers_ordering {
+            let t = self.data.def(own).name().to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator compare` takes `self` and the value it is compared with, and \
+                 answers an `Ordering`: `operator compare(self: {t}, other: {t}) -> Ordering`"
+            );
+        }
+    }
+
+    /// `@FR-Op-Def`'s name half: a form of the table not built yet is refused by name, saying
+    /// what it will back, and a name that is no form at all is refused as one.  Answers whether
+    /// it refused.
+    fn refuse_operator_name(&mut self, fn_name: &str) -> bool {
+        // The table's names not built yet: the form each will back.
+        const PLACED: &[(&str, &str)] = &[
+            ("plus", "`+`"),
+            ("minus", "`-`"),
+            ("times", "`*`"),
+            ("divided_by", "`/`"),
+            ("remainder", "`%`"),
+            ("negate", "unary `-`"),
+            ("equals", "`==` and `!=`"),
+            ("at", "`x[i]`"),
+            ("set_at", "`x[i] = v`"),
+            ("slice", "`x[a..b]`"),
+            ("key_range", "a keyed slice"),
+            ("power", "`**`"),
+            ("bit_and", "`&`"),
+            ("bit_or", "`|`"),
+            ("bit_xor", "`^`"),
+            ("bit_not", "`~`"),
+            ("shift_left", "`<<`"),
+            ("shift_right", "`>>`"),
+            ("next", "`for e in x`"),
+            ("to_text", "`\"{x}\"`"),
+        ];
+        if let Some((_, form)) = PLACED.iter().find(|(n, _)| *n == fn_name) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` will back {form}, which a type cannot define yet; \
+                 declare it with `fn` as an ordinary method for now"
+            );
+            return true;
+        }
+        if fn_name.starts_with("to_") {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`operator {fn_name}` will back an `as` conversion, which a type cannot define \
+                 yet; declare it with `fn` as an ordinary method for now"
+            );
+            return true;
+        }
+        if fn_name != "compare" {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{fn_name}` is not an operator: `operator` takes the name of the form it backs \
+                 — `compare` for `<`, `<=`, `>` and `>=`; declare an ordinary method with `fn`"
+            );
+            return true;
+        }
+        false
+    }
+
     fn parse_fn_name(&mut self) -> Option<String> {
         if let Some(name) = self.lexer.has_identifier() {
             return Some(name);
@@ -2324,9 +2450,15 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F16 — functions & declarations (pub, parameters, return)
     pub(crate) fn parse_function(&mut self) -> bool {
-        if !self.lexer.has_token("fn") {
+        // @PLN182 — `operator` takes `fn`'s place: a function in its definition, an operator
+        // in its use.
+        let is_operator = if self.lexer.has_token("fn") {
+            false
+        } else if self.lexer.has_token("operator") {
+            true
+        } else {
             return false;
-        }
+        };
         let Some(fn_name) = self.parse_fn_name() else {
             return false;
         };
@@ -2499,6 +2631,9 @@ impl Parser {
         if self.context == u32::MAX {
             return false;
         }
+        if is_operator {
+            self.data.definitions[self.context as usize].operator_form = true;
+        }
         // loft#1538's shape: a template refused at its declaration answers its declared
         // return at a call, which the declaration's own refusal explains.
         if (several || unnamed_var) && !self.first_pass {
@@ -2610,6 +2745,9 @@ impl Parser {
         } else {
             Type::Void
         };
+        if is_operator && !self.first_pass {
+            self.check_operator_definition(&fn_name, &arguments, &result);
+        }
         // `@FR-G-NoRefParam` — a generator takes no `&` parameter (loft#1680).  `(G-Call)` binds
         // the arguments into a frame that runs LATER, and `(F-ParamRef)` makes a `&` parameter
         // write through to the caller's place — so the generator would hold a reference into a

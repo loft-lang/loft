@@ -41,7 +41,7 @@ def type_sig(sig: str) -> str:
     """Comparison key ignoring param NAMES (matches api_diff): a param rename is not a change,
     a real type change (`&T`->`T`) is."""
     s = " ".join((sig or "").split())
-    m = re.match(r"pub fn (\w+)\s*\((.*)\)(.*)$", s)
+    m = re.match(r"pub (?:fn|operator) (\w+)\s*\((.*)\)(.*)$", s)
     if not m:
         return s
     name, params, ret = m.group(1), m.group(2), m.group(3).strip()

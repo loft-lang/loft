@@ -1103,6 +1103,8 @@ fn write_definition(out: &mut String, d: &Definition) {
     out.push(']');
     // @PLN165 arc E — `#builtin`.
     let _ = write!(out, ",\"builtin\":{}", d.builtin);
+    // @PLN182 — written `operator`.
+    let _ = write!(out, ",\"operator_form\":{}", d.operator_form);
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
     out.push_str(",\"purity\":");
@@ -1384,6 +1386,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         instance_of: as_u32(field(p, "instance_of")?)?,   // @PLN165 D3
         instance_args: type_list(field(p, "instance_args")?)?, // @PLN165 D3
         builtin: as_bool(field(p, "builtin")?)?,          // @PLN165 arc E
+        operator_form: as_bool(field(p, "operator_form")?)?, // @PLN182
         forced_size: if forced == 0 { None } else { Some(forced) },
         purity: purity_from_parsed(field(p, "purity")?)?,
         field_groups: field_group_list(field(p, "field_groups")?)?,
@@ -2350,6 +2353,7 @@ mod tests {
             instance_of: 11,
             instance_args: vec![Type::Text(Deps::none()), Type::Reference(7, Deps::none())],
             builtin: true,
+            operator_form: true,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: Some(4),
@@ -2432,6 +2436,7 @@ mod tests {
             instance_of: u32::MAX,
             instance_args: Vec::new(),
             builtin: false,
+            operator_form: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,

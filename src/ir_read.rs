@@ -684,6 +684,7 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         pub_visible: r.field_bool(stores, ds::DEF_PUB_VISIBLE),
         null_safe: r.field_bool(stores, ds::DEF_NULL_SAFE), // @PLN46 W2
         builtin: r.field_bool(stores, ds::DEF_BUILTIN),     // @PLN165 arc E
+        operator_form: r.field_bool(stores, ds::DEF_OPERATOR_FORM), // @PLN182
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(
             stores,

@@ -542,7 +542,7 @@ def check_reference_pdf_content():
         # name also ends in `.loft`.
         if entry.endswith(".loft") and os.path.isfile(os.path.join(default, entry)):
             with open(os.path.join(default, entry), encoding="utf-8", errors="replace") as f:
-                fns.update(re.findall(r"^pub fn (\w+)", f.read(), re.M))
+                fns.update(re.findall(r"^pub (?:fn|operator) (\w+)", f.read(), re.M))
     # Word boundaries, not `in`: a bare substring test counts `map` as present because
     # the chapter list contains "Roadmap", which is enough to keep the empty-chapter
     # guard below from ever reaching 0.  The two agree on the real document (the

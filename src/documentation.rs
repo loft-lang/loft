@@ -889,8 +889,9 @@ fn parse_sections(source: &str) -> Vec<DocSection> {
 // ─── Syntax highlighter ───────────────────────────────────────────────────────
 
 const KW: &[&str] = &[
-    "fn", "if", "else", "for", "in", "return", "break", "continue", "struct", "enum", "pub", "use",
-    "type", "as", "not", "null", "true", "false", "and", "or", "limit", "default", "virtual",
+    "fn", "operator", "if", "else", "for", "in", "return", "break", "continue", "struct", "enum",
+    "pub", "use", "type", "as", "not", "null", "true", "false", "and", "or", "limit", "default",
+    "virtual",
 ];
 const TY: &[&str] = &[
     "integer",
@@ -1943,6 +1944,8 @@ pub fn extract_api_items(content: &str) -> Vec<crate::registry_index::ApiItem> {
             // `pub type` is how a type alias is written; `pub value struct` is a struct
             // (`time::DateTime`) — both were missing from search.
             sig.starts_with("pub fn ")
+                // @PLN182 — an `operator` definition is a method under its own keyword.
+                || sig.starts_with("pub operator ")
                 || sig.starts_with("pub struct ")
                 || sig.starts_with("pub value struct ")
                 || sig.starts_with("pub enum ")

@@ -5011,6 +5011,11 @@ pub struct Definition {
     /// name, as the bare call always has.  A marker on the declaration, never a name test.
     /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
     pub builtin: bool,
+    /// @PLN182 — written `operator` in place of `fn`: a call of this method is what an
+    /// operator form on its `self` type reaches (`a < b` → `compare`).  A plain `fn` of the
+    /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
+    /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
+    pub operator_form: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -5141,6 +5146,12 @@ impl Definition {
     #[must_use]
     pub fn builtin(&self) -> bool {
         self.builtin
+    }
+
+    /// Written `operator` (@PLN182): the method an operator form on its `self` type reaches.
+    #[must_use]
+    pub fn operator_form(&self) -> bool {
+        self.operator_form
     }
 
     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
@@ -7435,6 +7446,7 @@ impl Data {
             instance_of: u32::MAX,
             instance_args: Vec::new(),
             builtin: false,
+            operator_form: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,
@@ -7590,6 +7602,49 @@ impl Data {
         if !slot.contains(&d_nr) {
             slot.push(d_nr);
         }
+    }
+
+    /// `@FR-Op-Bound` (@PLN182) — the `operator compare(self: C, other: C) -> Ordering` a
+    /// type `C` declares, which meets `Ordered` the way a built-in type's `<` does.  A plain
+    /// `fn compare` meets nothing (`@FR-Op-Mark`).
+    #[must_use]
+    pub fn operator_compare_for(&self, concrete: &Type) -> Option<u32> {
+        let base = concrete.base().clone();
+        if !matches!(base, Type::Reference(_, _) | Type::Enum(_, _, _)) {
+            return None;
+        }
+        // `compare` is an overload set (the stdlib's own members on the base types), and a
+        // type's `operator compare` may be several members of it, one per right-hand type.
+        let mut candidates = self.overload_routines("compare");
+        let found = self.find_fn(u16::MAX, "compare", &base);
+        if found != u32::MAX && !candidates.contains(&found) {
+            candidates.push(found);
+        }
+        let ordering = self.def_nr("Ordering");
+        candidates.into_iter().find(|&d| {
+            self.def(d).operator_form
+                && self.params_fit(d, &[base.clone(), base.clone()])
+                && matches!(self.def(d).returned(), Type::Enum(e, false, _) if *e == ordering)
+        })
+    }
+
+    /// The stored discriminant of one `Ordering` variant (`Less`, `Equal`, `Greater`), read
+    /// from the enum's own definition rather than assumed from its declaration order.
+    #[must_use]
+    pub fn ordering_discriminant(&self, variant: &str) -> i32 {
+        let ordering = self.def_nr("Ordering");
+        if ordering == u32::MAX {
+            return 0;
+        }
+        self.def(ordering)
+            .attributes()
+            .iter()
+            .find(|a| a.name == variant)
+            .and_then(|a| match a.value {
+                Value::Enum(nr, _) => Some(i32::from(nr)),
+                _ => None,
+            })
+            .unwrap_or(0)
     }
 
     #[must_use]

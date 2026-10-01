@@ -383,7 +383,8 @@ than it gets credit for. Measured on the current tree, not recalled:
 | capability | today | how |
 |---|---|---|
 | render in `"{x}"` | **yes** | `fn to_text(self: T) -> text` (@PLN99) |
-| arithmetic / comparison | **yes** | `fn OpAdd(self: T, other: U) -> V`, `OpEq`, `OpLt`, … |
+| order (`< <= > >=`) | **yes** | `operator compare(self: T, other: T) -> Ordering` (formal/operators.md) |
+| arithmetic / comparison | **yes** | `fn OpAdd(self: T, other: U) -> V`, `OpEq`, `OpLt`, … — retiring for the `operator` forms (@PLN182) |
 | `for x in <value>` | **yes** | a `next(self) -> τ?` on the type — a struct iterates like a collection |
 | bounded generics | **yes** | structural satisfaction, no `impl` block |
 | **receive the parts of `"{…}"`** | **yes** | `fn lit(self: T, s: text)` + `fn hole_<kind>(self: T, v: τ)` — the target type decides (@PLN124). A hole may be a scalar OR a value of a named type, whose kind is its own name in method case (`SqlIdent` → `hole_sql_ident`) |

@@ -16,11 +16,20 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**`operator` is a keyword.**  It starts a definition an operator form reaches (below), so a
+variable, field or function named `operator` no longer compiles: rename it.
+
 **`compare` and `then` are stdlib methods.**  `x.compare(y)` answers `Less`, `Equal` or
 `Greater` (the new `Ordering` enum) for an `integer`, `single`, `float`, `text` or `character`,
 and `a.compare(b).then(c.compare(d))` orders by a second value when the first is equal.  A
 program that defines its own `compare` or `then` for one of those types is refused with "Cannot
 redefine": rename yours, or use the stdlib's.
+
+### New
+
+**Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
+of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)
+}` — and the four comparisons, `sort()`, `min_of` and `max_of` all use it.
 
 ---
 

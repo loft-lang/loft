@@ -10133,6 +10133,11 @@ impl Parser {
             let Some(method_suffix) = Self::interface_method_name(&self.data, child_nr) else {
                 continue;
             };
+            // `@FR-Op-Bound` — `op <` is met by the type's `operator compare`, which the
+            // monomorph's `<` then reads (`substitute_type_in_value`).
+            if method_suffix == "OpLt" && self.data.operator_compare_for(&concrete_type).is_some() {
+                continue;
+            }
             // I9-prim: use find_fn which checks both the method-style convention
             // (t_7integer_OpLt) and the add_op convention (OpLtInt via possible map).
             let mut found = variant_type
@@ -11612,6 +11617,21 @@ impl Parser {
                     .into_iter()
                     .map(|a| Self::substitute_type_in_value(a, tv_nr, concrete, iter_stride, data))
                     .collect();
+                // `@FR-Op-Bound` — `Ordered`'s `<` at a type whose order is its `operator
+                // compare`: `a < b` is `a.compare(b) == Less`, one call (`@FR-Op-Order`).
+                if new_args.len() == 2
+                    && Data::is_bound_stub_for(data.def(d).name(), "OpLt", 2)
+                    && let Some(cmp) = data.operator_compare_for(concrete)
+                {
+                    let read = Value::Call(
+                        data.def_nr("OpConvIntFromEnum"),
+                        vec![Value::Call(cmp, new_args)],
+                    );
+                    return Value::Call(
+                        data.def_nr("OpEqInt"),
+                        vec![read, Value::Int(data.ordering_discriminant("Less"))],
+                    );
+                }
                 // Re-resolve call target if it references the type variable.
                 let new_d = Self::re_resolve_call(d, tv_nr, concrete, data);
                 // `(G-Sat-Eq)`, @C91 — a bound `==` over a type with no `OpEq` of its own is its
