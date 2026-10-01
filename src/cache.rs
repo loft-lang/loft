@@ -86,7 +86,10 @@ use sha2::{Digest, Sha256};
 /// 16 — `Variable` carries `user_appended` and `copy_bound` (stride 43 → 45, loft#1840): a
 /// warm load without them reads a copy the program appended to as unwritten, and loses its
 /// `lost-write`.
-const CACHE_FORMAT_VERSION: u8 = 16;
+///
+/// 17 — `Definition` carries `operator` (stride 184 → 185, @PLN182): a warm stdlib without it
+/// reads an `operator` definition as a plain method, which no operator form reaches.
+const CACHE_FORMAT_VERSION: u8 = 17;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

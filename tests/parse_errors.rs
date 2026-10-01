@@ -5729,3 +5729,42 @@ fn test() {
     // an `if` standing as a `??` default, into an `i8?`
     .error("-128 does not fit `i8?` — a nullable i8 holds -127..=127 (the remaining code is its null), so this constant would be stored as null.  Use a wider nullable type, or the non-null `i8`, which holds its whole range at a_constant_a_nullable_narrow_slot_cannot_hold_is_refused_through_a_join:12:47");
 }
+
+// @PLN182 — `operator` definitions are checked where they are written (`@FR-Op-Def`), and a
+// plain `fn compare` does not make `<` work (`@FR-Op-Mark`).
+
+#[test]
+fn operator_with_a_name_that_backs_nothing() {
+    code!("struct P { v: integer }\npub operator frob(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { }")
+        .error("`frob` is not an operator: `operator` takes the name of the form it backs — `compare` for `<`, `<=`, `>` and `>=`; declare an ordinary method with `fn` at operator_with_a_name_that_backs_nothing:2:51");
+}
+
+#[test]
+fn operator_of_a_form_not_built_yet() {
+    code!("struct P { v: integer }\noperator plus(self: P, other: P) -> P { P { v: self.v + other.v } }\nfn test() { }")
+        .error("`operator plus` will back `+`, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_of_a_form_not_built_yet:2:40");
+}
+
+#[test]
+fn operator_conversion_not_built_yet() {
+    code!("struct P { v: integer }\noperator to_integer(self: P) -> integer { self.v }\nfn test() { }")
+        .error("`operator to_integer` will back an `as` conversion, which a type cannot define yet; declare it with `fn` as an ordinary method for now at operator_conversion_not_built_yet:2:42");
+}
+
+#[test]
+fn operator_compare_without_self() {
+    code!("struct P { v: integer }\noperator compare(a: P, b: P) -> Ordering { a.v.compare(b.v) }\nfn test() { }")
+        .error("`operator compare` is a method: its first parameter is `self`, the type `<` is written on — `operator compare(self: T, other: T) -> Ordering` at operator_compare_without_self:2:43");
+}
+
+#[test]
+fn operator_compare_of_the_wrong_shape() {
+    code!("struct P { v: integer }\noperator compare(self: P, other: P) -> integer { self.v - other.v }\nfn test() { }")
+        .error("`operator compare` takes `self` and the value it is compared with, and answers an `Ordering`: `operator compare(self: P, other: P) -> Ordering` at operator_compare_of_the_wrong_shape:2:49");
+}
+
+#[test]
+fn a_plain_compare_does_not_make_less_than_work() {
+    code!("struct P { v: integer }\nfn compare(self: P, other: P) -> Ordering { self.v.compare(other.v) }\nfn test() { a = P { v: 1 }; b = P { v: 2 }; assert(a < b, \"lt\"); }")
+        .error("`P` has a method `compare`, but `<` reaches only one written with `operator`: declare it `operator compare(self: P, other: P) -> Ordering` at a_plain_compare_does_not_make_less_than_work:3:58");
+}

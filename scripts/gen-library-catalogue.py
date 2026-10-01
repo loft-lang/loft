@@ -68,9 +68,9 @@ def _type_sig(sig: str) -> str:
     (by param TYPES, not names). So `to_text(self: Duration, spec: text)` and
     `... _spec: text)` compare EQUAL (a param rename is NOT a break), while a real type change
     (`m: &SegMesh` → `m: SegMesh`) still differs. Falls back to the whole sig if it does not
-    parse as `pub fn name(params) [-> ret]`."""
+    parse as `pub fn name(params) [-> ret]` (or `pub operator …`, @PLN182)."""
     s = _norm_sig(sig)
-    m = re.match(r"pub fn (\w+)\s*\((.*)\)(.*)$", s)
+    m = re.match(r"pub (?:fn|operator) (\w+)\s*\((.*)\)(.*)$", s)
     if not m:
         return s
     name, params, ret = m.group(1), m.group(2), m.group(3).strip()

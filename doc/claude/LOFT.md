@@ -565,6 +565,25 @@ holds. When you want a remainder that wraps into `[0, n)` (the sign of the *divi
 circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` by zero is a
 **null**, never a fault (C80) — discharge it with `?? default`.
 
+### Ordering your own type — `operator compare`
+
+A type gets `<`, `<=`, `>` and `>=` from one method written with `operator` in place of `fn`:
+
+```loft
+value struct Date { ms: integer }
+pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms) }
+
+d1 < d2       // d1.compare(d2) == Less
+d1 >= d2      // d1.compare(d2) != Less
+dates.sort()  // and every generic bounded by `Ordered`
+```
+
+Each form is one call of the LEFT operand's `compare`, operands in the order they are written.
+A `compare` declared with plain `fn` is an ordinary method, and `<` on that type is refused
+saying so.  `x.compare(y)` and `Ordering.then` are in the stdlib for every built-in ordered type,
+so a field-by-field order is `self.a.compare(o.a).then(self.b.compare(o.b))`.  The rules:
+[formal/operators.md](formal/operators.md).
+
 ### The `??` operator (null-coalescing)
 
 `lhs ?? rhs` evaluates to `lhs` if it is not null, otherwise evaluates to `rhs`:

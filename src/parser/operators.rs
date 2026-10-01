@@ -1163,6 +1163,111 @@ impl Parser {
         )
     }
 
+    /// `@FR-Op-Back` (@PLN182) — the `operator compare` an order form on these operand types
+    /// reaches: the LEFT operand's `compare`, chosen among that name's overloads by the right
+    /// operand's type exactly as the method call `a.compare(b)` would.  A plain `fn compare`
+    /// is an ordinary method and reaches nothing here (`@FR-Op-Mark`): where the type has one
+    /// and no other way to answer `<`, the refusal names it and the answer is
+    /// `Some(u32::MAX)`, so the caller does not add a second, vaguer one.
+    pub(crate) fn operator_compare(&mut self, types: &[Type]) -> Option<u32> {
+        if types.len() != 2 || types.iter().any(Type::is_unknown) {
+            return None;
+        }
+        let (Type::Reference(left, _) | Type::Enum(left, _, _)) = types[0].base() else {
+            return None;
+        };
+        let left = *left;
+        // The left type's own `compare` key (`t_<len><T>_compare`): its one definition, or the
+        // dispatcher over its overloads, chosen among by `@FR-Disp-Select` as `a.compare(b)`
+        // would choose.
+        let key = self.data.find_op_method(u16::MAX, "compare", &types[0]);
+        if key == u32::MAX {
+            return None;
+        }
+        // A type with several `compare`s is an overload set under the bare name.
+        let chosen = if self.data.has_overload_set("compare") {
+            let routed = self.data.routed_types(types);
+            match self.select_overload(u16::MAX, "compare", &routed) {
+                crate::parser::dispatch::Selection::One(d) => d,
+                crate::parser::dispatch::Selection::Ambiguous(_) => return None,
+                _ => key,
+            }
+        } else {
+            key
+        };
+        // The LEFT operand's own method (`@FR-Op-Left`), not a member some conversion reached.
+        let own = self.data.visible_params(chosen).first().is_some_and(
+            |t| matches!(t.base(), Type::Reference(d, _) | Type::Enum(d, _, _) if *d == left),
+        );
+        if !own {
+            return None;
+        }
+        if self.data.def(chosen).operator_form() {
+            return Some(chosen);
+        }
+        if self
+            .user_op_method("OpLt", types)
+            .is_none_or(|lt| lt == u32::MAX)
+        {
+            // Said on the pass that meets it: the operator search below refuses on pass 1 too.
+            let t = types[0].base().source_name(&self.data);
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{t}` has a method `compare`, but `<` reaches only one written with `operator`: \
+                 declare it `operator compare(self: {t}, other: {t}) -> Ordering`"
+            );
+            return Some(u32::MAX);
+        }
+        None
+    }
+
+    /// `@FR-Op-Order` — `a ⊕ b` for an order form ⊕ is ONE call of `a.compare(b)`, read against
+    /// the `Ordering` it answers: `<` is `Less`, `>` is `Greater`, `<=` is not `Greater`, `>=`
+    /// is not `Less`.
+    pub(crate) fn order_through_compare(
+        &mut self,
+        code: &mut Value,
+        operator: &str,
+        cmp: u32,
+        right: Value,
+        right_tp: Type,
+        left_tp: Type,
+    ) -> Type {
+        if cmp == u32::MAX {
+            return Type::Boolean; // refused, named by `operator_compare`
+        }
+        let mut call = Value::Null;
+        let left = code.clone();
+        // Reported, as the call spelling is (`@FR-Op-Result`): a nullable operand into a dense
+        // parameter warns here exactly as it does in `a.compare(b)`.
+        let tp = self.call_nr(
+            &mut call,
+            cmp,
+            &[left, right],
+            &[left_tp, right_tp],
+            true,
+            &[],
+            None,
+        );
+        if tp == Type::Null {
+            return Type::Null;
+        }
+        let (equal, variant) = match operator {
+            "<" => (true, "Less"),
+            ">" => (true, "Greater"),
+            "<=" => (false, "Greater"),
+            _ => (false, "Less"),
+        };
+        let disc = self.data.ordering_discriminant(variant);
+        let read = self.cl("OpConvIntFromEnum", &[call]);
+        *code = self.cl(
+            if equal { "OpEqInt" } else { "OpNeInt" },
+            &[read, Value::Int(disc)],
+        );
+        Type::Boolean
+    }
+
     /** Mutate current code when it reads a value into writing it. This is needed for assignments.
      */
     ///
@@ -5505,6 +5610,20 @@ impl Parser {
                     }
                 }
                 *ctp = Type::Boolean;
+            } else if matches!(operator, "<" | "<=" | ">" | ">=")
+                && let Some(cmp) = self.operator_compare(&[ctp.clone(), second_type.clone()])
+            {
+                // `@FR-Op-Order` — before the swap below: `a > b` is `a.compare(b) == Greater`,
+                // the LEFT operand's method with both operands in source order (`@FR-Op-Left`),
+                // never `b.compare(a)`.
+                *ctp = self.order_through_compare(
+                    code,
+                    operator,
+                    cmp,
+                    second_code,
+                    second_type,
+                    ctp.clone(),
+                );
             } else if operator == ">" {
                 // loft#1151 — the SWAP is a resolution detail; the refusal must still name the
                 // operator the author wrote.
