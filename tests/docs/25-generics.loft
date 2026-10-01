@@ -157,6 +157,10 @@ fn OpLt(self: Money, other: Money) -> boolean { self.cents < other.cents }
 fn OpEq(self: Money, other: Money) -> boolean { self.cents == other.cents }
 fn OpAdd(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
 fn to_text(self: Money) -> text { "{self.cents}c" }
+// Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
+fn OpMin(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+fn OpMin(self: Money) -> Money { Money { cents: 0 - self.cents } }
+fn OpMul(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -169,6 +173,8 @@ fn test_user_type_bounds() {
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
+  assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector<Crate> }
 fn children(self: Crate) -> vector<Crate> { self.kids }

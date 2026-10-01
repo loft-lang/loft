@@ -284,6 +284,7 @@ shifted = [x + offset <span class="kw">for</span> x <span class="kw">in</span> n
 f = <span class="bi"><a href="13-file.html">file</a></span>(<span class="st">"data.txt"</span>);
 <span class="kw">if</span> f#exists {
     data = f.<span class="fn-call">content</span>();
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"{len(data)} characters\n"</span>);
 } <span class="kw">else</span> {
     <span class="bi"><a href="stdlib-output-and-diagnostics.html">print</a></span>(<span class="st">"file not found\n"</span>);
 }

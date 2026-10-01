@@ -138,7 +138,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents &lt; other.cents }
 <span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents == other.cents }
 <span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
+<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }</code></pre>
+<p>Both arities of <code>-</code>, so <code>Money</code> satisfies <code>Subtractable</code> and, with <code>OpMul</code>, <code>Numeric</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
+<span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: <span class="nm">0</span> - self.cents } }
+<span class="kw">fn</span> <span class="en">OpMul</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents * other.cents } }
 <span class="kw">fn</span> <span class="fn-call">test_user_type_bounds</span>() {
   cheap = <span class="en">Money</span> { cents: <span class="nm">300</span> };
   dear = <span class="en">Money</span> { cents: <span class="nm">700</span> };
@@ -151,6 +155,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   total = <span class="fn-call">clamped_add</span>(cheap, cheap, <span class="en">Money</span> { cents: <span class="nm">1000</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_diff</span>(dear, cheap).cents == <span class="nm">400</span>, <span class="st">"Subtractable on a user type"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_negdiff</span>(dear, cheap).cents == -<span class="nm">400</span>, <span class="st">"Numeric + Subtractable on a user type"</span>);
 }
 <span class="kw">struct</span> <span class="en">Crate</span> { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, kids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; }
 <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Crate</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; { self.kids }
@@ -377,6 +383,10 @@ fn OpLt(self: Money, other: Money) -&gt; boolean { self.cents &lt; other.cents }
 fn OpEq(self: Money, other: Money) -&gt; boolean { self.cents == other.cents }
 fn OpAdd(self: Money, other: Money) -&gt; Money { Money { cents: self.cents + other.cents } }
 fn to_text(self: Money) -&gt; text { "{self.cents}c" }
+// Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
+fn OpMin(self: Money, other: Money) -&gt; Money { Money { cents: self.cents - other.cents } }
+fn OpMin(self: Money) -&gt; Money { Money { cents: 0 - self.cents } }
+fn OpMul(self: Money, other: Money) -&gt; Money { Money { cents: self.cents * other.cents } }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -389,6 +399,8 @@ fn test_user_type_bounds() {
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
+  assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector&lt;Crate&gt; }
 fn children(self: Crate) -&gt; vector&lt;Crate&gt; { self.kids }

@@ -57,7 +57,7 @@
   op - (self: Self, other: Self) -&gt; Self
 }</code></pre>
 <p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.</p>
-<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type satisfies one of the two: it can define `OpMin` at one arity only (a second definition is refused as a redefinition), as pinned by `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.</p>
+<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.</p>
 </div>
 <div class="item">
 <pre><code>pub interface Scalable {
