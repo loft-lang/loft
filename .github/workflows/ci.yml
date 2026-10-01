@@ -8,11 +8,8 @@ on:
   # Daily FULL run (03:00 UTC, clear of the 04:00 miri nightly).  Windows does
   # NOT run per-PR any more: the Windows leg costs ~30 min and almost never
   # regresses independently of the Linux/macOS legs that DO run per-PR.
-  # This schedule runs the WHOLE matrix on every OS.  A push to main runs only the
-  # Windows test shards — the merged tree is the one the PR just passed (branch
-  # protection is strict), so everything else would be the same answer twice, and
-  # macOS (over an hour alone) waits for the daily.  Windows is validated daily and
-  # on every merge; the non-required `Windows (daily)`
+  # push-to-main and this schedule run the WHOLE matrix on every OS, so Windows
+  # is validated daily and on every merge; the non-required `Windows (daily)`
   # job mirrors the latest daily result onto each PR — visible, never blocking
   # (see that job + the `os` matrix in `changes`).
   schedule:
@@ -151,9 +148,9 @@ jobs:
           # A pure-interpreter test cannot fail on macOS alone; a memory bug can, and
           # that is exactly what those two catch — for 9 minutes instead of 25.
           #
-          # The FULL macOS suite still runs on the daily schedule (and the release
-          # gate), so a genuine macOS-only functional break surfaces within a day,
-          # never at release.
+          # The FULL macOS suite still runs on every push-to-main and on the daily
+          # schedule, so a genuine macOS-only functional break surfaces within one
+          # merge, never at release.  Same trade, same reasoning, as Windows.
           # A manual dispatch picks its own runners, so one platform's answer
           # costs one platform's time (see the `workflow_dispatch` note above).
           #
@@ -185,15 +182,6 @@ jobs:
             else
               echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
             fi
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            # POST-MERGE runs only what the PR never ran.  Branch protection is strict, so the
-            # merged tree IS the tree the PR's ubuntu legs and every other job just passed;
-            # re-running them answers the same question twice.  Windows is off the PR matrix,
-            # so it is the new signal a merge gives.  The macOS full suite (over an hour on its
-            # own), the ubuntu-only extras (stdlib round-trip, differential oracle,
-            # html_asyncify, html_render) and the main-ref cache saves stay on the 03:00 daily,
-            # which runs on the same ref.
-            echo 'legs=[{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             # @PLN159 phase E1 — a FOURTH shard carries the native script corpus alone
             # (`native::native_scripts`, 219.6 s of the heavy shard's 764.8 s on the run that
@@ -292,7 +280,7 @@ jobs:
   test-skip:
     name: Test (${{ matrix.os }})
     needs: changes
-    if: (needs.changes.outputs.code == 'false') && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: needs.changes.outputs.code == 'false'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -319,15 +307,15 @@ jobs:
   # the PR matrix because it duplicated ubuntu at ~50% higher cost and WAS the
   # critical path.  The macOS-specific risk it actually carried — ARM-only memory
   # corruption, the @P383 class — is gated per-PR by Miri-macOS and the ASan-macOS
-  # sweep instead, at 9 minutes rather than 25.  The full suite runs daily and in the
-  # release gate.  Left required here so no branch-protection change is
+  # sweep instead, at 9 minutes rather than 25.  The full suite runs on every
+  # push-to-main and daily.  Left required here so no branch-protection change is
   # needed; drop the context from the required set to retire this job.
   macos-pr-placeholder:
     name: Test (macos-latest)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "macOS full suite runs daily (off the PR matrix). Per-PR macOS coverage is Miri-macOS + the ASan-macOS UAF/OOB sweep. This required context is a non-blocking placeholder on PRs."
+      - run: echo "macOS full suite runs on push-to-main + daily (off the PR matrix). Per-PR macOS coverage is Miri-macOS + the ASan-macOS UAF/OOB sweep. This required context is a non-blocking placeholder on PRs."
 
   test:
     name: Test (${{ matrix.os }})${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}
@@ -1155,7 +1143,7 @@ jobs:
   guard:
     name: stack_align_guard sweep (ubuntu)
     needs: changes
-    if: (needs.changes.outputs.code == 'true') && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -1228,7 +1216,6 @@ jobs:
   # a doc ref/link breaks) but never blocks the merge.  The authoritative daily
   # catch runs nightly (miri.yml).
   index-hygiene:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: doc index hygiene (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1284,7 +1271,6 @@ jobs:
   # `oracle_leak_scan_ratchet`.  ADVISORY (not in required-status-checks): red on a PR that adds
   # a finding, never blocking the merge.
   leak-scan:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: ownership leak scan (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1328,7 +1314,6 @@ jobs:
   # stable.  (The seeded-`rand` case was dropped — `rand` moved to the `random`
   # library, @PLAN12, and is not in the core bundle these tests drive.)
   wasm-bridge:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: wasm node bridge (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1363,7 +1348,6 @@ jobs:
   # an admin promotes it to required.  Catches staleness a change INTRODUCES; the
   # existing stale-bundle debt is a one-off rebuild (release checklist item B).
   bundle-fresh:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: browser bundle freshness (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1388,7 +1372,6 @@ jobs:
   # renderer regression shows red without blocking the merge (the rendering logic
   # is also covered by the lib/markdown unit tests in the required `Test` job).
   viewer-smoke:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: markdown viewer smoke (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1423,7 +1406,6 @@ jobs:
         run: cargo nextest run --profile ci -E 'binary(viewer_markdown)'
 
   fixtures-check:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: lib fixtures vs pinned tags (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1438,7 +1420,6 @@ jobs:
         run: scripts/sync-fixtures.sh --check
 
   fixtures-unreleased:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: fixture files the canonical repo lacks (ubuntu, GATED)
     runs-on: ubuntu-latest
     steps:
@@ -1463,7 +1444,6 @@ jobs:
         run: scripts/sync-fixtures.sh --check-unreleased
 
   registry-coverage:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: library registry coverage (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1479,7 +1459,6 @@ jobs:
         run: scripts/check_registry_coverage.sh
 
   comment-quality:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: comment quality vs baseline (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1523,7 +1502,7 @@ jobs:
   asan:
     name: ASan UAF/OOB gate (ubuntu)
     needs: changes
-    if: (needs.changes.outputs.code == 'true') && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -1606,7 +1585,6 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   clippy:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: Clippy
     runs-on: ubuntu-latest
 
@@ -1655,7 +1633,6 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   fmt:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: Format
     runs-on: ubuntu-latest
 
@@ -1680,7 +1657,7 @@ jobs:
   gallery:
     name: Browser build + probe
     needs: changes
-    if: (needs.changes.outputs.code == 'true') && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -1836,7 +1813,6 @@ jobs:
   # surfaces the failure earlier (8s job) and explains it more
   # clearly than the test panic.
   doc-check:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: Doc hygiene
     runs-on: ubuntu-latest
 
@@ -1897,7 +1873,6 @@ jobs:
   #     number with no catalogue entry (a typo or stale number).
   # Both are pure shell — no build needed.
   feature-catalogue:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: Feature catalogue
     runs-on: ubuntu-latest
     steps:

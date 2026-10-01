@@ -20,8 +20,12 @@ on:
   workflow_call:
   schedule:
     - cron: '17 6 * * *'          # nightly, off the hour
-  # No `push: main`: branch protection is strict, so a merge lands the exact tree this
-  # workflow's pull_request run just revalidated — the nightly covers registry drift.
+  push:
+    branches: [main]
+    paths:                        # only the loft surface a library compiles against
+      - 'default/**'              # the stdlib
+      - 'src/**'                  # the compiler / type system
+      - '.github/workflows/revalidate-libs.yml'
   pull_request:                   # catch a lib-breaking language change BEFORE it merges
     paths:
       - 'default/**'
