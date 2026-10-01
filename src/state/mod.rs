@@ -6229,7 +6229,39 @@ impl State {
         }
     }
 
+    /// `LOFT_HEADROOM_VERIFY=1` — `@FR-R-FrameHeadroom`'s falsifier: the lean loop stops after
+    /// every op (the stop flag is held set) and checks the running frame against its room.
+    fn headroom_verify() -> bool {
+        crate::env_once!(std::env::var("LOFT_HEADROOM_VERIFY").is_ok_and(|v| v != "0"))
+    }
+
+    /// The check [`Self::headroom_verify`] runs after each op: the stack top lies inside the
+    /// running frame's recorded room, and that room inside the stack store's buffer.
+    #[cold]
+    fn verify_frame_room(&self) {
+        let Some(f) = self.call_stack.last() else {
+            return;
+        };
+        let room = f.args_base + self.frame_headroom_of(f.d_nr);
+        assert!(
+            self.stack_pos <= room,
+            "@FR-R-FrameHeadroom: fn {} reached stack position {} past its room {room}",
+            f.d_nr,
+            self.stack_pos
+        );
+        let top = self.stack_cur.rec * 8 + self.stack_cur.pos + room;
+        assert!(
+            top <= self.stack_cap_bytes,
+            "@FR-R-FrameHeadroom: fn {}'s room ends at byte {top}, past the stack buffer's {}",
+            f.d_nr,
+            self.stack_cap_bytes
+        );
+    }
+
     fn lean_stop(&mut self) -> LeanStop {
+        if Self::headroom_verify() {
+            self.verify_frame_room();
+        }
         // The watchdog's request at the deadline: a graceful stop from any op, a loop that
         // calls nothing included, naming the frame that was running.
         if crate::timeout::deadline_reached() {
@@ -6248,7 +6280,9 @@ impl State {
         }
         self.note_runtime_error_halt();
         self.database.dispatch_stop.store(
-            self.database.runtime_error.is_some() || self.debug.is_some(),
+            self.database.runtime_error.is_some()
+                || self.debug.is_some()
+                || Self::headroom_verify(),
             std::sync::atomic::Ordering::Relaxed,
         );
         if self.debug.is_some() {
@@ -6839,6 +6873,11 @@ impl State {
             // written per op.
             let _stop = crate::timeout::publish_stop_flag(&self.database.dispatch_stop);
             let ops = self.op_table();
+            if Self::headroom_verify() {
+                self.database
+                    .dispatch_stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let _published = crate::crash_report::LeanSource::register(
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
