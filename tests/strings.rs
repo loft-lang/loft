@@ -70,16 +70,16 @@ fn string_scope() {
   │ │ for:3
   │ │ n#index+8=184 [22..97]
   │ │ │ loop:4L [seq 23..98]
-  │ │ │ n+8=192 [31..60]
-  │ │ │ │ │ │ │ ncc:14
-  │ │ │ │ │ │ │ __ncc_1+8=192 [90..93]
+  │ │ │ n+8=184 [31..60]
   │ │ │ │ block:6
-  │ │ │ │ t+24=200 [32..97]
+  │ │ │ │ t+24=192 [32..97]
   │ │ │ │ │ for:9
-  │ │ │ │ │ _range_end_1+8=224 [61..75]
-  │ │ │ │ │ _m#index+8=232 [63..75]
+  │ │ │ │ │ _range_end_1+8=216 [61..75]
+  │ │ │ │ │ _m#index+8=224 [63..75]
   │ │ │ │ │ │ loop:10L [seq 64..76]
-  │ │ │ │ │ │ _m+8=240 [72..72]",
+  │ │ │ │ │ │ _m+8=224 [72..72]
+  │ │ │ │ │ │ │ ncc:14
+  │ │ │ │ │ │ │ __ncc_1+8=232 [90..93]",
     )
     .result(Value::str("136 via n:1=1 n:2=12 n:3=122 "));
 }
@@ -94,6 +94,7 @@ fn loop_variable() {
         // @PLN157 P3b: a literal-`lo` counted loop initialises its counter to
         // `lo - 1` and increments unconditionally — the null-test-and-choose
         // ops are gone, so every span past the loop head starts ~4 ops earlier.
+        // `slot_alias`: the loop variable `_t` lives in `_t#index`'s slot.
         .slots(
             "\
   block:1
@@ -103,11 +104,11 @@ fn loop_variable() {
   │ │ for:3
   │ │ _t#index+8=40 [6..33]
   │ │ │ loop:4L [seq 7..34]
-  │ │ │ _t+8=48 [15..15]
-  │ │ │ │ │ ncc:7
-  │ │ │ │ │ __ncc_1+8=48 [22..25]
+  │ │ │ _t+8=40 [15..15]
   │ │ │ │ block:6
-  │ │ │ │ b+24=56 [16..33]
+  │ │ │ │ b+24=48 [16..33]
+  │ │ │ │ │ ncc:7
+  │ │ │ │ │ __ncc_1+8=72 [22..25]
   test_value+8=80 [35..42]",
         )
         .result(Value::Int(246));
