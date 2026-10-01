@@ -28,7 +28,9 @@
 //!   an integer and `c / 2^k` is exact and normal.
 //!
 //! Not in an `open_world` program (REPL, debugger, live reload, host), where a definition can
-//! change after its calls are compiled.  Switches: `LOFT_NO_INLINE_LEAF=1` (the whole pass),
+//! change after its calls are compiled, nor in one compiled for a run that observes function
+//! entries (`loft test`'s coverage, `Data::observes_entries`), whose report would otherwise
+//! name an inlined function as never called.  Switches: `LOFT_NO_INLINE_LEAF=1` (the whole pass),
 //! `LOFT_NO_MASK_RANGE=1`, `LOFT_NO_SINGLE_USE=1`, `LOFT_NO_SCALE_FOLD=1`;
 //! `LOFT_TRACE_INLINE_LEAF=1` names every inlined call and every reduction.
 use crate::data::{Block, Data, DefType, Type, Value};
@@ -732,7 +734,7 @@ fn reduce_in(
 /// Inline every admitted leaf call and reduce the bodies; answers how many calls were
 /// inlined.
 pub fn rewrite_program(data: &mut Data) -> usize {
-    if off_all() || data.open_world {
+    if off_all() || data.open_world || data.observes_entries {
         return 0;
     }
     let mut leaves: HashMap<u32, Leaf> = HashMap::new();

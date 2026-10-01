@@ -6032,6 +6032,11 @@ pub struct Data {
     /// closed program: a later parse would type a call by the rewritten signature, and a
     /// caller outside loft would read a record the function no longer returns.
     pub open_world: bool,
+    /// The run this program is compiled for OBSERVES function entries — `loft test`'s
+    /// coverage, which counts a function covered when a call enters it.  A rewrite that
+    /// removes calls (`leaf_inline::rewrite_program`, `@FR-R-InlineLeaf`) leaves them alone
+    /// here, as it does in an `open_world` program, so the report names what the tests call.
+    pub observes_entries: bool,
     /// @PLN133 S9 — the lazy drivers, answered once per definition set.
     ///
     /// [`Data::lazy_fetch_drivers`] walks every definition, and it is asked on
@@ -6884,6 +6889,7 @@ impl Data {
         Data {
             definitions: Vec::new(),
             open_world: false,
+            observes_entries: false,
             lazy_drivers: LazyDriverCache::default(),
             def_names: DefIndex::default(),
             use_names: HashMap::new(),

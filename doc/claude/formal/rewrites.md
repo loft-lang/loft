@@ -3412,14 +3412,20 @@ two operands a correct fold may not regroup (below).
                  Literal operations the substitution makes adjacent fold — checked: an
                  overflow or a result equal to the sentinel is left to the operator — and
                  operands are never regrouped.  The body's line markers go.  Not in an
-                 `open_world` program, and not into a generator or a `parallel` body.
+                 `open_world` program, not in one compiled for a run that observes
+                 function entries (`Data::observes_entries`: `loft test`'s coverage), and
+                 not into a generator or a `parallel` body.
 ```
 
 **In words.** Applies in: the IR phase, both backends (native already inlined through LLVM).
 **Regrouping is not exact**: every integer operator tests its result for the sentinel, so
 `(a ^ x) ^ b` and `(a ^ b) ^ x` disagree when an intermediate is `i64::MIN` — the fold takes
-`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  With the line markers
-gone a fault inside the body reports the call's line; the debugger, which would want the
+`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  Coverage counts a function
+entered by a call, so the test runner compiles with the calls kept — the value guards run the
+inlined form as programs, and `tests/function_coverage.rs` failed with the pass on before the
+flag existed.  The body's `Span` wrappers stay, and a fault's position comes from them, so a
+fault inside the body keeps its exact position and loses only the leaf's frame, as
+`(R-Leaf)` settled; with the line markers gone a frame's line is the call's; the debugger, which would want the
 body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (`clamp`,
 `approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
 each inlined call, each decline and each reduction below.
