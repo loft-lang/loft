@@ -739,6 +739,10 @@ pub mod fused {
     pub const NE: u8 = 1;
     pub const LT: u8 = 2;
     pub const LE: u8 = 3;
+    /// A comparison whose literal stood on the LEFT, mirrored so the local reads first:
+    /// `c < v` is `v > c`, `c <= v` is `v >= c` — exact on `i64`, the null sentinel included.
+    pub const GT: u8 = 4;
+    pub const GE: u8 = 5;
 }
 
 /// The arithmetic `kind` of a fused op applied to `v1` and `v2` (`OpAddInt` … `OpEorInt`).
@@ -763,6 +767,8 @@ pub fn fused_cmp(kind: u8, v1: i64, v2: i64) -> bool {
         fused::EQ => v1 == v2,
         fused::NE => v1 != v2,
         fused::LT => v1 < v2,
+        fused::GT => v1 > v2,
+        fused::GE => v1 >= v2,
         _ => v1 <= v2,
     }
 }

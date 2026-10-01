@@ -6507,11 +6507,34 @@ fn fusable_int(stack: &Stack, op: u32, params: &[Value]) -> Option<FusedInt> {
         "OpLeInt" => (true, fused::LE),
         _ => return None,
     };
+    let literal = |v: &Value| match v.unspan() {
+        Value::Int(c) => Some(i64::from(*c)),
+        Value::Long(c) => Some(*c),
+        _ => None,
+    };
+    // A comparison with its literal on the LEFT (`100000 <= i`, the end test of a counted
+    // range over a literal) is mirrored so the local reads first.  Only comparisons: an
+    // arithmetic op reports an overflow with its operands in the order written.
+    if compare
+        && let Some(c) = literal(&params[0])
+        && let Some(a) = int_local(stack, &params[1])
+    {
+        let kind = match kind {
+            fused::LT => fused::GT,
+            fused::LE => fused::GE,
+            k => k, // EQ, NE
+        };
+        return Some(FusedInt {
+            compare,
+            kind,
+            a,
+            b: FusedOperand::Const(c),
+        });
+    }
     let a = int_local(stack, &params[0])?;
-    let b = match params[1].unspan() {
-        Value::Int(c) => FusedOperand::Const(i64::from(*c)),
-        Value::Long(c) => FusedOperand::Const(*c),
-        other => FusedOperand::Var(int_local(stack, other)?),
+    let b = match literal(&params[1]) {
+        Some(c) => FusedOperand::Const(c),
+        None => FusedOperand::Var(int_local(stack, &params[1])?),
     };
     Some(FusedInt {
         compare,
