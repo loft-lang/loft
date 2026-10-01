@@ -4074,38 +4074,44 @@ impl Store {
             self.read_only || self.is_file_backed() || self.claims.contains(rec),
             "Unknown record {rec}"
         );
-        // Read size before any multiplication to avoid overflow when fld 0 is negative
-        // (a negative header means the block was freed — a bug if still in claims).
-        let size: i32 = self.read(rec, 0);
-        debug_assert!(
-            size > 0,
-            "Freed record {rec} (size={size}) accessed at fld {fld}"
-        );
-        debug_assert!(
-            fld >= 4 && fld < 8 * size as u32,
-            "Fld {fld} is outside of record {rec} size {}",
-            8 * size as u32
-        );
-        debug_assert!(
-            rec != 0 && u64::from(rec) * 8 + u64::from(fld) <= u64::from(self.size) * 8,
-            "Reading outside store ({rec}.{fld}) > {}",
-            self.size
-        );
-        if fld != 0 {
-            // The first 4 positions are reserved for the record size
+        // Only the assertions read the size, so a build without them skips the read: kept, it
+        // was a second bounds check per raw access, whose every failure the field read's own
+        // check catches too (`@FR-R-ElementPath`).
+        #[cfg(debug_assertions)]
+        {
+            // Read size before any multiplication to avoid overflow when fld 0 is negative
+            // (a negative header means the block was freed — a bug if still in claims).
+            let size: i32 = self.read(rec, 0);
             debug_assert!(
-                rec + size as u32 <= self.size,
-                "Inconsistent record {rec} size {size} > {}",
+                size > 0,
+                "Freed record {rec} (size={size}) accessed at fld {fld}"
+            );
+            debug_assert!(
+                fld >= 4 && fld < 8 * size as u32,
+                "Fld {fld} is outside of record {rec} size {}",
+                8 * size as u32
+            );
+            debug_assert!(
+                rec != 0 && u64::from(rec) * 8 + u64::from(fld) <= u64::from(self.size) * 8,
+                "Reading outside store ({rec}.{fld}) > {}",
                 self.size
             );
-            debug_assert!(
-                fld >= 4,
-                "Field {fld} too low, overlapping with size on ({rec}.{fld})"
-            );
-            debug_assert!(
-                size >= 1 && fld <= size as u32 * 8,
-                "Reading fields outside record ({rec}.{fld}) > {size}"
-            );
+            if fld != 0 {
+                // The first 4 positions are reserved for the record size
+                debug_assert!(
+                    rec + size as u32 <= self.size,
+                    "Inconsistent record {rec} size {size} > {}",
+                    self.size
+                );
+                debug_assert!(
+                    fld >= 4,
+                    "Field {fld} too low, overlapping with size on ({rec}.{fld})"
+                );
+                debug_assert!(
+                    size >= 1 && fld <= size as u32 * 8,
+                    "Reading fields outside record ({rec}.{fld}) > {size}"
+                );
+            }
         }
         true
     }

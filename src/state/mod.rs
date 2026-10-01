@@ -6324,6 +6324,21 @@ impl State {
         size: u32,
         index: i64,
     ) -> crate::keys::DbRef {
+        // `@FR-R-ElementPath` — the in-range element of a live vector: the collection record
+        // and the length read once each, one unsigned compare (a negative index fails it
+        // too), the element ref built here.  Everything else — null, empty, absent, counted
+        // from the end, out of range — takes the unchanged path below.
+        if !db.is_null() && db.rec != 0 && db.pos != 0 {
+            let store = crate::keys::store(db, &self.database.allocations);
+            let v_rec = store.collection_rec(db.rec, db.pos);
+            if v_rec != 0 && (index as u64) < u64::from(store.get_u32_raw(v_rec, 4)) {
+                return crate::keys::DbRef {
+                    store_nr: db.store_nr,
+                    rec: v_rec,
+                    pos: crate::vector::checked_vec_pos(index as u32, size),
+                };
+            }
+        }
         let len = crate::vector::length_vector(db, &self.database.allocations);
         if (index as u64) < u64::from(len) {
             return crate::vector::get_vector(db, size, index, &self.database.allocations);
