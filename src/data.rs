@@ -12990,9 +12990,16 @@ impl Data {
     /// is no syntax the parser reads, so a cure built from it could not be typed back in.
     #[must_use]
     pub fn integer_name(&self, t: &Type) -> String {
-        let Type::Integer(s) = t else {
+        // A nullable integer keeps its source spelling (the `?` is part of the name); only a
+        // plain integer is named by its range here (@FR-N-Shape: the nullability is asked, not
+        // left to a missing arm).
+        let (inner, nullable) = t.peel_optional();
+        let Type::Integer(s) = inner else {
             return t.source_name(self);
         };
+        if nullable {
+            return t.source_name(self);
+        }
         if s.forced_size.is_none() {
             if s.is_wide_template() || s.is_signed32_template() {
                 return t.source_name(self);

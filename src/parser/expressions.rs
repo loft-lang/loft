@@ -8506,9 +8506,9 @@ use a separate collection or add after the loop"
     /// text nor a character?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates,
     /// and `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827).
     pub(crate) fn appends_rendering(rhs: &Type) -> bool {
-        let rhs = match rhs {
+        let rhs = match rhs.base() {
             Type::RefVar(inner) => inner.as_ref(),
-            other => other,
+            _ => rhs,
         };
         !matches!(
             rhs.base(),
@@ -8521,17 +8521,18 @@ use a separate collection or add after the loop"
     /// was refused on a local and, on a field or an element, appended the integer's BITS as
     /// if they were text: `r.s += 5` left `r.s` unchanged and `v[1] += 7` appended U+0007.
     pub(crate) fn append_rendering(&mut self, var_nr: u16, tp: &Type, value: &Value) -> Value {
-        let tp = match tp {
+        let tp = match tp.base() {
             Type::RefVar(inner) => inner.as_ref().clone(),
-            other => other.clone(),
+            _ => tp.clone(),
         };
         let mut ls = Vec::new();
         self.append_data(tp, &mut ls, var_nr, u16::MAX, value, super::OUTPUT_DEFAULT);
         // An absent text stays absent, as `t + x` answers null for it and `t += "x"` leaves
         // it: rendering into the sentinel would make a text of the sentinel and the value.
-        let dest = match self.vars.tp(var_nr) {
+        let dest_tp = self.vars.tp(var_nr);
+        let dest = match dest_tp.base() {
             Type::RefVar(inner) => inner.as_ref().clone(),
-            other => other.clone(),
+            _ => dest_tp.clone(),
         };
         if matches!(dest, Type::Optional(_)) {
             // A presence TEST, not a store — @FR-N-Store admits the read.
