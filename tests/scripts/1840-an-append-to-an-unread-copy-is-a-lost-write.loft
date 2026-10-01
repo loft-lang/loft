@@ -17,6 +17,16 @@
 // and asserts the EXACT set of locals warned — the silent cells are half the claim: a read
 // after the append (an element, a `len`, which an append changes), the copy returned, a `&`
 // link, and a collection BUILT fresh (a literal, a call's value) rather than copied.
+//
+// @falsified-at: a80e26737 — 0 `lost-write` reports there, 8 here (fl_xs fv_xs kc_h pc_w lc_b
+//   lp_xs br_xs vs_m), on both backends; "1840 ok" on both trees.  Measured BY HAND: `make
+//   falsify` reads a warning guard INERT, because its `expect` channel counts only
+//   `@EXPECT_ERROR` / `@EXPECT_FAIL` and a file with a `main` gets a direct run, where the
+//   suite's warning matching never happens.  `tests/dead_code_lint.rs` asserts the exact set.
+//   CHANNEL: the `lost-write` warnings.
+//   ARMED: nothing.
+//   HOLDS: every value assertion, on both trees and both backends — the writes were lost before
+//     the fix as after it; only the report moved.
 
 struct K1840 { k: integer, v: integer }
 struct S1840 { items: vector<integer>, more: vector<integer>, keyed: hash<K1840[k]> }

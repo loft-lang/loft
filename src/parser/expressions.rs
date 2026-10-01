@@ -1930,13 +1930,6 @@ use a separate collection or add after the loop"
                 && self.vars.tp(var_nr).depend().is_empty())
     }
 
-    /// The lowering a whole-value vector bind's verdict asks for, applied in place to
-    /// `code`, the source, for the local `to` (`var_nr`): nothing for the identity, else the
-    /// local's own store — allocated when it owns none, cleared when it does — refilled with
-    /// a deep copy of the source's elements.  Fires on BOTH passes (`change_var` types the
-    /// local each pass and the field-read strip advances the `_elm_N` counter on the first,
-    /// so the `__vdb_N` dep is created identically); the ops are emitted on the second.
-    #[allow(clippy::too_many_arguments)] // the copy arm's own inputs, plus where it sits
     /// Is `src`, the source of a whole-value bind, a PLACE — a variable, or a projection
     /// chain out of one — so the bind COPIES it (`(B-Copy)`, loft#1840)?  A call is never one,
     /// whatever its first argument: a fresh value from a call or a literal BUILDS the local.
@@ -1948,6 +1941,13 @@ use a separate collection or add after the loop"
             || crate::use_analysis::projection_container_var(&self.data, src).is_some()
     }
 
+    /// The lowering a whole-value vector bind's verdict asks for, applied in place to
+    /// `code`, the source, for the local `to` (`var_nr`): nothing for the identity, else the
+    /// local's own store — allocated when it owns none, cleared when it does — refilled with
+    /// a deep copy of the source's elements.  Fires on BOTH passes (`change_var` types the
+    /// local each pass and the field-read strip advances the `_elm_N` counter on the first,
+    /// so the `__vdb_N` dep is created identically); the ops are emitted on the second.
+    #[allow(clippy::too_many_arguments)] // the copy arm's own inputs, plus where it sits
     fn lower_vec_copy_bind(
         &mut self,
         code: &mut Value,
