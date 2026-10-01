@@ -659,6 +659,9 @@ def cross(x, y):
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode in ("-h", "--help"):
+        print(__doc__)
+        return
     if mode == "caveats":
         print(__doc__.split("A REPORT, never a gate.")[0].strip())
         print("""

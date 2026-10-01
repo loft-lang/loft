@@ -2,7 +2,7 @@
 # One-command registry maintenance: see what needs publishing, OK once,
 # sign once — and the registry is current again.
 #
-#   scripts/registry_maintain.sh [--dry-run] [--yes] [--key <file>] [--registry-dir <dir>]
+#   scripts/registry_maintain.sh [--only P[,P...]] [--dry-run] [--yes] [--key <file>] [--registry-dir <dir>]
 #
 # The script gathers BOTH populations into one worklist:
 #
