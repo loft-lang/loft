@@ -82,14 +82,14 @@ row whose skill was deleted.
 | `design-protocol` | 2026-10-01 | `dc94504f1` |
 | `doc-quality` | 2026-10-01 | `dc94504f1` |
 | `draw` | 2026-09-16 | `9720dfd06` |
-| `engineering-rigor` | 2026-10-01 | `7a8958f70` |
+| `engineering-rigor` | 2026-10-01 | `4adf8d693` |
 | `formal-rules` | 2026-10-01 | `dc94504f1` |
-| `loft-codegen` | 2026-10-01 | `7a8958f70` |
-| `loft-debug` | 2026-10-01 | `2ba4e6b6d` |
-| `loft-plan-workflow` | 2026-10-01 | `f29effbf3` |
-| `loft-ship` | 2026-10-01 | `7a8958f70` |
-| `loft-test` | 2026-10-01 | `2ba4e6b6d` |
-| `loft-write` | 2026-10-01 | `2ba4e6b6d` |
+| `loft-codegen` | 2026-10-01 | `4adf8d693` |
+| `loft-debug` | 2026-10-01 | `ca7daa8de` |
+| `loft-plan-workflow` | 2026-10-01 | `839ff7377` |
+| `loft-ship` | 2026-10-01 | `74bc323b4` |
+| `loft-test` | 2026-10-01 | `ca7daa8de` |
+| `loft-write` | 2026-10-01 | `ca7daa8de` |
 | `split-file` | 2026-10-01 | `0c1e2c840` |
 
 ## Findings that outlive a single review
