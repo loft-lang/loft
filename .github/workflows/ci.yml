@@ -236,7 +236,6 @@ jobs:
   # the `mergeable into main` context to branch protection's required checks so
   # a red here blocks merge.
   mergeable:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: mergeable into main
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -271,7 +270,6 @@ jobs:
   # publish and registry-merge would be red for hours after each release, across work
   # that has nothing to do with it — which teaches everyone to merge past a red check.
   release-published:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: previous release reached the registry
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -1918,7 +1916,6 @@ jobs:
   # conclusion) so the toolchain matrix's `continue-on-error` can't hide a red
   # beta/nightly behind a green run.
   nightly-status:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     name: Nightly health (informational)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
