@@ -82,15 +82,15 @@ row whose skill was deleted.
 | `design-protocol` | 2026-10-01 | `dc94504f1` |
 | `doc-quality` | 2026-10-01 | `dc94504f1` |
 | `draw` | 2026-09-16 | `9720dfd06` |
-| `engineering-rigor` | 2026-10-01 | `4adf8d693` |
+| `engineering-rigor` | 2026-10-01 | `a80e26737` |
 | `formal-rules` | 2026-10-01 | `dc94504f1` |
-| `loft-codegen` | 2026-10-01 | `4adf8d693` |
-| `loft-debug` | 2026-10-01 | `ca7daa8de` |
-| `loft-plan-workflow` | 2026-10-01 | `839ff7377` |
-| `loft-ship` | 2026-10-01 | `74bc323b4` |
-| `loft-test` | 2026-10-01 | `206910102` |
-| `loft-write` | 2026-10-01 | `139320e23` |
-| `split-file` | 2026-10-01 | `ef2b231e0` |
+| `loft-codegen` | 2026-10-01 | `a80e26737` |
+| `loft-debug` | 2026-10-01 | `a80e26737` |
+| `loft-plan-workflow` | 2026-10-01 | `a80e26737` |
+| `loft-ship` | 2026-10-01 | `a80e26737` |
+| `loft-test` | 2026-10-01 | `a80e26737` |
+| `loft-write` | 2026-10-01 | `a80e26737` |
+| `split-file` | 2026-10-01 | `a80e26737` |
 
 ## Findings that outlive a single review
 
