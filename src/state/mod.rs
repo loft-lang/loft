@@ -2820,13 +2820,13 @@ impl State {
     When the position is outside the byte-code
     */
     pub fn code<T: Copy>(&mut self) -> T {
-        assert!(
-            self.code_pos + (size_of::<T>() as u32) <= self.bytecode.len() as u32,
-            "Position {} + {} outside generated code {}",
-            self.code_pos,
-            size_of::<T>(),
-            self.bytecode.len()
-        );
+        // The bound stays checked in every build; only the report is out of line.  A formatted
+        // `assert!` inside this generic, inlined into every operator, cost 13 % of the cycles of
+        // an interpreted vector loop (measured 2026-10-01): the panic's argument setup sat in
+        // the hot path of each operand read.
+        if self.code_pos + (size_of::<T>() as u32) > self.bytecode.len() as u32 {
+            code_out_of_range(self.code_pos, size_of::<T>(), self.bytecode.len());
+        }
         unsafe {
             let off = self
                 .bytecode
@@ -6552,8 +6552,7 @@ impl State {
                 } else {
                     u16::from(op)
                 };
-                let fn_d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
-                crate::crash_report::set_dispatch(op_pos_rt, opcode, fn_d_nr);
+                crate::crash_report::set_dispatch_op(op_pos_rt, opcode);
                 OPERATORS[usize::from(opcode)](self);
                 if self.database.frame_yield {
                     return;
@@ -8601,4 +8600,12 @@ pub fn size_str() -> u32 {
 #[must_use]
 pub fn size_ref() -> u32 {
     size_of::<DbRef>() as u32
+}
+
+/// The report of [`State::code`] reading past the generated code — out of line, so the check in
+/// every operand read stays one compare and a branch.
+#[cold]
+#[inline(never)]
+fn code_out_of_range(pos: u32, size: usize, len: usize) -> ! {
+    panic!("Position {pos} + {size} outside generated code {len}");
 }
