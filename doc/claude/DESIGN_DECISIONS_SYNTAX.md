@@ -218,7 +218,8 @@ set of hole kinds.  Decided 2026-09-21 — [record](DESIGN_DECISIONS-history.md#
 **Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, … binds no operator,
 is no operator template, and satisfies no operator interface (`Ordered`, `Addable`, …).  A user
 type keeps structural `==` (C91), its keyed collections, named methods, and the key-based stdlib
-functions (`sort_by`, `min_by`, `max_by`, `sum_by`).  **Why.** `fn Op<Name>` is the compiler's
+functions this decision adds (`sort_by`, `min_by`, `max_by`, `sum_by` — loft#1833, not yet
+shipped).  **Why.** `fn Op<Name>` is the compiler's
 operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
 comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
 does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
