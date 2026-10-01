@@ -128,7 +128,7 @@ impl Parser {
             return None;
         }
         let hint = self.lambda_hint();
-        let fits: Vec<u32> = match &hint {
+        let fits: Vec<u32> = match hint.base() {
             Type::Function(args, ret, ..) => members
                 .iter()
                 .copied()
@@ -165,7 +165,7 @@ impl Parser {
                     )
                 })
                 .collect();
-            let why = if matches!(hint, Type::Function(..)) {
+            let why = if matches!(hint.base(), Type::Function(..)) {
                 format!(
                     "none of its definitions is the `{}` expected here",
                     self.data.display_type_name(&hint)
