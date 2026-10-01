@@ -746,8 +746,12 @@ loop reads a second byte `ext` and dispatches `OPERATORS[255 + ext]` (`emit_op`)
 
 There are two loops in `execute_argv`.  The **lean loop** runs whenever nothing watches
 individual ops, and does per op only what an ordinary run needs: publish the allocation site
-(`alloc_pc`), publish the crash context (`crash_report::set_dispatch`, twelve bytes; the labels
-are set once per loop), dispatch, the frame yield, and the halt checks.  The **full loop**
+(`alloc_pc`), publish the op and its position for a crash report
+(`crash_report::set_dispatch_op` — not the function, whose read of the call stack cost 2–4 % of
+the cycles, and which the report's `at:` line names anyway; the labels are set once per loop),
+dispatch, the frame yield, and the halt checks.  An operand read (`State::code`) keeps its bounds
+check with the report out of line: the formatted `assert!` it replaced cost 5–7 % of a vector
+loop's cycles (2026-10-01).  The **full loop**
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the
 stack census, the stack shadow, allocation paths, the UAF scans — and takes over the moment one
 is armed, including a debugger attaching mid-run.  Measured: the full loop's
@@ -887,7 +891,7 @@ design of each is in the record; the delivered items are listed below the table.
 
 | Item | Backend | Open because | Design |
 |---|---|---|---|
-| **P2** — stack raw-pointer cache, the interpreter half | interpreter | the native half ships (loft#885); the interpreter half carries memory-model risk and a bounded gain | [§ Design: P2](PERFORMANCE-history.md#design-p2--reduce-store-indirection-on-the-stack) |
+| **P2** — stack raw-pointer cache, the interpreter half | interpreter | the native half ships (loft#885); the interpreter half carries memory-model risk and a bounded gain.  Measured 2026-10-01 as a prize: reading the stack store without its index check took 9 % of a vector loop's cycles and 2.4 % of `opl_points`; not taken, because its soundness rests on `Stores::restore_heap` never shortening the table | [§ Design: P2](PERFORMANCE-history.md#design-p2--reduce-store-indirection-on-the-stack) |
 | **P3** — integer paths carry no `long` sentinel | both | no audit test exists | [§ Design: P3](PERFORMANCE-history.md#design-p3--confirm-integer-paths-carry-no-long-sentinel) |
 | **P4** — block-copy slice materialisation | both | `OpAppendVectorSlice` does not exist | [§ Design: P4](PERFORMANCE-history.md#design-p4--block-copy-slice-materialisation-for-primitive-vectors) |
 | **P7** — `shrink_to_fit(v)` | both | `reserve` ships; `shrink_to_fit` does not | [§ Open work](PERFORMANCE-history.md#open-work) |
