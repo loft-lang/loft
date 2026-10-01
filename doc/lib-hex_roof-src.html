@@ -24,8 +24,1320 @@
 <h1>hex_roof source</h1>
 <article>
 <p><a href="lib-hex_roof.html">← hex_roof</a> · <a href="lib-hex_roof-api.html">API reference</a> · version 0.1.5</p>
-<p>The source for <code>hex_roof</code> 0.1.5 is not on this build box, so this page could not be rendered from it. <code>loft install hex_roof</code> fetches the package, and the repository is the other route.</p>
-<p><a href="https://github.com/loft-lang/loft-libs-world/tree/main/hex_roof">https://github.com/loft-lang/loft-libs-world/tree/main/hex_roof</a></p>
+<p class="lib-legend">3 file(s), 1280 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>roof_cone</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L47">47</a></td><td><a href="#tests-02-worked-examples-loft-L148">HXR-003</a></td><td><a href="#tests-01-hex-roof-loft-L44">44</a> <a href="#tests-01-hex-roof-loft-L65">65</a> <a href="#tests-01-hex-roof-loft-L128">128</a> <a href="#tests-02-worked-examples-loft-L124">124</a> <a href="#tests-02-worked-examples-loft-L131">131</a> <a href="#tests-02-worked-examples-loft-L137">137</a> … (9 total)</td></tr>
+<tr><td><code>roof_ridge</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L66">66</a></td><td><a href="#tests-02-worked-examples-loft-L54">HXR-001</a></td><td><a href="#tests-01-hex-roof-loft-L95">95</a> <a href="#tests-01-hex-roof-loft-L208">208</a> <a href="#tests-02-worked-examples-loft-L73">73</a> <a href="#tests-02-worked-examples-loft-L74">74</a></td></tr>
+<tr><td><code>vault_arc</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L83">83</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>roof_hip</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L116">116</a></td><td><a href="#tests-02-worked-examples-loft-L89">HXR-002</a></td><td><a href="#tests-01-hex-roof-loft-L117">117</a> <a href="#tests-02-worked-examples-loft-L142">142</a> <a href="#tests-02-worked-examples-loft-L225">225</a> <a href="#tests-02-worked-examples-loft-L231">231</a></td></tr>
+<tr><td><code>dome</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L168">168</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>vault_groin</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L202">202</a></td><td><a href="#tests-02-worked-examples-loft-L178">HXR-004</a></td><td><a href="#tests-02-worked-examples-loft-L196">196</a></td></tr>
+<tr><td><code>vault_cloister</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L219">219</a></td><td><a href="#tests-02-worked-examples-loft-L178">HXR-004</a></td><td><a href="#tests-02-worked-examples-loft-L197">197</a></td></tr>
+<tr><td><code>clear_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L235">235</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>roof_ponds</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L247">247</a></td><td><a href="#tests-02-worked-examples-loft-L212">HXR-005</a></td><td><a href="#tests-01-hex-roof-loft-L66">66</a> <a href="#tests-01-hex-roof-loft-L74">74</a> <a href="#tests-01-hex-roof-loft-L75">75</a> <a href="#tests-02-worked-examples-loft-L86">86</a> <a href="#tests-02-worked-examples-loft-L125">125</a> <a href="#tests-02-worked-examples-loft-L133">133</a> … (12 total)</td></tr>
+<tr><td><code>eave_spread</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L276">276</a></td><td><a href="#tests-02-worked-examples-loft-L148">HXR-003</a></td><td><a href="#tests-02-worked-examples-loft-L127">127</a> <a href="#tests-02-worked-examples-loft-L132">132</a> <a href="#tests-02-worked-examples-loft-L138">138</a> <a href="#tests-02-worked-examples-loft-L144">144</a> <a href="#tests-02-worked-examples-loft-L175">175</a></td></tr>
+<tr><td><code>ROOF_UNKNOWN</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L308">308</a></td><td>—</td><td><a href="#src-hex-roof-loft-L345">345</a> <a href="#src-hex-roof-loft-L768">768</a> <a href="#tests-01-hex-roof-loft-L119">119</a></td></tr>
+<tr><td><code>ROOF_PLANE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L309">309</a></td><td>—</td><td><a href="#src-hex-roof-loft-L367">367</a> <a href="#src-hex-roof-loft-L777">777</a> <a href="#tests-01-hex-roof-loft-L147">147</a> <a href="#tests-02-worked-examples-loft-L259">259</a></td></tr>
+<tr><td><code>ROOF_CONE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L310">310</a></td><td>—</td><td><a href="#src-hex-roof-loft-L641">641</a> <a href="#src-hex-roof-loft-L778">778</a> <a href="#tests-01-hex-roof-loft-L130">130</a> <a href="#tests-02-worked-examples-loft-L266">266</a></td></tr>
+<tr><td><code>ROOF_DOME</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L311">311</a></td><td>—</td><td><a href="#src-hex-roof-loft-L724">724</a> <a href="#src-hex-roof-loft-L787">787</a></td></tr>
+<tr><td><code>ROOF_RIDGE</code> <span class="search-kind">const</span></td><td><a href="#src-hex-roof-loft-L312">312</a></td><td>—</td><td><a href="#src-hex-roof-loft-L599">599</a> <a href="#src-hex-roof-loft-L782">782</a> <a href="#tests-01-hex-roof-loft-L97">97</a> <a href="#tests-01-hex-roof-loft-L151">151</a> <a href="#tests-01-hex-roof-loft-L194">194</a></td></tr>
+<tr><td><code>RoofFit</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-roof-loft-L314">314</a></td><td>—</td><td><a href="#src-hex-roof-loft-L328">328</a> <a href="#src-hex-roof-loft-L345">345</a> <a href="#src-hex-roof-loft-L367">367</a> <a href="#src-hex-roof-loft-L470">470</a> <a href="#src-hex-roof-loft-L567">567</a> <a href="#src-hex-roof-loft-L599">599</a> … (13 total)</td></tr>
+<tr><td><code>roof_plane_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L328">328</a></td><td>—</td><td><a href="#src-hex-roof-loft-L753">753</a></td></tr>
+<tr><td><code>roof_ridge_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L470">470</a></td><td>—</td><td><a href="#src-hex-roof-loft-L762">762</a> <a href="#tests-01-hex-roof-loft-L181">181</a> <a href="#tests-01-hex-roof-loft-L209">209</a></td></tr>
+<tr><td><code>roof_cone_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L605">605</a></td><td>—</td><td><a href="#src-hex-roof-loft-L552">552</a> <a href="#src-hex-roof-loft-L755">755</a></td></tr>
+<tr><td><code>roof_dome_fit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L688">688</a></td><td>—</td><td><a href="#src-hex-roof-loft-L757">757</a></td></tr>
+<tr><td><code>roof_match</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L752">752</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L96">96</a> <a href="#tests-01-hex-roof-loft-L118">118</a> <a href="#tests-01-hex-roof-loft-L129">129</a> <a href="#tests-01-hex-roof-loft-L146">146</a> <a href="#tests-01-hex-roof-loft-L193">193</a> <a href="#tests-01-hex-roof-loft-L194">194</a> … (8 total)</td></tr>
+<tr><td><code>roof_eval</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-roof-loft-L776">776</a></td><td><a href="#tests-02-worked-examples-loft-L239">HXR-006</a></td><td><a href="#tests-01-hex-roof-loft-L106">106</a> <a href="#tests-01-hex-roof-loft-L107">107</a> <a href="#tests-01-hex-roof-loft-L120">120</a> <a href="#tests-02-worked-examples-loft-L270">270</a></td></tr>
+</table>
+<h2 id="src-hex-roof-loft">src/hex_roof.loft</h2>
+<pre class="src"><code><span id="src-hex-roof-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-hex-roof-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-hex-roof-loft-L3"><span class="cm">// hexroof — ROOFS, VAULTS AND ARCHES: one mechanism, several profiles.</span></span>
+<span id="src-hex-roof-loft-L4"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L5"><span class="cm">// Once a cell carries a height, every roof form anyone names is the same function of a</span></span>
+<span id="src-hex-roof-loft-L6"><span class="cm">// DISTANCE, and only the distance SOURCE changes:</span></span>
+<span id="src-hex-roof-loft-L7"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L8"><span class="cm">//     d = |p - c|            a point    -&gt;  cone, or a pyramid on a polygonal base</span></span>
+<span id="src-hex-roof-loft-L9"><span class="cm">//     d = dist to a line     a line     -&gt;  gable</span></span>
+<span id="src-hex-roof-loft-L10"><span class="cm">//     d = dist to a SEGMENT  a segment  -&gt;  hip — the ends slope because past the ridge's</span></span>
+<span id="src-hex-roof-loft-L11"><span class="cm">//                                           end the distance stops running across the</span></span>
+<span id="src-hex-roof-loft-L12"><span class="cm">//                                           ridge and starts running to its tip</span></span>
+<span id="src-hex-roof-loft-L13"><span class="cm">//     d = 0                             -&gt;  flat</span></span>
+<span id="src-hex-roof-loft-L14"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L15"><span class="cm">// So "the list of roof forms" is not a list of special cases; it is a list of distance</span></span>
+<span id="src-hex-roof-loft-L16"><span class="cm">// sources the way layer already provides. A hip is a gable with a shorter ridge —</span></span>
+<span id="src-hex-roof-loft-L17"><span class="cm">// literally the same call with a shorter Track.</span></span>
+<span id="src-hex-roof-loft-L18"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L19"><span class="cm">// A roof and an arch are the same object seen from opposite sides: a roof is the upper</span></span>
+<span id="src-hex-roof-loft-L20"><span class="cm">// surface of a solid, an arch the lower surface of an opening. That is why they share</span></span>
+<span id="src-hex-roof-loft-L21"><span class="cm">// everything but the sign of the profile's curvature, and why a cell wants a floor height</span></span>
+<span id="src-hex-roof-loft-L22"><span class="cm">// AND a soffit height rather than a single z.</span></span>
+<span id="src-hex-roof-loft-L23"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hex-roof-loft-L24"><span class="kw">use</span> hex_way::*;</span>
+<span id="src-hex-roof-loft-L25"></span>
+<span id="src-hex-roof-loft-L26"><span class="kw">fn</span> <span class="fn-call">cellx</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L27">  ((<span class="fn-call">lattice_k</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span></span>
+<span id="src-hex-roof-loft-L28">}</span>
+<span id="src-hex-roof-loft-L29"><span class="kw">fn</span> <span class="fn-call">celly</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L30">  ((<span class="fn-call">lattice_m</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span></span>
+<span id="src-hex-roof-loft-L31">}</span>
+<span id="src-hex-roof-loft-L32"></span>
+<span id="src-hex-roof-loft-L33"><span class="cm">// z = peak - slope*d about a point.  Clamping d at dmax is not a detail: it is what makes</span></span>
+<span id="src-hex-roof-loft-L34"><span class="cm">// an eave LEVEL on a quantised footprint, where the boundary cells sit at a spread of true</span></span>
+<span id="src-hex-roof-loft-L35"><span class="cm">// radii (rooftest measures the difference).</span></span>
+<span id="src-hex-roof-loft-L36"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L37"><span class="cm">// AND THE CLAMP HAS ITS OWN COST, worth knowing before reaching for it: the cells it clamps</span></span>
+<span id="src-hex-roof-loft-L38"><span class="cm">// become a flat plateau, and an interior cell inside that plateau PONDS.  On a quantised</span></span>
+<span id="src-hex-roof-loft-L39"><span class="cm">// footprint the boundary and the interior overlap in radius, so there is no `dmax` that</span></span>
+<span id="src-hex-roof-loft-L40"><span class="cm">// levels the eave and still drains — measured below.  `roof_hip` has neither problem,</span></span>
+<span id="src-hex-roof-loft-L41"><span class="cm">// because it never measures a radius: the boundary is ring 0 by definition.</span></span>
+<span id="src-hex-roof-loft-L42"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L43"><span class="cm">// `cx`/`cy` are WORLD coordinates, not cell indices.</span></span>
+<span id="src-hex-roof-loft-L44"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L45"><span class="cm">// Example: @HXR-002</span></span>
+<span id="src-hex-roof-loft-L46"><span class="cm">// Example: @HXR-003</span></span>
+<span id="src-hex-roof-loft-L47"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_cone</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-roof-loft-L48">                 peak: <span class="ty"><a href="stdlib-types.html">float</a></span>, slope: <span class="ty"><a href="stdlib-types.html">float</a></span>, dmax: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L49">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L50">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L51">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L52">        dx = <span class="fn-call">cellx</span>(q, r) - cx;</span>
+<span id="src-hex-roof-loft-L53">        dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L54">        d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L55">        <span class="kw">if</span> d &gt; dmax { d = dmax; }</span>
+<span id="src-hex-roof-loft-L56">        <span class="fn-call">height_set</span>(f, q, r, peak - slope * d);</span>
+<span id="src-hex-roof-loft-L57">      }</span>
+<span id="src-hex-roof-loft-L58">    }</span>
+<span id="src-hex-roof-loft-L59">  }</span>
+<span id="src-hex-roof-loft-L60">}</span>
+<span id="src-hex-roof-loft-L61"></span>
+<span id="src-hex-roof-loft-L62"><span class="cm">// The same profile about a ridge.  A full-length ridge gives a gable; shorten it and the</span></span>
+<span id="src-hex-roof-loft-L63"><span class="cm">// ends hip in, because track_distance clamps to the segment.</span></span>
+<span id="src-hex-roof-loft-L64"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L65"><span class="cm">// Example: @HXR-001</span></span>
+<span id="src-hex-roof-loft-L66"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_ridge</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, t: <span class="en">Track</span>,</span>
+<span id="src-hex-roof-loft-L67">                  peak: <span class="ty"><a href="stdlib-types.html">float</a></span>, slope: <span class="ty"><a href="stdlib-types.html">float</a></span>, dmax: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L68">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L69">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L70">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L71">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L72">        <span class="kw">if</span> d &gt; dmax { d = dmax; }</span>
+<span id="src-hex-roof-loft-L73">        <span class="fn-call">height_set</span>(f, q, r, peak - slope * d);</span>
+<span id="src-hex-roof-loft-L74">      }</span>
+<span id="src-hex-roof-loft-L75">    }</span>
+<span id="src-hex-roof-loft-L76">  }</span>
+<span id="src-hex-roof-loft-L77">}</span>
+<span id="src-hex-roof-loft-L78"></span>
+<span id="src-hex-roof-loft-L79"><span class="cm">// The SOFFIT of a barrel vault or an arch: spring + sqrt(R^2 - d^2), d measured from the</span></span>
+<span id="src-hex-roof-loft-L80"><span class="cm">// crown line.  Beyond the springing the opening has closed, so the soffit is the springing</span></span>
+<span id="src-hex-roof-loft-L81"><span class="cm">// itself.  Pass a radius larger than the half-span for a segmental arch; equal to it for a</span></span>
+<span id="src-hex-roof-loft-L82"><span class="cm">// semicircular one.</span></span>
+<span id="src-hex-roof-loft-L83"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vault_arc</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, t: <span class="en">Track</span>, spring: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L84">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L85">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L86">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L87">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L88">        <span class="kw">if</span> d &gt;= radius {</span>
+<span id="src-hex-roof-loft-L89">          <span class="fn-call">height_set</span>(f, q, r, spring);</span>
+<span id="src-hex-roof-loft-L90">        } <span class="kw">else</span> {</span>
+<span id="src-hex-roof-loft-L91">          <span class="fn-call">height_set</span>(f, q, r, spring + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(radius * radius - d * d) ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-roof-loft-L92">        }</span>
+<span id="src-hex-roof-loft-L93">      }</span>
+<span id="src-hex-roof-loft-L94">    }</span>
+<span id="src-hex-roof-loft-L95">  }</span>
+<span id="src-hex-roof-loft-L96">}</span>
+<span id="src-hex-roof-loft-L97"></span>
+<span id="src-hex-roof-loft-L98"><span class="cm">// THE DISTANCE-TO-BOUNDARY ROOF — the one that actually matters on a quantised footprint.</span></span>
+<span id="src-hex-roof-loft-L99"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L100"><span class="cm">// Every cell rises at a constant slope from its NEAREST EAVE, which is the definition of a</span></span>
+<span id="src-hex-roof-loft-L101"><span class="cm">// hip roof. On a circular footprint that is a cone; on an octagonal one a pyramid; on an</span></span>
+<span id="src-hex-roof-loft-L102"><span class="cm">// L-shaped hall a properly mitred hip-and-valley. The FORM is entirely the footprint's</span></span>
+<span id="src-hex-roof-loft-L103"><span class="cm">// shape — there is one function here, not a catalogue, and that is the whole reason "roof</span></span>
+<span id="src-hex-roof-loft-L104"><span class="cm">// forms" stopped being a list.</span></span>
+<span id="src-hex-roof-loft-L105"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L106"><span class="cm">// Driving it from the FOOTPRINT rather than from the ideal circle is also what makes the</span></span>
+<span id="src-hex-roof-loft-L107"><span class="cm">// eave level. Boundary cells are at ring 0 by definition, whatever their true radius. Drive</span></span>
+<span id="src-hex-roof-loft-L108"><span class="cm">// a cone from each cell's own radius instead and the eave inherits the footprint's</span></span>
+<span id="src-hex-roof-loft-L109"><span class="cm">// roundness deviation, wobbling by slope x that spread — rooftest measures both, because</span></span>
+<span id="src-hex-roof-loft-L110"><span class="cm">// the failure is invisible until you look at the eave rather than the apex.</span></span>
+<span id="src-hex-roof-loft-L111"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L112"><span class="cm">// Multi-source BFS inward from the boundary, on the pre-allocated array + index-write</span></span>
+<span id="src-hex-roof-loft-L113"><span class="cm">// idiom (appending while a head pointer walks the same vector is the broken shape).</span></span>
+<span id="src-hex-roof-loft-L114"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L115"><span class="cm">// Example: @HXR-002</span></span>
+<span id="src-hex-roof-loft-L116"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_hip</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, eave: <span class="ty"><a href="stdlib-types.html">float</a></span>, per_ring: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-roof-loft-L117">  cap = <span class="fn-call">hexset_w</span>(s) * <span class="fn-call">hexset_h</span>(s);</span>
+<span id="src-hex-roof-loft-L118">  bq: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-roof-loft-L119">  br: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-roof-loft-L120">  bd: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-hex-roof-loft-L121">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..</span>cap { bq += [<span class="nm">0</span>]; br += [<span class="nm">0</span>]; bd += [<span class="nm">0</span>]; }</span>
+<span id="src-hex-roof-loft-L122">  vis = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(s), <span class="fn-call">hexset_r0</span>(s), <span class="fn-call">hexset_w</span>(s), <span class="fn-call">hexset_h</span>(s));</span>
+<span id="src-hex-roof-loft-L123">  n = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L124">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L125">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L126">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L127">        edge = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L128">        <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-roof-loft-L129">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, <span class="fn-call">nb_q</span>(q, r, i), <span class="fn-call">nb_r</span>(q, r, i)) { edge = <span class="kw">true</span>; }</span>
+<span id="src-hex-roof-loft-L130">        }</span>
+<span id="src-hex-roof-loft-L131">        <span class="kw">if</span> edge &amp;&amp; n &lt; cap {</span>
+<span id="src-hex-roof-loft-L132">          <span class="fn-call">height_set</span>(f, q, r, eave);</span>
+<span id="src-hex-roof-loft-L133">          <span class="fn-call">hexset_set</span>(vis, q, r, <span class="kw">true</span>);</span>
+<span id="src-hex-roof-loft-L134">          bq[n] = q; br[n] = r; bd[n] = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L135">          n = n + <span class="nm">1</span>;</span>
+<span id="src-hex-roof-loft-L136">        }</span>
+<span id="src-hex-roof-loft-L137">      }</span>
+<span id="src-hex-roof-loft-L138">    }</span>
+<span id="src-hex-roof-loft-L139">  }</span>
+<span id="src-hex-roof-loft-L140">  head = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L141">  top = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L142">  while head &lt; n {</span>
+<span id="src-hex-roof-loft-L143">    cq = bq[head] ?? <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L144">    cr = br[head] ?? <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L145">    cd = bd[head] ?? <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L146">    head = head + <span class="nm">1</span>;</span>
+<span id="src-hex-roof-loft-L147">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-roof-loft-L148">      nq = <span class="fn-call">nb_q</span>(cq, cr, i);</span>
+<span id="src-hex-roof-loft-L149">      nr = <span class="fn-call">nb_r</span>(cq, cr, i);</span>
+<span id="src-hex-roof-loft-L150">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(vis, nq, nr) &amp;&amp; n &lt; cap {</span>
+<span id="src-hex-roof-loft-L151">        <span class="fn-call">hexset_set</span>(vis, nq, nr, <span class="kw">true</span>);</span>
+<span id="src-hex-roof-loft-L152">        <span class="fn-call">height_set</span>(f, nq, nr, eave + ((cd + <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * per_ring);</span>
+<span id="src-hex-roof-loft-L153">        bq[n] = nq; br[n] = nr; bd[n] = cd + <span class="nm">1</span>;</span>
+<span id="src-hex-roof-loft-L154">        n = n + <span class="nm">1</span>;</span>
+<span id="src-hex-roof-loft-L155">        <span class="kw">if</span> cd + <span class="nm">1</span> &gt; top { top = cd + <span class="nm">1</span>; }</span>
+<span id="src-hex-roof-loft-L156">      }</span>
+<span id="src-hex-roof-loft-L157">    }</span>
+<span id="src-hex-roof-loft-L158">  }</span>
+<span id="src-hex-roof-loft-L159">  top</span>
+<span id="src-hex-roof-loft-L160">}</span>
+<span id="src-hex-roof-loft-L161"></span>
+<span id="src-hex-roof-loft-L162"><span class="cm">// A DOME — a point source with a CIRCULAR profile, where a cone is a point source with a</span></span>
+<span id="src-hex-roof-loft-L163"><span class="cm">// linear one.  That single swap is the whole difference, and it is also why a dome is the</span></span>
+<span id="src-hex-roof-loft-L164"><span class="cm">// harder object: a cone's slope is constant, a dome's diverges at the springing</span></span>
+<span id="src-hex-roof-loft-L165"><span class="cm">// (dz/dr = -r/sqrt(R^2-r^2)).  Past the 45-degree point r = R/sqrt(2) the surface is more</span></span>
+<span id="src-hex-roof-loft-L166"><span class="cm">// wall than roof and a per-cell height stops being able to carry it — which is exactly why</span></span>
+<span id="src-hex-roof-loft-L167"><span class="cm">// real domes sit on a vertical DRUM and only the cap is vaulted.  vaulttest measures it.</span></span>
+<span id="src-hex-roof-loft-L168"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dome</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>, base: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L169">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L170">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L171">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L172">        dx = <span class="fn-call">cellx</span>(q, r) - cx;</span>
+<span id="src-hex-roof-loft-L173">        dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L174">        d2 = dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L175">        <span class="kw">if</span> d2 &gt;= radius * radius {</span>
+<span id="src-hex-roof-loft-L176">          <span class="fn-call">height_set</span>(f, q, r, base);</span>
+<span id="src-hex-roof-loft-L177">        } <span class="kw">else</span> {</span>
+<span id="src-hex-roof-loft-L178">          <span class="fn-call">height_set</span>(f, q, r, base + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(radius * radius - d2) ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-roof-loft-L179">        }</span>
+<span id="src-hex-roof-loft-L180">      }</span>
+<span id="src-hex-roof-loft-L181">    }</span>
+<span id="src-hex-roof-loft-L182">  }</span>
+<span id="src-hex-roof-loft-L183">}</span>
+<span id="src-hex-roof-loft-L184"></span>
+<span id="src-hex-roof-loft-L185"><span class="cm">// Two barrels over one bay.  Which way you combine them is the entire distinction between</span></span>
+<span id="src-hex-roof-loft-L186"><span class="cm">// the two classical vaults:</span></span>
+<span id="src-hex-roof-loft-L187"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L188"><span class="cm">//   GROIN    = max — the higher surface wins, so both crown lines stay at full height and</span></span>
+<span id="src-hex-roof-loft-L189"><span class="cm">//              every wall keeps its arch.  The groins (concave) run along the diagonals.</span></span>
+<span id="src-hex-roof-loft-L190"><span class="cm">//   CLOISTER = min — the lower wins, so the vault springs continuously from all four walls</span></span>
+<span id="src-hex-roof-loft-L191"><span class="cm">//              and there is no wall opening anywhere.  The arrises (convex) run diagonally.</span></span>
+<span id="src-hex-roof-loft-L192"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L193"><span class="cm">// Same two inputs, opposite operator, opposite building.</span></span>
+<span id="src-hex-roof-loft-L194"><span class="kw">fn</span> <span class="fn-call">barrel_at</span>(t: <span class="en">Track</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, spring: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L195">  d = <span class="fn-call">track_distance</span>(t, x, y);</span>
+<span id="src-hex-roof-loft-L196">  <span class="kw">if</span> d &gt;= radius { <span class="kw">return</span> spring; }</span>
+<span id="src-hex-roof-loft-L197">  spring + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(radius * radius - d * d) ?? <span class="nm">0.0</span>)</span>
+<span id="src-hex-roof-loft-L198">}</span>
+<span id="src-hex-roof-loft-L199"></span>
+<span id="src-hex-roof-loft-L200"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L201"><span class="cm">// Example: @HXR-004</span></span>
+<span id="src-hex-roof-loft-L202"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vault_groin</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, t1: <span class="en">Track</span>, t2: <span class="en">Track</span>,</span>
+<span id="src-hex-roof-loft-L203">                   spring: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L204">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L205">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L206">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L207">        x = <span class="fn-call">cellx</span>(q, r); y = <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L208">        a = <span class="fn-call">barrel_at</span>(t1, x, y, spring, radius);</span>
+<span id="src-hex-roof-loft-L209">        b = <span class="fn-call">barrel_at</span>(t2, x, y, spring, radius);</span>
+<span id="src-hex-roof-loft-L210">        <span class="kw">if</span> b &gt; a { a = b; }</span>
+<span id="src-hex-roof-loft-L211">        <span class="fn-call">height_set</span>(f, q, r, a);</span>
+<span id="src-hex-roof-loft-L212">      }</span>
+<span id="src-hex-roof-loft-L213">    }</span>
+<span id="src-hex-roof-loft-L214">  }</span>
+<span id="src-hex-roof-loft-L215">}</span>
+<span id="src-hex-roof-loft-L216"></span>
+<span id="src-hex-roof-loft-L217"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L218"><span class="cm">// Example: @HXR-004</span></span>
+<span id="src-hex-roof-loft-L219"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">vault_cloister</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, t1: <span class="en">Track</span>, t2: <span class="en">Track</span>,</span>
+<span id="src-hex-roof-loft-L220">                      spring: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L221">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L222">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L223">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L224">        x = <span class="fn-call">cellx</span>(q, r); y = <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L225">        a = <span class="fn-call">barrel_at</span>(t1, x, y, spring, radius);</span>
+<span id="src-hex-roof-loft-L226">        b = <span class="fn-call">barrel_at</span>(t2, x, y, spring, radius);</span>
+<span id="src-hex-roof-loft-L227">        <span class="kw">if</span> b &lt; a { a = b; }</span>
+<span id="src-hex-roof-loft-L228">        <span class="fn-call">height_set</span>(f, q, r, a);</span>
+<span id="src-hex-roof-loft-L229">      }</span>
+<span id="src-hex-roof-loft-L230">    }</span>
+<span id="src-hex-roof-loft-L231">  }</span>
+<span id="src-hex-roof-loft-L232">}</span>
+<span id="src-hex-roof-loft-L233"></span>
+<span id="src-hex-roof-loft-L234"><span class="cm">// What can pass here: the gap between floor and soffit.</span></span>
+<span id="src-hex-roof-loft-L235"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clear_height</span>(fl: <span class="en">Heights</span>, so: <span class="en">Heights</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L236">  <span class="fn-call">height_get</span>(so, q, r) - <span class="fn-call">height_get</span>(fl, q, r)</span>
+<span id="src-hex-roof-loft-L237">}</span>
+<span id="src-hex-roof-loft-L238"></span>
+<span id="src-hex-roof-loft-L239"><span class="cm">// PONDING — the roof's correctness invariant, and the analogue of a stair's monotonicity.</span></span>
+<span id="src-hex-roof-loft-L240"><span class="cm">// An INTERIOR cell (all six neighbours in the footprint) every one of whose neighbours is</span></span>
+<span id="src-hex-roof-loft-L241"><span class="cm">// strictly higher is a local minimum: water collects and never leaves. A roof that sheds</span></span>
+<span id="src-hex-roof-loft-L242"><span class="cm">// has none. Boundary cells are exempt — they drain off the eave, which is their job.</span></span>
+<span id="src-hex-roof-loft-L243"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L244"><span class="cm">// A zero here is not "no local minima": a hollow on the BOUNDARY is not counted.</span></span>
+<span id="src-hex-roof-loft-L245"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L246"><span class="cm">// Example: @HXR-005</span></span>
+<span id="src-hex-roof-loft-L247"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_ponds</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-roof-loft-L248">  n = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L249">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L250">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L251">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L252">        interior = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L253">        lower = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L254">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L255">        <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-roof-loft-L256">          nq = <span class="fn-call">nb_q</span>(q, r, i);</span>
+<span id="src-hex-roof-loft-L257">          nr = <span class="fn-call">nb_r</span>(q, r, i);</span>
+<span id="src-hex-roof-loft-L258">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, nq, nr) { interior = <span class="kw">false</span>; }</span>
+<span id="src-hex-roof-loft-L259">          <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, nq, nr) &amp;&amp; <span class="fn-call">height_get</span>(f, nq, nr) &lt; z - <span class="nm">0.000001</span> { lower = <span class="kw">true</span>; }</span>
+<span id="src-hex-roof-loft-L260">        }</span>
+<span id="src-hex-roof-loft-L261">        <span class="kw">if</span> interior &amp;&amp; !lower { n = n + <span class="nm">1</span>; }</span>
+<span id="src-hex-roof-loft-L262">      }</span>
+<span id="src-hex-roof-loft-L263">    }</span>
+<span id="src-hex-roof-loft-L264">  }</span>
+<span id="src-hex-roof-loft-L265">  n</span>
+<span id="src-hex-roof-loft-L266">}</span>
+<span id="src-hex-roof-loft-L267"></span>
+<span id="src-hex-roof-loft-L268"><span class="cm">// The spread of eave heights around a footprint's boundary — 0 for a level eave.</span></span>
+<span id="src-hex-roof-loft-L269"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L270"><span class="cm">// THE INSTRUMENT FOR THE FAILURE NOTHING ELSE SEES: a roof built from the wrong distance</span></span>
+<span id="src-hex-roof-loft-L271"><span class="cm">// source still has an apex, still is not flat and still sheds water.  This is the number</span></span>
+<span id="src-hex-roof-loft-L272"><span class="cm">// that moves.</span></span>
+<span id="src-hex-roof-loft-L273"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L274"><span class="cm">// Example: @HXR-002</span></span>
+<span id="src-hex-roof-loft-L275"><span class="cm">// Example: @HXR-003</span></span>
+<span id="src-hex-roof-loft-L276"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">eave_spread</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L277">  lo = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L278">  hi = -<span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L279">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L280">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L281">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L282">        edge = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L283">        <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-roof-loft-L284">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, <span class="fn-call">nb_q</span>(q, r, i), <span class="fn-call">nb_r</span>(q, r, i)) { edge = <span class="kw">true</span>; }</span>
+<span id="src-hex-roof-loft-L285">        }</span>
+<span id="src-hex-roof-loft-L286">        <span class="kw">if</span> edge {</span>
+<span id="src-hex-roof-loft-L287">          z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L288">          <span class="kw">if</span> z &lt; lo { lo = z; }</span>
+<span id="src-hex-roof-loft-L289">          <span class="kw">if</span> z &gt; hi { hi = z; }</span>
+<span id="src-hex-roof-loft-L290">        }</span>
+<span id="src-hex-roof-loft-L291">      }</span>
+<span id="src-hex-roof-loft-L292">    }</span>
+<span id="src-hex-roof-loft-L293">  }</span>
+<span id="src-hex-roof-loft-L294">  <span class="kw">if</span> hi &lt; lo { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-roof-loft-L295">  hi - lo</span>
+<span id="src-hex-roof-loft-L296">}</span>
+<span id="src-hex-roof-loft-L297"></span>
+<span id="src-hex-roof-loft-L298"><span class="cm">// ── RECOVERING THE FORM: the inverse of everything above ────────────────────</span></span>
+<span id="src-hex-roof-loft-L299"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L300"><span class="cm">// Cells are STORAGE; the analytic surface is the truth.  hexmatch already does this for a</span></span>
+<span id="src-hex-roof-loft-L301"><span class="cm">// traced 2D boundary (loop of lattice points -&gt; straights + arcs).  A height field needs</span></span>
+<span id="src-hex-roof-loft-L302"><span class="cm">// the same service: read the per-cell z back, decide the profile, recover its exact</span></span>
+<span id="src-hex-roof-loft-L303"><span class="cm">// parameters, and hand the renderer a real cone — not a staircase of hexes wearing one.</span></span>
+<span id="src-hex-roof-loft-L304"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L305"><span class="cm">// Nothing downstream should ever draw the quantised heights directly.  Once the form is</span></span>
+<span id="src-hex-roof-loft-L306"><span class="cm">// recovered, the drawn surface is exact at any resolution, and the grid has served its</span></span>
+<span id="src-hex-roof-loft-L307"><span class="cm">// purpose as a compact way to STORE the roof rather than as the shape itself.</span></span>
+<span id="src-hex-roof-loft-L308"><span class="kw">pub</span> const <span class="en">ROOF_UNKNOWN</span> = <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L309"><span class="kw">pub</span> const <span class="en">ROOF_PLANE</span>   = <span class="nm">1</span>;</span>
+<span id="src-hex-roof-loft-L310"><span class="kw">pub</span> const <span class="en">ROOF_CONE</span>    = <span class="nm">2</span>;</span>
+<span id="src-hex-roof-loft-L311"><span class="kw">pub</span> const <span class="en">ROOF_DOME</span>    = <span class="nm">3</span>;   <span class="cm">// rf_z = base, rf_slope = sphere radius</span></span>
+<span id="src-hex-roof-loft-L312"><span class="kw">pub</span> const <span class="en">ROOF_RIDGE</span>   = <span class="nm">4</span>;   <span class="cm">// rf_x,rf_y = one end; rf_x2,rf_y2 = the other</span></span>
+<span id="src-hex-roof-loft-L313"></span>
+<span id="src-hex-roof-loft-L314"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L315">  rf_kind:  <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-roof-loft-L316">  rf_x:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: a       cone: centre x</span></span>
+<span id="src-hex-roof-loft-L317">  rf_y:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: b       cone: centre y</span></span>
+<span id="src-hex-roof-loft-L318">  rf_z:     <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// plane: c       cone: apex z</span></span>
+<span id="src-hex-roof-loft-L319">  rf_slope: <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// cone and ridge: dz per unit of distance</span></span>
+<span id="src-hex-roof-loft-L320">  rf_res:   <span class="ty"><a href="stdlib-types.html">float</a></span>,     <span class="cm">// worst residual over the footprint</span></span>
+<span id="src-hex-roof-loft-L321">  <span class="cm">// ⚠ **THE RIDGE'S SECOND END — a segment needs four numbers where a point needs two.**</span></span>
+<span id="src-hex-roof-loft-L322">  <span class="cm">// Zero for every other kind, which is what the existing literals give them.</span></span>
+<span id="src-hex-roof-loft-L323">  rf_x2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L324">  rf_y2:    <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L325">}</span>
+<span id="src-hex-roof-loft-L326"></span>
+<span id="src-hex-roof-loft-L327"><span class="cm">// Least squares z = a*x + b*y + c.  Covers flat and every shed/mono-pitch.</span></span>
+<span id="src-hex-roof-loft-L328"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_plane_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L329">  sxx = <span class="nm">0.0</span>; sxy = <span class="nm">0.0</span>; sx = <span class="nm">0.0</span>; syy = <span class="nm">0.0</span>; sy = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L330">  sxz = <span class="nm">0.0</span>; syz = <span class="nm">0.0</span>; sz = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L331">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L332">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L333">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L334">        x = <span class="fn-call">cellx</span>(q, r); y = <span class="fn-call">celly</span>(q, r); z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L335">        sxx = sxx + x * x; sxy = sxy + x * y; sx = sx + x;</span>
+<span id="src-hex-roof-loft-L336">        syy = syy + y * y; sy = sy + y; sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L337">        sxz = sxz + x * z; syz = syz + y * z; sz = sz + z;</span>
+<span id="src-hex-roof-loft-L338">      }</span>
+<span id="src-hex-roof-loft-L339">    }</span>
+<span id="src-hex-roof-loft-L340">  }</span>
+<span id="src-hex-roof-loft-L341">  det = sxx * (syy * sn - sy * sy) - sxy * (sxy * sn - sy * sx)</span>
+<span id="src-hex-roof-loft-L342">      + sx * (sxy * sy - syy * sx);</span>
+<span id="src-hex-roof-loft-L343">  ad = det; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L344">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> {</span>
+<span id="src-hex-roof-loft-L345">    <span class="kw">return</span> <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: <span class="nm">0.0</span>, rf_y: <span class="nm">0.0</span>, rf_z: <span class="nm">0.0</span>,</span>
+<span id="src-hex-roof-loft-L346">                     rf_slope: <span class="nm">0.0</span>, rf_res: <span class="nm">1000000.0</span> };</span>
+<span id="src-hex-roof-loft-L347">  }</span>
+<span id="src-hex-roof-loft-L348">  da = sxz * (syy * sn - sy * sy) - sxy * (syz * sn - sy * sz)</span>
+<span id="src-hex-roof-loft-L349">     + sx * (syz * sy - syy * sz);</span>
+<span id="src-hex-roof-loft-L350">  db = sxx * (syz * sn - sy * sz) - sxz * (sxy * sn - sy * sx)</span>
+<span id="src-hex-roof-loft-L351">     + sx * (sxy * sz - syz * sx);</span>
+<span id="src-hex-roof-loft-L352">  dc = sxx * (syy * sz - syz * sy) - sxy * (sxy * sz - syz * sx)</span>
+<span id="src-hex-roof-loft-L353">     + sxz * (sxy * sy - syy * sx);</span>
+<span id="src-hex-roof-loft-L354">  a = da / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L355">  b = db / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L356">  c = dc / det ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L357">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L358">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L359">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L360">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L361">        e = a * <span class="fn-call">cellx</span>(q, r) + b * <span class="fn-call">celly</span>(q, r) + c - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L362">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L363">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L364">      }</span>
+<span id="src-hex-roof-loft-L365">    }</span>
+<span id="src-hex-roof-loft-L366">  }</span>
+<span id="src-hex-roof-loft-L367">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_PLANE</span>, rf_x: a, rf_y: b, rf_z: c, rf_slope: <span class="nm">0.0</span>, rf_res: res }</span>
+<span id="src-hex-roof-loft-L368">}</span>
+<span id="src-hex-roof-loft-L369"></span>
+<span id="src-hex-roof-loft-L370"><span class="cm">// Worst |z - (apex - slope*r)| for one candidate centre, with apex and slope regressed.</span></span>
+<span id="src-hex-roof-loft-L371"><span class="kw">fn</span> <span class="fn-call">cone_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L372">  sr = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; srr = <span class="nm">0.0</span>; srz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L373">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L374">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L375">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L376">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L377">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L378">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L379">        sr = sr + rad; szz = szz + z; srr = srr + rad * rad; srz = srz + rad * z;</span>
+<span id="src-hex-roof-loft-L380">        sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L381">      }</span>
+<span id="src-hex-roof-loft-L382">    }</span>
+<span id="src-hex-roof-loft-L383">  }</span>
+<span id="src-hex-roof-loft-L384">  den = sn * srr - sr * sr;</span>
+<span id="src-hex-roof-loft-L385">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L386">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L387">  grad = (sn * srz - sr * szz) / den ?? <span class="nm">0.0</span>;     <span class="cm">// dz/dr, negative for a cone</span></span>
+<span id="src-hex-roof-loft-L388">  apex = (szz - grad * sr) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L389">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L390">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L391">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L392">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L393">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L394">        rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L395">        e = apex + grad * rad - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L396">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L397">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L398">      }</span>
+<span id="src-hex-roof-loft-L399">    }</span>
+<span id="src-hex-roof-loft-L400">  }</span>
+<span id="src-hex-roof-loft-L401">  (apex, <span class="nm">0.0</span> - grad, res)</span>
+<span id="src-hex-roof-loft-L402">}</span>
+<span id="src-hex-roof-loft-L403"></span>
+<span id="src-hex-roof-loft-L404"><span class="cm">// A cone: seed the centre at the highest cell, then refine.  The apex cell is only within</span></span>
+<span id="src-hex-roof-loft-L405"><span class="cm">// one circumradius of the true apex, so the seed alone is not good enough — the refinement</span></span>
+<span id="src-hex-roof-loft-L406"><span class="cm">// is what makes the recovery exact rather than approximately right.</span></span>
+<span id="src-hex-roof-loft-L407"><span class="cm">// ── ⛔ A RIDGE — the cone's own profile about a SEGMENT ────────────────────</span></span>
+<span id="src-hex-roof-loft-L408"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L409"><span class="cm">// `roof_ridge` draws `peak - slope * d` where `d` is the distance to a LINE SEGMENT, exactly</span></span>
+<span id="src-hex-roof-loft-L410"><span class="cm">// as `roof_cone` draws it about a point.  So the fit is `cone_at` with the radius replaced by</span></span>
+<span id="src-hex-roof-loft-L411"><span class="cm">// `track_distance` — the same primitive the generator uses, rather than a second opinion about</span></span>
+<span id="src-hex-roof-loft-L412"><span class="cm">// what distance-to-a-segment means.</span></span>
+<span id="src-hex-roof-loft-L413"><span class="kw">fn</span> <span class="fn-call">ridge_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, ax: <span class="ty"><a href="stdlib-types.html">float</a></span>, ay: <span class="ty"><a href="stdlib-types.html">float</a></span>, bx: <span class="ty"><a href="stdlib-types.html">float</a></span>, by: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-roof-loft-L414">    -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L415">  t = <span class="fn-call">track_new</span>();</span>
+<span id="src-hex-roof-loft-L416">  <span class="fn-call">track_straight</span>(t, ax, ay, bx, by);</span>
+<span id="src-hex-roof-loft-L417">  sd = <span class="nm">0.0</span>; szz = <span class="nm">0.0</span>; sdd = <span class="nm">0.0</span>; sdz = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L418">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L419">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L420">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L421">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L422">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L423">        sd = sd + d; szz = szz + z; sdd = sdd + d * d; sdz = sdz + d * z;</span>
+<span id="src-hex-roof-loft-L424">        sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L425">      }</span>
+<span id="src-hex-roof-loft-L426">    }</span>
+<span id="src-hex-roof-loft-L427">  }</span>
+<span id="src-hex-roof-loft-L428">  den = sn * sdd - sd * sd;</span>
+<span id="src-hex-roof-loft-L429">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L430">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L431">  grad = (sn * sdz - sd * szz) / den ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L432">  apex = (szz - grad * sd) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L433">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L434">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L435">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L436">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L437">        d = <span class="fn-call">track_distance</span>(t, <span class="fn-call">cellx</span>(q, r), <span class="fn-call">celly</span>(q, r));</span>
+<span id="src-hex-roof-loft-L438">        e = apex + grad * d - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L439">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L440">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L441">      }</span>
+<span id="src-hex-roof-loft-L442">    }</span>
+<span id="src-hex-roof-loft-L443">  }</span>
+<span id="src-hex-roof-loft-L444">  (apex, <span class="nm">0.0</span> - grad, res)</span>
+<span id="src-hex-roof-loft-L445">}</span>
+<span id="src-hex-roof-loft-L446"></span>
+<span id="src-hex-roof-loft-L447"><span class="cm">// ⛔ **FOUR SEEDS, AND ONLY ONE OF THEM IS ANY GOOD — THE OTHERS ARE KEPT AS CHEAP INSURANCE.**  0.1.2</span></span>
+<span id="src-hex-roof-loft-L448"><span class="cm">// started both ends at `roof_cone_fit`'s centre, reasoning that a cone is a ridge whose segment</span></span>
+<span id="src-hex-roof-loft-L449"><span class="cm">// has zero length.  It is — but the cone fit RUNS AWAY on ridge-like data: fitting a cone to a</span></span>
+<span id="src-hex-roof-loft-L450"><span class="cm">// gable puts its apex far outside the footprint (the same degeneracy that sends it to x = 9744</span></span>
+<span id="src-hex-roof-loft-L451"><span class="cm">// on a plane), and a local search started there never walks back.  Measured on a real roof — a</span></span>
+<span id="src-hex-roof-loft-L452"><span class="cm">// 27-cell gable, constant across the ridge — it returned a DEGENERATE segment 8 world units</span></span>
+<span id="src-hex-roof-loft-L453"><span class="cm">// clear of the roof with slope 0 and residual 1.185.</span></span>
+<span id="src-hex-roof-loft-L454"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L455"><span class="cm">// ✅ **So the climb is run from all three and the best is kept**: both ends at the highest cell,</span></span>
+<span id="src-hex-roof-loft-L456"><span class="cm">// both at the cone's centre, and one at each.  Each is cheap, and *take the better of two</span></span>
+<span id="src-hex-roof-loft-L457"><span class="cm">// starts* is not a threshold — it is the same answer either way when both converge.</span></span>
+<span id="src-hex-roof-loft-L458"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L459"><span class="cm">// ⚠ **A LOCAL SEARCH THAT HAS TO GROW A SEGMENT OUT OF A POINT IS THE FRAGILE PART**, not the</span></span>
+<span id="src-hex-roof-loft-L460"><span class="cm">// seed: from a degenerate start the residual can be flat in every direction the first step</span></span>
+<span id="src-hex-roof-loft-L461"><span class="cm">// tries.  Two starts that fail differently are what makes that visible.</span></span>
+<span id="src-hex-roof-loft-L462"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L463"><span class="cm">// ⚠ **THE LIBRARY'S OWN FIXTURE DID NOT CATCH THIS** — a ridge drawn on a disc happened to give</span></span>
+<span id="src-hex-roof-loft-L464"><span class="cm">// a usable cone centre.  The consumer's roof did.  That is `probe/adopt`'s lesson in a library:</span></span>
+<span id="src-hex-roof-loft-L465"><span class="cm">// a suite written by the author cannot ask the questions the author does not have.</span></span>
+<span id="src-hex-roof-loft-L466"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L467"><span class="cm">// ⚠ **EACH END IS CLIMBED IN THE EIGHT DIRECTIONS `roof_cone_fit` USES, ON THE SAME STEP</span></span>
+<span id="src-hex-roof-loft-L468"><span class="cm">// SCHEDULE.**  A second search rule here would be a second opinion about how this family</span></span>
+<span id="src-hex-roof-loft-L469"><span class="cm">// searches.</span></span>
+<span id="src-hex-roof-loft-L470"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_ridge_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L471">  <span class="cm">// the two candidate anchors: the highest cell, which lies ON the ridge, and the cone fit's</span></span>
+<span id="src-hex-roof-loft-L472">  <span class="cm">// centre, which is where a cone lands when asked to be a ridge</span></span>
+<span id="src-hex-roof-loft-L473">  hi = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L474">  lo = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L475">  hx = <span class="nm">0.0</span>; hy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L476">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L477">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L478">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L479">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L480">        <span class="kw">if</span> z &gt; hi { hi = z; hx = <span class="fn-call">cellx</span>(q, r); hy = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L481">        <span class="kw">if</span> z &lt; lo { lo = z; }</span>
+<span id="src-hex-roof-loft-L482">      }</span>
+<span id="src-hex-roof-loft-L483">    }</span>
+<span id="src-hex-roof-loft-L484">  }</span>
+<span id="src-hex-roof-loft-L485">  <span class="cm">// ⛔ **THE MAXIMUM IS ATTAINED TO WITHIN ROUNDING, NOT EXACTLY — measured on this package's</span></span>
+<span id="src-hex-roof-loft-L486">  <span class="cm">// OWN output.** 0.1.3 collected the locus with `z == hi`, which holds for a field read out of</span></span>
+<span id="src-hex-roof-loft-L487">  <span class="cm">// an integer store and FAILS for one `roof_ridge` drew: `track_distance` returns zero on the</span></span>
+<span id="src-hex-roof-loft-L488">  <span class="cm">// segment only up to rounding, so one cell wins the equality, the pair collapses to a point</span></span>
+<span id="src-hex-roof-loft-L489">  <span class="cm">// and the fit degenerates — residual 1.132 on a field this package had just produced.</span></span>
+<span id="src-hex-roof-loft-L490">  <span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L491">  <span class="cm">// ⚠ **THE BAND IS THE FIELD'S OWN SPAN, NOT A TUNED EPSILON**: a millionth of `hi - lo` is</span></span>
+<span id="src-hex-roof-loft-L492">  <span class="cm">// float equality made scale-aware, and it carries no units of its own.</span></span>
+<span id="src-hex-roof-loft-L493">  band = (hi - lo) * <span class="nm">0.000001</span>;</span>
+<span id="src-hex-roof-loft-L494">  <span class="kw">if</span> band &lt; <span class="nm">0.0</span> { band = <span class="nm">0.0</span> - band; }</span>
+<span id="src-hex-roof-loft-L495">  <span class="cm">// ⛔ **AND THE DIRECTION COMES FROM THE DATA, WHICH IS THE ONLY SEED THAT WORKS.** A climb</span></span>
+<span id="src-hex-roof-loft-L496">  <span class="cm">// grown out of a POINT can reduce its residual by running the segment ACROSS the ridge: a</span></span>
+<span id="src-hex-roof-loft-L497">  <span class="cm">// long segment through the middle makes every distance similar, the least-squares slope goes</span></span>
+<span id="src-hex-roof-loft-L498">  <span class="cm">// to zero and the fit becomes "flat at the mean" — measured at residual 1.20 on a five-row</span></span>
+<span id="src-hex-roof-loft-L499">  <span class="cm">// gable, with the segment perpendicular to the true ridge and eleven units long.</span></span>
+<span id="src-hex-roof-loft-L500">  <span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L501">  <span class="cm">// ✅ **THE RIDGE IS THE LOCUS OF THE MAXIMUM**, so the cells attaining it ARE the ridge, and</span></span>
+<span id="src-hex-roof-loft-L502">  <span class="cm">// the two furthest apart are its extent.</span></span>
+<span id="src-hex-roof-loft-L503">  ex1 = hx; ey1 = hy; ex2 = hx; ey2 = hy;</span>
+<span id="src-hex-roof-loft-L504">  far = <span class="nm">0.0</span> - <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L505">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L506">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L507">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) &amp;&amp; <span class="fn-call">height_get</span>(f, q, r) &gt;= hi - band {</span>
+<span id="src-hex-roof-loft-L508">        <span class="kw">for</span> r2 <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L509">          <span class="kw">for</span> q2 <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L510">            <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q2, r2) &amp;&amp; <span class="fn-call">height_get</span>(f, q2, r2) &gt;= hi - band {</span>
+<span id="src-hex-roof-loft-L511">              ddx = <span class="fn-call">cellx</span>(q2, r2) - <span class="fn-call">cellx</span>(q, r);</span>
+<span id="src-hex-roof-loft-L512">              ddy = <span class="fn-call">celly</span>(q2, r2) - <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L513">              dd = ddx * ddx + ddy * ddy;</span>
+<span id="src-hex-roof-loft-L514">              <span class="kw">if</span> dd &gt; far {</span>
+<span id="src-hex-roof-loft-L515">                far = dd;</span>
+<span id="src-hex-roof-loft-L516">                ex1 = <span class="fn-call">cellx</span>(q, r); ey1 = <span class="fn-call">celly</span>(q, r);</span>
+<span id="src-hex-roof-loft-L517">                ex2 = <span class="fn-call">cellx</span>(q2, r2); ey2 = <span class="fn-call">celly</span>(q2, r2);</span>
+<span id="src-hex-roof-loft-L518">              }</span>
+<span id="src-hex-roof-loft-L519">            }</span>
+<span id="src-hex-roof-loft-L520">          }</span>
+<span id="src-hex-roof-loft-L521">        }</span>
+<span id="src-hex-roof-loft-L522">      }</span>
+<span id="src-hex-roof-loft-L523">    }</span>
+<span id="src-hex-roof-loft-L524">  }</span>
+<span id="src-hex-roof-loft-L525">  <span class="cm">// ⛔ **AND THE SEED IS EXTENDED TO SPAN THE FOOTPRINT, BECAUSE GROWING IS WHAT FAILS.** The</span></span>
+<span id="src-hex-roof-loft-L526">  <span class="cm">// locus gives the right DIRECTION and too short a segment: every cell whose nearest point is</span></span>
+<span id="src-hex-roof-loft-L527">  <span class="cm">// past an end gets a clamped distance, so the fit is wrong there and the climb has to grow</span></span>
+<span id="src-hex-roof-loft-L528">  <span class="cm">// the ends outward — which it does badly, converging tilted and short at residual 0.128 on a</span></span>
+<span id="src-hex-roof-loft-L529">  <span class="cm">// ridge this package drew.  A gable's ridge runs the length of its roof, so the seed is the</span></span>
+<span id="src-hex-roof-loft-L530">  <span class="cm">// locus direction projected over every cell; a genuinely HIPPED roof is the case the climb</span></span>
+<span id="src-hex-roof-loft-L531">  <span class="cm">// then SHORTENS, and shortening is the direction it handles well.</span></span>
+<span id="src-hex-roof-loft-L532">  pdx = ex2 - ex1;</span>
+<span id="src-hex-roof-loft-L533">  pdy = ey2 - ey1;</span>
+<span id="src-hex-roof-loft-L534">  plen = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(pdx * pdx + pdy * pdy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L535">  <span class="kw">if</span> plen &gt; <span class="nm">0.000001</span> {</span>
+<span id="src-hex-roof-loft-L536">    ux = pdx / plen ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L537">    uy = pdy / plen ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L538">    tmin = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L539">    tmax = <span class="nm">0.0</span> - <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L540">    <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L541">      <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L542">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L543">          tp = (<span class="fn-call">cellx</span>(q, r) - ex1) * ux + (<span class="fn-call">celly</span>(q, r) - ey1) * uy;</span>
+<span id="src-hex-roof-loft-L544">          <span class="kw">if</span> tp &lt; tmin { tmin = tp; }</span>
+<span id="src-hex-roof-loft-L545">          <span class="kw">if</span> tp &gt; tmax { tmax = tp; }</span>
+<span id="src-hex-roof-loft-L546">        }</span>
+<span id="src-hex-roof-loft-L547">      }</span>
+<span id="src-hex-roof-loft-L548">    }</span>
+<span id="src-hex-roof-loft-L549">    ex2 = ex1 + ux * tmax; ey2 = ey1 + uy * tmax;</span>
+<span id="src-hex-roof-loft-L550">    ex1 = ex1 + ux * tmin; ey1 = ey1 + uy * tmin;</span>
+<span id="src-hex-roof-loft-L551">  }</span>
+<span id="src-hex-roof-loft-L552">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L553">  best = <span class="fn-call">ridge_climb</span>(s, f, ex1, ey1, ex2, ey2);</span>
+<span id="src-hex-roof-loft-L554">  t1 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, hx, hy);</span>
+<span id="src-hex-roof-loft-L555">  <span class="kw">if</span> t1.rf_res &lt; best.rf_res { best = t1; }</span>
+<span id="src-hex-roof-loft-L556">  t2 = <span class="fn-call">ridge_climb</span>(s, f, c.rf_x, c.rf_y, c.rf_x, c.rf_y);</span>
+<span id="src-hex-roof-loft-L557">  <span class="kw">if</span> t2.rf_res &lt; best.rf_res { best = t2; }</span>
+<span id="src-hex-roof-loft-L558">  t3 = <span class="fn-call">ridge_climb</span>(s, f, hx, hy, c.rf_x, c.rf_y);</span>
+<span id="src-hex-roof-loft-L559">  <span class="kw">if</span> t3.rf_res &lt; best.rf_res { best = t3; }</span>
+<span id="src-hex-roof-loft-L560">  best</span>
+<span id="src-hex-roof-loft-L561">}</span>
+<span id="src-hex-roof-loft-L562"></span>
+<span id="src-hex-roof-loft-L563"><span class="cm">// The climb itself, from a given pair of ends.  Each end moves in the eight directions</span></span>
+<span id="src-hex-roof-loft-L564"><span class="cm">// `roof_cone_fit` uses, on the same step schedule — a second search rule here would be a second</span></span>
+<span id="src-hex-roof-loft-L565"><span class="cm">// opinion about how this family searches.</span></span>
+<span id="src-hex-roof-loft-L566"><span class="kw">fn</span> <span class="fn-call">ridge_climb</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, sax: <span class="ty"><a href="stdlib-types.html">float</a></span>, say: <span class="ty"><a href="stdlib-types.html">float</a></span>, sbx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sby: <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
+<span id="src-hex-roof-loft-L567">    -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L568">  ax = sax; ay = say; bx = sbx; by = sby;</span>
+<span id="src-hex-roof-loft-L569">  (ba, bs, br) = <span class="fn-call">ridge_at</span>(s, f, ax, ay, bx, by);</span>
+<span id="src-hex-roof-loft-L570">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L571">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..5</span> {</span>
+<span id="src-hex-roof-loft-L572">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L573">    while moved {</span>
+<span id="src-hex-roof-loft-L574">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L575">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..16</span> {</span>
+<span id="src-hex-roof-loft-L576">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L577">        k = i % <span class="nm">8</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-roof-loft-L578">        <span class="kw">if</span> k == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L579">        <span class="kw">if</span> k == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L580">        <span class="kw">if</span> k == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L581">        <span class="kw">if</span> k == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L582">        <span class="kw">if</span> k == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L583">        <span class="kw">if</span> k == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L584">        <span class="kw">if</span> k == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L585">        <span class="kw">if</span> k == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L586">        nax = ax; nay = ay; nbx = bx; nby = by;</span>
+<span id="src-hex-roof-loft-L587">        <span class="kw">if</span> i &lt; <span class="nm">8</span> { nax = ax + ox; nay = ay + oy; }</span>
+<span id="src-hex-roof-loft-L588">        <span class="kw">else</span> { nbx = bx + ox; nby = by + oy; }</span>
+<span id="src-hex-roof-loft-L589">        (ca, cs, cr) = <span class="fn-call">ridge_at</span>(s, f, nax, nay, nbx, nby);</span>
+<span id="src-hex-roof-loft-L590">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L591">          br = cr; ba = ca; bs = cs;</span>
+<span id="src-hex-roof-loft-L592">          ax = nax; ay = nay; bx = nbx; by = nby;</span>
+<span id="src-hex-roof-loft-L593">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L594">        }</span>
+<span id="src-hex-roof-loft-L595">      }</span>
+<span id="src-hex-roof-loft-L596">    }</span>
+<span id="src-hex-roof-loft-L597">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L598">  }</span>
+<span id="src-hex-roof-loft-L599">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_RIDGE</span>, rf_x: ax, rf_y: ay, rf_z: ba, rf_slope: bs, rf_res: br,</span>
+<span id="src-hex-roof-loft-L600">            rf_x2: bx, rf_y2: by }</span>
+<span id="src-hex-roof-loft-L601">}</span>
+<span id="src-hex-roof-loft-L602"></span>
+<span id="src-hex-roof-loft-L603"><span class="cm">// Fit a cone to the heights over these cells: apex, radius and how well it fits.  Ask both</span></span>
+<span id="src-hex-roof-loft-L604"><span class="cm">// this and `roof_dome_fit` and keep the better residual — the shapes suit different roofs.</span></span>
+<span id="src-hex-roof-loft-L605"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_cone_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L606">  hi = -<span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L607">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L608">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L609">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L610">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L611">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L612">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L613">      }</span>
+<span id="src-hex-roof-loft-L614">    }</span>
+<span id="src-hex-roof-loft-L615">  }</span>
+<span id="src-hex-roof-loft-L616">  (ba, bs, br) = <span class="fn-call">cone_at</span>(s, f, bx, by);</span>
+<span id="src-hex-roof-loft-L617">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L618">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="src-hex-roof-loft-L619">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L620">    while moved {</span>
+<span id="src-hex-roof-loft-L621">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L622">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="src-hex-roof-loft-L623">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L624">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L625">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L626">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L627">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L628">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L629">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L630">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L631">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L632">        (ca, cs, cr) = <span class="fn-call">cone_at</span>(s, f, bx + ox, by + oy);</span>
+<span id="src-hex-roof-loft-L633">        <span class="kw">if</span> cr &lt; br - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L634">          br = cr; ba = ca; bs = cs; bx = bx + ox; by = by + oy;</span>
+<span id="src-hex-roof-loft-L635">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L636">        }</span>
+<span id="src-hex-roof-loft-L637">      }</span>
+<span id="src-hex-roof-loft-L638">    }</span>
+<span id="src-hex-roof-loft-L639">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L640">  }</span>
+<span id="src-hex-roof-loft-L641">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_CONE</span>, rf_x: bx, rf_y: by, rf_z: ba, rf_slope: bs, rf_res: br }</span>
+<span id="src-hex-roof-loft-L642">}</span>
+<span id="src-hex-roof-loft-L643"></span>
+<span id="src-hex-roof-loft-L644"><span class="cm">// A DOME.  Given a centre, the fit is LINEAR after one substitution: from</span></span>
+<span id="src-hex-roof-loft-L645"><span class="cm">// z = base + sqrt(R^2 - r^2) we get (z^2 + r^2) = 2*base*z + (R^2 - base^2), so regressing</span></span>
+<span id="src-hex-roof-loft-L646"><span class="cm">// (z^2 + r^2) on z hands back base as half the gradient and R from the intercept.  The</span></span>
+<span id="src-hex-roof-loft-L647"><span class="cm">// centre is then refined by the same local search the cone uses.</span></span>
+<span id="src-hex-roof-loft-L648"><span class="kw">fn</span> <span class="fn-call">dome_at</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, cx: <span class="ty"><a href="stdlib-types.html">float</a></span>, cy: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-roof-loft-L649">  sv = <span class="nm">0.0</span>; su = <span class="nm">0.0</span>; svv = <span class="nm">0.0</span>; suv = <span class="nm">0.0</span>; sn = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L650">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L651">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L652">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L653">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L654">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L655">        v = z;</span>
+<span id="src-hex-roof-loft-L656">        u = z * z + dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L657">        sv = sv + v; su = su + u; svv = svv + v * v; suv = suv + u * v; sn = sn + <span class="nm">1.0</span>;</span>
+<span id="src-hex-roof-loft-L658">      }</span>
+<span id="src-hex-roof-loft-L659">    }</span>
+<span id="src-hex-roof-loft-L660">  }</span>
+<span id="src-hex-roof-loft-L661">  den = sn * svv - sv * sv;</span>
+<span id="src-hex-roof-loft-L662">  ad = den; <span class="kw">if</span> ad &lt; <span class="nm">0.0</span> { ad = <span class="nm">0.0</span> - ad; }</span>
+<span id="src-hex-roof-loft-L663">  <span class="kw">if</span> ad &lt; <span class="nm">0.000000001</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L664">  grad = (sn * suv - sv * su) / den ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L665">  icept = (su - grad * sv) / sn ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L666">  base = grad * <span class="nm">0.5</span>;</span>
+<span id="src-hex-roof-loft-L667">  rr2 = icept + base * base;</span>
+<span id="src-hex-roof-loft-L668">  <span class="kw">if</span> rr2 &lt;= <span class="nm">0.0</span> { <span class="kw">return</span> (<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1000000.0</span>); }</span>
+<span id="src-hex-roof-loft-L669">  rad = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rr2) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L670">  res = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L671">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L672">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L673">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L674">        dx = <span class="fn-call">cellx</span>(q, r) - cx; dy = <span class="fn-call">celly</span>(q, r) - cy;</span>
+<span id="src-hex-roof-loft-L675">        d2 = dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L676">        pred = base;</span>
+<span id="src-hex-roof-loft-L677">        <span class="kw">if</span> d2 &lt; rad * rad { pred = base + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(rad * rad - d2) ?? <span class="nm">0.0</span>); }</span>
+<span id="src-hex-roof-loft-L678">        e = pred - <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L679">        <span class="kw">if</span> e &lt; <span class="nm">0.0</span> { e = <span class="nm">0.0</span> - e; }</span>
+<span id="src-hex-roof-loft-L680">        <span class="kw">if</span> e &gt; res { res = e; }</span>
+<span id="src-hex-roof-loft-L681">      }</span>
+<span id="src-hex-roof-loft-L682">    }</span>
+<span id="src-hex-roof-loft-L683">  }</span>
+<span id="src-hex-roof-loft-L684">  (base, rad, res)</span>
+<span id="src-hex-roof-loft-L685">}</span>
+<span id="src-hex-roof-loft-L686"></span>
+<span id="src-hex-roof-loft-L687"><span class="cm">// Fit a dome to the same heights, reported the same way, so the two are comparable.</span></span>
+<span id="src-hex-roof-loft-L688"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_dome_fit</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L689">  hi = -<span class="nm">1000000.0</span>;</span>
+<span id="src-hex-roof-loft-L690">  bx = <span class="nm">0.0</span>; by = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L691">  <span class="kw">for</span> r <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(s)..<span class="fn-call">hexset_r0</span>(s) + <span class="fn-call">hexset_h</span>(s) {</span>
+<span id="src-hex-roof-loft-L692">    <span class="kw">for</span> q <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(s)..<span class="fn-call">hexset_q0</span>(s) + <span class="fn-call">hexset_w</span>(s) {</span>
+<span id="src-hex-roof-loft-L693">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="src-hex-roof-loft-L694">        z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="src-hex-roof-loft-L695">        <span class="kw">if</span> z &gt; hi { hi = z; bx = <span class="fn-call">cellx</span>(q, r); by = <span class="fn-call">celly</span>(q, r); }</span>
+<span id="src-hex-roof-loft-L696">      }</span>
+<span id="src-hex-roof-loft-L697">    }</span>
+<span id="src-hex-roof-loft-L698">  }</span>
+<span id="src-hex-roof-loft-L699">  (bb, brad, bres) = <span class="fn-call">dome_at</span>(s, f, bx, by);</span>
+<span id="src-hex-roof-loft-L700">  step = <span class="nm">0.4</span>;</span>
+<span id="src-hex-roof-loft-L701">  <span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..4</span> {</span>
+<span id="src-hex-roof-loft-L702">    moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L703">    while moved {</span>
+<span id="src-hex-roof-loft-L704">      moved = <span class="kw">false</span>;</span>
+<span id="src-hex-roof-loft-L705">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="src-hex-roof-loft-L706">        ox = <span class="nm">0.0</span>; oy = <span class="nm">0.0</span>;</span>
+<span id="src-hex-roof-loft-L707">        <span class="kw">if</span> i == <span class="nm">0</span> { ox = step; }</span>
+<span id="src-hex-roof-loft-L708">        <span class="kw">if</span> i == <span class="nm">1</span> { ox = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L709">        <span class="kw">if</span> i == <span class="nm">2</span> { oy = step; }</span>
+<span id="src-hex-roof-loft-L710">        <span class="kw">if</span> i == <span class="nm">3</span> { oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L711">        <span class="kw">if</span> i == <span class="nm">4</span> { ox = step; oy = step; }</span>
+<span id="src-hex-roof-loft-L712">        <span class="kw">if</span> i == <span class="nm">5</span> { ox = step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L713">        <span class="kw">if</span> i == <span class="nm">6</span> { ox = <span class="nm">0.0</span> - step; oy = step; }</span>
+<span id="src-hex-roof-loft-L714">        <span class="kw">if</span> i == <span class="nm">7</span> { ox = <span class="nm">0.0</span> - step; oy = <span class="nm">0.0</span> - step; }</span>
+<span id="src-hex-roof-loft-L715">        (cb, crad, cres) = <span class="fn-call">dome_at</span>(s, f, bx + ox, by + oy);</span>
+<span id="src-hex-roof-loft-L716">        <span class="kw">if</span> cres &lt; bres - <span class="nm">0.0000000001</span> {</span>
+<span id="src-hex-roof-loft-L717">          bres = cres; bb = cb; brad = crad; bx = bx + ox; by = by + oy;</span>
+<span id="src-hex-roof-loft-L718">          moved = <span class="kw">true</span>;</span>
+<span id="src-hex-roof-loft-L719">        }</span>
+<span id="src-hex-roof-loft-L720">      }</span>
+<span id="src-hex-roof-loft-L721">    }</span>
+<span id="src-hex-roof-loft-L722">    step = step * <span class="nm">0.25</span>;</span>
+<span id="src-hex-roof-loft-L723">  }</span>
+<span id="src-hex-roof-loft-L724">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_DOME</span>, rf_x: bx, rf_y: by, rf_z: bb, rf_slope: brad, rf_res: bres }</span>
+<span id="src-hex-roof-loft-L725">}</span>
+<span id="src-hex-roof-loft-L726"></span>
+<span id="src-hex-roof-loft-L727"><span class="cm">// Decide what the field IS.  A plane wins ties: it is the simpler statement, and a cone</span></span>
+<span id="src-hex-roof-loft-L728"><span class="cm">// fitted to a flat roof would put its apex somewhere arbitrary.</span></span>
+<span id="src-hex-roof-loft-L729"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L730"><span class="cm">// Example: @HXR-006</span></span>
+<span id="src-hex-roof-loft-L731"><span class="cm">// ⛔ **AND WHEN NOTHING FITS, IT SAYS SO — `ROOF_UNKNOWN`.**  This returned the least-bad of</span></span>
+<span id="src-hex-roof-loft-L732"><span class="cm">// the three with `rf_kind` naming a shape the field is NOT, and the residual was the only</span></span>
+<span id="src-hex-roof-loft-L733"><span class="cm">// signal that it was a fallback rather than a recovery.  Measured on fields THIS PACKAGE</span></span>
+<span id="src-hex-roof-loft-L734"><span class="cm">// DRAWS: a `roof_ridge` gable comes back `ROOF_CONE` at residual **1.209**, with an apex of</span></span>
+<span id="src-hex-roof-loft-L735"><span class="cm">// 6.318 where the truth is 6.0 and a slope of 0.409 where it is 0.5; a `roof_hip` comes back</span></span>
+<span id="src-hex-roof-loft-L736"><span class="cm">// `ROOF_CONE` at **0.615**.  `roof_eval` then evaluates that cone into a surface that is not</span></span>
+<span id="src-hex-roof-loft-L737"><span class="cm">// the roof.</span></span>
+<span id="src-hex-roof-loft-L738"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L739"><span class="cm">// ⚠ **THE BEST CANDIDATE'S PARAMETERS ARE KEPT**, because *which* shape came closest and by</span></span>
+<span id="src-hex-roof-loft-L740"><span class="cm">// how much is what a caller diagnoses with.  What changes is that `rf_kind` no longer CLAIMS</span></span>
+<span id="src-hex-roof-loft-L741"><span class="cm">// one — `roof_eval` draws nothing for `ROOF_UNKNOWN` — so a fallback can no longer be</span></span>
+<span id="src-hex-roof-loft-L742"><span class="cm">// mistaken for a recovery by a caller that reads the kind and trusts it.</span></span>
+<span id="src-hex-roof-loft-L743"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L744"><span class="cm">// ⚠ **NO EXISTING RECOVERY CHANGES.**  A candidate within `tol` returns exactly as before;</span></span>
+<span id="src-hex-roof-loft-L745"><span class="cm">// only the path where all three were already wrong is affected, which is precisely the</span></span>
+<span id="src-hex-roof-loft-L746"><span class="cm">// population that was being told the wrong thing.</span></span>
+<span id="src-hex-roof-loft-L747"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L748"><span class="cm">// ⚠ **AND THE MISSING KIND IS NAMED RATHER THAN GUESSED AT**: this package DRAWS a ridge, a</span></span>
+<span id="src-hex-roof-loft-L749"><span class="cm">// hip and three vaults, and fits a plane, a cone and a dome.  A ridge is the cone's own</span></span>
+<span id="src-hex-roof-loft-L750"><span class="cm">// profile about a SEGMENT instead of a point, so `roof_ridge_fit` is a well-specified</span></span>
+<span id="src-hex-roof-loft-L751"><span class="cm">// addition — until it exists, a gable is honestly unknown rather than dishonestly a cone.</span></span>
+<span id="src-hex-roof-loft-L752"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_match</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>, tol: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">RoofFit</span> {</span>
+<span id="src-hex-roof-loft-L753">  p = <span class="fn-call">roof_plane_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L754">  <span class="kw">if</span> p.rf_res &lt;= tol { <span class="kw">return</span> p; }</span>
+<span id="src-hex-roof-loft-L755">  c = <span class="fn-call">roof_cone_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L756">  <span class="kw">if</span> c.rf_res &lt;= tol { <span class="kw">return</span> c; }</span>
+<span id="src-hex-roof-loft-L757">  d = <span class="fn-call">roof_dome_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L758">  <span class="kw">if</span> d.rf_res &lt;= tol { <span class="kw">return</span> d; }</span>
+<span id="src-hex-roof-loft-L759">  <span class="cm">// ⚠ **LAST, SO NO EXISTING VERDICT MOVES.** A cone is a ridge whose segment has zero</span></span>
+<span id="src-hex-roof-loft-L760">  <span class="cm">// length, so trying the ridge first would answer `ROOF_RIDGE` for a true cone — the less</span></span>
+<span id="src-hex-roof-loft-L761">  <span class="cm">// specific statement, which is the same reason a plane wins ties above.</span></span>
+<span id="src-hex-roof-loft-L762">  g = <span class="fn-call">roof_ridge_fit</span>(s, f);</span>
+<span id="src-hex-roof-loft-L763">  <span class="kw">if</span> g.rf_res &lt;= tol { <span class="kw">return</span> g; }</span>
+<span id="src-hex-roof-loft-L764">  best = p;</span>
+<span id="src-hex-roof-loft-L765">  <span class="kw">if</span> c.rf_res &lt; best.rf_res { best = c; }</span>
+<span id="src-hex-roof-loft-L766">  <span class="kw">if</span> d.rf_res &lt; best.rf_res { best = d; }</span>
+<span id="src-hex-roof-loft-L767">  <span class="kw">if</span> g.rf_res &lt; best.rf_res { best = g; }</span>
+<span id="src-hex-roof-loft-L768">  <span class="en">RoofFit</span> { rf_kind: <span class="en">ROOF_UNKNOWN</span>, rf_x: best.rf_x, rf_y: best.rf_y, rf_z: best.rf_z,</span>
+<span id="src-hex-roof-loft-L769">            rf_slope: best.rf_slope, rf_res: best.rf_res }</span>
+<span id="src-hex-roof-loft-L770">}</span>
+<span id="src-hex-roof-loft-L771"></span>
+<span id="src-hex-roof-loft-L772"><span class="cm">// The recovered ANALYTIC surface — what a renderer should draw, at any resolution, instead</span></span>
+<span id="src-hex-roof-loft-L773"><span class="cm">// of the cells it came from.</span></span>
+<span id="src-hex-roof-loft-L774"><span class="cm">//</span></span>
+<span id="src-hex-roof-loft-L775"><span class="cm">// Example: @HXR-006</span></span>
+<span id="src-hex-roof-loft-L776"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">roof_eval</span>(fit: <span class="en">RoofFit</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-roof-loft-L777">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_PLANE</span> { <span class="kw">return</span> fit.rf_x * x + fit.rf_y * y + fit.rf_z; }</span>
+<span id="src-hex-roof-loft-L778">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_CONE</span> {</span>
+<span id="src-hex-roof-loft-L779">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
+<span id="src-hex-roof-loft-L780">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-roof-loft-L781">  }</span>
+<span id="src-hex-roof-loft-L782">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_RIDGE</span> {</span>
+<span id="src-hex-roof-loft-L783">    rt = <span class="fn-call">track_new</span>();</span>
+<span id="src-hex-roof-loft-L784">    <span class="fn-call">track_straight</span>(rt, fit.rf_x, fit.rf_y, fit.rf_x2, fit.rf_y2);</span>
+<span id="src-hex-roof-loft-L785">    <span class="kw">return</span> fit.rf_z - fit.rf_slope * <span class="fn-call">track_distance</span>(rt, x, y);</span>
+<span id="src-hex-roof-loft-L786">  }</span>
+<span id="src-hex-roof-loft-L787">  <span class="kw">if</span> fit.rf_kind == <span class="en">ROOF_DOME</span> {</span>
+<span id="src-hex-roof-loft-L788">    dx = x - fit.rf_x; dy = y - fit.rf_y;</span>
+<span id="src-hex-roof-loft-L789">    d2 = dx * dx + dy * dy;</span>
+<span id="src-hex-roof-loft-L790">    <span class="kw">if</span> d2 &gt;= fit.rf_slope * fit.rf_slope { <span class="kw">return</span> fit.rf_z; }</span>
+<span id="src-hex-roof-loft-L791">    <span class="kw">return</span> fit.rf_z + (<span class="bi"><a href="stdlib-math.html">sqrt</a></span>(fit.rf_slope * fit.rf_slope - d2) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-roof-loft-L792">  }</span>
+<span id="src-hex-roof-loft-L793">  <span class="nm">0.0</span></span>
+<span id="src-hex-roof-loft-L794">}</span>
+</code></pre>
+<h2 id="tests-01-hex-roof-loft">tests/01-hex-roof.loft</h2>
+<pre class="src"><code><span id="tests-01-hex-roof-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-01-hex-roof-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-01-hex-roof-loft-L3"><span class="cm">// hex_roof — the conformance tests: a roof is a HEIGHT FIELD over a cell set, and it must drain.</span></span>
+<span id="tests-01-hex-roof-loft-L4"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L5"><span class="cm">// These assert the library's CONTRACT, not its depth.  The exhaustive measurement lives in</span></span>
+<span id="tests-01-hex-roof-loft-L6"><span class="cm">// hexbody's `tests/house.loft` (roofs at 12 orientations, `eave_spread`, `roof_ponds = 0`), which</span></span>
+<span id="tests-01-hex-roof-loft-L7"><span class="cm">// prints its evidence and carries a control that must fire.  This file is what CI runs under</span></span>
+<span id="tests-01-hex-roof-loft-L8"><span class="cm">// `LOFT_DENY_WARNINGS=1`.</span></span>
+<span id="tests-01-hex-roof-loft-L9"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L10"><span class="cm">// ⚠ `roof_match` takes a TOLERANCE and is an R2 fit by design — recovering a profile from an</span></span>
+<span id="tests-01-hex-roof-loft-L11"><span class="cm">// arbitrary height field, not from one we authored.  That is licensed; it is not an `ε` smuggled</span></span>
+<span id="tests-01-hex-roof-loft-L12"><span class="cm">// into an exact path.</span></span>
+<span id="tests-01-hex-roof-loft-L13"><span class="kw">use</span> hex_roof::*;</span>
+<span id="tests-01-hex-roof-loft-L14"><span class="kw">use</span> hex_way::*;</span>
+<span id="tests-01-hex-roof-loft-L15"><span class="kw">use</span> hex_field::*;</span>
+<span id="tests-01-hex-roof-loft-L16"></span>
+<span id="tests-01-hex-roof-loft-L17">const <span class="en">W</span> = <span class="nm">9</span>;</span>
+<span id="tests-01-hex-roof-loft-L18">const <span class="en">H</span> = <span class="nm">9</span>;</span>
+<span id="tests-01-hex-roof-loft-L19"></span>
+<span id="tests-01-hex-roof-loft-L20"><span class="kw">fn</span> <span class="fn-call">disc</span>() -&gt; <span class="en">HexSet</span> {</span>
+<span id="tests-01-hex-roof-loft-L21">  s = <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L22">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> {</span>
+<span id="tests-01-hex-roof-loft-L23">    <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> {</span>
+<span id="tests-01-hex-roof-loft-L24">      dq = q - <span class="nm">4</span>;</span>
+<span id="tests-01-hex-roof-loft-L25">      dr = r - <span class="nm">4</span>;</span>
+<span id="tests-01-hex-roof-loft-L26">      <span class="kw">if</span> dq * dq + dr * dr &lt;= <span class="nm">9</span> { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); }</span>
+<span id="tests-01-hex-roof-loft-L27">    }</span>
+<span id="tests-01-hex-roof-loft-L28">  }</span>
+<span id="tests-01-hex-roof-loft-L29">  s</span>
+<span id="tests-01-hex-roof-loft-L30">}</span>
+<span id="tests-01-hex-roof-loft-L31"></span>
+<span id="tests-01-hex-roof-loft-L32"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-01-hex-roof-loft-L33">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(s) &gt; <span class="nm">0</span>, <span class="st">"the test disc has cells"</span>);</span>
+<span id="tests-01-hex-roof-loft-L35">}</span>
+<span id="tests-01-hex-roof-loft-L36"></span>
+<span id="tests-01-hex-roof-loft-L37"><span class="kw">fn</span> <span class="fn-call">test_a_cone_rises_to_a_single_peak</span>() {</span>
+<span id="tests-01-hex-roof-loft-L38">  <span class="cm">// ⚠ `roof_cone`'s (cx, cy) is in WORLD units, not cell indices — cell (4,4) is NOT at world</span></span>
+<span id="tests-01-hex-roof-loft-L39">  <span class="cm">// (4.0, 4.0) on a pointy-top odd-r lattice.  Asserting "cell (4,4) is the apex" fails with 9</span></span>
+<span id="tests-01-hex-roof-loft-L40">  <span class="cm">// cells above it, which is a wrong assumption rather than a defect.  So assert the PROPERTY:</span></span>
+<span id="tests-01-hex-roof-loft-L41">  <span class="cm">// the cone is not flat, and its maximum is positive.</span></span>
+<span id="tests-01-hex-roof-loft-L42">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L43">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L44">  <span class="fn-call">roof_cone</span>(s, f, <span class="nm">4.0</span>, <span class="nm">4.0</span>, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">9.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L45">  hi = <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-roof-loft-L46">  lo = <span class="nm">1000000.0</span>;</span>
+<span id="tests-01-hex-roof-loft-L47">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> {</span>
+<span id="tests-01-hex-roof-loft-L48">    <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> {</span>
+<span id="tests-01-hex-roof-loft-L49">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-01-hex-roof-loft-L50">        h = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="tests-01-hex-roof-loft-L51">        <span class="kw">if</span> h &gt; hi { hi = h; }</span>
+<span id="tests-01-hex-roof-loft-L52">        <span class="kw">if</span> h &lt; lo { lo = h; }</span>
+<span id="tests-01-hex-roof-loft-L53">      }</span>
+<span id="tests-01-hex-roof-loft-L54">    }</span>
+<span id="tests-01-hex-roof-loft-L55">  }</span>
+<span id="tests-01-hex-roof-loft-L56">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hi &gt; <span class="nm">0.0</span>, <span class="st">"the cone has a positive maximum, got {hi}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L57">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(hi &gt; lo, <span class="st">"the cone is not flat: max {hi} must exceed min {lo}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L58">}</span>
+<span id="tests-01-hex-roof-loft-L59"></span>
+<span id="tests-01-hex-roof-loft-L60"><span class="kw">fn</span> <span class="fn-call">test_a_cone_has_no_ponds</span>() {</span>
+<span id="tests-01-hex-roof-loft-L61">  <span class="cm">// A pond is a cell with no downhill neighbour — water that cannot leave. A roof that ponds is</span></span>
+<span id="tests-01-hex-roof-loft-L62">  <span class="cm">// a roof that leaks, so this is the load-bearing property of every profile in this library.</span></span>
+<span id="tests-01-hex-roof-loft-L63">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L64">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L65">  <span class="fn-call">roof_cone</span>(s, f, <span class="nm">4.0</span>, <span class="nm">4.0</span>, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">9.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L66">  p = <span class="fn-call">roof_ponds</span>(s, f);</span>
+<span id="tests-01-hex-roof-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p == <span class="nm">0</span>, <span class="st">"a cone must not pond, found {p}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L68">}</span>
+<span id="tests-01-hex-roof-loft-L69"></span>
+<span id="tests-01-hex-roof-loft-L70"><span class="kw">fn</span> <span class="fn-call">test_a_flat_field_does_pond_which_keeps_the_pond_check_honest</span>() {</span>
+<span id="tests-01-hex-roof-loft-L71">  <span class="cm">// The control: if `roof_ponds` returned 0 for everything the test above would prove nothing.</span></span>
+<span id="tests-01-hex-roof-loft-L72">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L73">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L74">  p = <span class="fn-call">roof_ponds</span>(s, f);</span>
+<span id="tests-01-hex-roof-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(p &gt; <span class="nm">0</span>, <span class="st">"a dead-flat field must pond, but roof_ponds returned {p}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L76">}</span>
+<span id="tests-01-hex-roof-loft-L77"></span>
+<span id="tests-01-hex-roof-loft-L78"><span class="cm">// ── ⛔ A FALLBACK IS NOT A RECOVERY ────────────────────────────────────────</span></span>
+<span id="tests-01-hex-roof-loft-L79"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L80"><span class="cm">// `roof_match` returned the least-bad of plane/cone/dome with `rf_kind` naming a shape the</span></span>
+<span id="tests-01-hex-roof-loft-L81"><span class="cm">// field is NOT, and the residual was the only signal. It says `ROOF_UNKNOWN` now.</span></span>
+<span id="tests-01-hex-roof-loft-L82"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L83"><span class="cm">// ⚠ THE FIXTURES ARE FIELDS THIS PACKAGE ITSELF DRAWS, which is what makes the gap a fact</span></span>
+<span id="tests-01-hex-roof-loft-L84"><span class="cm">// about the package rather than about a fixture somebody invented: it draws a ridge, a hip</span></span>
+<span id="tests-01-hex-roof-loft-L85"><span class="cm">// and three vaults, and fits a plane, a cone and a dome.</span></span>
+<span id="tests-01-hex-roof-loft-L86"><span class="kw">fn</span> <span class="fn-call">test_a_ridge_recovers_as_a_ridge</span>() {</span>
+<span id="tests-01-hex-roof-loft-L87">  <span class="cm">// ⛔ **WHAT `roof_match` USED TO ANSWER HERE WAS `ROOF_CONE` AT RESIDUAL 1.209**, with an</span></span>
+<span id="tests-01-hex-roof-loft-L88">  <span class="cm">// apex of 6.318 where the truth is 6.0 and a slope of 0.409 where it is 0.5 — a shape the</span></span>
+<span id="tests-01-hex-roof-loft-L89">  <span class="cm">// field is not, named with confidence. `roof_ridge_fit` is the cone's own profile about a</span></span>
+<span id="tests-01-hex-roof-loft-L90">  <span class="cm">// SEGMENT, so the answer is exact.</span></span>
+<span id="tests-01-hex-roof-loft-L91">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L92">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L93">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-roof-loft-L94">  <span class="fn-call">track_straight</span>(t, <span class="nm">1.0</span>, <span class="nm">3.0</span>, <span class="nm">6.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L95">  <span class="fn-call">roof_ridge</span>(s, f, t, <span class="nm">6.0</span>, <span class="nm">0.5</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L96">  m = <span class="fn-call">roof_match</span>(s, f, <span class="nm">0.001</span>);</span>
+<span id="tests-01-hex-roof-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.rf_kind == <span class="en">ROOF_RIDGE</span>, <span class="st">"a ridge recovers as a ridge, got kind {m.rf_kind}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.rf_res &lt;= <span class="nm">0.001</span>, <span class="st">"…exactly: residual {m.rf_res}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L99">  <span class="cm">// ⚠ **THE PARAMETERS, NOT JUST THE LABEL** — a kind that is right about nothing else is a</span></span>
+<span id="tests-01-hex-roof-loft-L100">  <span class="cm">// label, and `roof_eval` draws from these.</span></span>
+<span id="tests-01-hex-roof-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(m.rf_z - <span class="nm">6.0</span>) &lt; <span class="nm">0.01</span>, <span class="st">"the peak comes back 6.0, got {m.rf_z}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(m.rf_slope - <span class="nm">0.5</span>) &lt; <span class="nm">0.01</span>, <span class="st">"and the slope 0.5, got {m.rf_slope}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L103">  <span class="cm">// …and the recovered surface agrees with the field it was recovered from, at a cell centre.</span></span>
+<span id="tests-01-hex-roof-loft-L104">  wx = (<span class="fn-call">lattice_k</span>(<span class="nm">4</span>, <span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="tests-01-hex-roof-loft-L105">  wy = (<span class="fn-call">lattice_m</span>(<span class="nm">4</span>, <span class="nm">4</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="tests-01-hex-roof-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(<span class="fn-call">roof_eval</span>(m, wx, wy) - <span class="fn-call">height_get</span>(f, <span class="nm">4</span>, <span class="nm">4</span>)) &lt; <span class="nm">0.01</span>,</span>
+<span id="tests-01-hex-roof-loft-L107">         <span class="st">"the recovered ridge evaluates to the field: {roof_eval(m, wx, wy)} against {height_get(f, 4, 4)}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L108">}</span>
+<span id="tests-01-hex-roof-loft-L109"></span>
+<span id="tests-01-hex-roof-loft-L110"><span class="kw">fn</span> <span class="fn-call">test_a_hip_is_still_unknown_and_that_keeps_the_refusal_honest</span>() {</span>
+<span id="tests-01-hex-roof-loft-L111">  <span class="cm">// ⚠ **THE REFUSAL PATH MUST STAY REACHABLE.** With the ridge added, three of the shapes this</span></span>
+<span id="tests-01-hex-roof-loft-L112">  <span class="cm">// package draws now recover; a hip does not, and saying so is what stops `ROOF_UNKNOWN`</span></span>
+<span id="tests-01-hex-roof-loft-L113">  <span class="cm">// becoming a branch nothing takes — an unreachable refusal is one nobody would notice</span></span>
+<span id="tests-01-hex-roof-loft-L114">  <span class="cm">// breaking.</span></span>
+<span id="tests-01-hex-roof-loft-L115">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L116">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L117">  <span class="fn-call">roof_hip</span>(s, f, <span class="nm">2.0</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-01-hex-roof-loft-L118">  m = <span class="fn-call">roof_match</span>(s, f, <span class="nm">0.001</span>);</span>
+<span id="tests-01-hex-roof-loft-L119">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.rf_kind == <span class="en">ROOF_UNKNOWN</span>, <span class="st">"a hip is none of the four, got {m.rf_kind}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_eval</span>(m, <span class="nm">0.0</span>, <span class="nm">0.0</span>) == <span class="nm">0.0</span>, <span class="st">"and an unknown roof draws nothing"</span>);</span>
+<span id="tests-01-hex-roof-loft-L121">}</span>
+<span id="tests-01-hex-roof-loft-L122"></span>
+<span id="tests-01-hex-roof-loft-L123"><span class="kw">fn</span> <span class="fn-call">test_the_three_kinds_it_does_know_are_unaffected</span>() {</span>
+<span id="tests-01-hex-roof-loft-L124">  <span class="cm">// ⚠ THE CONTROL, AND IT IS HALF THE POINT: a doorstep that answered UNKNOWN to everything</span></span>
+<span id="tests-01-hex-roof-loft-L125">  <span class="cm">// would pass both rows above. A cone this package drew must still come back a CONE, exactly.</span></span>
+<span id="tests-01-hex-roof-loft-L126">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L127">  fc = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L128">  <span class="fn-call">roof_cone</span>(s, fc, <span class="nm">3.0</span>, <span class="nm">1.5</span>, <span class="nm">6.0</span>, <span class="nm">0.5</span>, <span class="nm">1000.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L129">  mc = <span class="fn-call">roof_match</span>(s, fc, <span class="nm">0.001</span>);</span>
+<span id="tests-01-hex-roof-loft-L130">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mc.rf_kind == <span class="en">ROOF_CONE</span>, <span class="st">"a cone still recovers as a cone, got {mc.rf_kind}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mc.rf_res &lt;= <span class="nm">0.001</span>, <span class="st">"…within tolerance: {mc.rf_res}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L132"></span>
+<span id="tests-01-hex-roof-loft-L133">  <span class="cm">// ⛔ **IN WORLD UNITS, NOT CELL INDICES** — the same trap this file already warns about at</span></span>
+<span id="tests-01-hex-roof-loft-L134">  <span class="cm">// `test_a_cone_rises_to_a_single_peak`, and I walked into it one function later: on a</span></span>
+<span id="tests-01-hex-roof-loft-L135">  <span class="cm">// pointy-top odd-r lattice `q` is not the world x, so `2 + 0.25q` is a STAIRCASE and the</span></span>
+<span id="tests-01-hex-roof-loft-L136">  <span class="cm">// plane fit correctly refuses it. `cellx` is `lattice_k * √3/2`, which is what a plane is</span></span>
+<span id="tests-01-hex-roof-loft-L137">  <span class="cm">// linear in.</span></span>
+<span id="tests-01-hex-roof-loft-L138">  fp = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L139">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> {</span>
+<span id="tests-01-hex-roof-loft-L140">    <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-01-hex-roof-loft-L141">      wx = (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span>;</span>
+<span id="tests-01-hex-roof-loft-L142">      wy = (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="tests-01-hex-roof-loft-L143">      <span class="fn-call">height_set</span>(fp, q, r, <span class="nm">2.0</span> + <span class="nm">0.25</span> * wx + <span class="nm">0.125</span> * wy);</span>
+<span id="tests-01-hex-roof-loft-L144">    }</span>
+<span id="tests-01-hex-roof-loft-L145">  } }</span>
+<span id="tests-01-hex-roof-loft-L146">  mp = <span class="fn-call">roof_match</span>(s, fp, <span class="nm">0.001</span>);</span>
+<span id="tests-01-hex-roof-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mp.rf_kind == <span class="en">ROOF_PLANE</span>, <span class="st">"and a plane as a plane, got {mp.rf_kind}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L148">  <span class="cm">// ⛔ **AND A CONE MUST NOT BECOME A RIDGE.** A cone IS a ridge whose segment has zero length,</span></span>
+<span id="tests-01-hex-roof-loft-L149">  <span class="cm">// so a fitter tried too early would answer the less specific shape for both — which is why</span></span>
+<span id="tests-01-hex-roof-loft-L150">  <span class="cm">// `roof_match` asks the ridge last.</span></span>
+<span id="tests-01-hex-roof-loft-L151">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mc.rf_kind != <span class="en">ROOF_RIDGE</span>, <span class="st">"a cone is not answered as a degenerate ridge"</span>);</span>
+<span id="tests-01-hex-roof-loft-L152">}</span>
+<span id="tests-01-hex-roof-loft-L153"></span>
+<span id="tests-01-hex-roof-loft-L154"><span class="cm">// ── ⛔ THE SHAPE A REAL EDITOR DRAWS — a gable over a rectangle ─────────────</span></span>
+<span id="tests-01-hex-roof-loft-L155"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L156"><span class="cm">// ⛔ **THE DISC FIXTURE ABOVE IS NOT ENOUGH, AND A CONSUMER FOUND THAT.** moros's `roof_over`</span></span>
+<span id="tests-01-hex-roof-loft-L157"><span class="cm">// writes a 27-cell gable — five rows across, CONSTANT along the ridge — and 0.1.2 returned a</span></span>
+<span id="tests-01-hex-roof-loft-L158"><span class="cm">// degenerate segment eight world units clear of it with slope 0 and residual 1.185, while the</span></span>
+<span id="tests-01-hex-roof-loft-L159"><span class="cm">// disc fixture passed. A suite written by the author cannot ask the questions the author does</span></span>
+<span id="tests-01-hex-roof-loft-L160"><span class="cm">// not have; this is that question, in the library.</span></span>
+<span id="tests-01-hex-roof-loft-L161"><span class="cm">//</span></span>
+<span id="tests-01-hex-roof-loft-L162"><span class="cm">// The field is exact: `7.75 - (2/3)|y - 6|`, which is what a 0.25-unit store holds for that</span></span>
+<span id="tests-01-hex-roof-loft-L163"><span class="cm">// gable — 5.75 / 6.75 / 7.75 / 6.75 / 5.75 on rows at y = 3, 4.5, 6, 7.5, 9.</span></span>
+<span id="tests-01-hex-roof-loft-L164"><span class="kw">fn</span> <span class="fn-call">gable_rows</span>() -&gt; <span class="en">HexSet</span> {</span>
+<span id="tests-01-hex-roof-loft-L165">  s = <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L166">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">2..7</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">1..6</span> { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); } }</span>
+<span id="tests-01-hex-roof-loft-L167">  s</span>
+<span id="tests-01-hex-roof-loft-L168">}</span>
+<span id="tests-01-hex-roof-loft-L169"></span>
+<span id="tests-01-hex-roof-loft-L170"><span class="kw">fn</span> <span class="fn-call">test_a_gable_over_a_rectangle_recovers</span>() {</span>
+<span id="tests-01-hex-roof-loft-L171">  s = <span class="fn-call">gable_rows</span>();</span>
+<span id="tests-01-hex-roof-loft-L172">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L173">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> {</span>
+<span id="tests-01-hex-roof-loft-L174">    <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-01-hex-roof-loft-L175">      wy = (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span>;</span>
+<span id="tests-01-hex-roof-loft-L176">      d = wy - <span class="nm">6.0</span>;</span>
+<span id="tests-01-hex-roof-loft-L177">      <span class="kw">if</span> d &lt; <span class="nm">0.0</span> { d = <span class="nm">0.0</span> - d; }</span>
+<span id="tests-01-hex-roof-loft-L178">      <span class="fn-call">height_set</span>(f, q, r, <span class="nm">7.75</span> - <span class="nm">0.6666666666666666</span> * d);</span>
+<span id="tests-01-hex-roof-loft-L179">    }</span>
+<span id="tests-01-hex-roof-loft-L180">  } }</span>
+<span id="tests-01-hex-roof-loft-L181">  g = <span class="fn-call">roof_ridge_fit</span>(s, f);</span>
+<span id="tests-01-hex-roof-loft-L182">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(g.rf_res &lt; <span class="nm">0.01</span>,</span>
+<span id="tests-01-hex-roof-loft-L183">         <span class="st">"the gable does not recover: residual {g.rf_res}, segment {g.rf_x},{g.rf_y} to {g.rf_x2},{g.rf_y2}, slope {g.rf_slope}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L184">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(g.rf_slope - <span class="nm">0.6666666666666666</span>) &lt; <span class="nm">0.01</span>, <span class="st">"the slope comes back, got {g.rf_slope}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L185">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(g.rf_z - <span class="nm">7.75</span>) &lt; <span class="nm">0.02</span>, <span class="st">"and the peak, got {g.rf_z}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L186">  <span class="cm">// ⚠ **AND THE RIDGE RUNS ALONG THE ROWS, NOT ACROSS THEM** — a segment of near-zero length</span></span>
+<span id="tests-01-hex-roof-loft-L187">  <span class="cm">// is a cone wearing a ridge's name, and it fits this field badly.</span></span>
+<span id="tests-01-hex-roof-loft-L188">  dx = g.rf_x2 - g.rf_x; dy = g.rf_y2 - g.rf_y;</span>
+<span id="tests-01-hex-roof-loft-L189">  <span class="cm">// ⚠ `??` BINDS LOOSEST, so the parentheses are load-bearing: `sqrt(..) ?? 0.0 &gt; 1.0` parses</span></span>
+<span id="tests-01-hex-roof-loft-L190">  <span class="cm">// as `sqrt(..) ?? (0.0 &gt; 1.0)` and is a type error, not a comparison.</span></span>
+<span id="tests-01-hex-roof-loft-L191">  seglen = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-roof-loft-L192">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(seglen &gt; <span class="nm">1.0</span>, <span class="st">"the recovered ridge has length, got {seglen}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L193">  m = <span class="fn-call">roof_match</span>(s, f, <span class="nm">0.01</span>);</span>
+<span id="tests-01-hex-roof-loft-L194">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m.rf_kind == <span class="en">ROOF_RIDGE</span>, <span class="st">"and `roof_match` names it a ridge, got kind {m.rf_kind}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L195">}</span>
+<span id="tests-01-hex-roof-loft-L196"></span>
+<span id="tests-01-hex-roof-loft-L197"><span class="kw">fn</span> <span class="fn-call">test_the_package_recovers_what_it_draws</span>() {</span>
+<span id="tests-01-hex-roof-loft-L198">  <span class="cm">// ⛔ **THE STRONGEST FIXTURE THERE IS, AND IT WAS MISSING.** Every ridge test above builds its</span></span>
+<span id="tests-01-hex-roof-loft-L199">  <span class="cm">// field by hand; this one hands `roof_ridge_fit` the output of `roof_ridge`. 0.1.3 failed it</span></span>
+<span id="tests-01-hex-roof-loft-L200">  <span class="cm">// at residual 1.132 — the locus was collected with `z == hi`, and `track_distance` returns</span></span>
+<span id="tests-01-hex-roof-loft-L201">  <span class="cm">// zero on the segment only up to ROUNDING, so one cell won the equality, the pair collapsed</span></span>
+<span id="tests-01-hex-roof-loft-L202">  <span class="cm">// to a point and the fit degenerated. A hand-built field attains its maximum exactly and</span></span>
+<span id="tests-01-hex-roof-loft-L203">  <span class="cm">// hid it.</span></span>
+<span id="tests-01-hex-roof-loft-L204">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-01-hex-roof-loft-L205">  f = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-01-hex-roof-loft-L206">  t = <span class="fn-call">track_new</span>();</span>
+<span id="tests-01-hex-roof-loft-L207">  <span class="fn-call">track_straight</span>(t, <span class="nm">0.0</span> - <span class="nm">12.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L208">  <span class="fn-call">roof_ridge</span>(s, f, t, <span class="nm">6.0</span>, <span class="nm">0.5</span>, <span class="nm">1000.0</span>);</span>
+<span id="tests-01-hex-roof-loft-L209">  g = <span class="fn-call">roof_ridge_fit</span>(s, f);</span>
+<span id="tests-01-hex-roof-loft-L210">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(g.rf_res &lt; <span class="nm">0.01</span>,</span>
+<span id="tests-01-hex-roof-loft-L211">         <span class="st">"the package cannot recover its own ridge: residual {g.rf_res}, segment {g.rf_x},{g.rf_y} to {g.rf_x2},{g.rf_y2}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L212">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(g.rf_slope - <span class="nm">0.5</span>) &lt; <span class="nm">0.01</span>, <span class="st">"the slope comes back, got {g.rf_slope}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L213">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">abs</a></span>(g.rf_z - <span class="nm">6.0</span>) &lt; <span class="nm">0.02</span>, <span class="st">"and the peak, got {g.rf_z}"</span>);</span>
+<span id="tests-01-hex-roof-loft-L214">}</span>
+</code></pre>
+<h2 id="tests-02-worked-examples-loft">tests/02-worked-examples.loft</h2>
+<pre class="src"><code><span id="tests-02-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-02-worked-examples-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-02-worked-examples-loft-L3"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L4"><span class="cm">// Worked examples for `hex_roof` (@PLN141).  Each `test_*` below is a REAL,</span></span>
+<span id="tests-02-worked-examples-loft-L5"><span class="cm">// run-every-CI demonstration of a contract the signature cannot state; the</span></span>
+<span id="tests-02-worked-examples-loft-L6"><span class="cm">// function documents itself by CITING the tag with `// Example: @HXR-00N`, and</span></span>
+<span id="tests-02-worked-examples-loft-L7"><span class="cm">// `check_doc_drift.sh examples` fails if a citation goes dangling.  These are</span></span>
+<span id="tests-02-worked-examples-loft-L8"><span class="cm">// teaching examples, distinct from the conformance suite in `01-hex-roof.loft`.</span></span>
+<span id="tests-02-worked-examples-loft-L9"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L10"><span class="cm">// THE ONE IDEA, AND WHERE IT LEAKS.  Every roof form here is the same function</span></span>
+<span id="tests-02-worked-examples-loft-L11"><span class="cm">// of a DISTANCE, and only the distance SOURCE changes: a point gives a cone, a</span></span>
+<span id="tests-02-worked-examples-loft-L12"><span class="cm">// line a gable, a segment a hip, the FOOTPRINT ITSELF a proper hip-and-valley.</span></span>
+<span id="tests-02-worked-examples-loft-L13"><span class="cm">// So this is not a catalogue of forms and there are no special cases to learn.</span></span>
+<span id="tests-02-worked-examples-loft-L14"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L15"><span class="cm">// What a caller has to get right instead is which source a profile reads, and</span></span>
+<span id="tests-02-worked-examples-loft-L16"><span class="cm">// that is where every example below lives.  The trouble is that a roof built</span></span>
+<span id="tests-02-worked-examples-loft-L17"><span class="cm">// from the wrong source still looks like a roof: it still has an apex, it still</span></span>
+<span id="tests-02-worked-examples-loft-L18"><span class="cm">// sheds water, and it still passes every property the conformance suite checks.</span></span>
+<span id="tests-02-worked-examples-loft-L19"><span class="cm">// The damage shows at the EAVE, which is the last place anyone looks.</span></span>
+<span id="tests-02-worked-examples-loft-L20"><span class="kw">use</span> hex_roof::*;</span>
+<span id="tests-02-worked-examples-loft-L21"><span class="kw">use</span> hex_way::*;</span>
+<span id="tests-02-worked-examples-loft-L22"><span class="kw">use</span> hex_field::*;</span>
+<span id="tests-02-worked-examples-loft-L23"></span>
+<span id="tests-02-worked-examples-loft-L24">const <span class="en">W</span> = <span class="nm">9</span>;</span>
+<span id="tests-02-worked-examples-loft-L25">const <span class="en">H</span> = <span class="nm">9</span>;</span>
+<span id="tests-02-worked-examples-loft-L26"></span>
+<span id="tests-02-worked-examples-loft-L27"><span class="cm">// A quantised disc: 29 cells, and deliberately not a circle — that is the whole</span></span>
+<span id="tests-02-worked-examples-loft-L28"><span class="cm">// point of everything below.</span></span>
+<span id="tests-02-worked-examples-loft-L29"><span class="kw">fn</span> <span class="fn-call">disc</span>() -&gt; <span class="en">HexSet</span> {</span>
+<span id="tests-02-worked-examples-loft-L30">  s = <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L31">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> {</span>
+<span id="tests-02-worked-examples-loft-L32">    <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> {</span>
+<span id="tests-02-worked-examples-loft-L33">      dq = q - <span class="nm">4</span>;</span>
+<span id="tests-02-worked-examples-loft-L34">      dr = r - <span class="nm">4</span>;</span>
+<span id="tests-02-worked-examples-loft-L35">      <span class="kw">if</span> dq * dq + dr * dr &lt;= <span class="nm">9</span> { <span class="fn-call">hexset_set</span>(s, q, r, <span class="kw">true</span>); }</span>
+<span id="tests-02-worked-examples-loft-L36">    }</span>
+<span id="tests-02-worked-examples-loft-L37">  }</span>
+<span id="tests-02-worked-examples-loft-L38">  s</span>
+<span id="tests-02-worked-examples-loft-L39">}</span>
+<span id="tests-02-worked-examples-loft-L40"></span>
+<span id="tests-02-worked-examples-loft-L41"><span class="cm">// The lattice -&gt; world map, which is what this module measures distances in.</span></span>
+<span id="tests-02-worked-examples-loft-L42"><span class="kw">fn</span> <span class="fn-call">wx</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { ((<span class="fn-call">lattice_k</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.8660254037844386</span> }</span>
+<span id="tests-02-worked-examples-loft-L43"><span class="kw">fn</span> <span class="fn-call">wy</span>(q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { ((<span class="fn-call">lattice_m</span>(q, r)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.5</span> }</span>
+<span id="tests-02-worked-examples-loft-L44"></span>
+<span id="tests-02-worked-examples-loft-L45"><span class="kw">fn</span> <span class="fn-call">peak_of</span>(s: <span class="en">HexSet</span>, f: <span class="en">Heights</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="tests-02-worked-examples-loft-L46">  m = -<span class="nm">1000000.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L47">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L48">    z = <span class="fn-call">height_get</span>(f, q, r);</span>
+<span id="tests-02-worked-examples-loft-L49">    <span class="kw">if</span> z &gt; m { m = z; }</span>
+<span id="tests-02-worked-examples-loft-L50">  } } }</span>
+<span id="tests-02-worked-examples-loft-L51">  m</span>
+<span id="tests-02-worked-examples-loft-L52">}</span>
+<span id="tests-02-worked-examples-loft-L53"></span>
+<span id="tests-02-worked-examples-loft-L54"><span class="cm">// @HXR-001 — A HIP IS A GABLE WITH A SHORTER RIDGE.  Not "like" one: the same</span></span>
+<span id="tests-02-worked-examples-loft-L55"><span class="cm">// call, with a shorter `Track`.  `track_distance` clamps to the segment, so past</span></span>
+<span id="tests-02-worked-examples-loft-L56"><span class="cm">// the ridge's end the distance stops running across the ridge and starts running</span></span>
+<span id="tests-02-worked-examples-loft-L57"><span class="cm">// to its tip — and the ends slope in on their own.</span></span>
+<span id="tests-02-worked-examples-loft-L58"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L59"><span class="cm">// This is what "the list of roof forms is a list of distance sources" means in</span></span>
+<span id="tests-02-worked-examples-loft-L60"><span class="cm">// practice.  If you are reaching for a `roof_gable` and a `roof_hip_roof`, stop:</span></span>
+<span id="tests-02-worked-examples-loft-L61"><span class="cm">// you are choosing a Track length.</span></span>
+<span id="tests-02-worked-examples-loft-L62"><span class="kw">fn</span> <span class="fn-call">test_a_hip_is_a_gable_with_a_shorter_ridge</span>() {</span>
+<span id="tests-02-worked-examples-loft-L63">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L64"></span>
+<span id="tests-02-worked-examples-loft-L65">  <span class="cm">// One ridge the full width of the footprint, and one covering its middle third.</span></span>
+<span id="tests-02-worked-examples-loft-L66">  full = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L67">  <span class="fn-call">track_straight</span>(full, <span class="fn-call">wx</span>(<span class="nm">0</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wx</span>(<span class="nm">8</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-02-worked-examples-loft-L68">  short = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L69">  <span class="fn-call">track_straight</span>(short, <span class="fn-call">wx</span>(<span class="nm">3</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wx</span>(<span class="nm">5</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-02-worked-examples-loft-L70"></span>
+<span id="tests-02-worked-examples-loft-L71">  gable = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L72">  hip = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L73">  <span class="fn-call">roof_ridge</span>(s, gable, full, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L74">  <span class="fn-call">roof_ridge</span>(s, hip, short, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L75"></span>
+<span id="tests-02-worked-examples-loft-L76">  <span class="cm">// Over the middle the two are identical — both cells sit on their ridge.</span></span>
+<span id="tests-02-worked-examples-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(gable, <span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">5.0</span>, <span class="st">"the gable is at full height on the ridge"</span>);</span>
+<span id="tests-02-worked-examples-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(hip, <span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">5.0</span>, <span class="st">"and so is the hip — same ridge, same height"</span>);</span>
+<span id="tests-02-worked-examples-loft-L79"></span>
+<span id="tests-02-worked-examples-loft-L80">  <span class="cm">// Near the end they are not: the gable still runs at full height to the wall,</span></span>
+<span id="tests-02-worked-examples-loft-L81">  <span class="cm">// the hip has sloped away because the ridge ran out.</span></span>
+<span id="tests-02-worked-examples-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(gable, <span class="nm">1</span>, <span class="nm">4</span>) == <span class="nm">5.0</span>, <span class="st">"the gable carries the ridge to the end wall"</span>);</span>
+<span id="tests-02-worked-examples-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(hip, <span class="nm">1</span>, <span class="nm">4</span>) &lt; <span class="nm">2.0</span>, <span class="st">"the hip has sloped in, to {height_get(hip, 1, 4)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L84"></span>
+<span id="tests-02-worked-examples-loft-L85">  <span class="cm">// Both drain, because both are one profile of one distance.</span></span>
+<span id="tests-02-worked-examples-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, gable) == <span class="nm">0</span> &amp;&amp; <span class="fn-call">roof_ponds</span>(s, hip) == <span class="nm">0</span>, <span class="st">"neither ponds"</span>);</span>
+<span id="tests-02-worked-examples-loft-L87">}</span>
+<span id="tests-02-worked-examples-loft-L88"></span>
+<span id="tests-02-worked-examples-loft-L89"><span class="cm">// @HXR-002 — ON A QUANTISED FOOTPRINT A POINT-SOURCE CONE CANNOT GET BOTH THE</span></span>
+<span id="tests-02-worked-examples-loft-L90"><span class="cm">// EAVE AND THE DRAINAGE RIGHT.  Drive the roof from each cell's own radius and</span></span>
+<span id="tests-02-worked-examples-loft-L91"><span class="cm">// the eave inherits the footprint's roundness deviation.  Clamp at `dmax` to</span></span>
+<span id="tests-02-worked-examples-loft-L92"><span class="cm">// level it — which is what the clamp is for — and the clamped cells become a</span></span>
+<span id="tests-02-worked-examples-loft-L93"><span class="cm">// flat plateau that ponds.  There is no `dmax` that escapes both, and the reason</span></span>
+<span id="tests-02-worked-examples-loft-L94"><span class="cm">// is measurable: on a quantised disc the boundary and the interior OVERLAP in</span></span>
+<span id="tests-02-worked-examples-loft-L95"><span class="cm">// radius, so no single radius separates them.</span></span>
+<span id="tests-02-worked-examples-loft-L96"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L97"><span class="cm">// `roof_hip` has neither problem, because it does not measure a radius at all:</span></span>
+<span id="tests-02-worked-examples-loft-L98"><span class="cm">// it walks inward from the boundary, and the boundary is ring 0 BY DEFINITION,</span></span>
+<span id="tests-02-worked-examples-loft-L99"><span class="cm">// whatever radius its cells happen to sit at.</span></span>
+<span id="tests-02-worked-examples-loft-L100"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L101"><span class="cm">// Reach for `roof_cone` when the footprint really is a circle you control, and</span></span>
+<span id="tests-02-worked-examples-loft-L102"><span class="cm">// for `roof_hip` when it is a footprint someone drew.</span></span>
+<span id="tests-02-worked-examples-loft-L103"><span class="kw">fn</span> <span class="fn-call">test_the_eave_is_where_a_cone_on_a_quantised_footprint_goes_wrong</span>() {</span>
+<span id="tests-02-worked-examples-loft-L104">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L105">  cx = <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>);</span>
+<span id="tests-02-worked-examples-loft-L106">  cy = <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>);</span>
+<span id="tests-02-worked-examples-loft-L107"></span>
+<span id="tests-02-worked-examples-loft-L108">  <span class="cm">// The measurement that explains everything below: the innermost BOUNDARY cell</span></span>
+<span id="tests-02-worked-examples-loft-L109">  <span class="cm">// is closer to the centre than the outermost INTERIOR one.</span></span>
+<span id="tests-02-worked-examples-loft-L110">  blo = <span class="nm">1000.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L111">  ihi = -<span class="nm">1000.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L112">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L113">    dx = <span class="fn-call">wx</span>(q, r) - cx;</span>
+<span id="tests-02-worked-examples-loft-L114">    dy = <span class="fn-call">wy</span>(q, r) - cy;</span>
+<span id="tests-02-worked-examples-loft-L115">    d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="tests-02-worked-examples-loft-L116">    edge = <span class="kw">false</span>;</span>
+<span id="tests-02-worked-examples-loft-L117">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> { <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(s, <span class="fn-call">nb_q</span>(q, r, i), <span class="fn-call">nb_r</span>(q, r, i)) { edge = <span class="kw">true</span>; } }</span>
+<span id="tests-02-worked-examples-loft-L118">    <span class="kw">if</span> edge { <span class="kw">if</span> d &lt; blo { blo = d; } } <span class="kw">else</span> { <span class="kw">if</span> d &gt; ihi { ihi = d; } }</span>
+<span id="tests-02-worked-examples-loft-L119">  } } }</span>
+<span id="tests-02-worked-examples-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(ihi &gt; blo, <span class="st">"interior reaches {ihi}, the nearest eave cell is at {blo} — they overlap"</span>);</span>
+<span id="tests-02-worked-examples-loft-L121"></span>
+<span id="tests-02-worked-examples-loft-L122">  <span class="cm">// Unclamped: drains perfectly, and the eave wobbles by more than two units.</span></span>
+<span id="tests-02-worked-examples-loft-L123">  loose = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L124">  <span class="fn-call">roof_cone</span>(s, loose, cx, cy, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L125">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, loose) == <span class="nm">0</span>, <span class="st">"it sheds water"</span>);</span>
+<span id="tests-02-worked-examples-loft-L126">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">peak_of</span>(s, loose) == <span class="nm">5.0</span>, <span class="st">"it reaches its stated peak"</span>);</span>
+<span id="tests-02-worked-examples-loft-L127">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, loose) &gt; <span class="nm">2.0</span>, <span class="st">"but the eave is {eave_spread(s, loose)} out of level"</span>);</span>
+<span id="tests-02-worked-examples-loft-L128"></span>
+<span id="tests-02-worked-examples-loft-L129">  <span class="cm">// Clamped low enough to level the eave: now the plateau ponds.</span></span>
+<span id="tests-02-worked-examples-loft-L130">  tight = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L131">  <span class="fn-call">roof_cone</span>(s, tight, cx, cy, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, tight) &lt; <span class="nm">0.000001</span>, <span class="st">"the eave is level"</span>);</span>
+<span id="tests-02-worked-examples-loft-L133">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, tight) == <span class="nm">3</span>, <span class="st">"and three interior cells now hold water"</span>);</span>
+<span id="tests-02-worked-examples-loft-L134"></span>
+<span id="tests-02-worked-examples-loft-L135">  <span class="cm">// In between, both are wrong at once — there is no setting that works.</span></span>
+<span id="tests-02-worked-examples-loft-L136">  mid = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L137">  <span class="fn-call">roof_cone</span>(s, mid, cx, cy, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">3.25</span>);</span>
+<span id="tests-02-worked-examples-loft-L138">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, mid) &gt; <span class="nm">0.0</span> &amp;&amp; <span class="fn-call">roof_ponds</span>(s, mid) &gt; <span class="nm">0</span>, <span class="st">"the crossover is not a solution"</span>);</span>
+<span id="tests-02-worked-examples-loft-L139"></span>
+<span id="tests-02-worked-examples-loft-L140">  <span class="cm">// Driven from the footprint instead: level eave AND no ponding, by construction.</span></span>
+<span id="tests-02-worked-examples-loft-L141">  hip = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L142">  rings = <span class="fn-call">roof_hip</span>(s, hip, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rings == <span class="nm">2</span>, <span class="st">"the disc is {rings} rings deep"</span>);</span>
+<span id="tests-02-worked-examples-loft-L144">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, hip) == <span class="nm">0.0</span>, <span class="st">"every boundary cell is ring 0, so the eave is exactly level"</span>);</span>
+<span id="tests-02-worked-examples-loft-L145">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, hip) == <span class="nm">0</span>, <span class="st">"and it still drains"</span>);</span>
+<span id="tests-02-worked-examples-loft-L146">}</span>
+<span id="tests-02-worked-examples-loft-L147"></span>
+<span id="tests-02-worked-examples-loft-L148"><span class="cm">// @HXR-003 — THE CENTRE AND THE TRACK ARE IN WORLD UNITS, NOT CELL INDICES.</span></span>
+<span id="tests-02-worked-examples-loft-L149"><span class="cm">// A pointy-top odd-r lattice is not the integer grid its indices look like:</span></span>
+<span id="tests-02-worked-examples-loft-L150"><span class="cm">// cell (4,4) sits at world (6.93, 6.0).  Pass `(4.0, 4.0)` meaning "the middle</span></span>
+<span id="tests-02-worked-examples-loft-L151"><span class="cm">// cell" and the cone is centred outside the middle of the building.</span></span>
+<span id="tests-02-worked-examples-loft-L152"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L153"><span class="cm">// What makes this expensive is that the result is still a valid roof.  It has a</span></span>
+<span id="tests-02-worked-examples-loft-L154"><span class="cm">// positive peak, it is not flat, and it does not pond — so a suite that checks</span></span>
+<span id="tests-02-worked-examples-loft-L155"><span class="cm">// the apex passes it.  What moved is the apex's LOCATION and the eave's level.</span></span>
+<span id="tests-02-worked-examples-loft-L156"><span class="kw">fn</span> <span class="fn-call">test_the_centre_is_a_world_point_not_a_cell_index</span>() {</span>
+<span id="tests-02-worked-examples-loft-L157">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L158">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>) &gt; <span class="nm">6.9</span> &amp;&amp; <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>) &lt; <span class="nm">6.94</span>, <span class="st">"cell (4,4) is at world x {wx(4, 4)}, not 4.0"</span>);</span>
+<span id="tests-02-worked-examples-loft-L159">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">6.0</span>, <span class="st">"and world y {wy(4, 4)}, not 4.0"</span>);</span>
+<span id="tests-02-worked-examples-loft-L160"></span>
+<span id="tests-02-worked-examples-loft-L161">  right = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L162">  wrong = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L163">  <span class="fn-call">roof_cone</span>(s, right, <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L164">  <span class="fn-call">roof_cone</span>(s, wrong, <span class="nm">4.0</span>, <span class="nm">4.0</span>, <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);          <span class="cm">// cell indices — the mistake</span></span>
+<span id="tests-02-worked-examples-loft-L165"></span>
+<span id="tests-02-worked-examples-loft-L166">  <span class="cm">// The apex is on the centre cell when the centre is a world point.</span></span>
+<span id="tests-02-worked-examples-loft-L167">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(right, <span class="nm">4</span>, <span class="nm">4</span>) == <span class="nm">5.0</span>, <span class="st">"the peak lands on the middle cell"</span>);</span>
+<span id="tests-02-worked-examples-loft-L168">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(wrong, <span class="nm">4</span>, <span class="nm">4</span>) &lt; <span class="nm">2.0</span>, <span class="st">"and does not: {height_get(wrong, 4, 4)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L169"></span>
+<span id="tests-02-worked-examples-loft-L170">  <span class="cm">// Every cheap check still passes on the wrong one, which is why it survives.</span></span>
+<span id="tests-02-worked-examples-loft-L171">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, wrong) == <span class="nm">0</span>, <span class="st">"the wrong roof still sheds water"</span>);</span>
+<span id="tests-02-worked-examples-loft-L172">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">peak_of</span>(s, wrong) &gt; <span class="nm">0.0</span>, <span class="st">"it still has a positive peak"</span>);</span>
+<span id="tests-02-worked-examples-loft-L173"></span>
+<span id="tests-02-worked-examples-loft-L174">  <span class="cm">// The eave is the tell — nearly four times worse than the merely-quantised one.</span></span>
+<span id="tests-02-worked-examples-loft-L175">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">eave_spread</span>(s, wrong) &gt; <span class="nm">7.0</span>, <span class="st">"the eave gives it away: {eave_spread(s, wrong)}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L176">}</span>
+<span id="tests-02-worked-examples-loft-L177"></span>
+<span id="tests-02-worked-examples-loft-L178"><span class="cm">// @HXR-004 — GROIN AND CLOISTER ARE THE SAME TWO BARRELS AND THE OPPOSITE</span></span>
+<span id="tests-02-worked-examples-loft-L179"><span class="cm">// OPERATOR.  `vault_groin` takes the higher of the two surfaces, so both crown</span></span>
+<span id="tests-02-worked-examples-loft-L180"><span class="cm">// lines stay at full height and every wall keeps its arch.  `vault_cloister`</span></span>
+<span id="tests-02-worked-examples-loft-L181"><span class="cm">// takes the lower, so the vault springs continuously off all four walls and no</span></span>
+<span id="tests-02-worked-examples-loft-L182"><span class="cm">// wall has an opening at all.</span></span>
+<span id="tests-02-worked-examples-loft-L183"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L184"><span class="cm">// Identical argument lists, one word different at the call site, and a different</span></span>
+<span id="tests-02-worked-examples-loft-L185"><span class="cm">// building.  If you have picked the wrong one, nothing about the call will say</span></span>
+<span id="tests-02-worked-examples-loft-L186"><span class="cm">// so — look at whether the walls have openings.</span></span>
+<span id="tests-02-worked-examples-loft-L187"><span class="kw">fn</span> <span class="fn-call">test_groin_and_cloister_differ_only_in_which_surface_wins</span>() {</span>
+<span id="tests-02-worked-examples-loft-L188">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L189">  ew = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L190">  <span class="fn-call">track_straight</span>(ew, <span class="fn-call">wx</span>(<span class="nm">0</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wx</span>(<span class="nm">8</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-02-worked-examples-loft-L191">  ns = <span class="fn-call">track_new</span>();</span>
+<span id="tests-02-worked-examples-loft-L192">  <span class="fn-call">track_straight</span>(ns, <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">1</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">1</span>), <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">7</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">7</span>));</span>
+<span id="tests-02-worked-examples-loft-L193"></span>
+<span id="tests-02-worked-examples-loft-L194">  groin = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L195">  cloister = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L196">  <span class="fn-call">vault_groin</span>(s, groin, ew, ns, <span class="nm">0.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L197">  <span class="fn-call">vault_cloister</span>(s, cloister, ew, ns, <span class="nm">0.0</span>, <span class="nm">3.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L198"></span>
+<span id="tests-02-worked-examples-loft-L199">  <span class="cm">// The higher surface never drops below the lower one, anywhere.</span></span>
+<span id="tests-02-worked-examples-loft-L200">  same = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L201">  higher = <span class="nm">0</span>;</span>
+<span id="tests-02-worked-examples-loft-L202">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L203">    g = <span class="fn-call">height_get</span>(groin, q, r);</span>
+<span id="tests-02-worked-examples-loft-L204">    c = <span class="fn-call">height_get</span>(cloister, q, r);</span>
+<span id="tests-02-worked-examples-loft-L205">    <span class="kw">if</span> g &gt;= c { same = same + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L206">    <span class="kw">if</span> g &gt; c { higher = higher + <span class="nm">1</span>; }</span>
+<span id="tests-02-worked-examples-loft-L207">  } } }</span>
+<span id="tests-02-worked-examples-loft-L208">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(same == <span class="nm">29</span>, <span class="st">"the groin is never lower, on all {same} cells"</span>);</span>
+<span id="tests-02-worked-examples-loft-L209">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(higher == <span class="nm">27</span>, <span class="st">"and strictly higher on {higher} of them — this is a different vault"</span>);</span>
+<span id="tests-02-worked-examples-loft-L210">}</span>
+<span id="tests-02-worked-examples-loft-L211"></span>
+<span id="tests-02-worked-examples-loft-L212"><span class="cm">// @HXR-005 — PONDING COUNTS INTERIOR CELLS ONLY, AND THAT IS DELIBERATE.  A</span></span>
+<span id="tests-02-worked-examples-loft-L213"><span class="cm">// pond is water that cannot leave.  A cell on the boundary always can — it</span></span>
+<span id="tests-02-worked-examples-loft-L214"><span class="cm">// drains off the eave, which is its job — so a boundary local minimum is not a</span></span>
+<span id="tests-02-worked-examples-loft-L215"><span class="cm">// defect and is not counted.</span></span>
+<span id="tests-02-worked-examples-loft-L216"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L217"><span class="cm">// So `roof_ponds(s, f) == 0` does NOT mean "the field has no local minima".  If</span></span>
+<span id="tests-02-worked-examples-loft-L218"><span class="cm">// you are looking for a dip at the edge of a roof, this is not the function that</span></span>
+<span id="tests-02-worked-examples-loft-L219"><span class="cm">// finds it.</span></span>
+<span id="tests-02-worked-examples-loft-L220"><span class="kw">fn</span> <span class="fn-call">test_a_low_spot_on_the_eave_is_not_a_pond</span>() {</span>
+<span id="tests-02-worked-examples-loft-L221">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L222"></span>
+<span id="tests-02-worked-examples-loft-L223">  <span class="cm">// Sink a BOUNDARY cell far below everything around it: still no ponds.</span></span>
+<span id="tests-02-worked-examples-loft-L224">  edged = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L225">  <span class="fn-call">roof_hip</span>(s, edged, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L226">  <span class="fn-call">height_set</span>(edged, <span class="nm">4</span>, <span class="nm">1</span>, -<span class="nm">50.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L227">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, edged) == <span class="nm">0</span>, <span class="st">"a hollow on the eave drains off it"</span>);</span>
+<span id="tests-02-worked-examples-loft-L228"></span>
+<span id="tests-02-worked-examples-loft-L229">  <span class="cm">// Sink an INTERIOR cell by the same amount: that is a pond.</span></span>
+<span id="tests-02-worked-examples-loft-L230">  inner = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L231">  <span class="fn-call">roof_hip</span>(s, inner, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L232">  <span class="fn-call">height_set</span>(inner, <span class="nm">4</span>, <span class="nm">4</span>, -<span class="nm">50.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L233">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, inner) == <span class="nm">1</span>, <span class="st">"the same hollow inside is water that cannot leave"</span>);</span>
+<span id="tests-02-worked-examples-loft-L234"></span>
+<span id="tests-02-worked-examples-loft-L235">  <span class="cm">// The control that keeps the number honest: a dead-flat field is all ponds.</span></span>
+<span id="tests-02-worked-examples-loft-L236">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">roof_ponds</span>(s, <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>)) == <span class="nm">10</span>, <span class="st">"a flat roof ponds everywhere inside"</span>);</span>
+<span id="tests-02-worked-examples-loft-L237">}</span>
+<span id="tests-02-worked-examples-loft-L238"></span>
+<span id="tests-02-worked-examples-loft-L239"><span class="cm">// @HXR-006 — RECOVER THE SURFACE AND DRAW THAT, NEVER THE CELLS.  The heights</span></span>
+<span id="tests-02-worked-examples-loft-L240"><span class="cm">// are STORAGE; the analytic surface is the truth.  `roof_match` reads a height</span></span>
+<span id="tests-02-worked-examples-loft-L241"><span class="cm">// field back and names the profile, and `roof_eval` is then exact at any</span></span>
+<span id="tests-02-worked-examples-loft-L242"><span class="cm">// resolution — where drawing the cells directly gives a staircase of hexes</span></span>
+<span id="tests-02-worked-examples-loft-L243"><span class="cm">// wearing a cone.</span></span>
+<span id="tests-02-worked-examples-loft-L244"><span class="cm">//</span></span>
+<span id="tests-02-worked-examples-loft-L245"><span class="cm">// Two things to know about the answer.  A PLANE WINS TIES, because it is the</span></span>
+<span id="tests-02-worked-examples-loft-L246"><span class="cm">// simpler statement and a cone fitted to a flat roof puts its apex somewhere</span></span>
+<span id="tests-02-worked-examples-loft-L247"><span class="cm">// arbitrary.  And the fit is an R2 recovery with a TOLERANCE, by design — it</span></span>
+<span id="tests-02-worked-examples-loft-L248"><span class="cm">// recovers a profile from an arbitrary field, not from one you authored, so the</span></span>
+<span id="tests-02-worked-examples-loft-L249"><span class="cm">// recovered apex is not bit-identical to the one you asked for.</span></span>
+<span id="tests-02-worked-examples-loft-L250"><span class="kw">fn</span> <span class="fn-call">test_the_recovered_surface_is_the_thing_to_draw</span>() {</span>
+<span id="tests-02-worked-examples-loft-L251">  s = <span class="fn-call">disc</span>();</span>
+<span id="tests-02-worked-examples-loft-L252"></span>
+<span id="tests-02-worked-examples-loft-L253">  <span class="cm">// A field that IS a plane comes back as a plane.</span></span>
+<span id="tests-02-worked-examples-loft-L254">  plane = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L255">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..</span><span class="en">H</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..</span><span class="en">W</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(s, q, r) {</span>
+<span id="tests-02-worked-examples-loft-L256">    <span class="fn-call">height_set</span>(plane, q, r, <span class="nm">2.0</span> + <span class="nm">0.5</span> * <span class="fn-call">wx</span>(q, r) + <span class="nm">0.25</span> * <span class="fn-call">wy</span>(q, r));</span>
+<span id="tests-02-worked-examples-loft-L257">  } } }</span>
+<span id="tests-02-worked-examples-loft-L258">  pf = <span class="fn-call">roof_match</span>(s, plane, <span class="nm">0.001</span>);</span>
+<span id="tests-02-worked-examples-loft-L259">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pf.rf_kind == <span class="en">ROOF_PLANE</span>, <span class="st">"a plane is recognised as a plane"</span>);</span>
+<span id="tests-02-worked-examples-loft-L260">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(pf.rf_res &lt; <span class="nm">0.000001</span>, <span class="st">"with a residual of {pf.rf_res}"</span>);</span>
+<span id="tests-02-worked-examples-loft-L261"></span>
+<span id="tests-02-worked-examples-loft-L262">  <span class="cm">// A field that is a cone comes back as a cone.</span></span>
+<span id="tests-02-worked-examples-loft-L263">  cone = <span class="fn-call">heights_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="en">W</span>, <span class="en">H</span>);</span>
+<span id="tests-02-worked-examples-loft-L264">  <span class="fn-call">roof_cone</span>(s, cone, <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="nm">5.0</span>, <span class="nm">1.0</span>, <span class="nm">100.0</span>);</span>
+<span id="tests-02-worked-examples-loft-L265">  cf = <span class="fn-call">roof_match</span>(s, cone, <span class="nm">0.001</span>);</span>
+<span id="tests-02-worked-examples-loft-L266">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cf.rf_kind == <span class="en">ROOF_CONE</span>, <span class="st">"and a cone as a cone"</span>);</span>
+<span id="tests-02-worked-examples-loft-L267"></span>
+<span id="tests-02-worked-examples-loft-L268">  <span class="cm">// `roof_eval` reads the ANALYTIC surface — close to the authored apex, and</span></span>
+<span id="tests-02-worked-examples-loft-L269">  <span class="cm">// deliberately not identical to it: this is a fit, not a round trip.</span></span>
+<span id="tests-02-worked-examples-loft-L270">  z = <span class="fn-call">roof_eval</span>(cf, <span class="fn-call">wx</span>(<span class="nm">4</span>, <span class="nm">4</span>), <span class="fn-call">wy</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-02-worked-examples-loft-L271">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(z &gt; <span class="nm">4.999</span> &amp;&amp; z &lt; <span class="nm">5.001</span>, <span class="st">"the recovered apex is {z}, next to the authored 5.0"</span>);</span>
+<span id="tests-02-worked-examples-loft-L272">}</span>
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>
