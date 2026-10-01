@@ -13,7 +13,16 @@
      as hidden gets rAF at ~1 Hz however fast the work underneath is, so a frame
      count reads that throttle rather than the compute.  Both are reported;
      only `block` is safe to gate on.  ?threads=P (0 = sequential), ?work,
-     ?elems, ?window (ms). -->
+     ?elems, ?window (ms).
+
+     The FIRST frame's block is reported apart (`first_block_ms`) and kept out
+     of `max_block_ms` and `p90_block_ms`, exactly as the first gap is kept out
+     of `max_gap_ms`: it is a one-time cold start, not responsiveness.  Measured
+     (loft#1832): a warm-up `compile_and_run` of an empty program absorbs ~100 ms
+     of it in BOTH legs (the first compile), and the threaded leg carries ~50 ms
+     more on its first heavy par (the workers' first real work); every later
+     frame is steady.  `max_block_ms` compared those two cold starts, which is
+     why its verdict flipped from run to run while the average never did. -->
 <meta charset=utf-8><title>loft par UI responsiveness</title>
 <style>#box{width:24px;height:24px;background:#3a7;position:absolute}</style>
 <pre id=out>running…</pre><div id=box></div>
@@ -40,7 +49,8 @@ fn main() { data = [0]; for i in 1..${elems} { data += [i]; } total = 0; for a i
     if (!self.crossOriginIsolated) return report('FAIL coi=false');
     if (P > 0) await startLoftWorkers(wasm, P, { memory: wasm.memory, mainJS: new URL('./pkg-mt/loft.js', import.meta.url).href });
     let frames = 0, last = performance.now(), maxGap = 0, value = '?';
-    let workMs = 0, maxBlock = 0;
+    let workMs = 0, firstBlock = -1;
+    const blocks = [];  // every frame after the first, for max and p90
     const start = last;
     const frame = () => {
       const now = performance.now();
@@ -54,12 +64,19 @@ fn main() { data = [0]; for i in 1..${elems} { data += [i]; } total = 0; for a i
       const res = JSON.parse(compile_and_run(JSON.stringify([{name:'main.loft', content: SRC}])));
       const block = performance.now() - b0;
       workMs += block;
-      if (block > maxBlock) maxBlock = block;
+      if (firstBlock < 0) firstBlock = block; else blocks.push(block);
       value = (res.output||'').match(/total=(\d+)/)?.[1] || value;
       if (performance.now() - start < WINDOW) requestAnimationFrame(frame);
-      else report(`E1 threads=${P} window=${WINDOW} frames=${frames} fps=${(frames/(WINDOW/1000)).toFixed(1)}`
-        + ` max_gap_ms=${maxGap.toFixed(0)} avg_block_ms=${(workMs/frames).toFixed(1)}`
-        + ` max_block_ms=${maxBlock.toFixed(0)} work_ms=${workMs.toFixed(0)} value=${value}`);
+      else {
+        const sorted = blocks.slice().sort((a, b) => a - b);
+        const maxBlock = sorted.length ? sorted[sorted.length - 1] : firstBlock;
+        // Nearest-rank 90th percentile of the steady frames.
+        const p90 = sorted.length ? sorted[Math.max(0, Math.ceil(0.9 * sorted.length) - 1)] : firstBlock;
+        report(`E1 threads=${P} window=${WINDOW} frames=${frames} fps=${(frames/(WINDOW/1000)).toFixed(1)}`
+          + ` max_gap_ms=${maxGap.toFixed(0)} avg_block_ms=${(workMs/frames).toFixed(1)}`
+          + ` first_block_ms=${firstBlock.toFixed(0)} max_block_ms=${maxBlock.toFixed(0)}`
+          + ` p90_block_ms=${p90.toFixed(0)} work_ms=${workMs.toFixed(0)} value=${value}`);
+      }
     };
     requestAnimationFrame(frame);
   } catch (e) { report('caught=' + ((e && e.message) || String(e))); }
