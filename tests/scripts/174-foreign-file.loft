@@ -18,8 +18,6 @@
 //   with `fs_file_map` answering `fs_read_bytes` (the copy) every cell still passes, which
 //   is the point — the two paths are observationally one.
 
-fn ff_path() -> text { return "loft_174_foreign.tmp"; }
-
 // 64 bytes: "hello, foreign!" (15) then a byte pattern 32 + (i * 7) % 90 for i in 15..64
 // (byte 15 is 32 + 15 = 47, byte 63 is 32 + 81 = 113)
 fn ff_bytes() -> vector<u8> {
@@ -37,11 +35,19 @@ fn ff_same(a: const vector<u8>, b: const vector<u8>) -> boolean {
 }
 
 fn main() {
+  // Every scratch name carries this run's own prefix: three suites run this file at once
+  // (wrap, native, foreign_store), and with fixed names one run's write or delete landed
+  // on another's mapping — a map of length 0 where 64 bytes were written.
+  run = "loft_174_{now()}_{ticks()}";
+  ff = "{run}_foreign.tmp";
+  missing = "{run}_missing.tmp";
+  empty = "{run}_empty.tmp";
+  copy = "{run}_copy.tmp";
   src = ff_bytes();
   assert(len(src) == 64 && src[15] == 47 && src[63] == 113, "the file's bytes: {len(src)} {src[15]} {src[63]}");
-  assert(write_bytes(ff_path(), src), "write");
-  r = read_bytes(ff_path()) ?? [];
-  m = file_map(ff_path()) ?? [];
+  assert(write_bytes(ff, src), "write");
+  r = read_bytes(ff) ?? [];
+  m = file_map(ff) ?? [];
 
   // c1: the length
   assert(len(m) == 64 && len(m) == len(r), "c1 {len(m)} {len(r)}");
@@ -73,18 +79,18 @@ fn main() {
   assert(ff_indexed(m) == ff_indexed(r), "c6 {ff_indexed(m)} {ff_indexed(r)}");
 
   // c7: a missing file maps as null, an empty one as the empty vector
-  none = file_map("loft_174_missing.tmp");
+  none = file_map(missing);
   assert(none == null, "c7 missing");
-  assert(write_bytes("loft_174_empty.tmp", []), "c7 write empty");
-  e = file_map("loft_174_empty.tmp") ?? [1];
+  assert(write_bytes(empty, []), "c7 write empty");
+  e = file_map(empty) ?? [1];
   assert(len(e) == 0, "c7 empty {len(e)}");
 
   // c8: two mappings of one file live at once, each its own handle
-  m2 = file_map(ff_path()) ?? [];
+  m2 = file_map(ff) ?? [];
   assert(len(m2) == 64 && m2[15] == m[15] && ff_sum(m2) == 5172, "c8");
 
   // c9: the handle rebound — the first mapping is released, the second reads the same
-  m = file_map(ff_path()) ?? [];
+  m = file_map(ff) ?? [];
   assert(m[63] == 113 && len(m) == 64, "c9");
 
   // c10: a BIND copies (B-Copy): the copy is an ordinary vector, writable and independent
@@ -96,16 +102,16 @@ fn main() {
   assert(w2[0] == 1 && s1[0] == 102 && len(w2) == 7, "c10 view copy {w2[0]} {s1[0]}");
 
   // c11: the mapped bytes and a view of them written back out read the same bytes
-  assert(write_bytes("loft_174_copy.tmp", m), "c11 write mapping");
-  rm = read_bytes("loft_174_copy.tmp") ?? [];
+  assert(write_bytes(copy, m), "c11 write mapping");
+  rm = read_bytes(copy) ?? [];
   assert(len(rm) == 64 && ff_same(rm, r), "c11 mapping {len(rm)}");
-  assert(write_bytes("loft_174_copy.tmp", s1), "c11 write view");
-  rv = read_bytes("loft_174_copy.tmp") ?? [];
+  assert(write_bytes(copy, s1), "c11 write view");
+  rv = read_bytes(copy) ?? [];
   assert(len(rv) == 7 && text_from_bytes(rv) == "foreign", "c11 view '{text_from_bytes(rv)}'");
 
-  assert(delete("loft_174_copy.tmp") && delete("loft_174_empty.tmp") && delete(ff_path()), "cleanup");
+  assert(delete(copy) && delete(empty) && delete(ff), "cleanup");
   println("foreign file ok");
   // The run writes into the script's own directory, so it leaves nothing behind there.
-  delete(ff_path());
-  delete("loft_174_empty.tmp");
+  delete(ff);
+  delete(empty);
 }
