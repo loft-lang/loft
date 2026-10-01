@@ -3335,6 +3335,28 @@ the stack derivations.  Kept for the instructions it frees, not for time it boug
 `tests/dispatch_publish.rs`: a native asks mid-run which op it is called from (two calls, two
 positions), and the last op is named after the run.
 
+### The bytecode is read through one cached base
+
+```
+  (R-CodeBase)  every read of the bytecode on the run path — the opcode fetch, each operand
+                (`State::code`), an inline text (`code_str`, `string_from_code`) — goes
+                through a base pointer and a length cached in `State` (`code_base`,
+                `code_len`) instead of `State::bytecode`'s `Arc` and `Vec`.  The cache is set
+                at construction and re-derived by `State::edit_code`, the ONE writer of the
+                bytecode: a write that grows the buffer, or copies it because a `par` worker
+                still shares the `Arc`, moves it.  The length keeps its check on every read.
+```
+
+**In words.** Applied by: interpreter runtime.  Allowed because nothing else writes the bytecode
+(`tests/code_base.rs` checks it over the source) and the cache lives in `State`, not in a loop
+local, so code written while a loop runs (a REPL input, a live reload, a debugger `eval`) is read
+as written.  Effect (pinned layout, against the same tree without it, 2026-10-01): the opcode
+fetch went from four dependent loads to two and instructions fell 1–2 %; time moved by +0.9 %
+at the geomean, inside the noise — the fetch chain was not the serial path, because the
+indirect call is predicted and the core runs ahead of it.  Kept for the shorter code.  Guard
+`tests/code_base.rs`: a REPL session defines 48 long functions after earlier runs (the buffer
+has to grow) and reads old and new results back.
+
 ## Proposed — rules written before they are built
 
 A proposal states its conditions and effect now, so the analysis that found it is not lost and

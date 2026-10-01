@@ -6306,7 +6306,14 @@ impl State {
     /// WRITE side asks nothing of its own (`@FR-H-WriteOOB`): `v[i] = x` is
     /// `OpSet*(OpGetVector(v, i), 0, x)`, so the element's address is this answer and an
     /// absent one is the `nullref` the setter's `rec != 0` test declines (`@FR-H-WriteNull`).
+    ///
+    /// The in-range index is the whole of an ordinary loop's traffic, so it is the inlined
+    /// part — one unsigned compare, which a negative index fails too — and the rest (counting
+    /// from the end, the two raises) is out of line.  Kept whole, the raises made the function
+    /// too big for LLVM to inline reliably: an unrelated change to `State::code` flipped that
+    /// decision and cost `sort` 5 % of its cycles (measured 2026-10-01).
     #[must_use]
+    #[inline]
     pub fn vec_get_or_raise(
         &mut self,
         db: &crate::keys::DbRef,
@@ -6314,6 +6321,22 @@ impl State {
         index: i64,
     ) -> crate::keys::DbRef {
         let len = crate::vector::length_vector(db, &self.database.allocations);
+        if (index as u64) < u64::from(len) {
+            return crate::vector::get_vector(db, size, index, &self.database.allocations);
+        }
+        self.vec_get_or_raise_slow(db, size, index, len)
+    }
+
+    /// [`Self::vec_get_or_raise`] for an index outside `0..len`: counted from the end, or raised.
+    #[cold]
+    #[inline(never)]
+    fn vec_get_or_raise_slow(
+        &mut self,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        len: u32,
+    ) -> crate::keys::DbRef {
         let normalized = if index < 0 {
             index + i64::from(len)
         } else {
