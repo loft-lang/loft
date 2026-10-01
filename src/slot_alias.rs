@@ -51,20 +51,45 @@ pub fn range_slot_aliases(data: &Data, d_nr: u32) -> Vec<(u16, u16)> {
         }
         false
     });
-    let mut out = Vec::new();
+    let trace = crate::keys::trace_loop_var_alias();
+    let mut out: Vec<(u16, u16)> = Vec::new();
     for (lv, ix, lp) in pairs {
-        if lv == ix
+        let verdict = if lv == ix
             || lv >= vars.next_var()
             || ix >= vars.next_var()
             || vars.is_argument(lv)
             || vars.is_argument(ix)
             || vars.tp(lv) != vars.tp(ix)
-            || out.iter().any(|&(a, b)| a == lv || b == lv || a == ix)
         {
-            continue;
+            Err("the variable and the index differ in kind")
+        } else if out.iter().any(|&(a, b)| a == lv || b == lv || a == ix) {
+            Err("one of the two already shares a slot")
+        } else if !only_iterator_sets(code, lv, create_stack) {
+            Err("the loop variable is written, or its address taken")
+        } else if !index_kept(code, &lp.operators[1..], ix, create_stack) {
+            Err("the index is written in the body, or its address taken")
+        } else {
+            Ok(())
+        };
+        if trace {
+            let name = |v: u16| {
+                if v < vars.next_var() {
+                    vars.name(v).to_string()
+                } else {
+                    v.to_string()
+                }
+            };
+            match verdict {
+                Ok(()) => eprintln!(
+                    "loop-var-alias: {} {} shares {}",
+                    def.name,
+                    name(lv),
+                    name(ix)
+                ),
+                Err(why) => eprintln!("loop-var-alias: {} {} declined — {why}", def.name, name(lv)),
+            }
         }
-        let body = &lp.operators[1..];
-        if only_iterator_sets(code, lv, create_stack) && index_kept(code, body, ix, create_stack) {
+        if verdict.is_ok() {
             out.push((lv, ix));
         }
     }
