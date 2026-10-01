@@ -3530,18 +3530,28 @@ caught the fast table planted into every run).
 ### A frame reserves its stack once
 
 ```
-  (R-FrameHeadroom) PROPOSED.  Codegen knows each function's highest stack position.  A
-                 call ensures that much room at entry (one capacity test, growing the stack
-                 store if needed, `(R-StackBase)` re-deriving the base); the fast path's
-                 per-push capacity test goes.  Growth outside the computed height keeps its
-                 own test: a `par` worker's text buffers (`claim_in_stack`) and any native
-                 that pushes a variable amount.
+  (R-FrameHeadroom) Codegen records each function's highest stack position (the frame-
+                 relative position `remember_stack` sees at every op), and the room a frame
+                 needs is that plus a 256-byte margin (`State::frame_headroom`, shared with
+                 `par` workers).  Every frame enters through `State::push_frame`, which grows
+                 the stack store, once, to the frame's base plus that room; the direct-path
+                 push (`put_stack_m::<true, _>`) tests no capacity.  Every other push — the
+                 checked path, and the `State` methods (a call's return address, a native's
+                 result) — keeps its test.
 ```
 
-**In words.** Applies to: the interpreter generator and runtime, every push.  The capacity
-compare was 18 % of the samples inside `get_float`.  The guard owes a recursion that grows the
-stack many times over (`(R-StackBase)`'s cell), a frame whose height is reached only on one
-branch, and a native call that pushes its result.
+**In words.** Applied by: `State::record_frame_headroom` (at the end of `def_code`),
+`State::push_frame` (the one site a `CallFrame` reaches `call_stack`), `put_stack_m`.  The
+lean loop never runs under live reload, whose redirected function would carry another's
+height.  The capacity compare was 18 % of the samples inside `get_float`.  Falsifier
+**`LOFT_HEADROOM_VERIFY=1`**: the lean loop's stop flag is held set, so its cold path runs
+after every op and checks the stack top against the running frame's room and the room
+against the buffer — free when off.  The value cells cannot see a missing room on their
+own: the store grows by 7/3 when it grows, so a push past the room usually lands in slack.
+Guards `tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft` (a 100-deep
+right-nested sum, position 608, atop a recursion 1500 deep and in a `par` worker) and
+`tests/frame_headroom.rs` (only `push_frame` pushes a frame; the guard program under the
+falsifier).
 
 ### A forward walk over a vector the body cannot resize is a counted loop
 
