@@ -1203,12 +1203,25 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
 ) -> std::io::Result<(usize, usize)> {
     let mut rendered = 0usize;
     let mut uncached = 0usize;
+    let mut refused: Vec<String> = Vec::new();
     for (name, pkg) in &index.packages {
         let Some(v) = loft::registry_index::find_best_version(pkg, "*", false) else {
             continue;
         };
         let dir = loft::registry_index::extract_dir(name, &v.semver);
         let files = collect_sources(&dir);
+        // A cache miss must not overwrite a page that was rendered from the source: the
+        // stub reads like a finished page, so a doc build on a box without the packages
+        // replaced 37 committed source browsers with it in one commit, and nothing failed.
+        // Such a page is left as it is and the build fails below, naming the cure.  A page
+        // that is already a stub (a package the registry cannot serve) is rewritten as one.
+        let out = format!("doc/lib-{name}-src.html");
+        if files.is_empty()
+            && fs::read_to_string(&out).is_ok_and(|old| !old.contains(STUB_SOURCE_MARK))
+        {
+            refused.push(format!("{name} {}", v.semver));
+            continue;
+        }
 
         let mut body = String::new();
         let _ = writeln!(
@@ -1225,7 +1238,7 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
             uncached += 1;
             let _ = writeln!(
                 body,
-                "<p>The source for <code>{0}</code> {1} is not on this build box, so this page \
+                "<p>The source for <code>{0}</code> {1} {STUB_SOURCE_MARK}, so this page \
                  could not be rendered from it. <code>loft install {0}</code> fetches the \
                  package, and the repository is the other route.</p>",
                 esc(name),
@@ -1268,10 +1281,23 @@ fn generate_library_source_pages<S: std::hash::BuildHasher>(
         };
         let title = format!("{name} source");
         let html = page_html(&title, &nav, &title, &body, &meta);
-        fs::write(format!("doc/lib-{name}-src.html"), html)?;
+        fs::write(&out, html)?;
+    }
+    if !refused.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "{} library source page(s) would be replaced by a 'not on this build box' stub, \
+             because this box's registry cache lacks the package: {}.  Fetch them first — \
+             `make doc` does (`scripts/fetch-doc-packages.sh`, then gendoc).",
+            refused.len(),
+            refused.join(", ")
+        )));
     }
     Ok((rendered, uncached))
 }
+
+/// The words a library source page carries when the package was not in the registry cache;
+/// [`generate_library_source_pages`] reads them back to tell a stub from a rendered page.
+const STUB_SOURCE_MARK: &str = "is not on this build box";
 
 /// Every `.loft` file a package ships, `src/` before `tests/`.
 ///
