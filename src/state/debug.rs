@@ -1250,7 +1250,7 @@ impl State {
         // stack_trace() returns the same frame count as execute_argv.
         // @PLAN53 cluster 2 / S4: match execute_argv's aligned entry base.
         let entry_base = crate::variables::aligned_stack_step(4);
-        self.call_stack.push(super::CallFrame {
+        self.push_frame(super::CallFrame {
             d_nr,
             call_pos: 0,
             args_base: entry_base,
@@ -1938,6 +1938,7 @@ pub(super) fn execute_log_impl(
         bytecode: &raw const state.bytecode,
         library: &raw const state.library,
         stack_trace_lib_nr: stk_lib_nr,
+        frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
     }));
     // `LOFT_LOG=poison_free`: wire the runtime flag into the Stores so
     // every `free_named` overwrites the freed buffer with 0xDEADBEEF.

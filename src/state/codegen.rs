@@ -230,6 +230,8 @@ impl State {
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
+        // `@FR-R-FrameHeadroom` — this function's height starts from nothing.
+        self.gen_max_position = 0;
         self.walk_steps = None;
         // @PLN11 G2/M6 — read the body's SHAPE (null / empty-block) from the
         // persistent store when present, so these last native body reads are
@@ -276,6 +278,7 @@ impl State {
             self.add_return(&mut stack, start);
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            self.record_frame_headroom(def_nr);
             return;
         }
         let is_empty_stub = body_is_empty_block;
@@ -341,6 +344,7 @@ impl State {
             self.add_return(&mut stack, start);
             data.definitions[def_nr as usize].code_position = start;
             data.definitions[def_nr as usize].code_length = self.code_pos - start;
+            self.record_frame_headroom(def_nr);
             return;
         }
         // Plan-04 Phase B.3 atomic bundle: single function-entry
@@ -461,6 +465,7 @@ impl State {
         }
         data.definitions[def_nr as usize].code_position = start;
         data.definitions[def_nr as usize].code_length = self.code_pos - start;
+        self.record_frame_headroom(def_nr);
         if let Some(v) = self.calls.get(&def_nr) {
             let old = self.code_pos;
             for pos in v.clone() {

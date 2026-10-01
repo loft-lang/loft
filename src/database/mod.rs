@@ -79,6 +79,8 @@ pub struct ParallelCtx {
     /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
     /// the call stack when `stack_trace()` is called (fix #92).
     pub stack_trace_lib_nr: u16,
+    /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
+    pub frame_headroom: Arc<Vec<u32>>,
 }
 
 impl ParallelCtx {
