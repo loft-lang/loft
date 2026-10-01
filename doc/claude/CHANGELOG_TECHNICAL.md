@@ -52,10 +52,15 @@ off with the program cache off, under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT
 test: v5 reads 3 bytes for 5; the protected-variable test: t6 reads "world" for "hello").  Pins
 `tests/byte_copy.rs` and `tests/text_run.rs`.
 
+**The function header survives a slice** (`hoist::call_leaves_param`): an `OpSliceVector`
+reads its source as `OpAppendVector` does, so `(R-Header)`'s function clause no longer declines
+a parameter a slice is taken from — cbor's `read_value` keeps the header of `bytes`, and so does
+any hand-written `t += p[lo..hi]` over a parameter (cell f11 of the function-clause guard).
+
 Measured on pluginabi's `check_request` over cbor as written (`--native-release`, 200 000
-checks, one core, five interleaved runs): 3.70 → 2.35 µs a check (−36 %), the hand-written
-`text_from_byte_range` and slice forms' own 3.56 → 2.35; the vector clause alone 3.55 → 3.46,
-equal to the hand-written slice.
+checks, one core, five interleaved runs): 3.62 → 2.26 µs a check (−38 %); the hand-written
+`text_from_byte_range` and slice forms measured 3.56 → 2.35 before the header fix; the vector
+clause alone 3.55 → 3.46, equal to the hand-written slice.
 
 ### `(H-LazyFree)`: a store's small deletes merge but stay out of the free tree until one sweep, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
 
