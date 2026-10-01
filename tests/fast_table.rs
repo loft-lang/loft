@@ -44,16 +44,19 @@ fn a_stack_instrument_still_sees_the_checked_accessor() {
         .lines()
         .find(|l| l.trim_start().starts_with("via put_stack"))
         .unwrap_or_else(|| panic!("no census report:\n{err}"));
-    let bytes: u64 = line
-        .split(':')
+    // The share, not a byte count: `State` methods push through `put_stack` too, so a census
+    // given the direct path in every operator still counts thousands of bytes there — 6.6 %
+    // of the writes, against 92.6 % when the operators take the checked path (2026-10-01).
+    let share: f64 = line
+        .split('(')
         .nth(1)
-        .and_then(|r| r.split_whitespace().next())
-        .and_then(|n| n.parse().ok())
+        .and_then(|r| r.split('%').next())
+        .and_then(|n| n.trim().parse().ok())
         .unwrap_or_else(|| panic!("unreadable census line: {line}"));
     assert!(
-        bytes > 1000,
+        share > 50.0,
         "under the census the operators must write through `put_stack` (the checked \
-         table); a census that sees no such bytes was given the fast table: {line}"
+         table); a census that sees them write elsewhere was given the direct path: {line}"
     );
 }
 
