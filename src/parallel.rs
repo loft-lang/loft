@@ -99,7 +99,7 @@ impl WorkerProgram {
         state.stack_trace_lib_nr = self.stack_trace_lib_nr;
         // Fix #92: propagate Data ptr + fn_positions so stack_trace() inside
         // a parallel worker can resolve the worker's d_nr → name/file/line.
-        state.data_ptr = self.data_ptr;
+        state.data_ptr = self.data_ptr.clone();
         state.fn_positions.clone_from(&*self.fn_positions);
         state.line_numbers = (*self.line_numbers).clone();
         state

@@ -872,7 +872,7 @@ impl State {
     /// called through its STORE instance; the slot itself is left as it was.
     pub fn fn_call_ref_store(&mut self, fn_var: u16, arg_size: u16, mask: u64) {
         let d_nr_i64 = self.get_var::<i64>(fn_var);
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         if d_nr_i64 >= 0
             && let Some(data) = handle.get()
         {
@@ -935,7 +935,7 @@ impl State {
             // A work-buffer occupies one STEPPED DbRef span (16B under 8-byte
             // alignment, not the raw 12) — pop exactly that per buffer.
             let buf_span = self.stack_step(size_ref()) as u16;
-            let handle = self.data_ptr;
+            let handle = &self.data_ptr;
             if let Some(data) = handle.get()
                 && buf_span > 0
             {
@@ -984,7 +984,17 @@ impl State {
         // `clear(db)` unconditionally → OOB on u16::MAX (allocation.rs:421).
         let mut hidden_bufs_size: u16 = 0;
         let mut allocated_bufs: Vec<DbRef> = Vec::new();
-        let handle = self.data_ptr;
+        // Most callees take no hidden buffer: ask that with a borrow, and take a share of the
+        // table only for the loop below, which allocates through `self` while it reads.
+        let has_hidden = self
+            .data_ptr
+            .get()
+            .is_some_and(|d| d.def(d_nr as u32).attributes().iter().any(|a| a.hidden));
+        let handle = if has_hidden {
+            self.data_ptr.clone()
+        } else {
+            crate::data_ref::DataRef::NONE
+        };
         if let Some(data) = handle.get() {
             let attr_count = data.def(d_nr as u32).attributes().len();
             for a_idx in 0..attr_count {
@@ -1091,12 +1101,11 @@ impl State {
     /// op, which is the `OpFreeRef` that releases the store.
     pub fn drop_fn_ref(&mut self) {
         let fn_var = self.code::<u16>();
-        let handle = self.data_ptr;
-        let Some(data) = handle.get() else {
-            return;
-        };
         let d_nr_i64 = self.get_var::<i64>(fn_var);
         let closure = self.get_var::<DbRef>(fn_var - 8);
+        let Some(data) = self.data_ptr.get() else {
+            return;
+        };
         let Ok(d_nr) = u32::try_from(d_nr_i64) else {
             return;
         };
@@ -1107,6 +1116,7 @@ impl State {
         if record == u32::MAX {
             return;
         }
+        // The table is read up to here; the cascade below writes through `self`.
         let cascade = data.drop_cascade_nr(record);
         if cascade == u32::MAX
             || self
@@ -1166,7 +1176,7 @@ impl State {
         // Fix #92: also works in parallel workers where data_ptr may be null;
         // frames with d_nr == u32::MAX (synthetic worker frame) get a placeholder name.
         if call == self.stack_trace_lib_nr && !self.call_stack.is_empty() {
-            let handle = self.data_ptr;
+            let handle = &self.data_ptr;
             let data_opt: Option<&Data> = handle.get();
             self.database.call_stack_snapshot = self
                 .call_stack
@@ -1323,7 +1333,7 @@ impl State {
     /// destination and is answered, as a loft text callee is, by a `Str` into that buffer.
     /// Answers `false` when `d_nr` has a loft body.
     fn fn_ref_native(&mut self, d_nr: u32) -> bool {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let Some(data) = handle.get() else {
             return false;
         };
@@ -1637,10 +1647,10 @@ impl State {
                 )
             {
                 let d_nr = frame.d_nr;
-                let data_ptr = self.data_ptr; // a Copy handle — no borrow conflict with frame
-                Self::drop_text_locals_in_bytes(d_nr, &mut frame.stack_bytes, data_ptr);
+                let data_ptr = self.data_ptr.clone(); // a share — no borrow conflict with frame
+                Self::drop_text_locals_in_bytes(d_nr, &mut frame.stack_bytes, &data_ptr);
                 owned_stores =
-                    Self::owned_store_locals_in_bytes(d_nr, &mut frame.stack_bytes, data_ptr);
+                    Self::owned_store_locals_in_bytes(d_nr, &mut frame.stack_bytes, &data_ptr);
             }
             self.coroutines[idx] = None;
             // After the slot is cleared, so a nested generator handle among these frees its
@@ -1683,7 +1693,7 @@ impl State {
     fn owned_store_locals_in_bytes(
         d_nr: u32,
         bytes: &mut [u8],
-        data_ptr: crate::data_ref::DataRef,
+        data_ptr: &crate::data_ref::DataRef,
     ) -> Vec<DbRef> {
         let mut owned = Vec::new();
         let Some(data) = data_ptr.get() else {
@@ -1752,7 +1762,7 @@ impl State {
     /// non-argument variables.  This region is zeroed at first resume so that
     /// uninitialised text-local slots carry a null ptr, enabling safe
     /// `drop_text_locals_in_bytes` in `free_coroutine`.
-    fn generator_zone2_size(d_nr: u32, data_ptr: crate::data_ref::DataRef) -> usize {
+    fn generator_zone2_size(d_nr: u32, data_ptr: &crate::data_ref::DataRef) -> usize {
         let Some(data) = data_ptr.get() else {
             return 0;
         };
@@ -1801,7 +1811,7 @@ impl State {
     fn drop_text_locals_in_bytes(
         d_nr: u32,
         bytes: &mut Vec<u8>,
-        data_ptr: crate::data_ref::DataRef,
+        data_ptr: &crate::data_ref::DataRef,
     ) {
         let Some(data) = data_ptr.get() else {
             return;
@@ -1889,7 +1899,7 @@ impl State {
         stack_bytes: &mut Vec<u8>,
         args_size: u32,
     ) -> Vec<(u32, String)> {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let Some(data) = handle.get() else {
             return Vec::new();
         };
@@ -2135,7 +2145,7 @@ impl State {
                 // zeroing below both write above the current stack top; grow
                 // the stack store to fit before any direct write.
                 self.ensure_stack(
-                    bytes.len() as u32 + Self::generator_zone2_size(d_nr, self.data_ptr) as u32,
+                    bytes.len() as u32 + Self::generator_zone2_size(d_nr, &self.data_ptr) as u32,
                 );
                 let dest = self.database.store_mut(&self.stack_cur).addr_span_mut(
                     self.stack_cur.rec,
@@ -2155,7 +2165,7 @@ impl State {
                 // already been through this path and their locals were live-assigned
                 // before the preceding yield.
                 if status == CoroutineStatus::Created {
-                    let zone_size = Self::generator_zone2_size(d_nr, self.data_ptr);
+                    let zone_size = Self::generator_zone2_size(d_nr, &self.data_ptr);
                     if zone_size > 0 {
                         let zone_abs = self.stack_cur.pos + stack_base + bytes.len() as u32;
                         let store = self.database.store_mut(&self.stack_cur);
@@ -2222,7 +2232,7 @@ impl State {
     // CO1.6c: push a typed null sentinel onto the stack.
     /// The member types of generator `d_nr`'s yield, when it yields a tuple holding a reference.
     fn yield_tuple_of(&self, d_nr: u32) -> Option<Vec<Type>> {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let data = handle.get()?;
         let def = data.definitions.get(d_nr as usize)?;
         match def.returned().base() {
@@ -2948,7 +2958,7 @@ impl State {
                     // the report says WHICH free to fix, not just where; needs `Data`, valid
                     // throughout execution (null only in a parallel worker, tolerated below).
                     // A parallel worker may hold no table; `get` answers None for it.
-                    let handle = self.data_ptr;
+                    let handle = &self.data_ptr;
                     let data: Option<&Data> = handle.get();
                     let op_name = |opc: u16| -> String {
                         data.and_then(|d| d.operator_name(opc))
@@ -3043,7 +3053,7 @@ impl State {
             bytecode: Arc::clone(&self.bytecode),
             library: Arc::clone(&self.library),
             stack_trace_lib_nr: self.stack_trace_lib_nr,
-            data_ptr: self.data_ptr,
+            data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
@@ -3478,7 +3488,7 @@ impl State {
     # Panics
     When too many steps were taken, this might indicate an unending loop.
     */
-    pub fn execute(&mut self, name: &str, data: &Data) {
+    pub fn execute(&mut self, name: &str, data: impl crate::data_ref::IntoSharedData) {
         self.execute_argv(name, data, &[]);
     }
 
@@ -5984,7 +5994,7 @@ impl State {
     /// no `State` was in reach.
     #[must_use]
     fn current_call_chain(&self) -> Vec<String> {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let Some(data) = handle.get() else {
             return Vec::new();
         };
@@ -6053,7 +6063,7 @@ impl State {
     /// `execute_argv`) or above the first frame, which leaves the diagnostic without a
     /// `-->` block rather than pointing it somewhere wrong.
     fn running_frame_declaration(&self) -> Option<Position> {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let data = handle.get()?;
         let frame = self.call_stack.last()?;
         let declared = &data.def(frame.d_nr).position;
@@ -6274,8 +6284,20 @@ impl State {
     ///
     /// # Panics
     /// Panics if the program executes more than 10 000 000 operations (infinite-loop guard).
+    pub fn execute_argv(
+        &mut self,
+        name: &str,
+        data: impl crate::data_ref::IntoSharedData,
+        argv: &[String],
+    ) {
+        self.execute_argv_shared(name, &data.into_shared(), argv);
+    }
+
+    /// [`Self::execute_argv`] with the table already shared, so the run's body is
+    /// compiled once whatever form the caller handed.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    pub fn execute_argv(&mut self, name: &str, data: &Data, argv: &[String]) {
+    fn execute_argv_shared(&mut self, name: &str, shared: &Arc<Data>, argv: &[String]) {
+        let data: &Data = shared;
         // @PLAN49 T1 — runtime phase breadcrumb.  One call per
         // program; runtime cost is irrelevant.
         crate::timeout::checkpoint_fn("run-interpret", "<entry>", "", 0);
@@ -6318,8 +6340,8 @@ impl State {
         // that need to spawn worker threads (e.g. n_parallel_for / _light).
         let bc_ptr = &raw const self.bytecode;
         let lib_ptr = &raw const self.library;
-        let data_ptr = crate::data_ref::DataRef::new(data);
-        self.data_ptr = data_ptr;
+        let data_ptr = crate::data_ref::DataRef::new(Arc::clone(shared));
+        self.data_ptr = data_ptr.clone();
         let stk_lib_nr = self
             .library_names
             .get("n_stack_trace")
@@ -7410,22 +7432,6 @@ impl State {
         self.stack_pos = saved_sp;
     }
 
-    /// Re-point the two raw `Data` pointers a run installs (`data_ptr`, read by a fn-ref
-    /// call to size its callee's buffers, and the parallel context's copy) at the `Data`
-    /// that owns the program NOW.  `execute_log_impl` installs them for the `Data` it is
-    /// handed; a host that keeps the program running across calls — the browser kernel,
-    /// which yields per frame and stores the `Data` beside the `State` — moves that `Data`
-    /// after the first run, and the pointers then name a moved-from table (loft#1541: a
-    /// fn-ref call in a later frame read `definitions` as empty).  Call it before every
-    /// resumption with the `Data` at its final address.
-    pub fn rebind_data(&mut self, data: &Data) {
-        let data_ptr = crate::data_ref::DataRef::new(data);
-        self.data_ptr = data_ptr;
-        if let Some(ctx) = self.database.parallel_ctx.as_mut() {
-            ctx.data = data_ptr;
-        }
-    }
-
     pub fn resume(&mut self) -> bool {
         self.database.frame_yield = false;
         let bytecode_len = self.bytecode.len() as u32;
@@ -7591,7 +7597,7 @@ impl State {
             bytecode: Arc::clone(&self.bytecode),
             library: Arc::clone(&self.library),
             stack_trace_lib_nr,
-            data_ptr: self.data_ptr,
+            data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
             line_numbers: Arc::new(self.line_numbers.clone()),
         }
@@ -7794,7 +7800,7 @@ impl State {
         // run_parallel_* path), stack_trace_lib_nr is already set by
         // WorkerProgram::new_state — don't clobber it.
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -7831,7 +7837,7 @@ impl State {
         return_size: u32,
     ) -> u64 {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -7888,7 +7894,7 @@ impl State {
         return_size: u32,
     ) -> u64 {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -7988,7 +7994,7 @@ impl State {
             input_bytes.len()
         );
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -8077,7 +8083,7 @@ impl State {
         dst: *mut u8,
     ) {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -8144,7 +8150,7 @@ impl State {
         return_size: u32,
     ) -> u64 {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -8257,7 +8263,7 @@ impl State {
         extra_args: &[u64],
     ) -> DbRef {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -8308,7 +8314,7 @@ impl State {
         n_hidden_text: usize,
     ) -> String {
         if let Some(ctx) = &self.database.parallel_ctx {
-            self.data_ptr = ctx.data;
+            self.data_ptr = ctx.data.clone();
             self.stack_trace_lib_nr = ctx.stack_trace_lib_nr;
             if self.fn_positions.is_empty()
                 && let Some(data) = ctx.data.get()
@@ -8386,19 +8392,21 @@ impl State {
     /// self-referential context pointers stay valid across an `Instance` move.
     pub fn execute_host(
         &mut self,
-        data: &Data,
+        data: impl crate::data_ref::IntoSharedData,
         fn_pos: u32,
         args: &[WorkerArg],
         n_hidden_text: usize,
         ret: HostRetKind,
     ) -> HostReturn {
+        let shared = data.into_shared();
+        let data: &Data = &shared;
         // Prime — mirror the top-level setup in `execute_argv`.  Refreshed every
         // call so the `&raw const self.bytecode` / `self.library` pointers point at
         // THIS State's fields (an `Instance` may have moved after `State::new`).
         let bc_ptr = &raw const self.bytecode;
         let lib_ptr = &raw const self.library;
-        let data_ptr = crate::data_ref::DataRef::new(data);
-        self.data_ptr = data_ptr;
+        let data_ptr = crate::data_ref::DataRef::new(Arc::clone(&shared));
+        self.data_ptr = data_ptr.clone();
         let stk_lib_nr = self
             .library_names
             .get("n_stack_trace")
@@ -8552,9 +8560,9 @@ impl State {
         log: &mut dyn Write,
         name: &str,
         config: &LogConfig,
-        data: &Data,
+        data: impl crate::data_ref::IntoSharedData,
     ) -> Result<(), Error> {
-        debug::execute_log_impl(self, log, name, config, data)
+        debug::execute_log_impl(self, log, name, config, &data.into_shared())
     }
 
     /// Dump IR / bytecode / variables without executing.

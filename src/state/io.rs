@@ -1018,7 +1018,7 @@ impl State {
     /// loft path and is REPORTED, where answering `false` would silently fall
     /// back to Rust and swallow the mistake.
     fn has_lazy_driver(&self, db_tp: u16) -> bool {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let Some(data) = handle.get() else {
             return false;
         };
@@ -1066,7 +1066,7 @@ impl State {
         key: &[crate::keys::Content],
         source: &str,
     ) {
-        let handle = self.data_ptr;
+        let handle = &self.data_ptr;
         let Some(data) = handle.get() else {
             self.database.lazy_fail(
                 coll,

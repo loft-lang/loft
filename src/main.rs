@@ -12169,7 +12169,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // fn dispatches via `OpStaticCall` in test bodies as well; without
                 // this wire every such call hits the panicking stub.
                 extensions::wire_shared_native_fns(&mut state_iter, &data_iter);
-                state_iter.execute_argv(name, &data_iter, &[]);
+                // The run co-owns this iteration's table; no further copy.
+                state_iter.execute_argv(name, std::sync::Arc::new(data_iter), &[]);
             }
         }
     } else if dump_only {

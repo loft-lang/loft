@@ -2067,6 +2067,8 @@ pub(crate) fn run_tests(
                         // Arm coverage for this run.  Sized to the definition table so
                         // the hook is a bounds-checked index, never a resize.
                         state.entered_fns = Some(vec![false; data_copy.definitions() as usize]);
+                        // The run co-owns this test's table, so it is shared, not copied again.
+                        let mut data_copy = std::sync::Arc::new(data_copy);
                         // loft#860 — and the profiler, if the environment asked for it.
                         // A no-op otherwise: `Profiler::from_env` returns `None`, so an
                         // ordinary test run pays a single `var_os` per test.
@@ -2078,7 +2080,14 @@ pub(crate) fn run_tests(
                             let config = LogConfig::from_env();
                             let mut log = std::io::stderr();
                             writeln!(log, "=== {fn_name_owned} ===").ok();
-                            compile::show_code(&mut log, &mut state, &mut data_copy, &config).ok();
+                            compile::show_code(
+                                &mut log,
+                                &mut state,
+                                std::sync::Arc::get_mut(&mut data_copy)
+                                    .expect("the table is not shared before the run"),
+                                &config,
+                            )
+                            .ok();
                             if let Err(e) =
                                 state.execute_log(&mut log, &fn_name_owned, &config, &data_copy)
                             {
