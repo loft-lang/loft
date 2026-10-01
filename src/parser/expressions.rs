@@ -3930,9 +3930,9 @@ use a separate collection or add after the loop"
         // into the place: `a -= V { x: 3 }` built the literal over `a` and answered `3` for
         // `50 - 3`, on a local, a field and an element alike (loft#1819).  A collection's
         // `+=` keeps building in place, which is how it appends.
-        let place_tp = match f_type {
+        let place_tp = match f_type.base() {
             Type::RefVar(inner) => inner.as_ref(),
-            other => other,
+            _ => f_type,
         };
         let compound_record = op != "="
             && matches!(
@@ -5803,9 +5803,9 @@ use a separate collection or add after the loop"
         // borrow of `b`, and `a` would no longer free the record it owns.  A collection or a
         // text place keeps this seam: its `+=` appends, and its element type may be decided
         // here.
-        let place_tp = match f_type {
+        let place_tp = match f_type.base() {
             Type::RefVar(inner) => inner.as_ref(),
-            other => other,
+            _ => f_type,
         };
         let compound_keeps_place = op != "="
             && matches!(
@@ -8589,9 +8589,9 @@ use a separate collection or add after the loop"
         rhs: &Type,
         composed: &Type,
     ) {
-        let place = match place {
+        let place = match place.base() {
             Type::RefVar(inner) => inner.as_ref(),
-            other => other,
+            _ => place,
         };
         if composed.is_unknown()
             || place.is_unknown()
@@ -8604,7 +8604,7 @@ use a separate collection or add after the loop"
             return;
         }
         let (c, p) = (composed.base(), place.base());
-        let fits = match (c, p) {
+        let fits = match (composed.base(), place.base()) {
             (Type::Integer(_), Type::Integer(_))
             | (Type::Float, Type::Float)
             | (Type::Single, Type::Single)
