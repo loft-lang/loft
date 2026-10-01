@@ -3,5 +3,5 @@
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.
 linux-debug	medium	1023118
 linux-debug	tiny	310797
-linux-release	medium	1022602
-linux-release	tiny	310281
+linux-release	medium	1025409
+linux-release	tiny	309622

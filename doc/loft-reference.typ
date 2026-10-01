@@ -8261,7 +8261,7 @@ Byte length of the character's UTF-8 encoding (1–4).
 pub fn split(self: text, separator: character) -> vector<text>
 ```
 
-Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens.
+Splits self on every occurrence of separator and returns the parts as a vector. Use to parse CSV lines or space-separated tokens. Every separator ends a part, so a trailing separator leaves an empty last part ("a,".split(',') is \["a", ""\]); an empty text has no parts at all.
 
 ```rust
 pub fn split_text(self: text, separator: text) -> vector<text>
@@ -8682,7 +8682,7 @@ Reads the entire file as a UTF-8 text value. Use for small configuration files o
 pub fn lines(self: const File) -> vector<text> fs#read
 ```
 
-Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
+Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
 
 == Files and directories
 
