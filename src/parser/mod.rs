@@ -11281,21 +11281,17 @@ impl Parser {
     /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
     /// at a real type is its own answer; one at a variable stands for its template.
     fn placeholder_instance_template(&self, d: u32) -> u32 {
-        let def = self.data.def(d);
-        let Some(key) =
-            Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
-        else {
+        if !self.data.is_placeholder_instance(d) {
+            return u32::MAX;
+        }
+        let Some(key) = Data::split_key(self.data.def(d).name()) else {
             return u32::MAX;
         };
         let template = self.data.def_nr(key.rest);
         if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
             return u32::MAX;
         }
-        let at_a_variable = def
-            .attributes()
-            .iter()
-            .any(|a| self.data.mentions_type_var(&a.typedef));
-        if at_a_variable { template } else { u32::MAX }
+        template
     }
 
     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.

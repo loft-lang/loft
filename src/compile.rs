@@ -107,7 +107,12 @@ pub fn byte_code_from(
         None
     };
     for d_nr in start_d_nr..data.definitions() {
-        if !matches!(data.def(d_nr).def_type(), DefType::Function) || data.def(d_nr).is_operator() {
+        // A placeholder instance stands for its template and is never code — on this backend
+        // as on `--native` (@FR-G-Mono).
+        if !matches!(data.def(d_nr).def_type(), DefType::Function)
+            || data.def(d_nr).is_operator()
+            || data.is_placeholder_instance(d_nr)
+        {
             continue;
         }
         // loft#665 piece 3 — publish which definition is being generated, so an

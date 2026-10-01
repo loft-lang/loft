@@ -8426,7 +8426,10 @@ extern crate loft;"
             }
         }
         for dnr in from..till {
-            if !matches!(self.data.def(dnr).def_type(), DefType::Function) {
+            // A placeholder instance stands for its template and is never code (@FR-G-Mono).
+            if !matches!(self.data.def(dnr).def_type(), DefType::Function)
+                || self.data.is_placeholder_instance(dnr)
+            {
                 continue;
             }
             if let Some(r) = reachable

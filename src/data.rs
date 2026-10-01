@@ -10797,6 +10797,32 @@ impl Data {
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
     }
 
+    /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
+    /// another template's body was parsed: `relay<U>` calling `hole(u)` binds `hole`'s `T` to
+    /// `U`.  It is the function-side twin of [`Self::is_open_instance`] — a stand-in for its
+    /// template that the template's own IR calls, never code: `(G-Mono)` specialises at
+    /// CONCRETE argument types only, and each monomorph of the caller re-aims the call at the
+    /// instance its binding names (`instantiate_nested_generics`).  So neither backend
+    /// generates it (@FR-G-Mono, loft#1841): its body formats, sizes and lays out a type
+    /// variable, which `--native` refused with an internal error.
+    ///
+    /// Asked of the instance KEY (`D-Key`) and the parameters together.  A non-instance
+    /// function whose parameter names a type variable is no placeholder — an interface's
+    /// method stub (`OpLt(self: Self, …)`) is emitted on purpose — so the answer is `false`
+    /// for every definition this does not positively recognise, and a `false` only keeps a
+    /// function the backends generated already.
+    #[must_use]
+    pub fn is_placeholder_instance(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::Function
+            && d.is_instance()
+            && d.attributes
+                .iter()
+                .any(|a| self.mentions_type_var(&a.typedef))
+    }
+
     /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
     /// variant of a generic enum, whose payload is typed by the template's variables — each
     /// instance has variants of its own.

@@ -64,7 +64,11 @@ pub fn dispatch_arms(
         if !matches!(def.def_type(), DefType::Function) {
             continue;
         }
-        if def.name().starts_with("Op") || def.is_store_text_instance() {
+        // A placeholder instance is not emitted, so it is no arm (@FR-G-Mono).
+        if def.name().starts_with("Op")
+            || def.is_store_text_instance()
+            || data.is_placeholder_instance(d)
+        {
             continue;
         }
         // A closure-capturing lambda has a hidden `__closure` param as its last

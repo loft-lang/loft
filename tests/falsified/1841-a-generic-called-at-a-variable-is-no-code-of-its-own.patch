@@ -1,0 +1,119 @@
+diff --git b/src/compile.rs a/src/compile.rs
+index 999aff624..605766a9e 100644
+--- b/src/compile.rs
++++ a/src/compile.rs
+@@ -107,12 +107,7 @@ pub fn byte_code_from(
+         None
+     };
+     for d_nr in start_d_nr..data.definitions() {
+-        // A placeholder instance stands for its template and is never code — on this backend
+-        // as on `--native` (@FR-G-Mono).
+-        if !matches!(data.def(d_nr).def_type(), DefType::Function)
+-            || data.def(d_nr).is_operator()
+-            || data.is_placeholder_instance(d_nr)
+-        {
++        if !matches!(data.def(d_nr).def_type(), DefType::Function) || data.def(d_nr).is_operator() {
+             continue;
+         }
+         // loft#665 piece 3 — publish which definition is being generated, so an
+diff --git b/src/data.rs a/src/data.rs
+index e1e3e4a0c..fb01443b5 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -10797,32 +10797,6 @@ impl Data {
+         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+     }
+ 
+-    /// An instance of a generic FUNCTION bound to a type VARIABLE (`i_1U_n_hole`), minted while
+-    /// another template's body was parsed: `relay<U>` calling `hole(u)` binds `hole`'s `T` to
+-    /// `U`.  It is the function-side twin of [`Self::is_open_instance`] — a stand-in for its
+-    /// template that the template's own IR calls, never code: `(G-Mono)` specialises at
+-    /// CONCRETE argument types only, and each monomorph of the caller re-aims the call at the
+-    /// instance its binding names (`instantiate_nested_generics`).  So neither backend
+-    /// generates it (@FR-G-Mono, loft#1841): its body formats, sizes and lays out a type
+-    /// variable, which `--native` refused with an internal error.
+-    ///
+-    /// Asked of the instance KEY (`D-Key`) and the parameters together.  A non-instance
+-    /// function whose parameter names a type variable is no placeholder — an interface's
+-    /// method stub (`OpLt(self: Self, …)`) is emitted on purpose — so the answer is `false`
+-    /// for every definition this does not positively recognise, and a `false` only keeps a
+-    /// function the backends generated already.
+-    #[must_use]
+-    pub fn is_placeholder_instance(&self, d_nr: u32) -> bool {
+-        let Some(d) = self.definitions.get(d_nr as usize) else {
+-            return false;
+-        };
+-        d.def_type == DefType::Function
+-            && d.is_instance()
+-            && d.attributes
+-                .iter()
+-                .any(|a| self.mentions_type_var(&a.typedef))
+-    }
+-
+     /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
+     /// variant of a generic enum, whose payload is typed by the template's variables — each
+     /// instance has variants of its own.
+diff --git b/src/generation/fnref.rs a/src/generation/fnref.rs
+index 178505ffc..fef497f18 100644
+--- b/src/generation/fnref.rs
++++ a/src/generation/fnref.rs
+@@ -64,11 +64,7 @@ pub fn dispatch_arms(
+         if !matches!(def.def_type(), DefType::Function) {
+             continue;
+         }
+-        // A placeholder instance is not emitted, so it is no arm (@FR-G-Mono).
+-        if def.name().starts_with("Op")
+-            || def.is_store_text_instance()
+-            || data.is_placeholder_instance(d)
+-        {
++        if def.name().starts_with("Op") || def.is_store_text_instance() {
+             continue;
+         }
+         // A closure-capturing lambda has a hidden `__closure` param as its last
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index ea84adca8..bf04024c5 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -8426,10 +8426,7 @@ extern crate loft;"
+             }
+         }
+         for dnr in from..till {
+-            // A placeholder instance stands for its template and is never code (@FR-G-Mono).
+-            if !matches!(self.data.def(dnr).def_type(), DefType::Function)
+-                || self.data.is_placeholder_instance(dnr)
+-            {
++            if !matches!(self.data.def(dnr).def_type(), DefType::Function) {
+                 continue;
+             }
+             if let Some(r) = reachable
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 00003054a..9e43a5b06 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -11267,17 +11267,21 @@ impl Parser {
+     /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
+     /// at a real type is its own answer; one at a variable stands for its template.
+     fn placeholder_instance_template(&self, d: u32) -> u32 {
+-        if !self.data.is_placeholder_instance(d) {
+-            return u32::MAX;
+-        }
+-        let Some(key) = Data::split_key(self.data.def(d).name()) else {
++        let def = self.data.def(d);
++        let Some(key) =
++            Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
++        else {
+             return u32::MAX;
+         };
+         let template = self.data.def_nr(key.rest);
+         if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
+             return u32::MAX;
+         }
+-        template
++        let at_a_variable = def
++            .attributes()
++            .iter()
++            .any(|a| self.data.mentions_type_var(&a.typedef));
++        if at_a_variable { template } else { u32::MAX }
+     }
+ 
+     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.
