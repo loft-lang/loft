@@ -1285,16 +1285,48 @@ impl Stores {
     /// grows on the ladder), the caller writes it, and the length bump lands on the same
     /// resolved store.  `None` for a null or absent vector, which the four-op path also
     /// left untouched (`OpNewRecord` answered the null slot and every op after it declined).
-    #[inline]
+    // Always inlined: called, its `Option<DbRef>` came back through memory written as narrow
+    // fields and re-read as one wide load — a store-forward stall on every push (2026-10-01).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     fn append_slot(&mut self, db: &DbRef, size: u32) -> Option<DbRef> {
+        if !db.is_null()
+            && let Some(slot) =
+                vector::append_slot_in_capacity(db, size, crate::keys::store(db, &self.allocations))
+        {
+            return Some(slot);
+        }
         let slot = vector::vector_append(db, size, &mut self.allocations);
         (slot.rec != 0).then_some(slot)
     }
 
-    /// The length bump of [`Self::append_slot`]: `slot.rec` IS the vector record.
+    /// The store an append writes its element to — `store_mut`'s answer, with its
+    /// `LOFT_STRICT_STORES` report behind a cold call so this inlines into every append op
+    /// (`@FR-R-Cold`): `store_mut` whole, with the report's argument setup inline, fell out of
+    /// line in them and cost a push op a call per element (2026-10-01).
+    #[inline(always)]
+    fn append_store(&mut self, slot: &DbRef) -> &mut Store {
+        let i = slot.store_nr as usize;
+        if crate::keys::strict_stores() && self.allocations[i].free {
+            self.append_to_freed_store(slot);
+        }
+        &mut self.allocations[i]
+    }
+
+    /// [`Self::append_store`]'s rare half: the write through a freed store, reported by
+    /// `store_mut` exactly as any other write is.
+    #[cold]
+    #[inline(never)]
+    fn append_to_freed_store(&mut self, slot: &DbRef) {
+        let _ = self.store_mut(slot);
+    }
+
+    /// The length bump of [`Self::append_slot`]: `slot.rec` IS the vector record, and the
+    /// slot it answered is element `len` (`8 + len * size`), so the length is derived rather
+    /// than read a second time (`@FR-R-ElementPath`).
     #[inline]
-    fn append_done(store: &mut Store, slot: &DbRef) {
-        let len = store.get_u32_raw(slot.rec, 4);
+    fn append_done(store: &mut Store, slot: &DbRef, size: u32) {
+        let len = (slot.pos - 8) / size;
         store.set_u32_raw(slot.rec, 4, len + 1);
     }
 
@@ -1305,36 +1337,36 @@ impl Stores {
     #[inline]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
         if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_int(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 8);
         }
     }
 
     #[inline]
     pub fn append_i32(&mut self, db: &DbRef, v: i32) {
         if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_i32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 4);
         }
     }
 
     #[inline]
     pub fn append_f64(&mut self, db: &DbRef, v: f64) {
         if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_float(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 8);
         }
     }
 
     #[inline]
     pub fn append_f32(&mut self, db: &DbRef, v: f32) {
         if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_single(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 4);
         }
     }
 
@@ -1350,9 +1382,9 @@ impl Stores {
     #[inline]
     pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
         if let Some(slot) = self.append_slot(db, 1) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_byte(slot.rec, slot.pos, min, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 1);
         }
     }
 
@@ -1380,9 +1412,9 @@ impl Stores {
     #[inline]
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
         if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.store_mut(&slot);
+            let store = self.append_store(&slot);
             store.set_u32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot);
+            Self::append_done(store, &slot, 4);
         }
     }
 
