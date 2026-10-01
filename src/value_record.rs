@@ -50,7 +50,9 @@
 //!
 //! The pass changes SIGNATURES, so it runs where the program is closed — the top of
 //! `compile::byte_code_from` — and not at all on a `Data` that is parsed against again
-//! (`Data::open_world`).  `LOFT_NO_IR_VALUE_RECORD=1` is the switch.
+//! (`Data::open_world`), which includes a compiled build that ships the live tier: its
+//! runtime parses the program again for the interpreter it flips functions to.
+//! `LOFT_NO_IR_VALUE_RECORD=1` is the switch.
 
 use crate::data::{Block, Data, DefType, I64, Type, Value};
 use crate::database::{Parts, Stores};

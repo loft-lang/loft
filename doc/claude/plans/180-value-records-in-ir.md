@@ -113,7 +113,15 @@ would type a call by the rewritten signature (`p.x` on a tuple does not parse). 
 that is parsed against again after compiling is marked `Data::open_world` and keeps
 records.  That covers the REPL, the debugger (which runs through it), live reload, the
 browser debugger panel and a host that calls functions by name.  A warm-cache start also
-keeps records, because it reads bodies from the cached store.
+keeps records, because it reads bodies from the cached store.  So does a COMPILED build that
+ships the live tier (`--native` and `--native-wasm` without `--lean` / `--native-release`,
+`--html --debug`): its runtime bootstraps an interpreter by parsing the program again, and a
+function flipped to it must keep the signature the compiled code calls.  Rewriting a by-value
+record parameter into a tuple took that function out of the live tier's dispatch table —
+`--html --debug` flipped one function of two, found by the GitHub gate's
+`html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm`.  The driver sets
+`open_world` from each path's own live-tier decision (`main.rs`, before the compile); the
+shipped and performance builds, and `--interpret`, keep the pass.
 
 **One tuple order per record type: schema order.** Tuples flow from returns into
 parameters, so every source of one record must agree.  A literal that writes its fields in
