@@ -8,6 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > The record of ONE release cycle — its blockers, the evidence each gate produced, and the
 > decisions taken.  The process every cycle follows lives in
 > [RELEASE.md](../../RELEASE.md); the index of cycles in [releases/README.md](../README.md).
+> The recommendations of the 2026-10-01 evaluation, as a worklist: [RECOMMENDATIONS.md](RECOMMENDATIONS.md).
 
 Opened at the cycle's **halfway point**, not at prep: `make release-checklist` marks the rows that
 `[mid]` runs meaningfully at (overall stability), and reading them now is early warning — a row
