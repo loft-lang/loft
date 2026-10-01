@@ -1185,8 +1185,16 @@ impl State {
     /// earlier `if … break` of the iterator (an inclusive range's stop) is emitted as it was.
     /// A `continue` jumps forward to T, patched when T is emitted.  A loop variable sharing its
     /// index's slot (`slot_alias`) is written by the step at T; its store span is the entry
-    /// jump, which every first round passes before the body.
+    /// jump, which every first round passes before the body.  The test is attributed to the
+    /// line the loop started on, so stepping and the profiler see the loop's line there.
     fn gen_rotated_loop(&mut self, lp: IrBlock, r: &Rotation, stack: &mut Stack) -> Type {
+        // The test belongs to the loop's own line, as at the top: a step off the body's last
+        // line pauses there, not on the next round's first line.
+        let loop_line = self
+            .line_numbers
+            .range(..=self.code_pos)
+            .next_back()
+            .map(|(_, &l)| l);
         stack.add_loop(self.code_pos);
         stack.set_rotated();
         let entry_op = self.code_pos;
@@ -1211,6 +1219,9 @@ impl State {
         }
         self.clear_stack(stack, 0);
         self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        if let Some(l) = loop_line {
+            self.line_numbers.insert(self.code_pos, l);
+        }
         stack.patch_continues(self);
         for p in &r.pre {
             self.generate(p, stack, false);
@@ -6860,18 +6871,18 @@ pub(super) struct Rotation {
 }
 
 /// `if c { break }` of the innermost loop — the break bare or alone in a block — answering `c`.
-fn exit_test(v: &Value) -> Option<&Value> {
-    let Value::If(c, t, f) = v.unspan() else {
+fn exit_test(node: &Value) -> Option<&Value> {
+    let Value::If(cond, then_arm, else_arm) = node.unspan() else {
         return None;
     };
-    let brk = match t.unspan() {
+    let brk = match then_arm.unspan() {
         Value::Break(0) => true,
         Value::Block(b) => {
             b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(0))
         }
         _ => false,
     };
-    (brk && matches!(f.unspan(), Value::Null)).then_some(c)
+    (brk && matches!(else_arm.unspan(), Value::Null)).then_some(cond)
 }
 
 /// Read a loop's first statement as a rotatable exit: a `while`'s `if !c { break }`, or a

@@ -5531,15 +5531,7 @@ impl State {
             };
             (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
         };
-        // A counted loop's variable in its range index's slot (`slot_alias`): one value under
-        // two names, so neither ever takes the bytes over from the other.  Trusted only where
-        // the two slots do coincide in this frame's table.
-        let aliases: Vec<(u16, u16)> = crate::slot_alias::range_slot_aliases(data, d_nr)
-            .into_iter()
-            .filter(|&(lv, ix)| {
-                lv < n && ix < n && vars.stack(lv) != u16::MAX && vars.stack(lv) == vars.stack(ix)
-            })
-            .collect();
+        let aliases = slot_aliases(data, d_nr);
         let one_value = |a: u16, b: u16| aliases.iter().any(|&p| p == (a, b) || p == (b, a));
         let mut out = Vec::new();
         for i in 0..n {
@@ -8619,4 +8611,18 @@ pub fn size_ref() -> u32 {
 #[inline(never)]
 fn code_out_of_range(pos: u32, size: usize, len: usize) -> ! {
     panic!("Position {pos} + {size} outside generated code {len}");
+}
+
+/// The loop variables of `d_nr` that share their range index's slot (`slot_alias`): one value
+/// under two names, so in a frame view neither ever takes the bytes over from the other.
+/// Trusted only where the two slots do coincide in the function's own table.
+fn slot_aliases(data: &crate::data::Data, d_nr: u32) -> Vec<(u16, u16)> {
+    let vars = &data.def(d_nr).variables;
+    let n = vars.count();
+    crate::slot_alias::range_slot_aliases(data, d_nr)
+        .into_iter()
+        .filter(|&(lv, ix)| {
+            lv < n && ix < n && vars.stack(lv) != u16::MAX && vars.stack(lv) == vars.stack(ix)
+        })
+        .collect()
 }

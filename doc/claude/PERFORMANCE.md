@@ -841,9 +841,23 @@ ops per element is the rest.  The lever there is fewer ops per iteration:
   recognisers read their head and stride from it.  Measured: `push` 279 → 236 ms (−16 %), a
   record append 623 → 578 ms (−7 %).  Guard
   `tests/scripts/a-literal-append-claims-its-vector-once.loft`, pin `tests/prealloc_elide.rs`.
-- **The loop variable** is copied from the range's index each round (`VarInt` + `PutInt`).
-- **The back edge**: a counted loop tests at the top and ends in a `GotoWord` back to it, two
-  jumps per round where a loop testing at the bottom takes one.
+- **The loop variable** was copied from the range's index each round (`VarInt` + `PutInt`).
+  Where nothing but that copy writes the variable and nothing in the body writes the index,
+  the slot allocator gives the variable the index's slot and the copy is not emitted
+  (`slot_alias`, `LOFT_NO_LOOP_VAR_ALIAS=1` keeps it; SLOTS.md § A loop variable in its
+  index's slot).  Measured: `push` 236 → 197 ms (−17 %), a tight `for` 540 → 433 ms (−20 %).
+  Guard `tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft`.
+- **The back edge**: a loop tested at the top and jumped back at the end, two jumps a round.
+  A loop whose first statement carries its exit test — a counted range's iterator, a
+  `while`'s `if !c { break }` — is laid out with the test at the bottom: entered by one jump
+  to the test, which jumps back to the body while the loop goes on (`gen_rotated_loop`,
+  `LOFT_NO_LOOP_ROTATE=1` keeps the top-tested form).  The test keeps the loop's own line, so
+  stepping off the body pauses on the `for` line as before.  Measured: `push` 200 → 188 ms,
+  a tight `for` 430 → 398 ms, a `while` 538 → 511 ms (−5 to −7.5 %).  Guard
+  `tests/scripts/a-loop-tests-at-its-bottom.loft`; both layouts pinned by
+  `tests/loop_layout.rs`.
+- **Still open**: a `while`'s test is `OpNot` over an unfused compare and an
+  `OpGotoFalseWord`, three ops where a counted `for` takes one.
 
 ### Function calls
 
