@@ -777,7 +777,7 @@ fn compound_arguments_intact(stores: &Stores, compound: &[CompoundArg]) -> bool 
 /// process. `State::note_runtime_error_halt` adds the caller's frames, which is
 /// what `crossed_placement` is for.
 fn fault(stores: &mut Stores, e: super::wire::Fault) {
-    stores.runtime_error = Some(Box::new(crate::runtime_error::RuntimeError::relayed(
+    stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::relayed(
         e.label,
         e.message,
         e.position,

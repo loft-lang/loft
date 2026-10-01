@@ -45,6 +45,16 @@ fn dev_soft_halt_enabled() -> bool {
 
 pub const STRING_NULL: &str = "\0";
 
+/// What the lean dispatch loop does once its one exit test fired (`@FR-R-DispatchStop`).
+enum LeanStop {
+    /// Nothing ends the loop: carry on with the next op.
+    Continue,
+    /// A frame yield: hand control back to the host.
+    Return,
+    /// A debugger or profiler attached: the full loop takes the run over.
+    Leave,
+}
+
 /// One entry in the shadow call-frame vector (TR1.1).
 /// Pushed by `fn_call`, popped by `fn_return`.  Stores enough information for
 /// `stack_trace()` to reconstruct function names, source lines, and argument
@@ -1335,6 +1345,14 @@ impl State {
         crate::extensions::set_current_lib_idx(call);
         self.library[call as usize](&mut self.database, &mut stack);
         self.stack_pos = stack.pos - 8;
+        // `@FR-R-DispatchStop` — the events only a native starts: a frame yield, a runtime
+        // error it raised, a `par` worker's fatal noticed after the join this native waited on.
+        if self.database.frame_yield
+            || self.database.runtime_error.is_some()
+            || crate::parallel::worker_fatal_pending()
+        {
+            self.database.dispatch_stop = true;
+        }
     }
 
     /// loft#1658 (@FR-L-FnRef) — a call through a function value whose function has NO loft body (a native
@@ -3072,6 +3090,10 @@ impl State {
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
         crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
+        // `@FR-R-DispatchStop` — a worker's fatal is noticed after the join.
+        if crate::parallel::worker_fatal_pending() {
+            self.database.dispatch_stop = true;
+        }
         // The worker's halt is re-raised by the dispatch loop's own check, which every par
         // family passes through — this site had its own copy first, and keeping both would
         // be two homes for one decision (and did hide, in the bite proof, that the block
@@ -3552,6 +3574,8 @@ impl State {
         if self.debug.is_none() {
             self.debug = Some(Box::default());
         }
+        // `@FR-R-DispatchStop` — a debugger attaching mid-run hands the run to the full loop.
+        self.database.dispatch_stop = true;
     }
 
     /// Register a breakpoint at the entry of function `d_nr` (its first bytecode
@@ -6022,6 +6046,32 @@ impl State {
             .collect()
     }
 
+    /// `@FR-R-DispatchStop` — the lean loop's one flag is set: do what the per-op tests did,
+    /// in their order, then re-derive the flag from the events themselves.  It is a cache,
+    /// never cleared past an event still pending: a halted run keeps it for every loop it
+    /// returns to, and an attached debugger keeps it while it is attached.
+    #[cold]
+    #[inline(never)]
+    fn lean_stop(&mut self) -> LeanStop {
+        if self.database.frame_yield {
+            // The host's resume clears `frame_yield`; the next op re-derives the flag.
+            return LeanStop::Return;
+        }
+        if crate::parallel::worker_fatal_pending()
+            && let Some(err) = crate::parallel::take_worker_fatal()
+        {
+            self.database.raise_runtime_error(err);
+            self.database.had_fatal = true;
+        }
+        self.note_runtime_error_halt();
+        self.database.dispatch_stop = self.database.runtime_error.is_some() || self.debug.is_some();
+        if self.debug.is_some() {
+            LeanStop::Leave
+        } else {
+            LeanStop::Continue
+        }
+    }
+
     /// Turn a pending typed fault into a halt of the running dispatch loop, with the
     /// frames it fired under attached.
     ///
@@ -6152,14 +6202,15 @@ impl State {
         let message = kind.describe();
         let op_pc = self.code_pos;
         let call_chain = self.current_call_chain();
-        self.database.runtime_error = Some(Box::new(crate::runtime_error::RuntimeError {
-            kind,
-            position,
-            op_pc,
-            message,
-            call_chain,
-            crossed_placement: false,
-        }));
+        self.database
+            .raise_runtime_error(Box::new(crate::runtime_error::RuntimeError {
+                kind,
+                position,
+                op_pc,
+                message,
+                call_chain,
+                crossed_placement: false,
+            }));
         self.database.had_fatal = true;
     }
 
@@ -6553,8 +6604,12 @@ impl State {
             || cfg!(debug_assertions)
             || cfg!(feature = "stack_align_guard"));
         crate::crash_report::set_dispatch_names("(opcode dispatch)", "");
-        if lean_loop {
-            while self.code_pos < bytecode_len && self.debug.is_none() {
+        // `@FR-R-DispatchStop` — after each op the lean loop tests ONE flag, which every rare
+        // event that ends or diverts it sets where it happens; the cold path below does what
+        // the per-op tests did.  The end of the run needs no test of its own: a halt and the
+        // entry function's return set `code_pos` to `u32::MAX`, which the loop condition ends.
+        if lean_loop && self.debug.is_none() {
+            while self.code_pos < bytecode_len {
                 let op_pos_rt = self.code_pos;
                 self.database.alloc_pc = op_pos_rt;
                 let op = self.code::<u8>();
@@ -6565,18 +6620,12 @@ impl State {
                 };
                 crate::crash_report::set_dispatch_op(op_pos_rt, opcode);
                 OPERATORS[usize::from(opcode)](self);
-                if self.database.frame_yield {
-                    return;
-                }
-                if crate::parallel::worker_fatal_pending()
-                    && let Some(err) = crate::parallel::take_worker_fatal()
-                {
-                    self.database.runtime_error = Some(err);
-                    self.database.had_fatal = true;
-                }
-                self.note_runtime_error_halt();
-                if self.code_pos == u32::MAX {
-                    break;
+                if self.database.dispatch_stop {
+                    match self.lean_stop() {
+                        LeanStop::Continue => {}
+                        LeanStop::Return => return,
+                        LeanStop::Leave => break,
+                    }
                 }
             }
         }
@@ -6787,7 +6836,7 @@ impl State {
             if crate::parallel::worker_fatal_pending()
                 && let Some(err) = crate::parallel::take_worker_fatal()
             {
-                self.database.runtime_error = Some(err);
+                self.database.raise_runtime_error(err);
                 self.database.had_fatal = true;
             }
             self.note_runtime_error_halt();
@@ -6975,6 +7024,7 @@ impl State {
         // pays nothing for it; armed, it needs the `Debugger` that branch tests for.
         if crate::op_census::enabled() && self.debug.is_none() {
             self.debug = Some(Box::default());
+            self.database.dispatch_stop = true;
         }
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             return;
@@ -6989,6 +7039,7 @@ impl State {
         if prof.is_none() {
             if self.debug.is_none() {
                 self.debug = Some(Box::default());
+                self.database.dispatch_stop = true;
             }
             crate::profiler::install_signal_flush();
             return;
@@ -6996,6 +7047,7 @@ impl State {
         let Some(prof) = prof else { return };
         if self.debug.is_none() {
             self.debug = Some(Box::default());
+            self.database.dispatch_stop = true;
         }
         if let Some(d) = self.debug.as_deref_mut() {
             d.prof = Some(Box::new(prof));

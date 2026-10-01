@@ -902,7 +902,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     // `main.rs` renders via the phase-2 pretty renderer.  Prior
     // production-mode log path above is unchanged — production
     // intentionally keeps logging-and-continuing semantics.
-    stores.runtime_error = Some(Box::new(
+    stores.raise_runtime_error(Box::new(
         crate::runtime_error::RuntimeError::assertion_failed(
             v_message.str().to_string(),
             v_file.str().to_string(),
@@ -928,7 +928,7 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
     // Plan-07 phase 4 — typed runtime error.  Same shape as n_assert
     // above; the loft `panic("msg")` builtin lands a `UserPanic`
     // variant.  See `RuntimeError::user_panic` for the constructor.
-    stores.runtime_error = Some(Box::new(crate::runtime_error::RuntimeError::user_panic(
+    stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::user_panic(
         v_message.str().to_string(),
         v_file.str().to_string(),
         v_line as u32,
