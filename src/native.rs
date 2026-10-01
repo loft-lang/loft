@@ -1844,7 +1844,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
             .parallel_ctx
             .as_ref()
             .expect("parallel_discard called outside State::execute()");
-        let data = unsafe { &*ctx.data };
+        let data = ctx.data();
         assert!(
             v_func >= 0,
             "parallel_discard: invalid function reference {v_func}"
@@ -1880,7 +1880,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
             .parallel_ctx
             .as_ref()
             .expect("parallel_discard: missing context");
-        let data = unsafe { &*ctx.data };
+        let data = ctx.data();
         let def = data.def(v_func as u32);
         let derived = u32::from(crate::variables::size(
             &def.returned,
@@ -2003,9 +2003,9 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
     let v_input = stores.get::<DbRef>(stack);
 
     // Build (fn_pos, program) + per-stitch context fetches in one
-    // parallel_ctx borrow scope.  Snapshot raw `data_ptr` so the
+    // parallel_ctx borrow scope.  Snapshot the `data_ptr` handle so the
     // Ref stitch's downstream call (which needs `&mut Stores`) can
-    // dereference after we give up the borrow.  The ParallelCtx
+    // read the definitions after we give up the borrow.  The ParallelCtx
     // outlives this fn's stack frame (set by State::execute before
     // any par fn dispatches).
     let (
@@ -2023,7 +2023,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
             .parallel_ctx
             .as_ref()
             .unwrap_or_else(|| panic!("{fn_label} called outside State::execute()"));
-        let data = unsafe { &*ctx.data };
+        let data = ctx.data();
         assert!(
             v_func >= 0,
             "{fn_label}: invalid function reference {v_func}"
@@ -2144,9 +2144,9 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
         QueueStitch::Ref => {
             let _ = v_return_size; // ref mode uses ret_type directly
             let n_rows = crate::vector::length_vector(&v_input, &stores.allocations) as usize;
-            // SAFETY: data_ptr was snapshotted from parallel_ctx
-            // above; the ParallelCtx outlives this stack frame.
-            let data: &crate::data::Data = unsafe { &*data_ptr };
+            let data: &crate::data::Data = data_ptr
+                .get()
+                .expect("a parallel context carries its program's definitions");
             let (refs, adopted) = crate::parallel::run_parallel_queue_ref(
                 stores,
                 program,
@@ -2263,7 +2263,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
             .parallel_ctx
             .as_ref()
             .expect("parallel_fold called outside State::execute()");
-        let data = unsafe { &*ctx.data };
+        let data = ctx.data();
         assert!(
             v_func >= 0,
             "parallel_fold: invalid function reference {v_func}"

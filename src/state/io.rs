@@ -1018,10 +1018,10 @@ impl State {
     /// loft path and is REPORTED, where answering `false` would silently fall
     /// back to Rust and swallow the mistake.
     fn has_lazy_driver(&self, db_tp: u16) -> bool {
-        if self.data_ptr.is_null() {
+        let handle = self.data_ptr;
+        let Some(data) = handle.get() else {
             return false;
-        }
-        let data: &crate::data::Data = unsafe { &*self.data_ptr };
+        };
         let element = self.database.element_type_name(db_tp);
         match data.lazy_fetch_driver_for(element) {
             Ok(found) => found.is_some(),
@@ -1066,14 +1066,14 @@ impl State {
         key: &[crate::keys::Content],
         source: &str,
     ) {
-        if self.data_ptr.is_null() {
+        let handle = self.data_ptr;
+        let Some(data) = handle.get() else {
             self.database.lazy_fail(
                 coll,
                 "a lazy fetch needs a running program to call its driver",
             );
             return;
-        }
-        let data: &crate::data::Data = unsafe { &*self.data_ptr };
+        };
         let element = self.database.element_type_name(db_tp).to_string();
         let d_nr = match data.lazy_fetch_driver_for(&element) {
             Ok(Some(d)) => d,

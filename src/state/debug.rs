@@ -1925,7 +1925,7 @@ pub(super) fn execute_log_impl(
     assert_ne!(d_nr, u32::MAX, "Unknown routine {name}");
 
     // Set up parallel context so n_parallel_for can access bytecode/library.
-    let data_ptr = std::ptr::from_ref::<crate::data::Data>(data);
+    let data_ptr = crate::data_ref::DataRef::new(data);
     state.data_ptr = data_ptr;
     let stk_lib_nr = state
         .library_names

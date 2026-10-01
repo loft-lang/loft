@@ -74,11 +74,25 @@ pub type Call = fn(&mut Stores, &mut DbRef);
 pub struct ParallelCtx {
     pub bytecode: *const Arc<Vec<u8>>,
     pub library: *const Arc<Vec<Call>>,
-    pub data: *const crate::data::Data,
+    pub data: crate::data_ref::DataRef,
     /// Cached library index of `n_stack_trace`; `u16::MAX` = not found.
     /// Copied into worker `State::stack_trace_lib_nr` so workers can snapshot
     /// the call stack when `stack_trace()` is called (fix #92).
     pub stack_trace_lib_nr: u16,
+}
+
+impl ParallelCtx {
+    /// The definition table of the program this context was installed for.  Every
+    /// installer passes the run's own `Data`, so a context always carries one.
+    ///
+    /// # Panics
+    /// When the context was built without a definition table, which no installer does.
+    #[must_use]
+    pub fn data(&self) -> &crate::data::Data {
+        self.data
+            .get()
+            .expect("a parallel context carries its program's definitions")
+    }
 }
 
 // Safety: the pointed-to data lives for the duration of `State::execute()`,

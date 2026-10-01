@@ -193,7 +193,7 @@ fn bootstrap_core(
     // workers need data_ptr / parallel_ctx.  Wired AFTER boxing: the raw
     // pointers capture the boxes' stable addresses.
     state.fn_positions = p.data.definitions.iter().map(|d| d.code_position).collect();
-    let data_ptr = std::ptr::from_ref(&p.data);
+    let data_ptr = crate::data_ref::DataRef::new(&p.data);
     state.data_ptr = data_ptr;
     let stk_lib_nr = state
         .library_names
