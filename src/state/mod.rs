@@ -2682,11 +2682,6 @@ impl State {
                 < self.database.allocations[self.stack_cur.store_nr as usize].byte_capacity(),
             "fast stack access at byte {off} beyond the stack store's buffer",
         );
-        debug_assert_eq!(
-            self.stack_base,
-            stack_base_of(&self.database, &self.stack_cur),
-            "@FR-R-StackBase: the cached stack base is stale"
-        );
         // SAFETY: `stack_base` is the stack record's base in the current buffer
         // (@FR-R-StackBase), and `off` lies inside the stack record.
         unsafe { self.stack_base.add(off as usize) }

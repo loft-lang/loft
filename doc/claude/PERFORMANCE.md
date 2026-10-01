@@ -767,8 +767,10 @@ takes the full loop for a plain run — the A/B switch for what the lean loop bu
 
 The execution stack is a single flat region inside a `Stores` record, addressed by
 `stack_cur: DbRef` and `stack_pos: u32`.  `get_stack`, `put_stack`, `get_var` and `put_var`
-have a **direct path** (`State::fast_stack`): the stack store's buffer plus the offset, inlined
-into every operator.  The general store path re-checks on every push and pop what the stack
+have a **direct path** (`State::fast_stack`): a base pointer cached in `State` plus the offset,
+inlined into every operator — the cache re-derived wherever the stack's buffer can move and
+every other buffer move refusing the stack store (formal/rewrites.md `(R-StackBase)`; the
+re-derivation per access was three dependent loads on a simple op's critical path).  The general store path re-checks on every push and pop what the stack
 guarantees by construction — its store is live, not foreign, not locked, and `ensure_stack`
 grows the buffer and the record together — and cost 43 % of the interpreter's time on that
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
@@ -955,7 +957,6 @@ design of each is in the record; the delivered items are listed below the table.
 
 | Item | Backend | Open because | Design |
 |---|---|---|---|
-| **P2** — stack raw-pointer cache, the interpreter half | interpreter | Re-priced 2026-10-01 after the dispatch-stop loop, on pinned layout: caching the stack record's base pointer in `State` (refreshed where `stack_cap_bytes` is — the constructors, `grow_stack`, checkpoint restore) took −10 % cycles and −16 % instructions on the hash loop, and −8 to −17 % on every measured routine (fibonacci −12 %, comprehension −17 %).  A simple op is LATENCY-bound, not instruction-bound (IPC ≈ 5.6): rederiving the buffer through three dependent loads per stack access is on its critical path, while deriving it once per op instead of per access (−8 % instructions) bought nothing in cycles.  Open because the cache's soundness is a convention today: only `grow_stack` and checkpoint restore move the stack store's buffer, and `claim_grow`, `adopt_image` and `reclaim_tail` never reach the stack store — that has to become an asserted invariant (the three refuse the stack store under debug assertions, run over the armed corpus) before it ships.  Next lever after it, unpriced: `code_pos` / `stack_pos` live in memory and round-trip through store-to-load forwarding every op; passing them in registers changes every generated operator | [§ Design: P2](PERFORMANCE-history.md#design-p2--reduce-store-indirection-on-the-stack) |
 | **P3** — integer paths carry no `long` sentinel | both | no audit test exists | [§ Design: P3](PERFORMANCE-history.md#design-p3--confirm-integer-paths-carry-no-long-sentinel) |
 | **P4** — block-copy slice materialisation | both | `OpAppendVectorSlice` does not exist | [§ Design: P4](PERFORMANCE-history.md#design-p4--block-copy-slice-materialisation-for-primitive-vectors) |
 | **P7** — `shrink_to_fit(v)` | both | `reserve` ships; `shrink_to_fit` does not | [§ Open work](PERFORMANCE-history.md#open-work) |
@@ -971,7 +972,8 @@ design of each is in the record; the delivered items are listed below the table.
 probe on a cache hit), F1 (the front end's hot spots), F2 (the allocation gate's two pins), BUILD1 (no lib/bin double compile),
 BUILD2 (the native-test binary cache), P5/P6 (amortised vector growth, free-block coalescing),
 P7's `reserve`, O8's `const_eval`, pre-allocated vector literals and constant range
-comprehensions, P2's native half, and the startup cache.
+comprehensions, P2's native half and its interpreter half (formal/rewrites.md `(R-StackBase)`,
+2026-10-01), and the startup cache.
 
 The two measurement notes that invalidate naïve numbers: `loft --native` compiles a
 SEMANTICS build — measure what ships with `--native-release` or a performance lane (CLAUDE.md
