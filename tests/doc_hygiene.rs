@@ -3501,16 +3501,18 @@ fn every_markdown_link_resolves() {
 /// one.  A hand-written page compares equal because `gendoc` does not touch it; a generated
 /// page that differs, or one `gendoc` creates that was never committed, is drift.
 ///
-/// Not compared: what depends on the builder's registry cache (`~/.loft/registry`) rather
-/// than on the tree — the `doc/lib-*.html` pages, and the library entries of
-/// `doc/search-index.js`.  A box with an empty cache renders those differently from the same
-/// tree (measured: 84 pages plus the index), so they are regenerated with a full cache at
+/// Not compared: what depends on the registry rather than on the tree — the `doc/lib-*.html`
+/// pages, `doc/libraries.html` (the catalogue, whose version column is the index's latest
+/// release), and the library entries of `doc/search-index.js`.  A box with an empty cache
+/// renders those differently from the same tree (measured: 84 pages plus the index), and a
+/// publish changes them on every branch at once, so they are regenerated with a full cache at
 /// release, under `M-doc-validation`, not on every change.
 #[test]
 fn the_generated_pages_match_their_sources() {
     use std::path::Path;
     use std::process::Command;
-    let registry_derived = |p: &str| p.starts_with("doc/lib-") && p.ends_with(".html");
+    let registry_derived =
+        |p: &str| (p.starts_with("doc/lib-") && p.ends_with(".html")) || p == "doc/libraries.html";
     let without_lib_entries = |s: &str| {
         s.lines()
             .filter(|l| !l.contains("url:\"lib-"))
