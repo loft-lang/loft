@@ -23,7 +23,8 @@
 // caller's tail receives a `DbRef` it copies instead of a tuple it forwards.  A program without
 // such a write never reaches the copy.  The interpreter never had the rewrite and was clean.
 //
-// @falsified-at: pending
+// @falsified-by: tests/falsified/a-small-record-copied-into-a-return-local-is-freed-on-native.patch — native leaked kt=91 Vs×80 -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
 
 value struct Vs { x: integer }
 
