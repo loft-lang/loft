@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I73 — native function registry: the loop kernels both backends call
 
 //! Loop kernels: a whole loop as ONE Rust function both backends call.
 //!
