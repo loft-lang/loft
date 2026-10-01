@@ -277,16 +277,26 @@ fn match_copy(v: &Value, cx: &Cx) -> Option<Site> {
     })
 }
 
+fn exclusive(cx: &Cx, t: u16) -> bool {
+    exclusive_vector(cx.data, cx.d_nr, cx.whole, t)
+}
+
 /// Is `t` a vector no other name can reach: a local, or the frame's hidden return or work
 /// buffer (whose caller hands it a store of its own), every binding of which is `OpGetField`
-/// of a store minted in this frame — a work buffer's lazy mint is one?
-fn exclusive(cx: &Cx, t: u16) -> bool {
-    let def = cx.data.def(cx.d_nr);
+/// of a store minted in this frame — a work buffer's lazy mint is one, and so is a record
+/// `(R-Place)` claimed for it in another store (`OpPlaceRecord` claims a fresh record)?
+/// `(R-VecCopy)` and `(R-ByteCopy)`'s vector clause ask the same question.
+pub(crate) fn exclusive_vector(data: &Data, d_nr: u32, whole: &Value, t: u16) -> bool {
+    let get_field = data.def_nr("OpGetField");
+    let place_record = data.def_nr("OpPlaceRecord");
+    let def = data.def(d_nr);
     let vars = def.variables();
     let mut binds: Vec<&Value> = Vec::new();
-    cx.whole.walk(&mut |n| {
+    // A null initialiser — the declaration hoisted ahead of a branch — names no store.
+    whole.walk(&mut |n| {
         if let Value::Set(x, rhs) = n
             && *x == t
+            && !matches!(rhs.unspan(), Value::Null)
         {
             binds.push(rhs);
         }
@@ -306,16 +316,18 @@ fn exclusive(cx: &Cx, t: u16) -> bool {
         return false;
     }
     binds.iter().all(|rhs| {
-        call(rhs, cx.get_field).is_some_and(|a| {
+        call(rhs, get_field).is_some_and(|a| {
             var(&a[0]).is_some_and(|vdb| {
                 !vars.is_argument(vdb) && {
-                    // Its null initialiser is no binding; anything else could name a
-                    // store someone else reaches.
+                    // Its null initialiser is no binding, and neither is a placement — a
+                    // record claimed fresh; anything else could name a store someone else
+                    // reaches.
                     let mut rebound = false;
-                    cx.whole.walk(&mut |n| {
+                    whole.walk(&mut |n| {
                         if let Value::Set(x, rhs) = n
                             && *x == vdb
                             && !matches!(rhs.unspan(), Value::Null)
+                            && call(rhs, place_record).is_none()
                         {
                             rebound = true;
                         }
@@ -336,15 +348,8 @@ fn element_type(
     t: u16,
     src: u16,
 ) -> Option<i32> {
+    let tp = shared_element_type(data, database, d_nr, t, src)?;
     let vars = data.def(d_nr).variables();
-    let (Type::Vector(tc, _), Type::Vector(sc, _)) = (vars.tp(t).base(), vars.tp(src).base())
-    else {
-        return None;
-    };
-    if tc.base() != sc.base() {
-        return None;
-    }
-    let tp = data.vector_element_type(tc, database)?;
     crate::rewrite_census::fired("R-VecCopy", 1);
     if crate::keys::trace_vec_copy() {
         eprintln!(
@@ -354,7 +359,28 @@ fn element_type(
             vars.name(src)
         );
     }
-    Some(i32::from(tp))
+    Some(tp)
+}
+
+/// The element type an append of `src`'s elements onto `t` names — the parser's own
+/// derivation (`append_elem_tp`) — when the two vectors hold the same element; `None`
+/// otherwise.
+pub(crate) fn shared_element_type(
+    data: &Data,
+    database: &mut crate::database::Stores,
+    d_nr: u32,
+    t: u16,
+    src: u16,
+) -> Option<i32> {
+    let vars = data.def(d_nr).variables();
+    let (Type::Vector(tc, _), Type::Vector(sc, _)) = (vars.tp(t).base(), vars.tp(src).base())
+    else {
+        return None;
+    };
+    if tc.base() != sc.base() {
+        return None;
+    }
+    Some(i32::from(data.vector_element_type(tc, database)?))
 }
 
 fn decline(cx: &Cx, t: u16, why: &str) {
