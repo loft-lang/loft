@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A function returning a small record in registers frees the store its return local copied
+// into (`@FR-R-ValueRecord`, `@FR-B-Copy`; found while fixing loft#1820).
+//
+//   value struct Vs { x: integer }
+//   fn OpMin(self: Vs, _o: Vs?) -> Vs { self }
+//   fn g(a: Vs, b: Vs) -> Vs { a - b }
+//   fn elsewhere(a: Vs, b: Vs) -> integer { s = a - b; s.x = 55; s.x }   // never called
+//   g(p, q).x               → 7, and one record left at program exit per call, --native only
+//
+// `--native` returns a record of a few scalars as the TUPLE of its fields where every caller
+// only reads fields.  A result position may then be a VIEW of a record the frame does not own
+// — the tuple is its field reads, and nothing is freed.  The gate read "is a view" off the
+// ownership oracle, which reads `__ret_tail_1 = OpMin(a, b, __ref_1)` through the call as a
+// borrow of `a`.  But the bind emitter ALIASES a borrowed call result only into a `skip_free`
+// destination; every other local takes the copy arm and owns a fresh store.  Read as a view,
+// that copy was freed by nobody.
+//
+// The write through a bound result elsewhere is the trigger, and it is why the defect looks
+// non-local: it keeps `OpMin` itself in the record form (its record is consumed there), so the
+// caller's tail receives a `DbRef` it copies instead of a tuple it forwards.  A program without
+// such a write never reaches the copy.  The interpreter never had the rewrite and was clean.
+//
+// @falsified-at: pending
+
+value struct Vs { x: integer }
+
+fn OpMin(self: Vs, _o: Vs?) -> Vs { self }
+fn pass(v: Vs) -> Vs { v }
+fn d1<T: Subtractable>(a: T, b: T) -> T { a - b }
+
+// The concrete tail, the instance tail, and a tail through a plain function.
+fn tail_op(a: Vs, b: Vs) -> Vs { a - b }
+fn tail_inst(a: Vs, b: Vs) -> Vs { d1(a, b) }
+fn tail_arm(a: Vs, b: Vs) -> Vs { if b.x > 1 { a - b } else { pass(a) } }
+// Shapes that were views and must stay views: a parameter, a minted literal, a local.
+fn tail_param(a: Vs, _b: Vs) -> Vs { a }
+fn tail_lit(a: Vs, _b: Vs) -> Vs { Vs { x: a.x } }
+fn tail_local(a: Vs, b: Vs) -> Vs { r = a - b; r }
+
+// The trigger: never called, it only has to exist.
+fn writes_through_a_bound_result(a: Vs, b: Vs) -> integer {
+  s = a - b;
+  s.x = 55;
+  t = pass(a);
+  t.x = 9;
+  s.x + t.x
+}
+
+fn test_a_copied_return_local_is_freed() {
+  p = Vs { x: 7 };
+  q = Vs { x: 3 };
+  t = 0;
+  for _i in 0..40 {
+    t += tail_op(p, q).x + tail_inst(p, q).x + tail_arm(p, q).x;
+  }
+  assert(t == 40 * 21, "copied tails {t}");
+  p.x += 1;
+  assert(p.x == 8 && q.x == 3, "operands are intact: {p.x} {q.x}");
+}
+
+fn test_the_views_one_axis_away_are_unmoved() {
+  p = Vs { x: 7 };
+  q = Vs { x: 3 };
+  t = 0;
+  for _i in 0..40 {
+    t += tail_param(p, q).x + tail_lit(p, q).x + tail_local(p, q).x;
+  }
+  assert(t == 40 * 21, "views {t}");
+  p.x += 1;
+  assert(p.x == 8 && q.x == 3, "operands are intact: {p.x} {q.x}");
+}
+
+fn main() {
+  test_a_copied_return_local_is_freed();
+  test_the_views_one_axis_away_are_unmoved();
+  print("a-small-record-copied-into-a-return-local-is-freed-on-native ok\n");
+}
