@@ -1,0 +1,25 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 3e8ce666d..cf3e3275e 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -9886,18 +9886,8 @@ use a separate collection or add after the loop"
+         // caller aliasing the holder's collection, so `h.hs += …` was visible through `x`'s
+         // caller and the displaced store leaked.  The struct sibling has materialised a field
+         // since loft#775; no keyed site ever did.
+-        //
+-        // A keyed LITERAL (`p = [K { … }]`) is the third: it is built in a `__kvb_N`
+-        // accumulator the callee OWNS and frees at exit (`Function::work_keyed`), so installing
+-        // the accumulator itself handed the caller a store freed under it — the values read
+-        // right only until the store was reused, and `LOFT_POISON` read the freed record
+-        // (loft#1836).  Copied into the work-ref like a variable, the caller owns its own.
+-        let keyed_literal = matches!(code.unspan(), Value::Block(b)
+-            if matches!(b.operators.last().map(Value::unspan), Some(Value::Var(acc))
+-                if self.vars.name(*acc).starts_with("__kvb_")));
+-        let materialisable = keyed_literal
+-            || self.is_field(code)
+-            || matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
++        let materialisable =
++            self.is_field(code) || matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
+         if op != "=" || !self.vars.is_argument(var_nr) || !materialisable {
+             return false;
+         }
