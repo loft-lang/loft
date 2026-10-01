@@ -609,10 +609,10 @@ pub struct Stores {
     /// Plan-07 phase 4 — typed runtime error captured by the most recent
     /// fault-site opcode or native fn.  Set by callers via
     /// [`crate::runtime_error::RuntimeError`] constructors plus
-    /// `had_fatal = true`; the interpreter dispatch loop in
-    /// `src/state/mod.rs::execute_argv` checks `runtime_error.is_some()`
-    /// after each op and breaks out of execution by setting
-    /// `code_pos = u32::MAX`.  `main.rs` then renders the error through
+    /// `had_fatal = true`, through [`Stores::raise_runtime_error`] — the one place it is
+    /// stored, so `dispatch_stop` is set with it; the interpreter dispatch loop in
+    /// `src/state/mod.rs::execute_argv` sees the flag after the op and breaks out of
+    /// execution by setting `code_pos = u32::MAX`.  `main.rs` then renders the error through
     /// the phase-2 pretty renderer.  Boxed because the slot is rarely
     /// populated and the `RuntimeError` payload (kind enum + Position
     /// String + message String) is otherwise ~96 bytes per `Stores`.
@@ -630,6 +630,13 @@ pub struct Stores {
     /// FY.1: When true, the interpreter loop yields back to the caller.
     /// Set by `gl_swap_buffers` in WASM mode; cleared by `resume_frame`.
     pub frame_yield: bool,
+    /// `@FR-R-DispatchStop` — the interpreter's lean dispatch loop tests THIS after every op
+    /// instead of each rare event that ends it: a runtime error ([`Stores::raise_runtime_error`]),
+    /// a frame yield or a `par` worker's fatal (`State::invoke_native` after a native returns,
+    /// the `parallel` block after its join), a debugger or profiler arming (`enable_debug`,
+    /// `arm_profiler`).  A cache, never the truth: the loop's cold path re-derives it from the
+    /// events themselves, so a nested loop never clears one its caller still needs.
+    pub dispatch_stop: bool,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -762,6 +769,7 @@ impl Clone for Stores {
             logger: self.logger.clone(),
             had_fatal: false,
             runtime_error: None,
+            dispatch_stop: false,
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1529,6 +1537,7 @@ impl Stores {
             logger: None,
             had_fatal: false,
             runtime_error: None,
+            dispatch_stop: false,
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
@@ -1679,8 +1688,16 @@ impl Stores {
             crate::loft_eprintln!("error: {}", err.message);
             std::process::exit(1);
         }
-        self.runtime_error = Some(Box::new(err));
+        self.raise_runtime_error(Box::new(err));
         self.had_fatal = true;
+    }
+
+    /// `@FR-R-DispatchStop` — store a runtime error: the ONE place `runtime_error` is set, so
+    /// the dispatch loop's one per-op test sees it (`tests/dispatch_stop.rs` keeps every other
+    /// assignment out of `src/`).
+    pub fn raise_runtime_error(&mut self, err: Box<crate::runtime_error::RuntimeError>) {
+        self.runtime_error = Some(err);
+        self.dispatch_stop = true;
     }
 
     /// Remove `cur` from a tree-backed collection MID-ITERATION and answer the cursor that
