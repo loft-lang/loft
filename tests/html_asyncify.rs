@@ -120,12 +120,19 @@ fn build_html(root: &Path) -> Option<PathBuf> {
     let _guard = build_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let status = Command::new(&loft_bin)
+    let out = Command::new(&loft_bin)
         .args(["--html", html.to_str().unwrap()])
         .arg(src.to_str().unwrap())
-        .status()
+        .output()
         .expect("invoke loft --html");
-    assert!(status.success(), "loft --html build failed");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "loft --html build failed:\n{stderr}");
+    // The page provides `loft_gl_swap_buffers` itself, so the host's native libraries play
+    // no part in a browser build and an unloaded one is nothing to report (loft#1830).
+    assert!(
+        !stderr.contains("did not load"),
+        "a --html build reported a host native library:\n{stderr}"
+    );
     Some(html)
 }
 

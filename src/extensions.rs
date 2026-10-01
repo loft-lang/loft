@@ -761,6 +761,19 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
 /// (indicating a registration bug).
 #[cfg(feature = "native-extensions")]
 pub fn wire_native_fns(state: &mut crate::state::State, data: &crate::data::Data) {
+    wire_native_fns_for(state, data, true);
+}
+
+/// [`wire_native_fns`], saying whether an unloaded native library is worth REPORTING.
+/// It is not for a browser build (`--html`): the page provides its own imports (the
+/// GL and web host functions) and the host's cdylibs play no part in what ships, so
+/// "did not load" there names nothing the author can act on (loft#1830's stderr).
+#[cfg(feature = "native-extensions")]
+pub fn wire_native_fns_for(
+    state: &mut crate::state::State,
+    data: &crate::data::Data,
+    report_unresolved: bool,
+) {
     // THIS program's stub set (see `State::native_stub_symbols`) — cloned because
     // `state` is mutated below while wiring.  Never a process-global: a global was
     // overwritten by whichever compile ran last, so in a process compiling more than
@@ -920,7 +933,7 @@ pub fn wire_native_fns(state: &mut crate::state::State, data: &crate::data::Data
         state.replace_static_fn(sym, native_auto_dispatch);
     }
 
-    if !unresolved.is_empty() {
+    if report_unresolved && !unresolved.is_empty() {
         report_unresolved_natives(data, &unresolved);
     }
     if !bridgeless.is_empty() {
@@ -1132,6 +1145,14 @@ pub fn reachable_unimplemented_natives(
 
 #[cfg(not(feature = "native-extensions"))]
 pub fn wire_native_fns(_state: &mut crate::state::State, _data: &crate::data::Data) {}
+
+#[cfg(not(feature = "native-extensions"))]
+pub fn wire_native_fns_for(
+    _state: &mut crate::state::State,
+    _data: &crate::data::Data,
+    _report_unresolved: bool,
+) {
+}
 
 /// The suffix `#[loft_native]` appends when it generates a fn's marshal bridge.
 /// The bridge for Rust fn `X` is `X__loft_bridge`, always adjacent to `X`, so a

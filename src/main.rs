@@ -9849,7 +9849,8 @@ fn main() {
     all_native_libs.extend(auto_native_libs);
     extensions::load_all(&mut state, all_native_libs.clone());
     // PKG.5: wire auto-marshalled native functions from loaded cdylibs.
-    extensions::wire_native_fns(&mut state, &p.data);
+    // A browser build reports no unloaded host library: the page provides its own imports.
+    extensions::wire_native_fns_for(&mut state, &p.data, html_out.is_none());
     // @PLN11 Arc N / N3 — wire the shared-store bridge dispatchers for the
     // auto-native libraries (the `loft_shared_*` symbols), a disjoint set from the
     // hand-written `#native` symbols `wire_native_fns` handles.
