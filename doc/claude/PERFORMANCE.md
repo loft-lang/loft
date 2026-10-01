@@ -771,7 +771,12 @@ have a **direct path** (`State::fast_stack`): a base pointer cached in `State` p
 inlined into every operator — the cache re-derived wherever the stack's buffer can move and
 every other buffer move refusing the stack store (formal/rewrites.md `(R-StackBase)`; the
 re-derivation per access was three dependent loads on a simple op's critical path).  The bytecode is
-read the same way (`(R-CodeBase)`), through a base and length cached in `State`.  The general store path re-checks on every push and pop what the stack
+read the same way (`(R-CodeBase)`), through a base and length cached in `State`.  An element read
+in range and an append that fits each take one straight path (`(R-ElementPath)`).  ⚠ Measure
+`ld_blocks.store_forward` beside cycles when a change moves inlining: a helper returning a
+`DbRef` through memory writes it as narrow fields that the caller re-reads as one wide load, a
+stall per call that the instruction count does not show (2026-10-01: −4 % instructions, +8 %
+cycles, 11× the blocked loads).  The general store path re-checks on every push and pop what the stack
 guarantees by construction — its store is live, not foreign, not locked, and `ensure_stack`
 grows the buffer and the record together — and cost 43 % of the interpreter's time on that
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
