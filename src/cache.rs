@@ -191,48 +191,11 @@ pub fn loft_exe_identity() -> u64 {
 }
 
 /// @PLN11 G2 / track 1 — whether the whole-program startup cache is active for
-/// this run.  **Default ON** (the 3–3.6× warm-start win, no longer hidden behind
-/// an opt-in flag), with three overrides; see [`cache_decision`] for the policy.
+/// this run: **on**, for an installed `loft` and a development build alike, unless
+/// `LOFT_NO_CACHE` is set — see [`cache_decision`] for the policy.
 #[must_use]
 pub fn program_cache_enabled() -> bool {
-    fn is_set(name: &str) -> bool {
-        std::env::var_os(name).is_some_and(|v| !v.is_empty())
-    }
-    cache_decision(
-        is_set("LOFT_NO_CACHE"),
-        is_set("LOFT_PROGRAM_CACHE"),
-        std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
-        running_a_dev_build(),
-    )
-}
-
-/// Whether THIS binary is a development build — one living inside a Cargo
-/// `target/debug/` or `target/release/` tree, as opposed to an installed `loft`.
-///
-/// Read from the binary's own path rather than from the environment, because that is
-/// where the fact lives.  `CARGO_MANIFEST_DIR` (the signal
-/// [`cache_decision`] already had) is set by `cargo run` but NOT by invoking
-/// `target/debug/loft` directly — which is the commoner half of the compiler-debug
-/// loop, since it skips the rebuild check.  So the exemption meant to protect that
-/// loop missed its most frequent form, and a cached bundle silently answered for a
-/// parser the developer had just changed.
-#[must_use]
-pub fn running_a_dev_build() -> bool {
-    std::env::current_exe().is_ok_and(|p| {
-        // Any `debug` / `release` path component.  Cargo always puts a build under one
-        // — `target/debug/loft`, `target/debug/deps/loft-<hash>` for a test binary,
-        // `target/loft/html-mt/release/loft` for a custom target-dir build, and
-        // `target-da/release/loft` for the debug-assertions calibration build the
-        // project's own guidance uses.  An installed binary
-        // (`/usr/local/bin/loft`) has none.
-        //
-        // Deliberately NOT "a `target` component followed by debug/release": that is
-        // the obvious reading and it misses `CARGO_TARGET_DIR=target-da`, which is
-        // precisely the configuration this exemption exists to protect.  A false
-        // positive would only disable a cache, which is the safe direction.
-        p.components()
-            .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release")
-    })
+    cache_decision(std::env::var_os("LOFT_NO_CACHE").is_some_and(|v| !v.is_empty()))
 }
 
 /// Whether the user has armed a compiler diagnostic for this run.
@@ -247,51 +210,20 @@ pub fn diagnostics_armed() -> bool {
         .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty()))
 }
 
-/// The cache-enable policy: on for an installed `loft`, off for a Cargo invocation and for
-/// any binary living in a `target/` tree, with `LOFT_NO_CACHE` and `LOFT_PROGRAM_CACHE` as
-/// the explicit overrides in that precedence.
+/// The cache-enable policy (@C133): on, unless `LOFT_NO_CACHE` turns it off.
 ///
-/// **The default was flipped ON and is flipped back here, deliberately and temporarily.**
-/// The flip's own precondition is that *a cached run reports and BEHAVES as an uncached one*,
-/// and the invalidation half of that is genuinely fixed — both cache keys now fold in
-/// [`binary_signature_tag`], so any rebuild invalidates, and a warm load replays the cold
-/// parse's diagnostics. What is not yet true is the BEHAVIOUR half, measured on this tree:
-///
-///   * an out-of-process placed library never started its worker on a warm run, because the
-///     list `main` installs workers from is built by the parse. `mark_exports` writes its
-///     marks into `Data` and the bundle carries them, so the marked calls resolved to
-///     `compile.rs`'s "native function not loaded" stub — a placed library that works on its
-///     first run and panics on its second. The manifest now carries that list too
-///     (`startup_cache`'s `plib` headers), which is what makes the flip reachable;
-///   * `placement_parity`'s in-process-vs-placed comparisons became ORDER-DEPENDENT: four of
-///     them pass alone and fail inside their own test binary, because the second of the two
-///     runs they compare is warm and the first is cold. **CLOSED (loft#1129):** the warm
-///     load replayed each diagnostic's ENTRY but not its `fixes`, and `fixable` is what puts
-///     the once-per-run *"N diagnostics above suggest what to write instead — re-run with
-///     `--explain`"* line under the report. So a warm run said strictly less than the cold
-///     one it stood in for — deterministic, not a race; the thread count only decided
-///     whether a given comparison straddled the two. The fixes now ride the manifest line.
-///
-/// Both measured classes are closed and `LOFT_PROGRAM_CACHE=1 cargo test --release --test
-/// placement_parity` is green in PARALLEL, so nothing known blocks the flip. The context
-/// rules stay until the flip is taken deliberately, with a full gate run behind it —
-/// flipping a default is the owner's call, not a side effect of closing its blocker.
-/// `LOFT_PROGRAM_CACHE` is honoured for the same reason it existed: it is how the cache's own
-/// tests, and anyone measuring the warm start, reach the quick path from a dev build.
-// Four independent SIGNALS, not a state machine: each is a separate fact about the
-// invocation, and the precedence between them is the policy.  A struct of four bools would
-// only rename them, and keeping it a pure function is what makes it unit-testable without
-// mutating process env.
-#[allow(clippy::fn_params_excessive_bools)]
+/// A development build (`cargo run`, `cargo test`, a binary under `target/`) is cached like
+/// an installed one.  What used to hold it back is answered on the facts: both cache keys
+/// fold in [`binary_signature_tag`], so a rebuilt compiler never reads a bundle an earlier
+/// build wrote, and a warm load reproduces the cold run's behaviour — the placed-library
+/// workers ride the manifest's `plib` list, and each diagnostic's fixes ride its line
+/// (loft#1129).  What stays is the case no key can see: a compiler instrumented WITHOUT a
+/// rebuild (an armed `LOFT_LOG` / `LOFT_IR`), where a warm run says so and names
+/// `LOFT_NO_CACHE=1` (`main.rs`), and a test that runs the binary to measure a cold compile,
+/// which sets it.
 #[must_use]
-fn cache_decision(no_cache: bool, program_cache: bool, under_cargo: bool, dev_build: bool) -> bool {
-    if no_cache {
-        return false;
-    }
-    if program_cache {
-        return true;
-    }
-    !under_cargo && !dev_build
+fn cache_decision(no_cache: bool) -> bool {
+    !no_cache
 }
 
 /// Compute the stdlib cache key: a SHA-256 over every input that can
@@ -1422,48 +1354,10 @@ mod tests {
 
     #[test]
     fn cache_decision_precedence() {
-        // (no_cache, program_cache, under_cargo, dev_build) → enabled?
-        // 1. the kill switch wins over everything.
-        assert!(!cache_decision(true, true, false, false));
-        assert!(!cache_decision(true, false, true, false));
-        assert!(!cache_decision(true, false, false, true));
-        // 2. the explicit force-on overrides both context defaults — the cache's own tests
-        //    rely on it, and it is how a dev build reaches the quick path deliberately.
-        assert!(cache_decision(false, true, true, false));
-        assert!(cache_decision(false, true, false, true));
-        // 3–4. the two context defaults.  They are NOT the incomplete-invalidation proxy
-        //    they used to be — `stdlib_cache_key` folds in `binary_signature_tag` now, so
-        //    that half is answered on the fact.  What they hold back is the BEHAVIOUR half:
-        //    the warm path does not yet reproduce every parse-time effect (see
-        //    `cache_decision`'s doc for the two measured classes).
-        assert!(!cache_decision(false, false, true, false));
-        assert!(!cache_decision(false, false, false, true));
-        // 5. plain installed invocation → on.
-        assert!(cache_decision(false, false, false, false));
-    }
-
-    /// The dev-build probe must recognise a cargo build and NOT an installed one — the
-    /// point is to tell a development build from a shipped one, and a false negative
-    /// re-enables the cache for the compiler-debug loop it exists to protect.
-    #[test]
-    fn dev_build_probe_reads_the_binary_path() {
-        // This test binary is itself a cargo build, so the running executable is by
-        // construction a dev build — a self-check that needs no fixture and cannot
-        // drift from how the real binary is laid out.  It holds under a custom
-        // `CARGO_TARGET_DIR` too (e.g. `target-da/`, the debug-assertions
-        // calibration build), which the first version of this predicate got wrong.
-        assert!(
-            running_a_dev_build(),
-            "a cargo-built test binary must read as a dev build: {:?}",
-            std::env::current_exe()
-        );
-        // The shipped shape must NOT: no `debug`/`release` component.
-        assert!(
-            !std::path::Path::new("/usr/local/bin/loft")
-                .components()
-                .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release"),
-            "an installed path must not look like a dev build"
-        );
+        // The kill switch is the one setting: on without it, off with it — a development
+        // build included, which the policy no longer tells apart.
+        assert!(cache_decision(false));
+        assert!(!cache_decision(true));
     }
 
     #[test]

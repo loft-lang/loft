@@ -115,7 +115,7 @@ fn sandboxed_clean_program_runs_on_native() {
 /// and admission would be skipped; and the cache is keyed by program CONTENT, not
 /// policy.  So a program admitted under a permissive policy,
 /// then run UNCHANGED under a tightened policy, must still be re-admitted — and
-/// rejected.  Forces the program cache on (`LOFT_PROGRAM_CACHE=1`) with an
+/// rejected.  Runs with the program cache on (`LOFT_NO_CACHE` removed) and an
 /// isolated `LOFT_HOME`, so run 1 writes a warm cache that run 2 must ignore.
 #[test]
 fn warm_program_cache_does_not_bypass_admission() {
@@ -134,7 +134,7 @@ fn warm_program_cache_does_not_bypass_admission() {
     let run = |toml: &str| -> (bool, String) {
         std::fs::write(dir.join("loft.toml"), toml).unwrap();
         let out = Command::new(loft_bin())
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("LOFT_HOME", &home)
             .arg("--timeout")
             .arg("60")

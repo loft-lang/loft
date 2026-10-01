@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! @PLN11 arc E — the opt-in whole-program startup cache, end-to-end.
+//! @PLN11 arc E — the whole-program startup cache, end-to-end.
 //!
-//! On `LOFT_PROGRAM_CACHE` a cold run caches the ENTIRE parsed program (stdlib +
+//! With the cache on (the default; `LOFT_NO_CACHE=1` is the cold reference) a cold run caches the ENTIRE parsed program (stdlib +
 //! the script's lazily-loaded libs + user file) keyed on the script path, and a
 //! warm run mmaps it and skips ALL parsing.  A drift manifest of every parsed
 //! source's content hash invalidates the bundle whenever any input changes.
@@ -26,10 +26,9 @@ fn run(script: &std::path::Path, cache_dir: Option<&std::path::Path>) -> (bool, 
         .current_dir(workspace_root())
         .env_remove("LOFT_STDLIB_CACHE");
     if let Some(dir) = cache_dir {
-        cmd.env("LOFT_PROGRAM_CACHE", "1")
-            .env("XDG_CACHE_HOME", dir);
+        cmd.env_remove("LOFT_NO_CACHE").env("XDG_CACHE_HOME", dir);
     } else {
-        cmd.env_remove("LOFT_PROGRAM_CACHE");
+        cmd.env("LOFT_NO_CACHE", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
     (
@@ -87,6 +86,60 @@ fn program_cache_cold_warm_then_drift() {
 
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
+/// @C133 — a development build is cached like an installed one, and `LOFT_NO_CACHE=1` is the
+/// one switch that turns the cache off.  The binary under test lives in a Cargo `target/`
+/// tree, which is exactly the build the cache used to skip; with nothing set it writes a
+/// bundle, and with the switch it reads and writes none.
+#[test]
+fn a_development_build_caches_unless_told_not_to() {
+    let bin = loft_bin();
+    assert!(
+        bin.components()
+            .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release"),
+        "the premise: the binary under test is a development build: {bin:?}"
+    );
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_c133_{pid}.loft"));
+    std::fs::write(&script, "fn main() {\n  print(\"c133={6 * 7}\\n\");\n}\n").expect("script");
+    let bundles = |root: &std::path::Path| {
+        std::fs::read_dir(root.join("loft"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("store"))
+            .count()
+    };
+    let run_in = |root: &std::path::Path, off: bool| {
+        let _ = std::fs::remove_dir_all(root);
+        let mut cmd = Command::new(&bin);
+        cmd.arg("--interpret")
+            .arg(&script)
+            .env("XDG_CACHE_HOME", root)
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env_remove("CARGO_MANIFEST_DIR");
+        if off {
+            cmd.env("LOFT_NO_CACHE", "1");
+        } else {
+            cmd.env_remove("LOFT_NO_CACHE");
+        }
+        let out = cmd.output().expect("invoke loft");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("c133=42"),
+            "the program's answer, off={off}"
+        );
+        bundles(root)
+    };
+    let on = tmp.join(format!("loft_c133_on_{pid}"));
+    let off = tmp.join(format!("loft_c133_off_{pid}"));
+    assert!(run_in(&on, false) > 0, "the default must write a bundle");
+    assert_eq!(run_in(&off, true), 0, "LOFT_NO_CACHE=1 must write none");
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_dir_all(&on);
+    let _ = std::fs::remove_dir_all(&off);
 }
 
 /// #358 — a no-`main` script (the zero-param test-fn fallback) must execute on
@@ -259,10 +312,9 @@ fn program_cache_warm_keeps_native_libs() {
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE");
         if let Some(dir) = cache {
-            cmd.env("LOFT_PROGRAM_CACHE", "1")
-                .env("XDG_CACHE_HOME", dir);
+            cmd.env_remove("LOFT_NO_CACHE").env("XDG_CACHE_HOME", dir);
         } else {
-            cmd.env_remove("LOFT_PROGRAM_CACHE");
+            cmd.env("LOFT_NO_CACHE", "1");
         }
         let out = cmd.output().expect("failed to invoke loft binary");
         (
@@ -327,7 +379,7 @@ fn lib_dependency_edit_invalidates_program_cache() {
             .arg(&script)
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE")
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("XDG_CACHE_HOME", &cache_dir)
             .output()
             .expect("failed to invoke loft binary");
@@ -397,7 +449,7 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
             .arg(&script)
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE")
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("XDG_CACHE_HOME", &cache);
         if explain {
             cmd.env("LOFT_EXPLAIN", "1");
@@ -432,7 +484,7 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
             .arg(&script)
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE")
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("XDG_CACHE_HOME", dir)
             .env("LOFT_EXPLAIN", "1")
             .output()
@@ -477,7 +529,7 @@ fn introspect_parses_fresh_under_a_warm_program_cache() {
             .arg(&script)
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE")
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("XDG_CACHE_HOME", &cache_dir)
             .output()
             .expect("failed to invoke loft binary");
@@ -543,7 +595,7 @@ fn a_warm_run_keeps_the_owner_witness() {
                 .arg(&script)
                 .current_dir(workspace_root())
                 .env_remove("LOFT_STDLIB_CACHE")
-                .env("LOFT_PROGRAM_CACHE", "1")
+                .env_remove("LOFT_NO_CACHE")
                 .env("LOFT_STRICT_STORES", "1")
                 .env("XDG_CACHE_HOME", &cache_dir)
                 .output()
@@ -662,7 +714,7 @@ fn run_with_stdlib(
         .current_dir(workspace_root())
         .env_remove("LOFT_STDLIB_CACHE")
         .env_remove("LOFT_NO_CACHE")
-        .env("LOFT_PROGRAM_CACHE", "1")
+        .env_remove("LOFT_NO_CACHE")
         .env("XDG_CACHE_HOME", cache_dir)
         .output()
         .expect("failed to invoke loft binary");
@@ -801,7 +853,7 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
             .current_dir(workspace_root())
             .env_remove("LOFT_STDLIB_CACHE")
             .env_remove("LOFT_NO_WORK_BUFFER")
-            .env("LOFT_PROGRAM_CACHE", "1")
+            .env_remove("LOFT_NO_CACHE")
             .env("LOFT_TRACE_WARM", "1")
             .env("XDG_CACHE_HOME", cache);
         for (k, v) in env {

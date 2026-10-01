@@ -495,6 +495,11 @@ ten times faster than release's; pass `PROFILE=release` for timing-sensitive tes
 `tests/dumps/` and `tests/generated/` first, as `make test` does.  Running a whole test binary
 (`cargo test --release --test issues`, hundreds of tests) on every edit is the slow shape.
 
+A test that runs the `loft` binary reuses the program's cached parse on a rerun, a dev build
+included; a rebuild invalidates it.  A test that must see a cold parse — it times, counts or
+traces the parse — sets **`LOFT_NO_CACHE=1`** on its command
+([STARTUP_CACHE.md](STARTUP_CACHE.md#default-on-behaviour-and-the-off-switch)).
+
 ### Don't stack duplicate cargo invocations
 
 Two `cargo test` runs from one checkout queue on the `target/` build lock, and each pays its own

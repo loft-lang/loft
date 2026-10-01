@@ -780,9 +780,9 @@ and guarded by a COUNT, never by a time (@PLN166).
   build with no pin reports and passes.
 - **The counted compile is COLD: it parses `default/` every time.**  The window opens
   before `parse_dir("default")`, so every row carries the whole stdlib parse.  An
-  installed `loft` never pays that per run — it loads the stdlib from the startup cache
-  (`warm_load_stdlib`, [STARTUP_CACHE.md](STARTUP_CACHE.md)) — and a dev build pays it
-  because the cache is off in a `target/` tree ([STARTUP_CACHE.md § Default-on behaviour](STARTUP_CACHE.md#default-on-behaviour-and-overrides)).  So read a
+  ordinary run never pays that per run — it loads the stdlib from the startup cache
+  (`warm_load_stdlib`, [STARTUP_CACHE.md](STARTUP_CACHE.md)) — and the counted compile
+  pays it because it calls `parse_dir` in process, which never consults the cache.  So read a
   growth by its SHAPE: the same delta on tiny and medium is a per-compile constant, i.e.
   the stdlib parse — a new stdlib declaration, paid once per stdlib change on a real
   install; a delta that scales with the corpus is the front end itself.  Accept the first

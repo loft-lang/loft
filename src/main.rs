@@ -416,6 +416,8 @@ fn print_help() {
     println!(
         "                                                 — build what a run will need, first"
     );
+    println!("                                a rerun reuses its parse, a dev build included;");
+    println!("                                LOFT_NO_CACHE=1 parses fresh and caches nothing");
     println!("  generate [path]               generate Rust stubs for #native declarations");
     println!("                                writes native/src/generated.rs in the package");
     println!("  package [path]                build a publishable <pkg>-<version>.tar.gz");

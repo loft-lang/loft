@@ -3,7 +3,7 @@
 
 //! @PLN11 G2/M6 — warm-cache store-backed codegen, end-to-end.
 //!
-//! With `LOFT_PROGRAM_CACHE` + `LOFT_CODEGEN_STORE`, a warm cache hit loads the
+//! With the program cache on and `LOFT_CODEGEN_STORE`, a warm cache hit loads the
 //! bundle as a *skeleton* (def table only — `open_program_store` /
 //! `read_data_skeleton`) and codegen reads each function body straight from the
 //! mmap'd store via `def_body_node`, skipping `read_data`'s body reconstruction.
@@ -20,11 +20,10 @@ fn run(script: &std::path::Path, cache: Option<&std::path::Path>, m6: bool) -> (
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--interpret")
         .arg(script)
-        .env_remove("LOFT_PROGRAM_CACHE")
+        .env("LOFT_NO_CACHE", "1")
         .env_remove("LOFT_CODEGEN_STORE");
     if let Some(dir) = cache {
-        cmd.env("LOFT_PROGRAM_CACHE", "1")
-            .env("XDG_CACHE_HOME", dir);
+        cmd.env_remove("LOFT_NO_CACHE").env("XDG_CACHE_HOME", dir);
         if m6 {
             cmd.env("LOFT_CODEGEN_STORE", "1");
         }
