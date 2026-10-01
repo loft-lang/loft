@@ -85,7 +85,7 @@ the definition is reached by syntax, and nothing is spelled `Op`.
 
   (Op-Left)    a binary form `a ⊕ b` calls the method of the LEFT operand's type, chosen among
                that name's overloads by the RIGHT operand's type, as the method call `a.m(b)`
-               chooses (`parser/dispatch.rs`; no formal rule yet — P1 writes one).  The right operand's
+               chooses (Disp-Select, formal/dispatch.md).  The right operand's
                type is never asked, and no form is commuted: `2 * d` is refused where `d * 2` is
                not.  Each operand is evaluated once, left to right.
 
