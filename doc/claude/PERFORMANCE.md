@@ -770,7 +770,8 @@ The execution stack is a single flat region inside a `Stores` record, addressed 
 have a **direct path** (`State::fast_stack`): a base pointer cached in `State` plus the offset,
 inlined into every operator — the cache re-derived wherever the stack's buffer can move and
 every other buffer move refusing the stack store (formal/rewrites.md `(R-StackBase)`; the
-re-derivation per access was three dependent loads on a simple op's critical path).  The general store path re-checks on every push and pop what the stack
+re-derivation per access was three dependent loads on a simple op's critical path).  The bytecode is
+read the same way (`(R-CodeBase)`), through a base and length cached in `State`.  The general store path re-checks on every push and pop what the stack
 guarantees by construction — its store is live, not foreign, not locked, and `ensure_stack`
 grows the buffer and the record together — and cost 43 % of the interpreter's time on that
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
