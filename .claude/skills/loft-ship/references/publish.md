@@ -25,8 +25,11 @@ exactly where a hand publish goes wrong. Use the routines:
   locally) runs `loft package` + `gh release create` + uploads the tarball. *The tag is the only
   thing you do by hand — everything correctness-sensitive is downstream.*
 - **Publish + sign** (the hard half, runs on the machine that holds the key):
-  - own libs, all at once: `scripts/registry_maintain.sh` — publishes every lib that is
-    missing/newer than the index, then signs (it signs **through** `registry-sign.sh`).
+  - own libs, named: `scripts/registry_maintain.sh --only <pkg>[,<pkg>]` — publishes
+    exactly those, then signs **through** `registry-sign.sh` with an `--expect <pkg>@<ver>`
+    per published version, so a diff carrying anything else is refused, not signed.  This is
+    the agent-safe form: no prompt, no `--yes` (PKG_REGISTRY_TRUST.md § The third route).
+    Without `--only` it publishes every lib that is missing/newer than the index.
   - one registry PR: `scripts/registry-sign.sh --pr N` — shows the diff, re-checks every
     tarball `sha256`, then signs.
   - **yank a broken release**: edit the package's `yanked` array by hand (never touch its
@@ -53,8 +56,9 @@ pre-supplied via `LOFT_YUBIKEY_PIN`, and the whole step can be replaced with
 `src/registry_keys.rs::TRUSTED_PUBLIC_KEYS` before anything is committed or pushed — a signature
 from a key not on that list is refused, fail-safe. (Reading an idle YubiKey touch's typed
 one-time-password as the confirmation "yes" is the exact hazard this on-card design avoids —
-see `registry_maintain.sh`'s note above its sign step — not a feature of it.) `--yes` skips the
-local-key prompt for scripted use; the trust gate still runs regardless. So the whole release is:
+see `registry_maintain.sh`'s note above its sign step — not a feature of it.) From a script,
+`--expect <pkg>@<ver>` replaces the prompt with a CHECK of what is signed; `--yes` asserts
+nothing and refuses when stdin is not a terminal. The trust gate runs regardless. So the whole release is:
 **you push a tag, then you touch your key once** (or type `yes` if no card is present) — the
 routine gets everything between right.
 
@@ -160,8 +164,8 @@ arise there.)
 `loft install` reads `index.json` through the raw-GitHub CDN and keeps its own local
 cache under `~/.loft/registry/` with roughly a **1-hour TTL** (the TTL is loft's, in
 `src/install.rs` — the CDN adds its own shorter propagation on top). Right after a merge, `@latest` may still resolve to
-the previous version at some edges. To verify a fresh publish, **install the exact version**
-(`loft install <lib>@<version>`) rather than `@latest`; if the pinned version installs and
+the previous version at some edges. To verify a fresh publish, **install the exact version
+past the cache** (`loft install --refresh <lib>@<version>`) rather than `@latest`; if the pinned version installs and
 verifies, the publish succeeded — `@latest` will catch up as the CDN propagates. Don't conclude
 the publish failed from a stale edge read.
 
@@ -183,7 +187,7 @@ so "the publish succeeded" is not one of the checks.
 
   A large deletion count is usually harmless key reordering, but it hides real loss —
   compare the parsed package/version SETS, not the diff text.
-- `loft install <lib>@<version>` succeeds from a clean cache (sha256 + size check pass).
+- `loft install --refresh <lib>@<version>` succeeds (sha256 + size check pass).
   Pin the exact version; `@latest` can read a stale CDN edge.
 - **A concurrent publish survived.**  The registry has real concurrent writers.  The signer rebases and re-signs, or refuses — but
   confirm the other party's entry is still in the index afterwards.
