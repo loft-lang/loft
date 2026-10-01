@@ -751,7 +751,10 @@ individual ops, and does per op only what an ordinary run needs: publish the all
 (`alloc_pc`), publish the op and its position for a crash report
 (`crash_report::set_dispatch_op` — not the function, whose read of the call stack cost 2–4 % of
 the cycles, and which the report's `at:` line names anyway; the labels are set once per loop),
-dispatch, the frame yield, and the halt checks.  An operand read (`State::code`) keeps its bounds
+dispatch, and ONE test of `Stores::dispatch_stop`, which every rare event that ends the loop —
+a runtime error, a frame yield, a `par` worker's fault, a debugger arming — sets where it
+happens (formal/rewrites.md `(R-DispatchStop)`).  Testing the five events after every op
+instead was 15–24 % of a loop's time.  An operand read (`State::code`) keeps its bounds
 check with the report out of line: the formatted `assert!` it replaced cost 5–7 % of a vector
 loop's cycles (2026-10-01).  The **full loop**
 carries every per-op instrument — the debugger and profiler (`debug_check`), live reload, the

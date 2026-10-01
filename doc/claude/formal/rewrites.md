@@ -3253,6 +3253,38 @@ fibonacci −24 % (pinned layout).  No switch: there is no second form to keep. 
 stack-trace cells (`1753-…`, `55-stack-trace`, `117-deep-stack`, `1806-…`) and
 `runtime_errors`, `frame_readers`.
 
+### The dispatch loop tests one flag, set where each rare event happens
+
+```
+  (R-DispatchStop) the lean dispatch loop tests ONE flag after each op (`Stores::
+                 dispatch_stop`) instead of each event that ends or diverts it, and
+                 each event sets the flag where it happens: a runtime error in its one
+                 store (`Stores::raise_runtime_error` — no other assignment of
+                 `runtime_error` exists); a frame yield, a native's runtime error and a
+                 `par` worker's fatal after a native returns (`State::invoke_native`, the
+                 one path of every native call); a worker's fatal after the `parallel`
+                 block's join; a debugger or profiler arming (`enable_debug`,
+                 `arm_profiler`).  On the flag, a cold path does what the per-op tests
+                 did, in their order — a frame yield returns, a worker's fatal is raised,
+                 a runtime error halts with its frames, an attached debugger hands the run
+                 to the full loop — and RE-DERIVES the flag from the events, so a nested
+                 loop never clears one its caller still needs.  The end of the run needs
+                 no test: a halt and the entry function's return set `code_pos` to
+                 `u32::MAX`, which the loop condition ends.
+```
+
+**In words.** Applied by: interpreter runtime (`execute_argv`'s lean loop, `State::lean_stop`).
+The five events cannot start between two plain ops — each needs a native call, a raise, a join
+or a `&mut State` method — so testing each after every op paid for nothing, and it was 15–24 %
+of a loop's time.  What it could break is an event that no longer reaches the loop: a fault that
+does not halt.  Effect (pinned layout): the `12_drawing` hash loop −21 %, `record_walk` −20 %,
+`push` −17 %, `index_read` / `index_write` −13 %, recursive fibonacci −5 %.  No switch: the
+per-op tests are not a form to keep.  Guards `tests/dispatch_stop.rs` (a native and an op raise
+inside a loop halt at once; `runtime_error` is stored only by its setter), `dispatch_reentry`
+(the frame yield), `runtime_errors`' loft#1053 cases (a `par` worker's fault, a `parallel`
+block's).  Not taken beside it: reading the op byte unchecked (−1 to −3 %), which drops the
+operand bound's guarantee.
+
 ## Proposed — rules written before they are built
 
 A proposal states its conditions and effect now, so the analysis that found it is not lost and
