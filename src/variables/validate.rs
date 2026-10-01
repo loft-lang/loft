@@ -478,7 +478,7 @@ fn walk_frame_bases(val: &Value, current_base: u16, frames: &mut HashMap<u16, (u
 ///
 /// Returns `Some((loop_scope, left_idx, right_idx))` on the first
 /// violation.
-/// Is `(a, b)` a loop variable and the range index whose slot it shares (`slot_alias`)?
+/// Is `(a, b)` a loop variable and the range index whose slot it shares (`@FR-R-LoopSlot`)?
 fn is_alias(aliases: &[(u16, u16)], a: usize, b: usize) -> bool {
     aliases.iter().any(|&(lv, ix)| {
         (usize::from(lv), usize::from(ix)) == (a, b) || (usize::from(ix), usize::from(lv)) == (a, b)

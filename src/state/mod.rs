@@ -788,7 +788,7 @@ impl State {
         }
     }
 
-    /// The source line of the call made at `call_pos`: the nearest line entry STRICTLY before
+    /// `@FR-R-CallLine` — the source line of the call made at `call_pos`: the nearest line entry STRICTLY before
     /// it.  Entries sit before the first instruction of each line, and a frame's `call_pos` is
     /// already past the whole Call instruction, so an entry AT it belongs to the next statement
     /// (loft#1753).  0 for a frame with no call site (`call_pos` 0).  Asked when a stack is
@@ -8615,7 +8615,7 @@ fn code_out_of_range(pos: u32, size: usize, len: usize) -> ! {
     panic!("Position {pos} + {size} outside generated code {len}");
 }
 
-/// The loop variables of `d_nr` that share their range index's slot (`slot_alias`): one value
+/// The loop variables of `d_nr` that share their range index's slot (`@FR-R-LoopSlot`): one value
 /// under two names, so in a frame view neither ever takes the bytes over from the other.
 /// Trusted only where the two slots do coincide in the function's own table.
 fn slot_aliases(data: &crate::data::Data, d_nr: u32) -> Vec<(u16, u16)> {

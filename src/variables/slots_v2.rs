@@ -136,7 +136,7 @@ pub fn assign_slots_v2(
         .collect();
     let mut ivs: Vec<Iv> = Vec::new();
     for v in 0..function.next_var() {
-        // A loop variable sharing its range index's slot gets no interval of its own: it
+        // `@FR-R-LoopSlot` — a loop variable sharing its range index's slot gets no interval of its own: it
         // takes the index's slot below (`slot_alias`).
         if function.is_argument(v) || aliases.iter().any(|&(lv, _)| lv == v) {
             continue;

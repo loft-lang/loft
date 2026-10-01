@@ -26,7 +26,7 @@ pub struct Loop {
     start: u32,
     stack: u16,
     breaks: Vec<u32>,
-    /// A rotated loop's test sits after its body, so a `continue` jumps FORWARD to it and is
+    /// `@FR-R-Rotate` — a rotated loop's test sits after its body, so a `continue` jumps FORWARD to it and is
     /// patched when the test is emitted (`rotated` set), as a `break` is at the loop's end.
     rotated: bool,
     continues: Vec<u32>,
