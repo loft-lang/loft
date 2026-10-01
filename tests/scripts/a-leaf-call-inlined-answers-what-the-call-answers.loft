@@ -24,6 +24,15 @@
 //   - argument evaluation order, with arguments that write.
 //
 // Expected values are computed by hand (Python over the same integer and IEEE rules).
+//
+// @falsified-at: none — it guards a pass no earlier build has, so no control fails it.
+//   Falsified instead by planted defects, 2026-10-01, each failing its own cell: a reassigned
+//   parameter substituted (a panic in the remap); arguments bound in reverse (the order cell
+//   reads [2,1]); a mask that is not all ones removed (`part(k)` reads 5); the fallback dropped
+//   without the non-null proof (the null-seed hash reads null); single use with two reads (a
+//   panic on the stale local); a scale by 3 folded (`third(9)` reads ...568 for ...577); a
+//   xor ranged with a negative operand (`negxor` reads -2).  `tests/leaf_inline.rs` pins where
+//   each rule fires.
 
 pub fn seed_hash(hseed: integer, hidx: integer, hsalt: integer) -> float {
   hx = ((hseed * 73856093) ^ (hidx * 19349663) ^ (hsalt * 83492791)) & 0xFFFFFFFF;

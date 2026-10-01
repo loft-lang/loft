@@ -309,11 +309,11 @@ fn expand(
     }
     for (v, (name, tp)) in leaf.vars.iter().enumerate() {
         let v = v as u16;
-        if !map.contains_key(&v) {
+        map.entry(v).or_insert_with(|| {
             let t = vars.add_unique(&format!("il_{name}"), tp, scope);
             fresh.insert(t);
-            map.insert(v, Value::Var(t));
-        }
+            Value::Var(t)
+        });
     }
     for s in &leaf.stmts {
         ops.push(remap(s, &map, scope));
@@ -363,32 +363,32 @@ fn inline_in(
 
 /// The literal an integer operator over two literals answers, when it answers one — never on
 /// an overflow or a result that is the null sentinel, which the operator itself reports.
-fn fold_int(ops: &Ops, op: u32, a: &Value, b: &Value) -> Option<Value> {
-    let lit = |v: &Value| match v.unspan() {
+fn fold_int(ops: &Ops, op: u32, first: &Value, second: &Value) -> Option<Value> {
+    let lit = |node: &Value| match node.unspan() {
         Value::Int(k) => Some(i64::from(*k)),
         Value::Long(l) if *l != i64::MIN => Some(*l),
         _ => None,
     };
-    let (x, y) = (lit(a)?, lit(b)?);
-    let r = if op == ops.mul_int {
-        x.checked_mul(y)?
+    let (lhs, rhs) = (lit(first)?, lit(second)?);
+    let folded = if op == ops.mul_int {
+        lhs.checked_mul(rhs)?
     } else if op == ops.add_int {
-        x.checked_add(y)?
+        lhs.checked_add(rhs)?
     } else if op == ops.min_int {
-        x.checked_sub(y)?
+        lhs.checked_sub(rhs)?
     } else if op == ops.eor_int {
-        x ^ y
+        lhs ^ rhs
     } else if op == ops.land_int {
-        x & y
+        lhs & rhs
     } else if op == ops.lor_int {
-        x | y
+        lhs | rhs
     } else {
         return None;
     };
-    if r == i64::MIN {
+    if folded == i64::MIN {
         return None;
     }
-    Some(i32::try_from(r).map_or(Value::Long(r), Value::Int))
+    Some(i32::try_from(folded).map_or(Value::Long(folded), Value::Int))
 }
 
 /// Fold every literal-over-literal integer operation in `v`, innermost first.  Operands are
@@ -496,22 +496,26 @@ impl Reduce<'_> {
     /// `{t = x / c (nullable); if t is not null then t else d}` as the plain `x / c`, when `x`
     /// converts a ranged — hence non-sentinel — integer and `c` is a finite non-zero literal:
     /// then the quotient is finite and the fallback is never taken.
-    fn coalesce(&self, v: &Value, facts: &std::collections::HashMap<u16, Range>) -> Option<Value> {
-        let Value::Block(b) = v else {
+    fn coalesce(
+        &self,
+        node: &Value,
+        facts: &std::collections::HashMap<u16, Range>,
+    ) -> Option<Value> {
+        let Value::Block(block) = node else {
             return None;
         };
-        let body: Vec<&Value> = b
+        let body: Vec<&Value> = block
             .operators
             .iter()
             .filter(|o| !matches!(o, Value::Line(_)))
             .collect();
-        let [Value::Set(t, div), Value::If(test, then_arm, _)] = body.as_slice() else {
+        let [Value::Set(tmp, div), Value::If(test, then_arm, _)] = body.as_slice() else {
             return None;
         };
-        let Value::Call(d, dargs) = div.unspan() else {
+        let Value::Call(div_op, dargs) = div.unspan() else {
             return None;
         };
-        if *d != self.ops.div_float_nullable || dargs.len() != 2 {
+        if *div_op != self.ops.div_float_nullable || dargs.len() != 2 {
             return None;
         }
         let Value::Call(conv, cargs) = dargs[0].unspan() else {
@@ -520,10 +524,10 @@ impl Reduce<'_> {
         if *conv != self.ops.conv_float_from_int || cargs.len() != 1 {
             return None;
         }
-        let Value::Float(c) = dargs[1].unspan() else {
+        let Value::Float(divisor) = dargs[1].unspan() else {
             return None;
         };
-        if !c.is_finite() || *c == 0.0 || self.range(facts, &cargs[0]).is_none() {
+        if !divisor.is_finite() || *divisor == 0.0 || self.range(facts, &cargs[0]).is_none() {
             return None;
         }
         let Value::Call(cb, targs) = test.unspan() else {
@@ -531,8 +535,8 @@ impl Reduce<'_> {
         };
         if *cb != self.ops.conv_bool_from_float
             || targs.len() != 1
-            || !matches!(targs[0].unspan(), Value::Var(x) if x == t)
-            || !matches!(then_arm.unspan(), Value::Var(x) if x == t)
+            || !matches!(targs[0].unspan(), Value::Var(read) if read == tmp)
+            || !matches!(then_arm.unspan(), Value::Var(read) if read == tmp)
         {
             return None;
         }
@@ -645,7 +649,8 @@ fn scale_folds(c: f64, m: f64) -> bool {
         && c != 0.0
         && c.abs() < 2f64.powi(1021)
         && q.is_normal()
-        && q * m == c
+        // Exactness, so the BITS must agree — not a tolerance.
+        && (q * m).to_bits() == c.to_bits()
 }
 
 #[derive(PartialEq, Eq, Debug)]

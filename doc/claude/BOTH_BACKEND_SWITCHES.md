@@ -298,6 +298,19 @@ records (`Data::open_world`).  **`LOFT_NO_IR_VALUE_RECORD=1`** restores the reco
 both backends, leaving the case to `--native`'s own rewrite (`LOFT_NO_VALUE_RECORD`).  It is
 the first bisect step for a wrong field read out of a small-record call on the interpreter.
 
+**A scalar leaf's call is its body (`@FR-R-InlineLeaf`, default-ON, both backends, at the
+top of `byte_code_from` after the value records):** a call of a function whose parameters,
+locals and result are scalars and whose body is operators over them is replaced by that body
+over fresh locals, literal and plain-variable arguments read in place.  Inside the inlined
+body three reductions follow: a redundant all-ones mask and a provably non-null `??` go
+(`@FR-R-MaskRange`), the last temporary moves into its one read (`@FR-R-SingleUse`), and a
+power-of-two scale folds into a literal divisor (`@FR-R-ScaleFold`).  A program parsed against
+again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps every call and
+is the first bisect step for a wrong answer out of a small scalar function on either backend;
+**`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
+reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+and every reduction, per function.
+
 **Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
 element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
 fresh literal into its hidden buffer on every exit and its return adopted raw — is handed

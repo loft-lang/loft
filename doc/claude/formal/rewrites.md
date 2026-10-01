@@ -3385,123 +3385,104 @@ meeting in one `Option`).  Effect (pinned layout, against R-CodeBase): matrix_mu
 sort −16 %, index_write −13 %, a single-precision append loop −18 %.  Guard
 `tests/scripts/an-element-read-in-range-answers-what-the-full-path-answers.loft`.
 
-## Proposed — rules written before they are built
+## A leaf's body in place of its call — four rules over one IR pass
 
-A proposal states its conditions and effect now, so the analysis that found it is not lost and
-the build has its spec; it carries **PROPOSED** until a site implements it.  All four were found
-in the `12_drawing` hash loop, the one routine still above 100× its native time, and each removes
-bytecode from the IR rather than cycles from an op.  Their prices were measured by hand-writing
-the loop in each rule's resulting form — every variant answers the same `778258` — and timing it
-on the interpreter (pinned layout, 2026-10-01, native `seed_hash` 1.07 ns a call):
+Built 2026-10-01 (`src/leaf_inline.rs`, after `(R-ValueRecord)` at the top of
+`byte_code_from`, so both backends see the result).  Found in the `12_drawing` hash loop, the
+last routine above 100× its native time; each removes bytecode from the IR rather than cycles
+from an op.  The loop's body went from 45 ops an element to 25 (+2 for the loop): the
+inlined body, its literals folded, the second mask and the fallback gone, the last temporary
+in its read, the scale in the divisor.  `hash` 146× → 79× native (pinned layout, the pass
+switched off on the same binary as the baseline), `lock` −10 %, `fov_rays` −5 %; no other
+routine's instruction count moved.  Hand-written forms had priced it at 72×: the difference is
+two operands a correct fold may not regroup (below).
 
-| form (cumulative unless noted) | ops an element | ns an element | vs native |
-|---|--:|--:|--:|
-| the source as written | 45 | 156 | 146× |
-| `(R-MaskRange)` alone, inside the callee | 37 | 130 | 122× |
-| `(R-InlineLeaf)` | 34 | 113 | 106× |
-| + `(R-MaskRange)` | 28 | 90 | 84× |
-| + `(R-SingleUse)` | 27 | 82 | 77× |
-| + `(R-ScaleFold)` | 25 | 77 | 72× |
-
-Build them in that order: the inline is the only one that crosses 100× alone, and two of the
-range rule's removals need the call's literals.  What the 25 ops still hold is the hash's own
-work — three multiplications, the xors and the shift, two masks a product needs, a conversion,
-the float arithmetic — plus a variable read twice by `hx ^ (hx >> 13)`, which only a combined op
-could avoid; about 72× is where removing bytecode ends for this routine.
-
-### A leaf call with known arguments is its body
+### A scalar leaf's call is its body
 
 ```
-  (R-InlineLeaf) PROPOSED.  A call of a LEAF (`(R-Leaf)`: calls no user function and no
-                 fn-ref) whose body is one block of assignments and a result — no early
-                 `return`, no loop, no reference parameter, no local handed out by
-                 reference — is replaced in the IR by that body over fresh locals bound
-                 to the arguments, in argument order, before the body: the call's own
-                 evaluation order.  A literal argument is substituted for its local, and
-                 the operations it makes constant fold: `lit * lit` and `lit ^ lit` to
-                 one literal, `1 * e` to `e` — exact on `i64` with the null sentinel,
-                 because a literal is never null and a fold that would reach the sentinel
-                 is not made.  Not in an `open_world` program (REPL, debugger, live
-                 reload, host): there a definition can change after the call is compiled.
+  (R-InlineLeaf) A call of a SCALAR LEAF — parameters, locals and result all integer,
+                 float, single, boolean or character (never `τ?`); a body of assignments
+                 and a result built only from operators, variables, literals, `if` and
+                 nested blocks of assignments; a final `return` read as the result; at
+                 most 120 nodes — is replaced in the IR by that body over fresh caller
+                 locals.  An argument for a parameter the body never assigns is read IN
+                 PLACE when it is a literal, or a plain variable when no argument holds a
+                 call (none can then write it before the body reads it); any other
+                 argument is bound to its local before the body, in argument order.
+                 Literal operations the substitution makes adjacent fold — checked: an
+                 overflow or a result equal to the sentinel is left to the operator — and
+                 operands are never regrouped.  The body's line markers go.  Not in an
+                 `open_world` program, and not into a generator or a `parallel` body.
 ```
 
-**In words.** Applies in: the IR phase (both backends; native already inlines through LLVM).
-`(R-Leaf)` already settled the observable consequence — a fault inside a leaf keeps its exact
-position and loses only the leaf's frame name — so stack traces do not change from what native
-shows.  The debugger's `:step` would no longer enter the function, which is one reason a debug
-session (`open_world`) keeps the call.  The caller's frame grows by the callee's locals; a
-callee called in a loop is inlined once per call SITE, not per iteration.  Effect in the hash
-loop: −11 ops (the call and its return, the frame, two argument pushes, the two folded
-multiplications and their xor), 146× → 106×.  The guard owes cells where it must NOT fire —
-a recursive or non-leaf callee, a reference parameter, an early return, an `open_world` program —
-and cells where the folded literal is the one that would overflow.
+**In words.** Applies in: the IR phase, both backends (native already inlined through LLVM).
+**Regrouping is not exact**: every integer operator tests its result for the sentinel, so
+`(a ^ x) ^ b` and `(a ^ b) ^ x` disagree when an intermediate is `i64::MIN` — the fold takes
+`1 * 73856093` and `7 * 83492791`, not their xor across `i * 19349663`.  With the line markers
+gone a fault inside the body reports the call's line; the debugger, which would want the
+body's lines, runs `open_world` and keeps the call.  It reaches the stdlib too (`clamp`,
+`approx` inline their `min`/`max`).  `LOFT_NO_INLINE_LEAF=1`; `LOFT_TRACE_INLINE_LEAF=1` names
+each inlined call, each decline and each reduction below.
 
 ### A value's range removes the operations it makes redundant
 
 ```
-  (R-MaskRange)  PROPOSED.  Over `(R-Range)`'s facts, computed in the IR phase: `e & lit`
-                 (a non-negative literal) whose operand already lies in `0 ..= lit` is
-                 `e`; and `x ?? d` whose left side cannot be null is `x` — for a float
-                 division, when the dividend is an integer conversion of a ranged (hence
-                 non-sentinel) integer and the divisor a finite non-zero literal.  It
-                 extends `(R-Range)` by one operator: `a ^ b` over two non-negative ranges
-                 lies in `0 ..= 2^k - 1`, `2^k` the least power of two above both maxima,
-                 as `|` already does.  A parameter is never ranged by shape (C80), so the
-                 rule reaches a fact that depends on an argument only through
-                 `(R-InlineLeaf)` or a caller's facts.
+  (R-MaskRange)  Inside an inlined body: `e & m` with `m = 2^k - 1` is `e` when `e`
+                 provably lies in `0 ..= m`; and `{t = x / c (nullable); if t is not
+                 null then t else d}` is `x / c` when `x` converts a ranged — hence
+                 non-sentinel — integer and `c` is a finite non-zero literal.  The facts
+                 are `(R-Range)`'s, carried statement by statement through the body: each
+                 assignment ranges its local from the facts before it, so a local that
+                 reads itself (`hx = (hx ^ (hx >> 13)) & m`) is ranged at each step; an
+                 `if` keeps only what both arms agree on.  It extends `(R-Range)` by one
+                 operator, for both backends: `a ^ b` over two non-negative ranges lies in
+                 `0 ..= 2^k - 1`, `2^k` the least power of two above both maxima.
 ```
 
-**In words.** Applies in: the IR phase; native gains too (its NaN check on the division goes).
-In the hash, of the three `& 0xFFFFFFFF`, only the second is redundant: after the first,
-`hx < 2^32`, so `hx >> 13 < 2^19` and their xor stays below `2^32` — the `^` clause is what
-proves it.  The first and the third mask a product that exceeds `2^32` and stay.  The coalesce
-goes because `hx as float` is a conversion of a ranged integer.  Neither of those two facts
-depends on a parameter, so they hold inside `seed_hash` without inlining (−8 ops, 146× → 122×);
-after the inline the same rule takes 106× → 84×.  The guard owes cells where the range does
-NOT hold and the operation must stay: an unbounded parameter, a product that overflows `2^32`,
-a xor with a negative operand, a division by a variable.
+**In words.** Applies in: the IR phase; the xor clause also widens native's plain operators.
+**A range inside `0 ..= m` is not enough for any `m`**: `5 & 6` is `4`, so only an all-ones
+mask is the identity on its range.  The fallback needs the NON-NULL proof, which a value built
+from a parameter never has (C80) — inside `seed_hash` alone it stays; after the inline, with
+literal or ranged arguments, it goes.  `LOFT_NO_MASK_RANGE=1`.
 
 ### A value read once, right after it is written, is not stored
 
 ```
-  (R-SingleUse)  PROPOSED.  `x = e; s` where `s` is the next statement, reads `x`
-                 exactly once, reads it BEFORE anything in `s` with an effect, and `x`
-                 is read nowhere after `s` and never by reference: `s` reads `e` in place
-                 of `x`, and the store and the load go.
+  (R-SingleUse)  An inlined body's last assignment `x = e`, to one of its fresh locals,
+                 followed by the body's result reading `x` exactly once and as the first
+                 thing that result evaluates: the result reads `e` in place of `x`, and
+                 the store and the load go.
 ```
 
-**In words.** Applies in: the IR phase.  Effect in the hash loop: −1 op once the call is
-inlined (`hx = …;` then `acc += f(hx)`), 84× → 77×.  It must not move an evaluation across
-another effect, which is why the read has to come first in `s`; the guard owes a cell where an
-effect precedes the read and the store must stay.
+**In words.** Applies in: the IR phase.  "First" means no operator completes before the
+read, so moving `e` crosses no effect; the fresh local is read nowhere outside the body.
+A result that reads the local twice keeps it (substituting one read would leave the other
+reading the value before).  `LOFT_NO_SINGLE_USE=1`.
 
 ### A power-of-two scale folds into a literal divisor
 
 ```
-  (R-ScaleFold)  PROPOSED.  `x / c * m` and `x * m / c`, with `c` a finite non-zero float
-                 literal and `m` a power of two (`2^k`, k ≥ 1), are `x / (c / m)` when
-                 `c / m` is exact and normal, and `x` is finite and either zero or at
-                 least the smallest normal number times `|c|` in magnitude — so neither
-                 form passes through a subnormal.  Then both round the one quotient
-                 `x·m / c` once: scaling by a power of two is exact and commutes with
-                 rounding, and an overflow to infinity happens in both forms or in
-                 neither.  An integer conversion meets the `x` clause whenever
-                 `|c| < 2^1021`.
+  (R-ScaleFold)  Inside an inlined body: `x / c * m` (either operand order of the product)
+                 and `x * m / c`, with `x` an integer conversion, `c` a finite non-zero
+                 float literal with `|c| < 2^1021` and `m` a power of two of at least 2,
+                 are `x / (c / m)` when `c / m` is exact and normal.  Then neither form
+                 passes through a subnormal, and both round the one quotient `x·m / c`
+                 once: scaling by a power of two is exact and commutes with rounding.
 ```
 
-**In words.** Applies in: the IR phase; native gains too, because LLVM folds `fmul (fdiv x, C1),
-C2` only under `reassoc`, which loft never grants (results must not depend on the backend's
-float flags).  It is not reassociation: `acc + (y - 1.0)` into `(acc + y) - 1.0` rounds
-differently and stays as written.  Effect in the hash loop: `(hx as float) / 4294967295.0 *
-2.0` becomes `/ 2147483647.5`, −2 ops, 77× → 72×.  The guard owes cells where the fold must
-NOT fire — `m` not a power of two, a divisor whose halving is subnormal, an `x` that can be
-subnormal — and a cell that compares the bits of both forms over the boundary values
-(zero of either sign, the largest finite `x`, the smallest normal quotient).  Checked
-2026-10-01: bit-identical over the hash's whole integer range (two million samples and the
-boundaries); and the subnormal exclusion is real — an `x` whose quotient lies a quarter grid
-step past a subnormal point answers `0x0.8000000000000p-1022` as `x / c * 2.0` and
-`0x0.8000000000001p-1022` as `x / (c / 2)`.  Random samples did not find that case (a random
-double's quotient by this `c` lands near the grid), so the guard builds it, as here.
+**In words.** Applies in: the IR phase; native gains too, because LLVM folds `fmul (fdiv x,
+C1), C2` only under `reassoc`, which loft never grants.  It is not reassociation: `acc + (y -
+1.0)` into `(acc + y) - 1.0` rounds differently and stays.  Checked bit-identical over the
+hash's integer range; and the subnormal exclusion is real — an `x` whose quotient lies a
+quarter grid step past a subnormal point answers `0x0.8000000000000p-1022` as `x / c * 2.0`
+and `…0001p-1022` as `x / (c / 2)` (random samples miss it; a constructed one finds it).
+`LOFT_NO_SCALE_FOLD=1`.
+
+**Guards.** `tests/scripts/a-leaf-call-inlined-answers-what-the-call-answers.loft` (values,
+both backends, the cells where each rule must NOT fire beside those where it does);
+`tests/leaf_inline.rs` (which rule fires on which cell, read off the trace; every switch; the
+hash loop calls no leaf); `leaf_inline::tests` (the fold never answers an overflow or the
+sentinel; the scale fold's conditions).
 
 ## Validating the emitted routines against their assumptions
 
