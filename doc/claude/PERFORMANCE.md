@@ -781,7 +781,7 @@ what is computed; `LOFT_NO_FUSE=1` emits the unfused form (R-Switch), and
 
 | fused op | replaces | chosen by |
 |---|---|---|
-| `OpIntVV` / `VC`, `OpCmpIntVV` / `VC` | an integer operator over locals and literals | `fusable_int` |
+| `OpIntVV` / `VC`, `OpCmpIntVV` / `VC` | an integer operator over locals and literals; a comparison with its literal on the LEFT is mirrored (`3 < a` is `a > 3`, kinds `GT`/`GE`) — never an arithmetic one, whose overflow report names its operands in order | `fusable_int` |
 | `OpIntVVPut` / `VCPut` | `x = a op c`, e.g. `i += 1` | `set_var` |
 | `OpCmpIntVVJump` / `VCJump` | an `if` or loop test and its jump | `gen_if_test` |
 | `OpTextWalkStep` | the step of `for c in T` | `hoist::char_walks` (native's `(R-CharWalk)` matcher) |
@@ -866,7 +866,26 @@ ops per element is the rest.  The lever there is fewer ops per iteration:
 `fn_call` pushes the return address onto the stack and jumps `code_pos` to the callee. The
 callee's locals live above the caller's on the same flat stack record — there is no frame
 allocation. A return slides the return value down with `copy_block`, which the store census
-counts as copied bytes (8 per integer return).
+counts as copied bytes (8 per integer return).  A frame records the call's position and not
+its source line: the line is looked up only when a stack is rendered (`State::call_line`),
+since that lookup on every call was a quarter of a recursive function's time.
+
+### Measuring an interpreter change: pin the layout first
+
+Two ordinary builds of the interpreter can differ by 15 % on one loop with IDENTICAL instruction
+counts: where the dispatch loop and the operator functions land in memory decides how the CPU's
+front end serves them (measured 2026-10-01: bench 14 at 34.461 G vs 34.452 G instructions, +6 %
+cycles; a hash loop +14 %, then −4 % once pinned).  So an interpreter before/after is measured on
+two builds that differ ONLY in the change, made from one directory with every function and
+branch target cache-line aligned:
+
+```bash
+RUSTFLAGS='-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthru-blocks=5' \
+  CARGO_TARGET_DIR=target/al-before cargo build --release --bin loft     # and al-after
+```
+
+and read beside `perf stat -e instructions,cycles`: instructions are deterministic, so a change
+that removes work and still reads slower is layout until the pinned builds say otherwise.
 
 ---
 
