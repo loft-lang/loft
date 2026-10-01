@@ -1063,7 +1063,12 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
             continue;
         }
         let record = w.params[&(d, i)];
-        if matches!(vars.tp(x), Type::Reference(rd, _) if *rd == record) {
+        // `@FR-N-Shape` — a nullable record local is declined on purpose (a null record has no
+        // fields to read into the tuple); the test says so instead of missing the wrapper.
+        let tp = vars.tp(x);
+        if !matches!(tp, Type::Optional(_))
+            && matches!(tp.base(), Type::Reference(rd, _) if *rd == record)
+        {
             plan.reads_at_call = true;
         } else {
             v.bad_params.insert((d, i));
