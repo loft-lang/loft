@@ -6,7 +6,7 @@ fix: an escape for a backtick inside a backtick literal, or a `"…"` literal th
 ref: 
 probe: 014.probe.loft
 expect: refused
-checked: 02cc37e78
+checked: ff407fedf
 holds: yes
 
 The baseline's header quotes code in backticks (`#[ignore = "..."]`, `make release-checklist`) across eleven lines. Python holds it in one `"""…"""`; loft has two literal forms and neither fits: the backtick literal spans lines but cannot contain a backtick, and the double-quoted literal takes `\"` but is refused at the first line break. The port prints eleven `print("…\n")` calls instead, each with its quotes escaped — the one place the twin's clarity verdict went against loft on a string rather than on a missing helper.

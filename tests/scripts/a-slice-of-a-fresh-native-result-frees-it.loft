@@ -12,7 +12,7 @@
 // makes the leak count grow with the evaluations rather than stand at one.  The last cell is the
 // control that was right before: a slice of a loft function's result.
 //
-// @falsified-at: 12c5ea1a4 — interpret leaked kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
+// @falsified-at: a401738f4 — interpret leaked kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
 // @falsified-by: tests/falsified/a-slice-of-a-fresh-native-result-frees-it.patch — interpret leaked
 //   kt=65535 ?×24 -> clean, native leaked kt=65535 ?×24 -> clean
 // CHANNEL: the leak check alone, on both backends — the values are right on both trees, which is

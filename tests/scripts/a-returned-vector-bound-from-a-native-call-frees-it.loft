@@ -22,7 +22,7 @@
 //
 // The last cell is the control that was right before: a local filled in place.
 //
-// @falsified-at: 12c5ea1a4 — native leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a
+// @falsified-at: a401738f4 — native leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
 // @falsified-by: tests/falsified/a-returned-vector-bound-from-a-native-call-frees-it.patch — native
 //   leaked kt=65535 ?×17 -> clean; interpret INERT (expected for a backend-divergence guard — only
