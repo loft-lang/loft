@@ -1527,7 +1527,7 @@ if parser::parse("user_code", snippet) &gt; 0 {
     <span class="st">"fn f() {{ x = 1.5f; }}"</span>,
     <span class="st">"fn f&lt;T&gt;(x: T) -&gt; T {{ x }}"</span>,
     <span class="st">"fn f(v: vector&lt;integer&gt;) {{ for e in v if e &gt; 1 {{ }} }}"</span>,
-    <span class="st">"fn f(x: integer) {{ if x is 3 {{ }} }}"</span>,
+    <span class="st">"enum Dir {{ North, South }} fn f(e: Dir) {{ if e is North {{ }} }}"</span>,
     <span class="st">"fn f(v: vector&lt;integer&gt;) {{ w = v[1..]; }}"</span>,
     <span class="st">"fn f() {{ x = `a`; }}"</span>
   ];
@@ -2437,7 +2437,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <span class="kw">fn</span> <span class="en">OpLt</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents &lt; other.cents }
 <span class="kw">fn</span> <span class="en">OpEq</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { self.cents == other.cents }
 <span class="kw">fn</span> <span class="en">OpAdd</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents + other.cents } }
-<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }
+<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Money</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"{self.cents}c"</span> }</code></pre>
+<p>Both arities of <code>-</code>, so <code>Money</code> satisfies <code>Subtractable</code> and, with <code>OpMul</code>, <code>Numeric</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents - other.cents } }
+<span class="kw">fn</span> <span class="en">OpMin</span>(self: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: <span class="nm">0</span> - self.cents } }
+<span class="kw">fn</span> <span class="en">OpMul</span>(self: <span class="en">Money</span>, other: <span class="en">Money</span>) -&gt; <span class="en">Money</span> { <span class="en">Money</span> { cents: self.cents * other.cents } }
 <span class="kw">fn</span> <span class="fn-call">test_user_type_bounds</span>() {
   cheap = <span class="en">Money</span> { cents: <span class="nm">300</span> };
   dear = <span class="en">Money</span> { cents: <span class="nm">700</span> };
@@ -2450,6 +2454,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   total = <span class="fn-call">clamped_add</span>(cheap, cheap, <span class="en">Money</span> { cents: <span class="nm">1000</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total.cents == <span class="nm">600</span>, <span class="st">"Addable on a user type: {total.cents}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">described</span>(dear) == <span class="st">"700c"</span>, <span class="st">"Printable on a user type: {described(dear)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_diff</span>(dear, cheap).cents == <span class="nm">400</span>, <span class="st">"Subtractable on a user type"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">gen_negdiff</span>(dear, cheap).cents == -<span class="nm">400</span>, <span class="st">"Numeric + Subtractable on a user type"</span>);
 }
 <span class="kw">struct</span> <span class="en">Crate</span> { label: <span class="ty"><a href="stdlib-types.html">text</a></span>, kids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; }
 <span class="kw">fn</span> <span class="fn-call">children</span>(self: <span class="en">Crate</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Crate</span>&gt; { self.kids }
@@ -4064,7 +4070,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   op - (self: Self, other: Self) -&gt; Self
 }</code></pre>
 <p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.</p>
-<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type satisfies one of the two: it can define `OpMin` at one arity only (a second definition is refused as a redefinition), as pinned by `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.</p>
+<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.</p>
 </div>
 <div class="item">
 <pre><code>pub interface Scalable {
