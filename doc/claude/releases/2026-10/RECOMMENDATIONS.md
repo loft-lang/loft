@@ -131,6 +131,8 @@ method; they make the methods' results comparable and keep a red result from goi
 - **Next.** [The plan's README](../../plans/179-scripts-in-loft/README.md) § "A script's name"
   says "a port is a swap under the same name", which reads as if a caller moves when a port
   lands.  Add one sentence: callers move when the plan closes, not before.
+- **Applied 2026-10-01.** The README's naming section now says callers move when the plan
+  closes, and that for an original with an extension the caller's line does change then.
 
 ### P2 — the findings register counts two closed findings as open
 
@@ -142,6 +144,11 @@ method; they make the methods' results comparable and keep a red result from goi
 - **Next.** Give each a probe from its issue's repro and run the recheck, or close both from
   their issues' state.
 - **Done when.** `REASONS.md` reads `OPEN: 11` and both findings name the closing fix.
+- **Applied 2026-10-01, by a different method.** Both findings read `status: fixed` with the
+  fixing commit and the guard that holds it (`REASONS.md` reads `OPEN: 11`).  012 cannot take
+  a `.loft` probe (it would need a stale rlib), so `n3_use_native.rs`'s loft#1776 test is the
+  evidence; 003's probe is folding the census workaround back (`scripts/script_census`) and
+  running the census interpreted, which is recorded on the finding as still owed.
 
 ### P3 — choose the next ports by the surface they newly exercise
 
@@ -150,3 +157,9 @@ method; they make the methods' results comparable and keep a red result from goi
 - **Next.** Take the next ports from the tiers that exercise what no port has yet: T3 (git, gh,
   curl — 50 files), T4 (cargo — 27), T5 (runs a program of its own choosing — 58), per the
   generated [WORKLIST.md](../../plans/179-scripts-in-loft/WORKLIST.md).
+- **Corrected 2026-10-01.** T3–T5 cannot be ported yet: they need strand 4's `process`
+  library, a design in `PROCESS.md` that is not built.  The next step is strand 4 itself (its
+  five gate probes, then `lib/git` over `run`), with finding 011 (regex captures, which T2
+  needs) beside it; and not all six ports were `report` originals (two `gate`s, one `writes`).
+  The plan's Status section carries this, and the owner's sequencing: strand 4 starts once the
+  interpreter work is cleanly below 100× native.
