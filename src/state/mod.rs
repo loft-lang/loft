@@ -6634,6 +6634,13 @@ impl State {
         // the per-op tests did.  The end of the run needs no test of its own: a halt and the
         // entry function's return set `code_pos` to `u32::MAX`, which the loop condition ends.
         if lean_loop && self.debug.is_none() {
+            // `@FR-R-DispatchPublish` — the crash context is derived from the position the
+            // loop stores for the allocator and the bytecode, registered once, instead of being
+            // written per op.
+            let _published = crate::crash_report::LeanSource::register(
+                std::ptr::addr_of!(self.database.alloc_pc),
+                std::ptr::addr_of!(self.bytecode),
+            );
             while self.code_pos < bytecode_len {
                 let op_pos_rt = self.code_pos;
                 self.database.alloc_pc = op_pos_rt;
@@ -6643,7 +6650,6 @@ impl State {
                 } else {
                     u16::from(op)
                 };
-                crate::crash_report::set_dispatch_op(op_pos_rt, opcode);
                 OPERATORS[usize::from(opcode)](self);
                 if self.database.dispatch_stop {
                     match self.lean_stop() {

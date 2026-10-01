@@ -51,6 +51,12 @@ thread_local! {
     /// written when the loop starts ([`set_dispatch_names`]) rather than with every op.
     static LAST_NAMES: Cell<Names> = const { Cell::new(Names::EMPTY) };
 
+    /// `@FR-R-DispatchPublish` — where a running lean dispatch loop keeps the op it is on: a
+    /// pointer to the position it publishes for the allocator anyway (`Stores::alloc_pc`) and
+    /// one to its bytecode, registered once per loop by [`LeanSource`].  A reader derives the
+    /// op from them instead of the loop writing a context per op.
+    static LEAN_SRC: Cell<LeanSrc> = const { Cell::new(LeanSrc::NONE) };
+
     /// Plan-07 phase 1 step 1.20 / phase 3 — pc → source-position table
     /// snapshot for the running interpreter.  `State::execute_argv`
     /// publishes a clone here on entry so the panic hook (a process-wide
@@ -148,11 +154,74 @@ fn op_name_of(op: u16) -> &'static str {
 /// the difference between a report and a lead (loft#920).
 #[must_use]
 pub fn last_op_name() -> &'static str {
-    let op = LAST_CTX.with(|c| c.get().op_code);
+    let op = current_ctx().op_code;
     OP_NAMES
         .get()
         .and_then(|v| v.get(op as usize).copied())
         .unwrap_or("")
+}
+
+#[derive(Clone, Copy)]
+struct LeanSrc {
+    pc: *const u32,
+    code: *const std::sync::Arc<Vec<u8>>,
+}
+
+impl LeanSrc {
+    const NONE: LeanSrc = LeanSrc {
+        pc: std::ptr::null(),
+        code: std::ptr::null(),
+    };
+}
+
+/// `@FR-R-DispatchPublish` — a lean dispatch loop's registration, alive for exactly the loop:
+/// built before its first op, dropped on every way out (a return, a break, an unwind), when it
+/// publishes the last op into [`LAST_CTX`] — so a reader after the loop still finds it — and
+/// restores the registration it replaced, which is how a nested loop leaves its caller's.
+pub struct LeanSource {
+    prev: LeanSrc,
+}
+
+impl LeanSource {
+    /// Register the loop's op position and bytecode.  Both are fields of the running `State`,
+    /// which does not move while its loop runs; the bytecode is read through its `Arc` field,
+    /// so a replacement of the code during the loop is read as the new code.
+    #[must_use]
+    pub fn register(pc: *const u32, code: *const std::sync::Arc<Vec<u8>>) -> LeanSource {
+        let prev = LEAN_SRC.with(|c| c.replace(LeanSrc { pc, code }));
+        LeanSource { prev }
+    }
+}
+
+impl Drop for LeanSource {
+    fn drop(&mut self) {
+        let last = current_ctx();
+        LAST_CTX.with(|c| c.set(last));
+        LEAN_SRC.with(|c| c.set(self.prev));
+    }
+}
+
+/// The op this thread is dispatching: derived from a running lean loop's registration, or the
+/// context the full loop and [`set_context`] write.
+fn current_ctx() -> Ctx {
+    let src = LEAN_SRC.with(Cell::get);
+    if src.pc.is_null() {
+        return LAST_CTX.with(Cell::get);
+    }
+    // SAFETY: registered by the running loop on this thread, which keeps both alive and in
+    // place until its `LeanSource` drops (see `LeanSource::register`).
+    let (pc, code) = unsafe { (src.pc.read_volatile(), &**src.code) };
+    let byte = |at: u32| code.get(at as usize).copied();
+    let op_code = match byte(pc) {
+        Some(255) => 255 + u16::from(byte(pc + 1).unwrap_or(0)),
+        Some(b) => u16::from(b),
+        None => u16::MAX,
+    };
+    Ctx {
+        pc,
+        fn_d_nr: u32::MAX,
+        op_code,
+    }
 }
 
 /// Used by the installer to ensure we only install once per process.
@@ -292,25 +361,6 @@ pub fn set_dispatch(pc: u32, op_code: u16, fn_d_nr: u32) {
     });
 }
 
-/// The lean dispatch loop's publication: the op and where it starts, without the function.
-///
-/// Naming the function means reading the call stack on every op, and the lean loop runs
-/// only while nothing watches individual ops — where the only reader of the function is a
-/// crash report, whose source position already names it.  Measured 2026-10-01, the call-stack
-/// read and the wider write were 2–4 % of an interpreted run's cycles.  `fn_d_nr` reads
-/// `u32::MAX` ("not tracked"); the full loop, which every per-op instrument switches to,
-/// publishes it through [`set_dispatch`].
-#[inline]
-pub fn set_dispatch_op(pc: u32, op_code: u16) {
-    LAST_CTX.with(|c| {
-        c.set(Ctx {
-            pc,
-            fn_d_nr: u32::MAX,
-            op_code,
-        });
-    });
-}
-
 /// Read the last-dispatched opcode context on this thread.
 /// Returns (pc, op_code, fn_d_nr).  Used by debug sentinels (e.g.
 /// the `put_stack`/`get_stack` DbRef-bounds check) to report which
@@ -318,10 +368,8 @@ pub fn set_dispatch_op(pc: u32, op_code: u16) {
 #[must_use]
 #[allow(dead_code)]
 pub fn last_context() -> (u32, u16, u32) {
-    LAST_CTX.with(|c| {
-        let ctx = c.get();
-        (ctx.pc, ctx.op_code, ctx.fn_d_nr)
-    })
+    let ctx = current_ctx();
+    (ctx.pc, ctx.op_code, ctx.fn_d_nr)
 }
 
 /// Plan-07 phase 1 step 1.20 / phase 3 — publish a snapshot of the
@@ -542,7 +590,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
     // Read the context.  If the interpreter wasn't running, EMPTY
     // fields produce a "no context" message — still useful to
     // confirm the signal fired.
-    let ctx = LAST_CTX.with(Cell::get);
+    let ctx = current_ctx();
     let (op_label, fn_label) = context_labels(ctx.op_code);
     // Plan-07 phase 3 — try to resolve the offending pc to a loft
     // source position.  This is technically not async-signal-safe
@@ -594,7 +642,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
         let _ = w.u32(ctx.pc);
         let _ = w.str("\n  fn:       ");
         let _ = w.str(fn_label);
-        // The lean loop does not track the function (`set_dispatch_op`); the `at:` line
+        // The lean loop does not track the function (`LeanSource`); the `at:` line
         // below names it.
         if ctx.fn_d_nr != u32::MAX {
             let _ = w.str(" (d_nr=");
