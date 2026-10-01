@@ -380,8 +380,7 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
     // Only into a COPY (`(B-Copy)`): an append into a fresh collection is how it is built, and
     // a built collection nothing reads is not a write that a source lost.
     for (v, slot) in acc.iter_mut().enumerate() {
-        let copy = func.copy_bound(v as u16) || cx.value_struct_copies.contains(&(v as u16));
-        if func.user_appended(v as u16) && copy {
+        if cx.appended_copy(v as u16) {
             slot.1 = slot.1.saturating_add(1);
         }
     }
@@ -391,12 +390,12 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
 /// Shared read-only context for the access walk (op-name sets computed once).
 struct AccessCx<'a> {
     data: &'a Data,
-    /// Which locals the program's own `+=` wrote into ([`Function::user_appended`]): a `len`
-    /// read of one of them observes what the append changed.
+    /// The locals' marks — which the program's own `+=` wrote into and which a bind copied
+    /// ([`Self::appended_copy`]).
     func: &'a Function,
     /// `OpPreAllocVector` (a capacity hint) and `OpFinishRecord` (installs a built record into
     /// its collection): both lower a `+=` into their first argument and observe nothing of
-    /// its content, so for a local the program appended to that argument is a write
+    /// its content, so for a copy the program appended to that argument is a write
     /// destination, not a read (loft#1840).  Any other local keeps them as reads, which is
     /// what keeps a fresh literal (`v = [1, 2]`, filled the same way) out of the lint.
     fill_dests: [u32; 2],
@@ -428,6 +427,17 @@ struct AccessCx<'a> {
     /// read.  Any other `OpDatabase` keeps its read: a record literal is built into its variable
     /// the same way, and a fresh record is not a lost copy.
     value_struct_copies: HashSet<u16>,
+}
+
+impl AccessCx<'_> {
+    /// A COPY the program's own `+=` wrote into (loft#1840): bound by copying a place
+    /// (`copy_bound`) or a value-struct copy the scope pass made.  Only there is an append
+    /// the mutation the lint reports and its fill ops are no reads — a collection built
+    /// fresh keeps both as they were, so a fresh one nothing reads stays silent.
+    fn appended_copy(&self, v: u16) -> bool {
+        self.func.user_appended(v)
+            && (self.func.copy_bound(v) || self.value_struct_copies.contains(&v))
+    }
 }
 
 fn is_setter(op: u32, data: &Data) -> bool {
@@ -499,7 +509,7 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
         }
         Value::Call(op, args)
             if cx.fill_dests.contains(op)
-                && matches!(place_root(&args[0], cx.data), Some(v) if cx.func.user_appended(v)) =>
+                && matches!(place_root(&args[0], cx.data), Some(v) if cx.appended_copy(v)) =>
         {
             classify_write_base(&args[0], cx, acc, false);
             for a in &args[1..] {
@@ -541,7 +551,7 @@ fn classify_length_subject(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) 
     match node.unspan() {
         // An append changes the count an element write cannot, so for a local the program
         // appended to, its `len` is a read of what the append wrote (loft#1840).
-        Value::Var(v) if cx.func.user_appended(*v) => bump_read(acc, *v),
+        Value::Var(v) if cx.appended_copy(*v) => bump_read(acc, *v),
         Value::Var(_) => {}
         Value::Call(op, args) if cx.projs.contains(op) && !args.is_empty() => {
             classify_length_subject(&args[0], cx, acc);

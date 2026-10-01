@@ -1937,6 +1937,17 @@ use a separate collection or add after the loop"
     /// local each pass and the field-read strip advances the `_elm_N` counter on the first,
     /// so the `__vdb_N` dep is created identically); the ops are emitted on the second.
     #[allow(clippy::too_many_arguments)] // the copy arm's own inputs, plus where it sits
+    /// Is `src`, the source of a whole-value bind, a PLACE — a variable, or a projection
+    /// chain out of one — so the bind COPIES it (`(B-Copy)`, loft#1840)?  A call is never one,
+    /// whatever its first argument: a fresh value from a call or a literal BUILDS the local.
+    /// A source this declines (a `??` over a place, a call handing its argument back) keeps
+    /// the local unmarked, which costs a `lost-write` that might have fired and never one
+    /// that names a copy that did not happen.
+    fn is_copied_place(&self, src: &Value) -> bool {
+        matches!(src.unspan(), Value::Var(_))
+            || crate::use_analysis::projection_container_var(&self.data, src).is_some()
+    }
+
     fn lower_vec_copy_bind(
         &mut self,
         code: &mut Value,
@@ -1960,7 +1971,7 @@ use a separate collection or add after the loop"
         // loft#1840 — `(B-Copy)`: this local now holds a COPY of a place, so a `+=` into it
         // that nothing reads is a lost write.  A source that is no place (a literal, a call's
         // fresh value) builds the local rather than copying into it.
-        if lhs_root_var(code).is_some() && var_nr < self.vars.count() {
+        if self.is_copied_place(code) && var_nr < self.vars.count() {
             self.vars.mark_copy_bound(var_nr);
         }
         let elm_tp_clone = (**elm_tp).clone();
@@ -6685,7 +6696,7 @@ use a separate collection or add after the loop"
                 &[code.clone(), to.clone(), Value::Int(tp_val)],
             );
             // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
-            if lhs_root_var(code).is_some()
+            if self.is_copied_place(code)
                 && let Value::Var(v) = to.unspan()
                 && *v < self.vars.count()
             {
