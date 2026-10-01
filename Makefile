@@ -600,6 +600,9 @@ interp-gap:  ## Where the interpreter still moves data native no longer does, pe
 	cargo build --release --lib --bin loft -q
 	cargo build --release --lib --bin loft -q --features op-census --target-dir target/op-census
 	python3 scripts/interp_gap.py $(ARGS)
+worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal), re-timed quickly (ARGS="--axis interp|native", "--list")
+	cargo build --release --bin loft -q
+	python3 scripts/worst.py $(ARGS)
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
