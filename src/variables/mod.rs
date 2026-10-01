@@ -5465,12 +5465,14 @@ impl Function {
         }
     }
 
-    /// Did a whole-value bind copy a place into `v` (loft#1840)?
+    /// Did a whole-value bind copy a place into `v` (loft#1840)?  Never for a `&` link: an `=`
+    /// through one writes the place it names (`(B-Ref)`), so the local holds no copy whatever
+    /// its spelling, and an append through it lands where the link points.
     #[must_use]
     pub fn copy_bound(&self, v: u16) -> bool {
-        self.variables
-            .get(v as usize)
-            .is_some_and(|var| var.copy_bound)
+        self.variables.get(v as usize).is_some_and(|var| {
+            var.copy_bound && !var.amp_link && !var.amp_container_link && !var.store_text_link
+        })
     }
 
     /// A user identifier names `v` (loft#1834).

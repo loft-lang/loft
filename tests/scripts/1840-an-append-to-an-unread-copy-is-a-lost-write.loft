@@ -18,8 +18,8 @@
 // after the append (an element, a `len`, which an append changes), the copy returned, a `&`
 // link, and a collection BUILT fresh (a literal, a call's value) rather than copied.
 //
-// @falsified-at: a80e26737 — 0 `lost-write` reports there, 8 here (fl_xs fv_xs kc_h pc_w lc_b
-//   lp_xs br_xs vs_m), on both backends; "1840 ok" on both trees.  Measured BY HAND: `make
+// @falsified-at: a80e26737 — 0 `lost-write` reports there, 11 here (fl_xs fv_xs kc_h pc_w lc_b
+//   lp_xs br_xs vs_m tx_f tx_p tx_m), on both backends; "1840 ok" on both trees.  Measured BY HAND: `make
 //   falsify` reads a warning guard INERT, because its `expect` channel counts only
 //   `@EXPECT_ERROR` / `@EXPECT_FAIL` and a file with a `main` gets a direct run, where the
 //   suite's warning matching never happens.  `tests/dead_code_lint.rs` asserts the exact set.
@@ -66,6 +66,10 @@ fn len_after(s: S1840) -> integer { ln_xs = s.items; ln_xs += [7]; len(ln_xs) }
 fn keyed_read_after(s: S1840) -> integer { kr_h = s.keyed; kr_h += [K1840 { k: 5, v: 6 }]; len(kr_h) }
 fn returned(s: S1840) -> vector<integer> { rt_xs = s.items; rt_xs += [7]; rt_xs }
 fn linked(s: S1840) { lk_xs = &s.items; lk_xs += [7]; }
+// A whole write THROUGH a link refills the place it names, then the append lands there too:
+// the `=` is no copy, whatever the bind lowering it shares.
+fn linked_written_through(s: S1840) { lw_c = &s.more; lw_c = s.items; lw_c += [9]; }
+fn text_linked(s: S1840) { tk_t = &s.name; tk_t += "!"; }
 fn text_written_back(s: S1840) { tb_t = s.name; tb_t += "x"; s.name = tb_t; }
 fn text_len_after(s: S1840) -> integer { tl_t = s.name; tl_t += "x"; len(tl_t) }
 fn text_returned(s: S1840) -> text { tr_t = s.name; tr_t += "x"; tr_t }
@@ -115,5 +119,9 @@ fn main() {
   text_fresh(4);
   text_written_back(s);
   assert(s.name == "nx", "the text written back reached s.name");
+  linked_written_through(s);
+  assert(len(s.more) == 3 && s.more[2] == 9, "the link refilled s.more and the append landed there");
+  text_linked(s);
+  assert(s.name == "nx!", "the text link wrote through");
   println("1840 ok");
 }
