@@ -1260,6 +1260,14 @@ pub fn loop_var_alias_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_VAR_ALIAS"))
 }
 
+/// `LOFT_TRACE_LOOP_VAR_ALIAS=1` — name each counted loop whose variable shares its range
+/// index's slot, and each one declined with the reason.
+#[must_use]
+pub fn trace_loop_var_alias() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_LOOP_VAR_ALIAS"))
+}
+
 /// The interpreter emits no `OpPreAllocVector` that only repeats the append after it —
 /// **DEFAULT ON**.  The op claims a record for an ABSENT vector, `max(count, 11)` elements wide,
 /// and does nothing to a vector that has one; `vector_append` claims the same 11 elements on
