@@ -3098,7 +3098,8 @@ impl State {
         if crate::parallel::worker_fatal_pending() {
             self.database.dispatch_stop = true;
         }
-        // The worker's halt is re-raised by the dispatch loop's own check, which every par
+        // The worker's halt is re-raised by the dispatch loop's own check (its cold path,
+        // which the flag above sends it to), which every par
         // family passes through — this site had its own copy first, and keeping both would
         // be two homes for one decision (and did hide, in the bite proof, that the block
         // form was covered while the other three were not).
