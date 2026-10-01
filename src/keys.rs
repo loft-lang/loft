@@ -1249,6 +1249,20 @@ pub fn retbuf_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_HOIST"))
 }
 
+/// The interpreter emits no `OpPreAllocVector` that only repeats the append after it —
+/// **DEFAULT ON**.  The op claims a record for an ABSENT vector, `max(count, 11)` elements wide,
+/// and does nothing to a vector that has one; `vector_append` claims the same 11 elements on
+/// an absent vector.  So for a literal of at most 11 elements the op is the append's own first
+/// claim run early, and in a loop it ran once per iteration for nothing.  The IR keeps it:
+/// `--native`'s append-group recognisers read the group's head and stride from it.  Opt OUT
+/// with `LOFT_NO_PREALLOC_ELIDE` (read at bytecode generation): the before-half of the A/B
+/// and the first bisect step for a wrong first claim on the interpreter.
+#[must_use]
+pub fn prealloc_elide_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PREALLOC_ELIDE"))
+}
+
 /// @PLN157 § V-m: `v += [x]` on a plain vector of a scalar kind is ONE fused
 /// `OpAppend<Kind>` — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FUSED_APPEND` (read at PARSE
 /// time: the before-half of the A/B on one binary — the four-op form, five runtime calls

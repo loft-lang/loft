@@ -831,10 +831,19 @@ relocates the data on each step.  That is NOT worth moving into the IR phase: pr
 ran 280–283 ms either way, a record-append loop 632–647 → 632–637 ms, and `f32_build` (603 KB
 relocated per op, the most of any routine) 595–640 → 592–596 ms.  Growth doubles, so its cost
 is amortised to nothing; `vector_append` is 5 % of `push`'s cycles, and the dispatch of its 13
-ops per element is the rest.  The lever there is fewer ops per iteration: the
-`OpPreAllocVector` the parser emits before every push re-runs each iteration although it only
-ever claims once, the loop variable is copied from the range index each round, and the loop
-test jumps over a `GotoWord` to reach the body.
+ops per element is the rest.  The lever there is fewer ops per iteration:
+
+- **The reservation before a literal append** — `OpPreAllocVector(v, n, size)`, which the parser
+  emits before every literal append to a local vector — claims a record only for an ABSENT
+  vector, `max(n, 11)` elements wide, and `vector_append` claims the same 11 on its own.  So
+  for n <= 11 the interpreter does not emit it (`keys::prealloc_elide_enabled`,
+  `LOFT_NO_PREALLOC_ELIDE=1` keeps it); the IR keeps it, because `--native`'s append-group
+  recognisers read their head and stride from it.  Measured: `push` 279 → 236 ms (−16 %), a
+  record append 623 → 578 ms (−7 %).  Guard
+  `tests/scripts/a-literal-append-claims-its-vector-once.loft`, pin `tests/prealloc_elide.rs`.
+- **The loop variable** is copied from the range's index each round (`VarInt` + `PutInt`).
+- **The back edge**: a counted loop tests at the top and ends in a `GotoWord` back to it, two
+  jumps per round where a loop testing at the bottom takes one.
 
 ### Function calls
 
