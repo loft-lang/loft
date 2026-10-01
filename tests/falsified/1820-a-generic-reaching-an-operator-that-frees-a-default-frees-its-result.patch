@@ -16,11 +16,10 @@ index 548962b86..179e7f8d0 100644
              // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
              // Held back while an arm-local of a monomorph was built against the type
              // variable's row and answered a wrong number; with that fixed the arms are
-diff --git a/src/scopes.rs b/src/scopes.rs
-index 886435436..901a97c5b 100644
---- a/src/scopes.rs
-+++ b/src/scopes.rs
-@@ -20652,51 +20652,24 @@ impl Scopes<'_> {
+diff --git a/src/scopes/inline_returns.rs b/src/scopes/inline_returns.rs
+--- a/src/scopes/inline_returns.rs
++++ b/src/scopes/inline_returns.rs
+@@ -59,51 +59,24 @@
      /// would make the lift free the caller's record — and must itself be proven fresh, so
      /// the proof stays positive and one unreadable link refuses the chain.
      ///
@@ -77,15 +76,12 @@ index 886435436..901a97c5b 100644
          })
      }
  
-@@ -23907,11 +23880,6 @@ fn inject_per_arm(
- /// starts empty.
- const ARMED_VIEW_RETURN: &str = "materialized_view_return_armed";
- 
+@@ -938,8 +911,3 @@
+         None
+     }
+ }
+-
 -/// How many generic instances deep [`Scopes::monomorph_delegated_return_is_fresh`] follows a
 -/// chain of delegating tails before it answers `false`.  The bound is the cycle guard mutual
 -/// recursion needs (`f<T>` forwarding to `g<T>` forwarding to `f<T>`), not a measured depth.
 -const DELEGATION_DEPTH: usize = 8;
--
- /// The join feeding a `materialized_view_return`'s copy, if the return has that shape.
- ///
- /// Answers for the ARMED name too, so a later phase can still learn which locals the arms
