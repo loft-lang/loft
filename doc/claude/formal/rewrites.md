@@ -3506,7 +3506,7 @@ rules are priced before they are built.
 ### The fast-or-checked choice is made once per run
 
 ```
-  (R-FastTable)  PROPOSED.  The stack access mode (`State::fast_stack`: the direct path,
+  (R-FastTable)  The stack access mode (`State::fast_stack`: the direct path,
                  or the checked path every debug instrument needs) is fixed for a run, yet
                  every push, pop and local read tests it.  Each operator body is compiled for
                  both modes (generic over a `const bool`) into two operator tables, and the
@@ -3514,10 +3514,18 @@ rules are priced before they are built.
                  never a new one; the mode never changes while a table is in use.
 ```
 
-**In words.** Applies to: the interpreter runtime, every op.  The test was 23 % of the samples
-inside `get_float` (2026-10-01).  The risk to price first: the operator code doubles, which
-costs instruction cache.  Guard: every value cell run under a checked instrument
-(`LOFT_STRICT_STORES=1`, the stack verifier) and without one.
+**In words.** Applied by: the fill generator (`create::generate_code_into` writes each op as
+`fn op<const F: bool>` and respells its stack accessors `get_stack_m::<F, _>` and siblings, and
+emits `OPERATORS` and `OPERATORS_FAST`, both `static`) and `State::op_table`, which the lean
+dispatch loop asks once.  Other loops dispatch `OPERATORS`, whose accessors decide at run time
+and are valid in every mode; ops that are `State` methods keep the runtime test.  Built
+2026-10-01: −4.7 % instructions, −5.2 % cycles at the geomean over 17 benches (pinned layout);
+the bound measured by deleting the test was −8.2 %, the rest is the doubled operator code —
+`07_string_build` moved +4.9 % in cycles with −0.3 % in instructions.  Guards
+`tests/fast_table.rs` (under the stack census the operators still write through `put_stack`:
+92.6 % of the writes, 6.6 % with the direct path planted into the checked table; the direct
+and checked paths answer alike) and `state::fast_table_tests` (the table follows the mode;
+caught the fast table planted into every run).
 
 ### A frame reserves its stack once
 
