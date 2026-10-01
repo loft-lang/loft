@@ -18,11 +18,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > ⚠ **The gate BLOCKS inside loft and ADVISES in a library repo**, and the asymmetry is
 > deliberate. `examples` and `examples-index` are the only two checks that span
 > repositories: a library's CI checks loft out as `loft-src` and runs *loft's* script
-> against the library, so the rules arrive from whatever loft `main` happens to be. That
-> bit in both directions before it was tiered — `exindex` landed in loft on 2026-08-18 and
-> reddened loft-libs-game's next PR for a file it never touched (last green run
-> 2026-08-17), and switching a *library checkout's branch* turned loft's own run red with
-> two dangling tags, a failure with no bad commit in either repo. A gate whose rules change
+> against the library, so the rules arrive from whatever loft `main` happens to be. A
+> blocking gate fails in both directions: a new rule in loft reddens a library's next PR
+> for a file that PR never touched, and switching a *library checkout's branch* turns
+> loft's own run red with dangling tags, a failure with no bad commit in either repo. A gate whose rules change
 > under you, from a repo you do not control, lands its red on whoever opens the next PR.
 >
 > It follows this repo's own diagnostic rule: **a diagnostic gates if and only if ignoring
@@ -38,7 +37,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 >
 > **Advisory costs you a local pass/fail, so one command gives it back:** `make
 > examples-preflight REPO=<library>` gates the citation faults CI reports and exits
-> non-zero on them, without demanding the (no longer committed) index.
+> non-zero on them, without demanding the index, which is not committed.
 > `EXAMPLES_GATE=hard` restores full blocking for a repo that wants it.
 >
 > ⚠⚠ **`examples-index.tsv` is not committed in a library repo at all — CI builds it.**
@@ -57,11 +56,11 @@ machine can see: a worked-example tag that **dangles**
 cannot see the two failures that actually rot a library's docs over time:
 
 - **Staleness** — a `///` doc comment that still resolves and still reads
-  cleanly, but no longer describes what the function *does now* (a parameter
+  cleanly, but does not describe what the function *does now* (a parameter
   changed meaning, the return contract shifted, a behaviour note went out of
   date). The prose is internally consistent, so nothing flags it; only a human
   reading it against the current body notices.
-- **Example quality** — a cited example that is valid and runs, but is no longer
+- **Example quality** — a cited example that is valid and runs, but is not
   the *clearest* demonstration: a better real call site has since appeared in a
   consumer, or the tagged test drifted to exercise an edge case rather than the
   common path.
@@ -116,7 +115,7 @@ make libraries-review
 It answers the only two questions a program can: what is **structurally missing** (a
 library with no watermark row, so it has never been reviewed; one whose source cites no
 worked example and carries no `examples-exempt.tsv` verdict; a watermark row naming a
-library that no longer exists), and which reviewed libraries have **moved** since the
+library that does not exist), and which reviewed libraries have **moved** since the
 commit their watermark records — with the commit count and how many `pub fn` lines
 changed, so "three commits, zero signatures" can be read and dismissed in seconds. It
 is a report: it never fails, and it never judges whether a doc is *good*.

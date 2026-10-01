@@ -4,7 +4,7 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 
 ## Design: lazy loop yields (CL-9)
 
-> **Status: slices 1–3 built (loft#836, #1586, #1798) — every loop whose yields are statements
+> **Slices 1–3 are built: every loop whose yields are statements
 > is lazy on `--native`; slice 4 (text-in-loop interning) open.**  Two lowerings share the work,
 > described under § Re-descent below: the ROTATED loop for one yield on the body's straight
 > line, and RE-DESCENT for every other shape.  What still takes the eager buffer is a `yield`
@@ -15,7 +15,7 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 > after the yield ROTATE the loop: a third state runs them at the start of the next advance,
 > before the header, so a `break` among them still ends the loop.  A lazy loop's hidden record
 > buffers (`__ref_*`) persist in the struct, and so do a lambda's fn-ref and its `___clos_*`
-> record (loft#1587), which is what lets a loop that builds a closure per iteration stay lazy.
+> record, which is what lets a loop that builds a closure per iteration stay lazy.
 > Guard: `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`. `tests/scripts/836-lazy-loop-yields.loft`
 > and `tests/oracle/26-coroutine-laziness.loft` assert the interleaving; VALUES cannot, which is
 > why the value-only oracle reported agreement across a difference this wide.
@@ -114,9 +114,7 @@ a state the decomposition must model:
   exactly (a 2-op block whose loop's third op is `Yield(Var(item_var))`) and lowers it to the
   lazy `YieldFrom` segment, so it is already `next()`-driven on native and needs no work here.
   The eager path starts the moment the body holds anything else — `{ print(…); yield i; }` is
-  `ForLoopBody`. Verified 2026-08-09: a `for i in 0..1000000000 { yield i; }` generator
-  consumed three values and stopped, while `{ print("p{i} "); yield i; }` over `0..1000` ran all
-  1000 iterations before the consumer's first advance.
+  `ForLoopBody`.
 - **A2 — multiple yields per iteration** (`for … { yield a; yield b }`) — each yield is its own
   state; the back-edge targets the header, but re-entry lands at the *next* yield-state.
 - **A3 — a `yield` inside an `if`/`match` inside the loop** — conditional states; the resume point

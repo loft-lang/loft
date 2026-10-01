@@ -16,13 +16,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > frame, native compiles a resumable **state machine**.
 >
 > Scope: single-value `yield` (CO1.1–CO1.6, shipped 0.8.3) **and `yield from`** (delegation),
-> which ships and is specified below as `(G-Delegate)`.
->
-> ⚠ That line read *"`yield from` is deferred to 1.1+ ([COROUTINE.md](../COROUTINE.md) CO1.4) and
-> is not specified here"* until 2026-09-25, long after the construct shipped and was guarded
-> (`tests/scripts/1277-…`, loft#1277).  A shipped construct declared out of scope has no rule, so
-> nothing measured it and this chapter's `OPEN: 0` read green over three defects in it at once —
-> one of them silent.  A scope line is a claim to re-read whenever the chapter is opened.
+> which ships and is specified below as `(G-Delegate)`.  A scope line is a claim to re-read
+> whenever the chapter is opened: a shipped construct declared out of scope has no rule, so
+> nothing measures it.
 
 ## The model in one line
 
@@ -258,11 +254,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   them around a loop.  `tests/scripts/1277-…` covers arguments and exhaustion, and
   `tests/coroutine_matrix.rs`'s X5 column crosses delegation with the yielded TYPE — integer,
   text, record, tuple, float, single and enum.
-  ⚠ Before 2026-09-25 the native state machine re-ran a delegation's prefix on every advance it
-  served (silent: the produced sequence is unchanged), a `yield from` beside a loop in either
-  lowering did not compile, and a delegated TUPLE did not compile.  The X5 column that crosses
-  exactly this was closed on the stale scope line above, which is how all four survived.  The
-  delegated fn-ref is loft#1676 and still open.
+  The delegated fn-ref is loft#1676 and still open.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
 - **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a

@@ -30,7 +30,6 @@ doc/claude/CONTROL.md	timeline	4
 doc/claude/COPY_DIAGNOSTICS.md	history	1
 doc/claude/COPY_DIAGNOSTICS.md	timeline	5
 doc/claude/COROUTINE.md	timeline	8
-doc/claude/COROUTINE_LAZY_YIELDS.md	timeline	3
 doc/claude/COROUTINE_SAFETY.md	timeline	1
 doc/claude/DATABASE.md	history	4
 doc/claude/DATABASE.md	timeline	17
@@ -75,7 +74,6 @@ doc/claude/LAVITION.md	timeline	16
 doc/claude/LAZY_STORES.md	history	1
 doc/claude/LAZY_STORES.md	timeline	7
 doc/claude/LIBRARY_AUTHORING.md	timeline	8
-doc/claude/LIBRARY_DOC_REVIEW.md	timeline	6
 doc/claude/LIBRARY_PUBLISH.md	timeline	2
 doc/claude/LIFETIME.md	history	1
 doc/claude/LIFETIME.md	timeline	15
@@ -93,7 +91,7 @@ doc/claude/NATIVE-history.md	two-h1	1
 doc/claude/NATIVE.md	history	3
 doc/claude/NATIVE.md	timeline	32
 doc/claude/NATIVE_ARTIFACT_IDENTITY.md	timeline	9
-doc/claude/NATIVE_SWITCHES.md	timeline	19
+doc/claude/NATIVE_SWITCHES.md	timeline	1
 doc/claude/OWNERSHIP_MODEL.md	timeline	29
 doc/claude/PACKAGES.md	timeline	9
 doc/claude/PACKAGES.md	two-h1	2
@@ -175,7 +173,7 @@ doc/claude/formal/calls.md	timeline	20
 doc/claude/formal/closures.md	timeline	20
 doc/claude/formal/collections.md	timeline	46
 doc/claude/formal/concurrency.md	timeline	1
-doc/claude/formal/coroutines.md	timeline	5
+doc/claude/formal/coroutines.md	timeline	2
 doc/claude/formal/formatting.md	history	1
 doc/claude/formal/formatting.md	timeline	2
 doc/claude/formal/grammar.md	timeline	3

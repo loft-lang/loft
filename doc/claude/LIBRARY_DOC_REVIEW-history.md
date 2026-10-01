@@ -44,3 +44,10 @@ parse-checked as 19 packages, 0 errors. The count is taken over the REGISTRY's
 published surface, so the `34 type` figure `make libraries-review` prints moves only
 once those branches merge and the libraries republish: the branches are the fix, the
 release is the owner's step.
+
+## Older dated lines moved from LIBRARY_DOC_REVIEW.md on 2026-10-01
+
+- **Why the examples gate only advises in a library repo.**  Before the gate was tiered it bit
+  in both directions: `exindex` landed in loft on 2026-08-18 and reddened loft-libs-game's next
+  PR for a file it never touched (last green run 2026-08-17), and switching a library
+  checkout's branch turned loft's own run red with two dangling tags.
