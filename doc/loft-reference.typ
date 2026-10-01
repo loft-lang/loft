@@ -8217,6 +8217,40 @@ pub fn clamp(self: float, lo: float, hi: float) -> float
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+```
+
+Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.
+
+```rust
+pub fn then(self: Ordering, next: Ordering) -> Ordering
+```
+
+This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.
+
+```rust
+pub fn compare(self: integer, other: integer) -> Ordering
+```
+
+Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `\<` uses.
+
+```rust
+pub fn compare(self: single, other: single) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
+pub fn compare(self: float, other: float) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses.
+
+```rust
 pub fn approx(self: float, b: float, eps: float) -> boolean
 ```
 
@@ -8249,6 +8283,18 @@ pub fn len(self: character) -> integer
 ```
 
 Byte length of the character's UTF-8 encoding (1–4).
+
+```rust
+pub fn compare(self: text, other: text) -> Ordering
+```
+
+Where `self` stands against `other`, in the order `\<` uses: by bytes, as `\<` compares text.
+
+```rust
+pub fn compare(self: character, other: character) -> Ordering
+```
+
+Where `self` stands against `other`, by code point, in the order `\<` uses.
 
 ```rust
 pub fn split(self: text, separator: character) -> vector<text>

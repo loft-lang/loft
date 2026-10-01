@@ -12,6 +12,18 @@ invariants, internal phase numbers)?  See
 
 ---
 
+## 2026-11
+
+### May need a change in your code
+
+**`compare` and `then` are stdlib methods.**  `x.compare(y)` answers `Less`, `Equal` or
+`Greater` (the new `Ordering` enum) for an `integer`, `single`, `float`, `text` or `character`,
+and `a.compare(b).then(c.compare(d))` orders by a second value when the first is equal.  A
+program that defines its own `compare` or `then` for one of those types is refused with "Cannot
+redefine": rename yours, or use the stdlib's.
+
+---
+
 ## 2026-10
 
 The **one-meaning** release.  A spelling now means one thing wherever it is written: `==`

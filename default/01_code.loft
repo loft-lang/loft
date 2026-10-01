@@ -763,6 +763,37 @@ pub fn clamp(self: float, lo: float, hi: float) -> float {
   min(max(self, lo), hi)
 }
 #pure
+
+/// Where one value stands against another: what `compare` answers.  An enum rather than a
+/// signed number, so a comparison cannot be written as a subtraction that overflows.
+pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}
+
+/// This answer, or `next` when this one is `Equal`: compares by several fields in turn,
+/// `a.year.compare(b.year).then(a.month.compare(b.month))`.
+pub fn then(self: Ordering, next: Ordering) -> Ordering {
+  if self == Equal { next } else { self }
+}
+#pure
+
+/// Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `<` uses.
+pub fn compare(self: integer, other: integer) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, in the order `<` uses.
+pub fn compare(self: single, other: single) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, in the order `<` uses.
+pub fn compare(self: float, other: float) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
 /// Approximate equality: true when a and b differ by at most eps (inclusive).
 /// `==` on float/single is EXACT IEEE equality — use `approx` when you want a
 /// tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`.
@@ -858,6 +889,17 @@ fn OpCastCharacterFromInt(v1: i32) -> character;
 #rust"if let Some(c) = char::from_u32(@v1 as u32) {{ c }} else {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange); char::from(0) }}"
 fn OpConvIntFromCharacter(v1: character) -> i32;
 #rust"if @v1 == char::from(0) {{ i64::MIN }} else {{ i64::from(@v1 as u32) }}"
+// `compare` for text and character sits here, after the operators `<` reads for them.
+/// Where `self` stands against `other`, in the order `<` uses: by bytes, as `<` compares text.
+pub fn compare(self: text, other: text) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
+/// Where `self` stands against `other`, by code point, in the order `<` uses.
+pub fn compare(self: character, other: character) -> Ordering {
+  if self < other { Less } else if other < self { Greater } else { Equal }
+}
+#pure
 type enumerate size(1);
 fn OpVarEnum(pos: const u16) -> enumerate;
 #rust"s.get_var::<u8>(@pos)"

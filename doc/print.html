@@ -4285,6 +4285,30 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
+<pre><code>pub enum Ordering {
+  Less,
+  Equal,
+  Greater
+}</code></pre>
+<p>Where one value stands against another: what `compare` answers.  An enum rather than a signed number, so a comparison cannot be written as a subtraction that overflows.</p>
+</div>
+<div class="item">
+<pre><code>pub fn then(self: Ordering, next: Ordering) -&gt; Ordering</code></pre>
+<p>This answer, or `next` when this one is `Equal`: compares by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn compare(self: integer, other: integer) -&gt; Ordering</code></pre>
+<p>Where `self` stands against `other` — `Less`, `Equal` or `Greater` — in the order `&lt;` uses.</p>
+</div>
+<div class="item">
+<pre><code>pub fn compare(self: single, other: single) -&gt; Ordering</code></pre>
+<p>Where `self` stands against `other`, in the order `&lt;` uses.</p>
+</div>
+<div class="item">
+<pre><code>pub fn compare(self: float, other: float) -&gt; Ordering</code></pre>
+<p>Where `self` stands against `other`, in the order `&lt;` uses.</p>
+</div>
+<div class="item">
 <pre><code>pub fn approx(self: float, b: float, eps: float) -&gt; boolean</code></pre>
 <p>Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.</p>
 </div>
@@ -4305,6 +4329,14 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn len(self: character) -&gt; integer</code></pre>
 <p>Byte length of the character's UTF-8 encoding (1–4).</p>
+</div>
+<div class="item">
+<pre><code>pub fn compare(self: text, other: text) -&gt; Ordering</code></pre>
+<p>Where `self` stands against `other`, in the order `&lt;` uses: by bytes, as `&lt;` compares text.</p>
+</div>
+<div class="item">
+<pre><code>pub fn compare(self: character, other: character) -&gt; Ordering</code></pre>
+<p>Where `self` stands against `other`, by code point, in the order `&lt;` uses.</p>
 </div>
 <div class="item">
 <pre><code>pub fn split(self: text, separator: character) -&gt; vector&lt;text&gt;</code></pre>

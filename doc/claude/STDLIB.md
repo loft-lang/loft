@@ -81,6 +81,8 @@ method (`x.abs()`) or free (`abs(x)`) — the same function either way.
 | `min(self: N, b: N) -> N` | Smaller of two values. Returns null if either is null. |
 | `max(self: N, b: N) -> N` | Larger of two values. Returns null if either is null. |
 | `clamp(self: N, lo: N, hi: N) -> N` | Clamps to `[lo, hi]`. Returns null if any arg is null. |
+| `compare(self: O, other: O) -> Ordering` | Where `self` stands against `other`: `Less`, `Equal` or `Greater`, in the order `<` uses (O = integer \| single \| float \| text \| character; text by bytes, a character by code point). An enum, not a signed number, so it never overflows the way `a - b` can. |
+| `then(self: Ordering, next: Ordering) -> Ordering` | `self`, or `next` when `self` is `Equal`: orders by several fields in turn, `a.year.compare(b.year).then(a.month.compare(b.month))`. |
 | `approx(self: F, b: F, eps: F) -> boolean` | True when `a`/`b` (F = single \| float) differ by ≤ `eps`. `==` on float/single is **exact IEEE** (@PLN102); use `approx` for tolerance. A null (NaN) operand → false. |
 | `floor_mod(self: integer, divisor: integer) -> integer?` | Floor modulo: the remainder that takes the sign of the **divisor**, so it lands in `[0, divisor)` for a positive `divisor`. `%` truncates and keeps the **dividend's** sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`) — use it for circular indexing (`grid[(i - 1).floor_mod(w)]`). `floor_mod(x, 0)` is null (like `%`). Integer-only. |
 
