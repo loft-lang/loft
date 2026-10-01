@@ -391,10 +391,13 @@ capture page and a backgrounded tab are both hidden), so an rAF-only loop
 stalls.  The generated page (`src/main.rs`) pumps via an unthrottled
 `MessageChannel` while `document.hidden` is true and via `requestAnimationFrame`
 while visible (so a GL render loop stays vsync-aligned), re-checking visibility
-each tick.  The asyncify-aware Node driver `tools/wasm_ws_repro.mjs` carries the
+each tick.  A visible page can be denied frames too (a throttled or occluded
+renderer that never sets `document.hidden`), so each visible resume also arms a
+100 ms fallback; once it fires, the loop pumps as a hidden page does until a frame
+arrives again.  The asyncify-aware Node driver `tools/wasm_ws_repro.mjs` carries the
 same corrected `AsyncifyCtrl` and pumps on `setImmediate`; the browser gate is
 `tests/html_asyncify.rs` (asserts a multi-suspend program reaches its final line
-both visible and hidden).
+visible, hidden, and visible with no frames granted).
 
 ## Reading a store in the page (@PLN146 F4)
 

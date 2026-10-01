@@ -11131,6 +11131,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
       // unthrottled MessageChannel while the page is hidden, and via rAF while
       // visible so a GL render loop stays vsync-aligned.  schedule() re-checks
       // visibility each tick, so a tab going hidden/visible adapts live.
+      // A VISIBLE page can be denied frames too — a throttled or occluded
+      // renderer that never sets document.hidden — and an rAF-only resume then
+      // crawls or stops (loft#1830: a visible page stuck at `tick 0`).  So each
+      // visible resume also arms a fallback: whichever comes first, the frame or
+      // RAF_FALLBACK_MS, resumes the program.  A fallback that fires marks rAF
+      // STALLED, and the loop then pumps as a hidden page does — the timer may
+      // be throttled with the frames, so it is waited on once, not per tick —
+      // until a probe frame arrives and hands the loop back to rAF.
       const mc=new MessageChannel();
       // A trap inside a RESUME lands here rather than on the boot promise, and
       // an uncaught one stops the pump silently — a frame loop that dies with a
@@ -11139,9 +11147,19 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         try{{ if(ac.resume('loft_start'))schedule(); }}catch(e){{ loftReportTrap(e); }}
       }};
       mc.port1.onmessage=pump;
+      const RAF_FALLBACK_MS=100;
+      let rafStalled=false;
       const schedule=()=>{{
-        if(document.hidden)mc.port2.postMessage(0);
-        else requestAnimationFrame(pump);
+        if(document.hidden||rafStalled){{
+          if(rafStalled)requestAnimationFrame(()=>{{ rafStalled=false; }});
+          mc.port2.postMessage(0);
+          return;
+        }}
+        let due=true;
+        requestAnimationFrame(()=>{{ if(due){{ due=false; pump(); }} }});
+        setTimeout(()=>{{
+          if(due){{ due=false; rafStalled=true; mc.port2.postMessage(0); }}
+        }},RAF_FALLBACK_MS);
       }};
       schedule();
     }}

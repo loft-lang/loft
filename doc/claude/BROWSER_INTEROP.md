@@ -100,7 +100,8 @@ in-world text field and a settings dialog alike. The engine gains general
 - The **asyncify yield**: a suspending import (`loft_gl.loft_gl_swap_buffers`,
   `loft_web.ws_yield`) returns control to the JS event loop and resumes intact.
   Issue #450 fixed the resume pump for hidden/headless pages (an unthrottled
-  `MessageChannel` while hidden, `requestAnimationFrame` while visible).
+  `MessageChannel` while hidden, `requestAnimationFrame` while visible, with a
+  fallback when a visible page is granted no frames).
 - The **target-conditional library + JS bridge** mechanism: a `[wasm.bridge]`
   in `loft.toml` plus a `wasm/host.js`. The `web` library already ships exactly
   this (its `host.js` is where the browser WebSocket lives).

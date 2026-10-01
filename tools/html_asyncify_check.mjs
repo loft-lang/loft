@@ -22,6 +22,11 @@
 //              BEFORE the page runs — the headless / backgrounded-tab
 //              condition where rAF is paused (issue #450).  If the page still
 //              reaches the marker, only the non-rAF pump drove it.
+//   --stalled-raf  A dead requestAnimationFrame on a page that stays VISIBLE:
+//              the browser withholds frames (a throttled or occluded renderer)
+//              without ever setting document.hidden — loft#1830's CI signature,
+//              a visible page stuck at `tick 0`.  Only a pump that does not
+//              wait on rAF alone reaches the marker.
 //
 // Exit 0 if `#out` contains the expected substring, 1 if not (prints the
 // captured `#out`), 2 = SKIP (no chrome binary).
@@ -43,11 +48,12 @@ if (argv.length < 1) {
   process.exit(64);
 }
 const FILE_ARG = argv[0];
-let expect = null, waitMs = 5000, hidden = false, cdpPort = 9555;
+let expect = null, waitMs = 5000, hidden = false, stalledRaf = false, cdpPort = 9555;
 for (let i = 1; i < argv.length; i++) {
   if (argv[i] === '--expect') expect = argv[++i];
   else if (argv[i] === '--wait-ms') waitMs = parseInt(argv[++i], 10);
   else if (argv[i] === '--hidden') hidden = true;
+  else if (argv[i] === '--stalled-raf') stalledRaf = true;
   else if (argv[i] === '--port') cdpPort = parseInt(argv[++i], 10);
   else { console.error('unknown flag: ' + argv[i]); process.exit(64); }
 }
@@ -160,6 +166,11 @@ let exitCode = 0;
         `,
       });
     }
+    if (stalledRaf) {
+      await send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `window.requestAnimationFrame = function(){ return 0; };`,
+      });
+    }
     await send('Page.navigate', { url: URL_ARG });
     // POLL for the expected text rather than sleeping the whole budget and looking once.
     // `--wait-ms` is a CEILING on how long the resume may take, not a measurement of how long
@@ -178,9 +189,9 @@ let exitCode = 0;
       text = await read();
     }
     if (typeof text === 'string' && text.includes(expect)) {
-      console.log(JSON.stringify({ ok: true, hidden, expect }));
+      console.log(JSON.stringify({ ok: true, hidden, stalledRaf, expect }));
     } else {
-      console.error(JSON.stringify({ ok: false, hidden, expect, got: text }, null, 2));
+      console.error(JSON.stringify({ ok: false, hidden, stalledRaf, expect, got: text }, null, 2));
       exitCode = 1;
     }
   } catch (e) {
