@@ -226,4 +226,6 @@ does not see what runs (CONTROL.md).  The user path produced six defects in one 
 **Revisit when.** A user type needs operator syntax that a method and the `_by` functions cannot
 give it readably — and then with a designed spelling (`op <`), never `fn Op…`.  Decided
 2026-10-01 — [record](DESIGN_DECISIONS-history.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function).
+**Guard:** `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` keeps the template half;
+the rest is guarded with its implementation (loft#1833).
 **Catalogue:** @F26 (bounded generics) · `formal/interfaces.md` (G-Sat) · loft#1833 (the work).

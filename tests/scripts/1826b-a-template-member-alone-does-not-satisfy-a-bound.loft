@@ -10,6 +10,8 @@
 // HAS an `OpEq`, which the concrete `a == b` instantiates; content in the generic would
 // answer differently from the concrete site.  The accepting half is
 // `1826-an-operator-reaches-a-template-member-as-its-call-does.loft`.
+// @C132 — a user `fn Op…` is no operator template: this file keeps that half of the decision
+// today; the rest (a user `fn Op…` binds no operator at all) lands with loft#1833.
 //
 // @falsified-at: f143377a8 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1826b-a-template-member-alone-does-not-satisfy-a-bound.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
