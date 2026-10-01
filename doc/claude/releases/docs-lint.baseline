@@ -1,14 +1,10 @@
 # path	rule	count — pinned by `make docs-lint-baseline`; read by `make docs-lint`
 CLAUDE.md	timeline	15
-README.md	hedge	2
 default/01_code.loft	narration	4
 default/01_code.loft	stamp	17
 default/02_files.loft	stamp	3
 default/04_stacktrace.loft	stamp	1
 default/07_reflect.loft	stamp	1
-doc/DEVELOPERS.md	hedge	9
-doc/DEVELOPERS.md	history	2
-doc/DEVELOPERS.md	timeline	1
 doc/PROMPTS.md	hedge	3
 doc/PROMPTS.md	history	1
 doc/claude/API_SURFACE.md	timeline	2
@@ -34,7 +30,7 @@ doc/claude/CONTROL.md	timeline	4
 doc/claude/COPY_DIAGNOSTICS.md	history	1
 doc/claude/COPY_DIAGNOSTICS.md	timeline	5
 doc/claude/COROUTINE.md	timeline	8
-doc/claude/COROUTINE_LAZY_YIELDS.md	timeline	6
+doc/claude/COROUTINE_LAZY_YIELDS.md	timeline	3
 doc/claude/COROUTINE_SAFETY.md	timeline	1
 doc/claude/DATABASE.md	history	4
 doc/claude/DATABASE.md	timeline	17
@@ -79,12 +75,12 @@ doc/claude/LAVITION.md	timeline	16
 doc/claude/LAZY_STORES.md	history	1
 doc/claude/LAZY_STORES.md	timeline	7
 doc/claude/LIBRARY_AUTHORING.md	timeline	8
-doc/claude/LIBRARY_DOC_REVIEW.md	timeline	17
+doc/claude/LIBRARY_DOC_REVIEW.md	timeline	6
 doc/claude/LIBRARY_PUBLISH.md	timeline	2
 doc/claude/LIFETIME.md	history	1
 doc/claude/LIFETIME.md	timeline	15
 doc/claude/LIFETIME_CLOSURES.md	timeline	5
-doc/claude/LOFT.md	timeline	4
+doc/claude/LOFT.md	timeline	3
 doc/claude/LOFT_CONTROL.md	timeline	2
 doc/claude/LOFT_DATA.md	history	1
 doc/claude/LOFT_DATA.md	timeline	5
@@ -120,7 +116,7 @@ doc/claude/REGISTRY_GOVERNANCE.md	timeline	1
 doc/claude/REGISTRY_GOVERNANCE.md	two-h1	1
 doc/claude/REGISTRY_RECOVERY.md	timeline	2
 doc/claude/REGISTRY_SUBMIT.md	timeline	7
-doc/claude/RELEASE.md	timeline	8
+doc/claude/RELEASE.md	timeline	7
 doc/claude/REMOTE_STORES.md	timeline	6
 doc/claude/REPL.md	timeline	1
 doc/claude/RUN_BOUNDS.md	timeline	2
@@ -209,7 +205,6 @@ doc/features/F24.md	hedge	1
 doc/features/F31.md	hedge	1
 doc/features/F4.md	hedge	1
 doc/features/F55.md	hedge	1
-doc/learn-loft.md	hedge	1
 loft-ffi-build/src/lib.rs	stamp	2
 loft-ffi-macros/src/lib.rs	stamp	4
 loft-ffi/src/lib.rs	stamp	6
@@ -272,7 +267,7 @@ src/diagnostic_render.rs	narration	1
 src/diagnostic_render.rs	stamp	4
 src/diagnostics.rs	narration	2
 src/diagnostics.rs	stamp	3
-src/documentation.rs	narration	3
+src/documentation.rs	narration	2
 src/documentation.rs	stamp	1
 src/engine_host.rs	narration	1
 src/engine_host.rs	stamp	7
@@ -379,7 +374,7 @@ src/parser/definitions.rs	narration	11
 src/parser/definitions.rs	stamp	32
 src/parser/dispatch.rs	narration	1
 src/parser/dispatch.rs	stamp	1
-src/parser/expressions.rs	narration	27
+src/parser/expressions.rs	narration	29
 src/parser/expressions.rs	stamp	70
 src/parser/fields.rs	narration	5
 src/parser/fields.rs	stamp	24
@@ -463,10 +458,6 @@ src/wasm.rs	stamp	3
 src/wasm_assets.rs	stamp	1
 src/wasm_debug.rs	narration	2
 src/wasm_threads.rs	stamp	1
-tests/docs/07-vector.loft	hedge	1
-tests/docs/26-closures.loft	hedge	2
-tests/docs/27-coroutines.loft	hedge	1
-tests/docs/35-testing.loft	hedge	1
 tests/fixtures/libs/graphics/native/src/lib.rs	narration	1
 tests/fixtures/libs/graphics/native/src/lib.rs	stamp	2
 tests/fixtures/libs/graphics/native/src/text.rs	stamp	5

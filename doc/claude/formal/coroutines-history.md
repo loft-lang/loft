@@ -293,3 +293,11 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   `yield from` advance asks `next_operands` for its channel.  Guards:
   `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft` and its refused
   twin `1676b-…`.
+
+## Moved from coroutines.md § Conformance on 2026-10-01
+
+- **Lazy, one-per-advance** — every loop whose yields are statements became lazy on native
+  with re-descent (loft#1798); the conformance line cited the issue inline.
+- **Stackful (`G-YieldDepth`)** — the line read *"a `yield` inside a helper called from the
+  generator produces the value and resumes correctly past the helper"* until it was measured,
+  and it does not: such a `yield` is refused on both backends.

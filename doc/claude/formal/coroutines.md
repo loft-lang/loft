@@ -234,8 +234,8 @@ Every deviation this doc has carried is closed; the record is in the companion
   straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
   so an endless one hands out each value as it is asked for — and so does every other loop whose
   yields are STATEMENTS: several per path, one under an `if`/`match` arm with statements after it,
-  one in a nested loop, one beside a `continue`, for every yield type (`p0 g0 g10 p1 g1 g11`,
-  loft#1798).  One shape still runs EAGERLY on native (`y0 y1 g0 g1`): a `yield` inside an
+  one in a nested loop, one beside a `continue`, for every yield type (`p0 g0 g10 p1 g1 g11`).
+  One shape still runs EAGERLY on native (`y0 y1 g0 g1`): a `yield` inside an
   expression, behind an operand the suspend could change (`s = s + { yield x; "b" }`).  The values
   agree and the side effects do not — an interleaving difference COROUTINE.md § CL-9 records as a
   named limitation — and an ENDLESS loop of that shape never hands out a value on native, so make
@@ -244,8 +244,6 @@ Every deviation this doc has carried is closed; the record is in the companion
   preserved with the frame and resumes correctly past it, on both backends.  A `yield` inside a
   helper that is not itself a generator is REFUSED, identically on both backends — *"yield is
   only allowed inside generator functions (return type must be iterator<T>)"*.
-  ⚠ This line read *"a `yield` inside a helper called from the generator produces the value and
-  resumes correctly past the helper"* until it was measured, and it does not.
   [VERIFICATION.md](VERIFICATION.md) had said so in three places — *"deferred G-YieldDepth — a
   `yield` INSIDE a helper (true stackful) needs `yield from`"* — so the two records disagreed
   about the same rule, and this is the one a reader of the rules meets.  A conformance line is a

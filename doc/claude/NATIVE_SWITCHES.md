@@ -287,7 +287,7 @@ borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and 
 
 ## Generators
 
-**`LOFT_NO_REDESCENT=1`** (loft#1798, default-ON, generation time) sends every generator loop
+**`LOFT_NO_REDESCENT=1`** (default-ON, generation time) sends every generator loop
 that RE-DESCENT would lower lazily back to the eager buffer — the whole loop runs in the
 factory before the first value is handed out — and is the first bisect step for a native-only
 wrong answer, leak or rustc error out of a generator loop whose yields are not all on one

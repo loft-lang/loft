@@ -24,12 +24,12 @@ The design for native lazy loop yields.  Part of [COROUTINE.md](COROUTINE.md), w
 > exhaustion and from `drop_stores`), because the whole loop runs before the consumer reads
 > and a handle to a per-iteration record would alias its final state — three yields of
 > {7,17,27} summed to 81. The factory also runs the generator's TAIL (the statements after the
-> last yield, where its scope-exit frees live) once the buffer is filled; it used to drop it,
-> which leaked every persistent heap local and lost a `print` after the loop (loft#1356;
-> guard `tests/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
+> last yield, where its scope-exit frees live) once the buffer is filled, so every persistent
+> heap local is freed and a `print` after the loop runs (guard
+> `tests/scripts/1356-a-record-yielded-from-a-loop-body-is-the-value-at-the-yield.loft`).
 > The sections after § Re-descent are the original design, kept as the map for slice 4.
 
-### Re-descent (slices 2–3, loft#1798)
+### Re-descent
 
 Rust has no jump into a loop or a branch, so a lowering that must resume at an arbitrary yield
 emits the body as the Rust `loop` / `if` / block it is and re-enters it FROM THE TOP
