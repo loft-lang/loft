@@ -3312,6 +3312,29 @@ Effect (pinned layout): −8 to −17 % per routine.  Not available in a debug-a
 which runs the checked stack path.  Guards `tests/scripts/a-stack-that-grows-mid-call-keeps-every-frame.loft`,
 `rpc.rs`'s continue-after-step-back cell, `par_nested`, the `store::tests` refusal pair.
 
+### A crash context is derived, not written per op
+
+```
+  (R-DispatchPublish)  the lean dispatch loop publishes ONE position per op — `alloc_pc`,
+                       which the allocator reads anyway — and registers that field and its
+                       bytecode with the crash report once per loop (`LeanSource`).  Every
+                       reader of "the op this thread is on" (`last_context`, `last_op_name`,
+                       the signal handler, the panic hook) derives the opcode from those two;
+                       the registration's drop publishes the last op as a written context and
+                       restores the registration it replaced, so a reader after the loop, and
+                       a caller's loop after a nested one, still name their op.  The full loop
+                       keeps writing its context per op (it tracks the function).
+```
+
+**In words.** Applied by: interpreter runtime (`crash_report::current_ctx`).  Allowed because
+the position is already written per op for the allocator, and the bytecode the loop runs is a
+field of the `State` that does not move while it runs.  Effect (pinned layout, 2026-10-01):
+−4.6 to −6.4 % instructions and −2.4 to +1.2 % cycles — the write was retired by the store
+buffer beside the op chain, not on it, the same latency-bound picture as removing a third of
+the stack derivations.  Kept for the instructions it frees, not for time it bought.  Guard
+`tests/dispatch_publish.rs`: a native asks mid-run which op it is called from (two calls, two
+positions), and the last op is named after the run.
+
 ## Proposed — rules written before they are built
 
 A proposal states its conditions and effect now, so the analysis that found it is not lost and
