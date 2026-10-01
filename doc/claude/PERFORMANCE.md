@@ -45,6 +45,8 @@ Ask the tool that measures:
 | what got slower or faster than on `main` | `make speed` (a report); `make speed-gate` is the one speed gate |
 | the classic benchmark suite, every lane | `bench/run_bench.sh` |
 | which fn, line or path burns the time | `make profile` — § Profiling a run |
+| the interpreter against native, every routine with its censuses | `make interp-gap` → `target/interp-gap/report.md` |
+| did this change move the WORST routines — interpreter/native and native/Rust, re-timed in seconds to minutes | `make worst` (`scripts/worst.py`): the working set is taken from the last complete `make interp-gap` and `make perf-portal`, so a full run is what redefines it |
 
 The rendered benchmark page for users is [doc/00-performance.html](../00-performance.html).
 
