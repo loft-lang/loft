@@ -182,6 +182,10 @@ impl Parser {
                     for c in cd {
                         ls.push(c.clone());
                     }
+                } else if Self::appends_rendering(tp) {
+                    if let Value::Insert(parts) = self.append_rendering(var_nr, tp, code) {
+                        ls.extend(parts);
+                    }
                 } else if *tp == Type::Character {
                     ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]));
                 } else {
@@ -244,6 +248,8 @@ impl Parser {
             }
         } else if self.format_append_in_place(var_nr, code, false) {
             // `@FR-R-FormatAppend` — the format's parts are written into the destination.
+        } else if Self::appends_rendering(tp) {
+            *code = self.append_rendering(var_nr, tp, code);
         } else if *tp == Type::Character {
             *code = self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]);
         } else {

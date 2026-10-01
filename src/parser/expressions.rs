@@ -3934,11 +3934,14 @@ use a separate collection or add after the loop"
             Type::RefVar(inner) => inner.as_ref(),
             _ => f_type,
         };
+        // A TEXT place's `+=` appends a rendering, so a bracket literal on its right is a
+        // vector of its own (`t += [1, 2]` appends "[1,2]", as `t + [1, 2]` does), never a
+        // list built into the text (loft#1827).
         let compound_record = op != "="
-            && matches!(
+            && (matches!(
                 place_tp.base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
-            );
+            ) || (matches!(place_tp.base(), Type::Text(_)) && self.lexer.peek_token("[")));
         if compound_record {
             *code = Value::Null;
         }
@@ -5829,7 +5832,12 @@ use a separate collection or add after the loop"
                     | (Type::Boolean, Type::Boolean)
                     | (Type::Character, Type::Character)
             ));
-        if !compound_keeps_place {
+        // A TEXT place's `+=` appends the right side's rendering, as `t + x` does, so a right
+        // side that is not text leaves the place a text (loft#1827).
+        let text_appends_rendering = op != "="
+            && matches!(place_tp.base(), Type::Text(_))
+            && !matches!(s_type.base(), Type::Text(_) | Type::Character);
+        if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
@@ -8494,6 +8502,47 @@ use a separate collection or add after the loop"
         f_type
     }
 
+    /// Does `t += x` append the RENDERING of `x` rather than `x` itself — is `x` neither a
+    /// text nor a character?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates,
+    /// and `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827).
+    pub(crate) fn appends_rendering(rhs: &Type) -> bool {
+        let rhs = match rhs {
+            Type::RefVar(inner) => inner.as_ref(),
+            other => other,
+        };
+        !matches!(
+            rhs.base(),
+            Type::Text(_) | Type::Character | Type::Unknown(_) | Type::Null | Type::Never
+        )
+    }
+
+    /// Append the rendering of `value` (of type `tp`) to the text `var_nr`, through the one
+    /// dispatch `"{x}"` interpolation and `t + x` use (`append_data`).  Before, `t += 5`
+    /// was refused on a local and, on a field or an element, appended the integer's BITS as
+    /// if they were text: `r.s += 5` left `r.s` unchanged and `v[1] += 7` appended U+0007.
+    pub(crate) fn append_rendering(&mut self, var_nr: u16, tp: &Type, value: &Value) -> Value {
+        let tp = match tp {
+            Type::RefVar(inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+        let mut ls = Vec::new();
+        self.append_data(tp, &mut ls, var_nr, u16::MAX, value, super::OUTPUT_DEFAULT);
+        // An absent text stays absent, as `t + x` answers null for it and `t += "x"` leaves
+        // it: rendering into the sentinel would make a text of the sentinel and the value.
+        let dest = match self.vars.tp(var_nr) {
+            Type::RefVar(inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+        if matches!(dest, Type::Optional(_)) {
+            // A presence TEST, not a store — @FR-N-Store admits the read.
+            let mut present = Value::Var(var_nr);
+            if self.convert_admitting(&mut present, &dest, &Type::Boolean) {
+                return v_if(present, Value::Insert(ls), Value::Null);
+            }
+        }
+        Value::Insert(ls)
+    }
+
     pub(crate) fn append_to_text(
         &mut self,
         code: &mut Value,
@@ -8556,6 +8605,8 @@ use a separate collection or add after the loop"
         } else if self.format_append_in_place(var_nr, code, true) {
             // `@FR-R-FormatAppend` — the format's parts are written into the destination
             // through their stack twins, this being a `&text` target.
+        } else if Self::appends_rendering(s_type) {
+            *code = self.append_rendering(var_nr, s_type, code);
         } else if s_type == &Type::Character {
             *code = self.cl(
                 "OpAppendStackCharacter",

@@ -22100,6 +22100,11 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
         || name.starts_with("OpPush")
         || name.starts_with("OpAppendStack")
         || name.starts_with("OpClearStack")
+        // Every `OpFormat*` renders INTO the text its first argument names — the `"{x}"`
+        // interpolation, `t + x` and `t += x` all lower to them.  Missing here, a `&text`
+        // parameter whose only write was `t += "{5}"`, `t = t + 5` or `t += 5` was refused
+        // as never modified (loft#1827).
+        || name.starts_with("OpFormat")
         || name == "OpNewRecord"
         || name == "OpAppendCopy"
         || name == "OpAppendVector"
