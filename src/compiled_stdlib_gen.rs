@@ -513,11 +513,11 @@ fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
 }
 
 
-// loft:default/01_code.loft:722
+// loft:default/01_code.loft:721
 #[inline]
 fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:723
+  // loft:default/01_code.loft:722
   return if ((((var_self) as i64) <= ((var_b) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -525,11 +525,11 @@ fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:727
+// loft:default/01_code.loft:726
 #[inline]
 fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:728
+  // loft:default/01_code.loft:727
   return if ((((var_b) as i64) <= ((var_self) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -537,28 +537,28 @@ fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:732
+// loft:default/01_code.loft:731
 #[inline]
 fn t_7integer_clamp(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_lo: i64, mut var_hi: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:733
+  // loft:default/01_code.loft:732
   let _pre_0 = t_7integer_max(cell, var_self, var_lo);
   return t_7integer_min(cell, _pre_0, var_hi)
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:799
+// loft:default/01_code.loft:798
 #[inline]
 fn t_4text_len(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:800
+  // loft:default/01_code.loft:799
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.chars().count() as i64 } }}
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:810
+// loft:default/01_code.loft:809
 #[inline]
 fn t_4text_size(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:811
+  // loft:default/01_code.loft:810
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.len() as i64 } }}
   } /*block_1: integer*/
 
@@ -1677,4 +1677,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 91;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 13236399144303146300;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 4201637581691406654;
+pub(crate) const SOURCE_HASH: u64 = 1936862271667928512;
