@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An element read takes the interpreter's short path only when it is in range, and answers
+// there exactly what the full path answers.  `@FR-R-ElementPath`.
+//
+// `v[i]` on a live vector with `0 <= i < len` reads the collection record and the length once
+// each and builds the element's address itself; everything else — a null or absent vector, an
+// empty one, an index counted from the end, one out of range — takes the full path
+// (`@FR-H-Index`).  So the cells put both kinds side by side, on every element shape whose size
+// changes the address (8-byte integer and float, a three-field struct, text), on a vector that
+// lives in a struct field (a non-zero field position) and inside another vector, and on writes
+// through `v[i] = x`, which are addressed by the same read.  Every expected value is computed
+// by hand.
+//
+// @falsified-at: none — it guards a path no earlier build has.  Falsified by planted defects,
+//   2026-10-01: the length compare taking `<=` (an index equal to the length read past the
+//   end), and the address built with a fixed element size of 8 (the struct and text cells).
+
+struct P {
+  a: integer,
+  b: float,
+  c: text
+}
+
+struct H {
+  name: text,
+  xs: vector<integer>
+}
+
+fn test_integers_in_and_out_of_range() {
+  v = [10, 20, 30, 40];
+  assert(v[0] == 10 && v[3] == 40, "ends {v[0]} {v[3]}");
+  assert(v[-1] == 40 && v[-4] == 10, "from the end {v[-1]} {v[-4]}");
+  assert(!v[4] && !v[-5], "out of range {v[4]} {v[-5]}");
+  i = len(v) - 1;
+  assert(v[i] == 40, "last by variable {v[i]}");
+  i = len(v);
+  assert(!v[i], "one past by variable {v[i]}");
+}
+
+fn test_floats() {
+  f = [1.5, 2.5, 3.5];
+  assert(f[1] == 2.5, "middle {f[1]}");
+  t = 0.0;
+  for k in 0..len(f) {
+    t += f[k];
+  }
+  assert(t == 7.5, "sum {t}");
+}
+
+fn test_structs_are_addressed_by_their_size() {
+  ps = [P { a: 1, b: 0.5, c: "x" }, P { a: 2, b: 1.5, c: "yy" }, P { a: 3, b: 2.5, c: "zzz" }];
+  assert(ps[2].c == "zzz" && ps[1].b == 1.5 && ps[0].a == 1, "fields {ps[2].c} {ps[1].b} {ps[0].a}");
+  assert(ps[-1].a == 3, "from the end {ps[-1].a}");
+  ps[0].a = 7;
+  assert(ps[0].a == 7 && ps[1].a == 2 && ps[2].a == 3, "write {ps[0].a} {ps[1].a} {ps[2].a}");
+}
+
+fn test_texts() {
+  t = ["a", "bb", "ccc"];
+  assert(t[1] == "bb" && t[2] == "ccc" && t[0] == "a", "texts {t[0]} {t[1]} {t[2]}");
+  assert(!t[3], "past the end {t[3]}");
+}
+
+fn test_writes_through_an_index() {
+  v = [10, 20, 30, 40];
+  v[2] = 99;
+  v[0] = v[3] + 1;
+  assert("{v}" == "[41,20,99,40]", "after writes {v}");
+}
+
+fn test_a_vector_in_a_struct_field() {
+  h = H { name: "h", xs: [5, 6, 7] };
+  assert(h.xs[1] == 6 && h.xs[2] == 7, "field elements {h.xs[1]} {h.xs[2]}");
+  assert(!h.xs[3], "past the field's end {h.xs[3]}");
+  n = H { name: "n" };
+  assert(!n.xs[0], "an absent field vector {n.xs[0]}");
+}
+
+fn test_nested_and_empty() {
+  m = [[1, 2], [3, 4, 5]];
+  assert(m[1][2] == 5 && m[0][1] == 2 && m[1][-1] == 5, "nested {m[1][2]} {m[0][1]} {m[1][-1]}");
+  assert(!m[0][2], "past an inner end {m[0][2]}");
+  e: vector<integer> = [];
+  assert(!e[0], "empty {e[0]}");
+}
+
+fn test_a_long_walk() {
+  v: vector<integer> = [];
+  for k in 0..1000 {
+    v += [k];
+  }
+  t = 0;
+  for k in 0..len(v) {
+    t += v[k];
+  }
+  assert(t == 499500, "sum {t}");
+  b = 0;
+  for k in 1..=len(v) {
+    b += v[-k];
+  }
+  assert(b == 499500, "sum from the end {b}");
+}
+
+fn main() {
+  test_integers_in_and_out_of_range();
+  test_floats();
+  test_structs_are_addressed_by_their_size();
+  test_texts();
+  test_writes_through_an_index();
+  test_a_vector_in_a_struct_field();
+  test_nested_and_empty();
+  test_a_long_walk();
+  println("ok");
+}
