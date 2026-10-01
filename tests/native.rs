@@ -510,6 +510,13 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
         let tmp = scratch.join(format!("loft_native_{stem}_{}.rs.tmp", std::process::id()));
         std::fs::write(&tmp, &buf)?;
         std::fs::rename(&tmp, &tmp_rs)?;
+    } else {
+        // Reused unchanged, so its timestamp says when it was last WRITTEN — possibly hours
+        // ago.  `run_native_jobs` sweeps entries older than two minutes when the loft build
+        // changed, and it sweeps AFTER this point, so an untouched source was deleted under
+        // its own job: the first shard after an rlib change failed every script with
+        // "couldn't read …rs".  The timestamp tracks last USE, as it does for the binary.
+        loft::cache::touch_now(&tmp_rs);
     }
 
     let binary = scratch.join(format!("loft_native_{stem}_bin"));
