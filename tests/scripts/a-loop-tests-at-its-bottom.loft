@@ -16,7 +16,12 @@
 // lies below its start, a `while` false at entry.  `--native` never sees the layout.
 //
 // @falsified-at: none — it guards a layout no earlier build has, so no control fails it.
-//   Falsified instead by planted defects, 2026-10-01 (recorded in the commit that added it).
+//   Falsified instead by planted defects, 2026-10-01: the entry jump lost (the body runs
+//   before the first test) fails `test_zero_rounds` (5 rounds where there are none); the
+//   `continue`s never patched (a `continue` does nothing) fails `test_continue_while` (55 for
+//   37); the test jumping back to the entry instead of the body never runs a body and is
+//   killed by the timeout.  `tests/loop_layout.rs` pins the jumps each function carries and
+//   runs these cells under every switch state.
 
 fn below(calls: &integer, n: integer) -> boolean {
   calls += 1;
