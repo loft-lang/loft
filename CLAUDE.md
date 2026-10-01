@@ -42,7 +42,9 @@ cargo run --bin loft -- prog.loft        # run     |  -- repl  |  -- introspect 
 loft debug prog.loft:12 [--lib dir]      # STOP at line 12: read/edit the live frame, step
                                          #   (pipe commands on stdin; `--rpc` = scripted NDJSON)
                                          #   reach for this INSTEAD of adding println — DEBUG.md
-cargo run --bin gendoc                   # regenerate doc/*.html
+make doc                                 # regenerate doc/*.html: fetches the library packages,
+                                         #   then gendoc.  A bare `cargo run --bin gendoc` on a box
+                                         #   without them keeps the committed lib pages
 make ci                                  # fmt → clippy → test (full local gate).  Unreliable
                                          #   here (memory, a sibling gate)?  Run the SAME gate
                                          #   on GitHub, no PR needed: `gh workflow run ci.yml
