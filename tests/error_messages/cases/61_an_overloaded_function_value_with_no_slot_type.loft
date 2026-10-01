@@ -1,0 +1,4 @@
+// An overloaded function bound with nothing to say which definition is meant: refused by name.
+fn bump(x: integer) -> integer { x + 1 }
+fn bump(x: text) -> text { "{x}!" }
+fn main() { f = bump; println("{f(1)}"); }

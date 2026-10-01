@@ -114,6 +114,77 @@ impl Parser {
     /// local's name (the return type's deps still name that attr).  Without this
     /// a value-returning fn mis-types as `fn(integer, S) -> S` and can't be used
     /// as a `fn` value.
+    /// The member of the overload set `set` a function VALUE names: the one whose visible
+    /// parameter types and return type are the expected `fn(…) -> R` (the slot's type, the
+    /// same push a short lambda reads, [`Self::lambda_hint`]).  With no member that fits, or
+    /// more than one, or no expected function type at all, the name cannot stand for one
+    /// function: `None`, and on the second pass it is refused, naming the definitions and
+    /// the spelling that picks one.  The first pass never guesses — a guessed member would
+    /// type the binding it lands in, and the second pass would read that type back as the
+    /// expectation and pick the guess as if the author had.
+    fn overload_as_value(&mut self, set: u32, name: &str) -> Option<u32> {
+        let members = self.data.overload_routines(self.data.def(set).name());
+        if members.is_empty() {
+            return None;
+        }
+        let hint = self.lambda_hint();
+        let fits: Vec<u32> = match &hint {
+            Type::Function(args, ret, ..) => members
+                .iter()
+                .copied()
+                .filter(|&m| {
+                    // A part the expectation leaves open (`map`'s result, still being
+                    // inferred, reads `unknown`) constrains nothing.
+                    let fits = |have: &Type, want: &Type| {
+                        want.base().is_unknown() || have.base().is_equal(want.base())
+                    };
+                    let have = self.fn_ref_arg_types(m);
+                    have.len() == args.len()
+                        && have.iter().zip(args).all(|(h, a)| fits(h, a))
+                        && fits(self.data.def(m).returned(), ret)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if fits.len() == 1 {
+            return Some(fits[0]);
+        }
+        if !self.first_pass {
+            let sigs: Vec<String> = members
+                .iter()
+                .map(|&m| {
+                    let args: Vec<String> = self
+                        .fn_ref_arg_types(m)
+                        .iter()
+                        .map(|t| self.data.display_type_name(t))
+                        .collect();
+                    format!(
+                        "{name}({}) -> {}",
+                        args.join(", "),
+                        self.data.display_type_name(self.data.def(m).returned())
+                    )
+                })
+                .collect();
+            let why = if matches!(hint, Type::Function(..)) {
+                format!(
+                    "none of its definitions is the `{}` expected here",
+                    self.data.display_type_name(&hint)
+                )
+            } else {
+                "nothing here says which one is meant".to_string()
+            };
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{name}` has {} definitions — {} — and {why}.  A function value names one: \
+                 wrap the call you mean, `fn(x: …) -> … {{ {name}(x) }}`",
+                members.len(),
+                sigs.join(", ")
+            );
+        }
+        None
+    }
+
     fn fn_ref_arg_types(&self, fn_d_nr: u32) -> Vec<Type> {
         self.fn_ref_visible_args(fn_d_nr)
             .into_iter()
@@ -1134,6 +1205,31 @@ impl Parser {
                 // read as "already reported".
                 t = if reported_method {
                     Type::Never
+                } else if matches!(self.data.def_type(dnr), DefType::Dynamic)
+                    && !self.data.overload_routines(name).is_empty()
+                {
+                    // An OVERLOADED free function is found here as its set — a `Dynamic`
+                    // def under the plain name — and fell through to the same silent null:
+                    // the call it was passed to then reported a missing argument
+                    // (loft#1829).  As a value the name stands for the member whose
+                    // signature the slot expects.
+                    match self.overload_as_value(dnr, name) {
+                        Some(member) => {
+                            *code = Value::Int(member as i32);
+                            self.data.def_used(member);
+                            self.record_sandbox_fn_ref(member);
+                            Type::Function(
+                                self.fn_ref_arg_types(member),
+                                Box::new(self.data.def(member).returned().clone()),
+                                crate::data::Deps::none(),
+                                self.fn_ref_consts(member),
+                            )
+                        }
+                        // Pass 1 leaves it undecided; pass 2 has reported it, and `Never`
+                        // keeps the call check from adding a second error for one mistake.
+                        None if self.first_pass => Type::Unknown(0),
+                        None => Type::Never,
+                    }
                 } else {
                     Type::Null
                 };
