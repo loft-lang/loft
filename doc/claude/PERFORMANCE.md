@@ -748,10 +748,10 @@ loop reads a second byte `ext` and dispatches `OPERATORS[255 + ext]` (`emit_op`)
 
 There are two loops in `execute_argv`.  The **lean loop** runs whenever nothing watches
 individual ops, and does per op only what an ordinary run needs: publish the allocation site
-(`alloc_pc`), publish the op and its position for a crash report
-(`crash_report::set_dispatch_op` — not the function, whose read of the call stack cost 2–4 % of
-the cycles, and which the report's `at:` line names anyway; the labels are set once per loop),
-dispatch, and ONE test of `Stores::dispatch_stop`, which every rare event that ends the loop —
+(`alloc_pc`) — which is also the crash report's position: the loop registers that field and its
+bytecode once (`crash_report::LeanSource`) and a report derives the op from them, so nothing
+else is written per op (formal/rewrites.md `(R-DispatchPublish)`; the function is not tracked,
+the report's `at:` line names it) — dispatch, and ONE test of `Stores::dispatch_stop`, which every rare event that ends the loop —
 a runtime error, a frame yield, a `par` worker's fault, a debugger arming — sets where it
 happens (formal/rewrites.md `(R-DispatchStop)`).  Testing the five events after every op
 instead was 15–24 % of a loop's time.  An operand read (`State::code`) keeps its bounds
