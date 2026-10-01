@@ -292,6 +292,25 @@ pub fn set_dispatch(pc: u32, op_code: u16, fn_d_nr: u32) {
     });
 }
 
+/// The lean dispatch loop's publication: the op and where it starts, without the function.
+///
+/// Naming the function means reading the call stack on every op, and the lean loop runs
+/// only while nothing watches individual ops — where the only reader of the function is a
+/// crash report, whose source position already names it.  Measured 2026-10-01, the call-stack
+/// read and the wider write were 2–4 % of an interpreted run's cycles.  `fn_d_nr` reads
+/// `u32::MAX` ("not tracked"); the full loop, which every per-op instrument switches to,
+/// publishes it through [`set_dispatch`].
+#[inline]
+pub fn set_dispatch_op(pc: u32, op_code: u16) {
+    LAST_CTX.with(|c| {
+        c.set(Ctx {
+            pc,
+            fn_d_nr: u32::MAX,
+            op_code,
+        });
+    });
+}
+
 /// Read the last-dispatched opcode context on this thread.
 /// Returns (pc, op_code, fn_d_nr).  Used by debug sentinels (e.g.
 /// the `put_stack`/`get_stack` DbRef-bounds check) to report which
@@ -575,9 +594,14 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
         let _ = w.u32(ctx.pc);
         let _ = w.str("\n  fn:       ");
         let _ = w.str(fn_label);
-        let _ = w.str(" (d_nr=");
-        let _ = w.u32(ctx.fn_d_nr);
-        let _ = w.str(")\n");
+        // The lean loop does not track the function (`set_dispatch_op`); the `at:` line
+        // below names it.
+        if ctx.fn_d_nr != u32::MAX {
+            let _ = w.str(" (d_nr=");
+            let _ = w.u32(ctx.fn_d_nr);
+            let _ = w.str(")");
+        }
+        let _ = w.str("\n");
         // Plan-07 phase 3 — emit `at file:line:col` when the source
         // span lookup succeeded.  Truncate file path to fit; the
         // user can still grep for it.
