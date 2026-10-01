@@ -16649,6 +16649,20 @@ fn run() -> integer { nested(\"n\").v + nested(\"x\").v }"
 // Vector non-`&` reassignment REBINDS locally (leaves the caller untouched),
 // like the struct case — fixed by P2.4 (vector_db hands a rebind param a fresh
 // `__vdb` backing; the witness frees it at exit).
+/// loft#1836 / loft#1816 — a whole-value write through a `&` link to a KEYED collection writes
+/// the source (`(B-Ref-Write)`), so it is neither a dead assignment nor an unread variable.  A
+/// keyed link is never in `amp_vector_locals`; asked only that, the lints reported both.  No
+/// warning is expected, and the value proves the write landed.
+#[test]
+fn a_keyed_link_whole_write_is_not_a_dead_store() {
+    code!(
+        "struct Ek { k: integer }
+fn check() -> integer { h: hash<Ek[k]> = [Ek { k: 1 }]; c = &h; c = [Ek { k: 2 }, Ek { k: 3 }]; len(h) }"
+    )
+    .expr("check()")
+    .result(Value::Int(2));
+}
+
 #[test]
 fn pln87_vector_param_reassign_is_local() {
     code!(

@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1816 — the CURED half of a pair: `1816-the-printed-cure-is-reported.loft` with the cure
+// its warnings print applied (`b_…: &…`).  The program must now do what the cure promised —
+// the caller sees the new value — for every kind, on both backends, with no warning left.
+// Getting there fixed loft#1836's `&hash<…>` list literal (refused as a retype) and a
+// `vector<T>?` parameter's rebind.
+//
+// @falsified-at: 22ebfad8 → here (exit 1 → 0): on the control the file is refused at
+//   compile — `b_hash = [Ek {…}]` through `&hash<Ek[k]>` ("cannot change type … to
+//   vector<Ek>"), on both backends.
+//   CHANNEL: COMPILE (exit).
+//   WITNESS: `Variable 'b_hash' cannot change type from &hash<Ek[k]> to vector<Ek>`, exit 1, on both backends.
+//   HOLDS: the warnings — none on either tree.
+struct S { k: integer }
+struct Ek { k: integer }
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn shv(x: Sh?) -> integer { if x == null { return -1; } match x ?? Ci { r: -2 } { Ci { r } => r, Sq { s } => 100 + s } }
+fn reset_int(b_int: &integer) { b_int = 5; }
+fn reset_vec(b_vec: &vector<integer>) { b_vec = [5, 6]; }
+fn reset_vecq(b_vecq: &vector<integer>?) { b_vecq = [5, 6]; }
+fn reset_st(b_st: &S) { b_st = S { k: 5 }; }
+fn reset_stq(b_stq: &S?) { b_stq = S { k: 5 }; }
+fn reset_txt(b_txt: &text) { b_txt = "zz"; }
+fn reset_txtq(b_txtq: &text?) { b_txtq = "zz"; }
+fn reset_hash(b_hash: &hash<Ek[k]>) { b_hash = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn reset_hashq(b_hashq: &hash<Ek[k]>?) { b_hashq = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn reset_en(b_en: &Sh) { b_en = Sq { s: 5 }; }
+fn reset_enq(b_enq: &Sh?) { b_enq = Sq { s: 5 }; }
+fn main() {
+  v_int: integer = 1;
+  reset_int(v_int);
+  assert("{v_int}" == "5", "int: {v_int}");
+  v_vec: vector<integer> = [1];
+  reset_vec(v_vec);
+  assert("{len(v_vec)}" == "2", "vec: {len(v_vec)}");
+  v_vecq: vector<integer>? = [1];
+  reset_vecq(v_vecq);
+  assert("{len(v_vecq ?? [])}" == "2", "vecq: {len(v_vecq ?? [])}");
+  v_st: S = S { k: 1 };
+  reset_st(v_st);
+  assert("{v_st.k}" == "5", "st: {v_st.k}");
+  v_stq: S? = S { k: 1 };
+  reset_stq(v_stq);
+  assert("{(v_stq ?? S { k: -1 }).k}" == "5", "stq: {(v_stq ?? S { k: -1 }).k}");
+  v_txt: text = "a";
+  reset_txt(v_txt);
+  assert("{v_txt}" == "zz", "txt: {v_txt}");
+  v_txtq: text? = "a";
+  reset_txtq(v_txtq);
+  assert("{v_txtq ?? "-"}" == "zz", "txtq: {v_txtq ?? "-"}");
+  v_hash: hash<Ek[k]> = [Ek { k: 1 }];
+  reset_hash(v_hash);
+  assert("{len(v_hash)}" == "2", "hash: {len(v_hash)}");
+  v_hashq: hash<Ek[k]>? = [Ek { k: 1 }];
+  reset_hashq(v_hashq);
+  assert("{len(v_hashq ?? [])}" == "2", "hashq: {len(v_hashq ?? [])}");
+  v_en: Sh = Ci { r: 1 };
+  reset_en(v_en);
+  assert("{shv(v_en)}" == "105", "en: {shv(v_en)}");
+  v_enq: Sh? = Ci { r: 1 };
+  reset_enq(v_enq);
+  assert("{shv(v_enq)}" == "105", "enq: {shv(v_enq)}");
+}
+

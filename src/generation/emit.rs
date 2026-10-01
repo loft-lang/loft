@@ -461,7 +461,7 @@ impl Output<'_> {
                     // arm above reads `*var_p`.  Its source is a frame local, never absent.
                     return write!(w, "unsafe {{ *var_{var_name} }}");
                 } else if let Type::RefVar(inner) = variables.tp(var)
-                    && matches!(inner.base(), Type::Reference(..))
+                    && matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _))
                     && self.local_record_link.contains(&var)
                 {
                     // loft#1371 — a local `&struct` link built from `OpCreateStack` holds

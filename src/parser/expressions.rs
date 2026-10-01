@@ -3352,16 +3352,16 @@ use a separate collection or add after the loop"
     }
 
     /// Does `x = …` on `v` write THROUGH a link rather than rebind `v` (`@FR-B-Ref-Write`)?  A
-    /// `&` parameter or annotated `&` local is a `RefVar`; a vector local linked by `c = &n`
-    /// is a plain vector registered in `amp_vector_locals`; a keyed collection linked the same
-    /// way carries `amp_container_link` (loft#1836 — without it `c = &h; c = [..]` was
-    /// reported dead and never-read); a link to a text field or element is a store text link.
+    /// `&` parameter or annotated `&` local is a `RefVar`; a collection local linked by `c = &h`
+    /// carries the container-link mark (a keyed one is never in `amp_vector_locals`, and was
+    /// reported as a dead store — loft#1836); a vector link and its source are registered in
+    /// `amp_vector_locals`; a link to a text field or element is a store text link.
     fn assign_writes_through(&self, v: u16) -> bool {
         // Through `base()` (`@FR-N-Shape`): a link to a `vector<T>?` is a link all the same.
         let tp = self.vars.tp(v).base();
         matches!(tp, Type::RefVar(_))
             || self.vars.is_store_text_link(v)
-            || (crate::parser::vectors::is_keyed(tp) && self.vars.is_amp_container_link(v))
+            || self.vars.is_amp_container_link(v)
             || (matches!(tp, Type::Vector(..)) && {
                 // A scan rather than a keyed lookup: the key is an owned `String`, and building
                 // one per assignment is an allocation the front end does not otherwise make.
@@ -3942,10 +3942,12 @@ use a separate collection or add after the loop"
         // rebind infra).  `+=` (op != "="), and `v = v + [..]` / `v = other` (RHS
         // is not a bare literal), keep the caller backing.  A `&`/RefVar vector
         // param is handled earlier by `assign_refvar_vector`.
+        // Through `base()` (`@FR-N-Shape`): a `vector<T>?` parameter rebinds locally too —
+        // asked bare it built the literal into the CALLER's store (loft#1836).
         if !self.first_pass
             && op == "="
             && var_nr != u16::MAX
-            && matches!(f_type, Type::Vector(_, _))
+            && matches!(f_type.base(), Type::Vector(_, _))
             && self.vars.is_argument(var_nr)
             && !self.vars.is_compiler_generated(var_nr)
             && !self.is_hidden_param(var_nr)
@@ -3963,7 +3965,7 @@ use a separate collection or add after the loop"
         let amp_vector_replace = !self.first_pass
             && op == "="
             && var_nr != u16::MAX
-            && matches!(f_type, Type::RefVar(inner) if matches!(**inner, Type::Vector(_, _)))
+            && matches!(f_type.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Vector(_, _)))
             && self.vars.is_argument(var_nr)
             && self.lexer.peek_token("[");
         let prev_read_target = std::mem::replace(&mut self.expected, f_type.clone());
@@ -4391,7 +4393,11 @@ use a separate collection or add after the loop"
             // variable as a link over a value and read the buffer as a stack ref
             // (loft#1371).  A VECTOR source keeps the DbRef share below — it aliases the
             // element writes and the appends already — and only its whole-value write
-            // needs the link.
+            // needs the link.  A STRUCT-ENUM source is a heap record like a struct's, and the
+            // `&` parameter carries it; left out of this list its local `&` was dropped and
+            // the bind copied, so `c = &n; c = Sq {…}` left `n` alone (loft#1836).  A LOCAL
+            // link only: a `reference<E>` field or element given `&e` holds the record, as it
+            // always has (`1579-…`).
             let stack_src = match *code.unspan() {
                 Value::Var(src)
                     if is_scalar(self.vars.tp(src))
@@ -4401,7 +4407,9 @@ use a separate collection or add after the loop"
                                 | Type::Tuple(_)
                                 | Type::Text(_)
                                 | Type::Function(..)
-                        ) =>
+                        )
+                        || (var_nr != u16::MAX
+                            && matches!(self.vars.tp(src).base(), Type::Enum(_, true, _))) =>
                 {
                     Some(src)
                 }
@@ -4503,7 +4511,10 @@ use a separate collection or add after the loop"
                 // NON-OWNING: the borrow fact rides `deps` (@FR-O-Borrow), so the source
                 // frees its store and the link frees nothing.  A scalar inner carries no
                 // `Deps` slot and owns no store, so there is no free decision to derive.
-                let is_ref = matches!(inner, Type::Reference(..) | Type::Text(_));
+                let is_ref = matches!(
+                    inner.base(),
+                    Type::Reference(..) | Type::Enum(_, true, _) | Type::Text(_)
+                );
                 // @C118 — the slot a null collection local needs before a link can share it.
                 let mut ls = self.null_local_slot(src);
                 let create = self.cl("OpCreateStack", &[Value::Var(src)]);
@@ -7677,9 +7688,12 @@ use a separate collection or add after the loop"
                     // described a link that was not there and every read of `pe` derefed a
                     // vector buffer as a stack ref — an interpreter panic (loft#1371).  A
                     // `&vector` PARAMETER keeps its `RefVar`: there the link IS the call
-                    // ABI.  `vector<T>?` is deliberately not matched here, so it still
-                    // reaches the nullable-link refusal below (loft#1372).
-                    if matches!(tp, Type::Vector(_, _)) {
+                    // ABI.  Through `base()`: a `&vector<T>?` link is its `&vector<T>` twin
+                    // over a nullable slot (D-bind-17, loft#1372), and kept as a `RefVar` it
+                    // was the same link-that-was-not-there — a garbage length on the
+                    // interpreter, a rustc type error on native (loft#1836).  A KEYED collection
+                    // link is the same shared handle (`c = &h`), so its annotated spelling is too.
+                    if crate::parser::vectors::is_collection(tp.base()) {
                         tp
                     } else {
                         // D-tup-2 — the SAME admitted-element gate the signature uses;
@@ -10036,8 +10050,11 @@ use a separate collection or add after the loop"
             && self
                 .amp_vector_locals
                 .contains(&(self.context, self.vars.name(var_nr).to_string()));
-        let elm_tp = match f_type {
-            Type::RefVar(inner) => match inner.as_ref() {
+        // Through `base()` at both levels (`@FR-N-Shape`): a link to a `vector<T>?` is a link to
+        // a vector, and its write replaces the source's contents as any `&τ` write does
+        // (`(B-Ref-Write)`, `(B-Ref-Uniform)`; loft#1836 — it re-pointed the link at a copy).
+        let elm_tp = match f_type.base() {
+            Type::RefVar(inner) => match inner.base() {
                 Type::Vector(elm_tp, _) => elm_tp.clone(),
                 _ => return false,
             },
@@ -10054,7 +10071,7 @@ use a separate collection or add after the loop"
         }
         // A non-vector right-hand side is a type error the general path reports; do not
         // lower it to a shape-mismatched `OpAppendVector` here.
-        if op == "=" && !matches!(s_type, Type::Vector(_, _) | Type::RefVar(_)) {
+        if op == "=" && !matches!(s_type.base(), Type::Vector(_, _) | Type::RefVar(_)) {
             return false;
         }
         if self.first_pass {

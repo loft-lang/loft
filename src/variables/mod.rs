@@ -2227,7 +2227,8 @@ impl Function {
     /// Call this on every `=` assignment to a user variable during the second pass.
     pub fn track_write(&mut self, var_nr: u16, lexer: &mut Lexer) {
         let var = &self.variables[var_nr as usize];
-        if var.name.starts_with('_')
+        // A `text` parameter's promoted shadow is the parameter (`lint_name`), not a temporary.
+        if (var.name.starts_with('_') && var.promoted_from == u16::MAX)
             || var.name.contains('#')
             || var.const_binding
             || var.value_const
@@ -2262,7 +2263,7 @@ impl Function {
             // it: the same dead store as below, where the overwritten write is the call's.
             // Replacing a plain parameter rebinds the local only (calls.md F-ParamRebind), so
             // the caller's value was neither read nor changed.
-            let name = var.name.clone();
+            let name = self.lint_name(var_nr).to_string();
             lexer.to(var.write_source);
             diagnostic!(
                 lexer,
@@ -2292,7 +2293,7 @@ impl Function {
             self.variables[var_nr as usize].incoming_reported = true;
         } else if var.write_source != (0, 0) && var.reads() == var.uses_at_write && !var.captured {
             // Variable was written before but not read since — dead assignment
-            let name = var.name.clone();
+            let name = self.lint_name(var_nr).to_string();
             let prev_source = var.write_source;
             lexer.to(prev_source);
             diagnostic!(
@@ -2329,21 +2330,36 @@ impl Function {
     /// return buffer is an argument too (calls.md F-Ret), and its incoming value is the
     /// caller's empty place, there to be filled.
     pub fn seed_incoming_writes(&mut self, data: &Data, d_nr: u32) {
-        for var in &mut self.variables {
-            if !var.argument
-                || !Self::declared_parameter(data, d_nr, &var.name)
-                || var.name.starts_with('_')
-                || var.name.contains('#')
-                || var.const_binding
-                || var.value_const
-                || var.caller_hidden_buf
-                || matches!(var.type_def.base(), Type::RefVar(_))
-            {
-                continue;
+        for nr in 0..self.variables.len() {
+            let eligible = {
+                let var = &self.variables[nr];
+                let name = self.lint_name(nr as u16);
+                (var.argument || var.promoted_from != u16::MAX)
+                    && Self::declared_parameter(data, d_nr, name)
+                    && !name.starts_with('_')
+                    && !name.contains('#')
+                    && !var.const_binding
+                    && !var.value_const
+                    && !var.caller_hidden_buf
+                    && !matches!(var.type_def.base(), Type::RefVar(_))
+            };
+            if eligible {
+                let var = &mut self.variables[nr];
+                var.uses_at_write = var.reads();
+                var.write_source = var.source;
+                var.incoming_seed = true;
             }
-            var.uses_at_write = var.reads();
-            var.write_source = var.source;
-            var.incoming_seed = true;
+        }
+    }
+
+    /// The name the dead-store lints speak of `v` by: a `text` parameter's promoted shadow
+    /// (`__tp_<name>`, the local its first write makes) IS that parameter to the author.
+    fn lint_name(&self, v: u16) -> &str {
+        let var = &self.variables[v as usize];
+        if var.promoted_from == u16::MAX {
+            &var.name
+        } else {
+            &self.variables[var.promoted_from as usize].name
         }
     }
 
@@ -4288,12 +4304,60 @@ impl Function {
                 .any(|a| !a.hidden && a.name == name)
     }
 
+    /// A parameter's last write that nothing reads afterwards — see `test_used`.
+    fn unread_last_write(var: &Variable) -> bool {
+        !var.incoming_seed
+            && !var.caller_hidden_buf
+            && !matches!(var.type_def.base(), Type::RefVar(_))
+            && var.write_source != (0, 0)
+            && var.reads() == var.uses_at_write
+            && !var.captured
+    }
+
+    fn report_unread_last_write(lexer: &mut Lexer, var: &Variable, spelled: &str) {
+        lexer.to(var.write_source);
+        diagnostic!(
+            lexer,
+            Level::Warning,
+            code = "dead-assignment",
+            "Dead assignment — '{}' is never read after this, and a parameter's \
+             assignment stays in this function",
+            spelled,
+        );
+        lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("declare the parameter `{spelled}: &…`"),
+            condition: Some("the caller is meant to see the new value".to_string()),
+            edit: None,
+            concept: "reference",
+            concept_ref: "@F21",
+        });
+        lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "delete the assignment".to_string(),
+            condition: Some("nothing needs the new value".to_string()),
+            edit: None,
+            concept: "dead-code lint",
+            concept_ref: "@F100",
+        });
+    }
+
     pub fn test_used(&self, lexer: &mut Lexer, data: &Data, body: &Value, d_nr: u32) {
         for (nr, var) in self.variables.iter().enumerate() {
             // A `#` marks a name the compiler made (`i#index`), except the per-occurrence
             // binding `name#N` — a second `for i`, a pattern's `e` — which is the user's `i`
             // or `e` and is reported under that spelling.
             let spelled = self.written_name(u16::try_from(nr).unwrap_or(u16::MAX));
+            // A `text` parameter's promoted shadow carries the parameter's writes (its first one
+            // made it), so the parameter's last-write report is asked of the shadow, under the
+            // parameter's name; nothing else is (loft#1816).
+            if var.promoted_from != u16::MAX {
+                let name = self.lint_name(u16::try_from(nr).unwrap_or(u16::MAX));
+                if Self::declared_parameter(data, d_nr, name) && Self::unread_last_write(var) {
+                    Self::report_unread_last_write(lexer, var, name);
+                }
+                continue;
+            }
             if var.name.starts_with('_') || spelled.contains('#') {
                 continue;
             }
@@ -4366,39 +4430,10 @@ impl Function {
             // promoted return buffer is the caller's place (calls.md F-Ret), never a dead store,
             // and so is any argument the signature does not declare.
             if var.argument
-                && !var.incoming_seed
-                && !var.caller_hidden_buf
                 && Self::declared_parameter(data, d_nr, &var.name)
-                && !matches!(var.type_def.base(), Type::RefVar(_))
-                && var.write_source != (0, 0)
-                && var.reads() == var.uses_at_write
-                && !var.captured
+                && Self::unread_last_write(var)
             {
-                lexer.to(var.write_source);
-                diagnostic!(
-                    lexer,
-                    Level::Warning,
-                    code = "dead-assignment",
-                    "Dead assignment — '{}' is never read after this, and a parameter's \
-                     assignment stays in this function",
-                    spelled,
-                );
-                lexer.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Conditional,
-                    title: format!("declare the parameter `{spelled}: &…`"),
-                    condition: Some("the caller is meant to see the new value".to_string()),
-                    edit: None,
-                    concept: "reference",
-                    concept_ref: "@F21",
-                });
-                lexer.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Conditional,
-                    title: "delete the assignment".to_string(),
-                    condition: Some("nothing needs the new value".to_string()),
-                    edit: None,
-                    concept: "dead-code lint",
-                    concept_ref: "@F100",
-                });
+                Self::report_unread_last_write(lexer, var, spelled);
             }
             if var.reads() == 0
                 && !var.captured

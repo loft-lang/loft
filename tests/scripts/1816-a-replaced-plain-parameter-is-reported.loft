@@ -18,6 +18,7 @@
 //   CHANNEL: the WARNING TEXT and COUNT, and nothing else — falsify has no warning column
 //   (GUARDS.md § A guard that never failed is not a guard), so this was counted by hand,
 //   --interpret and --native both, against the declared expectations.
+//   WITNESS: 1 warning (`Parameter n is never read`) where the file expects 11.
 //   HOLDS: every asserted value is identical on both trees and both backends; the bytecode
 //   and the generated Rust of the medium front-end corpus are byte-identical too.
 //

@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1816 — the REPORTED half of a pair: a plain parameter replaced and never read, over
+// every heap kind the warnings can fire on (record, list, keyed, struct enum, text — each with
+// and without `?`) and a scalar.  Each reports both warnings, each names the cure `b_…: &…`,
+// and the caller keeps its value (formal/calls.md F-ParamRebind) — asserted.  The CURED half,
+// `1816-the-printed-cure-does-what-it-promises.loft`, is this program with that cure applied.
+// The owner's rule: a cure we print must be a path that works.
+//
+// @falsified-at: 22ebfad8 → here (warnings 4 → 22, exit 1 → 0): on the control only `b_int`,
+//   `b_stq`, `b_en` and `b_enq` were reported, as `Parameter … is never read` with no cure
+//   naming `&`, and `vecq` failed its assertion — a `vector<T>?` parameter's literal was built into the
+//   CALLER's store (2, not 1), on both backends.
+//   CHANNEL: the WARNING COUNT and the `vecq` assertion (exit).
+//   WITNESS: warnings 4 where the file expects 22; `assertion failed: vecq: 2`.
+//   HOLDS: every other value is unchanged on both trees.
+// @EXPECT_WARNING: The value parameter 'b_int' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_int' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_vec' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_vec' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_vecq' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_vecq' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_st' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_st' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_stq' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_stq' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_txt' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_txt' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_txtq' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_txtq' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_hash' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_hash' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_hashq' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_hashq' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_en' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_en' is never read after this
+// @EXPECT_WARNING: The value parameter 'b_enq' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b_enq' is never read after this
+struct S { k: integer }
+struct Ek { k: integer }
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn shv(x: Sh?) -> integer { if x == null { return -1; } match x ?? Ci { r: -2 } { Ci { r } => r, Sq { s } => 100 + s } }
+fn reset_int(b_int: integer) { b_int = 5; }
+fn reset_vec(b_vec: vector<integer>) { b_vec = [5, 6]; }
+fn reset_vecq(b_vecq: vector<integer>?) { b_vecq = [5, 6]; }
+fn reset_st(b_st: S) { b_st = S { k: 5 }; }
+fn reset_stq(b_stq: S?) { b_stq = S { k: 5 }; }
+fn reset_txt(b_txt: text) { b_txt = "zz"; }
+fn reset_txtq(b_txtq: text?) { b_txtq = "zz"; }
+fn reset_hash(b_hash: hash<Ek[k]>) { b_hash = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn reset_hashq(b_hashq: hash<Ek[k]>?) { b_hashq = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn reset_en(b_en: Sh) { b_en = Sq { s: 5 }; }
+fn reset_enq(b_enq: Sh?) { b_enq = Sq { s: 5 }; }
+fn main() {
+  v_int: integer = 1;
+  reset_int(v_int);
+  assert("{v_int}" == "1", "int: {v_int}");
+  v_vec: vector<integer> = [1];
+  reset_vec(v_vec);
+  assert("{len(v_vec)}" == "1", "vec: {len(v_vec)}");
+  v_vecq: vector<integer>? = [1];
+  reset_vecq(v_vecq);
+  assert("{len(v_vecq ?? [])}" == "1", "vecq: {len(v_vecq ?? [])}");
+  v_st: S = S { k: 1 };
+  reset_st(v_st);
+  assert("{v_st.k}" == "1", "st: {v_st.k}");
+  v_stq: S? = S { k: 1 };
+  reset_stq(v_stq);
+  assert("{(v_stq ?? S { k: -1 }).k}" == "1", "stq: {(v_stq ?? S { k: -1 }).k}");
+  v_txt: text = "a";
+  reset_txt(v_txt);
+  assert("{v_txt}" == "a", "txt: {v_txt}");
+  v_txtq: text? = "a";
+  reset_txtq(v_txtq);
+  assert("{v_txtq ?? "-"}" == "a", "txtq: {v_txtq ?? "-"}");
+  v_hash: hash<Ek[k]> = [Ek { k: 1 }];
+  reset_hash(v_hash);
+  assert("{len(v_hash)}" == "1", "hash: {len(v_hash)}");
+  v_hashq: hash<Ek[k]>? = [Ek { k: 1 }];
+  reset_hashq(v_hashq);
+  assert("{len(v_hashq ?? [])}" == "1", "hashq: {len(v_hashq ?? [])}");
+  v_en: Sh = Ci { r: 1 };
+  reset_en(v_en);
+  assert("{shv(v_en)}" == "1", "en: {shv(v_en)}");
+  v_enq: Sh? = Ci { r: 1 };
+  reset_enq(v_enq);
+  assert("{shv(v_enq)}" == "1", "enq: {shv(v_enq)}");
+}
+

@@ -1225,6 +1225,10 @@ parses; ordinary runs keep the cache.
 
 ### Smaller things you may notice
 
+- A `&` link to a list that may be absent (`vector<T>?`) writes through, as one to a list
+  that may not: `c = &n; c = a` used to point `c` at a copy and leave `n` alone, the annotated
+  `c: &vector<T>? = n` read a wrong length (and did not compile with `--native`), and `p = [1,
+  2, 3]` through a `&vector<T>?` parameter appended instead of replacing.
 - A name you write that starts with `_` is yours.  `fn f(_b: Box) { _b = Box { n: 1 }; }`
   changed the CALLER's record, where `fn f(b: Box)` never does, and `_x = S { a: _x.b }` read
   the record before its old fields were kept — because the compiler took any `_` name for one

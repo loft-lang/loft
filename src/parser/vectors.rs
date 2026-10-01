@@ -925,11 +925,29 @@ impl Parser {
             if known_receiver {
                 *val = Value::Null;
             }
-            let orig_lhs = if known_receiver { None } else { orig_lhs };
+            // A `&` link to a KEYED collection (`p: &hash<K[k]>`, `?` or not) is not a place to
+            // build the literal in: it names the source's store.  Built in an accumulator of its
+            // own at the keyed type, the literal is a value the assignment writes THROUGH the
+            // link (`(B-Ref-Write)`), as `p = other` already is.  Built into the link against
+            // its `&` type, no keyed branch recognised it, a `vector<K>` came out, and the
+            // write was refused as a retype (loft#1836).
+            let link_keyed = matches!(var_tp.base(), Type::RefVar(_)) && keyed_kind(var_tp);
+            if link_keyed {
+                *val = Value::Null;
+            }
+            let orig_lhs = if known_receiver || link_keyed {
+                None
+            } else {
+                orig_lhs
+            };
             let seeded;
             let unseeded = Type::Unknown(0);
+            let link_tp;
             let elem_tp = if known_receiver {
                 &unseeded
+            } else if link_keyed {
+                link_tp = var_tp.peel_link().without_deps();
+                &link_tp
             } else if var_tp.is_unknown() && is_collection(&hint) {
                 seeded = hint;
                 &seeded

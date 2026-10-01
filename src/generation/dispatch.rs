@@ -872,9 +872,11 @@ impl Output<'_> {
         // the record BY VALUE (the #257 alias shape, read via the record DbRef) — store
         // `o`'s DbRef.  `p` is non-owning (skip_free at the bind site); a realloc/rebind of
         // `o` is the same L7 edge the #257 alias has.
+        // A struct-ENUM referent is the same record shape (loft#1836: left out, its local
+        // link bind emitted no right-hand side).
         if !variables.is_argument(var)
             && let Type::RefVar(inner) = variables.tp(var)
-            && matches!(inner.base(), Type::Reference(..))
+            && matches!(inner.base(), Type::Reference(..) | Type::Enum(_, true, _))
             && let Value::Call(d_nr, cargs) = to.unspan()
             && matches!(self.data.def(*d_nr).name(), "OpCreateStack" | "OpVarRef")
             && let [src_arg] = cargs.as_slice()

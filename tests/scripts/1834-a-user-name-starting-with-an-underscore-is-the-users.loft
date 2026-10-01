@@ -14,6 +14,8 @@
 //   assertion fails (`pb 1`, the caller's record rebuilt); read cell by cell, seven of thirteen
 //   were wrong on --interpret and --native alike — the record, vector, hash and enum
 //   parameters, the self-reading literal on a parameter, the locals and the lambda parameter.
+//   CHANNEL: the asserted VALUES (exit).
+//   WITNESS: `assertion failed: pb 1` (the caller's record rebuilt; want 7), both backends.
 //   HOLDS: the text, integer, unused-parameter, field-write, loop and match cells answer the
 //   same on both trees; no leak on either backend here (LOFT_NATIVE_LEAK_CHECK).
 struct Box { n: integer }
