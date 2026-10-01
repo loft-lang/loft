@@ -498,10 +498,16 @@ if expect or expect_yank or expect_meta:
     # it means the operator is signing something other than what they described.
     meta_absent = sorted(n for n in expect_meta
                          if n not in set(pp) & set(cp) or meta(pp, n) == meta(cp, n))
-    # `versions` and `yanked` on a --expect-meta package: metadata only means metadata.
+    # `versions` and `yanked` on a --expect-meta package: metadata only means metadata —
+    # except a version `--expect` names, which is how a publish that also refreshes the
+    # package's manifest description is stated in full (`registry_maintain.sh --only`
+    # passes both).  Every OTHER version must still be byte-identical.
+    def unnamed_versions(d, n):
+        return {v: x for v, x in (d[n].get("versions") or {}).items()
+                if f"{n}@{v}" not in expect}
     meta_overreach = sorted(
         n for n in expect_meta if n in set(pp) & set(cp)
-        and ((pp[n].get("versions") or {}) != (cp[n].get("versions") or {})
+        and (unnamed_versions(pp, n) != unnamed_versions(cp, n)
              or (pp[n].get("yanked") or []) != (cp[n].get("yanked") or [])))
     # A yank of a version the index does not list is a typo, not a yank: it would
     # sign a marker pointing at nothing (PKG_REGISTRY.md § Yanking — the `web`
