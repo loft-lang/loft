@@ -188,7 +188,22 @@ pub const OPERATORS: &[fn(&mut State)] = &["
     for d_nr in 0..data.definitions() {
         let n = &data.def(d_nr).name;
         if data.def(d_nr).is_operator() {
-            writeln!(into, "    {},", operator_name(n))?;
+            writeln!(into, "    {}::<false>,", operator_name(n))?;
+        }
+    }
+    writeln!(into, "];")?;
+    // `@FR-R-FastTable` — the same operators with the stack access mode fixed to the direct
+    // path, dispatched only when `State::fast_stack` holds.
+    writeln!(
+        into,
+        "\n/// [`OPERATORS`] with the direct stack path compiled in (`@FR-R-FastTable`): valid\n\
+         /// only while `State::fast_stack` holds, which is fixed for a run.\n\
+         pub const OPERATORS_FAST: &[fn(&mut State)] = &["
+    )?;
+    for d_nr in 0..data.definitions() {
+        let n = &data.def(d_nr).name;
+        if data.def(d_nr).is_operator() {
+            writeln!(into, "    {}::<true>,", operator_name(n))?;
         }
     }
     writeln!(into, "];")?;
@@ -215,7 +230,12 @@ pub const OPERATORS: &[fn(&mut State)] = &["
             continue;
         }
         let name = operator_name(n);
-        writeln!(into, "\nfn {name}(s: &mut State) {{")?;
+        // Each op body is written to a buffer first: its stack accessors are respelled with
+        // the access mode `F` (`@FR-R-FastTable`, `State::get_stack_m` and its siblings).
+        let outer: &mut dyn Write = &mut *into;
+        let mut body: Vec<u8> = Vec::new();
+        let into: &mut dyn Write = &mut body;
+        writeln!(into, "\nfn {name}<const F: bool>(s: &mut State) {{")?;
         let mut res = data.def(d_nr).rust.clone();
         for a in &data.def(d_nr).attributes {
             if a.name.starts_with('_') || res.is_empty() {
@@ -276,6 +296,13 @@ pub const OPERATORS: &[fn(&mut State)] = &["
             writeln!(into, "    s.put_stack(new_value);")?;
         }
         writeln!(into, "}}")?;
+        let text = String::from_utf8(body)
+            .expect("generated code is UTF-8")
+            .replace("s.get_stack::<", "s.get_stack_m::<F, ")
+            .replace("s.get_var::<", "s.get_var_m::<F, ")
+            .replace("s.put_stack(", "s.put_stack_m::<F, _>(")
+            .replace("s.put_var(", "s.put_var_m::<F, _>(");
+        outer.write_all(text.as_bytes())?;
     }
     Ok(())
 }

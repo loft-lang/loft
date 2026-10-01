@@ -2922,6 +2922,73 @@ impl State {
         }
     }
 
+    /// `@FR-R-FastTable` — the four stack accessors with the access mode fixed at compile
+    /// time: `F = true` is the direct path, valid only when `State::fast_stack` holds (the
+    /// `OPERATORS_FAST` table is dispatched only then); `F = false` is the ordinary accessor,
+    /// which decides at run time and is valid in every mode.  The generated operators call
+    /// these, so the table chosen once per run removes the mode test from every op.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn get_stack_m<const F: bool, T: 'static + Copy>(&mut self) -> T {
+        if !F {
+            return self.get_stack();
+        }
+        assert!(
+            (size_of::<T>() as u32) < self.stack_pos,
+            "No elements left on the stack {} < {}",
+            self.stack_pos,
+            size_of::<T>() as u32
+        );
+        self.stack_pos -= self.stack_step(size_of::<T>() as u32);
+        // SAFETY: below `stack_pos`, so inside the stack record (see `fast_stack`).
+        unsafe { self.stack_slot(self.stack_pos).cast::<T>().read_unaligned() }
+    }
+
+    /// [`Self::get_stack_m`]'s push.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn put_stack_m<const F: bool, T: 'static>(&mut self, val: T) {
+        if !F {
+            return self.put_stack(val);
+        }
+        self.ensure_stack(self.stack_step(size_of::<T>() as u32));
+        let slot = self.stack_slot(self.stack_pos);
+        // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
+        unsafe { *slot.cast::<T>() = val };
+        self.stack_pos += self.stack_step(size_of::<T>() as u32);
+        if self.stack_pos > self.stack_high {
+            self.stack_high = self.stack_pos;
+        }
+    }
+
+    /// [`Self::get_stack_m`]'s local read.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn get_var_m<const F: bool, T: 'static + Copy>(&mut self, pos: u16) -> T {
+        if !F {
+            return self.get_var(pos);
+        }
+        // SAFETY: inside the frame, which lies inside the stack record.
+        unsafe {
+            self.stack_slot(self.stack_pos - u32::from(pos))
+                .cast::<T>()
+                .read_unaligned()
+        }
+    }
+
+    /// [`Self::get_stack_m`]'s local write.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn put_var_m<const F: bool, T: 'static>(&mut self, pos: u16, value: T) {
+        if !F {
+            return self.put_var(pos, value);
+        }
+        let step = self.stack_step(size_of::<T>() as u32);
+        let slot = self.stack_slot(self.stack_pos + step - u32::from(pos));
+        // SAFETY: a frame slot, inside the stack record and aligned.
+        unsafe { *slot.cast::<T>() = value };
+    }
+
     /**
     Pull a value from stack
     # Panics
@@ -6712,6 +6779,13 @@ impl State {
             // loop stores for the allocator and the bytecode, registered once, instead of being
             // written per op.
             let _stop = crate::timeout::publish_stop_flag(&self.database.dispatch_stop);
+            // `@FR-R-FastTable` — the access mode is fixed for the run, so the table is chosen
+            // once: the direct path compiled into every op, or the checked one.
+            let ops: &[fn(&mut State)] = if self.fast_stack {
+                crate::fill::OPERATORS_FAST
+            } else {
+                OPERATORS
+            };
             let _published = crate::crash_report::LeanSource::register(
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
@@ -6726,7 +6800,7 @@ impl State {
                 } else {
                     u16::from(op)
                 };
-                OPERATORS[usize::from(opcode)](self);
+                ops[usize::from(opcode)](self);
                 if self
                     .database
                     .dispatch_stop
