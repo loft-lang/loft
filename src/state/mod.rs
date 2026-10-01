@@ -288,6 +288,12 @@ pub struct State {
     /// buffer only grows through `ensure_stack`; this cache lets the hot
     /// push/reserve paths skip the store lookup when no growth is needed.
     pub(crate) stack_cap_bytes: u32,
+    /// `@FR-R-StackBase` — the address of the stack record's field base in the stack store's
+    /// buffer, so a stack access is one add instead of three dependent loads (the store
+    /// table, the store, its buffer).  Set where `stack_cap_bytes` is: at construction, by
+    /// `grow_stack`, by a checkpoint restore — the only places the buffer can move, which the
+    /// store's own buffer moves enforce by refusing the stack store (`Store::stack_buffer`).
+    pub(crate) stack_base: *mut u8,
     pub code_pos: u32,
     pub(crate) def_pos: u32,
     pub(crate) source: u16,
@@ -688,7 +694,9 @@ impl State {
         if crate::stack_verify::enabled() {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
+        db.store_mut(&stack_cur).stack_buffer = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
+        let stack_base = stack_base_of(&db, &stack_cur);
         // Allocate the constant store (CONST_STORE = 1). Starts empty,
         // populated during byte_code(), locked before execution.
         let _const_store = db.database(100);
@@ -704,6 +712,7 @@ impl State {
             stack_pos: 4,
             stack_high: 4,
             stack_cap_bytes,
+            stack_base,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
@@ -2639,6 +2648,21 @@ impl State {
         // and a release build simply writes.
         store.extend_primary_to_store_end();
         self.stack_cap_bytes = store.byte_capacity() as u32;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
+    }
+
+    /// `@FR-R-StackBase` — claim a record IN the stack store (a `par` worker's text work
+    /// buffers).  The claim may grow the store and move its buffer, which every other mover
+    /// refuses (`Store::stack_buffer`); this one is sanctioned because it re-derives the
+    /// cached base and capacity after it, as `grow_stack` does.
+    fn claim_in_stack(&mut self, words: u32) -> DbRef {
+        self.database.store_mut(&self.stack_cur).stack_buffer = false;
+        let cr = self.database.claim(&self.stack_cur, words);
+        let store = self.database.store_mut(&self.stack_cur);
+        store.stack_buffer = true;
+        self.stack_cap_bytes = store.byte_capacity() as u32;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
+        cr
     }
 
     /// The address of stack byte `off` (relative to the stack record's field base), for the
@@ -2649,15 +2673,19 @@ impl State {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn stack_slot(&self, off: u32) -> *mut u8 {
-        let store = &self.database.allocations[self.stack_cur.store_nr as usize];
-        let at = (self.stack_cur.rec * 8 + self.stack_cur.pos + off) as usize;
         debug_assert!(
-            (at as u64) < store.byte_capacity(),
-            "fast stack access at byte {at} beyond the stack store's {} bytes",
-            store.byte_capacity()
+            u64::from(self.stack_cur.rec * 8 + self.stack_cur.pos + off)
+                < self.database.allocations[self.stack_cur.store_nr as usize].byte_capacity(),
+            "fast stack access at byte {off} beyond the stack store's buffer",
         );
-        // SAFETY: `at` is inside the stack store's buffer (above).
-        unsafe { store.ptr.add(at) }
+        debug_assert_eq!(
+            self.stack_base,
+            stack_base_of(&self.database, &self.stack_cur),
+            "@FR-R-StackBase: the cached stack base is stale"
+        );
+        // SAFETY: `stack_base` is the stack record's base in the current buffer
+        // (@FR-R-StackBase), and `off` lies inside the stack record.
+        unsafe { self.stack_base.add(off as usize) }
     }
 
     /// @PLAN53 cluster 2 / S4 — one eval-TOS / frame-reserve advance, always
@@ -5251,6 +5279,7 @@ impl State {
         self.stack_high = cp.stack_high;
         self.stack_pos = cp.stack_pos;
         self.stack_cap_bytes = cp.stack_cap_bytes;
+        self.stack_base = stack_base_of(&self.database, &self.stack_cur);
         self.arguments = cp.arguments;
         self.coroutines.clone_from(&cp.coroutines);
         self.active_coroutines.clone_from(&cp.active_coroutines);
@@ -7687,12 +7716,15 @@ impl State {
         if crate::stack_verify::enabled() {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
+        db.store_mut(&stack_cur).stack_buffer = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
+        let stack_base = stack_base_of(&db, &stack_cur);
         State {
             stack_cur,
             stack_pos: 4,
             stack_high: 4,
             stack_cap_bytes,
+            stack_base,
             verify_on: crate::stack_verify::enabled(),
             fast_stack: fast_stack_allowed(),
             walk_steps: None,
@@ -8395,7 +8427,7 @@ impl State {
         // Allocate String buffers for hidden RefVar(Text) params in the stack store.
         let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
         for _ in 0..n_hidden_text {
-            let cr = self.database.claim(&self.stack_cur, 4); // 32 bytes; String needs 24
+            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
             unsafe {
                 let p = self
                     .database
@@ -8496,7 +8528,7 @@ impl State {
         // `execute_at_text` — a `-> text` callee reads/writes these before the return.
         let mut work_crs: Vec<DbRef> = Vec::with_capacity(n_hidden_text);
         for _ in 0..n_hidden_text {
-            let cr = self.database.claim(&self.stack_cur, 4); // 32 bytes; String needs 24
+            let cr = self.claim_in_stack(4); // 32 bytes; String needs 24
             unsafe {
                 let p = self
                     .database
@@ -8674,4 +8706,12 @@ fn slot_aliases(data: &crate::data::Data, d_nr: u32) -> Vec<(u16, u16)> {
             lv < n && ix < n && vars.stack(lv) != u16::MAX && vars.stack(lv) == vars.stack(ix)
         })
         .collect()
+}
+
+/// `@FR-R-StackBase` — the stack record's field base in the stack store's buffer, the value
+/// `State::stack_base` caches.
+fn stack_base_of(db: &Stores, stack_cur: &DbRef) -> *mut u8 {
+    let store = &db.allocations[stack_cur.store_nr as usize];
+    // SAFETY: the stack record lies inside its store's buffer.
+    unsafe { store.ptr.add((stack_cur.rec * 8 + stack_cur.pos) as usize) }
 }
