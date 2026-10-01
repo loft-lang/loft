@@ -1153,6 +1153,12 @@ impl State {
     }
 
     pub(super) fn gen_loop(&mut self, lp: IrBlock, stack: &mut Stack) -> Type {
+        if crate::keys::loop_rotate_enabled()
+            && let Some(first) = lp.operators().iter().next()
+            && let Some(r) = rotation(&first.to_owned_value())
+        {
+            return self.gen_rotated_loop(lp, &r, stack);
+        }
         stack.add_loop(self.code_pos);
         let pos = self.code_pos;
         for v in lp.operators().iter() {
@@ -1161,6 +1167,57 @@ impl State {
         self.clear_stack(stack, 0);
         stack.add_op("OpGotoWord", self);
         self.code_add((i64::from(pos) - i64::from(self.code_pos) - 4) as i32);
+        stack.end_loop(self);
+        Type::Void
+    }
+
+    /// A loop laid out with its exit test at the BOTTOM ([`rotation`] read its first
+    /// statement): one jump enters at the test, and the test jumps back to the body while the
+    /// loop goes on, so a round runs one jump where the top-tested form ran two.
+    ///
+    /// ```text
+    ///       GotoWord → T
+    ///   B:  the iterator's statements after its test; the loop variable's store; the body
+    ///   T:  the iterator's statements before its test; the test, jumping to B unless it ends
+    /// ```
+    ///
+    /// The test falls through at the end, where the `break` it replaces would have jumped; an
+    /// earlier `if … break` of the iterator (an inclusive range's stop) is emitted as it was.
+    /// A `continue` jumps forward to T, patched when T is emitted.  A loop variable sharing its
+    /// index's slot (`slot_alias`) is written by the step at T; its store span is the entry
+    /// jump, which every first round passes before the body.
+    fn gen_rotated_loop(&mut self, lp: IrBlock, r: &Rotation, stack: &mut Stack) -> Type {
+        stack.add_loop(self.code_pos);
+        stack.set_rotated();
+        let entry_op = self.code_pos;
+        stack.add_op("OpGotoWord", self);
+        let entry = self.code_pos;
+        self.code_add(0i32);
+        let body = self.code_pos;
+        for p in &r.post {
+            self.generate(p, stack, false);
+        }
+        if let Some((lv, ix)) = r.store {
+            let pos = stack.function.stack(lv);
+            if pos != u16::MAX && pos == stack.function.stack(ix) {
+                stack.function.set_stack_allocated(lv);
+                self.store_spans.push((entry_op, body, lv));
+            } else {
+                self.generate(&Value::Set(lv, Box::new(Value::Var(ix))), stack, false);
+            }
+        }
+        for v in lp.operators().iter().skip(1) {
+            self.generate_node(v, stack, false);
+        }
+        self.clear_stack(stack, 0);
+        self.code_put(entry, (self.code_pos - entry - 4) as i32);
+        stack.patch_continues(self);
+        for p in &r.pre {
+            self.generate(p, stack, false);
+        }
+        let step = self.gen_if_test(IrNode::Native(&r.test), stack);
+        self.code_put(step, (i64::from(body) - i64::from(self.code_pos)) as i32);
+        self.clear_stack(stack, 0);
         stack.end_loop(self);
         Type::Void
     }
@@ -1179,6 +1236,12 @@ impl State {
         let old_pos = stack.position;
         self.clear_stack(stack, loop_nr);
         stack.add_op("OpGotoWord", self);
+        if stack.is_rotated(loop_nr) {
+            stack.add_continue(self.code_pos, loop_nr);
+            self.code_add(0i32); // patched to the loop's test when it is emitted
+            stack.position = old_pos;
+            return Type::Void;
+        }
         self.code_add((i64::from(stack.get_loop(loop_nr)) - i64::from(self.code_pos) - 4) as i32);
         stack.position = old_pos;
         Type::Void
@@ -2225,7 +2288,10 @@ impl State {
             let mut step = (**bl).clone();
             step.operators.pop();
             step.result = Type::Void;
+            let from = self.code_pos;
             self.generate(&Value::Block(Box::new(step)), stack, false);
+            // The step writes the shared slot: from here on the debugger may show `v`.
+            self.record_store_span(from, v);
             stack.function.set_stack_allocated(v);
             return;
         }
@@ -6780,4 +6846,72 @@ mod self_reference_guard {
         );
         assert!(ir_reads_var(&data, &ir, 4), "the index var beside it is");
     }
+}
+
+/// The parts of a loop whose FIRST statement carries its exit test, for
+/// [`State::gen_rotated_loop`]: the statements before the last `if … break` of this loop, its
+/// condition, the statements after it, and the loop variable a counted range's iterator yields
+/// into with the index it yields.
+pub(super) struct Rotation {
+    pre: Vec<Value>,
+    test: Value,
+    post: Vec<Value>,
+    store: Option<(u16, u16)>,
+}
+
+/// `if c { break }` of the innermost loop — the break bare or alone in a block — answering `c`.
+fn exit_test(v: &Value) -> Option<&Value> {
+    let Value::If(c, t, f) = v.unspan() else {
+        return None;
+    };
+    let brk = match t.unspan() {
+        Value::Break(0) => true,
+        Value::Block(b) => {
+            b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(0))
+        }
+        _ => false,
+    };
+    (brk && matches!(f.unspan(), Value::Null)).then_some(c)
+}
+
+/// Read a loop's first statement as a rotatable exit: a `while`'s `if !c { break }`, or a
+/// counted range's iterator `v = {#Iter range: …; if c break; …; index}`.  `None` for anything
+/// else — a text or vector walk, a filter, a statement that is no exit — which keeps the
+/// top-tested layout: the cost of a wrong decline is the jump the loop already pays.
+pub(super) fn rotation(first: &Value) -> Option<Rotation> {
+    if let Some(c) = exit_test(first) {
+        return Some(Rotation {
+            pre: Vec::new(),
+            test: c.clone(),
+            post: Vec::new(),
+            store: None,
+        });
+    }
+    let Value::Set(lv, val) = first.unspan() else {
+        return None;
+    };
+    let Value::Block(bl) = val.unspan() else {
+        return None;
+    };
+    if bl.name != "Iter range" {
+        return None;
+    }
+    let (last, ops) = bl.operators.split_last()?;
+    let Value::Var(ix) = last.unspan() else {
+        return None;
+    };
+    let k = ops.iter().rposition(|o| exit_test(o).is_some())?;
+    // Every other statement is a plain step: a `continue` or a second loop in the iterator
+    // would jump on the old layout.
+    if ops.iter().enumerate().any(|(i, o)| {
+        i != k && o.any_node(&mut |n| matches!(n, Value::Continue(_) | Value::Loop(_)))
+    }) {
+        return None;
+    }
+    Some(Rotation {
+        pre: ops[..k].to_vec(),
+        test: exit_test(&ops[k])?.clone(),
+        post: ops[k + 1..].to_vec(),
+        store: Some((*lv, *ix)),
+    })
 }

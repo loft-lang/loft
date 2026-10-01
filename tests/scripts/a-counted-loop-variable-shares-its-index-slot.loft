@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A counted loop's variable lives in its range index's slot on the interpreter.
+//
+// `for i in a..b` steps a hidden index and copied it into `i` at the top of every round.  Where
+// nothing but that copy writes `i` and nothing in the body writes the index, the slot allocator
+// gives `i` the index's slot and the bytecode generator drops the copy (`slot_alias`,
+// `LOFT_NO_LOOP_VAR_ALIAS=1` keeps it).  What can go wrong is a write the alias does not see:
+// one to `i` would now also move the loop, one to the index would change `i` mid-body.  So the
+// cells write the loop variable every way the language allows — a direct assignment, a
+// `&integer` parameter, a `&` link — and each must DECLINE and keep the loop's own count; the
+// admitted cells vary one axis each: an inclusive range, a variable start, a parameter start (the two-counter iterator), nesting, `break` and
+// `continue`, a closure capturing `i`, a generator yielding inside the loop, a second loop over
+// the same name, a reversed range (not a counted range: never admitted), and a callee with its
+// own loops between two reads.  Each checks the value AND the number of rounds.
+
+fn bump(x: &integer) {
+  x += 100;
+}
+
+fn inner(n: integer) -> integer {
+  t = 0;
+  for k in 0..n { t += k; }
+  t
+}
+
+fn squares(n: integer) -> iterator<integer> {
+  for i in 0..n { yield i * i; }
+}
+
+fn test_plain() {
+  t = 0;
+  r = 0;
+  for i in 0..10 { t += i * i; r += 1; }
+  assert(t == 285 && r == 10, "plain {t} {r}");
+}
+
+fn test_inclusive() {
+  t = 0;
+  r = 0;
+  for i in 1..=10 { t += i; r += 1; }
+  assert(t == 55 && r == 10, "inclusive {t} {r}");
+}
+
+fn test_variable_start() {
+  a = 3;
+  b = 8;
+  t = 0;
+  r = 0;
+  for i in a..b { t += i; r += 1; }
+  assert(t == 25 && r == 5, "variable start {t} {r}");
+}
+
+fn test_written_in_body() {
+  t = 0;
+  r = 0;
+  for j in 0..5 { j = j * 2; t += j; r += 1; }
+  assert(t == 20 && r == 5, "written {t} {r}");
+}
+
+fn test_reference_parameter() {
+  t = 0;
+  r = 0;
+  for i in 0..3 { bump(i); t += i; r += 1; }
+  assert(t == 303 && r == 3, "&integer {t} {r}");
+}
+
+fn test_link() {
+  t = 0;
+  r = 0;
+  for k in 0..3 { l = &k; l += 7; t += k; r += 1; }
+  assert(t == 24 && r == 3, "link {t} {r}");
+}
+
+fn test_nested() {
+  t = 0;
+  r = 0;
+  for i in 0..4 { for j in 0..3 { t += i * j; r += 1; } }
+  assert(t == 18 && r == 12, "nested {t} {r}");
+}
+
+fn test_break_continue() {
+  t = 0;
+  r = 0;
+  for i in 0..10 {
+    if i == 7 { break; }
+    r += 1;
+    if i % 2 == 0 { continue; }
+    t += i;
+  }
+  assert(t == 9 && r == 7, "break/continue {t} {r}");
+}
+
+fn test_closure() {
+  t = 0;
+  for i in 0..3 {
+    f = fn(x: integer) -> integer { x + i };
+    t += f(10);
+  }
+  assert(t == 33, "closure {t}");
+}
+
+fn test_generator() {
+  t = 0;
+  r = 0;
+  for s in squares(5) { t += s; r += 1; }
+  assert(t == 30 && r == 5, "generator {t} {r}");
+}
+
+fn test_parameter_start(a: integer, b: integer) {
+  t = 0;
+  r = 0;
+  for i in a..b { t += i * i; r += 1; }
+  assert(t == 50 && r == 3, "parameter start {t} {r}");
+}
+
+fn test_same_name_twice() {
+  t = 0;
+  for i in 0..3 { t += i; }
+  for i in 10..12 { t += i; }
+  assert(t == 24, "twice {t}");
+}
+
+fn test_reversed() {
+  t = 0;
+  for i in rev(1..=5) { t = t * 10 + i; }
+  assert(t == 54321, "reversed {t}");
+}
+
+fn test_callee_between_reads() {
+  t = 0;
+  for i in 0..4 { t += i; t += inner(i); t += i; }
+  assert(t == 16, "callee {t}");
+}
+
+fn main() {
+  test_plain();
+  test_inclusive();
+  test_variable_start();
+  test_written_in_body();
+  test_reference_parameter();
+  test_link();
+  test_nested();
+  test_break_continue();
+  test_closure();
+  test_generator();
+  test_parameter_start(3, 6);
+  test_same_name_twice();
+  test_reversed();
+  test_callee_between_reads();
+  println("ok");
+}
