@@ -254,7 +254,9 @@ Every deviation this doc has carried is closed; the record is in the companion
   them around a loop.  `tests/scripts/1277-…` covers arguments and exhaustion, and
   `tests/coroutine_matrix.rs`'s X5 column crosses delegation with the yielded TYPE — integer,
   text, record, tuple, float, single and enum.
-  The delegated fn-ref is loft#1676 and still open.
+  A delegated FN-REF — `yield from` a generator yielding lambdas — is
+  `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft`, values on both
+  backends.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
 - **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a
