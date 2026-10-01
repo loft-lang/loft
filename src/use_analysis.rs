@@ -3974,13 +3974,16 @@ pub fn binds_the_callees_minted_store(
         return false;
     }
     let def = data.def(*fn_nr);
-    if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
-        return false;
-    }
     // `@FR-N-Shape` — read the nullability marker rather than fall through a missing arm: a
     // `-> S?` return is loft#896's synthetic enum with its own delivery and no buffer attribute.
+    // Asked FIRST: the ownership reads below are defined for a heap return only, and a callee
+    // returning a closure carries callee-frame deps that `returns_borrowed_view` refuses to
+    // read (a lifted `use(mk_closure(), …)` reaches here through `lift_set`).
     let (shape, nullable) = def.returned().peel_optional();
     if nullable || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+        return false;
+    }
+    if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
         return false;
     }
     let Some(buf) = def.hidden_return_buffer_attr() else {
