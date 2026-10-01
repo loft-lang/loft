@@ -16721,7 +16721,7 @@ impl Parser {
                 && tp.is_amp_rebindable_heap()
                 && let Value::Var(v) = actual_code.unspan()
                 && self.vars.is_argument(*v)
-                && !matches!(self.vars.tp(*v), Type::RefVar(_))
+                && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
                 && !self.vars.is_compiler_generated(*v)
                 && !self.is_hidden_param(*v)
             {
@@ -16745,10 +16745,10 @@ impl Parser {
             // parameter at all; one that only reads through its `&` writes nothing back.  A callee
             // with no body (a native operator) is not asked: it has no assignment to find.
             if !self.first_pass
-                && matches!(tp, Type::RefVar(_))
+                && matches!(tp.base(), Type::RefVar(_))
                 && let Value::Var(v) = actual_code.unspan()
                 && self.vars.is_argument(*v)
-                && !matches!(self.vars.tp(*v), Type::RefVar(_))
+                && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
                 && !self.vars.is_compiler_generated(*v)
                 && !self.is_hidden_param(*v)
                 && *self.data.def(d_nr).code() != Value::Null
