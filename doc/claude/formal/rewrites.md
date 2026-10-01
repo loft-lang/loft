@@ -3283,7 +3283,13 @@ per-op tests are not a form to keep.  Guards `tests/dispatch_stop.rs` (a native 
 inside a loop halt at once; `runtime_error` is stored only by its setter), `dispatch_reentry`
 (the frame yield), `runtime_errors`' loft#1053 cases (a `par` worker's fault, a `parallel`
 block's).  Not taken beside it: reading the op byte unchecked (−1 to −3 %), which drops the
-operand bound's guarantee.
+operand bound's guarantee.  The flag is an `AtomicBool` (a relaxed load is the same instruction as a plain
+one): the timeout's watchdog sets it at the deadline through a pointer the running loop
+publishes (`timeout::publish_stop_flag`), and `lean_stop` exits gracefully, naming the frame
+that runs — so a loop stops at the deadline whether or not it calls.  Guard
+`tests/timeout_breadcrumb.rs` (a loop without calls stops gracefully; a native hang is still
+hard-killed), falsified by the watchdog never setting the flag and by the loop never
+publishing it.
 
 ### The stack is addressed through one cached base
 
