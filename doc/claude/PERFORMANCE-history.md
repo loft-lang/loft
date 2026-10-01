@@ -1951,6 +1951,21 @@ f's: the ratchet demands the same count from two runs in one process, and a `Laz
 mints a shared value once fails that by exactly one — reach for a static-backed default
 (`Arc::<str>::default()`) rather than a lazily minted one.
 
+## F2 — the allocation gate's two pins (loft#1761, closed 2026-10-02)
+
+One counting window held the cold stdlib parse and the program together, so a stdlib
+declaration read as front-end growth (+3974 on every row from the fused-op declarations,
+c7c0521b9) and could mask a real front-end regression of the same size.  The window now
+splits after `parse_dir`: a `stdlib` row and `tiny` / `medium` program rows per key.
+Measured when it landed (linux-debug): stdlib 291 885, tiny 18 905, medium 731 226; one
+added stdlib function moved stdlib +252 and both program rows +23 — the scope pass and the
+lints re-reading the stdlib each run, which is why the gate reports both halves together.
+
+The same change made the count hermetic.  A stray `default/.loft/` (the cache a run on a
+stdlib file writes beside it) moved every row by +44, and a `.loft` file under it was parsed
+into the stdlib; the loader now skips hidden entries, and the gate parses a pristine copy of
+`default/` because even a skipped entry costs +2 to list.
+
 ## Design: W1 — wasm string representation
 
 **Affected benchmark:** 07 (2.06× wasm vs native)

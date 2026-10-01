@@ -4017,6 +4017,13 @@ impl Parser {
         let mut files: BTreeSet<String> = BTreeSet::new();
         for path in paths {
             let p = path?;
+            // A hidden entry is no part of the library: `.loft/` is the cache and log a run
+            // writes beside its sources, `.git/` a checkout's history.  Walking one would make
+            // what a load reads — and what it costs — depend on what earlier runs left in the
+            // directory (loft#1761).
+            if p.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             let own_file = p
                 .path()
                 .extension()

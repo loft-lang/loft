@@ -1,7 +1,10 @@
-# key	size	allocations — the front end's heap allocations on bench/frontend's corpus.
+# key	size	allocations — the front end's heap allocations: `stdlib` the cold stdlib
+# parse alone, `tiny`/`medium` bench/frontend's corpus on top of it (a warm run's cost).
 # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.
-linux-debug	medium	1023118
-linux-debug	tiny	310797
-linux-release	medium	1022602
-linux-release	tiny	310281
+linux-debug	medium	731226
+linux-debug	stdlib	291885
+linux-debug	tiny	18905
+linux-release	medium	731226
+linux-release	stdlib	291369
+linux-release	tiny	18905

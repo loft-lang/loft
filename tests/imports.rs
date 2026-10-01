@@ -1200,3 +1200,44 @@ fn a_name_two_imports_deep_names_the_library_that_has_it() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A library directory's HIDDEN entries are no part of it (loft#1761): `.loft/` is the cache a
+/// run writes beside its sources, `.git/` a checkout's history.  A `.loft` file under one is
+/// not loaded, and its definitions do not exist; a visible subdirectory still is.
+#[test]
+fn a_hidden_directory_in_a_library_is_not_loaded() {
+    let dir = std::env::temp_dir().join(format!("loft_hidden_dir_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".loft").join("cache")).unwrap();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.loft"), "pub fn hd_visible() -> integer { 1 }\n").unwrap();
+    std::fs::write(
+        dir.join("sub").join("b.loft"),
+        "pub fn hd_nested() -> integer { 2 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".loft").join("cache").join("c.loft"),
+        "pub fn hd_hidden() -> integer { 3 }\n",
+    )
+    .unwrap();
+    let mut p = Parser::new();
+    p.parse_dir("default", true, false).unwrap();
+    p.parse_dir(&dir.to_string_lossy(), false, false).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_ne!(
+        p.data.def_nr("n_hd_visible"),
+        u32::MAX,
+        "a file in the directory loads"
+    );
+    assert_ne!(
+        p.data.def_nr("n_hd_nested"),
+        u32::MAX,
+        "a visible subdirectory loads"
+    );
+    assert_eq!(
+        p.data.def_nr("n_hd_hidden"),
+        u32::MAX,
+        "a file under a hidden directory must not load"
+    );
+}

@@ -10,15 +10,18 @@
 //! malloc/free is the largest single share of a compile's profile).  So this counts,
 //! and the time stays a report.
 //!
-//! The count is taken in-process by a global allocator armed only around the front end —
-//! the stdlib parse, the corpus parse, the scope pass and the post-scope lints — so the
-//! harness's own allocations are outside the window.  The corpus is `bench/frontend`'s,
+//! The count is taken in-process by a global allocator armed only around the front end, so
+//! the harness's own allocations are outside the window.  The corpus is `bench/frontend`'s,
 //! read through `frontend.py --emit`, so both instruments measure the same input.
 //!
-//! The stdlib parse is COLD: no startup cache is read, so a new `default/` declaration
-//! moves every row by the same constant — one a real install pays once per stdlib change,
-//! not per run.  PERFORMANCE.md § Front-end speed says how to tell that from front-end
-//! growth.
+//! Two pins, because they are two costs (loft#1761):
+//! - **`stdlib`** — the COLD stdlib parse alone (`parse_dir` over a pristine copy of
+//!   `default/`, no startup cache).  A real install pays it once per stdlib change, not per run.
+//! - **`tiny` / `medium`** — the PROGRAM on top of an already-loaded stdlib: the corpus parse,
+//!   the scope pass and the post-scope lints, which is what a warm run pays.  Those passes
+//!   walk every definition, the stdlib's too, so a new stdlib declaration moves both program
+//!   rows by one constant beside its own row; a growth that scales with the corpus is the
+//!   front end's.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -64,24 +67,28 @@ fn corpus(size: &str) -> String {
     String::from_utf8(out.stdout).expect("utf-8 corpus")
 }
 
-/// Allocations the front end makes compiling `src`: stdlib parse, corpus parse, scope
-/// pass, post-scope lints.  Each call is a fresh parser; nothing is cached across calls.
-fn front_end_allocations(src: &str, tag: &str) -> u64 {
+/// Allocations the front end makes compiling `src`, as `(stdlib, program)`: the cold stdlib
+/// parse, then the corpus parse, scope pass and post-scope lints on top of it.  Each call is
+/// a fresh parser; nothing is cached across calls.
+fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
     let dir = std::env::temp_dir().join(format!("loft_fc_{}_{tag}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("corpus.loft");
     std::fs::write(&file, src).expect("write corpus");
     let path = file.to_string_lossy().to_string();
+    let stdlib_dir = pristine_stdlib(&dir);
 
     ALLOCS.with(|c| c.set(0));
     ARMED.with(|a| a.set(true));
     let mut p = loft::parser::Parser::new();
-    p.parse_dir("default", true, false).expect("stdlib parses");
+    p.parse_dir(&stdlib_dir, true, false)
+        .expect("stdlib parses");
+    let stdlib = ALLOCS.with(|c| c.replace(0));
     let parsed = p.parse(&path, false);
     loft::scopes::check(&mut p.data, &mut p.database);
     loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &path);
     ARMED.with(|a| a.set(false));
-    let n = ALLOCS.with(Cell::get);
+    let program = ALLOCS.with(Cell::get);
 
     drop(p);
     let _ = std::fs::remove_dir_all(&dir);
@@ -89,7 +96,29 @@ fn front_end_allocations(src: &str, tag: &str) -> u64 {
         parsed,
         "the corpus must compile — counting a failed compile counts nothing"
     );
-    n
+    (stdlib, program)
+}
+
+/// A copy of the stdlib's own sources — the `.loft` files of `default/`, nothing else — in
+/// `dir/default`, so the count cannot depend on what a run left in the checkout.  Reading
+/// a directory costs allocations per ENTRY, skipped or not, so a stray `default/.loft/` (the
+/// cache a run on a stdlib file writes beside it) moved the pin by +2 even once the loader
+/// skipped it (loft#1761).  The copy is made outside the counting window.
+fn pristine_stdlib(dir: &std::path::Path) -> String {
+    let to = dir.join("default");
+    std::fs::create_dir_all(&to).expect("stdlib copy dir");
+    for entry in std::fs::read_dir("default").expect("default/ is readable") {
+        let from = entry.expect("default/ entry").path();
+        let name = from
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if !name.starts_with('.') && name.ends_with(".loft") && from.is_file() {
+            std::fs::copy(&from, to.join(&name)).expect("copy a stdlib source");
+        }
+    }
+    to.to_string_lossy().to_string()
 }
 
 const PINS: &str = "bench/frontend/allocations.tsv";
@@ -128,7 +157,8 @@ fn pinned() -> Vec<(String, String, u64)> {
 
 fn write_pins(rows: &[(String, String, u64)]) {
     let mut out = String::from(
-        "# key\tsize\tallocations — the front end's heap allocations on bench/frontend's corpus.\n\
+        "# key\tsize\tallocations — the front end's heap allocations: `stdlib` the cold stdlib\n\
+         # parse alone, `tiny`/`medium` bench/frontend's corpus on top of it (a warm run's cost).\n\
          # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`;\n\
          # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.\n",
     );
@@ -161,40 +191,54 @@ fn front_end_allocations_do_not_grow() {
     let key = key();
     let repin = std::env::var_os("LOFT_FRONTEND_REPIN").is_some();
     let mut pins = pinned();
-    let mut grew = Vec::new();
+    // Each counted row and the two runs it took: `stdlib` once per run of either corpus, so
+    // four runs must agree on it; each corpus's program half from its own two.
+    let mut rows: Vec<(&str, Vec<u64>)> = vec![("stdlib", Vec::new())];
     for size in ["tiny", "medium"] {
         let src = corpus(size);
         front_end_allocations(&src, &format!("{size}-warm"));
-        let counts: Vec<u64> = (0..2)
-            .map(|i| front_end_allocations(&src, &format!("{size}{i}")))
-            .collect();
+        let mut program = Vec::new();
+        for i in 0..2 {
+            let (stdlib, prog) = front_end_allocations(&src, &format!("{size}{i}"));
+            rows[0].1.push(stdlib);
+            program.push(prog);
+        }
+        rows.push((size, program));
+    }
+    let mut grew_stdlib = Vec::new();
+    let mut grew_program = Vec::new();
+    for (row, counts) in &rows {
         let n = counts[0];
-        let at = pins.iter().position(|(k, s, _)| *k == key && s == size);
+        let at = pins.iter().position(|(k, s, _)| *k == key && s == row);
         if at.is_none() && !repin {
             eprintln!(
-                "{key} {size}: {counts:?} allocations over two runs — no pin for this build; \
-                 LOFT_FRONTEND_REPIN=1 records one once the two agree"
+                "{key} {row}: {counts:?} allocations over the runs — no pin for this build; \
+                 LOFT_FRONTEND_REPIN=1 records one once they agree"
             );
             continue;
         }
-        assert_eq!(
-            counts[0], counts[1],
-            "the {size} count differs between two runs in one process — the gate needs an \
-             exact count, so find what varies before trusting it"
+        assert!(
+            counts.iter().all(|c| *c == n),
+            "the {row} count differs between runs in one process ({counts:?}) — the gate needs \
+             an exact count, so find what varies before trusting it"
         );
         if repin {
             match at {
                 Some(i) => pins[i].2 = n,
-                None => pins.push((key.clone(), size.to_string(), n)),
+                None => pins.push((key.clone(), (*row).to_string(), n)),
             }
             continue;
         }
+        let grew = if *row == "stdlib" {
+            &mut grew_stdlib
+        } else {
+            &mut grew_program
+        };
         match at.map(|i| pins[i].2) {
             None => {}
-            Some(p) if n > p => grew.push(format!("{size}: {p} → {n} (+{})", n - p)),
+            Some(p) if n > p => grew.push(format!("{row}: {p} → {n} (+{})", n - p)),
             Some(p) if n < p => eprintln!(
-                "{key} {size}: {p} → {n} allocations — it fell; \
-                                           re-pin with LOFT_FRONTEND_REPIN=1"
+                "{key} {row}: {p} → {n} allocations — it fell; re-pin with LOFT_FRONTEND_REPIN=1"
             ),
             Some(_) => {}
         }
@@ -203,14 +247,34 @@ fn front_end_allocations_do_not_grow() {
         write_pins(&pins);
         return;
     }
+    // Both halves in one report: a stdlib change moves the `stdlib` row AND every program row
+    // by one constant — the scope pass and the post-scope lints walk every definition on every
+    // run, the stdlib's included — so the program rows alone cannot say which change grew.
+    let mut report = Vec::new();
+    if !grew_stdlib.is_empty() {
+        report.push(format!(
+            "the cold stdlib parse allocates more than its pin: {}.  A new `default/` declaration \
+             moves this row (name the declarations in the commit); with no stdlib change it is \
+             the parser's",
+            grew_stdlib.join(", ")
+        ));
+    }
+    if !grew_program.is_empty() {
+        report.push(format!(
+            "compiling a program on a loaded stdlib allocates more than its pin: {}.  The SAME \
+             delta on every size, beside a stdlib row that grew, is the scope pass and the lints \
+             reading the new stdlib definitions each run; a delta that grows with the corpus is \
+             the front end's — find the new allocation (a `to_string()` or `clone()` on a hot \
+             path is the usual one) and remove it",
+            grew_program.join(", ")
+        ));
+    }
     assert!(
-        grew.is_empty(),
-        "the front end allocates more than its pin ({key}): {}.\n\
-         Allocation is where a compile's time goes; find the new allocation (a `to_string()` \
-         or `clone()` on a hot path is the usual one) and remove it.  If the growth is meant \
-         — a feature that must allocate — re-pin with \
-         `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts` and say why in \
-         the commit.",
-        grew.join(", ")
+        report.is_empty(),
+        "the front end allocates more than its pins ({key}):\n- {}\nAllocation is where a \
+         compile's time goes.  If the growth is meant — a feature that must allocate — re-pin \
+         with `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts` and say \
+         why in the commit.",
+        report.join("\n- ")
     );
 }
