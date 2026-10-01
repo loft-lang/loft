@@ -808,6 +808,7 @@ fn divide(a: float, b: float) -> float {
 f = file("data.txt");
 if f#exists {
     data = f.content();
+    print("{len(data)} characters\n");
 } else {
     print("file not found\n");
 }
