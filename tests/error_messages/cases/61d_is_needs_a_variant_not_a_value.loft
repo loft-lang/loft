@@ -1,0 +1,2 @@
+fn f(x: integer) -> integer { if x is 3 { 1 } else { 0 } }
+fn main() { println("{f(3)}"); }
