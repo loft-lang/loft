@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I66 — Bytecode VM / executor
 
 //! How a running `State` — and the parallel context its workers inherit — reaches the
 //! definition table it was run against.

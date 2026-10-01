@@ -764,7 +764,8 @@ mod tests {
     #[test]
     fn a_short_chain_is_kept_whole() {
         assert_eq!(tail(&[7, 8]), vec![7, 8]);
-        assert!(tail(&[]).is_empty());
+        let unexpected = tail(&[]);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// The defect the arc C oracle caught: a fixed period only ever samples one phase

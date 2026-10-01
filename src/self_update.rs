@@ -931,14 +931,16 @@ mod tests {
     /// A fixed release is silent — the whole point of publishing the fix.
     #[test]
     fn a_fixed_version_has_no_flags() {
-        assert!(flags_for(&feed(ADVISORIES), "2026.7.3").is_empty());
+        let unexpected = flags_for(&feed(ADVISORIES), "2026.7.3");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// And a release predating the affected range is silent too, so the check cannot
     /// simply be "warn on everything".
     #[test]
     fn a_version_outside_the_affected_range_has_no_flags() {
-        assert!(flags_for(&feed(ADVISORIES), "2026.5.0").is_empty());
+        let unexpected = flags_for(&feed(ADVISORIES), "2026.5.0");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// @PLN78 step 4 — the download half, where the signature stops being a claim about

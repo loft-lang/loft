@@ -312,14 +312,17 @@ mod tests {
     #[test]
     fn skips_plain_string_text_and_comments() {
         // `::` in plain (non-interpolated) text and in a comment are NOT refs.
-        assert!(scan_qualified_lib_refs("// see regex::docs for more").is_empty());
-        assert!(scan_qualified_lib_refs("s = \"path is a::b not a lib\"").is_empty());
+        let unexpected = scan_qualified_lib_refs("// see regex::docs for more");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
+        let unexpected = scan_qualified_lib_refs("s = \"path is a::b not a lib\"");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]
     fn skips_capitalised_enum_variants() {
         // `Enum::Variant` (capitalised) is a type, never a library.
-        assert!(scan_qualified_lib_refs("match c { Color::Red => 1, Shape::Box => 2 }").is_empty());
+        let unexpected = scan_qualified_lib_refs("match c { Color::Red => 1, Shape::Box => 2 }");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]

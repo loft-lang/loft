@@ -1175,7 +1175,8 @@ mod shim_name_tests {
                 shim_implib_name("libfoo.so", os).is_none(),
                 "an ELF/Mach-O shared object is linked directly; there is no second file"
             );
-            assert!(shim_implib_args("out/foo.lib", os).is_empty());
+            let unexpected = shim_implib_args("out/foo.lib", os);
+            assert!(unexpected.is_empty(), "{unexpected:?}");
         }
     }
 

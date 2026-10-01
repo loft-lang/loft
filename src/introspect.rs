@@ -458,13 +458,12 @@ fn run_diff_against_baseline(baseline: &str, buffer: &[u8]) -> std::io::Result<(
         // 0 = identical, 1 = differs.  Both are valid outcomes;
         // mirror diff's exit code.
         std::process::exit(s.code().unwrap_or(2));
-    } else {
-        eprintln!(
-            "loft: --diff requires `diff` on PATH; \
-             fall back to redirecting --introspect output and diffing manually."
-        );
-        std::process::exit(2);
     }
+    eprintln!(
+        "loft: --diff requires `diff` on PATH; \
+         fall back to redirecting --introspect output and diffing manually."
+    );
+    std::process::exit(2);
 }
 
 fn emit_bytecode(

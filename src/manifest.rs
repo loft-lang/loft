@@ -1455,12 +1455,8 @@ source = "build/atlas.pack"
         assert_eq!(m.embeds[1].root, dir);
         // The control: a manifest that declares none has none.
         let bare = write_temp("noembed", "[package]\nname = \"plain\"\n");
-        assert!(
-            read_manifest(bare.to_str().unwrap())
-                .unwrap()
-                .embeds
-                .is_empty()
-        );
+        let unexpected = read_manifest(bare.to_str().unwrap()).unwrap().embeds;
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     // @PLN146 F5 — [[font]] array-of-tables: the three sources, in file order.
@@ -1537,7 +1533,7 @@ lifetime = "30d"
         let dataset = &m.build_assets[1];
         assert_eq!(dataset.name.as_deref(), Some("dataset"));
         assert_eq!(dataset.lifetime.as_deref(), Some("30d"));
-        assert!(dataset.inputs.is_empty());
+        assert!(dataset.inputs.is_empty(), "{:?}", dataset.inputs);
     }
 
     // @PLN100 Slice 4 — [[test]] entries: run/targets/needs/inputs.
@@ -1569,7 +1565,7 @@ inputs = ["assets/atlas.bin"]
         assert_eq!(smoke.needs, vec!["atlas"]);
         let integrity = &m.build_tests[1];
         assert_eq!(integrity.inputs, vec!["assets/atlas.bin"]);
-        assert!(integrity.needs.is_empty());
+        assert!(integrity.needs.is_empty(), "{:?}", integrity.needs);
     }
 
     #[test]

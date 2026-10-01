@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1836 — `p = [K { … }]` through a `&` keyed PARAMETER writes the caller's collection
+// (`@FR-B-Ref-Write`), and the store the caller then holds is the caller's.  The literal is built
+// in a `__kvb_N` accumulator the callee owns and frees at exit; installing that accumulator in
+// the caller's slot handed the caller a store freed under it.  The values read right until the
+// store was reused, so only `LOFT_POISON` saw it.  The literal is now copied into a store the
+// caller owns, as `p = other` already was.  Cells: a null `hash?` source, a call in a loop (a
+// store per call would leak), two writes in one call, a read back inside the callee, and a
+// `sorted` kind.
+//
+// @falsified-at: fd7cc9b06 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean (LOFT_POISON=1)
+// @falsified-by: tests/falsified/1836b-a-keyed-literal-through-a-link-parameter-is-the-callers.patch
+//   CHANNEL: PANIC on both backends — the first read of the caller's collection reaches the
+//   poisoned record of the freed accumulator.
+//   ARMED: LOFT_POISON=1 (the CI arena-UAF gate); unarmed, every value is right on both trees.
+//   WITNESS: "Store access out of bounds: rec=3735928559 … the reference is corrupt".
+//   HOLDS: every asserted value on both trees unarmed; no leak on either backend here
+//   (LOFT_NATIVE_LEAK_CHECK).
+struct Ek { k: integer }
+fn f(p: &hash<Ek[k]>?) { p = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn g(p: &hash<Ek[k]>) { p = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn twice(p: &hash<Ek[k]>) { p = [Ek { k: 1 }]; p = [Ek { k: 5 }, Ek { k: 6 }, Ek { k: 7 }]; }
+fn readback(p: &hash<Ek[k]>) -> integer {
+  p = [Ek { k: 4 }, Ek { k: 8 }];
+  len(p) * 10 + (if p[8] != null { 1 } else { 0 })
+}
+fn s(p: &sorted<Ek[-k]>) { p = [Ek { k: 1 }, Ek { k: 9 }, Ek { k: 5 }]; }
+
+fn main() {
+  n: hash<Ek[k]>? = null;
+  f(n);
+  assert(len(n ?? []) == 2, "null source {len(n ?? [])}");
+  m: hash<Ek[k]> = [Ek { k: 7 }];
+  t = 0;
+  for _ in 0..50 { g(m); t += len(m); }
+  assert(t == 100, "loop {t}");
+  q: hash<Ek[k]> = [Ek { k: 7 }];
+  twice(q);
+  assert(len(q) == 3 && q[1] == null && q[6] != null, "twice {len(q)}");
+  r: hash<Ek[k]> = [];
+  rb = readback(r);
+  assert(rb == 21 && len(r) == 2, "readback {rb} {len(r)}");
+  o: sorted<Ek[-k]> = [Ek { k: 3 }];
+  s(o);
+  d = 0;
+  for e in o { d = d * 10 + e.k; }
+  assert(d == 951, "sorted {d}");
+}

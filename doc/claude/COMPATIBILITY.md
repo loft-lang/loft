@@ -217,8 +217,7 @@ symbol `Y` (a **bare name**, e.g. `#superseded "write_through"`). Three things f
   its qualifier and answers a different question than the bare spelling a reader sees, so it is
   REMOVED, not kept: a breaking release of its library (`api_compatible_with` raised) with a
   CHANGELOG line naming the method to call. The lint is never exempted for a `#superseded`
-  function. First applied to `regex` 0.4.0, which dropped `find` and `split` for `search` and
-  `split_on` (loft#1835).
+  function.
 
 A *semantic* replacement (the old behaviour is **not** expressible over the new — see *Folding's
 limit* below) is **not** a `#superseded` steer; it is **contract-keyed** (the escape valve below),

@@ -1231,12 +1231,10 @@ mod tests {
         // A double IN and a double OUT are not one decision, and this is where
         // the difference shows: the same type refused as a parameter passes as
         // a return.
-        assert!(
-            sig("double(const double*, int64_t)")
-                .boundary_refusals()
-                .is_empty()
-        );
-        assert!(sig("int(int)").boundary_refusals().is_empty());
+        let unexpected = sig("double(const double*, int64_t)").boundary_refusals();
+        assert!(unexpected.is_empty(), "{unexpected:?}");
+        let unexpected = sig("int(int)").boundary_refusals();
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     fn vec_of(t: Type) -> Type {
@@ -1252,7 +1250,8 @@ mod tests {
         let ints = vec![vec_of(int())];
         let ret = Type::Integer(crate::data::IntegerSpec::wide());
         // A vector is a pointer AND a count where the signature has one...
-        assert!(check(&data(), &sig("long(const long*, long)"), &ints, &ret, false).is_empty());
+        let unexpected = check(&data(), &sig("long(const long*, long)"), &ints, &ret, false);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
         assert_eq!(
             plan(&ints, &sig("long(const long*, long)")).unwrap(),
             vec![CArg::VectorPtrCount]
@@ -1261,7 +1260,8 @@ mod tests {
         // makes a Fortran routine bindable: `dgemm_` takes thirteen bare
         // pointers, so a vector that always cost two slots could not reach it
         // at any arity ceiling.
-        assert!(check(&data(), &sig("long(const long*)"), &ints, &ret, false).is_empty());
+        let unexpected = check(&data(), &sig("long(const long*)"), &ints, &ret, false);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
         assert_eq!(
             plan(&ints, &sig("long(const long*)")).unwrap(),
             vec![CArg::VectorPtr]
@@ -1410,16 +1410,14 @@ mod tests {
     #[test]
     fn a_returned_pointer_may_be_held_as_an_integer() {
         let ret = Type::Integer(crate::data::IntegerSpec::wide());
-        assert!(
-            check(
-                &data(),
-                &sig("void*(const char*)"),
-                &[Type::Text(crate::data::Deps::none())],
-                &ret,
-                false
-            )
-            .is_empty()
+        let unexpected = check(
+            &data(),
+            &sig("void*(const char*)"),
+            &[Type::Text(crate::data::Deps::none())],
+            &ret,
+            false,
         );
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// The concession, made concrete: `#c` is the declared edge of loft's

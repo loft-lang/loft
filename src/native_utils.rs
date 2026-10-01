@@ -2449,8 +2449,10 @@ mod p350_html_wasm_import_check {
             vec!["loft_gl.loft_gl_window_width".to_string()],
         );
         // Present as a method, and as a property — both are definitions.
-        assert!(missing_host_imports(&wasm, "loft_gl_window_width() { return 1; }").is_empty());
-        assert!(missing_host_imports(&wasm, "loft_gl_window_width: () => 1,").is_empty());
+        let unexpected = missing_host_imports(&wasm, "loft_gl_window_width() { return 1; }");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
+        let unexpected = missing_host_imports(&wasm, "loft_gl_window_width: () => 1,");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
         // A LONGER name that merely CONTAINS the import must not count as providing it —
         // otherwise `loft_gl_window_width_ex` would mask the real gap.
         assert_eq!(
@@ -2464,7 +2466,8 @@ mod p350_html_wasm_import_check {
             "doc/loft-gl-wasm.js must define loft_gl_window_width"
         );
         // Unwalkable input yields no opinion, never a false build failure.
-        assert!(missing_host_imports(b"not a wasm", "").is_empty());
+        let unexpected = missing_host_imports(b"not a wasm", "");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// loft#669 — every handle table in the browser shim hands out 1-BASED handles, so

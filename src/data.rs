@@ -7906,17 +7906,15 @@ impl Data {
     When the type was already set before.
     */
     pub fn set_attr_type(&mut self, d_nr: u32, a_nr: usize, tp: Type) {
-        if a_nr == usize::MAX || !self.attr_type(d_nr, a_nr).is_unknown() {
-            panic!(
-                "Cannot set attribute type {}.{} twice was {} to {}",
-                self.def(d_nr).name,
-                self.attr_name(d_nr, a_nr),
-                self.attr_type(d_nr, a_nr).name(self),
-                tp.name(self)
-            );
-        } else {
-            self.definitions[d_nr as usize].attributes[a_nr].typedef = tp;
-        }
+        assert!(
+            a_nr != usize::MAX && self.attr_type(d_nr, a_nr).is_unknown(),
+            "Cannot set attribute type {}.{} twice was {} to {}",
+            self.def(d_nr).name,
+            self.attr_name(d_nr, a_nr),
+            self.attr_type(d_nr, a_nr).name(self),
+            tp.name(self)
+        );
+        self.definitions[d_nr as usize].attributes[a_nr].typedef = tp;
     }
 
     /// #682 — downgrade a closure-record capture attribute from the ADOPTING
@@ -13519,7 +13517,8 @@ mod caller_graph_tests {
     fn callers_of_uncalled_returns_empty() {
         let d = build_test_data();
         // fn0 has no callers.
-        assert!(d.callers_of(0).is_empty());
+        let unexpected = d.callers_of(0);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]

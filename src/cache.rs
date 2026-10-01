@@ -1326,7 +1326,8 @@ mod tests {
 
     #[test]
     fn collect_stdlib_sources_missing_dir_is_empty() {
-        assert!(collect_stdlib_sources("nonexistent-dir-xyz").is_empty());
+        let unexpected = collect_stdlib_sources("nonexistent-dir-xyz");
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]

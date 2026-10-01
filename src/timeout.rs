@@ -506,9 +506,8 @@ fn print_breadcrumb_and_abort(timeout: u64, grace: u64) {
     // cleaner `_exit`; pick via env `LOFT_TIMEOUT_CLEAN_EXIT`.
     if std::env::var("LOFT_TIMEOUT_CLEAN_EXIT").is_ok() {
         std::process::exit(124); // GNU `timeout` convention
-    } else {
-        std::process::abort();
     }
+    std::process::abort();
 }
 
 /// Parse `LOFT_TIMEOUT=<seconds>` from the env.  Returns `0` if
