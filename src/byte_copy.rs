@@ -53,6 +53,11 @@ pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u3
         let mut tps = Vec::new();
         collect_vector_types(&whole, &cx, database, &mut tps);
         visit(&mut code, &cx, &tps);
+        // `@FR-R-TextRun` — a run copied only to be read as text is read in place: decided
+        // on the copies just guarded.
+        if !tps.is_empty() {
+            crate::text_run::rewrite(data, d_nr, &mut code);
+        }
     }
     data.definitions[d_nr as usize].code = code;
 }

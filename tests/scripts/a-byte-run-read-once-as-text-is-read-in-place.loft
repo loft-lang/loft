@@ -1,0 +1,111 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextRun` — a byte vector built only as a run of another, then read once as text, is
+// never built: the text is read off the run in place.
+//
+// `tb: vector<u8> = []; for k in 0..n { tb += [bytes[a + k] ?? 0]; } text_from_bytes(tb)` — how
+// a binary decoder (cbor's `read_value`) takes a text out of its frame — claimed the vector's
+// wrapper and its element record only to read them once.  Behind `(R-ByteCopy)`'s in-range
+// guard the declaration and the copy go, and the read is `text_from_byte_range(bytes, a + lo,
+// a + hi)`; every range the guard refuses keeps the vector and the call as written.  The value
+// never changes: every cell answers the same with `LOFT_NO_BYTE_COPY=1`, and that A/B is the
+// falsifier together with the pin (`tests/text_run.rs`).  Bytes hand-computed from
+// "hello world" = 104 101 108 108 111 32 119 111 114 108 100; "héllo" is 104 195 169 108 108 111.
+//
+// @falsified-at: none — the rule has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-10-02): with the protected-variable test struck in `text_run::inert`, t6 fails on
+//   both backends — the guard re-evaluated at the read sees the reassigned offset and reads
+//   "world" where the vector holds "hello".
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   WITNESS: under the sabotage t6 reads "world" for "hello".
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+struct T { s: text, next: integer }
+
+fn hw() -> vector<u8> { [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8, 32 as u8,
+                         119 as u8, 111 as u8, 114 as u8, 108 as u8, 100 as u8] }
+
+// a local vector read once as text
+fn txt(bytes: vector<u8>, a: integer, n: integer) -> text {
+  tb: vector<u8> = [];
+  for k in 0..n { tb += [bytes[a + k] ?? 0]; }
+  text_from_bytes(tb)
+}
+
+// the decoder's record: the vector placed in the return buffer, the text one of its fields
+fn rec(bytes: vector<u8>, a: integer, n: integer) -> T {
+  tb: vector<u8> = [];
+  for k in 0..n { tb += [bytes[a + k] ?? 0]; }
+  return T { s: text_from_bytes(tb), next: a + n };
+}
+
+fn t1() { b = hw(); s = txt(b, 6, 5); assert(s == "world", "t1 got '{s}'"); }
+
+fn t2() {
+  b = hw(); r = rec(b, 0, 5);
+  assert(r.s == "hello" && r.next == 5, "t2 got '{r.s}' {r.next}");
+}
+
+// an end past the source: the guard refuses it and the vector holds the two zero bytes
+fn t3() {
+  b = hw(); s = txt(b, 8, 5);
+  assert(size(s) == 5 && s.byte_at(0) == 114 && s.byte_at(2) == 100 && s.byte_at(4) == 0, "t3 got size {size(s)}");
+}
+
+// bytes that are not UTF-8 answer "" on both paths
+fn t4() {
+  b: vector<u8> = [255 as u8, 65 as u8, 66 as u8];
+  s = txt(b, 0, 2);
+  assert(s == "", "t4 got '{s}'");
+}
+
+// a second use of the vector keeps it
+fn t5() {
+  b = hw(); tb: vector<u8> = [];
+  for k in 0..5 { tb += [b[k] ?? 0]; }
+  s = text_from_bytes(tb);
+  assert(s == "hello" && len(tb) == 5, "t5 got '{s}' {len(tb)}");
+}
+
+// the offset reassigned between the copy and the read keeps the vector
+fn t6() {
+  b = hw(); a = 0; tb: vector<u8> = [];
+  for k in 0..5 { tb += [b[a + k] ?? 0]; }
+  a = 6;
+  s = text_from_bytes(tb);
+  assert(s == "hello" && a == 6, "t6 got '{s}'");
+}
+
+// a negative offset: the guard refuses it and the loop reads from the end
+fn t7() { b = hw(); s = txt(b, -5, 5); assert(s == "world", "t7 got '{s}'"); }
+
+// an empty run
+fn t8() { b = hw(); s = txt(b, 4, 0); assert(s == "", "t8 got '{s}'"); }
+
+// a vector that is not empty before the copy keeps it
+fn t9() {
+  b = hw(); tb: vector<u8> = [72 as u8];
+  for k in 0..4 { tb += [b[1 + k] ?? 0]; }
+  s = text_from_bytes(tb);
+  assert(s == "Hello", "t9 got '{s}'");
+}
+
+// many calls: nothing is left behind by either path
+fn t10() {
+  b = hw(); total = 0;
+  for i in 0..1000 { total += size(txt(b, i % 7, 4)); total += rec(b, 6, 5).next; }
+  assert(total == 15000, "t10 got {total}");
+}
+
+// a two-byte character inside the run
+fn t12() {
+  h: vector<u8> = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
+  s = txt(h, 0, 6);
+  assert(s == "héllo" && size(s) == 6, "t12 got '{s}'");
+}
+
+fn main() {
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t12();
+  println("done");
+}

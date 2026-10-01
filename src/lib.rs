@@ -362,6 +362,7 @@ pub mod scopes;
 pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
+pub mod text_run;
 pub mod use_analysis;
 pub mod value_record;
 mod variables;
