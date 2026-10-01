@@ -12,8 +12,11 @@
 // many times; and a `par` worker calls it in its own stack.  Expected values by hand:
 // wide(n) = sum over i < 100 of (n + i % 10 + i) = 100 n + 5400.
 //
-// @falsified-at: none — it guards a mechanism no earlier build has.  Planted defects, see
-//   tests/frame_headroom.rs.
+// @falsified-at: none — it guards a mechanism no earlier build has.  Falsified instead by planted
+//   defects, 2026-10-01, run under `LOFT_HEADROOM_VERIFY=1` (tests/frame_headroom.rs): `push_frame`
+//   making no room (the room-in-buffer check), the height recorded as the margin alone (the
+//   position check).  Without the verifier both passed: the store grows by 7/3, so a push past
+//   the room lands in slack.
 
 fn wide(n: integer) -> integer {
   a0 = n + 0;
