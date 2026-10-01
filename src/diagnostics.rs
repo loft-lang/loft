@@ -1009,7 +1009,7 @@ mod cache_roundtrip_tests {
     fn a_line_with_no_fix_groups_still_decodes() {
         let line = "W\t8\t22\tnever-read\t/tmp/x.loft\t_\tVariable i is never read";
         let back = DiagEntry::decode_from_cache(line).expect("an entry with no fix groups");
-        assert!(back.fixes.is_empty());
+        assert!(back.fixes.is_empty(), "{:?}", back.fixes);
         assert_eq!(back.line, 8);
         assert_eq!(back.message, "Variable i is never read");
     }

@@ -8331,14 +8331,16 @@ mod uaf_overlay_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code, &deps(10, 3)).is_empty());
+        let unexpected = run(&code, &deps(10, 3));
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — a deref BEFORE the free is correctly ordered.
     #[test]
     fn silent_when_deref_precedes_free() {
         let code = v_block(vec![deref(3), free(10)], Type::Void, "body");
-        assert!(run(&code, &deps(10, 3)).is_empty());
+        let unexpected = run(&code, &deps(10, 3));
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — re-allocating the store (`OpDatabase(S)`) between free and deref clears it.
@@ -8349,7 +8351,8 @@ mod uaf_overlay_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code, &deps(10, 3)).is_empty());
+        let unexpected = run(&code, &deps(10, 3));
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — a store freed on only ONE branch is live on the other; a deref after the
@@ -8368,7 +8371,8 @@ mod uaf_overlay_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code, &deps(10, 3)).is_empty());
+        let unexpected = run(&code, &deps(10, 3));
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// The `check_reads` leaf helper agrees with the walk on a lone deref.
@@ -8773,7 +8777,8 @@ mod return_source_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — path-sensitive: a plain free on a `return null` path (the freed record is
@@ -8793,7 +8798,8 @@ mod return_source_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — re-`OpDatabase` between the free and the return clears it.
@@ -8804,7 +8810,8 @@ mod return_source_tests {
             Type::Void,
             "body",
         );
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 }
 
@@ -8875,7 +8882,8 @@ mod ref_param_publish_tests {
     #[test]
     fn silent_on_free_if_distinct() {
         let code = v_block(vec![publish(0), free_if(1, 0)], Type::Void, "body");
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// NEGATIVE — the same call assigned to a LOCAL deep-copies into a store the local
@@ -8883,7 +8891,8 @@ mod ref_param_publish_tests {
     #[test]
     fn silent_when_target_is_a_local() {
         let code = v_block(vec![publish(2), free(1)], Type::Void, "body");
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// POSITIVE — published on ONE arm only. MAY-alias: the free after the join still
@@ -8902,7 +8911,8 @@ mod ref_param_publish_tests {
     #[test]
     fn silent_without_a_publish() {
         let code = v_block(vec![free(1)], Type::Void, "body");
-        assert!(run(&code).is_empty());
+        let unexpected = run(&code);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 }
 

@@ -5157,7 +5157,7 @@ mod completion_tests {
     #[test]
     fn empty_prefix_yields_nothing() {
         let (_start, out) = complete_word(&model(), "1 + ", 4);
-        assert!(out.is_empty());
+        assert!(out.is_empty(), "{out:?}");
     }
 
     // ── REPL.C member completion ─────────────────────────────────────────────
@@ -5220,7 +5220,7 @@ mod completion_tests {
     #[test]
     fn dot_unknown_field_yields_nothing() {
         let (_start, out) = complete_word(&model(), "p.zzz", 5);
-        assert!(out.is_empty());
+        assert!(out.is_empty(), "{out:?}");
     }
 
     /// An unknown / non-struct receiver offers nothing, and never leaks the
@@ -5236,7 +5236,7 @@ mod completion_tests {
     #[test]
     fn dot_non_identifier_receiver_yields_nothing() {
         let (_start, out) = complete_word(&model(), "arr[0].x", 8);
-        assert!(out.is_empty());
+        assert!(out.is_empty(), "{out:?}");
     }
 }
 
@@ -5265,7 +5265,8 @@ mod paused_prompt_tests {
         // A payload with no readable text still says something, never nothing.
         let from_value =
             std::panic::catch_unwind(|| std::panic::panic_any(42u8)).expect_err("must unwind");
-        assert!(!panic_message(&from_value).is_empty());
+        let unexpected = panic_message(&from_value);
+        assert!(!unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// @PLN120 E3 — a bare verb must not shadow a live local of the same name.

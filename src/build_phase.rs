@@ -971,7 +971,11 @@ mod tests {
 
         let native = resolve_target("native", &m).unwrap();
         assert_eq!(native.shape, Shape::Native);
-        assert!(native.requires_rust_targets.is_empty());
+        assert!(
+            native.requires_rust_targets.is_empty(),
+            "{:?}",
+            native.requires_rust_targets
+        );
     }
 
     #[test]
@@ -1046,7 +1050,7 @@ mod tests {
 
         // Can't query rustup → rustup-target gate skipped.
         let miss = missing_requires(&html, None, &|_| true);
-        assert!(miss.rust_targets.is_empty());
+        assert!(miss.rust_targets.is_empty(), "{:?}", miss.rust_targets);
     }
 
     // ── Slice 3 — asset steps ──────────────────────────────────────────────

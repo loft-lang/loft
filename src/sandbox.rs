@@ -2182,8 +2182,8 @@ data_budget = "8_000_000"
     fn empty_profile_section_registers_a_deny_all_profile() {
         let cfg = parse_sandbox_config("[sandbox]\nlocked = [\"a.loft\"]\n[profile.locked]\n");
         let p = cfg.profiles.get("locked").expect("registered");
-        assert!(p.allow.is_empty());
-        assert!(p.allow_libs.is_empty());
+        assert!(p.allow.is_empty(), "{:?}", p.allow);
+        assert!(p.allow_libs.is_empty(), "{:?}", p.allow_libs);
         assert!(!p.allows("game#read")); // deny-all by default
         assert!(!p.native_ffi); // safe default
     }

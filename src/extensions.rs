@@ -3201,7 +3201,8 @@ mod dlopen_diag_tests {
             h.contains("libgl-dev") && h.contains("libasound2-dev"),
             "{h}"
         );
-        assert!(build_deps_hint(temp_pkg("nobd", "[native]\n").to_str().unwrap()).is_empty());
+        let unexpected = build_deps_hint(temp_pkg("nobd", "[native]\n").to_str().unwrap());
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     #[test]

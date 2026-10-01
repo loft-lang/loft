@@ -461,7 +461,7 @@ mod tests {
         let content = "schema_version = 1\n";
         let lock = parse(content).expect("parse");
         assert_eq!(lock.schema_version, 1);
-        assert!(lock.packages.is_empty());
+        assert!(lock.packages.is_empty(), "{:?}", lock.packages);
     }
 
     #[test]

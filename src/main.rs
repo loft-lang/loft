@@ -12437,7 +12437,8 @@ mod tests {
         std::fs::create_dir_all(&src).expect("mkdir");
         std::fs::write(src.join("solo.loft"), "use parts::*;\n").expect("write entry");
         std::fs::write(src.join("parts.loft"), "fn p() -> integer { 2 }\n").expect("write mod");
-        assert!(super::undeclared_source_deps(&dir, "solo", &[]).is_empty());
+        let unexpected = super::undeclared_source_deps(&dir, "solo", &[]);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -12584,6 +12585,7 @@ aes-gcm       = { version = \"0.10\", default-features = false, features = [\"ae
         // zero non-loft deps, so the driver skips the build-extension entirely.
         let web = "[package]\nname = \"web-wasm\"\n\n[dependencies]\n\
                    loft = { path = \"../../../loft\" }\n";
-        assert!(bridge_nonloft_deps(web).is_empty());
+        let unexpected = bridge_nonloft_deps(web);
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 }

@@ -3693,7 +3693,8 @@ mod layout_tests {
     #[test]
     fn validate_all_layouts_clean_after_init_returns_no_issues() {
         let s = Stores::new();
-        assert!(s.validate_all_layouts().is_empty());
+        let unexpected = s.validate_all_layouts();
+        assert!(unexpected.is_empty(), "{unexpected:?}");
     }
 
     /// Build the shape that makes `finish()` promote: `Node` is the content of an
