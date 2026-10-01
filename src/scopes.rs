@@ -916,8 +916,9 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
     // var_size: V2 is scope-blind, a single function-entry reserve (frame
     // hwm) covers all slots, so there are no per-block reserves.
     let result = {
+        let aliases = crate::slot_alias::range_slot_aliases(data, d_nr);
         let d = &data.definitions[d_nr as usize];
-        crate::variables::assign_slots_v2(&d.variables, local_start)
+        crate::variables::assign_slots_v2(&d.variables, local_start, &aliases)
     };
     {
         let d = &mut data.definitions[d_nr as usize];

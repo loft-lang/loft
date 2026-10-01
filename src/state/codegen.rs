@@ -2211,6 +2211,24 @@ impl State {
         if matches!(value.unspan(), Value::Block(_)) && self.emit_walk_step(stack, v) {
             return;
         }
+        // A counted loop's variable placed in its range index's own slot (`slot_alias`): the
+        // iterator's yield and the store of it would copy the slot onto itself, so the
+        // iterator runs without them.  Read off the two positions, so a variable table that
+        // carries no alias decision keeps the copy.
+        if let Value::Block(bl) = value.unspan()
+            && bl.name == "Iter range"
+            && let Some(Value::Var(w)) = bl.operators.last().map(Value::unspan)
+            && *w != v
+            && stack.function.stack(v) != u16::MAX
+            && stack.function.stack(v) == stack.function.stack(*w)
+        {
+            let mut step = (**bl).clone();
+            step.operators.pop();
+            step.result = Type::Void;
+            self.generate(&Value::Block(Box::new(step)), stack, false);
+            stack.function.set_stack_allocated(v);
+            return;
+        }
         // Zero-sized variables (null-typed) have no stack storage.
         if size(stack.function.tp(v), &Context::Variable) == 0 {
             stack.function.set_stack_allocated(v);

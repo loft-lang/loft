@@ -355,6 +355,7 @@ pub mod return_field;
 pub mod rewrite_census;
 pub mod scopes;
 pub mod siphash;
+pub mod slot_alias;
 pub mod use_analysis;
 pub mod value_record;
 mod variables;
