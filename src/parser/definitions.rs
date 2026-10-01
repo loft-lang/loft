@@ -2978,6 +2978,9 @@ impl Parser {
                     );
                 }
             }
+            if !self.first_pass {
+                self.vars.seed_incoming_writes(&self.data, self.context);
+            }
             self.parse_code();
             self.literal_body_constant();
             // #314 — pass-1 sibling of the pass-2 flip above: now that

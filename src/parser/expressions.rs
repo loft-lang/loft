@@ -3308,6 +3308,68 @@ use a separate collection or add after the loop"
         Some(v_block(steps, Type::Void, "ref_tuple_write"))
     }
 
+    /// The variable an `=` names as its whole target, or `u16::MAX`.
+    ///
+    /// loft#1816 — the TARGET of `x = …` is written, not read.  `parse_var` counted its
+    /// mention as a use, and only the scalar route (`towards_set`) took that back, so on
+    /// every other route — a struct literal built in place, a vector, a call into a buffer —
+    /// a reassignment read as a read of its own target: `dead-assignment` and `never-read`
+    /// were blind to every heap local and heap parameter.  The LINTS take it back here, for
+    /// every route, as a target mention (`Function::reads`).  `uses` itself is left as each
+    /// route has it: code generation reads it (a single-use local's store MOVES), and a
+    /// reassignment after such a move must still count against it.
+    ///
+    /// A LINK is the exception: `c = a` on a `&` local or parameter writes THROUGH it, which
+    /// reads the binding — it is the one use the link exists for.
+    fn assign_target(&self, to: &Value, op: &str, var_nr: u16) -> u16 {
+        match to.unspan() {
+            Value::Var(v)
+                if op == "="
+                    && *v == var_nr
+                    && self.vars.exists(var_nr)
+                    && !self.assign_writes_through(var_nr) =>
+            {
+                var_nr
+            }
+            _ => u16::MAX,
+        }
+    }
+
+    /// After an `=` to `target`: take its mention back for the lints when the route left it
+    /// counted (`untaken`), then ask whether the previous write was read — after the RHS is
+    /// parsed, so its reads are counted, and here rather than inside one route, so the routes
+    /// that return early are tracked too.
+    fn assign_target_written(&mut self, target: u16, untaken: bool) {
+        if target == u16::MAX {
+            return;
+        }
+        if untaken {
+            self.vars.add_target_mention(target);
+        }
+        if !self.first_pass && self.vars.exists(target) {
+            self.vars.track_write(target, &mut self.lexer);
+        }
+    }
+
+    /// Does `x = …` on `v` write THROUGH a link rather than rebind `v` (`@FR-B-Ref-Write`)?  A
+    /// `&` parameter or annotated `&` local is a `RefVar`; a vector local linked by `c = &n`
+    /// is a plain vector registered in `amp_vector_locals`; a link to a text field or element
+    /// is a store text link.
+    fn assign_writes_through(&self, v: u16) -> bool {
+        // Through `base()` (`@FR-N-Shape`): a link to a `vector<T>?` is a link all the same.
+        let tp = self.vars.tp(v).base();
+        matches!(tp, Type::RefVar(_))
+            || self.vars.is_store_text_link(v)
+            || (matches!(tp, Type::Vector(..)) && {
+                // A scan rather than a keyed lookup: the key is an owned `String`, and building
+                // one per assignment is an allocation the front end does not otherwise make.
+                let name = self.vars.name(v);
+                self.amp_vector_locals
+                    .iter()
+                    .any(|(c, n)| *c == self.context && n == name)
+            })
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3375,7 +3437,15 @@ use a separate collection or add after the loop"
         let group_parent = parent_tp.clone();
         let group_to = to.clone();
         let already = std::mem::replace(&mut self.rebind_lowered, u16::MAX);
+        let target = self.assign_target(to, op, var_nr);
+        // Only a mention that was COUNTED can be taken back.
+        let counted = target != u16::MAX && self.vars.reads(target) > 0;
+        let outer_target = std::mem::replace(&mut self.assign_target_discounted, target);
+        let outer_taken = std::mem::replace(&mut self.assign_target_taken, false);
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
+        self.assign_target_discounted = outer_target;
+        self.assign_target_written(target, counted && !taken);
         // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
         // read-only too (`mark_const_view`).
         if op == "="
@@ -4611,11 +4681,6 @@ use a separate collection or add after the loop"
         }
         if let Type::Rewritten(tp) = s_type {
             s_type = *tp;
-        }
-        // Dead assignment check: after the RHS is parsed (so RHS reads of the
-        // variable are already counted), check if the previous write was never read.
-        if op == "=" && var_nr != u16::MAX && !self.first_pass && self.vars.exists(var_nr) {
-            self.vars.track_write(var_nr, &mut self.lexer);
         }
         // @FR-N-Store / @FR-N-Join — a bare `null` written to a LOCAL is the same store a `τ?`
         // is, and takes the same two arms the `τ?` takes further down: a DECLARED local keeps

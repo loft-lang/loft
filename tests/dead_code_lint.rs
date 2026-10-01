@@ -38,12 +38,13 @@ fn spec_path() -> PathBuf {
 
 const DEAD_STORE_MSG: &str = "is mutated but its value is never read";
 
-/// The three locals `test_used` (unused_variables) flags in the corpus — disjoint from this
+/// The four locals `test_used` (unused_variables) flags in the corpus — disjoint from this
 /// lint (a var mutated via `OpSet` was read as the write base at parse, so `uses>0`).
-const EXPECT_NEVER_READ: [&str; 3] = [
+const EXPECT_NEVER_READ: [&str; 4] = [
     "Variable a is never read", // W-scalar    — a = 3; a += 1  (self-read doesn't rescue)
     "Variable total is never read", // W-accumulator — total += i, unread after the loop
     "Variable x is never read", // N-effectful — binding unread; the RHS effect would stay
+    "Variable z is never read", // N-construct — a constructed value nothing reads (loft#1816)
 ];
 
 /// Run `file` on `backend` (`--interpret` / `--native`) with the given extra env, returning
@@ -134,7 +135,7 @@ fn assert_default(backend: &str) {
         "[{backend}] reference-struct alias `al` must NOT warn (the write propagates)\n{diag}"
     );
 
-    // `test_used` untouched — its three never-read warnings still fire, and `d` gets ONLY the
+    // `test_used` untouched — its four never-read warnings still fire, and `d` gets ONLY the
     // dead-store message (no double warning).
     for w in EXPECT_NEVER_READ {
         assert!(
@@ -144,7 +145,7 @@ fn assert_default(backend: &str) {
     }
     assert_eq!(
         never_reads(&diag),
-        3,
+        EXPECT_NEVER_READ.len(),
         "[{backend}] never-read set drifted\n{diag}"
     );
     assert!(
@@ -180,7 +181,7 @@ fn assert_opt_out(backend: &str) {
     // `test_used` is a different lint — the opt-out must not touch it.
     assert_eq!(
         never_reads(&diag),
-        3,
+        EXPECT_NEVER_READ.len(),
         "[{backend}] opt-out must not affect unused_variables\n{diag}"
     );
 }

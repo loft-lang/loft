@@ -6849,7 +6849,7 @@ fn empty_it(b: Box) { b.items.clear(); }
 
 === What `&` adds: REPLACEMENT
 
-Assigning the whole binding — `b = ...` — is the one operation that does NOT reach the caller through a plain parameter.  It rebinds the callee's own name and the caller keeps what it had.  Declaring the parameter `&` turns that assignment into a write-back, and that is all `&` does.
+Assigning the whole binding — `b = ...` — is the one operation that does NOT reach the caller through a plain parameter.  It rebinds the callee's own name and the caller keeps what it had.  Declaring the parameter `&` turns that assignment into a write-back, and that is all `&` does.  The compiler reports the plain spelling below: the value `b` came in with is never read (`warning\[never-read\]`), and neither is the one it is given (`warning\[dead-assignment\]`), each with `b: &Box` as the cure.
 
 ```rust
 fn replace_plain(b: Box) { b = Box { items: [Item { val: 99 }] }; }
@@ -6922,7 +6922,7 @@ So read `&` on a signature as "this function may hand you back a different value
 
 === Forwarding carries it through
 
-The forwarder needs the `&` as much as the function it calls.  Its own body never assigns to the parameter, so the `&` can look unnecessary — but it is what carries the inner replacement out.  Written `fn forward\_replace(b: Box)` the assertion below fails, and nothing reports it.
+The forwarder needs the `&` as much as the function it calls.  Its own body never assigns to the parameter, so the `&` can look unnecessary — but it is what carries the inner replacement out.  Written `fn forward\_replace(b: Box)` the assertion below fails — and the compiler says why: the replacement lands in the forwarder's own `b`, which nothing reads after the call (`warning\[dead-assignment\]`).
 
 ```rust
   deep = Box { items: [Item { val: 1 }] };

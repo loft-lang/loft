@@ -132,11 +132,11 @@ fn n_effectful(showln: fn(text)) -> integer {
   0
 }
 
-// verdict: silent for BOTH lints — a false-positive guard for construction. `z = Box{…}`
+// verdict: S2 silent, `test_used` WARNS — a false-positive guard for construction. `z = Box{…}`
 // emits `OpSetField(z,…)` (write_targets>0) but the element fills READ z's field (reads>0),
-// and construction also bumps `uses>0` — so `test_used` (uses==0) stays quiet AND S2
-// (reads==0) stays quiet. That an unused constructed value escapes both is a separate
-// pre-existing `test_used` gap, not a dead-store; S2 must not false-positive on it.
+// so S2 (reads==0) stays quiet: an unused constructed value is not a dead store.  It IS a
+// value nothing reads, which `test_used` reports since the target of `z = …` stopped counting
+// as a read of `z` (loft#1816).
 fn n_construct_unread() {
   z = Box { data: [1, 2, 3] };
   // z is never read

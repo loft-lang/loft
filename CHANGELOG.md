@@ -229,6 +229,16 @@ A character, an enum, a struct, a list and a boolean now refuse `0N`, as text al
 fill for them (`{flag:*>6}`).  A `for` inside a hole still pads each number it produces
 (`{for n in v {n}:03}`).
 
+**A value nothing reads is reported for records and lists too, and for parameters.**  `x = 1;
+x = 2` warned that the first value was never read, but `b = Box { n: 1 }; b = Box { n: 2 }` and
+`v = [1]; v = [2]` did not, and a list or record bound and never used at all went unreported.
+They now warn as a number does.  A plain parameter is the function's own name for the value, so
+replacing it changes nothing for the caller: `fn reset(b: Box) { b = Box { n: 0 }; }` now says
+that the value `b` received is never read and that the new one is never read either, with
+`b: &Box` as the cure when the caller is meant to see it.  Handing such a parameter to a `&`
+parameter that replaces it is reported the same way.  A library built with warnings denied may
+need the unused value removed.
+
 ### Everything else
 
 **A generic format hole renders as the type it is called with.**  Inside

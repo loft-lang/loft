@@ -179,6 +179,13 @@ pub(crate) struct RestoredVar {
     pub owner_witness: u16,
 }
 
+impl Variable {
+    /// [`Function::reads`] for one variable.
+    fn reads(&self) -> u16 {
+        self.uses.saturating_sub(self.target_mentions)
+    }
+}
+
 // This is created for every variable instance, even if those are of the same name.
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
@@ -191,6 +198,15 @@ pub struct Variable {
     uses: u16,
     uses_at_write: u16,
     write_source: (u32, u32),
+    /// The pending write `write_source` names is a PARAMETER's incoming value, not an
+    /// assignment in the body (loft#1816): a plain parameter enters already written, so the
+    /// first `p = …` before any read of `p` throws the caller's value away unread.
+    incoming_seed: bool,
+    /// Mentions counted in `uses` that were the TARGET of an `=` (loft#1816), which the lints
+    /// do not count as reads; see [`Function::reads`].
+    target_mentions: u16,
+    /// That was reported, so the end-of-function `never-read` does not say it again.
+    incoming_reported: bool,
     argument: bool,
     defined: bool,
     /// Binding-const (`const` PREFIX): `const x` local, `const p: T` param, and the
@@ -879,6 +895,9 @@ impl Function {
                 source: (0, 0),
                 scope: u16::MAX,
                 uses_at_write: 0,
+                incoming_seed: false,
+                target_mentions: 0,
+                incoming_reported: false,
                 write_source: (0, 0),
                 defined: false,
                 const_binding: false,
@@ -953,6 +972,7 @@ impl Function {
         self.variables.append(&mut other.variables);
         for v in &mut self.variables {
             v.uses = 0;
+            v.target_mentions = 0;
         }
         self.work_text = 0;
         self.work_ctext = 0;
@@ -2168,6 +2188,19 @@ impl Function {
         self.variables[var_nr as usize].stack_pos = pos;
     }
 
+    /// The mentions of `var_nr` that READ it: `uses` minus the times it was named as the
+    /// target of an `=` on a route that left that mention counted (loft#1816).  What the
+    /// dead-store and never-read lints ask; code generation keeps reading `uses`.
+    #[must_use]
+    pub fn reads(&self, var_nr: u16) -> u16 {
+        self.variables[var_nr as usize].reads()
+    }
+
+    pub fn add_target_mention(&mut self, var_nr: u16) {
+        let v = &mut self.variables[var_nr as usize];
+        v.target_mentions = v.target_mentions.saturating_add(1);
+    }
+
     pub fn in_use(&mut self, var_nr: u16, plus: bool) {
         if plus {
             self.variables[var_nr as usize].uses += 1;
@@ -2210,7 +2243,44 @@ impl Function {
         // hands `f` the 10, and reporting that write as dead advertises a deletion
         // that changes the answer.  Silence on a captured variable is the safe
         // direction for a lint that must never make a program wrong.
-        if var.write_source != (0, 0) && var.uses == var.uses_at_write && !var.captured {
+        if var.write_source != (0, 0)
+            && var.reads() == var.uses_at_write
+            && !var.captured
+            && var.incoming_seed
+        {
+            // loft#1816 — the PARAMETER's incoming value is replaced before anything read
+            // it: the same dead store as below, where the overwritten write is the call's.
+            // Replacing a plain parameter rebinds the local only (calls.md F-ParamRebind), so
+            // the caller's value was neither read nor changed.
+            let name = var.name.clone();
+            lexer.to(var.write_source);
+            diagnostic!(
+                lexer,
+                Level::Warning,
+                code = "never-read",
+                "The value parameter '{}' receives is never read — an assignment replaces it \
+                 first, and the replacement stays in this function",
+                name,
+            );
+            lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("declare it `{name}: &…` so the assignment reaches the caller"),
+                condition: Some("the caller is meant to see the new value".to_string()),
+                edit: None,
+                concept: "reference",
+                concept_ref: "@F21",
+            });
+            lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("make `{name}` a local and drop the parameter"),
+                condition: Some("no caller needs to pass it".to_string()),
+                edit: None,
+                concept: "dead-code lint",
+                concept_ref: "@F100",
+            });
+            lexer.to(here);
+            self.variables[var_nr as usize].incoming_reported = true;
+        } else if var.write_source != (0, 0) && var.reads() == var.uses_at_write && !var.captured {
             // Variable was written before but not read since — dead assignment
             let name = var.name.clone();
             let prev_source = var.write_source;
@@ -2234,26 +2304,56 @@ impl Function {
             lexer.to(here);
         }
         let var = &mut self.variables[var_nr as usize];
-        var.uses_at_write = var.uses;
+        var.uses_at_write = var.reads();
         var.write_source = here;
+        var.incoming_seed = false;
+    }
+
+    /// loft#1816 — a plain parameter enters the body already WRITTEN: the caller's value is
+    /// its first write, and a `p = …` before any read of `p` makes that write dead exactly as
+    /// a second `x = …` makes a local's first one dead.  Seeded at the body's start (pass 2),
+    /// so [`Self::track_write`] asks the same question of both.  A `&` parameter is exempt —
+    /// its assignment IS the caller's (F-ParamRef) — and so are the names `track_write`
+    /// itself skips.
+    /// Only the SIGNATURE's parameters of `d_nr` are seeded: a local promoted to a
+    /// return buffer is an argument too (calls.md F-Ret), and its incoming value is the
+    /// caller's empty place, there to be filled.
+    pub fn seed_incoming_writes(&mut self, data: &Data, d_nr: u32) {
+        for var in &mut self.variables {
+            if !var.argument
+                || !Self::declared_parameter(data, d_nr, &var.name)
+                || var.name.starts_with('_')
+                || var.name.contains('#')
+                || var.const_binding
+                || var.value_const
+                || var.caller_hidden_buf
+                || matches!(var.type_def.base(), Type::RefVar(_))
+            {
+                continue;
+            }
+            var.uses_at_write = var.reads();
+            var.write_source = var.source;
+            var.incoming_seed = true;
+        }
     }
 
     /// Save write-tracking state for all variables, then clear pending writes.
     /// Call before entering a branch — the branch should not see pre-branch writes
     /// as "unread" because the branch might not execute.
-    pub fn save_and_clear_write_state(&self) -> Vec<(u16, (u32, u32))> {
+    pub fn save_and_clear_write_state(&self) -> Vec<(u16, (u32, u32), bool)> {
         self.variables
             .iter()
-            .map(|v| (v.uses_at_write, v.write_source))
+            .map(|v| (v.uses_at_write, v.write_source, v.incoming_seed))
             .collect()
     }
 
     /// Restore write-tracking state for all variables (call after leaving a branch).
-    pub fn restore_write_state(&mut self, state: &[(u16, (u32, u32))]) {
-        for (i, (uses_at_write, write_source)) in state.iter().enumerate() {
+    pub fn restore_write_state(&mut self, state: &[(u16, (u32, u32), bool)]) {
+        for (i, (uses_at_write, write_source, incoming_seed)) in state.iter().enumerate() {
             if i < self.variables.len() {
                 self.variables[i].uses_at_write = *uses_at_write;
                 self.variables[i].write_source = *write_source;
+                self.variables[i].incoming_seed = *incoming_seed;
             }
         }
     }
@@ -2674,6 +2774,9 @@ impl Function {
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
+            incoming_seed: false,
+            target_mentions: 0,
+            incoming_reported: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2724,6 +2827,9 @@ impl Function {
             // asks a copy; the move is an optimisation).
             uses: self.variables[var as usize].uses,
             uses_at_write: self.variables[var as usize].uses_at_write,
+            incoming_seed: false,
+            target_mentions: 0,
+            incoming_reported: false,
             // A SPLIT of a linked local is a second place, and the `&` names the original;
             // the copy is not the place the link holds, so it inherits no link.
             amp_linked_by: u16::MAX,
@@ -2769,6 +2875,9 @@ impl Function {
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
+            incoming_seed: false,
+            target_mentions: 0,
+            incoming_reported: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2809,6 +2918,9 @@ impl Function {
             stack_pos: u16::MAX,
             uses: 1,
             uses_at_write: 0,
+            incoming_seed: false,
+            target_mentions: 0,
+            incoming_reported: false,
             write_source: (0, 0),
             argument: false,
             defined: true,
@@ -4153,6 +4265,15 @@ impl Function {
         self.variables[var_nr as usize].source
     }
 
+    /// Does the signature of `d_nr` declare a visible parameter `name`?
+    fn declared_parameter(data: &Data, d_nr: u32, name: &str) -> bool {
+        (d_nr as usize) < data.definitions.len()
+            && data.definitions[d_nr as usize]
+                .attributes()
+                .iter()
+                .any(|a| !a.hidden && a.name == name)
+    }
+
     pub fn test_used(&self, lexer: &mut Lexer, data: &Data, body: &Value, d_nr: u32) {
         for (nr, var) in self.variables.iter().enumerate() {
             // A `#` marks a name the compiler made (`i#index`), except the per-occurrence
@@ -4222,7 +4343,54 @@ impl Function {
             {
                 continue;
             }
-            if var.uses == 0 && !var.captured && data.def_nr(spelled) == u32::MAX {
+            // loft#1816 — a PARAMETER's last assignment that nothing reads afterwards.  A plain
+            // parameter is this function's own local (calls.md F-ParamRebind), so the value
+            // reaches no one: the dead store `track_write` reports between two writes, here
+            // between the last write and the end of the body.  Only a write made at the body's
+            // own level is still pending here — a branch or a loop restores the state it found
+            // (`restore_write_state`), so a write a later iteration may read is never one.  A
+            // promoted return buffer is the caller's place (calls.md F-Ret), never a dead store,
+            // and so is any argument the signature does not declare.
+            if var.argument
+                && !var.incoming_seed
+                && !var.caller_hidden_buf
+                && Self::declared_parameter(data, d_nr, &var.name)
+                && !matches!(var.type_def.base(), Type::RefVar(_))
+                && var.write_source != (0, 0)
+                && var.reads() == var.uses_at_write
+                && !var.captured
+            {
+                lexer.to(var.write_source);
+                diagnostic!(
+                    lexer,
+                    Level::Warning,
+                    code = "dead-assignment",
+                    "Dead assignment — '{}' is never read after this, and a parameter's \
+                     assignment stays in this function",
+                    spelled,
+                );
+                lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("declare the parameter `{spelled}: &…`"),
+                    condition: Some("the caller is meant to see the new value".to_string()),
+                    edit: None,
+                    concept: "reference",
+                    concept_ref: "@F21",
+                });
+                lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: "delete the assignment".to_string(),
+                    condition: Some("nothing needs the new value".to_string()),
+                    edit: None,
+                    concept: "dead-code lint",
+                    concept_ref: "@F100",
+                });
+            }
+            if var.reads() == 0
+                && !var.captured
+                && !var.incoming_reported
+                && data.def_nr(spelled) == u32::MAX
+            {
                 lexer.to(var.source);
                 diagnostic!(
                     lexer,

@@ -223,6 +223,7 @@ fn text_slot_reuse_sequential() {
          }"
     )
     .expr("check()")
+    .warning("Variable b is never read at text_slot_reuse_sequential:3:17")
     .result(Value::str("goodbye world"));
 }
 

@@ -2166,8 +2166,12 @@ impl Parser {
             crate::parser::expressions::build_nested_tuple_assign(to, &tuple_lhs, code)
         } else if let Value::Var(nr) = to.unspan() {
             // The const guard is `parse_assign_op_inner`'s, asked before it routed here.
-            // This variable was created here and thus not yet used.
+            // This variable was created here and thus not yet used.  Said to `parse_assign_op`
+            // too, which then has no target mention left to take back (loft#1816).
             self.var_usages(*nr, false);
+            if self.assign_target_discounted == *nr {
+                self.assign_target_taken = true;
+            }
             v_set(*nr, code)
         } else {
             if !self.first_pass {

@@ -784,7 +784,7 @@ fn constant(self: Parser, _public: boolean) -> boolean {
 // <parameter> ::= <identifier> ':' [ 'const' | '&' ] <type> [ '=' <value> ]
 
 fn parameter(self: Parser) {
-  p = self.lexer.identifier();
+  self.lexer.identifier();
   self.expect(":");
   if self.lexer.matches("const") {
   }
