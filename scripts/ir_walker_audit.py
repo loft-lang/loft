@@ -536,9 +536,18 @@ def audit_dead():
 # `for_each_child`'s leaf arm names every variant with no child expression, so the
 # CHILD-BEARING set is its complement — derived from the keystone rather than listed
 # here, because a new variant must not silently join the wrong side of it.
+def for_each_child_start(src):
+    """Where `Value::for_each_child` begins in data.rs, whatever lifetimes its signature
+    carries (`<'a>(&'a self, … FnMut(&'a Value))` reads the same as the elided form)."""
+    m = re.search(r"pub fn for_each_child(?:<'a>)?\(&(?:'a )?self, f: &mut impl FnMut\(&(?:'a )?Value\)\)", src)
+    if not m:
+        raise SystemExit("Value::for_each_child not found in data.rs — `reach` cannot derive its child set")
+    return m.start()
+
+
 def child_bearing_variants():
     src = open(DATA_RS, encoding="utf-8").read()
-    i = src.index("pub fn for_each_child(&self, f: &mut impl FnMut(&Value))")
+    i = for_each_child_start(src)
     j = src.index("// Leaves — no child expressions.", i)
     end = src.index("\n        }\n", j)
     leaves = set(re.findall(r"Value::([A-Za-z0-9]+)", src[j:end]))
@@ -558,7 +567,7 @@ def pass_through_variants():
     All four walkers that turned out to be wrong the same way were missing one of these.
     """
     src = open(DATA_RS, encoding="utf-8").read()
-    i = src.index("pub fn for_each_child(&self, f: &mut impl FnMut(&Value))")
+    i = for_each_child_start(src)
     j = src.index("// Leaves \u2014 no child expressions.", i)
     out = set()
     # `item (| item)*` rather than `(item |?)+`: the repeated form lets the leading and
