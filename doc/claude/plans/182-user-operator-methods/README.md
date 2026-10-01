@@ -158,9 +158,10 @@ is decided.
 
 ## What P0 found
 
-- **Overload selection has no formal rule.**  (Op-Left) chooses among `minus`'s overloads by the
-  right operand's type, as a method call already does (`parser/dispatch.rs`, the #1811 guard),
-  but `formal/calls.md` names no rule for it.  P1 writes that rule before (Op-Left) can cite it.
+- **Overload selection had no rule in `formal/`.**  (Op-Left) chooses among `minus`'s overloads
+  by the right operand's type, as a method call does.  The rules existed, in @PLN162's plan
+  directory, never moved when that plan finished; P1's first step moved them to
+  [formal/dispatch.md](../../formal/dispatch.md), and (Op-Left) cites `Disp-Select`.
 - **`compare` needs stdlib support first.**  `Ordering`, `then`, and `compare` on `integer`,
   `float`, `single`, `text` and `character` are P1's first step: without them a user's `compare`
   is a three-way `if`.
