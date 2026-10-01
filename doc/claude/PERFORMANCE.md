@@ -832,7 +832,15 @@ Measured on `14_stdlib_vector`, per op (interpreter / native):
 
 The interpreter's extra store work is **vector growth**: native sizes a vector it fills once
 (`(R-Push)`, `(R-PushFill)`, `(R-PushRec)`) where the interpreter grows it step by step and
-relocates the data on each step.  Those rules are the first candidates for the IR phase.
+relocates the data on each step.  That is NOT worth moving into the IR phase: priced
+2026-10-01 by reserving the whole vector by hand before the loop, interpreted, `push`'s loop
+ran 280–283 ms either way, a record-append loop 632–647 → 632–637 ms, and `f32_build` (603 KB
+relocated per op, the most of any routine) 595–640 → 592–596 ms.  Growth doubles, so its cost
+is amortised to nothing; `vector_append` is 5 % of `push`'s cycles, and the dispatch of its 13
+ops per element is the rest.  The lever there is fewer ops per iteration: the
+`OpPreAllocVector` the parser emits before every push re-runs each iteration although it only
+ever claims once, the loop variable is copied from the range index each round, and the loop
+test jumps over a `GotoWord` to reach the body.
 
 ### Function calls
 
