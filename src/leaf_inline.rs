@@ -56,6 +56,22 @@ fn off_scale() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_SCALE_FOLD").is_ok_and(|v| v != "0"))
 }
 
+/// An instrument that attributes work to FUNCTIONS is armed (`LOFT_PROFILE`,
+/// `LOFT_ALLOC_PATHS`, `LOFT_ALLOC_SITES`, `LOFT_OP_CENSUS`): its report names what the
+/// program wrote, so the calls stay calls.
+fn profiled() -> bool {
+    crate::env_once!(
+        [
+            "LOFT_PROFILE",
+            "LOFT_ALLOC_PATHS",
+            "LOFT_ALLOC_SITES",
+            "LOFT_OP_CENSUS"
+        ]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some())
+    )
+}
+
 fn trace() -> bool {
     crate::env_once!(std::env::var("LOFT_TRACE_INLINE_LEAF").is_ok_and(|v| v != "0"))
 }
@@ -734,7 +750,7 @@ fn reduce_in(
 /// Inline every admitted leaf call and reduce the bodies; answers how many calls were
 /// inlined.
 pub fn rewrite_program(data: &mut Data) -> usize {
-    if off_all() || data.open_world || data.observes_entries {
+    if off_all() || data.open_world || data.observes_entries || profiled() {
         return 0;
     }
     let mut leaves: HashMap<u32, Leaf> = HashMap::new();

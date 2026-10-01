@@ -636,7 +636,7 @@ pub struct Stores {
     /// the `parallel` block after its join), a debugger or profiler arming (`enable_debug`,
     /// `arm_profiler`).  A cache, never the truth: the loop's cold path re-derives it from the
     /// events themselves, so a nested loop never clears one its caller still needs.
-    pub dispatch_stop: bool,
+    pub dispatch_stop: std::sync::atomic::AtomicBool,
     /// When true, `free_named` overwrites the freed store's buffer with a
     /// poison pattern (`0xDEADBEEF` i32 words) so subsequent reads through a
     /// stale DbRef hit recognisable garbage instead of whatever bytes the
@@ -769,7 +769,7 @@ impl Clone for Stores {
             logger: self.logger.clone(),
             had_fatal: false,
             runtime_error: None,
-            dispatch_stop: false,
+            dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             // #255: `source_dir` is parse-time CONFIG (the main source file's
             // directory), not runtime state — it must survive `clone()` so the
             // `source_dir()` builtin works after the test runner / native paths
@@ -1539,7 +1539,7 @@ impl Stores {
             logger: None,
             had_fatal: false,
             runtime_error: None,
-            dispatch_stop: false,
+            dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             source_dir: String::new(),
             // #255 / @PLN9: program-relative by default — a relative file path
             // re-homes against the program's own directory, so "program + assets"
@@ -1699,7 +1699,8 @@ impl Stores {
     /// assignment out of `src/`).
     pub fn raise_runtime_error(&mut self, err: Box<crate::runtime_error::RuntimeError>) {
         self.runtime_error = Some(err);
-        self.dispatch_stop = true;
+        self.dispatch_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Remove `cur` from a tree-backed collection MID-ITERATION and answer the cursor that

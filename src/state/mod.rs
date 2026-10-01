@@ -1373,7 +1373,9 @@ impl State {
             || self.database.runtime_error.is_some()
             || crate::parallel::worker_fatal_pending()
         {
-            self.database.dispatch_stop = true;
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -3134,7 +3136,9 @@ impl State {
         crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
         // `@FR-R-DispatchStop` — a worker's fatal is noticed after the join.
         if crate::parallel::worker_fatal_pending() {
-            self.database.dispatch_stop = true;
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         // The worker's halt is re-raised by the dispatch loop's own check (its cold path,
         // which the flag above sends it to), which every par
@@ -3618,7 +3622,9 @@ impl State {
             self.debug = Some(Box::default());
         }
         // `@FR-R-DispatchStop` — a debugger attaching mid-run hands the run to the full loop.
-        self.database.dispatch_stop = true;
+        self.database
+            .dispatch_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Register a breakpoint at the entry of function `d_nr` (its first bytecode
@@ -6097,6 +6103,12 @@ impl State {
     #[cold]
     #[inline(never)]
     fn lean_stop(&mut self) -> LeanStop {
+        // The watchdog's request at the deadline: a graceful stop from any op, a loop that
+        // calls nothing included, naming the frame that was running.
+        if crate::timeout::deadline_reached() {
+            let d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
+            crate::timeout::stop_at_deadline(d_nr);
+        }
         if self.database.frame_yield {
             // The host's resume clears `frame_yield`; the next op re-derives the flag.
             return LeanStop::Return;
@@ -6108,7 +6120,10 @@ impl State {
             self.database.had_fatal = true;
         }
         self.note_runtime_error_halt();
-        self.database.dispatch_stop = self.database.runtime_error.is_some() || self.debug.is_some();
+        self.database.dispatch_stop.store(
+            self.database.runtime_error.is_some() || self.debug.is_some(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if self.debug.is_some() {
             LeanStop::Leave
         } else {
@@ -6696,6 +6711,7 @@ impl State {
             // `@FR-R-DispatchPublish` — the crash context is derived from the position the
             // loop stores for the allocator and the bytecode, registered once, instead of being
             // written per op.
+            let _stop = crate::timeout::publish_stop_flag(&self.database.dispatch_stop);
             let _published = crate::crash_report::LeanSource::register(
                 std::ptr::addr_of!(self.database.alloc_pc),
                 std::ptr::addr_of!(self.code_base),
@@ -6711,7 +6727,11 @@ impl State {
                     u16::from(op)
                 };
                 OPERATORS[usize::from(opcode)](self);
-                if self.database.dispatch_stop {
+                if self
+                    .database
+                    .dispatch_stop
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
                     match self.lean_stop() {
                         LeanStop::Continue => {}
                         LeanStop::Return => return,
@@ -7115,7 +7135,9 @@ impl State {
         // pays nothing for it; armed, it needs the `Debugger` that branch tests for.
         if crate::op_census::enabled() && self.debug.is_none() {
             self.debug = Some(Box::default());
-            self.database.dispatch_stop = true;
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         if self.debug.as_deref().is_some_and(|d| d.prof.is_some()) {
             return;
@@ -7130,7 +7152,9 @@ impl State {
         if prof.is_none() {
             if self.debug.is_none() {
                 self.debug = Some(Box::default());
-                self.database.dispatch_stop = true;
+                self.database
+                    .dispatch_stop
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             crate::profiler::install_signal_flush();
             return;
@@ -7138,7 +7162,9 @@ impl State {
         let Some(prof) = prof else { return };
         if self.debug.is_none() {
             self.debug = Some(Box::default());
-            self.database.dispatch_stop = true;
+            self.database
+                .dispatch_stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(d) = self.debug.as_deref_mut() {
             d.prof = Some(Box::new(prof));

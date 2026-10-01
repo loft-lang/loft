@@ -47,8 +47,9 @@ fn run_until_deadline(name: &str, body: &str, extra: &[&str]) -> String {
     )
 }
 
-/// A hang with NO further loft call in it — the shape only the watchdog can end, because
-/// no checkpoint runs past the deadline to exit cooperatively.
+/// A hang with NO further loft call in it.  It stops GRACEFULLY: at the deadline the
+/// watchdog sets the dispatch loop's stop flag, which every op tests (`@FR-R-DispatchStop`),
+/// so a loop needs no call to reach a checkpoint.
 const SPINS_INSIDE_ONE_FN: &str = r#"
 fn spin952(n: integer) -> integer {
   t = 0;
@@ -73,8 +74,9 @@ fn test_the_stuck_one() {
 }
 "#;
 
-/// A hang that keeps CALLING, so the cooperative checkpoint sees the deadline first and
-/// the run exits cleanly instead of aborting.
+/// A hang that keeps CALLING.  `work952` is a scalar leaf, inlined into `main`
+/// (`@FR-R-InlineLeaf`), so the frame that runs — and the one the report names — is
+/// `main`'s, as it is under `--native`, where LLVM inlines it.
 const CALLS_IN_A_LOOP: &str = r#"
 fn work952(i: integer) -> integer { i * 2 }
 fn main() {
@@ -84,13 +86,14 @@ fn main() {
 }
 "#;
 
-/// The watchdog names the function it hard-killed, not a placeholder.
+/// A loop that calls nothing stops gracefully and names the function it was in, not a
+/// placeholder.
 #[test]
-fn hard_kill_names_the_function() {
+fn a_loop_without_calls_stops_gracefully_and_names_its_function() {
     let out = run_until_deadline("hardkill", SPINS_INSIDE_ONE_FN, &[]);
     assert!(
-        out.contains("hard-kill"),
-        "the watchdog must fire on a hang with no cooperative checkpoint\n{out}"
+        out.contains("(graceful)") && !out.contains("hard-kill"),
+        "a loop reaches the stop flag after every op, so it stops gracefully\n{out}"
     );
     assert!(
         out.contains("fn=spin952"),
@@ -134,8 +137,8 @@ fn a_calling_loop_exits_gracefully_and_is_attributed() {
         "a loop that keeps calling must reach a cooperative checkpoint\n{out}"
     );
     assert!(
-        out.contains("fn=work952"),
-        "and name the function it was in\n{out}"
+        out.contains("fn=main"),
+        "and name the frame it was in — `main`, which runs the inlined `work952`\n{out}"
     );
 }
 
@@ -157,5 +160,44 @@ fn a_fast_program_reports_nothing() {
     assert!(
         !out.contains("[timeout]"),
         "a run inside its deadline must print no timeout report\n{out}"
+    );
+}
+
+/// The hard kill remains for code that never returns to the dispatch loop: here a native
+/// waiting on a stdin that never closes.  The report still names the function.
+#[test]
+fn a_hang_inside_a_native_is_hard_killed_and_named() {
+    let path = std::env::temp_dir().join("loft_timeout_native952.loft");
+    std::fs::write(
+        &path,
+        "fn wait952() -> text {\n  host_input()\n}\nfn main() {\n  t = wait952();\n  println(\"never {t}\");\n}\n",
+    )
+    .expect("write probe");
+    let mut child = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "3")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn loft");
+    // Holding the child's stdin open keeps `host_input` waiting: `wait_with_output` would
+    // close it first.
+    let _stdin = child.stdin.take();
+    let out = child.wait_with_output().expect("wait for loft");
+    let _ = std::fs::remove_file(&path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("hard-kill"),
+        "the watchdog ends a native hang\n{text}"
+    );
+    assert!(
+        text.contains("fn=wait952"),
+        "and names the function\n{text}"
     );
 }

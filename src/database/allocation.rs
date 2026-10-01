@@ -2541,7 +2541,7 @@ impl Stores {
             logger: self.logger.clone(),
             had_fatal: false,
             runtime_error: None,
-            dispatch_stop: false,
+            dispatch_stop: std::sync::atomic::AtomicBool::new(false),
             // #255 / @PLN9: a parallel worker's file ops must resolve paths the
             // same way as the main thread — carry the anchor + mode.
             source_dir: self.source_dir.clone(),
