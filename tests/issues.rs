@@ -2852,6 +2852,7 @@ fn p4d_fn_ref_field_bare_default() {
         "struct Holder { f: fn(integer) -> integer }
 fn test() { h = Holder {}; }"
     )
+    .warning("Variable h is never read at p4d_fn_ref_field_bare_default:2:16")
     .result(Value::Null);
 }
 
@@ -3043,6 +3044,7 @@ fn test() {
     r = Range { lo: 20, hi: 10 };
 }"
     )
+    .warning("Variable r is never read at l6_cross_field_constraint_violation:6:8")
     .result(Value::Null);
 }
 
@@ -3222,6 +3224,7 @@ fn test() {
     s = Score { "value": -1 };
 }"#
     )
+    .warning("Variable s is never read at type_parse_with_constraint_violation:5:8")
     .result(Value::Null);
 }
 
@@ -3240,6 +3243,7 @@ fn test() {
     ];
 }"
     )
+    .warning("Variable items is never read at l6_vector_struct_constraint_violation:6:12")
     .result(Value::Null);
 }
 
@@ -5690,6 +5694,7 @@ fn run() -> integer {
     }
 }"
     )
+    .warning("Dead assignment — 'n' is overwritten before being read at p54_struct_enum_reassign_explicit_return:3:20")
     .expr("run()")
     .result(Value::Int(42));
 }
@@ -16097,6 +16102,7 @@ fn test_it() {
     v: vector<K> = [K { cb: fn() { w.n = w.n + 1; } }];
 }"
     )
+    .warning("Variable v is never read at issue_318_vector_of_closure_carrying_struct_rejected:5:7")
     .error(
         "collection of a struct type that holds a capturing closure is not \
          supported — element copies would dangle into the constructing \
@@ -16649,6 +16655,8 @@ fn pln87_vector_param_reassign_is_local() {
         "fn vrebind(v: vector<integer>) { v = [7, 8, 9]; }
 fn check() -> integer { a = [1, 2, 3]; vrebind(a); len(a) }"
     )
+    .warning("The value parameter 'v' receives is never read — an assignment replaces it first, and the replacement stays in this function at pln87_vector_param_reassign_is_local:1:33")
+    .warning("Dead assignment — 'v' is never read after this, and a parameter's assignment stays in this function at pln87_vector_param_reassign_is_local:1:48")
     .expr("check()")
     .result(Value::Int(3));
 }

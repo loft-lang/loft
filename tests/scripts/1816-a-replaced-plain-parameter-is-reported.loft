@@ -58,6 +58,10 @@ fn branch_write(b: Box, c: boolean) -> integer { if c { b = Box { n: 5 }; } b.n 
 // SILENT: a forwarder whose replacement IS read.
 fn forward_read(f: Box) -> integer { replace_ref(f); f.n }
 
+// SILENT: `x = x` is the identity (#330) — it neither reads nor writes, so the first value is
+// still the one read.  A record, a scalar and a vector.
+fn self_assign() -> integer { x = Box { n: 7 }; x = x; y = 1; y = y; z = [1, 2]; z = z; x.n * 100 + y * 10 + len(z) }
+
 fn locals() -> integer {
   // A record local overwritten before it is read — as `x = 1; x = 2` always was.
   h = Box { n: 1 };
@@ -91,6 +95,7 @@ fn main() {
   assert(branch_write(box, true) == 5 && branch_write(box, false) == 7, "branch write");
   assert(forward_read(box) == 9, "the forwarded replacement is read");
   assert(box.n == 7, "and stays in the forwarder: {box.n}");
+  assert(self_assign() == 712, "self-assignment {self_assign()}");
   // h.n = 2, w = [4] after the link write: 200 + 10 + 4.
   assert(locals() == 214, "locals {locals()}");
   println("replaced parameters reported");

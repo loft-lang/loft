@@ -3445,7 +3445,11 @@ use a separate collection or add after the loop"
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
         let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
         self.assign_target_discounted = outer_target;
-        self.assign_target_written(target, counted && !taken);
+        // `x = x` is the identity (#330): the statement is erased and writes nothing, so it is
+        // neither a write to track nor a target mention to take back.
+        if !matches!(code, Value::Insert(items) if items.is_empty()) {
+            self.assign_target_written(target, counted && !taken);
+        }
         // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
         // read-only too (`mark_const_view`).
         if op == "="
