@@ -109,6 +109,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 
 | Plan | status | What it is |
 |---|---|---|
+| [@PLN182](https://github.com/loft-lang/plans/issues/182) | next | Operator syntax for user types through named methods (`compare`, `plus`, `at`, …); retires a user `fn Op…` (loft#1833) ([plans/182-user-operator-methods/](plans/182-user-operator-methods/README.md)) |
 | [@PLN177](https://github.com/loft-lang/plans/issues/177) | future | Growable call stack: recursion depth stops being a runtime halt |
 | [@PLN178](https://github.com/loft-lang/plans/issues/178) | future | A store's failure arm: `place = value else { … }` runs when the write did not land |
 | [@PLN15](https://github.com/loft-lang/plans/issues/15) | future | Serialisable cross-branch record references (same-store, generation-tagged) |
