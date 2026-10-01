@@ -39,9 +39,8 @@
 
 struct Money1275 { cents: integer }
 
-// A user type satisfying `Subtractable`: one two-operand `OpMin`.  It cannot also define the
-// unary one — a CONCRETE method key carries no arity, so the two would collide on one receiver
-// — which is why `Subtractable` is its own bound and not a third requirement on `Numeric`.
+// A user type satisfying `Subtractable`: one two-operand `OpMin` and nothing else, which is
+// the whole requirement.  (A type may define the unary one beside it — loft#1811.)
 fn OpMin(self: Money1275, other: Money1275) -> Money1275 {
   Money1275 { cents: self.cents - other.cents }
 }

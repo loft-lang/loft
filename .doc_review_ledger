@@ -85,7 +85,7 @@ doc/00-vs-python.html#5. Polymorphic enum dispatch vs isinstance	a6a3274915af52a
 doc/00-vs-python.html#6. String formatting — embedded expressions	baeb564425dec8652c0b2dddf4b55b9d0310b908a4575500e29fd182d92c1aea	2026.10.0
 doc/00-vs-python.html#7. Collections — typed and built-in	a6e56ed6aeb4a69c39b262e30c4cc0111df5f5c922e56c6f9775f5935e5165d4	2026.10.0
 doc/00-vs-python.html#8. Closures — same-scope capture works	cfe020a43c0cf6b87c18187f5dd830cbae658188fb060991b1d52a8ba26ca5d9	2026.10.0
-doc/00-vs-python.html#9. No exception handling — file errors use FileResult	ff23b127445a582bd30cffeda330322d4c67b7a77af8d6aa6afdc99252d06064	2026.10.0
+doc/00-vs-python.html#9. No exception handling — file errors use FileResult	3af15a3d79727d76f4f3e1c1950f6be8a09d85d9d6361cab08d5a1c6ebe9fd3d	2026.10.0
 doc/00-vs-python.html#vs Python	e61f327b85c33bc315556834ce0180f7c2456c1441b26ddccfdb955908ad6ab3	2026.10.0
 doc/00-vs-rust.html#(intro)	7fc1cb928fc662981aaa470a63ae41d524912a2856b3250a2e382eba4f72f456	2026.10.0
 doc/00-vs-rust.html#1. Variables — no let or mut	dc8328da9d945b39cee25bb24612ad96e211778c9b95b05fbb48aa53478d81ab	2026.10.0
@@ -158,7 +158,7 @@ doc/claude/LOFT.md#Struct types	6bd10aca70a241aaf97abc307afd803e96c0d453e255cef9
 doc/claude/LOFT.md#The `??` operator (null-coalescing)	405ceefb731d86f06f19e1e56f8b135c6d2ecac19614df7a5275eaf5fc40cbe6	2026.10.0
 doc/claude/LOFT.md#The `as` operator	cee844868ccbe495ada28cdb575e505c78167cff01380b375bebf033cb7b1299	2026.10.0
 doc/claude/LOFT.md#The `x?` operator (default-fallback) — @PLN116	46b4d1da861df457d354b4a1278a0af40310e3e692b3cb68499c96e5fba6e1f1	2026.10.0
-doc/claude/LOFT.md#Type-conversion rules — when does loft convert automatically?	c93e17f302791fc43a3faecf9f0a1222349d594b41899fd9700acba98f658466	2026.10.0
+doc/claude/LOFT.md#Type-conversion rules — when does loft convert automatically?	6542a918bb2bbe11e7a539501babecd481ee3ef5939c37cedaaaeff4a3d2ff61	2026.10.0
 doc/claude/LOFT.md#Types	b5d946c3574dd17e1e896e475a418639412db48bb8eef3222b8dd888f23bf4ec	2026.10.0
 doc/docs.html#(intro)	19c1e29aa7329a2d33355ec3773ec7b84bab52ce527ae93704d6c108c3bd4402	2026.10.0
 doc/docs.html#Loft	0cbcbf78e4c20d8f48d0d465c2891cf7297f2bcfb87a09ec874a69efd6eff0b7	2026.10.0
@@ -247,15 +247,15 @@ tests/docs/18-locks.loft#(intro)	cd888aed10442ee162b5c09c9663f91c34175f94a5d9e48
 tests/docs/19-threading.loft#(intro)	baed4f48ec46eb7d5b75a64a8c4aaef8c5589e8a3f3f02707294005d7c035928	2026.10.0
 tests/docs/20-logging.loft#(intro)	b9c04a843bb5cc37d27e205d7e8d51f0b82e5a2b0d53b9709880fea0ecc1d105	2026.10.0
 tests/docs/22-time.loft#(intro)	d6afc162efac6810195382f3b5d5e6a274cfd0218c3204652ad72461997daa78	2026.10.0
-tests/docs/23-safety.loft#(intro)	8b22a080db0fa081eee8a1e262d7e6f15ba89c248c0582405ca0f575fb651551	2026.10.0
+tests/docs/23-safety.loft#(intro)	be17b03e8f0728537572419847495c99a7f87b241212853ff4c513c8bdbc81b2	2026.10.0
 tests/docs/24-json.loft#(intro)	ec336622c2d70dc3f87afbe41b7caef2e794ebb52ddc8be04240676ddafdc707	2026.10.0
 tests/docs/25-generics.loft#(intro)	f815185f07f5fd3f04a94b82761049154eb48d3a2d8727a7be2a4a81e50e8b46	2026.10.0
 tests/docs/26-closures.loft#(intro)	d35b2cfa36276f02c68088deea065f4a0141ee4ce715aef4a1d02eec2da1b559	2026.10.0
-tests/docs/27-coroutines.loft#(intro)	9917d04d98d9db2f2e458278c36df32485d813873653f1008b712f3a30d78725	2026.10.0
+tests/docs/27-coroutines.loft#(intro)	28ddd8f8673213a367ad44ee6045b78950e85d55aa6b0409d5ef9b16e09c5077	2026.10.0
 tests/docs/28-tuples.loft#(intro)	10453006a611322dce8f51208a7ba8ee2d3da41f817b0930db43359ec3ffbccb	2026.10.0
 tests/docs/29-match.loft#(intro)	4e9e523be95035068bdcfbe98f9391e64cee12cd993e315f3e3d78700c8be987	2026.10.0
 tests/docs/30-formatting.loft#(intro)	a6ca27778eb92dd5fe6110684eae2deef7ac15e3cbb7789430890408c79c5160	2026.10.0
-tests/docs/31-ref-forward.loft#(intro)	165ba6272d7a393d3cea63ee11f04870aa30d5f83f96a7d451bd00bf74b6dadf	2026.10.0
+tests/docs/31-ref-forward.loft#(intro)	c446ba9c560008f74c0b4ba2075a31065ea5de7f508f9c7b5b978c44dd001d5c	2026.10.0
 tests/docs/33-features.loft#(intro)	0212741ce05b618e0e17943786d2096e21c77cb461ff4d6bce52b47986782099	2026.10.0
 tests/docs/34-running.loft#(intro)	58b272b166e474d9cbe1033caed3bdf6f7077c58da0031e290bbd71533d07b31	2026.10.0
 tests/docs/35-testing.loft#(intro)	d73972c0f9a4bbce4b40d7414189c59e2bfa29e2fdaf40b1769770dc6910238e	2026.10.0

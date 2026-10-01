@@ -1,0 +1,34 @@
+diff --git b/src/main.rs a/src/main.rs
+index a9b99cee3..ed0b097df 100644
+--- b/src/main.rs
++++ a/src/main.rs
+@@ -230,10 +230,6 @@ fn print_help() {
+     );
+     println!("                                a browser prints for a trap resolve to function");
+     println!("                                names instead of bare indices (a larger page)");
+-    println!(
+-        "  --threads | --no-threads      with --html: force the browser thread pool on or off"
+-    );
+-    println!("                                (default: on exactly when the program uses `par`)");
+     println!("  targets [<target>]            which stdlib builtins are NOT available on a target");
+     println!("                                (ask before designing, not after the build fails)");
+     println!(
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 5fe70fb58..2ae87c508 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -1227,13 +1227,9 @@ impl State {
+                     .into_iter()
+                     .map(|(d_nr, args_base, cp)| {
+                         let frame_vars = self.iter_frame_variables_at(data, d_nr, args_base, cp);
+-                        // `stack_trace()` promises "parameters and live locals": a compiler
+-                        // temporary (`__work_1`, a hidden return buffer) is neither, and a
+-                        // `_` name the user wrote stays (loft#1834's one predicate).
+-                        let fn_vars = data.def(d_nr).variables();
+                         frame_vars
+                             .into_iter()
+-                            .filter(|fv| fv.live && !fn_vars.is_compiler_generated(fv.var_nr))
++                            .filter(|fv| fv.live)
+                             .map(|fv| {
+                                 let type_name = fv.typedef.name(data);
+                                 let value = match fv.value {

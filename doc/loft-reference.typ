@@ -808,6 +808,7 @@ fn divide(a: float, b: float) -> float {
 f = file("data.txt");
 if f#exists {
     data = f.content();
+    print("{len(data)} characters\n");
 } else {
     print("file not found\n");
 }
@@ -3727,7 +3728,7 @@ Each construct in the list at the top of this page answers a non-zero count here
     "fn f() {{ x = 1.5f; }}",
     "fn f<T>(x: T) -> T {{ x }}",
     "fn f(v: vector<integer>) {{ for e in v if e > 1 {{ }} }}",
-    "fn f(x: integer) {{ if x is 3 {{ }} }}",
+    "enum Dir {{ North, South }} fn f(e: Dir) {{ if e is North {{ }} }}",
     "fn f(v: vector<integer>) {{ w = v[1..]; }}",
     "fn f() {{ x = `a`; }}"
   ];
@@ -5397,6 +5398,14 @@ fn OpLt(self: Money, other: Money) -> boolean { self.cents < other.cents }
 fn OpEq(self: Money, other: Money) -> boolean { self.cents == other.cents }
 fn OpAdd(self: Money, other: Money) -> Money { Money { cents: self.cents + other.cents } }
 fn to_text(self: Money) -> text { "{self.cents}c" }
+```
+
+Both arities of `-`, so `Money` satisfies `Subtractable` and, with `OpMul`, `Numeric`.
+
+```rust
+fn OpMin(self: Money, other: Money) -> Money { Money { cents: self.cents - other.cents } }
+fn OpMin(self: Money) -> Money { Money { cents: 0 - self.cents } }
+fn OpMul(self: Money, other: Money) -> Money { Money { cents: self.cents * other.cents } }
 fn test_user_type_bounds() {
   cheap = Money { cents: 300 };
   dear = Money { cents: 700 };
@@ -5409,6 +5418,8 @@ fn test_user_type_bounds() {
   total = clamped_add(cheap, cheap, Money { cents: 1000 });
   assert(total.cents == 600, "Addable on a user type: {total.cents}");
   assert(described(dear) == "700c", "Printable on a user type: {described(dear)}");
+  assert(gen_diff(dear, cheap).cents == 400, "Subtractable on a user type");
+  assert(gen_negdiff(dear, cheap).cents == -400, "Numeric + Subtractable on a user type");
 }
 struct Crate { label: text, kids: vector<Crate> }
 fn children(self: Crate) -> vector<Crate> { self.kids }
@@ -7885,7 +7896,7 @@ pub interface Subtractable {
 ```
 
 Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type satisfies one of the two: it can define `OpMin` at one arity only (a second definition is refused as a redefinition), as pinned by `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
+A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a user type that defines `OpMin` at both arities, in either order — as pinned by `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
 
 ```rust
 pub interface Scalable {

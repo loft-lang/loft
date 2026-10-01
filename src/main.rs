@@ -230,6 +230,10 @@ fn print_help() {
     );
     println!("                                a browser prints for a trap resolve to function");
     println!("                                names instead of bare indices (a larger page)");
+    println!(
+        "  --threads | --no-threads      with --html: force the browser thread pool on or off"
+    );
+    println!("                                (default: on exactly when the program uses `par`)");
     println!("  targets [<target>]            which stdlib builtins are NOT available on a target");
     println!("                                (ask before designing, not after the build fails)");
     println!(

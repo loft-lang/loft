@@ -92,6 +92,18 @@ impl Fold {
         cats: &str,
         stderr: Option<&str>,
     ) -> (bool, String) {
+        self.publish_described(name, ver, cats, stderr, "a real one-line description")
+    }
+
+    /// The same, with the manifest `description` the publish carries.
+    fn publish_described(
+        &self,
+        name: &str,
+        ver: &str,
+        cats: &str,
+        stderr: Option<&str>,
+        desc: &str,
+    ) -> (bool, String) {
         let entry = self.dir.join(format!("entry_{name}_{ver}.json"));
         std::fs::write(
             &entry,
@@ -114,10 +126,11 @@ impl Fold {
             .arg(ver)
             .arg(&entry)
             .arg("https://example.invalid/pkg")
-            .arg("a real one-line description")
+            .arg(desc)
             .arg("manifest")
             .arg(cats)
             .arg(&err_path)
+            .arg(self.meta_mark(name))
             .output()
             .expect("run fold");
         let text = format!(
@@ -126,6 +139,11 @@ impl Fold {
             String::from_utf8_lossy(&out.stderr)
         );
         (out.status.success(), text)
+    }
+
+    /// Where the fold marks a package whose metadata it refreshed.
+    fn meta_mark(&self, name: &str) -> PathBuf {
+        self.dir.join(format!("meta_{name}"))
     }
 
     fn categories_of(&self, name: &str) -> Vec<String> {
@@ -374,4 +392,31 @@ fn a_missing_validator_refuses_rather_than_skips() {
     let (code, out) = run_gate(&dir);
     assert_ne!(code, 0, "an unchecked index was accepted:\n{out}");
     assert!(out.contains("refusing"), "the refusal must say so:\n{out}");
+}
+
+/// A publish that rewrites an EXISTING package's description or categories marks it, so
+/// `--only` can hand the signer `--expect-meta <pkg>` beside its `--expect <pkg>@<ver>` —
+/// without the mark the signer refuses the run's own metadata refresh.  A new package and
+/// an unchanged one are not marked: the version is the whole change there.
+#[test]
+fn a_refreshed_description_or_list_is_marked_for_the_signer() {
+    let fold = Fold::new("meta_mark");
+    let (ok, out) = fold.publish_described("already", "0.2.0", "", None, "an existing library");
+    assert!(ok, "{out}");
+    assert!(
+        !fold.meta_mark("already").exists(),
+        "unchanged metadata is not marked"
+    );
+    let (ok, out) = fold.publish_described("already", "0.3.0", "", None, "a corrected line");
+    assert!(ok, "{out}");
+    assert!(
+        fold.meta_mark("already").exists(),
+        "a refreshed description is marked"
+    );
+    let (ok, out) = fold.publish("fresh", "0.1.0", r#"["text"]"#);
+    assert!(ok, "{out}");
+    assert!(
+        !fold.meta_mark("fresh").exists(),
+        "a new package is not marked"
+    );
 }

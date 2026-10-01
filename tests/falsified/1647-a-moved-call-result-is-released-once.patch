@@ -1,6 +1,7 @@
---- a/src/scopes.rs
-+++ b/src/scopes.rs
-@@ -4737,10 +4737,7 @@
+diff --git a/src/scopes/args.rs b/src/scopes/args.rs
+--- a/src/scopes/args.rs
++++ b/src/scopes/args.rs
+@@ -70,10 +70,7 @@
  /// copy declines its release (the same store as the destination, a stack, free, read-only
  /// or free-protected store) the lift's own free would release nothing it owns either.
  fn moved_source_arg(outer_call: u32, args: &[Value], data: &Data) -> Option<usize> {

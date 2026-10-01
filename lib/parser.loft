@@ -22,7 +22,12 @@ struct Parser {
   operators: hash < Operator[op] >,
   // Where the cursor stood right after the last `}}` that closed a block or a `match`: a
   // statement that ends there needs no `;` (loft#1800).
-  block_end: integer = -1
+  block_end: integer = -1,
+  // Parsing the HEAD of an `if` / `while` / `for` / `match`, where the next `{{` opens the
+  // body: there `Name {{ }}` is a whole default record only when the body's `{{` still
+  // follows it, so `if e == North {{ }}` compares with a variant and keeps its body.
+  // Cleared inside `( )`, a call's arguments and `[ ]`, which a body cannot interrupt.
+  cond_head: boolean = false
 }
 
 struct FormatSpec {
@@ -350,7 +355,7 @@ fn while_statement(self: Parser) -> boolean {
   if !self.lexer.matches("while") {
     return false;
   }
-  self.expression();
+  self.head_expression();
   self.need_block();
   true
 }
@@ -364,7 +369,7 @@ fn match_expr(self: Parser) -> boolean {
   if !self.lexer.matches("match") {
     return false;
   }
-  self.expression();
+  self.head_expression();
   self.expect("{{");
   for arm in 0..10000 {
     if self.lexer.test("}}") || self.lexer.is_finished() || self.log.level == Fatal {
@@ -470,7 +475,7 @@ fn for_statement(self: Parser) -> boolean {
   }
   self.lexer.identifier();
   self.lexer.matches("in");
-  self.expression();
+  self.head_expression();
   self.need_block();
   true
 }
@@ -520,7 +525,10 @@ fn list(self: Parser) -> boolean {
       element# break;
     }
     at = self.lexer.offset();
+    was = self.cond_head;
+    self.cond_head = false;
     l = self.expression();
+    self.cond_head = was;
     if self.lexer.matches(",") {
       element# continue;
     }
@@ -542,7 +550,7 @@ fn for_list(self: Parser) -> boolean {
   }
   self.lexer.identifier();
   self.lexer.matches("in");
-  self.expression();
+  self.head_expression();
   self.need_block();
   true
 }
@@ -552,7 +560,7 @@ fn if_statement(self: Parser) -> boolean {
   if !self.lexer.matches("if") {
     return false;
   }
-  self.expression();
+  self.head_expression();
   self.need_block();
   if self.lexer.matches("else") {
     // `else if …` chains: the else arm is itself an `if`.
@@ -561,6 +569,21 @@ fn if_statement(self: Parser) -> boolean {
     }
   }
   true
+}
+// The head of an `if` / `while` / `for` / `match`: an expression a body follows.
+fn head_expression(self: Parser) {
+  was = self.cond_head;
+  self.cond_head = true;
+  self.expression();
+  self.cond_head = was;
+}
+
+// An expression inside brackets, where no body can follow.
+fn nested_expression(self: Parser) {
+  was = self.cond_head;
+  self.cond_head = false;
+  self.expression();
+  self.cond_head = was;
 }
 // <object> ::= '{' { <identifier> ':' <expression> [ ';' ] } '}'
 
@@ -575,8 +598,12 @@ fn object(self: Parser) -> boolean {
   if !self.lexer.matches("{{") {
     return false;
   }
-  // `Name {{ }}` builds a whole default record.
+  // `Name {{ }}` builds a whole default record — in a head only when the body still follows.
   if self.lexer.matches("}}") {
+    if self.cond_head && !self.lexer.test("{{") {
+      self.lexer.revert(before);
+      return false;
+    }
     return true;
   }
   for field in 0..255 {
@@ -646,7 +673,7 @@ fn single_part(self: Parser) -> boolean {
     // A parenthesised expression, or a TUPLE `(a, b)`.
     for member in 0..256 {
       at = self.lexer.offset();
-      self.expression();
+      self.nested_expression();
       if !self.lexer.matches(",") || self.lexer.test(")") || self.stalled(at) {
         member# break;
       }
@@ -724,7 +751,7 @@ fn fn_call(self: Parser) -> boolean {
       argument# break;
     }
     at = self.lexer.offset();
-    self.expression();
+    self.nested_expression();
     if !self.lexer.matches(",") {
       argument# break;
     }

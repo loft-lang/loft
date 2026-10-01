@@ -118,7 +118,7 @@ fn main() {
     "fn f() {{ x = 1.5f; }}",
     "fn f<T>(x: T) -> T {{ x }}",
     "fn f(v: vector<integer>) {{ for e in v if e > 1 {{ }} }}",
-    "fn f(x: integer) {{ if x is 3 {{ }} }}",
+    "enum Dir {{ North, South }} fn f(e: Dir) {{ if e is North {{ }} }}",
     "fn f(v: vector<integer>) {{ w = v[1..]; }}",
     "fn f() {{ x = `a`; }}"
   ];

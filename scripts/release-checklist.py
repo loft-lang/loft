@@ -1533,10 +1533,11 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         ),
         Item(
             "M-file-split",
-            "File split — this release's pick is split and merged, one file per PR",
+            "File split — this release's pick is split and merged, one file per commit",
             'make file-sizes ARGS="--pick 2"   # then the split-file skill on the first',
-            "tick with the split PR's link and the pick's commit.  A pure move: no "
-            "signature, behaviour or comment change, `git diff -M --color-moved` reads as "
+            "tick with the split commit and the PR that carried it.  A pure move in a commit "
+            "of its own: no signature, behaviour or comment change, `git show -M "
+            "--color-moved` reads as "
             "moves.  Two picks when last release's split landed clean, one otherwise.  "
             "A gate because the report alone let `src/` reach 18 files over 6 000 lines "
             "(RELEASE.md § File split per release)",

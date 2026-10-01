@@ -97,10 +97,9 @@ pub interface Numeric {
 /// A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
 /// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
 /// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
-/// interfaces that each name `OpMin`.  The built-in number types satisfy both.  A user type
-/// satisfies one of the two: it can define `OpMin` at one arity only (a second definition is
-/// refused as a redefinition), as pinned by
-/// `tests/scripts/1275-a-bound-offers-both-arities-of-minus.loft`.
+/// interfaces that each name `OpMin`.  The built-in number types satisfy both, and so does a
+/// user type that defines `OpMin` at both arities, in either order — as pinned by
+/// `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`.
 pub interface Subtractable {
   op - (self: Self, other: Self) -> Self
 }

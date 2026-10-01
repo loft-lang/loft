@@ -236,15 +236,32 @@ They now warn as a number does.  A plain parameter is the function's own name fo
 replacing it changes nothing for the caller: `fn reset(b: Box) { b = Box { n: 0 }; }` now says
 that the value `b` received is never read and that the new one is never read either, with
 `b: &Box` as the cure when the caller is meant to see it.  Handing such a parameter to a `&`
-parameter that replaces it is reported the same way.  A library built with warnings denied may
+parameter that replaces it is reported the same way, and so is a `text` parameter replaced
+before it is read, also when the function returns it.  A library built with warnings denied may
 need the unused value removed.
 
-**`regex` 0.4.0 drops `regex::find` and `regex::split`.**  The text methods `find` and `split`
+**`regex` 0.4 drops `regex::find` and `regex::split`.**  The text methods `find` and `split`
 took every bare call, so these two were reachable only through `regex::` and answered something
 different from the bare spelling.  Write `input.search(pattern)` and `input.split_on(pattern)`.
 A function marked `#superseded` is removed this way whenever a method of the same name hides it.
 
 ### Everything else
+
+**A `&` link writes its source for every nullable value.**  `c = &n; c = a` with `n` a
+`vector<T>?` re-pointed `c` at a copy and left `n` as it was, and an annotated
+`c: &vector<T>? = n` read a garbage length.  A link to a nullable list, record, text, keyed
+collection or struct enum now writes its source exactly as its non-null twin does — as a local
+link, an annotated one or a `&` parameter, from a `null` source too.  A list literal written
+through a `&hash<…>` parameter is no longer refused as a change of type, and a plain
+`vector<T>?` parameter given a new list no longer writes the caller's.
+
+**An overloaded function can be passed as a value.**  `call(bump, 4)` with two `bump`
+definitions resolved the name to `null` and then reported a missing argument; it now takes the
+definition whose signature the parameter asks for.
+
+**A field-capture list standing where an `if` body belongs is reported once.**
+`if c is Circle { radius } else { … }` named the cure and then printed four "Expect token"
+errors about nothing you wrote; the first error is now the only one.
 
 **A generic format hole renders as the type it is called with.**  Inside
 `fn show<T: Printable>(x: T)`, `"{x:05}"` rendered `show(42)` as `42000` and `"{x:5}"` put a

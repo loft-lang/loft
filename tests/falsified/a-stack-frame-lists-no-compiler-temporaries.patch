@@ -1,0 +1,19 @@
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 5fe70fb58..2ae87c508 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -1227,13 +1227,9 @@ impl State {
+                     .into_iter()
+                     .map(|(d_nr, args_base, cp)| {
+                         let frame_vars = self.iter_frame_variables_at(data, d_nr, args_base, cp);
+-                        // `stack_trace()` promises "parameters and live locals": a compiler
+-                        // temporary (`__work_1`, a hidden return buffer) is neither, and a
+-                        // `_` name the user wrote stays (loft#1834's one predicate).
+-                        let fn_vars = data.def(d_nr).variables();
+                         frame_vars
+                             .into_iter()
+-                            .filter(|fv| fv.live && !fn_vars.is_compiler_generated(fv.var_nr))
++                            .filter(|fv| fv.live)
+                             .map(|fv| {
+                                 let type_name = fv.typedef.name(data);
+                                 let value = match fv.value {

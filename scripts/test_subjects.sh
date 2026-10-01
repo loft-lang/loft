@@ -116,7 +116,7 @@ subject_patterns() {
 subject_paths() {
   case "$1" in
     (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/' ;;
-    (scopes)   echo '^src/scopes\.rs|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs' ;;
+    (scopes)   echo '^src/scopes\.rs|^src/scopes/|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs' ;;
     (codegen)  echo '^src/generation/|^src/compile\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs' ;;
     (store)    echo '^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/tree\.rs|^src/siphash\.rs' ;;

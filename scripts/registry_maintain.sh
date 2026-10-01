@@ -2,7 +2,7 @@
 # One-command registry maintenance: see what needs publishing, OK once,
 # sign once — and the registry is current again.
 #
-#   scripts/registry_maintain.sh [--dry-run] [--yes] [--key <file>] [--registry-dir <dir>]
+#   scripts/registry_maintain.sh [--only P[,P...]] [--dry-run] [--yes] [--key <file>] [--registry-dir <dir>]
 #
 # The script gathers BOTH populations into one worklist:
 #
@@ -390,7 +390,7 @@ sha256_of() { python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[
 # RELIABILITY: one own-lib that can't publish (missing release asset, package
 # error) must not abort the rest — skip it, record it, keep going so the others
 # publish and the index still gets signed.
-published=(); EXPECTS=()
+published=(); EXPECTS=(); META_EXPECTS=()
 SKIPPED_LIBS=()
 while IFS=$'\t' read -r name ver repo libdir _why; do
     echo "publishing $name $ver from $repo ..."
@@ -472,10 +472,10 @@ while IFS=$'\t' read -r name ver repo libdir _why; do
     fi
     if ! python3 - "$REG_DIR/index.json" "$name" "$ver" "$tmp/entry_$name.json" \
         "https://github.com/$ORG/$repo/tree/main/$name" "${desc:-loft library $name}" "$desc_src" \
-        "${cats:-}" "$tmp/pub_$name.err" <<'EOF'
+        "${cats:-}" "$tmp/pub_$name.err" "$tmp/meta_$name" <<'EOF'
 import json, sys
 
-index_path, name, ver, entry_path, homepage, desc, desc_src, cats_raw, pub_err = sys.argv[1:10]
+index_path, name, ver, entry_path, homepage, desc, desc_src, cats_raw, pub_err, meta_mark = sys.argv[1:11]
 raw = open(entry_path).read()
 try:
     entry = json.loads("{%s}" % raw)[ver]
@@ -514,9 +514,11 @@ if name not in index["packages"] and not cats:
     )
     sys.exit(1)
 
+existed = name in index["packages"]
 pkg = index["packages"].setdefault(
     name, {"description": desc, "homepage": homepage, "categories": [], "yanked": [], "versions": {}}
 )
+before = (pkg.get("description"), list(pkg.get("categories") or []))
 # The official manifest description is authoritative — refresh it on every publish
 # so a corrected `[package] description` propagates.  A README-scraped fallback
 # only seeds a brand-new package (setdefault above); it never clobbers an
@@ -528,6 +530,11 @@ if desc_src == "manifest" and desc:
 # manifest that declares none leaves an existing (hand-curated) list alone.
 if cats:
     pkg["categories"] = cats
+# A refreshed description or category list on a package already in the index is a
+# metadata change the signer must be told about (`--expect-meta`), or `--only`
+# refuses its own publish as "other packages' metadata changed".
+if existed and (pkg.get("description"), list(pkg.get("categories") or [])) != before:
+    open(meta_mark, "w").write("1")
 
 # `deps` is a CLAIM, and `loft publish` can only read it from `loft.toml`.  A
 # multi-package repo deliberately keeps its registry deps OUT of the manifest
@@ -591,6 +598,7 @@ EOF
     # a package name may itself contain a `-`, so splitting the message form back
     # apart would be a guess.  Two spellings, one append site.
     EXPECTS+=("$name@$ver")
+    if [ -e "$tmp/meta_$name" ]; then META_EXPECTS+=("$name"); fi
 done < "$tmp/work.tsv"
 
 # ── submissions/ drain (C96 key-absent path) ─────────────────────────────────
@@ -704,6 +712,7 @@ if [ -n "$ONLY" ]; then
         exit 0
     fi
     for e in "${EXPECTS[@]}"; do sign_args+=(--expect "$e"); done
+    for m in "${META_EXPECTS[@]}"; do sign_args+=(--expect-meta "$m"); done
 elif [ "$YES" = 1 ]; then
     sign_args+=(--yes)
 fi

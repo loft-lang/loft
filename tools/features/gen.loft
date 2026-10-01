@@ -41,11 +41,9 @@ fn is_stub(body: text) -> boolean {
 // Returns "" when the body has no loft example — infra entries, and the
 // toolchain features whose examples are shell commands, not `.loft` programs.
 fn extract_loft(body: text) -> text {
-  op = body.find("```loft");
-  if op < 0 { return ""; }
+  op = body.find("```loft") ?? return "";
   after = body[op + 7..];
-  cl = after.find("```");
-  if cl < 0 { return ""; }
+  cl = after.find("```") ?? return "";
   after[0..cl].trim()
 }
 

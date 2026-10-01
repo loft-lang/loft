@@ -1608,8 +1608,23 @@ impl Parser {
                 if precedence == 3 && self.lexer.has_token("is") {
                     if let Some(variant_name) = self.lexer.has_identifier() {
                         current_type = self.parse_is_variant(code, &current_type, &variant_name);
-                    } else if !self.first_pass {
-                        diagnostic!(self.lexer, Level::Error, "expect variant name after 'is'");
+                    } else {
+                        // A value after `is` (`x is 3`): read it as the operand the author
+                        // wrote, so the condition ends where they ended it and the body that
+                        // follows is not mistaken for this operand — otherwise every brace
+                        // after it cascades into "Expect token" errors that name nothing here.
+                        let mut operand = Value::Null;
+                        let mut operand_parent = Type::Unknown(0);
+                        self.parse_part(&Type::Unknown(0), &mut operand, &mut operand_parent);
+                        if !self.first_pass {
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "`is` tests an enum variant (`x is Circle`); to compare with a value, write `==`"
+                            );
+                        }
+                        *code = Value::Null;
+                        current_type = Type::Unknown(0);
                     }
                     continue;
                 }

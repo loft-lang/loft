@@ -106,7 +106,7 @@ if parser::parse("user_code", snippet) &gt; 0 {
     <span class="st">"fn f() {{ x = 1.5f; }}"</span>,
     <span class="st">"fn f&lt;T&gt;(x: T) -&gt; T {{ x }}"</span>,
     <span class="st">"fn f(v: vector&lt;integer&gt;) {{ for e in v if e &gt; 1 {{ }} }}"</span>,
-    <span class="st">"fn f(x: integer) {{ if x is 3 {{ }} }}"</span>,
+    <span class="st">"enum Dir {{ North, South }} fn f(e: Dir) {{ if e is North {{ }} }}"</span>,
     <span class="st">"fn f(v: vector&lt;integer&gt;) {{ w = v[1..]; }}"</span>,
     <span class="st">"fn f() {{ x = `a`; }}"</span>
   ];
@@ -246,7 +246,7 @@ fn main() {
     "fn f() {{ x = 1.5f; }}",
     "fn f&lt;T&gt;(x: T) -&gt; T {{ x }}",
     "fn f(v: vector&lt;integer&gt;) {{ for e in v if e &gt; 1 {{ }} }}",
-    "fn f(x: integer) {{ if x is 3 {{ }} }}",
+    "enum Dir {{ North, South }} fn f(e: Dir) {{ if e is North {{ }} }}",
     "fn f(v: vector&lt;integer&gt;) {{ w = v[1..]; }}",
     "fn f() {{ x = `a`; }}"
   ];

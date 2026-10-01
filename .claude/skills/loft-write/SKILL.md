@@ -32,6 +32,10 @@ for the code as written, and a rewrite only as an API an `advice` names to users
 
 The parser **rejects** code that violates these rules.
 
+`OpXxx` definitions are the stdlib's operator table.  A user `fn Op…` still binds its
+operator today, but C132 retires that (loft#1833, DESIGN_DECISIONS_SYNTAX.md): give a user
+type named methods (`a.before(b)`, `v.plus(w)`) rather than new `fn Op…` definitions.
+
 ---
 
 ## Primitive types
@@ -134,8 +138,9 @@ or spelled `as Circle?` (null on a miss).  A miss the compiler can prove is an e
 
 **Nullability defaults (@PLN25 DN1) — every scalar and vector is NON-NULL by default.** A plain
 `integer` / `float` / `single` / `boolean` / `character` / `text` (and `vector<T>`) field, local, or
-return REJECTS `null`: storing `null` — or an undischarged `τ?` from a fit-failing op (parse, `/`,
-`v[i]`) — into it is a compile error. To ALLOW null, append `?` to the type (`integer?`, `text?`,
+return does not intend `null`: storing `null` or an undischarged `τ?` into it is a WARNING
+(`(N-Store)` — the slot then holds null, and a library's deny-warnings CI fails on it), and a bare
+text parse into it is refused (`text-parse-may-fail`, above). To ALLOW null, append `?` to the type (`integer?`, `text?`,
 `vector<T>?`). A `vector<T>` field defaults to `[]` (empty, non-null). **The old `not null` modifier
 is a RETIRED accepted no-op** — it now means what the default already is, so don't write it; write
 `?` when (and only when) you want the slot to hold null.
@@ -780,11 +785,8 @@ emit = fn(x: integer, y: integer) { total += x + y; };
 emit(1, 2);
 ```
 
-**Type annotations on `|x|` shorthand are rejected by design
-(see `doc/claude/DESIGN_DECISIONS_SYNTAX.md § C62`).**  If you need
-types, switch to `fn(name: <type>) { ... }` — the shorthand
-exists specifically *because* the types are inferred; adding
-annotations collapses the distinction between the two forms.
+**Type annotations on `|x|` shorthand are rejected by design** (C62,
+DESIGN_DECISIONS_SYNTAX.md) — when you need types, write `fn(name: <type>) { ... }`.
 
 ---
 
@@ -830,7 +832,8 @@ compile error naming the reservation. Use `assert(cond, "message")`, and do not 
 - **Definitions CAN shadow a stdlib name.**  `enum E`, `struct File`,
   `pub PI = 3;` are legal even though the stdlib has `E`/`File`/`PI`; your name wins
   bare resolution and `std::Name` still reaches the original.  A LIBRARY name is
-  different: one brought in by `use lib::*;` cannot be redefined ("Cannot redefine"),
+  different: one brought in by `use lib::*;` cannot be redefined (an error naming the
+  library's definition),
   while a bare `use lib;` leaves the unqualified name free (`lib::name` reaches the
   library's).
 - **Built-in TYPE-KEYWORDS are reserved** — you cannot define `struct integer`,
@@ -935,6 +938,7 @@ needed); `x = v[i]; if x != null { … }` when the consumer's contract is
 |--------------|-----|
 | `Too few parameters on n_<fn> (got …, need …)` | A compiler panic (a hidden-buffer ABI mismatch), not a mistake in your code — reduce it to a minimal repro and file it (`gh issue create`) |
 | `Variable <x> is never read` | A **warning** (program still runs, exit 0) — use the variable, or name an unused loop var `_` |
+| `The value parameter 'p' receives is never read` / `Dead assignment — … a parameter's assignment stays in this function` | A plain parameter is the callee's own local: the assignment reaches no caller.  Write `p: &T` if the caller is meant to see it, else a local (DIAGNOSTICS.md `never-read` / `dead-assignment`) |
 | `Indexing a non vector` | You indexed a scalar (`x = 5; x[0]`) — index a vector/collection, not a single value |
 | `Cannot assign <T> to a field of type null` | A local named `null` (a literal keyword) — rename it |
 | `Undefined type string` | Use `text`, not `string` |

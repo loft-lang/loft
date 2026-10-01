@@ -1227,9 +1227,13 @@ impl State {
                     .into_iter()
                     .map(|(d_nr, args_base, cp)| {
                         let frame_vars = self.iter_frame_variables_at(data, d_nr, args_base, cp);
+                        // `stack_trace()` promises "parameters and live locals": a compiler
+                        // temporary (`__work_1`, a hidden return buffer) is neither, and a
+                        // `_` name the user wrote stays (loft#1834's one predicate).
+                        let fn_vars = data.def(d_nr).variables();
                         frame_vars
                             .into_iter()
-                            .filter(|fv| fv.live)
+                            .filter(|fv| fv.live && !fn_vars.is_compiler_generated(fv.var_nr))
                             .map(|fv| {
                                 let type_name = fv.typedef.name(data);
                                 let value = match fv.value {

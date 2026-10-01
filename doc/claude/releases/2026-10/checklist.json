@@ -1,12 +1,17 @@
 {
   "M-changelog-read": {
-    "at": "2026-09-30 05:46",
-    "commit": "56000d47259d667d57ebac49f92babaf13b5103b",
-    "note": "read CHANGELOG.md's 2026-10 section at candidate 3cf7c5324: it describes this release (the one-meaning release: content ==, use lib, const, foreign stores/file_map, C131 variant casts, binding field patterns, zero-padding, generic holes, literal nulls, re-binds, locked writes, stack_trace lines, defaults, tuple comprehension). Checked against every user-visible commit between the last release and the candidate; the two gaps found (other streams' fixes, 1665f7e2f; locked writes, 56000d472) are in. Perf restorations of in-cycle regressions carry no entry."
+    "at": "2026-10-01 16:55",
+    "commit": "aec018740f38ccd0c910f1b14d4a58ea76c2612b",
+    "note": "Read CHANGELOG.md's 2026-10 section at aec018740 against every user-visible fix merged since the previous read (3cf7c5324): #1831's fifty and #1838/#1839's nine. The gaps found \u2014 #1836 (a & link to every nullable heap kind writes its source; struct-enum local links; a list literal through &hash), #1829 (overloaded function as a value), #1828 (one error for a misplaced capture), #1837 (returned text parameter) \u2014 are in; each re-measured on this build. regex 0.4 entry covers 0.4.0/0.4.1."
   },
   "M-close-plans": {
     "at": "2026-09-16 10:13",
     "note": "scripts/close-shipped-plans.sh --range v2026.9.0..HEAD --dry-run, 2026-09-16. Eight plan-close directives in range, naming loft-lang/plans issues 149 150 152 153 155 159 160 162, and ALL EIGHT report \"already closed, skipping\". Nothing shipped in this range left a plan open, which is the whole question the step asks. Deliberately run in dry-run only: the acting form calls gh issue close against a separate repo, and closing plan issues is the owner call, not the reviewer one. No outward action taken."
+  },
+  "M-doc-validation": {
+    "at": "2026-10-01 16:56",
+    "commit": "aec018740f38ccd0c910f1b14d4a58ea76c2612b",
+    "note": "Pre-tag pass bounded by the previous validation (892ff474): libraries \u2014 make libraries-review: default, lib/parser.loft, lib/audience_crystal re-read through f29effbf3 (a comment + an unused binding, no doc change), nothing reviewed has moved; the 42 never-reviewed are #1821 (next-release). User docs \u2014 gendoc no drift; doc_review.py 264/264, the 5 moved sections re-read with their claims probed on both backends (statement yields lazy on --native s=100/side 1, expression yield eager side 1 vs 4; ref-forward warnings; i32 narrowing) and 00-vs-python's #exceptions sample made a verbatim window again. @F \u2014 features-review SINCE=892ff474: F2/F45 hold; F21 and F100 corrected at loft-lang/features (F100's example and its stale loft test claim), regenerated, features-check in sync."
   },
   "M-docs-review": {
     "at": "2026-09-29 18:12",
@@ -21,14 +26,20 @@
     "at": "2026-09-16 23:55",
     "note": "make file-sizes run 2026-09-16 at the row's creation; both halves read. SIZE (scripts/file-sizes.py): docs 1000 files, median 189 lines, 89 over the 700 bar, 36 reading as several subjects -- PERFORMANCE.md (32 sections, largest 17%), DESIGN_DECISIONS.md (70, 6%), TESTING.md (36, 20%), WASM.md (22, 13%), PLANNING.md (21, 22%), LOFT.md (29, 16%), PACKAGES.md (39, 22%), plans/157 DESIGN.md (56, 8%). Code 612 files, median 260, 96 over the 1200 bar, 45 as several subjects; the giant parser/state files are KEEP because one impl block is 74-97% of each (one subject, merely long), and the real candidate is src/use_analysis.rs (167 sections, largest 8%) -- tests/issues.rs (1550, 1%) is a test file where that shape is the point. HISTORY (scripts/doc_history_report.py): the split holds in general, 138 docs carrying 5155 timeline lines of 90793 (6%); it concentrates in the formal contract docs, where formal/heap.md is 71% history with NO -history.md companion (the only high-share contract doc without one) and binding 52%, tuples 59%, closures 49%, ownership 35% HAVE a companion and still carry that much -- a companion existing is not evidence the history moved, so the share is what to read. METHOD NOTE: the first version of file-sizes.py divided the largest section by the whole FILE while sections span first-anchor-to-EOF, so a doc with one late ## scored 2% and read as several subjects; 7 of 43 doc recommendations were false until a len(secs)<2 guard landed. WHAT REMAINS: no file was split. This tick records the census and the candidate list; each split is its own edit with its own review, and the heap.md history move is the one the record already scoped (RELEASE.md 5b: MOVE, never copy -- a register living in two files defines its entries twice)."
   },
+  "M-file-split": {
+    "at": "2026-10-01 18:04",
+    "commit": "af5723e87159a153de94ca4657dcaa4dd95c2a11",
+    "note": "206910102 (split src/scopes.rs into 36 parts) in the 2026.10 release PR from tuxedo-pr1838-next; pick at dc94504f1 (make file-sizes --pick 2: scopes.rs 27889 lines, split value 25869); non-move count 1097 (205 widenings to pub(super) + structural lines; a line-multiset check finds no body line changed); introspect_diff 2097/2100 byte-identical (3 differ only by a thread id in a pre-existing panic, #1841); gate 0a250393d + recheck af5723e87 PASSED"
+  },
   "M-ignores": {
     "at": "2026-09-30 00:48",
     "commit": "a72d8257ffe11cfb8187e2597b62406f3df2d3f4",
     "note": "at a72d8257f: each ignore's reason checked TRUE by running what it names \u2014 leak_cross_mode (4), leak_cases_native, f26_wide_poison_sweep, fuzz_differential, seed_corpus_replay green locally 2026-09-29 and now steps in miri.yml release-gate-sweeps; the job's existing sweeps (fuzz_gate_map54_full_replay, SI-2, whole corpus) green in miri.yml run 36554569886; differential oracle green in ci.yml daily 36548461806; oracle_leak_scan_ratchet 0 findings, advisory PR job; 18 measurements/benchmarks assert nothing (by hand, by design); regen_fill_rs a maintenance tool; format_width x2 Windows-only (run on Linux). Removed: native_suite_floor_holds (stale floor), oracle_dev_free_check_ratchet (superseded checker). Skip lists: the 4 html_wasm platform limits (host facility absent), none cite an issue."
   },
   "M-libs": {
-    "at": "2026-09-16 10:54",
-    "note": "scripts/revalidate_libs_local.sh run 2026-09-16 on tuxedo-advisory-2026-09-16 (c5547719d), registry index 99862cf (2026-09-10, 0 behind origin/main, 43 packages). BUILDS ALL GREEN: 42 pass, 0 runtime/env, 0 skipped, 0 COMPILE-BREAK -- which is the question this row asks, since it exists to catch a language change that retro-breaks a shipped library, and nothing on this tree breaks one. The script nevertheless exits 1 on RELEASE-READINESS: two published libraries carry warnings and so fail their own LOFT_DENY_WARNINGS CI. graphics 0.9.1 twice, src/graphics.loft:1549:68 and :1581:53 -- const parameter atlas passed to plain parameter data of gl_upload_canvas, and const mvp to mat of gl_set_uniform_mat4 (C124, const-to-plain-parameter, which C124 section Rollout expects until the named libraries migrate). regex 0.3.1 once, src/regex.loft:86:55 -- both as a first parameter is deprecated (C123, both-receiver-deprecated, a WARNING by owner decision 2026-09-15 precisely so a library CI goes red and published uses get renamed). BOTH ARE PRE-EXISTING, measured not assumed: the loft2 peer ran the same published sources through the pre-fix binary at 6eece5cdd and the post-fix one and got byte-identical diagnostics, and both lints are parse-time declaration lints that no change on this branch can emit. Their cure is an edit in each library own repo, not here. WHAT REMAINS FOR THE TAG: those two must be republished warning-clean before the release claims them, which is an owner call and not this tree work."
+    "at": "2026-10-01 16:55",
+    "commit": "aec018740f38ccd0c910f1b14d4a58ea76c2612b",
+    "note": "Against this tree (f29effbf3 + #1839): PR #1839's library legs all green (100 pass, incl. 'gate' and every published package's 'Test against this loft'), and the two libraries that carried warnings are republished warning-clean today \u2014 text2d 0.4.2 (registry d491788), regex 0.4.0 (f3c440c) then 0.4.1 with its corrected description (8719b8f). graphics' C124 warnings from the 09-16 note were cleared by graphics 0.9.2. Coverage check: 0 findings across 41 libraries / 43 packages."
   },
   "M-liveness": {
     "at": "2026-09-16 09:08",

@@ -737,13 +737,12 @@ compiles and both arities are reachable from a `<T: SubNeg>` body. Two interface
 declaring one arity work too, including when both generics spell their type variable `T` — a
 generic header binds its own type variable (`(G-Gen)`, loft#1300 / loft#1301).
 
-⚠ **A CONCRETE type still provides one arity of a name, not both.** A method key carries the
-receiver and the method name and no arity, so `fn OpMin(self: Money)` and
-`fn OpMin(self: Money, other: Money)` collide as a redefinition. A user type therefore
-satisfies `Numeric` or `Subtractable`, not both — which is the other half of why they are
-separate bounds. Asking a type for the arity it does not have is a compile error naming the
-interface (*"'Money' does not satisfy interface 'Subtractable': missing OpMin"*), not a
-silently dropped operand.
+**A CONCRETE type may provide both arities too.** `fn OpMin(self: Money)` and
+`fn OpMin(self: Money, other: Money)` are one overload set in either declaration order
+(`tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`),
+so a type defining both and `OpMul` satisfies `Numeric + Subtractable`. Asking a type for an
+arity it does not have is a compile error naming the interface (*"'Money' does not satisfy
+interface 'Subtractable': missing OpMin"*), not a silently dropped operand.
 
 `Scalable` scales through a `scale` METHOD rather than `op *` for the neighbouring reason: it
 would share `Numeric`'s `*` at the SAME arity, and same-name same-arity requirements from two
