@@ -6,7 +6,7 @@ description: >-
   release checklist's M-file-split row (the pick from `make file-sizes ARGS="--pick 2"`,
   one or two files per monthly release), and when asked to "split", "break up" or
   "carve out" a file. File size is never limited per PR — this is release work. The result is always a PURE MOVE in its own
-  PR: no signature, behaviour or comment changes. Not for refactoring — a long function
+  commit: no signature, behaviour or comment changes. Not for refactoring — a long function
   found on the way is split only if the split is itself a move; otherwise it keeps or
   gains a `#[expect(clippy::too_many_lines, reason = …)]` and the finding becomes an
   issue.
@@ -26,7 +26,8 @@ make file-sizes ARGS="--pick 2"        # this release's files, with the seams th
 make file-sizes ARGS="--all"           # every file over the bar
 ```
 
-Take the top pick (the owner may name another).  **One file per PR.**
+Take the top pick (the owner may name another).  **One file per commit** — it may ride in a
+release branch's PR, but never in a commit with anything else.
 
 ## Two modes
 
@@ -35,7 +36,7 @@ subject, the original keeping the type definition(s), shared private helpers, an
 header that lists the parts and what each holds.
 
 **carve** — the file is mostly one subject with small ones beside it: move the small ones
-out and stop.  Same rules, same pure-move PR.  A move never shares a squash-merge with a
+out and stop.  Same rules, same pure-move commit.  A move never shares a commit with a
 behaviour change.
 
 ## Find the seams
@@ -88,10 +89,10 @@ A plain `grep -c '^[+-]'` over the diff counts every moved line twice and says n
 the non-move count is more than the `mod` lines and part headers account for, something
 changed that should not have; find it and undo it with the inverse edit.
 
-## The PR
+## The commit
 
-Title `split <file> into N parts` or `carve <subject> out of <file>`; body is the parts and
-one line each on what they hold.  Nothing else in the PR.  Tick the row with the PR link
-and the pick's commit:
-`scripts/release-checklist.py --done M-file-split --note "<PR link>; pick at <sha>; non-move count <n>; gate <PASSED sha>"`
+Subject `split <file> into N parts` or `carve <subject> out of <file>`; body is the parts and
+one line each on what they hold.  Nothing else in the commit — it may travel in the release
+branch's PR beside other work.  Tick the row with the commit and the PR that carried it:
+`scripts/release-checklist.py --done M-file-split --note "<commit> in <PR link>; pick at <sha>; non-move count <n>; gate <PASSED sha>"`
 — a tick note says what ran, on which commit, and what it answered (RELEASE.md).

@@ -117,7 +117,7 @@ class — per [STABILITY_ROADMAP.md](STABILITY_ROADMAP.md)'s standing rule the
 deliverable is the collapsed structure, and the cases that matter most have no ticket
 to file.
 
-### File split per release (by hand) — one release, one file, one PR
+### File split per release (by hand) — one release, one file, one commit
 
 Also each release: split the top file of the pick, with the `split-file` skill.
 
@@ -133,9 +133,11 @@ right and globally inconsistent is what that produces.
   minus its largest item.  An `impl` block counts as its items, not as one subject.
   A file that is one long item scores near zero, however long it is; its length is that
   function's own `too_many_lines` question ([CODE.md § Functions](CODE.md#functions)).
-- **One file per PR, a pure move**: no signature, behaviour or comment change, so the
-  diff reads as moves and the review is a check that it does.  Take two picks when the
-  previous release's split landed clean, one otherwise.
+- **One file per commit, a pure move**: no signature, behaviour or comment change, so the
+  commit's diff reads as moves and the review is a check that it does.  It may ride in the
+  release branch's PR beside other work — the COMMIT is what keeps the move reviewable on
+  its own, so it never shares one with a behaviour change.  Take two picks when the previous
+  release's split landed clean, one otherwise.
 - **No per-PR file-size limit.**  How large a file has grown is this row's question; a
   fix never has to carve a file first.
 - **Payoff check**, read in `M-file-sizes`: did last release's split land, and did the
