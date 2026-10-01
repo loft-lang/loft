@@ -108,10 +108,13 @@ struct Leaf {
 }
 
 fn scalar(tp: &Type) -> bool {
-    matches!(
-        tp,
-        Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character
-    )
+    match tp {
+        Type::Integer(_) | Type::Float | Type::Single | Type::Boolean | Type::Character => true,
+        // Deliberately not peeled: a `τ?` admits the null its type allows, which the
+        // reductions inside the body would have to prove away; declining keeps the call.
+        Type::Optional(_) => false,
+        _ => false,
+    }
 }
 
 fn literal(v: &Value) -> bool {
@@ -216,9 +219,9 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
             return Err("a statement other than an assignment");
         }
     }
-    let tail = match last {
+    let tail = match last.unspan() {
         Value::Return(e) => (**e).clone(),
-        e => (*e).clone(),
+        e => e.clone(),
     };
     if !pure(data, &tail, &mut assigned, &mut nodes) {
         return Err("a result other than operators over variables and literals");
@@ -338,6 +341,9 @@ fn inline_in(
 ) {
     let inner = match v {
         Value::Block(b) | Value::Loop(b) => b.scope,
+        // A `Span` is transparent: the block it wraps is visited as its own node next and
+        // takes its own scope there.
+        Value::Span(_) => scope,
         _ => scope,
     };
     v.for_each_child_mut(&mut |c| inline_in(c, inner, caller, leaves, vars, fresh, n));
@@ -825,7 +831,59 @@ pub fn rewrite_program(data: &mut Data) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::scale_folds;
+    use super::{Ops, Value, fold_int, scale_folds};
+
+    fn ops() -> Ops {
+        Ops {
+            mul_int: 1,
+            add_int: 2,
+            min_int: 3,
+            eor_int: 4,
+            land_int: 5,
+            lor_int: 6,
+            div_float: 7,
+            div_float_nullable: 8,
+            mul_float: 9,
+            conv_float_from_int: 10,
+            conv_bool_from_float: 11,
+        }
+    }
+
+    #[test]
+    fn a_literal_fold_never_answers_an_overflow_or_the_sentinel() {
+        let o = ops();
+        assert_eq!(
+            fold_int(&o, 1, &Value::Int(7), &Value::Int(83_492_791)),
+            Some(Value::Int(584_449_537))
+        );
+        assert_eq!(
+            fold_int(&o, 1, &Value::Long(1 << 62), &Value::Int(4)),
+            None,
+            "an overflow stays the operator's"
+        );
+        assert_eq!(
+            fold_int(&o, 2, &Value::Long(i64::MAX), &Value::Int(1)),
+            None
+        );
+        assert_eq!(
+            fold_int(&o, 3, &Value::Long(i64::MIN + 1), &Value::Int(1)),
+            None,
+            "a result that is the sentinel"
+        );
+        assert_eq!(
+            fold_int(&o, 4, &Value::Long(i64::MIN), &Value::Int(0)),
+            None,
+            "a null operand"
+        );
+        assert_eq!(
+            fold_int(&o, 5, &Value::Int(5), &Value::Int(6)),
+            Some(Value::Int(4))
+        );
+        assert_eq!(
+            fold_int(&o, 1, &Value::Long(1 << 40), &Value::Int(2)),
+            Some(Value::Long(1 << 41))
+        );
+    }
 
     #[test]
     fn a_power_of_two_scale_folds_only_where_both_forms_round_alike() {

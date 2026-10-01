@@ -14,7 +14,8 @@
 //
 //   - the hash itself, by literal arguments (the rules all fire), by a variable argument,
 //     and by a null argument — where the `??` is what answers, so it must stay;
-//   - a parameter the body reassigns (never substituted by its literal);
+//   - a parameter the body reassigns (never substituted by its literal), and a local the
+//     result reads twice (kept, not substituted into one of the reads);
 //   - a literal fold that would overflow (left to the operator, which answers null);
 //   - a mask its operand exceeds; a xor with a negative operand; a mask not of the form
 //     `2^k - 1`, which `a & lit` does not leave alone even inside the range;
@@ -60,6 +61,11 @@ fn tiny(x: integer) -> float {
   (x as float) / 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001 * 2.0
 }
 
+fn twice(a: integer) -> integer {
+  t = a * 3;
+  t + t
+}
+
 fn pair(a: integer, b: integer) -> integer {
   a * 10 + b
 }
@@ -98,6 +104,12 @@ fn test_masks_that_must_stay() {
   assert(masked(100000) == 2231016800, "masked {masked(100000)}");
   assert(negxor(10) == 4294967294, "negxor {negxor(10)}");
   assert(part(5) == 4, "part {part(5)}");
+  k = 5;
+  assert(part(k) == 4, "part of a ranged local {part(k)}");
+}
+
+fn test_a_value_read_twice_is_kept() {
+  assert(twice(4) == 24, "twice {twice(4)}");
 }
 
 fn test_a_fallback_over_a_possible_null_stays() {
@@ -108,6 +120,7 @@ fn test_a_fallback_over_a_possible_null_stays() {
 
 fn test_scales_that_do_not_fold() {
   assert(third(10) == 4.285714285714286, "third {third(10)}");
+  assert(third(9) == 3.8571428571428577, "third of 9 {third(9)}");
   assert(tiny(0) == 0.0, "tiny {tiny(0)}");
 }
 
@@ -123,6 +136,7 @@ fn main() {
   test_the_hash_of_a_null_seed_is_its_fallback();
   test_a_reassigned_parameter_is_never_substituted();
   test_masks_that_must_stay();
+  test_a_value_read_twice_is_kept();
   test_a_fallback_over_a_possible_null_stays();
   test_scales_that_do_not_fold();
   test_arguments_evaluate_in_order();
