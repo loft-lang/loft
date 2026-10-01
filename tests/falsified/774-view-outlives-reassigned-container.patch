@@ -1,7 +1,7 @@
-diff --git a/src/scopes.rs b/src/scopes.rs
---- a/src/scopes.rs
-+++ b/src/scopes.rs
-@@ -1728,7 +1728,8 @@
+diff --git a/src/scopes/view_walk.rs b/src/scopes/view_walk.rs
+--- a/src/scopes/view_walk.rs
++++ b/src/scopes/view_walk.rs
+@@ -255,7 +255,8 @@
      // side instead.  That was a restatement — and once a binding can view more than one
      // container it is also a wrong answer, because the RHS names both and only one of them was
      // disturbed.  One home for the fact, named where it was observed.

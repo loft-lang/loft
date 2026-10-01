@@ -1550,67 +1550,67 @@ src/runtime_error.rs	! Plan-07 phase 4 — typed runtime errors.
 src/runtime_error.rs	! fault sites. After phase 4, every fault attributable to user code is
 src/runtime_error.rs	Plan-07 phase 4g.1 / 4g.2 — call-chain at raise time
 src/sandbox.rs	`def.native()`, which arc A leaves EMPTY on a `#c` definition on
-src/scopes.rs	(@P297), the result is `Insert([Set(__lift_N, …), final])` — a
-src/scopes.rs	(plan-57 cluster I) so the block-exit `free_vars` sweep frees its store
-src/scopes.rs	11 sites used to re-derive (A.3): a callee with a ref param that
-src/scopes.rs	@P297 — a USER struct-returning call (`n_*` with a body) passed
-src/scopes.rs	@P302 — a keyed-collection local backed by its OWN store
 src/scopes.rs	@P303 / #490 — a user fn returning a heap struct-enum that the
-src/scopes.rs	@P322 — when the function body ends with a nested
-src/scopes.rs	@P329: tuple-of-text return — when an element is a non-literal
-src/scopes.rs	@P376 follow-up — no const-param unlock emitted anymore (matching
 src/scopes.rs	@P378(a) — INVERSE of `paired_witness` for the case where the
-src/scopes.rs	@P378(a) — `v` is an inner-scoped witness whose store
-src/scopes.rs	@P378(a) — witness `v` is INNER-scoped (e.g.
-src/scopes.rs	@P378(b) — a heap-returning tail `If` whose CONDITION lifted a
-src/scopes.rs	@P393 (t9) — a loft-source fn OR `t_` method returning an OWNED vector
-src/scopes.rs	@PLAN52 cluster I iteration 2 (2026-05-30): honor skip_free
 src/scopes.rs	@PLAN53 cluster 2 / S4: in aligned mode each arg + the return-address
-src/scopes.rs	@PLAN53 cluster 2: remap the var-numbers these IR nodes carry through
 src/scopes.rs	@PLAN53 — the aligned V2 allocator is the ONLY allocator. Compute the
-src/scopes.rs	@PLN125 arc B — the scope-end hook `v`'s type declares, as a call on `v`.
-src/scopes.rs	@PLN125 arc B — the scope-end hook fires where the BINDING's life
-src/scopes.rs	A `__cell_<T>` is minted FOR this closure (plan-22 boxes a mutated scalar /
-src/scopes.rs	ARC.md A4 (closed 2026-05-07) — `parallel_for_light` was
-src/scopes.rs	Currently no production caller — phase 5b' wires this in place
-src/scopes.rs	EXCEPTION (@P302): keyed collections — `s = []` lowers to
 src/scopes.rs	Plan-04 close-out (2026-04-22): V1 remains the slot
-src/scopes.rs	Plan-06 phase 5b minimal — purity-driven `is_par_safe` classifier.
-src/scopes.rs	Plan-06 phase 5b' G5 — calling a ParentWrite stdlib fn
-src/scopes.rs	Plan-06 phase 5b' G5 — for a `ParentWrite` callee, treat the
-src/scopes.rs	Plan-06 phase 5b' G5 — heap-typed return values are passed
-src/scopes.rs	Plan-06 phase 5b' — DEEP parent-write check for par() workers.
-src/scopes.rs	Plan-06 phase 5b' — precise shallow par-safety check.
-src/scopes.rs	Plan-06 phase 5d (DESIGN.md D8 diagnostic shapes) — explains
-src/scopes.rs	Plan-06 phase 5e — monotonic fixed-point over the call graph.
-src/scopes.rs	Used by phase 5b proper's codegen integration: when
 src/scopes.rs	`free_vars` sweep frees the store there. Empty on phase 1; populated from
-src/scopes.rs	`gen_set_first_ref_var_copy` (state/codegen.rs:1025-1033)
-src/scopes.rs	`trigger` allocates. Their scope-exit `OpFreeRef` is REMOVED, not kept as an
-src/scopes.rs	and no longer called `__retbuf`: `ref_return` renames the attr to the
-src/scopes.rs	and set each variable's scope. Runs once normally; plan-57 cluster I re-runs
-src/scopes.rs	direct calls are checked. Plan-06 phase 5b' (eventual)
-src/scopes.rs	empty / garbage bytes. See PROBLEMS.md @P329.
-src/scopes.rs	fn-ref` in native codegen, @P258/@P259 territory).
-src/scopes.rs	in the dep list (`src/parser/mod.rs:1924-1928`) so the
-src/scopes.rs	it no longer owns. When that source is an inline call it is lifted into a
 src/scopes.rs	loft#849 / @PLN139 — vars that no longer OWN what they hold, so their scope end must
-src/scopes.rs	pitfall `scan_set` was patched for under @P198 (`value.unspan()`).
 src/scopes.rs	rather than a borrow (@P302).
-src/scopes.rs	retired and the sentinel is removed (the reliable checks subsume
-src/scopes.rs	runs (maker, 2026-08-05). It is the rustc bargain in loft's spelling: where rustc refuses
-src/scopes.rs	scope-exit free can no longer strand the free's `var_…` reference out
-src/scopes.rs	shape upstream or belongs to the @P329 tuple-of-text branch, and neither
-src/scopes.rs	site: the plain scope-exit free, the @P317 tag-checked free, and
-src/scopes.rs	suppression. A debug sentinel used to scream when the old read
-src/scopes.rs	the single-valued `dep` no longer records because its holding local was
-src/scopes.rs	there instead of at function exit. `confined` is empty on phase 1, so
-src/scopes.rs	trick — phase 5e replaces with proper monotonic fixed-point).
-src/scopes.rs	valid witness into the @P378(a) branch below.
-src/scopes.rs	── Plan-06 phase 5b — par-safety analyser (DESIGN.md D8) ────────────────────
-src/scopes.rs	── Plan-06 phase 5b' shallow check (precise, no false positives) ────────────
-src/scopes.rs	── Plan-06 phase 5d — par-safety diagnostic helpers (DESIGN.md D8) ──────────
-src/scopes.rs	── Plan-06 phase 5e — fixed-point par-safety (DESIGN.md D8 phase 5e) ────────
+src/scopes/args.rs	it no longer owns. When that source is an inline call it is lifted into a
+src/scopes/capture_adoption.rs	A `__cell_<T>` is minted FOR this closure (plan-22 boxes a mutated scalar /
+src/scopes/confinement.rs	the single-valued `dep` no longer records because its holding local was
+src/scopes/drops.rs	@PLN125 arc B — the scope-end hook `v`'s type declares, as a call on `v`.
+src/scopes/free_vars.rs	@P329: tuple-of-text return — when an element is a non-literal
+src/scopes/free_vars.rs	@P378(b) — a heap-returning tail `If` whose CONDITION lifted a
+src/scopes/free_vars.rs	and no longer called `__retbuf`: `ref_return` renames the attr to the
+src/scopes/free_vars.rs	empty / garbage bytes. See PROBLEMS.md @P329.
+src/scopes/get_free_vars.rs	@P302 — a keyed-collection local backed by its OWN store
+src/scopes/get_free_vars.rs	@P376 follow-up — no const-param unlock emitted anymore (matching
+src/scopes/get_free_vars.rs	@P378(a) — `v` is an inner-scoped witness whose store
+src/scopes/get_free_vars.rs	@PLAN52 cluster I iteration 2 (2026-05-30): honor skip_free
+src/scopes/get_free_vars.rs	@PLN125 arc B — the scope-end hook fires where the BINDING's life
+src/scopes/get_free_vars.rs	in the dep list (`src/parser/mod.rs:1924-1928`) so the
+src/scopes/get_free_vars.rs	retired and the sentinel is removed (the reliable checks subsume
+src/scopes/get_free_vars.rs	suppression. A debug sentinel used to scream when the old read
+src/scopes/inline_returns.rs	@P297 — a USER struct-returning call (`n_*` with a body) passed
+src/scopes/inline_returns.rs	@P393 (t9) — a loft-source fn OR `t_` method returning an OWNED vector
+src/scopes/inline_returns.rs	pitfall `scan_set` was patched for under @P198 (`value.unspan()`).
+src/scopes/insert_free.rs	@P322 — when the function body ends with a nested
+src/scopes/last_use.rs	`trigger` allocates. Their scope-exit `OpFreeRef` is REMOVED, not kept as an
+src/scopes/last_use.rs	scope-exit free can no longer strand the free's `var_…` reference out
+src/scopes/leak_check.rs	site: the plain scope-exit free, the @P317 tag-checked free, and
+src/scopes/par_safety.rs	Currently no production caller — phase 5b' wires this in place
+src/scopes/par_safety.rs	Plan-06 phase 5b minimal — purity-driven `is_par_safe` classifier.
+src/scopes/par_safety.rs	Plan-06 phase 5d (DESIGN.md D8 diagnostic shapes) — explains
+src/scopes/par_safety.rs	Plan-06 phase 5e — monotonic fixed-point over the call graph.
+src/scopes/par_safety.rs	Used by phase 5b proper's codegen integration: when
+src/scopes/par_safety.rs	trick — phase 5e replaces with proper monotonic fixed-point).
+src/scopes/par_safety.rs	── Plan-06 phase 5b — par-safety analyser (DESIGN.md D8) ────────────────────
+src/scopes/par_safety.rs	── Plan-06 phase 5d — par-safety diagnostic helpers (DESIGN.md D8) ──────────
+src/scopes/par_safety.rs	── Plan-06 phase 5e — fixed-point par-safety (DESIGN.md D8 phase 5e) ────────
+src/scopes/par_writes.rs	ARC.md A4 (closed 2026-05-07) — `parallel_for_light` was
+src/scopes/par_writes.rs	Plan-06 phase 5b' G5 — calling a ParentWrite stdlib fn
+src/scopes/par_writes.rs	Plan-06 phase 5b' G5 — for a `ParentWrite` callee, treat the
+src/scopes/par_writes.rs	Plan-06 phase 5b' G5 — heap-typed return values are passed
+src/scopes/par_writes.rs	Plan-06 phase 5b' — DEEP parent-write check for par() workers.
+src/scopes/par_writes.rs	Plan-06 phase 5b' — precise shallow par-safety check.
+src/scopes/par_writes.rs	direct calls are checked. Plan-06 phase 5b' (eventual)
+src/scopes/par_writes.rs	── Plan-06 phase 5b' shallow check (precise, no false positives) ────────────
+src/scopes/reshape_refusals.rs	runs (maker, 2026-08-05). It is the rustc bargain in loft's spelling: where rustc refuses
+src/scopes/returns.rs	shape upstream or belongs to the @P329 tuple-of-text branch, and neither
+src/scopes/scan.rs	(@P297), the result is `Insert([Set(__lift_N, …), final])` — a
+src/scopes/scan.rs	(plan-57 cluster I) so the block-exit `free_vars` sweep frees its store
+src/scopes/scan.rs	@PLAN53 cluster 2: remap the var-numbers these IR nodes carry through
+src/scopes/scan.rs	fn-ref` in native codegen, @P258/@P259 territory).
+src/scopes/scan.rs	there instead of at function exit. `confined` is empty on phase 1, so
+src/scopes/scan_set.rs	11 sites used to re-derive (A.3): a callee with a ref param that
+src/scopes/scan_set.rs	@P378(a) — witness `v` is INNER-scoped (e.g.
+src/scopes/scan_set.rs	EXCEPTION (@P302): keyed collections — `s = []` lowers to
+src/scopes/scan_set.rs	`gen_set_first_ref_var_copy` (state/codegen.rs:1025-1033)
+src/scopes/scan_set.rs	and set each variable's scope. Runs once normally; plan-57 cluster I re-runs
+src/scopes/scan_set.rs	valid witness into the @P378(a) branch below.
 src/self_update.rs	The plan called 30 and @PLAN12 §6.7 "half a system" each: 6.7 produces the yank
 src/self_update.rs	removed. Refusing here would wall off precisely the people `--from` exists for.
 src/self_update.rs	that no longer exist, so `verify-self` would report a permanent, meaningless
