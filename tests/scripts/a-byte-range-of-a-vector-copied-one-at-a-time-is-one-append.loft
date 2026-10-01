@@ -125,7 +125,7 @@ fn v11() {
 // past several growth steps
 fn v12() {
   big: vector<u8> = [];
-  for r in 0..1000 { for x in hw() { big += [x]; } }
+  for _ in 0..1000 { for x in hw() { big += [x]; } }
   out: vector<u8> = [];
   for k in 0..5000 { out += [big[3 + k] ?? 0]; }
   s = 0;
@@ -165,8 +165,29 @@ fn v17() {
   assert(same(out, [108, 108, 111]), "v17 got {out}");
 }
 
+// a default that is a variable keeps the loop (only a literal default is admitted)
+fn v18() {
+  b = hw(); d = 7 as u8; out: vector<u8> = [];
+  for k in 0..3 { out += [b[8 + k] ?? d]; }
+  assert(same(out, [114, 108, 100]), "v18 got {out}");
+}
+
+// a float run keeps the loop: its element can hold the null the `??` replaces
+fn v19() {
+  src: vector<float> = [1.5, 2.5, 3.5]; out: vector<float> = [];
+  for k in 0..2 { out += [src[1 + k] ?? 0.0]; }
+  assert(len(out) == 2 && (out[0] ?? 0.0) == 2.5 && (out[1] ?? 0.0) == 3.5, "v19 got {out}");
+}
+
+// the copy inside an `if` arm
+fn v20() {
+  b = hw(); out: vector<u8> = []; flag = len(b) > 3;
+  if flag { for k in 0..3 { out += [b[k] ?? 0]; } }
+  assert(same(out, [104, 101, 108]), "v20 got {out}");
+}
+
 fn main() {
   v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10(); v11(); v12(); v13(); v15();
-  v16(); v17();
+  v16(); v17(); v18(); v19(); v20();
   println("done");
 }

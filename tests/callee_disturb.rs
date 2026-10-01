@@ -56,6 +56,10 @@ const STRICT_NATIVE: &[(&str, &str)] = &[
     ("LOFT_NATIVE_LEAK_CHECK", "1"),
 ];
 const OFF: &[(&str, &str)] = &[("LOFT_NO_CALLEE_DISTURB", "1")];
+/// The receipt's witness is a stale read through a block the realloc freed and the next claim
+/// reused at once; `(H-LazyFree)` defers that reuse (the old bytes stay readable), so the exact
+/// receipt is taken on the exact allocator and the default one is held to failing at all.
+const OFF_EXACT: &[(&str, &str)] = &[("LOFT_NO_CALLEE_DISTURB", "1"), ("LOFT_NO_LAZY_FREE", "1")];
 
 #[test]
 fn the_pairs_agree_on_both_backends_under_every_falsifier() {
@@ -80,11 +84,12 @@ fn the_switch_restores_the_defect_the_guard_catches() {
         assert!(
             !ok,
             "{mode} with LOFT_NO_CALLEE_DISTURB=1 must fail the guard — without that the guard \
-             measures nothing"
+             measures nothing:\n{err}"
         );
+        let (exact_ok, _, exact_err) = run(mode, OFF_EXACT);
         assert!(
-            err.contains("c2 grow, realloc: callee 4294967401, want 3"),
-            "{mode} must fail on c2 with the stale read the unit removes:\n{err}"
+            !exact_ok && exact_err.contains("c2 grow, realloc: callee 4294967401, want 3"),
+            "{mode} must fail on c2 with the stale read the unit removes:\n{exact_err}"
         );
     }
 }

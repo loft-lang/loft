@@ -24,6 +24,39 @@ run removes `LOFT_NO_CACHE` so an exported switch cannot silence it.  The off sw
 `loft --help` (under `cache`), DEBUG.md and RUNNING_TESTS.md.  Guard:
 `arc_e_program_cache::a_development_build_caches_unless_told_not_to`.
 ### `(H-LazyFree)`: a store's deletes go untracked until one sweep at the growth bound, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
+### `(R-ByteCopy)`'s vector clause and `(R-TextRun)` — a decoder's byte strings are one copy, its texts no object at all (2026-10-02)
+
+**The vector clause** (`src/byte_copy.rs`): `for k in lo..hi { buf += [v[off + k] ?? d] }` —
+a raw byte vector variable `v`, `off` a literal or a variable, `d` a literal, `buf` exclusive —
+is `if 0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off { OpSliceVector(buf, v, off +
+lo, off + hi, tp) } else { the loop }`.  A raw byte read in range is never null, so the `??`
+never fires inside the guard; an `integer` or `float` element can hold the null its `??`
+replaces and keeps the loop.  The destination test is `(R-VecCopy)`'s, now one predicate
+(`vec_copy::exclusive_vector`) that also reads a record `(R-Place)` claimed for the vector as
+minted here, and a hoisted null declaration as no binding — cbor's `bs` and `tb` are both.
+
+**`(R-TextRun)`** (`src/text_run.rs`, run by `byte_copy::rewrite` on the copies it just
+guarded): a byte vector declared empty right before such a copy and read once by `x =
+text_from_bytes(t)` is never built on the guard's path — its declaration and copy move under
+`!g`, leaving their variables' null initialisers in place (the native generator declares at
+the first assignment), and the read becomes `if g { x = text_from_byte_range(v, …) } else { x
+= text_from_bytes(t) }`, the choice above the assignment because a text native assigned to its
+destination is lowered destination-passing.  The guard is evaluated twice, so the statements
+between may only read, mint the frame's return buffer and write its scalar fields.
+`LOFT_NO_BYTE_COPY=1` turns both off.
+
+Guards `a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft` (v1–v17) and
+`a-byte-run-read-once-as-text-is-read-in-place.loft` (t1–t12), both backends, rewrite on and
+off with the program cache off, under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STORES=warn` and `LOFT_NATIVE_LEAK_CHECK`; each sabotaged once (the slice guard's upper
+test: v5 reads 3 bytes for 5; the protected-variable test: t6 reads "world" for "hello").  Pins
+`tests/byte_copy.rs` and `tests/text_run.rs`.
+
+Measured on pluginabi's `check_request` over cbor as written (`--native-release`, 200 000
+checks, one core, five interleaved runs): 3.70 → 2.35 µs a check (−36 %), the hand-written
+`text_from_byte_range` and slice forms' own 3.56 → 2.35; the vector clause alone 3.55 → 3.46,
+equal to the hand-written slice.
+
 ### `(H-LazyFree)`: a store's small deletes merge but stay out of the free tree until one sweep, and a struct-enum field answers `holds_no_heap` by its variant (2026-09-30)
 
 Item 3 of `bench/portal/analysis/records.md` § check_request on the library as written, and

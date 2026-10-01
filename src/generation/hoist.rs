@@ -6208,8 +6208,10 @@ fn call_leaves_param(
         if !is_path_of(data, a, p) {
             continue;
         }
+        // An append READS its source — the whole vector, or a range of it (`t += v[lo..hi]`,
+        // `(R-ByteCopy)`'s slice) — and writes only its destination, argument 0.
         let reads = READ_ONLY_COLLECTION_OPS.contains(&name)
-            || (i > 0 && name == "OpAppendVector")
+            || (i > 0 && matches!(name, "OpAppendVector" | "OpSliceVector"))
             || const_collections;
         if !reads {
             return false;

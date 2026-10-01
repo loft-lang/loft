@@ -232,8 +232,12 @@ the type MAXIMUM that never terminates on either form.
 loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
 the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
 43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
-or extra byte out of such a copy.  `LOFT_TRACE_BYTE_COPY=1` names each site admitted and
-each kept.
+or extra byte out of such a copy.  It turns off the rule's vector clause with it
+(`for i in lo..hi { buf += [v[off + i] ?? d] }` as one slice append behind its in-range
+guard) and `@FR-R-TextRun`, which builds on that clause: a byte vector filled only by such a
+copy and read once by `text_from_bytes` is read in place by `text_from_byte_range`, so the
+switch is also the first bisect step for a wrong text out of a decoder.
+`LOFT_TRACE_BYTE_COPY=1` names each site admitted and each kept (`[byte-copy]`, `[text-run]`).
 
 **`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
 pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where

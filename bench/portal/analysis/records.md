@@ -893,3 +893,21 @@ the compiler should not have made.  So the next units remove objects, in this or
 
 Store efficiency (the placed buffer's prefill, `owned_walk`'s per-field `Vec`) resumes once
 these stop producing the objects it would speed up.
+
+## Built (2026-10-02) — a decoder's texts are no objects, its byte strings one copy
+
+Measured first on cbor as written (the per-check store census, `LOFT_STORE_CENSUS` on an
+`op-census` build): 4 stores, 46 claims and 26 deletes a check, no deep copies left.  Priced by
+hand on a scratch copy before anything was built (`loft-optimize` step 4): reading each text
+off the frame with `text_from_byte_range` instead of through a `tb` vector 3 558 → 2 525 ns a
+check (−29 %); the byte strings as one slice on top, 2 349 ns.  A `Decoded` returned as a tuple
+was SLOWER (7 812 ns) — so item 1 of the order above is a design, not a respelling.
+
+Both forms are now the compiler's, on the library as written: `(R-ByteCopy)`'s vector clause
+(a byte run copied one at a time is one guarded slice append) and `(R-TextRun)` (a byte run
+read once as text is never built).  `check_request` 3.70 → 2.35 µs (−36 %, interleaved on one
+core), the hand-written forms' figure.  Reach outside cbor: the vector clause fires wherever a
+byte vector variable is copied by index (pluginabi's bench); `(R-TextRun)` is cbor's alone in
+the bench body today.  An `integer` or `float` run (`members[st + m] ?? 0` in Moros,
+`?? 0.0` in hex_fit) keeps its loop: its elements can hold the null the `??` replaces, so it
+needs an append that substitutes the default — the next clause, priced on those rows first.

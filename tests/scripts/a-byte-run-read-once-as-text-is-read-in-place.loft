@@ -105,7 +105,25 @@ fn t12() {
   assert(s == "héllo" && size(s) == 6, "t12 got '{s}'");
 }
 
+// the read inside an `if` arm whose condition is a call keeps the vector (a call is not inert)
+fn t13() {
+  b = hw(); tb: vector<u8> = [];
+  for k in 0..5 { tb += [b[6 + k] ?? 0]; }
+  s = "none";
+  if size(s) > 0 { s = text_from_bytes(tb); }
+  assert(s == "world", "t13 got '{s}'");
+}
+
+// the read inside an `if` arm, after an assignment of an unrelated variable
+fn t14() {
+  b = hw(); tb: vector<u8> = [];
+  for k in 0..5 { tb += [b[6 + k] ?? 0]; }
+  s = "none"; m = 0;
+  if m < 1 { s = text_from_bytes(tb); }
+  assert(s == "world", "t14 got '{s}'");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t12();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t12(); t13(); t14();
   println("done");
 }

@@ -1770,6 +1770,17 @@ The stdlib's own `char_slice` takes it too.
                  and the loop pushes what it always pushed).  A second statement in the
                  body, a text that is a field or an element, a destination whose element
                  is not a raw byte, and a bound that is any other call keep the loop.
+                 THE VECTOR CLAUSE: `for i in lo..hi { buf += [v[off + i] ?? d] }` (or
+                 `v[i]`, `i + off`) over a byte vector VARIABLE `v` whose element is
+                 `buf`'s, `off` a literal or a variable, `d` a literal, `buf` EXCLUSIVE
+                 as `(R-VecCopy)` defines it (a record `(R-Place)` claimed for it counts
+                 as minted here) — is ONE slice append of `v[off + lo .. off + hi]`
+                 behind `0 <= off && 0 <= lo && lo <= hi && hi <= len(v) - off`.  A raw
+                 byte read in range is never null, so `?? d` never fires inside the
+                 guard; outside it the loop runs as written (a negative index counts
+                 from the end, one past the end reads null and pushes `d`).  An element
+                 of any other kind — `integer`, `float`, a narrow bias — can hold the
+                 null its `?? d` replaces, and keeps the loop.
 ```
 
 **In words.**  A binary encoder copies a text payload into its byte buffer one byte at a
@@ -1778,8 +1789,45 @@ push cost 4.3 ns a byte against a block copy.  The append grows the vector the w
 grows it (`vector::append_bytes`, one home with `vector_append`'s doubling), because a
 reservation to the exact length reallocated on every chunk.
 
+The vector clause is the decoder's half of the same copy: `bs += [bytes[pos + k] ?? 0]` is
+how a reader takes a byte string out of its frame, and the guard makes the slice exactly the
+bytes the loop pushes.
+
 **BUILT** (`src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
-guard `tests/scripts/a-byte-wise-text-copy-is-one-append.loft`, pin `tests/byte_copy.rs`).
+guards `tests/scripts/a-byte-wise-text-copy-is-one-append.loft` and
+`tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft`, pin
+`tests/byte_copy.rs`).
+
+### A byte run read once as text is never built
+
+```
+  (R-TextRun)    `t: vector<u8> = []; for i in lo..hi { t += [v[off + i] ?? d] }; …;
+                 x = text_from_bytes(t)` — a byte vector declared empty immediately
+                 before a copy `(R-ByteCopy)`'s vector clause admits, and read once as
+                 text as the direct value of an assignment — is never built on the
+                 guard `g` of that copy: the declaration and the copy run only under
+                 `!g`, and the read is `if g { x = text_from_byte_range(v, off + lo,
+                 off + hi) } else { x = text_from_bytes(t) }`.  `g` is evaluated twice,
+                 so every statement between the copy and the read may only read, mint
+                 the frame's hidden return buffer or write a scalar field of it, and
+                 assign no variable `g` reads.  A second mention of `t`, a mention of its
+                 wrapper other than its declaration and its frees, a vector that is not
+                 empty before the copy, a read that is not an assignment's value, and a
+                 read under a loop keep the vector.
+```
+
+**In words.**  A decoder takes each text out of its frame by copying the bytes into a vector
+and converting it, so every text cost two objects — the vector's wrapper and its element
+record — claimed, filled and released only to be read once.  The range read decodes the same
+bytes with the same conversion (`String::from_utf8`, invalid bytes answering `""`), so on the
+guard's path the text is identical and neither object exists; the frees of the wrapper the
+path never claimed pass a null by.  The choice sits above the assignment, not inside it,
+because a text native assigned to its destination is lowered destination-passing and must be
+the assignment's direct value.
+
+**BUILT** (`src/text_run.rs`, called by `src/byte_copy.rs` on the copies it just guarded;
+`LOFT_NO_BYTE_COPY` turns both off; guard
+`tests/scripts/a-byte-run-read-once-as-text-is-read-in-place.loft`, pin `tests/text_run.rs`).
 
 ### A vector copied element by element is one append
 

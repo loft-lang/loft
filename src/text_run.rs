@@ -309,14 +309,14 @@ fn path_ok(v: &Value, t: u16, protected: &[u16], cx: &Cx) -> bool {
     match v.unspan() {
         Value::Block(bl) => seq(&bl.operators),
         Value::Insert(ls) => seq(ls),
-        Value::Set(x, rhs) => !protected.contains(x) && path_ok(rhs, t, protected, cx),
+        Value::Set(dest, rhs) => !protected.contains(dest) && path_ok(rhs, t, protected, cx),
         Value::Call(_, args) => seq(args),
-        Value::If(c, a, b) => {
-            inert(c, protected, cx)
-                && if holds_read(a, t, cx) {
-                    path_ok(a, t, protected, cx)
+        Value::If(cond, then, other) => {
+            inert(cond, protected, cx)
+                && if holds_read(then, t, cx) {
+                    path_ok(then, t, protected, cx)
                 } else {
-                    path_ok(b, t, protected, cx)
+                    path_ok(other, t, protected, cx)
                 }
         }
         _ => false,
@@ -336,6 +336,8 @@ fn inert(v: &Value, protected: &[u16], cx: &Cx) -> bool {
         | Value::Boolean(_)
         | Value::Float(_)
         | Value::Single(_)
+        | Value::Text(_)
+        | Value::Enum(_, _)
         | Value::Var(_) => true,
         Value::If(c, a, b) => {
             inert(c, protected, cx) && inert(a, protected, cx) && inert(b, protected, cx)
