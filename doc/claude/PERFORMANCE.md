@@ -771,11 +771,7 @@ inlined into every operator — the cache re-derived wherever the stack's buffer
 every other buffer move refusing the stack store (formal/rewrites.md `(R-StackBase)`; the
 re-derivation per access was three dependent loads on a simple op's critical path).  The bytecode is
 read the same way (`(R-CodeBase)`), through a base and length cached in `State`.  An element read
-in range and an append that fits each take one straight path (`(R-ElementPath)`).  ⚠ Measure
-`ld_blocks.store_forward` beside cycles when a change moves inlining: a helper returning a
-`DbRef` through memory writes it as narrow fields that the caller re-reads as one wide load, a
-stall per call that the instruction count does not show (2026-10-01: −4 % instructions, +8 %
-cycles, 11× the blocked loads).  The general store path re-checks on every push and pop what the stack
+in range and an append that fits each take one straight path (`(R-ElementPath)`).  The general store path re-checks on every push and pop what the stack
 guarantees by construction — its store is live, not foreign, not locked, and `ensure_stack`
 grows the buffer and the record together — and cost 43 % of the interpreter's time on that
 loop.  The checked path (`*_checked`, out of line) runs whenever an instrument that watches
@@ -897,6 +893,20 @@ RUSTFLAGS='-C llvm-args=-align-all-functions=6 -C llvm-args=-align-all-nofallthr
 
 and read beside `perf stat -e instructions,cycles`: instructions are deterministic, so a change
 that removes work and still reads slower is layout until the pinned builds say otherwise.
+
+⚠ **Both builds come from ONE tree, which differs only by the change.**  A binary bakes in the
+compiled stdlib (`src/compiled_stdlib_gen.rs`) while the bench reads `default/*.loft` from the
+tree it runs in, so a binary built before a rebase runs a stdlib it was not compiled against
+and falls onto slow paths: measured 2026-10-01, a pre-rebase "before" made `join` read −95 %
+and `split` −90 % for a change that touched neither.  Across a rebase, build the "before" from a
+detached worktree at the rebased commit just below the change (`git worktree add --detach`),
+with the current derived files copied in, and check `git diff --stat` between the two trees
+names only the change.  A comparison across the rebase measures main's commits too: one such
+run credited a change with −4.2 % that was −5.6 % of main's and +0.9 % of its own.
+
+And when a change moves inlining, read `ld_blocks.store_forward` beside cycles: a helper that
+returns a `DbRef` through memory writes it as narrow fields the caller re-reads as one wide load,
+a stall per call that the instruction count does not show (`(R-ElementPath)`).
 
 ---
 
