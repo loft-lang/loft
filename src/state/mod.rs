@@ -5531,6 +5531,16 @@ impl State {
             };
             (at, at + u32::from(crate::variables::size(vars.tp(i), &ctx)))
         };
+        // A counted loop's variable in its range index's slot (`slot_alias`): one value under
+        // two names, so neither ever takes the bytes over from the other.  Trusted only where
+        // the two slots do coincide in this frame's table.
+        let aliases: Vec<(u16, u16)> = crate::slot_alias::range_slot_aliases(data, d_nr)
+            .into_iter()
+            .filter(|&(lv, ix)| {
+                lv < n && ix < n && vars.stack(lv) != u16::MAX && vars.stack(lv) == vars.stack(ix)
+            })
+            .collect();
+        let one_value = |a: u16, b: u16| aliases.iter().any(|&p| p == (a, b) || p == (b, a));
         let mut out = Vec::new();
         for i in 0..n {
             let slot = vars.stack(i);
@@ -5562,6 +5572,7 @@ impl State {
                 let usurper = (0..n)
                     .filter(|&j| {
                         j != i
+                            && !one_value(i, j)
                             && !vars.is_argument(j)
                             && vars.stack(j) != u16::MAX
                             && stored[j as usize] != u32::MAX

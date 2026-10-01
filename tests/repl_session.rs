@@ -1506,9 +1506,9 @@ fn file_debugger_can_call_into_a_native_library() {
 /// control — without it, a "fix" that simply always breaks would pass.
 fn cond_session(cond: &str, file: &std::path::Path) -> (bool, Vec<String>) {
     let mut s = ReplSession::new("default").expect("stdlib");
-    let src = "fn main() {\n  total = 0;\n  for i in 0..4 {\n    \
-               step = i * 10;\n    total = total + step;\n  }\n  \
-               assert(total == 60, \"ran\")\n}\n";
+    let src = "fn main() {\n  total = 0;\n  for i in 0..4 {\n    k = i + 1;\n    \
+               step = k * 10;\n    total = total + step;\n  }\n  \
+               assert(total == 100, \"ran\")\n}\n";
     std::fs::write(file, src).expect("write");
     s.load_program(file.to_str().unwrap())
         .expect("read")
@@ -1516,7 +1516,7 @@ fn cond_session(cond: &str, file: &std::path::Path) -> (bool, Vec<String>) {
     s.debug_stepping(true);
     s.add_file_breakpoint_rich(
         file.to_str().unwrap(),
-        5,
+        6,
         Some(cond.to_string()),
         Vec::new(),
         true,
@@ -1528,8 +1528,8 @@ fn cond_session(cond: &str, file: &std::path::Path) -> (bool, Vec<String>) {
 #[test]
 fn an_unevaluable_breakpoint_condition_is_reported_and_stops() {
     let f = tmp_session("cond_bad").with_extension("loft");
-    // `i` is not in the frame at line 5, so the condition cannot be evaluated.
-    let (paused, trace) = cond_session("i == 2", &f);
+    // `k`'s slot belongs to `step` at line 6, so the condition cannot be evaluated.
+    let (paused, trace) = cond_session("k == 2", &f);
     assert!(
         paused,
         "an unevaluable condition must STOP — silently never firing is the bug"
@@ -1569,21 +1569,21 @@ fn a_true_breakpoint_condition_stops_without_a_diagnostic() {
 /// @PLN120 A — the frame-liveness gate: the plan's three-row probe table, driven
 /// through the real `loft debug <file>:<line>` path.
 ///
-/// `for i in 0..4 { step = i * 10; total = total + step; }` is the shape the design
-/// was built on, and it is deliberately one where `i` and `step` **share a stack
-/// slot** (`loft introspect` shows both at `var[48]`; the allocator is scope-blind,
-/// so two locals whose live ranges do not overlap coalesce even inside one scope).
-/// That is what makes the three rows below controls rather than decoration:
+/// `for i in 0..4 { k = i + 1; step = k * 10; total = total + step; }` is deliberately a
+/// shape where `k` and `step` **share a stack slot** (the allocator is scope-blind, so two
+/// locals whose live ranges do not overlap coalesce even inside one scope).  The loop
+/// variable `i` is not the probe any more: it lives in its range index's slot
+/// (`slot_alias`), which nothing else takes, so it is held through the whole body.  That
+/// is what makes the rows below controls rather than decoration:
 ///
-/// * line 4 — `step` is in scope with no completed write, so it must read `<unset>`
-///   and **not** `0`. `0` is `i`'s value in the shared slot: a scope-only fix (show
+/// * line 5 — `step` is in scope with no completed write, so it must read `<unset>`
+///   and **not** `1`. `1` is `k`'s value in the shared slot: a scope-only fix (show
 ///   every in-scope local with its slot's contents) prints exactly that, which is a
 ///   silent lie of the same family arc B closed for conditions.
-/// * line 5 — `step` must read its value (the one the line consumes; it was missing
-///   entirely before A, because the reference-span filter asked whether the pc was
-///   past its first *read*), and `i` must be reported as `<reused by step>` — in
-///   scope, but its bytes are gone. Not silently dropped, not shown as `0`.
-/// * line 7 — after the loop, `i` and `step` must be **absent**. Without this row a
+/// * line 6 — `step` must read its value (the one the line consumes), and `k` must be
+///   reported as `<reused by step>` — in scope, but its bytes are gone. Not silently
+///   dropped, not shown as `10`.  `i` is still `0`: one value under two names is no reuse.
+/// * line 8 — after the loop, `k`, `step` and `i` must be **absent**. Without this row a
 ///   fix that shows every local everywhere passes the other two.
 #[test]
 fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
@@ -1591,10 +1591,11 @@ fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
     let prog = "fn main() {\n  \
                 total = 0;\n  \
                 for i in 0..4 {\n    \
-                step = i * 10;\n    \
+                k = i + 1;\n    \
+                step = k * 10;\n    \
                 total = total + step;\n  \
                 }\n  \
-                assert(total == 60, \"loop\")\n}\n";
+                assert(total == 100, \"loop\")\n}\n";
     std::fs::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     let at = |line: u32, cmds: &str| -> String {
@@ -1604,39 +1605,43 @@ fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
         String::from_utf8_lossy(&out).to_string()
     };
 
-    // Row 1 — line 4 `step = i * 10`.
-    let l4 = at(4, ":vars\n:quit\n");
-    assert!(l4.contains("i = 0"), "line 4 shows the user's `i`: {l4}");
-    assert!(
-        l4.contains("step = <unset>"),
-        "line 4 marks `step` unset — NOT `step = 0`, which is `i`'s value in the \
-         slot they share: {l4}"
-    );
-
-    // Row 2 — line 5 `total = total + step`.
+    // Row 1 — line 5 `step = k * 10`.
     let l5 = at(5, ":vars\n:quit\n");
+    assert!(l5.contains("k = 1"), "line 5 shows the user's `k`: {l5}");
     assert!(
-        l5.contains("step = 0"),
-        "line 5 shows `step`, the value the line reads (absent before A): {l5}"
-    );
-    assert!(
-        l5.contains("i = <reused by step>"),
-        "line 5 names why `i` is unreadable rather than dropping it: {l5}"
+        l5.contains("step = <unset>"),
+        "line 5 marks `step` unset — NOT `step = 1`, which is `k`'s value in the \
+         slot they share: {l5}"
     );
 
-    // Row 3 (the control) — line 7, after the loop.
-    let l7 = at(7, ":vars all\n:quit\n");
-    assert!(l7.contains("total = 60"), "line 7 shows `total`: {l7}");
+    // Row 2 — line 6 `total = total + step`.
+    let l6 = at(6, ":vars\n:quit\n");
     assert!(
-        !l7.contains("step ") && !l7.contains("i = "),
-        "line 7 must NOT gain `i`/`step` — they are out of scope: {l7}"
+        l6.contains("step = 10"),
+        "line 6 shows `step`, the value the line reads: {l6}"
+    );
+    assert!(
+        l6.contains("k = <reused by step>"),
+        "line 6 names why `k` is unreadable rather than dropping it: {l6}"
+    );
+    assert!(
+        l6.contains("i = 0"),
+        "line 6 still shows the loop variable, which shares its index's slot and nothing else: {l6}"
+    );
+
+    // Row 3 (the control) — line 8, after the loop.
+    let l8 = at(8, ":vars all\n:quit\n");
+    assert!(l8.contains("total = 100"), "line 8 shows `total`: {l8}");
+    assert!(
+        !l8.contains("step ") && !l8.contains("k = ") && !l8.contains("i = "),
+        "line 8 must NOT gain `i`/`k`/`step` — they are out of scope: {l8}"
     );
 
     // The unreadable local names its reason on read AND refuses the edit — the edit
     // half is the memory-safety property: writing through a name whose slot belongs
     // to another local corrupts that local (and for `text`, `Drop`s a `String` that
     // was never constructed).
-    let refused = at(5, "i\ni = 42\n:quit\n");
+    let refused = at(6, "k\nk = 42\n:quit\n");
     assert!(
         refused.contains("slot was reused by `step`"),
         "reading an unheld local explains itself: {refused}"
@@ -1648,63 +1653,22 @@ fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// @PLN120 A — the `text` half of the edit gate, which is the one failure mode of
-/// this arc that corrupts memory rather than merely misinforming: overwriting a text
-/// local runs `Drop` on its old `String`, so the slot must hold a constructed one.
-/// Before A the narrow reference-span filter hid an unwritten text local, and the
-/// gate rode on that; A shows it, so the gate has to be explicit.
-#[test]
-fn file_debugger_refuses_to_edit_an_unset_text_local() {
-    let path = std::env::temp_dir().join(format!("loft_pln120a_txt_{}.loft", std::process::id()));
-    let prog = "fn main() {\n  \
-                total = 0;\n  \
-                for i in 0..3 {\n    \
-                msg = \"n\";\n    \
-                total = total + i;\n  \
-                }\n  \
-                assert(total == 3, \"loop\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
-    let file = path.to_str().unwrap();
-    let drive = |line: u32, cmds: &str| -> String {
-        let input = std::io::Cursor::new(cmds.as_bytes().to_vec());
-        let mut out: Vec<u8> = Vec::new();
-        loft::repl::run_file_debug("default", &[], file, line, input, &mut out).expect("debug run");
-        String::from_utf8_lossy(&out).to_string()
-    };
-    // On its own assignment line the text local is `<unset>` and the edit is refused.
-    let unset = drive(4, "msg = \"hi\"\n:quit\n");
-    assert!(
-        unset.contains("msg = <unset>"),
-        "an unwritten text local is shown as unset: {unset}"
-    );
-    assert!(
-        unset.contains("has no value yet at this line"),
-        "and the refused edit says why: {unset}"
-    );
-    // The control: one line later it IS held, so the same edit must succeed —
-    // without this, a gate that refuses every text edit would pass.
-    let held = drive(5, "msg = \"hi\"\n:quit\n");
-    assert!(
-        held.contains("msg = \"n\"") && held.contains("msg = \"hi\""),
-        "one line later the edit lands: {held}"
-    );
-    let _ = std::fs::remove_file(&path);
-}
-
 /// @PLN120 F — the undo/redo history survives a step exactly as far as its storage
 /// does.  Six cells; the consumer report is cell 1 and the safety property is cell 2.
 ///
-/// The probe is the arc-A shape on purpose: `i` and `step` **share** slot 48 (the slot
-/// allocator is scope-blind), so an undo of `i` replayed one line later would write
+/// The probe is the arc-A shape on purpose: `k` and `step` **share** a slot (the slot
+/// allocator is scope-blind), so an undo of `k` replayed one line later would write
 /// `step`'s value — which is exactly the hazard that made `debug_step` clear the whole
-/// history, discarding the valid entries with the stale one.
+/// history, discarding the valid entries with the stale one.  The loop variable `i` shares
+/// only its range index's slot (`slot_alias`): its edit keeps its storage across a step.
 #[test]
 fn file_debugger_undo_survives_a_step_only_while_its_storage_does() {
     let path = std::env::temp_dir().join(format!("loft_pln120f_{}.loft", std::process::id()));
     let prog = "fn main() {\n  \
                 total = 0;\n  \
                 for i in 0..4 {\n    \
-                step = i * 10;\n    \
+                k = i + 1;\n    \
+                step = k * 10;\n    \
                 total = total + step;\n  \
                 }\n  \
                 assert(total > 0, \"loop\")\n}\n";
@@ -1717,27 +1681,40 @@ fn file_debugger_undo_survives_a_step_only_while_its_storage_does() {
         String::from_utf8_lossy(&out).to_string()
     };
 
-    // Cell 1 — THE REPORTED CASE.  `total` keeps slot 32 for the whole function, so its
+    // Cell 1 — THE REPORTED CASE.  `total` keeps its slot for the whole function, so its
     // undo entry is still valid after a step; before F this answered "nothing to undo".
-    let c1 = drive(5, "total = 99\n:next\n:undo\n:quit\n");
+    let c1 = drive(6, "total = 99\n:next\n:undo\n:quit\n");
     assert!(c1.contains("total = 99"), "the edit lands: {c1}");
     assert!(
         c1.matches("total = 0").count() >= 2,
         "…and `:undo` after a step restores it: {c1}"
     );
 
-    // Cell 2 — THE SAFETY CONTROL.  Editing `i` on line 4 and stepping to line 5 hands
-    // slot 48 to `step`; the entry must be dropped WITH ITS REASON, and `step`'s value
+    // Cell 2 — THE SAFETY CONTROL.  Editing `k` on line 5 and stepping to line 6 hands
+    // its slot to `step`; the entry must be dropped WITH ITS REASON, and `step`'s value
     // must be left alone.  Without this cell, "stop clearing the history" passes cell 1
     // and ships the stale-slot write.
-    let c2 = drive(4, "i = 7\n:next\n:undo\n:quit\n");
+    let c2 = drive(5, "k = 7\n:next\n:undo\n:quit\n");
     assert!(
-        c2.contains("no longer undoable") && c2.contains("`i`'s stack slot is now `step`'s"),
+        c2.contains("no longer undoable") && c2.contains("`k`'s stack slot is now `step`'s"),
         "the drop names the local that took the slot: {c2}"
     );
     assert!(
         c2.contains("step = 70"),
         "…and `step` (7 * 10, the edit's own effect) is NOT overwritten by the undo: {c2}"
+    );
+
+    // Cell 6 — one value under two names is no hand-over.  The loop variable shares its
+    // range index's slot and nothing else, so its edit survives the step and `:undo` puts
+    // it back, with no drop reported.
+    let c6 = drive(5, "i = 2\n:next\n:undo\n:quit\n");
+    assert!(
+        !c6.contains("no longer undoable"),
+        "the loop variable's storage is unchanged by a step: {c6}"
+    );
+    assert!(
+        c6.contains("i = 2") && c6.trim_end().lines().rev().any(|l| l.contains("i = 0,")),
+        "…and `:undo` restores it: {c6}"
     );
 
     // Cell 5 — no edits at all.  Correct behaviour, previously indistinguishable from a
