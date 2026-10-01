@@ -1,0 +1,142 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A loop whose first statement carries its exit test runs that test at its bottom on the
+// interpreter.
+//
+// A counted `for` and a `while` test at the top and jump back at the end: two jumps a round.
+// The bytecode generator lays such a loop out with the test after the body instead — one jump
+// enters at the test, and the test jumps back to the body while the loop goes on
+// (`gen_rotated_loop`, `LOFT_NO_LOOP_ROTATE=1` keeps the top-tested form).  What can go wrong
+// is the ROUND COUNT: a loop that must not run at all running once, a `continue` landing on the
+// body instead of the test (skipping the step: a loop that never ends), a `break` or an exit
+// falling into the wrong place, a `while` condition evaluated once too often or too seldom.
+// So every cell counts its rounds beside its value, and the zero-round loops come in every
+// spelling the shape reaches: an empty range, a backward range, an inclusive range whose end
+// lies below its start, a `while` false at entry.  `--native` never sees the layout.
+//
+// @falsified-at: none — it guards a layout no earlier build has, so no control fails it.
+//   Falsified instead by planted defects, 2026-10-01 (recorded in the commit that added it).
+
+fn below(calls: &integer, n: integer) -> boolean {
+  calls += 1;
+  calls <= n
+}
+
+fn first_over(v: vector<integer>, x: integer) -> integer {
+  for i in 0..len(v) {
+    if v[i] > x { return i; }
+  }
+  -1
+}
+
+fn from(a: integer, b: integer) -> integer {
+  t = 0;
+  r = 0;
+  for i in a..b { t += i; r += 1; }
+  t * 100 + r
+}
+
+fn test_while() {
+  t = 0;
+  i = 0;
+  while i < 10 { t += i; i += 1; }
+  assert(t == 45 && i == 10, "while {t} {i}");
+}
+
+fn test_zero_rounds() {
+  r = 0;
+  for _ in 5..5 { r += 1; }
+  for _ in 5..2 { r += 1; }
+  for _ in 1..=0 { r += 1; }
+  n = 0;
+  for _ in 3..n { r += 1; }
+  j = 7;
+  while j < 3 { r += 1; j += 1; }
+  assert(r == 0 && j == 7, "zero rounds {r} {j}");
+}
+
+fn test_continue_while() {
+  t = 0;
+  i = 0;
+  while i < 10 {
+    i += 1;
+    if i % 3 == 0 { continue; }
+    t += i;
+  }
+  assert(t == 37 && i == 10, "continue in while {t} {i}");
+}
+
+fn test_inner_continue_and_break() {
+  t = 0;
+  for _ in 0..3 {
+    for j in 0..4 {
+      if j == 1 { continue; }
+      t += j;
+    }
+  }
+  u = 0;
+  for _ in 0..3 {
+    for j in 0..10 {
+      if j == 2 { break; }
+      u += 1;
+    }
+  }
+  assert(t == 15 && u == 6, "inner {t} {u}");
+}
+
+fn test_inclusive_variable_end() {
+  t = 0;
+  r = 0;
+  n = 4;
+  for i in 1..=n { t += i; r += 1; }
+  assert(t == 10 && r == 4, "inclusive {t} {r}");
+}
+
+fn test_computed_start() {
+  assert(from(3, 8) == 2505, "computed start {from(3, 8)}");
+  assert(from(8, 3) == 0, "computed start, empty {from(8, 3)}");
+  assert(from(-2, 1) == -297, "computed start, negative {from(-2, 1)}");
+}
+
+fn test_comprehension() {
+  v = [for i in 0..5 { i * 2 }];
+  e = [for i in 0..0 { i }];
+  assert(len(v) == 5 && sum(v) == 20 && v[4] == 8, "comprehension {v}");
+  assert(len(e) == 0, "empty comprehension {len(e)}");
+}
+
+fn test_return_inside() {
+  v = [4, 9, 2, 12, 7];
+  assert(first_over(v, 8) == 1, "first over 8 {first_over(v, 8)}");
+  assert(first_over(v, 10) == 3, "first over 10 {first_over(v, 10)}");
+  assert(first_over(v, 20) == -1, "none over 20 {first_over(v, 20)}");
+}
+
+fn test_filtered() {
+  t = 0;
+  r = 0;
+  for i in 0..10 if i % 2 == 0 { t += i; r += 1; }
+  assert(t == 20 && r == 5, "filtered {t} {r}");
+}
+
+fn test_condition_count() {
+  calls = 0;
+  t = 0;
+  while below(calls, 3) { t += 1; }
+  assert(t == 3 && calls == 4, "condition evaluated {calls} times for {t} rounds");
+}
+
+fn main() {
+  test_while();
+  test_zero_rounds();
+  test_continue_while();
+  test_inner_continue_and_break();
+  test_inclusive_variable_end();
+  test_computed_start();
+  test_comprehension();
+  test_return_inside();
+  test_filtered();
+  test_condition_count();
+  println("ok");
+}

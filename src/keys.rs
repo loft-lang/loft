@@ -1260,6 +1260,18 @@ pub fn loop_var_alias_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_VAR_ALIAS"))
 }
 
+/// A loop whose first statement carries its exit test — a counted range's iterator, or the
+/// `if !c { break }` of a `while` — tests at the BOTTOM on the interpreter: entered by one jump
+/// to the test, the test jumps back to the body while the loop goes on, so a round takes one
+/// jump where a test at the top and a jump back took two — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_LOOP_ROTATE` (read at bytecode generation): the before-half of the A/B and the
+/// first bisect step for a loop that runs a round too many or too few on the interpreter.
+#[must_use]
+pub fn loop_rotate_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_ROTATE"))
+}
+
 /// `LOFT_TRACE_LOOP_VAR_ALIAS=1` — name each counted loop whose variable shares its range
 /// index's slot, and each one declined with the reason.
 #[must_use]
