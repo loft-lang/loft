@@ -63,6 +63,11 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     // (`Stores::source_dir_native` via `current_exe()`) makes `source_dir()`
     // non-empty under `--native`, so it is no longer skipped here.
     //
+    // A `#native` function with no library loaded is REFUSED by the native generator for the
+    // whole file (`compile_error!` naming the symbol) — that refusal is this file's native
+    // answer, while the interpreter runs it and fails the one `@EXPECT_FAIL` function.  It was
+    // dropped as a `prepare error` skip until such a skip became a failure (loft#1841).
+    "75-native-stub.loft",
 ];
 
 /// Locate `libloft.rlib` and its sibling deps directory for standalone `rustc` compilation.
