@@ -1281,23 +1281,36 @@ impl Stores {
         self.vector_add(db, o_db, known);
     }
 
-    /// @PLN157 § V-m — the slot of one fused scalar append: `vector_append` claims it (and
-    /// grows on the ladder), the caller writes it, and the length bump lands on the same
-    /// resolved store.  `None` for a null or absent vector, which the four-op path also
-    /// left untouched (`OpNewRecord` answered the null slot and every op after it declined).
-    // Always inlined: called, its `Option<DbRef>` came back through memory written as narrow
-    // fields and re-read as one wide load — a store-forward stall on every push (2026-10-01).
+    /// @PLN157 § V-m — one fused scalar append: the slot claimed (`vector_append`, growing on
+    /// the ladder), `write` puts the element there, and the length bump lands on the same
+    /// resolved store.  Nothing for a null or absent vector, which the four-op path also left
+    /// untouched (`OpNewRecord` answered the null slot and every op after it declined).
+    ///
+    /// `@FR-R-ElementPath` — an element that fits takes the inline path
+    /// ([`vector::append_slot_in_capacity`]); a new or full vector takes `vector_append`.  Each
+    /// branch finishes the append itself: joined into one `Option<DbRef>` the two answers met
+    /// in memory, written as narrow fields and re-read as one wide load — a store-forward
+    /// stall on every push (2026-10-01).
     #[allow(clippy::inline_always)]
     #[inline(always)]
-    fn append_slot(&mut self, db: &DbRef, size: u32) -> Option<DbRef> {
-        if !db.is_null()
-            && let Some(slot) =
-                vector::append_slot_in_capacity(db, size, crate::keys::store(db, &self.allocations))
+    fn append_with(&mut self, db: &DbRef, size: u32, write: impl Fn(&mut Store, &DbRef)) {
+        if db.is_null() {
+            return;
+        }
+        if let Some(slot) =
+            vector::append_slot_in_capacity(db, size, crate::keys::store(db, &self.allocations))
         {
-            return Some(slot);
+            let store = self.append_store(&slot);
+            write(store, &slot);
+            Self::append_done(store, &slot, size);
+            return;
         }
         let slot = vector::vector_append(db, size, &mut self.allocations);
-        (slot.rec != 0).then_some(slot)
+        if slot.rec != 0 {
+            let store = self.append_store(&slot);
+            write(store, &slot);
+            Self::append_done(store, &slot, size);
+        }
     }
 
     /// The store an append writes its element to — `store_mut`'s answer, with its
@@ -1321,7 +1334,7 @@ impl Stores {
         let _ = self.store_mut(slot);
     }
 
-    /// The length bump of [`Self::append_slot`]: `slot.rec` IS the vector record, and the
+    /// The length bump of [`Self::append_with`]: `slot.rec` IS the vector record, and the
     /// slot it answered is element `len` (`8 + len * size`), so the length is derived rather
     /// than read a second time (`@FR-R-ElementPath`).
     #[inline]
@@ -1336,38 +1349,30 @@ impl Stores {
     // grows elsewhere.  The hint makes the per-element cost a property of this code.
     #[inline]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
-        if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 8, |store, slot| {
             store.set_int(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot, 8);
-        }
+        });
     }
 
     #[inline]
     pub fn append_i32(&mut self, db: &DbRef, v: i32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_i32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot, 4);
-        }
+        });
     }
 
     #[inline]
     pub fn append_f64(&mut self, db: &DbRef, v: f64) {
-        if let Some(slot) = self.append_slot(db, 8) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 8, |store, slot| {
             store.set_float(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot, 8);
-        }
+        });
     }
 
     #[inline]
     pub fn append_f32(&mut self, db: &DbRef, v: f32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_single(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot, 4);
-        }
+        });
     }
 
     /// A boolean or a plain enum: one byte, no sentinel (`OpSetBoolean` / `OpSetEnum`'s
@@ -1381,11 +1386,9 @@ impl Stores {
     /// `OpSetByte` writes it — `OpPushByte`, the fused `v += [x]`.
     #[inline]
     pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
-        if let Some(slot) = self.append_slot(db, 1) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 1, |store, slot| {
             store.set_byte(slot.rec, slot.pos, min, v);
-            Self::append_done(store, &slot, 1);
-        }
+        });
     }
 
     /// `@FR-R-ByteCopy` — the bytes `[lo, hi)` of a text appended to a byte vector as ONE
@@ -1411,11 +1414,9 @@ impl Stores {
 
     #[inline]
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
-        if let Some(slot) = self.append_slot(db, 4) {
-            let store = self.append_store(&slot);
+        self.append_with(db, 4, |store, slot| {
             store.set_u32_raw(slot.rec, slot.pos, v);
-            Self::append_done(store, &slot, 4);
-        }
+        });
     }
 
     /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):

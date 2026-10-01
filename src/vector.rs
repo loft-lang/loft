@@ -286,7 +286,8 @@ pub fn append_bytes(db: &DbRef, bytes: &[u8], stores: &mut [Store]) {
 /// The capacity, in elements, of the vector `db` names in `vec_rec` — after the two refusals
 /// that make reading it meaningful (loft#810).  Shared by [`vector_append`] and the in-capacity
 /// path [`append_slot_in_capacity`], so each refusal has one home.
-#[inline]
+#[allow(clippy::inline_always)]
+#[inline(always)]
 fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
     let owner_words = store.read::<i32>(db.rec, 0);
     if !(owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8) {
@@ -312,7 +313,8 @@ fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
 /// [`vector_append`], which handles both (and null).  Inlined into the typed appends: called,
 /// the slot came back through memory as three narrow stores the caller re-read as one wide
 /// load, a store-forward stall on every push (2026-10-01).
-#[inline]
+#[allow(clippy::inline_always)]
+#[inline(always)]
 pub(crate) fn append_slot_in_capacity(db: &DbRef, size: u32, store: &Store) -> Option<DbRef> {
     if db.rec == 0 {
         return None;
