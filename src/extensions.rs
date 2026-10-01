@@ -768,6 +768,10 @@ pub fn wire_native_fns(state: &mut crate::state::State, data: &crate::data::Data
 /// It is not for a browser build (`--html`): the page provides its own imports (the
 /// GL and web host functions) and the host's cdylibs play no part in what ships, so
 /// "did not load" there names nothing the author can act on (loft#1830's stderr).
+///
+/// # Panics
+/// As [`wire_native_fns`]: if a symbol is found via dlsym but the library used
+/// `loft_register_v1` (a registration bug).
 #[cfg(feature = "native-extensions")]
 pub fn wire_native_fns_for(
     state: &mut crate::state::State,
