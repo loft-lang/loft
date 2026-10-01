@@ -36,6 +36,11 @@
     "commit": "a72d8257ffe11cfb8187e2597b62406f3df2d3f4",
     "note": "at a72d8257f: each ignore's reason checked TRUE by running what it names \u2014 leak_cross_mode (4), leak_cases_native, f26_wide_poison_sweep, fuzz_differential, seed_corpus_replay green locally 2026-09-29 and now steps in miri.yml release-gate-sweeps; the job's existing sweeps (fuzz_gate_map54_full_replay, SI-2, whole corpus) green in miri.yml run 36554569886; differential oracle green in ci.yml daily 36548461806; oracle_leak_scan_ratchet 0 findings, advisory PR job; 18 measurements/benchmarks assert nothing (by hand, by design); regen_fill_rs a maintenance tool; format_width x2 Windows-only (run on Linux). Removed: native_suite_floor_holds (stale floor), oracle_dev_free_check_ratchet (superseded checker). Skip lists: the 4 html_wasm platform limits (host facility absent), none cite an issue."
   },
+  "M-install-sh": {
+    "at": "2026-10-01 21:41",
+    "commit": "3caa2cf17569f05c8e102c72b8c3a0f911996276",
+    "note": "A-acquisition PASS at 2026-10-01 after the splice: scripts/install.sh over the real GitHub transport into a scratch prefix (x86_64-Linux) -> version 2026.10.0 -> resolve -> anchor -> run, the shipped binary executing."
+  },
   "M-libs": {
     "at": "2026-10-01 16:55",
     "commit": "aec018740f38ccd0c910f1b14d4a58ea76c2612b",
@@ -66,6 +71,16 @@
   "M-perf-pass": {
     "at": "2026-09-16 09:54",
     "note": "Both halves measured 2026-09-16 on host tuxedo. LOFT half: make speed (exit 0, quiet box), 87 tests timed and annotated, tolerance +/-25%, 17 slower / 20 faster. The three headline rows are STALE ANNOTATIONS, not regressions: features_examples_interpret is annotated @speed 3.5 (tests/features.rs:31) and measures 64.85 units here, which agrees with the 94.97 s I measured running that binary directly today; loft_suite is annotated @speed 5.8 (tests/wrap.rs:279) and the debug-assertions gate ran it at 131 s; native_scripts is annotated @speed 6.1 (tests/native.rs:962). All three are whole-corpus tests whose clock grows with the corpus, so the annotations went stale as the suite grew. NOT blessed: scripts/test_speed.py own header records that a re-run moved 48 of 134 annotated tests past the band with nothing changed, so one run is not evidence for rewriting the numbers into the tests -- that is an owner call (make speed-bless). LIBRARY half: already re-measured on this box today and recorded in formal/performance.md D-perf-1 -- nine of ten judged drawing-lock rows under the 4x (Perf-Weight) bar (hash 0.59x ... fronds 3.28x), smooth 4.25x on a 240 ns/op reference that sits under the clock floor and is therefore a noisy row rather than a measurement of the gap, and the four rows the bench grew since (parse, render_lock, render_marks, resize) carry no reference in that clone so they stay unjudged there and keep @PLN157s scoreboard numbers. D-perf-1 remains OPEN for those four rows and closes with @PLN157."
+  },
+  "M-publish": {
+    "at": "2026-10-01 21:40",
+    "commit": "3caa2cf17569f05c8e102c72b8c3a0f911996276",
+    "note": "Owner reviewed the draft and published v2026.10.0 at 2026-10-01 19:38:16Z; A-draft (6 expected assets) and A-smoke (bundle smoke ran and passed on all 4 legs) were green on the draft first."
+  },
+  "M-registry-splice": {
+    "at": "2026-10-01 21:41",
+    "commit": "3caa2cf17569f05c8e102c72b8c3a0f911996276",
+    "note": "registry d8b24de: gen-toolchain-entry.py --splice-into from the 11 published assets (loft 2026.10.0 added, 2 earlier versions kept), entry identical to the attached loft-2026.10.0-registry-entry.json (url, sha256, size, all four binaries); signed through registry-sign.sh --expect loft@2026.10.0, trust gate OK.  validator-dryrun PASS (all gates) after publish; A-registry-this green (4 binaries anchored)."
   },
   "_waivers": {
     "36898106601": {
