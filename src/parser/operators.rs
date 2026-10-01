@@ -2919,6 +2919,30 @@ impl Parser {
             if matches!(self.data.def(*d).returned(), Type::Optional(_)))
     }
 
+    /// `return` is the one control word `??` takes (@F2): a `continue` or `break` after it
+    /// was read as a missing default and reported only as "Expect token ;", which names
+    /// neither the rule nor the spelling that works.  Refuses it by name, with the cure, and
+    /// consumes the keyword so the statement ends where the author ended it.  Answers
+    /// whether it refused.
+    fn refuse_coalesce_loop_control(&mut self) -> bool {
+        let Some(kw) = ["continue", "break"]
+            .into_iter()
+            .find(|kw| self.lexer.peek_token(kw))
+        else {
+            return false;
+        };
+        self.lexer.has_token(kw);
+        if !self.first_pass {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
+                 {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
+            );
+        }
+        true
+    }
+
     /// Desugar `lhs ?? ...` — both the plain-default form and the
     /// `?? return ret_expr` early-return form.  Lifted out of
     /// [`Self::handle_operator`] so each shape has its own focused helper.
@@ -3075,23 +3099,8 @@ impl Parser {
         // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
         if self.lexer.has_token("return") {
             self.build_null_coalesce_return(code, ctp, &lhs_type);
-        } else if let Some(kw) = ["continue", "break"]
-            .into_iter()
-            .find(|kw| self.lexer.peek_token(kw))
-        {
-            // `return` is the one control word `??` takes (@F2): a `continue` or `break` here
-            // was read as a missing default and reported only as "Expect token ;", which
-            // names neither the rule nor the spelling that works.  The keyword is consumed so
-            // the statement ends where the author ended it, and the operand stands as written.
-            self.lexer.has_token(kw);
-            if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "`?? {kw}` is not supported — after `??` comes a value or `return`.  To \
-                     {kw} on a null, test it first: `if v == null {{ {kw}; }}`"
-                );
-            }
+        } else if self.refuse_coalesce_loop_control() {
+            // the operand stands as written; the refusal is reported
         } else {
             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
         }
