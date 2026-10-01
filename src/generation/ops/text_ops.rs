@@ -24,11 +24,12 @@ impl OpEmitter for TextDispatchEmitter {
         let name = ctx.def_fn.name().to_string();
         // @P283 — mirror src/state/codegen.rs: a first arg that is a Var of type
         // RefVar(Text) (a `&mut String` work-buffer) rewrites the op to its
-        // `Stack` variant for case selection.
+        // `Stack` variant for case selection.  `@FR-N-Shape`: a `&text?` link is the same
+        // shape — peeled, or its raw-pointer append lands outside the `unsafe` block (loft#1836).
         let refvar_text_first = matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if {
             matches!(
                 ctx.output.data.def(ctx.output.def_nr).variables().tp(*v),
-                Type::RefVar(inner) if matches!(**inner, Type::Text(_))
+                Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
             )
         });
         let dispatch: &str = if refvar_text_first {

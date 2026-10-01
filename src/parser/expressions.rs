@@ -3353,13 +3353,15 @@ use a separate collection or add after the loop"
 
     /// Does `x = …` on `v` write THROUGH a link rather than rebind `v` (`@FR-B-Ref-Write`)?  A
     /// `&` parameter or annotated `&` local is a `RefVar`; a vector local linked by `c = &n`
-    /// is a plain vector registered in `amp_vector_locals`; a link to a text field or element
-    /// is a store text link.
+    /// is a plain vector registered in `amp_vector_locals`; a keyed collection linked the same
+    /// way carries `amp_container_link` (loft#1836 — without it `c = &h; c = [..]` was
+    /// reported dead and never-read); a link to a text field or element is a store text link.
     fn assign_writes_through(&self, v: u16) -> bool {
         // Through `base()` (`@FR-N-Shape`): a link to a `vector<T>?` is a link all the same.
         let tp = self.vars.tp(v).base();
         matches!(tp, Type::RefVar(_))
             || self.vars.is_store_text_link(v)
+            || (crate::parser::vectors::is_keyed(tp) && self.vars.is_amp_container_link(v))
             || (matches!(tp, Type::Vector(..)) && {
                 // A scan rather than a keyed lookup: the key is an owned `String`, and building
                 // one per assignment is an allocation the front end does not otherwise make.

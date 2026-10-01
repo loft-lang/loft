@@ -940,3 +940,31 @@ fn a_mutated_projection_of_a_parameter_stays_silent() {
         );
     }
 }
+
+/// loft#1836 — a whole-value write through a `&` link to a KEYED collection writes the source
+/// (`@FR-B-Ref-Write`), so the bind is read by it and the write is not a dead store.  The
+/// vector link was exempt by `amp_vector_locals` and the keyed one was not: `c = &n; c = [..]`
+/// was reported both `never-read` at the bind and `dead-assignment` at the write.  The copy
+/// beside it is the control, and must still be reported.
+const KEYED_LINK: &str = "struct Ek { k: integer }\n\
+fn linked() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }]; c = &n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n) }\n\
+fn copied() -> integer { m: hash<Ek[k]> = [Ek { k: 7 }]; d = m; d = [Ek { k: 2 }]; len(d) }\n\
+fn main() { print(\"r={linked()},{copied()}\"); }\n";
+
+#[test]
+fn a_whole_write_through_a_keyed_link_is_not_a_dead_store() {
+    // The lints run in the front end, which both backends share: one backend measures them.
+    let (out, diag) = run_body(KEYED_LINK, "--interpret", "keyed_link");
+    assert!(
+        out.contains("r=2,1"),
+        "the link writes `n`: {out:?}\n{diag}"
+    );
+    assert!(
+        !diag.contains("'c' is overwritten") && !diag.contains("Variable c is never read"),
+        "a write through the keyed link `c` reads its bind\n{diag}"
+    );
+    assert!(
+        diag.contains("Dead assignment — 'd' is overwritten before being read"),
+        "the copy `d` is still a dead store\n{diag}"
+    );
+}

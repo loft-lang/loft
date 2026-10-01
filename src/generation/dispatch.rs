@@ -2222,7 +2222,18 @@ impl Output<'_> {
         // a store the borrowing read immediately overwrites — orphaned, and never
         // freed because the binding emits no `OpFreeRef`.  Same for a vector-literal
         // element whose container is a field DbRef (loft#664).
-        if variables.owns_store(var) {
+        //
+        // loft#1836 — a keyed REASSIGNMENT (`c = [..]`, lowered to `Set(c, Null)` and then
+        // inserts) clears the store the slot already names, owned or not: a local link
+        // `c = &n` names `n`'s store, and `(B-Ref-Write)` writes the source.  This is the
+        // interpreter's `gen_keyed_null(first: false)` gate, spelled the same way — only an
+        // inline ref or an overwritten view keeps its slot.  Left to the ownership gate, the
+        // link was reset to `DbRef::NULL` and the inserts that follow panicked on it.
+        let keyed_clear = !first
+            && crate::parser::vectors::owns_keyed_store(variables.tp(var))
+            && !variables.is_inline_ref(var)
+            && !variables.is_overwritten_view(var);
+        if variables.owns_store(var) || keyed_clear {
             let ref_buf_type_id = {
                 // @FR-L-Null — `base()`, because a nullable collection local owns the SAME
                 // store its dense twin owns (layout(τ) = layout(τ?)).  Asked bare, a
