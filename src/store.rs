@@ -2587,7 +2587,7 @@ impl Store {
             foreign: self.foreign.clone(),
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
-            stack_buffer: false,
+            stack_buffer: self.stack_buffer,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             created_at: self.created_at,
@@ -5449,6 +5449,28 @@ impl Store {
     }
 }
 
+/// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than
+/// `State::grow_stack` would leave `State::stack_base` pointing into a freed buffer, so the
+/// moves that are not the stack's own refuse it.  None reaches the stack store today (nothing
+/// claims into it, adopts an image into it, trims it or takes it out of the table); this
+/// makes that a checked fact rather than a convention.  The paths are rare, so the check
+/// costs nothing a run can measure.
+#[cold]
+#[inline(never)]
+fn refuse_stack_buffer_failed(what: &str) -> ! {
+    panic!(
+        "{what} on the interpreter's stack store: only State::grow_stack may move its buffer \
+         (@FR-R-StackBase)"
+    )
+}
+
+#[inline]
+pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
+    if is_stack {
+        refuse_stack_buffer_failed(what);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -6861,27 +6883,5 @@ mod tests {
         for _ in 0..64 {
             store.claim(8);
         }
-    }
-}
-
-/// `@FR-R-StackBase` — a buffer move on the interpreter's stack store other than
-/// `State::grow_stack` would leave `State::stack_base` pointing into a freed buffer, so the
-/// moves that are not the stack's own refuse it.  None reaches the stack store today (nothing
-/// claims into it, adopts an image into it, trims it or takes it out of the table); this
-/// makes that a checked fact rather than a convention.  The paths are rare, so the check
-/// costs nothing a run can measure.
-#[cold]
-#[inline(never)]
-fn refuse_stack_buffer_failed(what: &str) -> ! {
-    panic!(
-        "{what} on the interpreter's stack store: only State::grow_stack may move its buffer \
-         (@FR-R-StackBase)"
-    )
-}
-
-#[inline]
-pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
-    if is_stack {
-        refuse_stack_buffer_failed(what);
     }
 }

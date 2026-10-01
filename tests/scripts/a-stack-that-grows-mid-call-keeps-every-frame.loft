@@ -13,12 +13,19 @@
 //
 // So each cell grows the stack many times over with frames still live beneath: a recursion
 // 3000 deep whose frames hold five integers and a text, each re-read AFTER the recursive call
-// returns (a stale base answers a wrong integer or a wrong text there), and a recursion whose
-// frames hold a vector built before the call and read after it.  And a `par` worker that
-// returns text, which claims in the stack store.
+// returns; one whose frames hold a vector built before the call and read after it; and one whose
+// frames write a local through a `&` reference after the call and read it back — the cell that
+// mixes the two ways to a slot (the store's path names the current buffer, the fast path the
+// cached one).  And a `par` worker that returns text, which claims in the stack store.
 //
 // @falsified-at: none — it guards a cache no earlier build has, so no control fails it.
-//   Falsified instead by planted defects, 2026-10-01 (recorded in the commit that added it).
+//   Falsified instead by planted defects, 2026-10-01: `grow_stack` not re-deriving the base
+//   aborts the run (heap corruption: the fast path keeps writing the freed buffer), exit 134.
+//   `claim_in_stack` not re-deriving it fails `par_nested`'s text-returning worker.  The
+//   checkpoint restore's re-derivation is `rpc.rs`'s continue-after-step-back cell; the
+//   refusal of every other buffer move is `store::tests::a_claim_that_grows_the_stack_store_is_refused`.
+//   LESSON: a stale base is invisible while only the fast path uses it — the freed buffer
+//   still holds what the fast path wrote — so a cell has to reach the same slot both ways.
 
 fn deep(n: integer) -> integer {
   a = n;
@@ -44,6 +51,23 @@ fn deep_vec(n: integer) -> integer {
   r + v[2] - v[1]
 }
 
+fn bump(x: &integer) {
+  x += 7;
+}
+
+// After the stack has grown beneath it, a frame writes its own local THROUGH a `&` reference —
+// the store's path, which always names the current buffer — and reads it back the fast way,
+// through the cached base.  A base left on the old buffer reads the value from before the write.
+fn deep_ref(n: integer) -> integer {
+  a = n;
+  if n == 0 {
+    return 0;
+  }
+  r = deep_ref(n - 1);
+  bump(a);
+  r + a - 7
+}
+
 fn label(x: integer) -> text {
   "w{x}"
 }
@@ -55,6 +79,10 @@ fn test_deep_frames_survive_growth() {
 
 fn test_deep_vector_frames_survive_growth() {
   assert(deep_vec(2000) == 2001000, "deep_vec {deep_vec(2000)}");
+}
+
+fn test_a_reference_write_after_growth_is_read_back() {
+  assert(deep_ref(3000) == 4501500, "deep_ref {deep_ref(3000)}");
 }
 
 fn test_a_par_worker_returning_text() {
@@ -71,6 +99,7 @@ fn test_a_par_worker_returning_text() {
 fn main() {
   test_deep_frames_survive_growth();
   test_deep_vector_frames_survive_growth();
+  test_a_reference_write_after_growth_is_read_back();
   test_a_par_worker_returning_text();
   println("ok");
 }

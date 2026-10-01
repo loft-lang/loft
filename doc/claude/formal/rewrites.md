@@ -3285,6 +3285,33 @@ inside a loop halt at once; `runtime_error` is stored only by its setter), `disp
 block's).  Not taken beside it: reading the op byte unchecked (−1 to −3 %), which drops the
 operand bound's guarantee.
 
+### The stack is addressed through one cached base
+
+```
+  (R-StackBase)  the interpreter's fast stack path addresses a slot as ONE add to a base
+                 pointer cached in `State` (`stack_base`), instead of re-deriving it
+                 through the store table, the store and its buffer on every access.  The
+                 base is re-derived wherever the stack store's buffer can move — at
+                 construction, by `grow_stack`, by `claim_in_stack` (a `par` worker's text
+                 work buffers), by a checkpoint restore (which replaces every store) — and
+                 every OTHER buffer move refuses the stack store (`Store::stack_buffer`:
+                 `claim_grow`, `adopt_image`, `reclaim_tail`, `take_slot`, `take_store`
+                 panic on it), so a missed re-derivation is a refusal at the move, never a
+                 read of a freed buffer.  A snapshot copy keeps the mark; a locked or
+                 borrowed copy for a worker does not (the worker has its own stack).
+```
+
+**In words.** Applied by: interpreter runtime (`State::stack_slot`, `stack_base_of`).  A simple
+op is latency-bound: the three dependent loads per stack access were on its critical path, and
+removing them took −10 % cycles with −16 % instructions where removing a third of the
+re-derivations per op (−8 % instructions) took nothing.  The refusal found the convention false
+on its first run: a `par` worker claims its text work buffers IN the stack store, which can grow
+it — that path is `claim_in_stack` now.  A stale base is invisible while only the fast path
+uses it (the freed buffer still holds what it wrote), so the guard reaches one slot both ways.
+Effect (pinned layout): −8 to −17 % per routine.  Not available in a debug-assertions build,
+which runs the checked stack path.  Guards `tests/scripts/a-stack-that-grows-mid-call-keeps-every-frame.loft`,
+`rpc.rs`'s continue-after-step-back cell, `par_nested`, the `store::tests` refusal pair.
+
 ## Proposed — rules written before they are built
 
 A proposal states its conditions and effect now, so the analysis that found it is not lost and
