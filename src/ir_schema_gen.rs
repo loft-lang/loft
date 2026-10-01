@@ -663,6 +663,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "linked_narrow", t4);
     db.field(t77, "store_text_link", t4);
     db.field(t77, "user_named", t4);
+    db.field(t77, "user_appended", t4);
+    db.field(t77, "copy_bound", t4);
     db.field(t77, "owner_witness", 0);
     db.field(t78, "name", t5);
     db.field(t78, "file", t5);

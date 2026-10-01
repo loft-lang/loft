@@ -809,6 +809,8 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             linked_narrow: vr.field_bool(stores, ds::VAR_LINKED_NARROW),
             store_text_link: vr.field_bool(stores, ds::VAR_STORE_TEXT_LINK),
             user_named: vr.field_bool(stores, ds::VAR_USER_NAMED),
+            user_appended: vr.field_bool(stores, ds::VAR_USER_APPENDED),
+            copy_bound: vr.field_bool(stores, ds::VAR_COPY_BOUND),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
         });
     }

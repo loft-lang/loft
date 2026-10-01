@@ -356,6 +356,15 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
     let mut acc = vec![(0u16, 0u16); func.var_count()];
     let cx = AccessCx {
         data,
+        func,
+        fill_dests: [
+            data.def_nr("OpPreAllocVector"),
+            data.def_nr("OpFinishRecord"),
+        ],
+        copy_fills: [
+            (data.def_nr("OpReplaceVector"), 0),
+            (data.def_nr("OpReplaceKeyed"), 1),
+        ],
         projs: &ops.projections,
         writes: &ops.write_first_arg,
         lens: &ops.lengths,
@@ -366,12 +375,37 @@ pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) ->
             .collect(),
     };
     classify_access(body, &cx, &mut acc);
+    // loft#1840 — the program's own `+=` is the mutation an append-family op cannot show: the
+    // ops it lowers to are the ones a copy's fill is made of, so the parser marked the local.
+    // Only into a COPY (`(B-Copy)`): an append into a fresh collection is how it is built, and
+    // a built collection nothing reads is not a write that a source lost.
+    for (v, slot) in acc.iter_mut().enumerate() {
+        let copy = func.copy_bound(v as u16) || cx.value_struct_copies.contains(&(v as u16));
+        if func.user_appended(v as u16) && copy {
+            slot.1 = slot.1.saturating_add(1);
+        }
+    }
     acc
 }
 
 /// Shared read-only context for the access walk (op-name sets computed once).
 struct AccessCx<'a> {
     data: &'a Data,
+    /// Which locals the program's own `+=` wrote into ([`Function::user_appended`]): a `len`
+    /// read of one of them observes what the append changed.
+    func: &'a Function,
+    /// `OpPreAllocVector` (a capacity hint) and `OpFinishRecord` (installs a built record into
+    /// its collection): both lower a `+=` into their first argument and observe nothing of
+    /// its content, so for a local the program appended to that argument is a write
+    /// destination, not a read (loft#1840).  Any other local keeps them as reads, which is
+    /// what keeps a fresh literal (`v = [1, 2]`, filled the same way) out of the lint.
+    fill_dests: [u32; 2],
+    /// The whole-value COPY fills that name their destination by position — a nullable
+    /// vector's `OpReplaceVector(dest, src)` and a keyed collection's `OpReplaceKeyed(src,
+    /// dest)` — the twins of the `OpAppendVector` fill the write family above already treats
+    /// as definitional.  Their destination is neither read nor mutated by the program; read
+    /// as a use, it hid every write into a nullable-vector or keyed copy (loft#1840).
+    copy_fills: [(u32, usize); 2],
     /// Projection ops (`OpGetField`/`OpGetVector`/…) — a write through one of these
     /// propagates the write context to arg 0.
     projs: &'a HashSet<u32>,
@@ -451,6 +485,27 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
                 classify_access(a, cx, acc);
             }
         }
+        Value::Call(op, args)
+            if let Some(&(_, dest)) = cx.copy_fills.iter().find(|(o, _)| o == op)
+                && dest < args.len() =>
+        {
+            for (i, a) in args.iter().enumerate() {
+                if i == dest {
+                    classify_write_base(a, cx, acc, false);
+                } else {
+                    classify_access(a, cx, acc);
+                }
+            }
+        }
+        Value::Call(op, args)
+            if cx.fill_dests.contains(op)
+                && matches!(place_root(&args[0], cx.data), Some(v) if cx.func.user_appended(v)) =>
+        {
+            classify_write_base(&args[0], cx, acc, false);
+            for a in &args[1..] {
+                classify_access(a, cx, acc);
+            }
+        }
         // Any op that writes through arg 0: arg-0 base is a write-DESTINATION (not a read).
         // Count it as a copy-mutate WRITE-TARGET only for the `OpSet*` family — append/insert/
         // clear are definitional/bulk fills (the `d = s.f` copy-fill lands here) and are neither
@@ -484,6 +539,9 @@ fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
 /// any index expression along the chain is a real read and is classified normally.
 fn classify_length_subject(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
     match node.unspan() {
+        // An append changes the count an element write cannot, so for a local the program
+        // appended to, its `len` is a read of what the append wrote (loft#1840).
+        Value::Var(v) if cx.func.user_appended(*v) => bump_read(acc, *v),
         Value::Var(_) => {}
         Value::Call(op, args) if cx.projs.contains(op) && !args.is_empty() => {
             classify_length_subject(&args[0], cx, acc);

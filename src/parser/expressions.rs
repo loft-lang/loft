@@ -1957,6 +1957,12 @@ use a separate collection or add after the loop"
             *code = Value::Insert(Vec::new());
             return;
         }
+        // loft#1840 — `(B-Copy)`: this local now holds a COPY of a place, so a `+=` into it
+        // that nothing reads is a lost write.  A source that is no place (a literal, a call's
+        // fresh value) builds the local rather than copying into it.
+        if lhs_root_var(code).is_some() && var_nr < self.vars.count() {
+            self.vars.mark_copy_bound(var_nr);
+        }
         let elm_tp_clone = (**elm_tp).clone();
         let dense = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
         // The COPY is what the selector decided; whether the value may be ABSENT is the
@@ -6678,6 +6684,13 @@ use a separate collection or add after the loop"
                 "OpReplaceKeyed",
                 &[code.clone(), to.clone(), Value::Int(tp_val)],
             );
+            // loft#1840 — `(B-Copy)` for the keyed kinds, as `lower_vec_copy_bind` records it.
+            if lhs_root_var(code).is_some()
+                && let Value::Var(v) = to.unspan()
+                && *v < self.vars.count()
+            {
+                self.vars.mark_copy_bound(*v);
+            }
             // The deep-copy gives `s` its OWN store, so it no longer borrows
             // the RHS.  Strip the `s["ns"]` lifetime dep the assignment set
             // up — otherwise scope analysis treats `s` as a borrow and
@@ -8224,6 +8237,16 @@ use a separate collection or add after the loop"
                     to = Value::Var(link);
                     *code = Value::Var(link);
                     f_type = self.vars.tp(link).clone();
+                }
+                // loft#1840 — the program's own append into a collection, recorded on the
+                // local it lands in: every lowering below emits ops a copy's own fill emits too,
+                // so the `lost-write` lint reads this mark rather than the ops.
+                if op == "+="
+                    && Self::is_collection_type(&f_type)
+                    && let Some(root) = lhs_root_var(&to)
+                    && root < self.vars.count()
+                {
+                    self.vars.mark_user_appended(root);
                 }
                 // loft#1212 — an EXPLICIT `??` coalesce is not a place.  `(E-Asgn-Discharge)`
                 // (@FR-E-Asgn-Discharge) says so in as many words: *"an explicit `(a ?? d)`

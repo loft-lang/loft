@@ -1003,3 +1003,49 @@ fn a_returned_text_parameter_replaced_unread_is_reported() {
         "the warning names `read_after`\n{diag}"
     );
 }
+
+/// loft#1840 — an APPEND into a copy nothing reads is a lost write, and only into a COPY.
+///
+/// The fixture's warning cells are pinned with `@EXPECT_WARNING`, which cannot see a warning
+/// that fires where it should not; this asserts the EXACT set of locals warned, so the silent
+/// cells — a read after the append (an element, a `len`), the copy returned, a `&` link, a
+/// collection BUILT fresh rather than copied — are half the claim.
+fn assert_append_to_a_copy(backend: &str) {
+    let (stdout, diag, code) = run_env(
+        backend,
+        &workspace("tests/scripts/1840-an-append-to-an-unread-copy-is-a-lost-write.loft"),
+        &[],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] fixture did not exit 0\n{stdout}\n---\n{diag}"
+    );
+    assert!(
+        stdout.contains("1840 ok"),
+        "[{backend}] {stdout}\n---\n{diag}"
+    );
+    let mut warned: Vec<&str> = diag
+        .lines()
+        .filter_map(|l| l.strip_prefix("warning[lost-write]: '"))
+        .filter_map(|l| l.split('\'').next())
+        .collect();
+    warned.sort_unstable();
+    assert_eq!(
+        warned,
+        [
+            "br_xs", "fl_xs", "fv_xs", "kc_h", "lc_b", "lp_xs", "pc_w", "vs_m"
+        ],
+        "[{backend}] the appends into an unread copy, and nothing else\n{diag}"
+    );
+}
+
+#[test]
+fn an_append_to_an_unread_copy_is_a_lost_write_interpret() {
+    assert_append_to_a_copy("--interpret");
+}
+
+#[test]
+fn an_append_to_an_unread_copy_is_a_lost_write_native() {
+    assert_append_to_a_copy("--native");
+}

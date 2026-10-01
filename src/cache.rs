@@ -82,7 +82,11 @@ use sha2::{Digest, Sha256};
 ///
 /// 15 — `Variable` carries `user_named` (stride 42 → 43, loft#1834): a warm load without it
 /// reads a user's `_`-prefixed parameter as a compiler temporary, and loses F-ParamRebind.
-const CACHE_FORMAT_VERSION: u8 = 15;
+///
+/// 16 — `Variable` carries `user_appended` and `copy_bound` (stride 43 → 45, loft#1840): a
+/// warm load without them reads a copy the program appended to as unwritten, and loses its
+/// `lost-write`.
+const CACHE_FORMAT_VERSION: u8 = 16;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

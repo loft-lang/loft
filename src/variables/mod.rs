@@ -156,6 +156,10 @@ pub(crate) struct VarSnapshot<'a> {
     pub store_text_link: bool,
     /// A user identifier names it (loft#1834); `is_compiler_generated` reads it.
     pub user_named: bool,
+    /// The program's own `+=` wrote into it (loft#1840); the `lost-write` lint reads it.
+    pub user_appended: bool,
+    /// A whole-value bind COPIED a place into it (`(B-Copy)`, loft#1840); the lint reads it.
+    pub copy_bound: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -179,6 +183,8 @@ pub(crate) struct RestoredVar {
     pub linked_narrow: bool,
     pub store_text_link: bool,
     pub user_named: bool,
+    pub user_appended: bool,
+    pub copy_bound: bool,
     pub owner_witness: u16,
 }
 
@@ -215,6 +221,17 @@ pub struct Variable {
     /// be (`_b` is the spelling the lints suggest for an unused one), so the prefix alone
     /// cannot tell them apart; see [`Function::is_compiler_generated`].
     user_named: bool,
+    /// The program's own `+=` wrote into this local's content (loft#1840).  The IR cannot
+    /// say so on its own: the copy-fill a whole-value bind lowers to (`d = s.f`) is the same
+    /// `OpAppendVector` a user's `d += other` is, and a literal append's pushes are what a
+    /// slice copy's fill is made of — so the `lost-write` lint, which must not read a copy's
+    /// own fill as a mutation, asks this mark instead of the ops.
+    user_appended: bool,
+    /// A whole-value bind COPIED a place into it — the `(B-Copy)` verdict, recorded where the
+    /// copy is lowered (loft#1840).  An append into a fresh collection is how one is BUILT,
+    /// so the `lost-write` lint reports an append only into a copy; the IR cannot tell the two
+    /// apart, because a literal's fill and a copy's fill are the same ops.
+    copy_bound: bool,
     argument: bool,
     defined: bool,
     /// Binding-const (`const` PREFIX): `const x` local, `const p: T` param, and the
@@ -837,6 +854,8 @@ impl Function {
             linked_narrow: v.linked_narrow,
             store_text_link: v.store_text_link,
             user_named: v.user_named,
+            user_appended: v.user_appended,
+            copy_bound: v.copy_bound,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -901,6 +920,8 @@ impl Function {
                 linked_narrow: r.linked_narrow,
                 store_text_link: r.store_text_link,
                 user_named: r.user_named,
+                user_appended: r.user_appended,
+                copy_bound: r.copy_bound,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -2816,6 +2837,8 @@ impl Function {
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2870,6 +2893,9 @@ impl Function {
             target_mentions: 0,
             incoming_reported: false,
             user_named: self.variables[var as usize].user_named,
+            // A split is a second place: an append into the first wrote nothing here.
+            user_appended: false,
+            copy_bound: false,
             // A SPLIT of a linked local is a second place, and the `&` names the original;
             // the copy is not the place the link holds, so it inherits no link.
             amp_linked_by: u16::MAX,
@@ -2919,6 +2945,8 @@ impl Function {
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: false,
@@ -2963,6 +2991,8 @@ impl Function {
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
+            user_appended: false,
+            copy_bound: false,
             write_source: (0, 0),
             argument: false,
             defined: true,
@@ -5410,6 +5440,37 @@ impl Function {
                 var.user_named = true;
             }
         }
+    }
+
+    /// The program's own `+=` wrote into `v`'s content (loft#1840) — see
+    /// [`Variable::user_appended`].
+    pub fn mark_user_appended(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.user_appended = true;
+        }
+    }
+
+    /// Did the program's own `+=` write into `v`'s content (loft#1840)?
+    #[must_use]
+    pub fn user_appended(&self, v: u16) -> bool {
+        self.variables
+            .get(v as usize)
+            .is_some_and(|var| var.user_appended)
+    }
+
+    /// A whole-value bind copied a place into `v` (loft#1840) — see [`Variable::copy_bound`].
+    pub fn mark_copy_bound(&mut self, v: u16) {
+        if let Some(var) = self.variables.get_mut(v as usize) {
+            var.copy_bound = true;
+        }
+    }
+
+    /// Did a whole-value bind copy a place into `v` (loft#1840)?
+    #[must_use]
+    pub fn copy_bound(&self, v: u16) -> bool {
+        self.variables
+            .get(v as usize)
+            .is_some_and(|var| var.copy_bound)
     }
 
     /// A user identifier names `v` (loft#1834).

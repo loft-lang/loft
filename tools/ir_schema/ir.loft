@@ -200,6 +200,12 @@ struct Variable {
   // loft#1834 — a user identifier names it (a signature or a mention), so a user's `_`-prefixed
   // name is not read as a compiler temporary; `is_compiler_generated` reads it
   user_named: boolean,
+  // loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it, because
+  // the copy-fill a whole-value bind lowers to is the same op a user's append is
+  user_appended: boolean,
+  // loft#1840 — a whole-value bind COPIED a place into it (B-Copy); the `lost-write` lint
+  // reports an append only into a copy, never into a collection being built
+  copy_bound: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
