@@ -9808,6 +9808,28 @@ fn main() {
     // (The auto-native cdylibs were already built + their symbols marked above,
     // build-before-mark, so `byte_code` has emitted `OpStaticCall` only for the
     // libraries that compiled.)
+    // @PLN180 — a build that ships the live tier is OPEN WORLD: its runtime bootstraps an
+    // interpreter by parsing the program again, and a function flipped to it must keep the
+    // signature the compiled code calls.  The IR value-record pass rewrites signatures
+    // (a by-value record parameter becomes a tuple), which took such a function out of the
+    // live tier's dispatch table — `--html --debug` flipped one function where it had two
+    // (html_debug_one_shared_heap_compiled_and_interpreted_agree_on_wasm).  Each path's
+    // live-tier decision is the one its `Output::emit_live` makes below; `--interpret`,
+    // `--lean` and `--native-release` ship none and keep the pass.
+    let ships_live_tier = if html_out.is_some() {
+        debug_name.is_some() && !lean
+    } else if native_mode
+        || native_wasm.is_some()
+        || native_emit.is_some()
+        || native_android.is_some()
+    {
+        !(lean || native_release)
+    } else {
+        false
+    };
+    if ships_live_tier {
+        p.data.open_world = true;
+    }
     compile::byte_code_with_store(&mut state, &mut p.data, warm_store.as_ref());
     // @PLN119 arc A — a platform without the placement transport runs a placed
     // library in-process. By the plan's invariant that is the same PROGRAM, so
