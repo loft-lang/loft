@@ -251,6 +251,10 @@ status).
   writing the assertion three times.
 - The fix is in codegen / runtime, where backend divergence is the
   actual hazard.
+- The compiler path synthesises a definition (a wrapper, a dispatcher, an
+  instance): a `code!` snippet skips the two-pass stability check that
+  `loft <file>` stops on, so only a `tests/scripts/` file guards it
+  (TESTING.md § Macros, the H5 note).
 
 ### When a Rust unit test is preferred
 

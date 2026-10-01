@@ -27,8 +27,8 @@ irreversible moves not to make.
   is robust algorithms; a green matrix can still be brittle).
 - **Prior attempts on THIS mechanism** — `doc/claude/formal/`, and grep it by the MECHANISM
   (the op, the pass) rather than the symptom. For store lifetime and return buffers it is
-  the record of what was tried: `ownership.md` writes each reverted fix up beside the rule
-  it failed, with the measurement that killed it, names where the closure decided the
+  the record of what was tried: `ownership.md` holds the rules and `ownership-history.md`
+  writes each reverted fix up, with the measurement that killed it, names where the closure decided the
   unsound step actually is, and cites the `tests/scripts/` cell now guarding it — so you
   inherit a working control — and when an entry names a FALSE PREMISE, search for the other
   sites that hold it. The cost of skipping it, worked through: the `loft-codegen` skill
@@ -175,7 +175,8 @@ serially before believing them.
 
 - **Re-probe the tracker with what you NOW know** (the fixed mechanism names
   better keywords than the filed symptom did), and put `Fixes #N` in the fix
-  commit (or PR body) for every row your fix closes. The trailer drives the
+  commit (or PR body) for every row your fix closes, beside its `Contract: settled|strained
+  — <why>` trailer (CLAUDE.md § Bug-filing policy). The `Fixes` trailer drives the
   whole lifecycle — `fixed-pending-merge` on push, auto-close + label-strip on
   merge; never hand-label. Add the substantive comment: fixing commit,
   regression test, what verification actually found. When a PR opens, copy

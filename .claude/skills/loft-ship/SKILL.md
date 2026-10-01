@@ -107,8 +107,9 @@ Each of these has broken a real library. Skim them before you start, not after y
 - **The re-sign foot-gun (publish).** Editing the registry `index.json` *without re-signing*
   it breaks **all** `loft install`s — every install fails with "registry index
   signature INVALID" (`src/install.rs` verifies before anything else). Every change to
-  `index.json` is re-signed by the maintainer (`registry_maintain.sh`); an external author's
-  submission signs nothing. → `references/publish.md`.
+  `index.json` is re-signed by the maintainer (`registry_maintain.sh --only <pkg>`, which
+  signs only what it published); an external author's submission signs nothing.
+  → `references/publish.md`.
 - **Asyncify for suspending calls (bridge).** A bridge function that yields/awaits (a socket
   read, a frame yield) needs asyncify wiring; `yield_frame()` only *sets a flag*, it does not
   trigger a suspend — a dedicated suspend import (e.g. `loft_web.ws_yield`) does. → bridge ref.
@@ -116,8 +117,8 @@ Each of these has broken a real library. Skim them before you start, not after y
   is where silent corruption hides; validate it with a round-trip *value* check, not "it
   didn't crash."
 - **Index staleness (publish).** `loft install` reads `index.json` via the raw-GitHub CDN
-  and keeps a local ~1h-TTL cache of its own (`~/.loft/registry/`). A just-published version may not resolve as `@latest` immediately — pin the exact
-  version to verify, and don't conclude "publish failed" from a stale edge.
+  and keeps a local ~1h-TTL cache of its own (`~/.loft/registry/`). A just-published version may not resolve as `@latest` immediately — verify with
+  `loft install --refresh <lib>@<version>`, and don't conclude "publish failed" from a stale edge.
 - **Claiming the browser column for a `#native` lib without a bridge.** The matrix says ✗
   there for a reason — it will compile-fail or silently no-op. Either build the bridge or drop
   the `--html` claim.
