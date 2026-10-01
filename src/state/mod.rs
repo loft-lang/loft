@@ -384,6 +384,13 @@ pub struct State {
     /// indistinguishable from coverage — the same shape as the backend-scope note.
     pub entered_fns: Option<Vec<bool>>,
     pub(crate) fn_positions: Vec<u32>,
+    /// `@FR-R-FrameHeadroom` — per definition, the bytes above its frame base its operators
+    /// can reach (the highest stack position codegen recorded in it, plus a margin).
+    /// `push_frame` ensures that much room once per frame, so the direct-path push
+    /// (`put_stack_m::<true, _>`) tests no capacity.  Shared with `par` workers.
+    pub(crate) frame_headroom: Arc<Vec<u32>>,
+    /// The highest stack position recorded while the current function is generated.
+    pub(crate) gen_max_position: u16,
     /// @PLN16 debugger — present only while debugging; the execute loop pauses at
     /// a registered breakpoint offset and captures the frame.  `None` on normal
     /// runs (the only per-op cost is one `is_some` branch).
@@ -746,6 +753,8 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            frame_headroom: Arc::new(Vec::new()),
+            gen_max_position: 0,
             debug: None,
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
@@ -882,7 +891,7 @@ impl State {
         // entered, so it is what a hang should be reported against.  Two relaxed stores
         // when armed, one load and a branch when not.
         crate::timeout::checkpoint_interp_call(d_nr);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: self.code_pos,
             args_base,
@@ -2850,6 +2859,47 @@ impl State {
     /** Remember the stack position for the current code. */
     pub fn remember_stack(&mut self, position: u16) {
         self.stack.insert(self.code_pos, position);
+        self.gen_max_position = self.gen_max_position.max(position);
+    }
+
+    /// `@FR-R-FrameHeadroom` — the bytes past the stack's highest recorded position any one
+    /// operator may push before the next records its own: its result, at most a few words.
+    const FRAME_MARGIN: u32 = 256;
+
+    /// `@FR-R-FrameHeadroom` — the room a frame of `d_nr` needs above its base.  A definition
+    /// with no recorded height (not compiled here) is given 64 KiB, far above any frame the
+    /// generator lays out.
+    fn frame_headroom_of(&self, d_nr: u32) -> u32 {
+        self.frame_headroom
+            .get(d_nr as usize)
+            .copied()
+            .unwrap_or(1 << 16)
+    }
+
+    /// `@FR-R-FrameHeadroom` — every frame enters through here: the frame is pushed and the
+    /// stack store is grown, once, to hold everything the function's operators can push
+    /// (`frame_headroom`), so the direct-path push needs no capacity test.  The only way a
+    /// `CallFrame` reaches `call_stack` (`tests/frame_headroom.rs` checks the source).
+    pub(crate) fn push_frame(&mut self, frame: CallFrame) {
+        let top = self.stack_cur.rec * 8
+            + self.stack_cur.pos
+            + frame.args_base
+            + self.frame_headroom_of(frame.d_nr);
+        if top >= self.stack_cap_bytes {
+            self.grow_stack(top);
+        }
+        self.call_stack.push(frame);
+    }
+
+    /// Record the frame height the function just generated needs (`def_code`).
+    pub(crate) fn record_frame_headroom(&mut self, d_nr: u32) {
+        let need = u32::from(self.gen_max_position) + Self::FRAME_MARGIN;
+        let table = Arc::make_mut(&mut self.frame_headroom);
+        if table.len() <= d_nr as usize {
+            table.resize(d_nr as usize + 1, 1 << 16);
+        }
+        table[d_nr as usize] = need;
+        self.gen_max_position = 0;
     }
 
     /**
@@ -2947,9 +2997,10 @@ impl State {
         if !F {
             return self.put_stack(val);
         }
-        self.ensure_stack(self.stack_step(size_of::<T>() as u32));
+        // `@FR-R-FrameHeadroom` — no capacity test: the frame's entry (`push_frame`) made room
+        // for every push its operators can make.
         let slot = self.stack_slot(self.stack_pos);
-        // SAFETY: `ensure_stack` just made room; aligned as in `put_var`.
+        // SAFETY: inside the room `push_frame` ensured; aligned as in `put_var`.
         unsafe { *slot.cast::<T>() = val };
         self.stack_pos += self.stack_step(size_of::<T>() as u32);
         if self.stack_pos > self.stack_high {
@@ -3194,6 +3245,7 @@ impl State {
             stack_trace_lib_nr: self.stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
         crate::parallel::run_parallel_block(&self.database, program, &positions, &parent_snapshot);
@@ -6592,6 +6644,7 @@ impl State {
             library: lib_ptr,
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
+            frame_headroom: Arc::clone(&self.frame_headroom),
         }));
 
         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
@@ -6646,7 +6699,7 @@ impl State {
         });
         // Fix #88: push a synthetic CallFrame for the entry function so it
         // appears in stack_trace() output.
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: entry_base,
@@ -7546,7 +7599,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
@@ -7590,7 +7643,7 @@ impl State {
         let base = self.stack_high.next_multiple_of(8);
         self.stack_pos = base;
         push_args(self);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
@@ -7673,7 +7726,7 @@ impl State {
         // (`fn_return`) — without this push the FIRST re-entry pops the
         // paused program's own frame (probe-caught: heap corruption at
         // teardown after 200k imbalanced pops).
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: base,
@@ -7854,6 +7907,7 @@ impl State {
             stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         }
     }
@@ -7913,6 +7967,8 @@ impl State {
             published_spans: None,
             entered_fns: None,
             fn_positions: Vec::new(),
+            frame_headroom: Arc::new(Vec::new()),
+            gen_max_position: 0,
             debug: None,
             call_stack: Vec::new(),
             fnref_bufs: Vec::new(),
@@ -8073,7 +8129,7 @@ impl State {
             .iter()
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8109,7 +8165,7 @@ impl State {
             .iter()
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8165,7 +8221,7 @@ impl State {
             .iter()
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8272,7 +8328,7 @@ impl State {
         // copied DATA is still the raw `input_bytes`; only the reserved frame span
         // (args_size + the TOS advance) is rounded up.  Identity flag-OFF (step==id).
         let stepped_size = self.stack_step(input_bytes.len() as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8352,7 +8408,7 @@ impl State {
             .iter()
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8418,7 +8474,7 @@ impl State {
             .iter()
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8531,7 +8587,7 @@ impl State {
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
         let args_size = self.worker_arg_size(&arg);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8581,7 +8637,7 @@ impl State {
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
         let args_size = self.worker_arg_size(&arg);
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
@@ -8669,6 +8725,7 @@ impl State {
             library: lib_ptr,
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
+            frame_headroom: Arc::clone(&self.frame_headroom),
         }));
         if self.fn_positions.is_empty() {
             self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
@@ -8681,7 +8738,7 @@ impl State {
             .position(|&p| p == fn_pos)
             .map_or(u32::MAX, |i| i as u32);
         let args_size: u16 = args.iter().map(|a| self.worker_arg_size(a)).sum();
-        self.call_stack.push(CallFrame {
+        self.push_frame(CallFrame {
             d_nr,
             call_pos: 0,
             args_base: self.stack_step(4),
