@@ -239,6 +239,11 @@ that the value `b` received is never read and that the new one is never read eit
 parameter that replaces it is reported the same way.  A library built with warnings denied may
 need the unused value removed.
 
+**`regex` 0.4.0 drops `regex::find` and `regex::split`.**  The text methods `find` and `split`
+took every bare call, so these two were reachable only through `regex::` and answered something
+different from the bare spelling.  Write `input.search(pattern)` and `input.split_on(pattern)`.
+A function marked `#superseded` is removed this way whenever a method of the same name hides it.
+
 ### Everything else
 
 **A generic format hole renders as the type it is called with.**  Inside

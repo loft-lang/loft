@@ -211,6 +211,14 @@ symbol `Y` (a **bare name**, e.g. `#superseded "write_through"`). Three things f
   is an advisory warning). A steer therefore cannot ship without its fold.
 - **Inert until used.** The channel does nothing until a symbol is actually marked, so adding it
   changed no existing program (the whole suite is byte-identical).
+- **A matching method removes it.** `#superseded` gives a function no rights it would not have
+  unmarked. When a method of the same name on the function's first-argument type takes every
+  bare call — the case `shadowed-by-method` warns about — the function is reachable only through
+  its qualifier and answers a different question than the bare spelling a reader sees, so it is
+  REMOVED, not kept: a breaking release of its library (`api_compatible_with` raised) with a
+  CHANGELOG line naming the method to call. The lint is never exempted for a `#superseded`
+  function. First applied to `regex` 0.4.0, which dropped `find` and `split` for `search` and
+  `split_on` (loft#1835).
 
 A *semantic* replacement (the old behaviour is **not** expressible over the new — see *Folding's
 limit* below) is **not** a `#superseded` steer; it is **contract-keyed** (the escape valve below),
@@ -330,7 +338,8 @@ warn-then-remove kind (there is none). To deprecate an idiom in our own surface 
 **signal** the successor (the versioning epoch / contract-keyed behaviour / recommended version) and
 **fold** the old onto the new, while the old keeps working forever. Signal + fold *is* the
 deprecation: it steers without threatening and consolidates without removing. So "deprecated" here
-means *"superseded, still supported, implemented over the new primitive"* — never *"going away."*
+means *"superseded, still supported, implemented over the new primitive"* — never *"going away,"*
+with the one exception above: a superseded function a matching method shadows is removed.
 
 We are *allowed* to do this; we do not *want* to. Even a break-free signal spends a new epoch and
 taxes every consumer's attention, so the standing preference is **pure-additive — no signal at all**,

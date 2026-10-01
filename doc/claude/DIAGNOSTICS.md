@@ -705,8 +705,9 @@ every source — so the shadow covers the declaring file and the library's own o
 modules, not just a consumer, and `pub` is not the axis. @PLN102 C97 keeps the
 DEFINITION legal on purpose (module-scoped, so the stdlib can grow without breaking a
 shipped library) and `lib::f` still reaches it; the silence was the defect. `warning`,
-not advice: the published `regex::find(pattern, input)` has the stdlib's exact arity and
-argument types, so a bare `find(p, i)` type-checks and answers the wrong thing. Quiet
+not advice: a library `find(pattern: text, input: text)` has the stdlib's exact arity and
+argument types, so a bare `find(p, i)` type-checks and answers the wrong thing, and a
+`#superseded` mark does not exempt it — such a function is removed (COMPATIBILITY.md). Quiet
 where the same name is a method on ANOTHER receiver type — arg-type dispatch keeps that
 one reachable — and quiet for a collision with a stdlib FREE function, which the import
 outranks) ·
