@@ -1102,7 +1102,8 @@ fn spatial_rejects_more_than_three_axes() {
 #[test]
 fn spatial_rejects_a_text_key() {
     code!("struct Word { w: text, n: integer }\nfn test() { ws: spatial<Word[w]> = []; }")
-        .error("a spatial index interleaves its axes into a Morton code, which needs numbers, and `w` is text — use `trie<Word[w]>`, which keys on text and answers a prefix at spatial_rejects_a_text_key:2:35");
+        .error("a spatial index interleaves its axes into a Morton code, which needs numbers, and `w` is text — use `trie<Word[w]>`, which keys on text and answers a prefix at spatial_rejects_a_text_key:2:35")
+        .warning("Variable ws is never read at spatial_rejects_a_text_key:2:16");
 }
 
 /// loft#799, the mirror: a `trie` walks one key's BYTES, so a numeric key is the
@@ -1110,7 +1111,8 @@ fn spatial_rejects_a_text_key() {
 #[test]
 fn trie_rejects_a_numeric_key() {
     code!("struct Pt { x: integer, y: integer }\nfn test() { ps: trie<Pt[x]> = []; }")
-        .error("a trie keys on the BYTES of a text field, and `x` is integer — use `spatial<…>` for coordinates, or `sorted<…>` / `index<…>` to order on a number at trie_rejects_a_numeric_key:2:30");
+        .error("a trie keys on the BYTES of a text field, and `x` is integer — use `spatial<…>` for coordinates, or `sorted<…>` / `index<…>` to order on a number at trie_rejects_a_numeric_key:2:30")
+        .warning("Variable ps is never read at trie_rejects_a_numeric_key:2:16");
 }
 
 /// A trie orders ONE key's bytes, so several keys have no order to share.
@@ -2842,12 +2844,16 @@ fn gh253_bang_on_nullable_is_quiet() {
 /// a function that RETURNS one (`[make(1)]`, a closure factory).
 #[test]
 fn gh247_capturing_closure_in_vector_rejected_direct() {
-    code!("fn test() { k = 3; fs: vector<fn() -> integer> = [fn() -> integer { k * 2 }]; }").error(
-        "a capturing closure cannot be stored in a collection: a collection has one element \
+    code!("fn test() { k = 3; fs: vector<fn() -> integer> = [fn() -> integer { k * 2 }]; }")
+        .error(
+            "a capturing closure cannot be stored in a collection: a collection has one element \
          layout and each capture set is its own record shape — hold it in a struct field, or \
          store a non-capturing fn that reads the state from a struct field \
          at gh247_capturing_closure_in_vector_rejected_direct:1:77",
-    );
+        )
+        .warning(
+            "Variable fs is never read at gh247_capturing_closure_in_vector_rejected_direct:1:23",
+        );
 }
 
 #[test]
@@ -2861,14 +2867,15 @@ fn test() { fs: vector<fn() -> integer> = [make(1)]; }"
          layout and each capture set is its own record shape — hold it in a struct field, or \
          store a non-capturing fn that reads the state from a struct field \
          at gh247_capturing_closure_in_vector_rejected_call:2:52",
-    );
+    )
+    .warning("Variable fs is never read at gh247_capturing_closure_in_vector_rejected_call:2:16");
 }
 
 /// Non-capturing closures and named fn-refs in a vector still work (not rejected).
 #[test]
 fn gh247_noncapturing_closure_in_vector_ok() {
     code!(
-        "fn dbl(x: integer) -> integer { x * 2 }\nfn test() { fs: vector<fn(integer) -> integer> = [dbl, fn(y: integer) -> integer { 7 }]; }"
+        "fn dbl(x: integer) -> integer { x * 2 }\nfn test() { fs: vector<fn(integer) -> integer> = [dbl, fn(y: integer) -> integer { 7 }]; assert(len(fs) == 2, \"fs\"); }"
     );
 }
 
@@ -3336,12 +3343,14 @@ fn unbuildable_vector_constant_rejected() {
 // Refuse it at the declaration and name the idiom that does work.
 #[test]
 fn multi_buffer_text_constant_rejected() {
-    code!("B = \"q\"; A = B + \"{1 + 1}\" + B; fn test() { a = A; }").error(
-        "text constant 'A' is assembled in a way that cannot be pasted at a use site — a \
+    code!("B = \"q\"; A = B + \"{1 + 1}\" + B; fn test() { a = A; }")
+        .error(
+            "text constant 'A' is assembled in a way that cannot be pasted at a use site — a \
          constant is inlined at every reference, and this initialiser builds its value \
          across more than one buffer.  Use a zero-argument function instead: \
          `fn a() -> text { … }`, then call `a()` at multi_buffer_text_constant_rejected:1:32",
-    );
+        )
+        .warning("Variable a is never read at multi_buffer_text_constant_rejected:1:48");
 }
 
 // A pass-1 LEFTOVER binding must not be reported as an unread variable.
@@ -5352,6 +5361,9 @@ fn a_comprehension_beside_other_elements_is_one_error() {
             "a `for` comprehension is a whole vector literal and takes no other elements beside \
              it — build it on its own, `[for x in v { … }]`, and add the others with `+=` at \
              a_comprehension_beside_other_elements_is_one_error:1:33",
+        )
+        .warning(
+            "Variable v is never read at a_comprehension_beside_other_elements_is_one_error:1:16",
         );
     code!("fn test() { v = [1, 2]; w = [for x in v { x * 10 }, 5]; assert(len(w) == 3, \"w\"); }")
         .error(
@@ -5374,7 +5386,8 @@ fn a_par_method_on_a_captured_value_names_the_scalar_route() {
         "a parallel worker is a function, not a method of a captured value (`c.scale(…)`) — read \
          what `scale` needs from `c` into scalars first, and pass them after the element to a \
          function: `f(a, k)` at a_par_method_on_a_captured_value_names_the_scalar_route:3:77",
-    );
+    )
+        .warning("Variable c is never read at a_par_method_on_a_captured_value_names_the_scalar_route:3:16");
 }
 
 // The narrowing rules across the ways a value reaches a narrow slot — the value cells are in

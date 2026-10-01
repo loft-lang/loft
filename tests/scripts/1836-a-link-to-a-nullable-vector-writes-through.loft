@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1836 — writing a `&τ` variable writes the SOURCE (`(B-Ref-Write)`), for every τ
+// (`(B-Ref-Uniform)`), and a `&τ?` link is its `&τ` twin over a nullable slot (D-bind-17).  For
+// τ = `vector<T>?` three spellings broke: `c = &n; c = a` re-pointed the link at a copy and
+// left `n` alone, into a null source too; the annotated `c: &vector<T>? = n` kept a `RefVar`
+// its bind never builds (a garbage length on the interpreter, a rustc type error on native);
+// and `p = [1, 2, 3]` through a `&vector<T>?` PARAMETER appended instead of replacing.  Each
+// was a shape test asking `Vector` without peeling `?` (`@FR-N-Shape`).  The same matrix over
+// every nullable heap τ found two more: a STRUCT-ENUM local `&` (null or not) was dropped and the
+// bind copied (the local-link lowering's source list, and native's record-link arms, left it
+// out), and a list literal through a `&hash<…>` (param or annotated, `?` or not) was built into
+// the link against its `&` type and refused as a retype.  The non-null twins, a literal and an
+// append through the local link, a struct `S?` and a `text?` link are the controls.  (The keyed
+// LOCAL link's literal write and the `text?` link on native are loft#1836's native half.)
+//
+// @falsified-at: 22ebfad8 → here (exit 1 → 0, both backends): on the control the file is
+//   refused at compile (`f_hash`'s literal, "cannot change type from &hash<Ek[k]>? to
+//   vector<Ek>").  Cell by cell (tmp matrix, both backends): the vector? local and null-source
+//   links answered 2 and 0, the annotated link a garbage 35 on the interpreter and rustc E0308
+//   on native, the parameter literal 4, and the struct-enum links left the source at 7.
+//   CHANNEL: COMPILE, then the asserted VALUES (exit).
+//   WITNESS: `cannot change type from &hash<Ek[k]>? to vector<Ek>`; with the cell removed, `local 2` (want 1).
+//   HOLDS: the non-null vector twin, the literal and append through a local link, the vector?
+//   parameter's variable and append writes, the struct `S?` and the `text?` link answer the same
+//   on both trees.
+
+struct S { k: integer }
+struct Ek { k: integer }
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn shv(x: Sh?) -> integer { if x == null { return -1; } match x ?? Ci { r: -2 } { Ci { r } => r, Sq { s } => 100 + s } }
+fn f_sh(p: &Sh?) { p = Sq { s: 9 }; }
+fn f_hash(p: &hash<Ek[k]>?) { p = [Ek { k: 2 }, Ek { k: 3 }]; }
+fn f_lit(p: &vector<integer>?) { p = [1, 2, 3]; }
+fn f_var(p: &vector<integer>?, a: vector<integer>) { p = a; }
+fn f_app(p: &vector<integer>?) { p += [9]; }
+
+fn main() {
+  a: vector<integer> = [1];
+  // The non-null control: the link's write replaces `n`'s contents.
+  n0: vector<integer> = [7, 8];
+  c0 = &n0;
+  c0 = a;
+  assert(len(n0) == 1, "non-null {len(n0)}");
+  // A local link to a `vector<T>?`, from a local, a literal and an append.
+  n1: vector<integer>? = [7, 8];
+  c1 = &n1;
+  c1 = a;
+  assert(len(n1 ?? []) == 1, "local {len(n1 ?? [])}");
+  n2: vector<integer>? = [7, 8];
+  c2 = &n2;
+  c2 = [5, 6, 7];
+  assert(len(n2 ?? []) == 3, "literal {len(n2 ?? [])}");
+  n3: vector<integer>? = [7, 8];
+  c3 = &n3;
+  c3 += [9];
+  assert(len(n3 ?? []) == 3, "append {len(n3 ?? [])}");
+  // Into a source that starts absent: the write gives it the copy.
+  b: vector<integer> = [1, 2, 3];
+  n4: vector<integer>? = null;
+  c4 = &n4;
+  c4 = b;
+  assert(len(n4 ?? []) == 3, "from null {len(n4 ?? [])}");
+  // The annotated spelling of the same link.
+  n5: vector<integer>? = [7, 8];
+  c5: &vector<integer>? = n5;
+  c5 = a;
+  assert(len(n5 ?? []) == 1, "annotated {len(n5 ?? [])}");
+  // A `&vector<T>?` parameter: a literal, a variable and an append, and a null argument.
+  m1: vector<integer>? = [7];
+  f_lit(m1);
+  assert(len(m1 ?? []) == 3, "param literal {len(m1 ?? [])}");
+  m2: vector<integer>? = [7, 8];
+  f_var(m2, a);
+  assert(len(m2 ?? []) == 1, "param var {len(m2 ?? [])}");
+  m3: vector<integer>? = [7];
+  f_app(m3);
+  assert(len(m3 ?? []) == 2, "param append {len(m3 ?? [])}");
+  m4: vector<integer>? = null;
+  f_lit(m4);
+  assert(len(m4 ?? []) == 3, "param from null {len(m4 ?? [])}");
+  // A STRUCT-ENUM link, every form — the local `&` was dropped and the bind copied, `?` or not.
+  e0: Sh = Ci { r: 7 };
+  ce0 = &e0;
+  ce0 = Sq { s: 9 };
+  assert(shv(e0) == 109, "enum local {shv(e0)}");
+  e1: Sh? = Ci { r: 7 };
+  ce1 = &e1;
+  ce1 = Sq { s: 9 };
+  assert(shv(e1) == 109, "enum? local {shv(e1)}");
+  e2: Sh? = Ci { r: 7 };
+  ce2: &Sh? = e2;
+  ce2 = null;
+  assert(shv(e2) == -1, "enum? annotated null {shv(e2)}");
+  e3: Sh? = null;
+  f_sh(e3);
+  assert(shv(e3) == 109, "enum? param from null {shv(e3)}");
+  // A `&hash<…>?` parameter given a list literal — refused as a retype before.
+  h1: hash<Ek[k]>? = [Ek { k: 1 }];
+  f_hash(h1);
+  assert(len(h1 ?? []) == 2, "hash? param literal {len(h1 ?? [])}");
+  // A struct `S?` link, the record control.
+  s1: S? = S { k: 1 };
+  cs1 = &s1;
+  cs1 = S { k: 9 };
+  assert((s1 ?? S { k: -1 }).k == 9, "struct? local");
+  // The `text?` control (D-bind-17).
+  t: text? = "ab";
+  ct = &t;
+  ct = "xyz";
+  assert(len(t ?? "") == 3, "text {len(t ?? "")}");
+  println("nullable vector links write through");
+}

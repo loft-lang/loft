@@ -1,0 +1,7 @@
+// loft#1828 — no else: the capture's one error, and the statement after it parses.
+enum Shape { Circle { radius: float }, Square { side: float } }
+fn main() {
+  c = Circle { radius: 2.0 };
+  if c is Circle { radius }
+  println("x");
+}

@@ -4595,3 +4595,18 @@ text-to-enum parse (`"Purple" as Direction`) was left for its own decision — a
 same day (owner: "yes, apply it to text as enum too"): a literal naming no variant is refused, a
 runtime text naming none answers the first-declared variant (`(D-Enum)`) with the
 `enum-parse-default` warning, and `as E?` or an immediate `?? d` is the checked spelling.
+
+## C132 — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
+
+Decided 2026-10-01 by the owner, while settling #1826 (whether a TEMPLATE `fn OpAdd<U>` may
+satisfy a bound): "I do not want fn Op definitions outside the stdlib, even if they are there they
+should be treated like normal functions and not a template", and "the Op way of writing was
+intended for the stdlib/operators for loft, it was not designed as anything else and thus is not
+very easy to use/read for programmers".  Measured before deciding: one published library file
+defined user operators (`time`'s `DateTime`, 20 definitions), no consumer application did, and
+136 test/doc files in this repo.  No other spelling gave a user type operator syntax; `op <`
+existed only inside interface declarations.  The 2026.10 cycle's user-operator defects:
+#1794, #1811, #1817, #1818 (silent-wrong), #1819 (silent-wrong in part), #1826 (ICE).  Option
+kept open and declined: allowing `op <` for user definitions — readable, but it keeps the
+machinery those defects came from.  2026.10 ships unchanged; the work is loft#1833.
+

@@ -205,8 +205,10 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    and `advice[lib-flag-outranked]` are the testbed's own checks: either one means the run is
    resolving something other than what you think.
 4. **The suite, both backends, warnings denied** — the steps the library's CI gates on:
-   `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, and every
-   `docs/*.loft` guide with `--interpret` and `--native`.  A library that claims the browser
+   `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, every
+   `docs/*.loft` guide with `--interpret` and `--native`, and `LOFT_DENY_WARNINGS=1 loft
+   --check` over every `examples/*.loft` and `docs/*.loft` (an example is compiled, not run:
+   most need a peer, a window or a port).  A library that claims the browser
    also runs its `--native-wasm` / `--html` gate (loft-ship skill § the parity gate).
    ⚠ A `use`d library with a native crate runs as its cdylib **even under `--interpret`**, so
    the two runs measure one binary twice; set `LOFT_NO_NATIVE_LIBS=1` on the interpreter run
@@ -522,12 +524,15 @@ which lists every library that still owes one ([LIBRARY_DOC_REVIEW.md](LIBRARY_D
 Run it yourself the same way:
 
 ```sh
-LOFT_DENY_WARNINGS=1 loft --interpret docs/01-getting-started.loft
-LOFT_DENY_WARNINGS=1 loft --native    docs/01-getting-started.loft
+LOFT_DENY_WARNINGS=1 loft --check     docs/01-getting-started.loft
+loft --interpret docs/01-getting-started.loft
+loft --native    docs/01-getting-started.loft
 ```
 
-Warnings are denied there as they are in the suite, so a guide that teaches an idiom the
-compiler warns about does not ship.
+Warnings are denied by the `--check`, which the `Examples and guides compile` step runs over
+every guide and every `examples/*.loft`: the deny is read by `--check` and `--tests` only, and
+a plain run prints its warnings and carries on.  So a guide or an example that teaches an
+idiom the compiler warns about does not ship.
 
 It is rendered in two places from that one file, with no further work: `loft doc <name>`
 locally, and `doc/lib-<name>-guide.html` on the published site, linked from the library's

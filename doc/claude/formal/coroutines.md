@@ -16,13 +16,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > frame, native compiles a resumable **state machine**.
 >
 > Scope: single-value `yield` (CO1.1–CO1.6, shipped 0.8.3) **and `yield from`** (delegation),
-> which ships and is specified below as `(G-Delegate)`.
->
-> ⚠ That line read *"`yield from` is deferred to 1.1+ ([COROUTINE.md](../COROUTINE.md) CO1.4) and
-> is not specified here"* until 2026-09-25, long after the construct shipped and was guarded
-> (`tests/scripts/1277-…`, loft#1277).  A shipped construct declared out of scope has no rule, so
-> nothing measured it and this chapter's `OPEN: 0` read green over three defects in it at once —
-> one of them silent.  A scope line is a claim to re-read whenever the chapter is opened.
+> which ships and is specified below as `(G-Delegate)`.  A scope line is a claim to re-read
+> whenever the chapter is opened: a shipped construct declared out of scope has no rule, so
+> nothing measures it.
 
 ## The model in one line
 
@@ -234,8 +230,8 @@ Every deviation this doc has carried is closed; the record is in the companion
   straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
   so an endless one hands out each value as it is asked for — and so does every other loop whose
   yields are STATEMENTS: several per path, one under an `if`/`match` arm with statements after it,
-  one in a nested loop, one beside a `continue`, for every yield type (`p0 g0 g10 p1 g1 g11`,
-  loft#1798).  One shape still runs EAGERLY on native (`y0 y1 g0 g1`): a `yield` inside an
+  one in a nested loop, one beside a `continue`, for every yield type (`p0 g0 g10 p1 g1 g11`).
+  One shape still runs EAGERLY on native (`y0 y1 g0 g1`): a `yield` inside an
   expression, behind an operand the suspend could change (`s = s + { yield x; "b" }`).  The values
   agree and the side effects do not — an interleaving difference COROUTINE.md § CL-9 records as a
   named limitation — and an ENDLESS loop of that shape never hands out a value on native, so make
@@ -244,8 +240,6 @@ Every deviation this doc has carried is closed; the record is in the companion
   preserved with the frame and resumes correctly past it, on both backends.  A `yield` inside a
   helper that is not itself a generator is REFUSED, identically on both backends — *"yield is
   only allowed inside generator functions (return type must be iterator<T>)"*.
-  ⚠ This line read *"a `yield` inside a helper called from the generator produces the value and
-  resumes correctly past the helper"* until it was measured, and it does not.
   [VERIFICATION.md](VERIFICATION.md) had said so in three places — *"deferred G-YieldDepth — a
   `yield` INSIDE a helper (true stackful) needs `yield from`"* — so the two records disagreed
   about the same rule, and this is the one a reader of the rules meets.  A conformance line is a
@@ -260,11 +254,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   them around a loop.  `tests/scripts/1277-…` covers arguments and exhaustion, and
   `tests/coroutine_matrix.rs`'s X5 column crosses delegation with the yielded TYPE — integer,
   text, record, tuple, float, single and enum.
-  ⚠ Before 2026-09-25 the native state machine re-ran a delegation's prefix on every advance it
-  served (silent: the produced sequence is unchanged), a `yield from` beside a loop in either
-  lowering did not compile, and a delegated TUPLE did not compile.  The X5 column that crosses
-  exactly this was closed on the stale scope line above, which is how all four survived.  The
-  delegated fn-ref is loft#1676 and still open.
+  The delegated fn-ref is loft#1676 and still open.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
 - **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a

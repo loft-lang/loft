@@ -79,7 +79,10 @@ use sha2::{Digest, Sha256};
 ///
 /// 14 — `Data` carries `type_var_bounds` (@PLN166 B1): a parse continuing a loaded stdlib
 /// without them mints a second placeholder for a `<T>` the stdlib already has.
-const CACHE_FORMAT_VERSION: u8 = 14;
+///
+/// 15 — `Variable` carries `user_named` (stride 42 → 43, loft#1834): a warm load without it
+/// reads a user's `_`-prefixed parameter as a compiler temporary, and loses F-ParamRebind.
+const CACHE_FORMAT_VERSION: u8 = 15;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

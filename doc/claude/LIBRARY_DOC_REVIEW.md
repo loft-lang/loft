@@ -18,11 +18,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > ⚠ **The gate BLOCKS inside loft and ADVISES in a library repo**, and the asymmetry is
 > deliberate. `examples` and `examples-index` are the only two checks that span
 > repositories: a library's CI checks loft out as `loft-src` and runs *loft's* script
-> against the library, so the rules arrive from whatever loft `main` happens to be. That
-> bit in both directions before it was tiered — `exindex` landed in loft on 2026-08-18 and
-> reddened loft-libs-game's next PR for a file it never touched (last green run
-> 2026-08-17), and switching a *library checkout's branch* turned loft's own run red with
-> two dangling tags, a failure with no bad commit in either repo. A gate whose rules change
+> against the library, so the rules arrive from whatever loft `main` happens to be. A
+> blocking gate fails in both directions: a new rule in loft reddens a library's next PR
+> for a file that PR never touched, and switching a *library checkout's branch* turns
+> loft's own run red with dangling tags, a failure with no bad commit in either repo. A gate whose rules change
 > under you, from a repo you do not control, lands its red on whoever opens the next PR.
 >
 > It follows this repo's own diagnostic rule: **a diagnostic gates if and only if ignoring
@@ -38,7 +37,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 >
 > **Advisory costs you a local pass/fail, so one command gives it back:** `make
 > examples-preflight REPO=<library>` gates the citation faults CI reports and exits
-> non-zero on them, without demanding the (no longer committed) index.
+> non-zero on them, without demanding the index, which is not committed.
 > `EXAMPLES_GATE=hard` restores full blocking for a repo that wants it.
 >
 > ⚠⚠ **`examples-index.tsv` is not committed in a library repo at all — CI builds it.**
@@ -57,11 +56,11 @@ machine can see: a worked-example tag that **dangles**
 cannot see the two failures that actually rot a library's docs over time:
 
 - **Staleness** — a `///` doc comment that still resolves and still reads
-  cleanly, but no longer describes what the function *does now* (a parameter
+  cleanly, but does not describe what the function *does now* (a parameter
   changed meaning, the return contract shifted, a behaviour note went out of
   date). The prose is internally consistent, so nothing flags it; only a human
   reading it against the current body notices.
-- **Example quality** — a cited example that is valid and runs, but is no longer
+- **Example quality** — a cited example that is valid and runs, but is not
   the *clearest* demonstration: a better real call site has since appeared in a
   consumer, or the tagged test drifted to exercise an edge case rather than the
   common path.
@@ -116,7 +115,7 @@ make libraries-review
 It answers the only two questions a program can: what is **structurally missing** (a
 library with no watermark row, so it has never been reviewed; one whose source cites no
 worked example and carries no `examples-exempt.tsv` verdict; a watermark row naming a
-library that no longer exists), and which reviewed libraries have **moved** since the
+library that does not exist), and which reviewed libraries have **moved** since the
 commit their watermark records — with the commit count and how many `pub fn` lines
 changed, so "three commits, zero signatures" can be read and dismissed in seconds. It
 is a report: it never fails, and it never judges whether a doc is *good*.
@@ -213,7 +212,7 @@ Leaving `at commit` empty is not free: next month the aid can only say *reviewed
 no commit recorded — nothing to diff against*, and that library falls back to a full
 re-read. The watermark is the entire mechanism that keeps a quiet month cheap.
 
-## Watermark table
+## Watermarks
 
 "Reviewed through" = the last monthly pass that read this library's docs; "at
 commit" = the ref that pass ended on — the baseline `make libraries-review` diffs
@@ -223,11 +222,7 @@ against to say what has moved since.
 not listed here — `make libraries-review` derives that backlog from the actual
 population (the in-tree trees plus every package in the registry snapshot), so a
 placeholder row would be a second list of the same fact, drifting the moment a
-library is published or renamed. Six such rows had already gone stale by 2026-08:
-`lib/html` and `lib/markdown` had moved out to the `loft-libs-docs` repo, two more
-were spelled differently from the tree they named, and two were prose standing in
-for a list — a four-library cell, and a catch-all "registered libs (…)" row that
-named six of thirty-four.
+library is published or renamed.
 
 The **key column is machine-read** — one library per row, spelled exactly as the aid
 keys it: the path for an in-tree tree (`default`, `lib/git`, `lib/lexer.loft`), the
@@ -236,31 +231,25 @@ as a STALE ROW rather than ignored.
 
 | library | reviewed through | at commit | notes |
 |---|---|---|---|
-| `default` | 2026-10 | `892ff4743` | @STD-001..012 authored across text / collections / JSON / files-IO; docs read while tagging. 2026-09: the only change since is two compiler-internal ops (`OpDistinctStore`, `OpRefAlias`), non-`pub` and undocumented by design — the reference chapter's promises are unchanged. 2026-09-04 re-read: loft#1348 removed every tracker tag from the published descriptions and rewrote the `min`/`max` section, `sum_of` and `File.format` for their readers; `Walkable`, `tree_walk`'s cap edge and the three interfaces documented; the `assert_eq` and `03_text` maintainer notes moved off the page. Each authored behaviour sentence was probed on both backends and holds 2026-10: every published section read against the release and each authored sentence probed on both backends (the docs pass; `.doc_review_ledger` 264/264); since then `len`/`size` of an absent text answer 0, `log10`/`log2` are exact at powers, `StackFrame.arguments` lists the parameters, and only `///` lines are published (loft#1808) — each probed; no `pub fn` line moved |
-| `lib/git` | 2026-10 | `892ff4743` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read while tagging. 2026-09: a query that cannot be ASKED now halts instead of answering `""` (loft#1061) and the doc above `git_query` and `branch` moved with the code 2026-10: one maintainer comment re-pointed from a design-decision id to the plan that records the decision; no `pub fn` moved |
-| `lib/lexer.loft` | 2026-10 | `892ff4743` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). 2026-09: `Anchor.start` (a revert can land at a token's START), `split_token` (maximal munch undone for a nested `>>`) and `offset` (a stalled-loop guard) — each documented with its reason and with live callers in `lib/parser.loft`. 2026-09-04: `Lexer` itself documented (the token/keyword tables must be set before the first parse); no `pub fn` moved 2026-10: one keyed read discharges with `?? []` (no entry means no token starts there); no `pub fn` moved |
-| `lib/parser.loft` | 2026-10 | `892ff4743` | First review. One `pub fn` (`parse`), doc read against the body and found current; @PAR-001 tags the doc test `tests/docs/16-parser.loft`, which is the clearest call site there is. Its prelude load names `default/01_code.lav`, an extension this repo has never had — filed as loft#1339, not fixed here because dropping it renumbers `cur_file`. 2026-09-04 after loft#1339: the phantom `.lav` prelude load is gone, with the comment saying why a real one would regress `parse`'s count; no `pub fn` moved 2026-10: the grammar grew `while`, `match` with guards, both lambda forms, `::` names and the optional `;` after a block (loft#1800); `parse`'s doc still states its contract, and `tests/docs/16-parser.loft` now asserts both what it parses and the listed constructs it does not |
-| `lib/code.loft` | 2026-10 | `892ff4743` | First review. 24 `pub fn`, no doc comment on any of them and no module header; header written naming what `Code` is, what `cur_arg` switches, and which half is reached. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite. Two defects it hides — `null_value` emits `Boolean`, `blocks` is popped but never pushed — filed as loft#1340. 2026-09-04 re-read after loft#1340: `add_block`/`add_loop`/`add_if` record the header they open, `end_if` spans are consistent, `null_value` emits `Null`; `Code` and `Structure` documented. Still `deferred` — the emitter has no caller to cite 2026-10: the `as Block` / `as If` / `as Loop` downcasts are now guarded by an `is` test and two keyed reads discharge with `?? 0` / `?? []`; the module header and type descriptions still describe it. Still `deferred` |
-| `lib/testlib.loft` | 2026-10 | `892ff4743` | First review. `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. Docs read; nothing stale. 2026-09-04: `Point` and `Bag` documented as the fixtures they are; no `pub fn` moved 2026-10: no source change beyond the join; nothing stale |
-| `lib/audience_crystal` | 2026-10 | `892ff4743` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) 2026-10: the `gridmesh` dependency moved to 0.2.3 with `use gridmesh::*`; one maintainer comment restated without its history; no `pub fn` moved |
+| `default` | 2026-10 | `892ff4743` | @STD-001..012 authored across text / collections / JSON / files-IO. Every published section read against the release and each authored sentence probed on both backends (`.doc_review_ledger` 264/264), including `len`/`size` of an absent text answering 0, `log10`/`log2` exact at powers, `StackFrame.arguments` listing the parameters, and only `///` lines published (loft#1808) |
+| `lib/git` | 2026-10 | `892ff4743` | @GIT-001..005 tagged to live uses in `scan.loft` + `refresh.loft`; 13 pub fns read. A query that cannot be ASKED halts instead of answering `""` (loft#1061), and the doc above `git_query` and `branch` says so |
+| `lib/lexer.loft` | 2026-10 | `892ff4743` | @LEX-001 (matches/test/identifier), @LEX-002 (anchor/revert backtracking) — both tagged to live uses in `parser.loft` (`function`, `object`), exercised by the `16-parser` doc test; format-protocol/comment fns still owe examples (need a non-rendered demo). `Lexer`, `Anchor.start`, `split_token` and `offset` documented with their reasons |
+| `lib/parser.loft` | 2026-10 | `892ff4743` | One `pub fn` (`parse`); @PAR-001 tags the doc test `tests/docs/16-parser.loft`, the clearest call site there is. Its doc states the contract of the grammar it has — `while`, `match` with guards, both lambda forms, `::` names, the optional `;` after a block (loft#1800) — and the doc test asserts both what it parses and the listed constructs it does not |
+| `lib/code.loft` | 2026-10 | `892ff4743` | 24 `pub fn`; the module header names what `Code` is, what `cur_arg` switches, and which half is reached; `Code` and `Structure` documented. `deferred` in `examples-exempt.tsv`: the emitter half has no call site to cite |
+| `lib/testlib.loft` | 2026-10 | `892ff4743` | `exempt` in `examples-exempt.tsv` — a fixture for `tests/docs/17-libraries.loft` and `tests/diagnostic_reach.rs`, deliberately trivial, so a call site teaches nothing its signature does not. `Point` and `Bag` documented as the fixtures they are |
+| `lib/audience_crystal` | 2026-10 | `892ff4743` | @ACR-001..003 tagged to the `01-editor-helpers` test (picking inverse, incr editor loop, erase) |
 | `lib/engine_host` | 2026-08 | `7786d28c` | @EHK-001..004 tagged to CI-spawned audience-demo kernels (run loop, broadcast, sync lanes, run_client drain); 37 pub fns read while tagging |
 
-`7786d28c` is the commit that authored every in-tree worked-example tag (squash-merged
-PR #971, 2026-08-18) — the 2026-08 pass *was* that tagging, so it is the pass's real
-end ref rather than the `(bootstrap)` placeholder these rows carried first.
+Each pass's notes, row by row, are in [LIBRARY_DOC_REVIEW-history.md](LIBRARY_DOC_REVIEW-history.md).
 
-### Type descriptions — 2026-09 (loft#1342)
+### Type descriptions owed a release
 
-The 2026-09 pass found the published distribution documents its functions and not
-its types: 34 `pub struct`/`pub enum` declarations carried no description, 33 of them
-named in other public signatures of their own library (`Stage` in 111 of `stage`'s).
-Every one now has a one-line description directly above its declaration, on the
-`doc-types-2026-09` branch of each library repo that had one — `loft-libs-graphics`,
-`-world`, `-net`, `-core`, `-assets` and `-docs` (`game` and `plugins` had none);
-parse-checked as 19 packages, 0 errors. The count is taken over the REGISTRY's
-published surface, so the `34 type` figure `make libraries-review` prints moves only
-once those branches merge and the libraries republish: the branches are the fix, the
-release is the owner's step.
+Every `pub struct`/`pub enum` in the published distribution has a one-line description
+directly above its declaration on the `doc-types-2026-09` branch of each library repo
+that had one — `loft-libs-graphics`, `-world`, `-net`, `-core`, `-assets` and `-docs`
+(loft#1342).  `make libraries-review` counts over the REGISTRY's published surface, so
+its `type` figure moves only once those branches merge and the libraries republish:
+the branches are the fix, the release is the owner's step.
 
 ## What this is NOT
 

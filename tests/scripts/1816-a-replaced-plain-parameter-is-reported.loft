@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1816 — replacing a plain parameter rebinds the callee's own local (calls.md
+// F-ParamRebind), so the caller keeps its value.  That is right, and now it is also SAID: the
+// value the parameter received is reported as never read when an assignment replaces it first
+// (`never-read`), and the replacement as a dead assignment when nothing reads it afterwards —
+// written in the body, or written back by a callee through a `&` argument.  The same change
+// lets both lints see a record or a collection local, which they already saw for a number.
+//
+// The SILENT cells are as much the guard as the reported ones: a `&` parameter (its write is the
+// caller's), a parameter read after its replacement's loop iteration, a branch-only write that is
+// read, and a `&` link local whose assignment writes through.  Every value is asserted, so a
+// lint that changed what a program computes fails here too.
+//
+// @falsified-at: 22ebfad8 → here (warnings 1 → 11): on the control only `reset_int`'s
+//   `Parameter n is never read` fired, and none of the eleven expectations below matched.
+//   CHANNEL: the WARNING TEXT and COUNT, and nothing else — falsify has no warning column
+//   (GUARDS.md § A guard that never failed is not a guard), so this was counted by hand,
+//   --interpret and --native both, against the declared expectations.
+//   WITNESS: 1 warning (`Parameter n is never read`) where the file expects 11.
+//   HOLDS: every asserted value is identical on both trees and both backends; the bytecode
+//   and the generated Rust of the medium front-end corpus are byte-identical too.
+//
+// @EXPECT_WARNING: The value parameter 'b' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'b' is never read after this
+// @EXPECT_WARNING: The value parameter 'v' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'v' is never read after this
+// @EXPECT_WARNING: The value parameter 'n' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'n' is never read after this
+// @EXPECT_WARNING: The value parameter 'r' receives is never read
+// @EXPECT_WARNING: Dead assignment — 'f' is never read after this
+// @EXPECT_WARNING: Dead assignment — 'k' is never read after this
+// @EXPECT_WARNING: Dead assignment — 'h' is overwritten before being read
+// @EXPECT_WARNING: Variable u is never read
+struct Box { n: integer }
+
+// A record, a collection and a scalar parameter, each replaced and never read: two reports each.
+fn reset_box(b: Box) { b = Box { n: 0 }; }
+fn reset_vec(v: vector<integer>) { v = [0]; }
+fn reset_int(n: integer) { n = 0; }
+
+// Replaced, then read: only the incoming value is lost.
+fn replaced_then_read(r: Box) -> integer { r = Box { n: 5 }; r.n }
+
+// The forwarding spelling (#1797's shape): the callee writes back into the forwarder's own
+// parameter, which nothing reads after the call.
+fn replace_ref(x: &Box) { x = Box { n: 9 }; }
+fn forward(f: Box) { replace_ref(f); }
+fn bump(x: &integer) { x = x + 1; }
+fn forward_int(k: integer) { bump(k); }
+
+// SILENT: a `&` parameter's assignment is the caller's.
+fn set_ref(b: &Box) { b = Box { n: 7 }; }
+// SILENT: written in a loop that reads it on the next turn.
+fn loop_carried(n: integer) -> integer { t = 0; for i in 0..3 { t += n; n = i; } t }
+// SILENT: a write on one branch, read after it.
+fn branch_write(b: Box, c: boolean) -> integer { if c { b = Box { n: 5 }; } b.n }
+// SILENT: a forwarder whose replacement IS read.
+fn forward_read(f: Box) -> integer { replace_ref(f); f.n }
+
+// SILENT: `x = x` is the identity (#330) — it neither reads nor writes, so the first value is
+// still the one read.  A record, a scalar and a vector.
+fn self_assign() -> integer { x = Box { n: 7 }; x = x; y = 1; y = y; z = [1, 2]; z = z; x.n * 100 + y * 10 + len(z) }
+
+fn locals() -> integer {
+  // A record local overwritten before it is read — as `x = 1; x = 2` always was.
+  h = Box { n: 1 };
+  h = Box { n: 2 };
+  // A collection local nothing reads.
+  u = [1, 2, 3];
+  // SILENT: a `&` link; `c = a` writes through into `n`.
+  a: vector<integer> = [4];
+  w: vector<integer> = [7, 8];
+  c = &w;
+  c = a;
+  h.n * 100 + len(w) * 10 + w[0]
+}
+
+fn main() {
+  box = Box { n: 1 };
+  reset_box(box);
+  assert(box.n == 1, "a replaced record parameter stays local: {box.n}");
+  v = [1, 2];
+  reset_vec(v);
+  assert(len(v) == 2, "a replaced vector parameter stays local: {len(v)}");
+  reset_int(3);
+  assert(replaced_then_read(box) == 5, "the replacement is what the body reads");
+  forward(box);
+  assert(box.n == 1, "a forwarder's plain parameter keeps the write-back: {box.n}");
+  forward_int(3);
+  set_ref(box);
+  assert(box.n == 7, "a & parameter writes back: {box.n}");
+  // 10 + 0 + 1 = 11: n starts at 10, then 0, then 1.
+  assert(loop_carried(10) == 11, "loop-carried {loop_carried(10)}");
+  assert(branch_write(box, true) == 5 && branch_write(box, false) == 7, "branch write");
+  assert(forward_read(box) == 9, "the forwarded replacement is read");
+  assert(box.n == 7, "and stays in the forwarder: {box.n}");
+  assert(self_assign() == 712, "self-assignment {self_assign()}");
+  // h.n = 2, w = [4] after the link write: 200 + 10 + 4.
+  assert(locals() == 214, "locals {locals()}");
+  println("replaced parameters reported");
+}

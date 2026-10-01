@@ -7,28 +7,4 @@ error: `{ radius }` after `is Circle` is the field-capture list, not the body â€
 5 |   v = if c is Circle { radius } else { 0 };
   |                                     ^
 
-error: Expect token {
-  --> <cases>/55_is_capture_needs_a_body_block.loft:5:37
-  |
-5 |   v = if c is Circle { radius } else { 0 };
-  |                                     ^
-
-error: Expect token ;
-  --> <cases>/55_is_capture_needs_a_body_block.loft:5:37
-  |
-5 |   v = if c is Circle { radius } else { 0 };
-  |                                     ^
-
-error: Expect token ;
-  --> <cases>/55_is_capture_needs_a_body_block.loft:7:2
-  |
-7 | }
-  |  ^
-
-error: Expect token }
-  --> <cases>/55_is_capture_needs_a_body_block.loft:7:2
-  |
-7 | }
-  |  ^
-
-error: aborting due to 5 previous errors
+error: aborting due to 1 previous error

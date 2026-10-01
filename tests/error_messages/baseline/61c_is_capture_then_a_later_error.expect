@@ -1,0 +1,16 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `{ radius }` after `is Circle` is the field-capture list, not the body — a block has to follow it. Write `is Circle { radius } { … }`, repeating the name if the body is just that value, or use `match`, which takes captures and IS an expression
+  --> <cases>/61c_is_capture_then_a_later_error.loft:5:37
+  |
+5 |   v = if c is Circle { radius } else { 0.0 };
+  |                                     ^
+
+error: Expected a value after `+`
+  --> <cases>/61c_is_capture_then_a_later_error.loft:6:11
+  |
+6 |   w = 1 +;
+  |           ^
+
+error: aborting due to 2 previous errors

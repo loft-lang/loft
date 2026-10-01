@@ -38,12 +38,13 @@ fn spec_path() -> PathBuf {
 
 const DEAD_STORE_MSG: &str = "is mutated but its value is never read";
 
-/// The three locals `test_used` (unused_variables) flags in the corpus — disjoint from this
+/// The four locals `test_used` (unused_variables) flags in the corpus — disjoint from this
 /// lint (a var mutated via `OpSet` was read as the write base at parse, so `uses>0`).
-const EXPECT_NEVER_READ: [&str; 3] = [
+const EXPECT_NEVER_READ: [&str; 4] = [
     "Variable a is never read", // W-scalar    — a = 3; a += 1  (self-read doesn't rescue)
     "Variable total is never read", // W-accumulator — total += i, unread after the loop
     "Variable x is never read", // N-effectful — binding unread; the RHS effect would stay
+    "Variable z is never read", // N-construct — a constructed value nothing reads (loft#1816)
 ];
 
 /// Run `file` on `backend` (`--interpret` / `--native`) with the given extra env, returning
@@ -134,7 +135,7 @@ fn assert_default(backend: &str) {
         "[{backend}] reference-struct alias `al` must NOT warn (the write propagates)\n{diag}"
     );
 
-    // `test_used` untouched — its three never-read warnings still fire, and `d` gets ONLY the
+    // `test_used` untouched — its four never-read warnings still fire, and `d` gets ONLY the
     // dead-store message (no double warning).
     for w in EXPECT_NEVER_READ {
         assert!(
@@ -144,7 +145,7 @@ fn assert_default(backend: &str) {
     }
     assert_eq!(
         never_reads(&diag),
-        3,
+        EXPECT_NEVER_READ.len(),
         "[{backend}] never-read set drifted\n{diag}"
     );
     assert!(
@@ -180,7 +181,7 @@ fn assert_opt_out(backend: &str) {
     // `test_used` is a different lint — the opt-out must not touch it.
     assert_eq!(
         never_reads(&diag),
-        3,
+        EXPECT_NEVER_READ.len(),
         "[{backend}] opt-out must not affect unused_variables\n{diag}"
     );
 }
@@ -938,4 +939,67 @@ fn a_mutated_projection_of_a_parameter_stays_silent() {
             "[{backend}] the write reaches the caller\n{diag}"
         );
     }
+}
+
+/// loft#1836 — a whole-value write through a `&` link to a KEYED collection writes the source
+/// (`@FR-B-Ref-Write`), so the bind is read by it and the write is not a dead store.  The
+/// vector link was exempt by `amp_vector_locals` and the keyed one was not: `c = &n; c = [..]`
+/// was reported both `never-read` at the bind and `dead-assignment` at the write.  The copy
+/// beside it is the control, and must still be reported.
+const KEYED_LINK: &str = "struct Ek { k: integer }\n\
+fn linked() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }]; c = &n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n) }\n\
+fn copied() -> integer { m: hash<Ek[k]> = [Ek { k: 7 }]; d = m; d = [Ek { k: 2 }]; len(d) }\n\
+fn main() { print(\"r={linked()},{copied()}\"); }\n";
+
+#[test]
+fn a_whole_write_through_a_keyed_link_is_not_a_dead_store() {
+    // The lints run in the front end, which both backends share: one backend measures them.
+    let (out, diag) = run_body(KEYED_LINK, "--interpret", "keyed_link");
+    assert!(
+        out.contains("r=2,1"),
+        "the link writes `n`: {out:?}\n{diag}"
+    );
+    assert!(
+        !diag.contains("'c' is overwritten") && !diag.contains("Variable c is never read"),
+        "a write through the keyed link `c` reads its bind\n{diag}"
+    );
+    assert!(
+        diag.contains("Dead assignment — 'd' is overwritten before being read"),
+        "the copy `d` is still a dead store\n{diag}"
+    );
+}
+
+/// loft#1837 — a `text` parameter replaced before it is read is the same lost value whether or
+/// not the function returns it.  Returned, its shadow IS the return buffer (a hidden `&text`),
+/// and three gates read that buffer's `&` as the author's: the incoming seed, the write-through
+/// test and the extra use a `&` left side counts.  The other cells must stay silent — each reads
+/// the incoming value, or writes it only on one branch, or is a `&` parameter (its write is the
+/// caller's).
+const RETURNED_TEXT_PARAM: &str = "fn read_after(t: text) -> text { t = \"x\"; t }\n\
+fn read_before(t: text) -> text { y = t; t = \"x\"; \"{t}{y}\" }\n\
+fn self_read(t: text) -> text { t = t + \"x\"; t }\n\
+fn appended(t: text) -> text { t += \"x\"; t }\n\
+fn linked(t: &text) -> text { t = \"x\"; t }\n\
+fn branch(t: text, b: boolean) -> text { if b { t = \"x\"; } t }\n\
+fn main() { s = \"q\"; print(\"r={read_after(\"a\")},{read_before(\"a\")},{self_read(\"a\")},{appended(\"a\")},{linked(s)},{s},{branch(\"a\", true)}\"); }\n";
+
+#[test]
+fn a_returned_text_parameter_replaced_unread_is_reported() {
+    // The lints run in the front end, which both backends share: one backend measures them.
+    let (out, diag) = run_body(RETURNED_TEXT_PARAM, "--interpret", "ret_text_param");
+    assert!(
+        out.contains("r=x,xa,ax,ax,x,x,x"),
+        "values: {out:?}\n{diag}"
+    );
+    let reported = diag
+        .matches("The value parameter 't' receives is never read")
+        .count();
+    assert_eq!(
+        reported, 1,
+        "only `read_after` loses its incoming value\n{diag}"
+    );
+    assert!(
+        diag.contains("fn read_after"),
+        "the warning names `read_after`\n{diag}"
+    );
 }

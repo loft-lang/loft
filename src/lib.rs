@@ -285,6 +285,7 @@ mod calc;
 pub mod copy_manifest;
 pub mod crash_report;
 pub mod data;
+pub mod data_ref;
 pub mod data_store;
 pub mod database;
 pub mod debugger;

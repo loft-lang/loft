@@ -264,7 +264,7 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 42;
+pub(crate) const VARIABLE_STRIDE: u32 = 43;
 pub(crate) const VAR_NAME: u32 = 24;
 pub(crate) const VAR_TYPE_DEF: u32 = 28; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
@@ -285,6 +285,8 @@ pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 39;
 pub(crate) const VAR_LINKED_NARROW: u32 = 40;
 /// @PLN167 decision 2 — a `&text` link to a text field or element (the store kind).
 pub(crate) const VAR_STORE_TEXT_LINK: u32 = 41;
+/// loft#1834 — a user identifier names it; `is_compiler_generated` reads it.
+pub(crate) const VAR_USER_NAMED: u32 = 42;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -1471,6 +1473,7 @@ mod tests {
         );
         assert_eq!(pos(ids.variable, "linked_narrow"), VAR_LINKED_NARROW);
         assert_eq!(pos(ids.variable, "store_text_link"), VAR_STORE_TEXT_LINK);
+        assert_eq!(pos(ids.variable, "user_named"), VAR_USER_NAMED);
         assert_eq!(pos(ids.variable, "owner_witness"), VAR_OWNER_WITNESS);
 
         // Function record.

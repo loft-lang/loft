@@ -2852,6 +2852,7 @@ fn p4d_fn_ref_field_bare_default() {
         "struct Holder { f: fn(integer) -> integer }
 fn test() { h = Holder {}; }"
     )
+    .warning("Variable h is never read at p4d_fn_ref_field_bare_default:2:16")
     .result(Value::Null);
 }
 
@@ -3043,6 +3044,7 @@ fn test() {
     r = Range { lo: 20, hi: 10 };
 }"
     )
+    .warning("Variable r is never read at l6_cross_field_constraint_violation:6:8")
     .result(Value::Null);
 }
 
@@ -3222,6 +3224,7 @@ fn test() {
     s = Score { "value": -1 };
 }"#
     )
+    .warning("Variable s is never read at type_parse_with_constraint_violation:5:8")
     .result(Value::Null);
 }
 
@@ -3240,6 +3243,7 @@ fn test() {
     ];
 }"
     )
+    .warning("Variable items is never read at l6_vector_struct_constraint_violation:6:12")
     .result(Value::Null);
 }
 
@@ -5690,6 +5694,7 @@ fn run() -> integer {
     }
 }"
     )
+    .warning("Dead assignment — 'n' is overwritten before being read at p54_struct_enum_reassign_explicit_return:3:20")
     .expr("run()")
     .result(Value::Int(42));
 }
@@ -16097,6 +16102,7 @@ fn test_it() {
     v: vector<K> = [K { cb: fn() { w.n = w.n + 1; } }];
 }"
     )
+    .warning("Variable v is never read at issue_318_vector_of_closure_carrying_struct_rejected:5:7")
     .error(
         "collection of a struct type that holds a capturing closure is not \
          supported — element copies would dangle into the constructing \
@@ -16643,12 +16649,28 @@ fn run() -> integer { nested(\"n\").v + nested(\"x\").v }"
 // Vector non-`&` reassignment REBINDS locally (leaves the caller untouched),
 // like the struct case — fixed by P2.4 (vector_db hands a rebind param a fresh
 // `__vdb` backing; the witness frees it at exit).
+/// loft#1836 / loft#1816 — a whole-value write through a `&` link to a KEYED collection writes
+/// the source (`(B-Ref-Write)`), so it is neither a dead assignment nor an unread variable.  A
+/// keyed link is never in `amp_vector_locals`; asked only that, the lints reported both.  No
+/// warning is expected, and the value proves the write landed.
+#[test]
+fn a_keyed_link_whole_write_is_not_a_dead_store() {
+    code!(
+        "struct Ek { k: integer }
+fn check() -> integer { h: hash<Ek[k]> = [Ek { k: 1 }]; c = &h; c = [Ek { k: 2 }, Ek { k: 3 }]; len(h) }"
+    )
+    .expr("check()")
+    .result(Value::Int(2));
+}
+
 #[test]
 fn pln87_vector_param_reassign_is_local() {
     code!(
         "fn vrebind(v: vector<integer>) { v = [7, 8, 9]; }
 fn check() -> integer { a = [1, 2, 3]; vrebind(a); len(a) }"
     )
+    .warning("The value parameter 'v' receives is never read — an assignment replaces it first, and the replacement stays in this function at pln87_vector_param_reassign_is_local:1:33")
+    .warning("Dead assignment — 'v' is never read after this, and a parameter's assignment stays in this function at pln87_vector_param_reassign_is_local:1:48")
     .expr("check()")
     .result(Value::Int(3));
 }

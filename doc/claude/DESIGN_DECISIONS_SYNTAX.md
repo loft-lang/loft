@@ -212,3 +212,20 @@ collections stay record sets (no `hash<K, V>`), and the SQL `hole_*` family stay
 **Revisit when.** A keyed type has a use a record set cannot express, or a target wants an OPEN
 set of hole kinds.  Decided 2026-09-21 — [record](DESIGN_DECISIONS-history.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set).
 **Catalogue:** @F25 (generics) · @F26 (bounded generics) · @F94 · revises C110.
+
+## C132 — operators are defined by the stdlib only; a user `fn Op…` is an ordinary function
+
+**Decision.** Outside `default/*.loft`, a function named `OpLt`, `OpAdd`, … binds no operator,
+is no operator template, and satisfies no operator interface (`Ordered`, `Addable`, …).  A user
+type keeps structural `==` (C91), its keyed collections, named methods, and the key-based stdlib
+functions (`sort_by`, `min_by`, `max_by`, `sum_by`).  **Why.** `fn Op<Name>` is the compiler's
+operator table, designed for the stdlib: its names do not say the symbol (`OpMin` is `-`), three
+comparisons derive from `OpLt` unseen, and an operator that calls user code is a place the reader
+does not see what runs (CONTROL.md).  The user path produced six defects in one cycle.
+
+**Revisit when.** A user type needs operator syntax that a method and the `_by` functions cannot
+give it readably — and then with a designed spelling (`op <`), never `fn Op…`.  Decided
+2026-10-01 — [record](DESIGN_DECISIONS-history.md#c132--operators-are-defined-by-the-stdlib-only-a-user-fn-op-is-an-ordinary-function).
+**Guard:** `1826b-a-template-member-alone-does-not-satisfy-a-bound.loft` keeps the template half;
+the rest is guarded with its implementation (loft#1833).
+**Catalogue:** @F26 (bounded generics) · `formal/interfaces.md` (G-Sat) · loft#1833 (the work).

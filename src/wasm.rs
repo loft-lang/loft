@@ -945,19 +945,13 @@ pub fn compile_and_run(files_json: &str) -> String {
 // ── FY.2–FY.3  Game session with frame yield ────────────────────────────────
 
 /// Persistent game session that survives across frame yields.
-/// Owns State and Data so raw pointers inside State remain valid.
-/// Both halves are BOXED: `execute_argv` stores raw pointers to the `Data`
-/// (`State::data_ptr`, the parallel context) and into the `State` itself (its bytecode and
-/// library), and the session is moved twice after that — into this struct, then into
-/// `GAME_SESSION`.  Moved as plain values, every one of those pointers went stale, and the first
-/// fn-ref call after a `resume_frame` read the definitions through a dangling `data_ptr`:
-/// *"index out of bounds: the len is 0 but the index is 822"*.  A box moves, its contents do
-/// not — the pattern `live_dispatch::bootstrap_core` already follows.
+/// The `State` is BOXED: `execute_argv` stores raw pointers into the `State` itself (its
+/// bytecode and library, in the parallel context), and the session is moved twice after
+/// that — into this struct, then into `GAME_SESSION`.  A box moves, its contents do not —
+/// the pattern `live_dispatch::bootstrap_core` already follows.  The definition table needs
+/// no such care: the `State` co-owns it.
 struct GameSession {
     state: Box<crate::state::State>,
-    // Kept alive for State's borrowed pointers; never read directly.
-    #[allow(dead_code)]
-    data: Box<crate::data::Data>,
 }
 
 thread_local! {
@@ -1041,13 +1035,14 @@ pub fn compile_and_start(files_json: &str) -> String {
         // Boxed BEFORE any pointer is taken, so the pointers `execute_argv` keeps survive the
         // session being moved into `GAME_SESSION` (see `GameSession`).
         let mut state = Box::new(State::new(p.database));
-        let mut data = Box::new(p.data);
+        let mut data = p.data;
         byte_code(&mut state, &mut data);
         crate::wasm_gl::register_wgl_natives(&mut state);
-        state.execute_argv("main", &data, &[]);
+        // The State co-owns the table, so the session may move freely.
+        state.execute_argv("main", std::sync::Arc::new(data), &[]);
         // execute_argv returns either because the program finished or because
         // frame_yield was set.  Store the session for resume_frame.
-        Ok(GameSession { state, data })
+        Ok(GameSession { state })
     }));
 
     virt_fs_clear();
@@ -1089,10 +1084,6 @@ pub fn resume_frame() -> String {
             let Some(session) = slot.as_mut() else {
                 return "{\"running\":false}".to_string();
             };
-            // The session's `Data` moved twice since `execute_argv` installed the
-            // pointers to it (into the session, then into this slot): re-point them at
-            // where it lives now, or the next fn-ref call reads a moved-from table.
-            session.state.rebind_data(&session.data);
             let still_running = session.state.resume();
             if still_running {
                 // Carry whatever the program printed DURING this frame.  A running

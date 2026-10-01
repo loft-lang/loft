@@ -293,3 +293,23 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   `yield from` advance asks `next_operands` for its channel.  Guards:
   `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft` and its refused
   twin `1676b-…`.
+
+## Moved from coroutines.md § Conformance on 2026-10-01
+
+- **Lazy, one-per-advance** — every loop whose yields are statements became lazy on native
+  with re-descent (loft#1798); the conformance line cited the issue inline.
+- **Stackful (`G-YieldDepth`)** — the line read *"a `yield` inside a helper called from the
+  generator produces the value and resumes correctly past the helper"* until it was measured,
+  and it does not: such a `yield` is refused on both backends.
+
+## Older dated lines moved from coroutines.md on 2026-10-01
+
+- **The scope line.**  It read *"`yield from` is deferred to 1.1+ ([COROUTINE.md](../COROUTINE.md)
+  CO1.4) and is not specified here"* until 2026-09-25, long after the construct shipped and was
+  guarded (`tests/scripts/1277-…`, loft#1277).  Nothing measured it, and the chapter's `OPEN: 0`
+  read green over three defects in it at once — one of them silent.
+- **Delegation conformance.**  Before 2026-09-25 the native state machine re-ran a delegation's
+  prefix on every advance it served (silent: the produced sequence is unchanged), a `yield from`
+  beside a loop in either lowering did not compile, and a delegated TUPLE did not compile.  The
+  X5 column that crosses exactly this was closed on the stale scope line, which is how all four
+  survived.

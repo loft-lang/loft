@@ -61,7 +61,7 @@ pub struct WorkerProgram {
     /// (fix #92 — without this the worker frame is shown as `<worker>` with
     /// no function name, file, or line).  The pointer is borrowed from a
     /// `&Data` held by the spawning frame, which outlives `thread::scope`.
-    pub data_ptr: *const crate::data::Data,
+    pub data_ptr: crate::data_ref::DataRef,
     pub fn_positions: Arc<Vec<u32>>,
     /// Source-line lookup table (bytecode position → source line) shared from
     /// the parent State.  Workers populate `State::line_numbers` from this so
@@ -99,7 +99,7 @@ impl WorkerProgram {
         state.stack_trace_lib_nr = self.stack_trace_lib_nr;
         // Fix #92: propagate Data ptr + fn_positions so stack_trace() inside
         // a parallel worker can resolve the worker's d_nr → name/file/line.
-        state.data_ptr = self.data_ptr;
+        state.data_ptr = self.data_ptr.clone();
         state.fn_positions.clone_from(&*self.fn_positions);
         state.line_numbers = (*self.line_numbers).clone();
         state

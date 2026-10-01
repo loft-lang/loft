@@ -229,6 +229,21 @@ A character, an enum, a struct, a list and a boolean now refuse `0N`, as text al
 fill for them (`{flag:*>6}`).  A `for` inside a hole still pads each number it produces
 (`{for n in v {n}:03}`).
 
+**A value nothing reads is reported for records and lists too, and for parameters.**  `x = 1;
+x = 2` warned that the first value was never read, but `b = Box { n: 1 }; b = Box { n: 2 }` and
+`v = [1]; v = [2]` did not, and a list or record bound and never used at all went unreported.
+They now warn as a number does.  A plain parameter is the function's own name for the value, so
+replacing it changes nothing for the caller: `fn reset(b: Box) { b = Box { n: 0 }; }` now says
+that the value `b` received is never read and that the new one is never read either, with
+`b: &Box` as the cure when the caller is meant to see it.  Handing such a parameter to a `&`
+parameter that replaces it is reported the same way.  A library built with warnings denied may
+need the unused value removed.
+
+**`regex` 0.4.0 drops `regex::find` and `regex::split`.**  The text methods `find` and `split`
+took every bare call, so these two were reachable only through `regex::` and answered something
+different from the bare spelling.  Write `input.search(pattern)` and `input.split_on(pattern)`.
+A function marked `#superseded` is removed this way whenever a method of the same name hides it.
+
 ### Everything else
 
 **A generic format hole renders as the type it is called with.**  Inside
@@ -1210,6 +1225,15 @@ parses; ordinary runs keep the cache.
 
 ### Smaller things you may notice
 
+- A `&` link to a list that may be absent (`vector<T>?`) writes through, as one to a list
+  that may not: `c = &n; c = a` used to point `c` at a copy and leave `n` alone, the annotated
+  `c: &vector<T>? = n` read a wrong length (and did not compile with `--native`), and `p = [1,
+  2, 3]` through a `&vector<T>?` parameter appended instead of replacing.
+- A name you write that starts with `_` is yours.  `fn f(_b: Box) { _b = Box { n: 1 }; }`
+  changed the CALLER's record, where `fn f(b: Box)` never does, and `_x = S { a: _x.b }` read
+  the record before its old fields were kept — because the compiler took any `_` name for one
+  of its own temporaries.  Both now answer what the same code with a plain name answers, on
+  both backends.
 - A tuple with a heap member is a value: `u = t` copies the member, `(s, 5)` copies a struct
   member in, and `a = t.0` / `(a, b) = t` copy a collection member out of a tuple you own —
   on both backends.  A struct member read out is still a view, as a struct field is; and the

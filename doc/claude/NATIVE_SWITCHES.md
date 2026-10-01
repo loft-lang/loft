@@ -139,7 +139,7 @@ to that condition, and `OpGetText` is a reader, so the walk holds its header, le
 base like any other (the stdlib `join` 5.40× → 1.96× of Rust, `split_walk` 1.80× →
 1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a wrong, stale or
 crashing text read through such a loop variable on native.  `LOFT_HOIST_VERIFY=1`
-re-reads the element at the walk's release and panics when the borrow no longer names it
+re-reads the element at the walk's release and panics when the borrow does not name it
 (address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
 walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
 `&text` parameter, tupled or returned, a store written in the body and a generator keep
@@ -163,9 +163,8 @@ iteration).
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push and no mint, whether or not the mint
-emits through a push header — since 2026-09-21: one left on its templates grows its store
-all the same, and a base bound beside it answered `null` on native; a null-discharge
-buffer's mint is a fresh store and does not count, since 2026-09-18)
+emits through a push header — one left on its templates grows its store all the same; a
+null-discharge buffer's mint is a fresh store and does not count)
 binds the address of each hoisted vector's element 0 beside its header and every read
 or write is one bounds test and one load or store through it (the resample probe −14 %)
 — and is the first bisect step for a wrong element read or write inside a growth-free
@@ -287,7 +286,7 @@ borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and 
 
 ## Generators
 
-**`LOFT_NO_REDESCENT=1`** (loft#1798, default-ON, generation time) sends every generator loop
+**`LOFT_NO_REDESCENT=1`** (default-ON, generation time) sends every generator loop
 that RE-DESCENT would lower lazily back to the eager buffer — the whole loop runs in the
 factory before the first value is handed out — and is the first bisect step for a native-only
 wrong answer, leak or rustc error out of a generator loop whose yields are not all on one
@@ -327,7 +326,7 @@ push, but CANNOT see what the admission exists to prevent — a runtime reader m
 lagging length changes no held fact — so there the interpreter is the falsifier.  The form
 is load-bearing: the window is three scalars whose address never reaches a call, because a
 counter whose address escaped to the growth arm lived on the stack and cost half the gain.
-Since 2026-09-22 the window also takes RECORD mint groups, at the top level or under `if`
+The window also takes RECORD mint groups, at the top level or under `if`
 arms (the arms are exclusive, so the trip count bounds the appends): the slot is the
 window's next, the field sets and the mint address are that pointer, the finish is the
 window's bump (`enum_match` 35.9 → 23.4 µs, ~3.98× → ~2.6×); a group whose literal fills
@@ -356,9 +355,7 @@ every path, the overflow note fired where the first evaluation stands; declared 
 innermost loop that spells it so the test peels out — declared one loop out it stayed in
 every tap), the resample tap's `yy * iw + xmin` −5 % on the row — and is the first bisect
 step for a wrong index or arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1`
-re-evaluates the chain at every use and panics when the memo disagrees; that form is what
-found loft#1534, a by-reference argument the non-sentinel proof's escape collector could
-not see.  `LOFT_TRACE_INVARIANT=1` names each memo.
+re-evaluates the chain at every use and panics when the memo disagrees.  `LOFT_TRACE_INVARIANT=1` names each memo.
 **`LOFT_NO_BOUNDED_NEST=1`** (@PLN157 `R-BoundedNest`, `@FR-R-BoundedNest`, default-ON,
 generation time, `--native` only) keeps every tap nest checked — with it off, an innermost
 counted loop that is one accumulate over `?`-discharged element products
@@ -401,16 +398,13 @@ in `0..=u32::MAX`, a byte, a counted range's counter, a one-expression callee su
 no fault can occur — and is the first bisect step for a wrong integer value on native where
 the range proof admitted a plain operator; `LOFT_HOIST_VERIFY=1` compares the plain answer
 with the checked one at every such operator.  It is C120's admissible successor for
-straight-line arithmetic; a parameter or a record/element read is never ranged.  ⚠ Its
-counted-range-counter clause was INERT until 2026-09-21 (loft#1558): the seeding looked for
-the counter's seed INSIDE the loop and the parser emits it as the statement before, so no
-counted loop was ever ranged.  Nothing showed it, because the pin that should have
-(`range_arith` a4) was recording a plain form the CHAIN GUARD supplied — a pin can borrow
-another rewrite's evidence and read as proof of its own clause.
-Since 2026-09-22 the proof also reads the STATIC TYPE (`range::type_range`): a non-nullable
+straight-line arithmetic; a parameter or a record/element read is never ranged.  A counted
+range's counter is seeded from the statement BEFORE the loop, where the parser emits it.  A
+pin can borrow another rewrite's evidence and read as proof of its own clause.
+The proof also reads the STATIC TYPE (`range::type_range`): a non-nullable
 `u8`/`i8`/`u16`/`i16` or user `limit(lo, hi)` parameter, local or compiler-typed join (the
-cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact since loft#1593 made
-every store into such a slot refuse an unprovable value; `i32`/`u32` (the templates) and a
+cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact because every store into
+such a slot refuses an unprovable value; `i32`/`u32` (the templates) and a
 signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
 sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
@@ -447,25 +441,24 @@ their templates: they are the language's null semantics, not its fault protectio
 
 ## Records returned and passed as values
 
-**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
+**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON) makes a
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off
 it and whose body builds it with `Object` blocks returns those fields in REGISTERS with
 the call site reading tuple elements (measured: 1.65× on the call, `smooth` −25 %
 standalone, `lock_curved` −3 %) — and is the bisect step for a wrong field out of a
-record-returning call on native.  It was opt-in for two days because its call-site gate
-did not hold over the script corpus (376 compile errors, 218 of them the fn-ref
-DISPATCH: every arm of the `match` a `CallRef` emits shares one return type); the gate
-now declines every arm by reading the arm set from `fnref::dispatch_arms`, the
-emitter's own home for that question, and a mixed-arm branch is declined by shape (a
-`__lift_` temp bound from a CALL was too, until `(R-ValueLocal)` made it a value local).
+record-returning call on native.  Every arm of the `match` a `CallRef` emits shares one
+return type, so the call-site gate declines every fn-ref DISPATCH arm, reading the arm set
+from `fnref::dispatch_arms`, the emitter's own home for that question; a mixed-arm branch
+is declined by shape, and a `__lift_` temp bound from a CALL is a value local
+(`(R-ValueLocal)`).
 A `__lift_` temp bound from a
 VIEW — a selecting tail's arm over a by-value parameter — is a value local bound to the
-view's field tuple and never a view leaf (read as one it leaked the store its copy
-mints, one record per call; found 2026-09-15 with the generic instance's statement join,
-whose arms bind the join local the same way and did not compile).
+view's field tuple and never a view leaf (read as one, it leaks the store its copy
+mints, one record per call); the generic instance's statement join binds its join local
+the same way.
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
-**`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON since 2026-09-25, generation
+**`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON, generation
 time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
 off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its
 fields where the callee reads it only field-wise, hands it to another such parameter,
@@ -482,7 +475,7 @@ carried and each declined with the reason, and the aliasing cells are
 `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
 
 **`LOFT_NO_VIEW_FIELD=1`** (@PLN164 C5 and E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`,
-**default-ON since 2026-09-17**, generation time, `--native` only) restores the record form —
+**default-ON**, generation time, `--native` only) restores the record form —
 with it off, a function returns a record of two scalars and a vector as a TUPLE
 whose vector element is a REFERENCE to the place the value already lives in — so a
 `Mark { matched, bad, pts }` built from a local the function appended into a parameter's
@@ -509,8 +502,8 @@ the leaf views.  The gate stores each exit's leaf and the emitter writes the sto
 is the first bisect step for a wrong or stale vector read out of a record-returning call on
 native, and `LOFT_TRACE_VALUEREC=1` names every admission and decline, with the reason and —
 for a site — the caller that consumed it.
-**`LOFT_NO_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **default-ON since
-2026-09-17**, generation time, `--native` only) makes a forward decline its callee again —
+**`LOFT_NO_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **default-ON**,
+generation time, `--native` only) makes a forward decline its callee again —
 with it off, a function that keeps its record FORWARDS an admitted callee's answer —
 `return nm()`, or the call arm of a value branch whose other arm is a record, both lowered as
 the callee filling a buffer bound back from the call — by writing the tuple into that buffer
@@ -529,8 +522,8 @@ keep its temp-store build and deep copy again — with it off, a local vector co
 exactly once by one append is built INSIDE the appended element (minted at the temp's
 declaration, invisible until the finish's length bump) — and is the bisect step for a
 wrong vector field of an appended record on native, or for a wrong value read through an
-element view between such a local's declaration and its append (loft#1553).  The declaration must be the local's only
-binding (loft#1552: a local declared `[]` and rebound under an `if` left the element empty).
+element view between such a local's declaration and its append.  The declaration must be the local's only
+binding (a local declared `[]` and rebound under an `if` would leave the element empty).
 **`LOFT_NO_ELEMENT_PLACE=1`** (@PLN164 E-2, `@FR-R-ElemFirst`, default-ON, generation time,
 `--native` only) keeps that build to local vectors and literal-built locals again — with it
 off, it also reaches an append into a record's COLLECTION FIELD (`sc.ops += [Op { pts: p }]`)
@@ -543,7 +536,7 @@ of the first's.  No statement between the declaration and the append may name th
 the call's vector inside the container's store, where only a record census sees it), or read a
 VIEW the early mint may have moved — the mint is the append's growth brought forward, so a
 local viewing the container's element, or any heap parameter where the container is a
-caller's, declines (loft#1553; a view of a sibling collection is spared).  It is the first
+caller's, declines (a view of a sibling collection is spared).  It is the first
 bisect step for a wrong, empty or leaked vector field of an element a parser appended;
 `LOFT_TRACE_ELEMFIRST=1` names every admission and decline, and the variable a declined
 window reads.
@@ -574,10 +567,9 @@ PERFORMANCE-history.md § Design: P2, NATIVE.md.
 
 **A null-discharge buffer does not block the hoist (@PLN157 § V-ad, `--native`, generation
 time):** `e = tbl[i]?` on a vector of all-scalar records mints an absent element into a
-hidden per-site buffer, and that allocation used to decline every header in the loop
-around it — the drawing bench's polygon crossing loop hoisted nothing (`wide_line` −31 %
-when it did); since 2026-09-18 it does not block the loop's BASES either (a fresh store,
-or a clear of the buffer's own, moves no element a base addresses).
+hidden per-site buffer, and that allocation declines neither the headers in the loop
+around it (the drawing bench's polygon crossing loop, `wide_line` −31 %) nor the loop's
+BASES (a fresh store, or a clear of the buffer's own, moves no element a base addresses).
 The SETS into that buffer are admitted as its mint is — a `??`
 fallback's text field (`Seq { …, name: "" }`) was written with `OpSetText`, the one op
 outside the twelve scalar setters, so a callee carrying such a fallback stayed a WRITING

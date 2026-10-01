@@ -4671,7 +4671,7 @@ impl State {
             // the native backend's `OpAppendStackText` arm (dispatch.rs:582)
             // already emits the required `*` deref.
             let stack_variant = if let Some(Value::Var(v)) = parameters.first()
-                && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
+                && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
             {
                 crate::generation::ops::refvar_text_stack_variant(name.as_str())
             } else {

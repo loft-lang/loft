@@ -1284,6 +1284,15 @@ pub struct Parser {
     /// Field-capture aliases created by `if expr is Variant { field } { body }`.
     /// Drained by `parse_if` after the body to restore previous name mappings.
     pub(crate) is_capture_aliases: Vec<(String, Option<u16>)>,
+    /// Where a field-capture list that was reported as standing in the body's place ended
+    /// (loft#1828): the next token, when it is not `{`.  `parse_block` reads a body that
+    /// starts at exactly this token as the one the capture already stood for, so the
+    /// construct's own `{` demand does not report the same mistake again.
+    pub(crate) capture_took_body: Option<crate::lexer::Position>,
+    /// The variable named as the target of the `=` being parsed (loft#1816), or `u16::MAX`.
+    pub(crate) assign_target_discounted: u16,
+    /// Whether the route lowering that `=` already took its target's mention back from `uses`.
+    pub(crate) assign_target_taken: bool,
     /// Post-2c: captures the most recently parsed `as <alias>` cast target's
     /// def_nr when the alias has a `size(N)` annotation.  Consumed by
     /// `append_to_file` so that `f += x as i32` narrows the serialised
@@ -1871,6 +1880,9 @@ impl Parser {
             init_reads_record: false,
             in_par_body: false,
             is_capture_aliases: Vec::new(),
+            capture_took_body: None,
+            assign_target_discounted: u16::MAX,
+            assign_target_taken: false,
             is_capture_bindings: Vec::new(),
             last_cast_alias: u32::MAX,
             dn4_checked_narrow: None,
@@ -16709,7 +16721,7 @@ impl Parser {
                 && tp.is_amp_rebindable_heap()
                 && let Value::Var(v) = actual_code.unspan()
                 && self.vars.is_argument(*v)
-                && !matches!(self.vars.tp(*v), Type::RefVar(_))
+                && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
                 && !self.vars.is_compiler_generated(*v)
                 && !self.is_hidden_param(*v)
             {
@@ -16725,6 +16737,31 @@ impl Parser {
             }
             if amp_rebind_arg != u16::MAX {
                 self.ensure_rebind_witness(amp_rebind_arg);
+            }
+            // loft#1816 — the same rebind as a WRITE: the callee's write-back lands in this
+            // parameter, so it is tracked like `p = …` written here, and a parameter nothing
+            // reads after the call is the dead store its body-written spelling is (F-ParamRebind:
+            // the caller two frames up never sees it).  Asked of a callee that reassigns that
+            // parameter at all; one that only reads through its `&` writes nothing back.  A callee
+            // with no body (a native operator) is not asked: it has no assignment to find.
+            if !self.first_pass
+                && matches!(tp.base(), Type::RefVar(_))
+                && let Value::Var(v) = actual_code.unspan()
+                && self.vars.is_argument(*v)
+                && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
+                && !self.vars.is_compiler_generated(*v)
+                && !self.is_hidden_param(*v)
+                && *self.data.def(d_nr).code() != Value::Null
+            {
+                let v = *v;
+                let mut cache: HashMap<u32, Vec<bool>> = HashMap::new();
+                if callee_param_reassigns(d_nr, &self.data, &mut cache)
+                    .get(nr)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    self.vars.track_write(v, &mut self.lexer);
+                }
             }
             // loft#1540, C124 — a value-const value reaches a `&` parameter never and a plain
             // record or collection parameter only when it is `const`; the question and its

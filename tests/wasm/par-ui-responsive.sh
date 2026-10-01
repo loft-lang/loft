@@ -5,8 +5,19 @@
 # loop runs one heavy par() per frame; with the Web Worker pool each frame's par
 # finishes faster, so the main thread is BLOCKED for less of every frame.  That
 # shorter block IS "the UI is not blocked", and it is what this gate asserts:
-# threaded avg_block_ms <= sequential / (MIN_BLOCK_RATIO_X10/10), with the worst
-# single block smaller too and the value stable.
+# threaded avg_block_ms <= sequential / (MIN_BLOCK_RATIO_X10/10), with the long
+# blocks shorter too (p90 of the steady frames) and the value stable.
+#
+# The long-block half compares p90_block_ms, not the worst block.  The worst block
+# was ALWAYS frame 1 in both legs, a one-time cold start: a warm-up compile of an
+# empty program absorbs ~100 ms of it in both legs, and the threaded leg adds ~50 ms
+# for its workers' first heavy par (loft#1832).  Comparing two cold starts flipped
+# from run to run (955 vs 954 ms on main, 2026-09-30) while the average never did.
+# The page now reports that frame apart (first_block_ms, never gated) and computes
+# max and p90 over the frames after it, as max_gap_ms already skips the first gap.
+# p90 rather than the steady max: a single runner stall in either leg is one sample
+# and decides a max, but not the 90th percentile, which still says that the long
+# blocks of the threaded leg are shorter.
 #
 # It does NOT gate on the frame count, though it still reports it.  How often
 # rAF fires is the browser's decision, not the work's: a page Chrome treats as
@@ -57,6 +68,8 @@ num() { echo "$1" | grep -oP "$2=\K[0-9.]+"; }
 tb=$(num "$TH" avg_block_ms); sb=$(num "$SQ" avg_block_ms)
 tbx=${tb%.*}$(printf '%s' "${tb#*.}" | cut -c1); sbx=${sb%.*}$(printf '%s' "${sb#*.}" | cut -c1)
 tm=$(num "$TH" max_block_ms); sm=$(num "$SQ" max_block_ms)
+tp=$(num "$TH" p90_block_ms); sp=$(num "$SQ" p90_block_ms)
+t1=$(num "$TH" first_block_ms); s1=$(num "$SQ" first_block_ms)
 tf=$(num "$TH" frames); sf=$(num "$SQ" frames)
 tw=$(num "$TH" work_ms); sw=$(num "$SQ" work_ms)
 tg=$(num "$TH" max_gap_ms); sg=$(num "$SQ" max_gap_ms)
@@ -70,8 +83,8 @@ done
 # The gate: threading must shorten the main-thread block.
 [ $(( 10#${tbx:-999999} * MIN_BLOCK_RATIO_X10 )) -le $(( 10#${sbx:-0} * 10 )) ] 2>/dev/null \
   || { echo "FAIL: threaded avg block (${tb}ms) is not ${MIN_BLOCK_RATIO_X10}/10 x shorter than sequential (${sb}ms)"; fail=1; }
-[ "${tm:-999999}" -lt "${sm:-0}" ] 2>/dev/null \
-  || { echo "FAIL: threaded worst block (${tm}ms) not < sequential (${sm}ms)"; fail=1; }
+[ "${tp:-999999}" -lt "${sp:-0}" ] 2>/dev/null \
+  || { echo "FAIL: threaded p90 block (${tp}ms) not < sequential (${sp}ms) — steady frames, the first excluded"; fail=1; }
 # Reported, never gated: a leg that spent most of the window NOT computing was
 # scheduled sparsely by the browser.  This is the state that used to decide the
 # old frame-count verdict; naming it keeps it visible now that it cannot.
@@ -82,5 +95,5 @@ note_sparse() {
 }
 note_sparse threaded "$tf" "$tw"
 note_sparse sequential "$sf" "$sw"
-[ $fail -eq 0 ] && echo "PASS: threading shortens the main-thread block — avg ${tb}ms vs ${sb}ms, worst ${tm}ms vs ${sm}ms; frames ${tf} vs ${sf}, gap ${tg}ms vs ${sg}ms; value=$tv"
+[ $fail -eq 0 ] && echo "PASS: threading shortens the main-thread block — avg ${tb}ms vs ${sb}ms, p90 ${tp}ms vs ${sp}ms (worst ${tm}ms vs ${sm}ms, first frame ${t1}ms vs ${s1}ms); frames ${tf} vs ${sf}, gap ${tg}ms vs ${sg}ms; value=$tv"
 exit $fail

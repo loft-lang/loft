@@ -1,0 +1,18 @@
+==== exit: 1 ====
+==== stdout ====
+==== stderr ====
+error: `bump` has 2 definitions — bump(integer) -> integer, bump(text) -> text — and nothing here says which one is meant.  A function value names one: wrap the call you mean, `fn(x: …) -> … { bump(x) }`
+  --> <cases>/61_an_overloaded_function_value_with_no_slot_type.loft:4:22
+  |
+4 | fn main() { f = bump; println("{f(1)}"); }
+  |                      ^
+
+warning[never-read]: Variable f is never read
+  --> <cases>/61_an_overloaded_function_value_with_no_slot_type.loft:4:16
+  |
+4 | fn main() { f = bump; println("{f(1)}"); }
+  |                ^
+
+note: 1 diagnostic above suggests what to write instead — re-run with `--explain`
+
+error: aborting due to 1 previous error

@@ -828,6 +828,19 @@ impl Parser {
                 return Type::Reference(r, Deps::none());
             }
         }
+        // loft#1828 — the capture list reported just before this body stood where the body
+        // belongs, so the author's body WAS that list: carry on as though the cure were
+        // written (`is V { f } { … }`) with an arm of no value, which adopts its sibling's
+        // type.  Demanding the `{` here reported the one mistake as four more `Expect token`
+        // errors, at the `else` and beyond (the loft#989 discipline).  Only at exactly the
+        // token after that list: any other body is the author's, and is read as one.
+        if let Some(at) = self.capture_took_body.take()
+            && at == self.lexer.peek().position
+            && !self.lexer.peek_token("{")
+        {
+            *val = v_block(Vec::new(), Type::Void, "empty block");
+            return Type::Void;
+        }
         self.lexer.token("{");
         if self.lexer.has_token("}") {
             *val = v_block(Vec::new(), Type::Void, "empty block");
@@ -12595,6 +12608,7 @@ impl Parser {
                     self.data.def(variant_def_nr).name(),
                     self.data.def(variant_def_nr).name(),
                 );
+                self.capture_took_body = Some(self.lexer.peek().position.clone());
             }
             if condition.is_empty() {
                 *code = stable_check;

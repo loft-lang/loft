@@ -12,6 +12,7 @@ use crate::variables::size;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Error, Write};
 use std::str::FromStr;
+use std::sync::Arc;
 
 // ------------------------------------------------------------------ StackDiagLevel
 
@@ -1919,14 +1920,15 @@ pub(super) fn execute_log_impl(
     log: &mut dyn Write,
     name: &str,
     config: &LogConfig,
-    data: &Data,
+    shared: &Arc<Data>,
 ) -> Result<(), Error> {
+    let data: &Data = shared;
     let d_nr = data.def_nr(&format!("n_{name}"));
     assert_ne!(d_nr, u32::MAX, "Unknown routine {name}");
 
     // Set up parallel context so n_parallel_for can access bytecode/library.
-    let data_ptr = std::ptr::from_ref::<crate::data::Data>(data);
-    state.data_ptr = data_ptr;
+    let data_ptr = crate::data_ref::DataRef::new(Arc::clone(shared));
+    state.data_ptr = data_ptr.clone();
     let stk_lib_nr = state
         .library_names
         .get("n_stack_trace")
@@ -1966,16 +1968,14 @@ pub(super) fn execute_log_impl(
         // Wrap in catch_unwind so the buffer is flushed even on panic.
         let mut tail = TailBuffer::new(tail_n);
         writeln!(tail, "Execute {name}:")?;
-        // SAFETY: We hold all three mutable references exclusively and none
-        // of them can be invalidated during catch_unwind on this thread.
+        // SAFETY: We hold both mutable references exclusively and neither
+        // can be invalidated during catch_unwind on this thread.
         let self_raw = std::ptr::from_mut::<State>(state);
         let tail_raw = &raw mut tail;
-        let data_raw = std::ptr::from_ref::<Data>(data);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let s = unsafe { &mut *self_raw };
             let t = unsafe { &mut *tail_raw };
-            let d = unsafe { &*data_raw };
-            s.execute_log_steps(t, d_nr, config, d)
+            s.execute_log_steps(t, d_nr, config, data)
         }));
         match result {
             Ok(r) => {

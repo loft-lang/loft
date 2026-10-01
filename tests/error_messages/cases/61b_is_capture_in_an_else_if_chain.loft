@@ -1,0 +1,4 @@
+// loft#1828 — an else-if chain: each capture is reported once, nothing between them.
+enum Shape { Circle { radius: float }, Square { side: float } }
+fn f(c: Shape) -> float { if c is Circle { radius } else if c is Square { side } else { 0.0 } }
+fn main() { println("{f(Circle { radius: 2.0 })}"); }

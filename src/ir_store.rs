@@ -359,6 +359,7 @@ fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_bool(stores, ds::VAR_DEFERRED_FIRST_BIND, v.deferred_first_bind);
     r.set_field_bool(stores, ds::VAR_LINKED_NARROW, v.linked_narrow);
     r.set_field_bool(stores, ds::VAR_STORE_TEXT_LINK, v.store_text_link);
+    r.set_field_bool(stores, ds::VAR_USER_NAMED, v.user_named);
     r.set_field_int(stores, ds::VAR_OWNER_WITNESS, i64::from(v.owner_witness));
 }
 

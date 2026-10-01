@@ -1,0 +1,5 @@
+// An overloaded function passed where no definition fits the expected fn type: one error, naming both.
+fn bump(x: integer) -> integer { x + 1 }
+fn bump(x: text) -> text { "{x}!" }
+fn call(f: fn(float) -> float, v: float) -> float { f(v) }
+fn main() { println("{call(bump, 1.0)}"); }

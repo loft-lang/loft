@@ -30,8 +30,10 @@ fn peak_for(code: &str) -> u16 {
     p.data = data;
     p.database = db;
     p.parse_str(code, "watermark_test", false);
+    // Errors only: these programs overwrite a local on purpose (the reclaim they measure),
+    // which the dead-assignment lint rightly reports.
     assert!(
-        p.diagnostics.is_empty(),
+        p.diagnostics.level() < loft::diagnostics::Level::Error,
         "parse errors: {:?}",
         p.diagnostics.lines()
     );

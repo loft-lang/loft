@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1829 — an OVERLOADED free function used as a value names the definition whose
+// signature its slot expects.  The name resolves to the overload SET, which fell through
+// as no value at all: `call(bump, 4)` reported "got null" and a missing argument.
+//
+// Axes this file MOVES:  where the value goes (a call argument of either member's type,
+//                        a typed local, a struct field, a return, a generic stdlib
+//                        `map` whose result is still being inferred) and which member
+//                        the slot picks (integer, text).  A single-definition name is the
+//                        control: it resolved before and must still.
+// Axes it HOLDS FIXED:   one set of two free definitions; the refusals (no context, no
+//                        member that fits) are error_messages cases 61 and 61b.
+//
+// @falsified-at: 74f9fe2c8 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses the
+//   program at compile time: "got null" and a missing argument, so no assertion runs)
+// @falsified-by: tests/falsified/1829-an-overloaded-function-as-a-value-is-the-one-its-slot-expects.patch — the same channels
+// HOLDS: leak, panic and refusals are clean on both trees and both backends; the
+//   single-definition control resolves on both trees.
+
+fn bump(x: integer) -> integer { x + 1 }
+fn bump(x: text) -> text { "{x}!" }
+fn only(x: integer) -> integer { x * 2 }
+struct H { f: fn(integer) -> integer }
+fn call(f: fn(integer) -> integer, v: integer) -> integer { f(v) }
+fn call_t(f: fn(text) -> text, v: text) -> text { f(v) }
+fn pick() -> fn(integer) -> integer { bump }
+
+fn main() {
+  assert(call(bump, 4) == 5, "argument, integer member: {call(bump, 4)}");
+  assert(call_t(bump, "a") == "a!", "argument, text member: {call_t(bump, "a")}");
+  t: fn(integer) -> integer = bump;
+  assert(t(2) == 3, "typed local: {t(2)}");
+  w: fn(text) -> text = bump;
+  assert(w("z") == "z!", "typed local, text member: {w("z")}");
+  h = H { f: bump };
+  assert(h.f(10) == 11, "struct field: {h.f(10)}");
+  p = pick();
+  assert(p(100) == 101, "return: {p(100)}");
+  m = map([1, 2, 3], bump);
+  assert("{m}" == "[2,3,4]", "map: {m}");
+  assert(call(only, 4) == 8, "a single definition still resolves: {call(only, 4)}");
+  println("ok");
+}

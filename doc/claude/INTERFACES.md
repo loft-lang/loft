@@ -147,7 +147,9 @@ max_of([Priority{value: 3}, Priority{value: 1}, Priority{value: 7}])
 ```
 
 To satisfy a SHIPPED interface the method is the operator's own name, and one definition
-serves both the bound and the bare operator:
+serves both the bound and the bare operator.  ⚠ C132 retires this spelling: a
+`fn Op…` outside the stdlib becomes an ordinary function, so a user type takes a named method,
+and the stdlib generics take a key through `sort_by` / `min_by` / `max_by` / `sum_by`:
 
 ```loft
 fn OpLt(self: Priority, other: Priority) -> boolean { self.value < other.value }

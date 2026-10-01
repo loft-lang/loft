@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1834 — a name the USER writes is the user's, whatever it starts with.  The compiler's own
+// temporaries are `_`-prefixed and `is_compiler_generated` asked only the prefix, so `_b` —
+// the spelling the lints suggest for a name you do not read — got a temporary's lowering:
+// a record, vector, hash or enum parameter lost F-ParamRebind (`fn pb(_b: Box) { _b = … }`
+// rebuilt the CALLER's record), and a `_x` literal reading `_x` read the record its re-init
+// had already cleared (@FR-R-InPlaceLiteral).  Every cell below is written with `_` names and
+// asserts the value its plain-named twin has always given; parameters, locals, loop and match
+// bindings and a lambda parameter, across record, vector, hash, enum, text and integer.
+//
+// @falsified-at: 22ebfad8 → here (exit 1 → 0, both backends): on the control the first
+//   assertion fails (`pb 1`, the caller's record rebuilt); read cell by cell, seven of thirteen
+//   were wrong on --interpret and --native alike — the record, vector, hash and enum
+//   parameters, the self-reading literal on a parameter, the locals and the lambda parameter.
+//   CHANNEL: the asserted VALUES (exit).
+//   WITNESS: `assertion failed: pb 1` (the caller's record rebuilt; want 7), both backends.
+//   HOLDS: the text, integer, unused-parameter, field-write, loop and match cells answer the
+//   same on both trees; no leak on either backend here (LOFT_NATIVE_LEAK_CHECK).
+struct Box { n: integer }
+struct E { k: integer, v: integer }
+enum Sh { Ci { r: integer }, Sq { s: integer } }
+fn pb(_b: Box) { _b = Box { n: 1 }; }
+fn pv(_v: vector<integer>) { _v = [9]; }
+fn ph(_h: hash<E[k]>) { _h = [E { k: 5, v: 50 }]; }
+fn pe(_e: Sh) { _e = Sq { s: 4 }; }
+fn pt(_t: text) { _t = "zz"; }
+fn unused(_p: Box) -> integer { 3 }
+fn pmut(_b: Box) { _b.n = 42; }
+fn self_lit_param(_b: Box) -> integer { _b = Box { n: _b.n + 100 }; _b.n }
+fn local_cells() -> text {
+  _x = Box { n: 1 }; _x = Box { n: _x.n + 10 };
+  _c = _x; _c.n = 99;
+  _w = [1, 2]; _w2 = _w; _w2 += [3];
+  _s = "a"; _s += "b";
+  "{_x.n} {_c.n} {len(_w)} {len(_w2)} {_s}"
+}
+fn loop_cells() -> integer { t = 0; for _i in 0..4 { t += _i; } bs = [Box { n: 2 }, Box { n: 3 }]; for _bb in bs { t += _bb.n; } t }
+fn match_cells(s: Sh) -> integer { match s { Ci { r: _rr } => _rr * 10, Sq { s: _ss } => _ss } }
+fn lambda_cells() -> integer { f = fn(_q: Box) -> integer { _q = Box { n: 8 }; _q.n }; b = Box { n: 1 }; r = f(b); r * 10 + b.n }
+fn main() {
+  b = Box { n: 7 }; pb(b);
+  v = [1, 2]; pv(v);
+  h: hash<E[k]> = [E { k: 1, v: 10 }]; ph(h);
+  e = Ci { r: 3 }; pe(e);
+  t = "aa"; pt(t);
+  assert(b.n == 7, "pb {b.n}");
+  assert(len(v) == 2, "pv {len(v)}");
+  assert(len(h) == 1 && h[1] != null, "ph {len(h)}");
+  er = match e { Ci { r } => r, Sq { s } => -s };
+  assert(er == 3, "pe {er}");
+  assert(t == "aa", "pt {t}");
+  assert(unused(b) == 3, "unused");
+  pmut(b); assert(b.n == 42, "a field write through a plain param reaches the caller {b.n}");
+  assert(self_lit_param(b) == 142 && b.n == 42, "self-reading literal on a param {b.n}");
+  lc = local_cells();
+  assert(lc == "11 99 2 3 ab", "locals {lc}");
+  assert(loop_cells() == 11, "loops {loop_cells()}");
+  assert(match_cells(Ci { r: 4 }) == 40 && match_cells(Sq { s: 6 }) == 6, "match");
+  assert(lambda_cells() == 81, "lambda {lambda_cells()}");
+  println("matrix ok");
+}

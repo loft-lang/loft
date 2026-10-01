@@ -1,0 +1,78 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 6d4857a62..b9e912284 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -2222,18 +2222,7 @@ impl Output<'_> {
+         // a store the borrowing read immediately overwrites — orphaned, and never
+         // freed because the binding emits no `OpFreeRef`.  Same for a vector-literal
+         // element whose container is a field DbRef (loft#664).
+-        //
+-        // loft#1836 — a keyed REASSIGNMENT (`c = [..]`, lowered to `Set(c, Null)` and then
+-        // inserts) clears the store the slot already names, owned or not: a local link
+-        // `c = &n` names `n`'s store, and `(B-Ref-Write)` writes the source.  This is the
+-        // interpreter's `gen_keyed_null(first: false)` gate, spelled the same way — only an
+-        // inline ref or an overwritten view keeps its slot.  Left to the ownership gate, the
+-        // link was reset to `DbRef::NULL` and the inserts that follow panicked on it.
+-        let keyed_clear = !first
+-            && crate::parser::vectors::owns_keyed_store(variables.tp(var))
+-            && !variables.is_inline_ref(var)
+-            && !variables.is_overwritten_view(var);
+-        if variables.owns_store(var) || keyed_clear {
++        if variables.owns_store(var) {
+             let ref_buf_type_id = {
+                 // @FR-L-Null — `base()`, because a nullable collection local owns the SAME
+                 // store its dense twin owns (layout(τ) = layout(τ?)).  Asked bare, a
+diff --git b/src/generation/ops/text_ops.rs a/src/generation/ops/text_ops.rs
+index 0ddee7099..5f7cf38ae 100644
+--- b/src/generation/ops/text_ops.rs
++++ a/src/generation/ops/text_ops.rs
+@@ -24,12 +24,11 @@ impl OpEmitter for TextDispatchEmitter {
+         let name = ctx.def_fn.name().to_string();
+         // @P283 — mirror src/state/codegen.rs: a first arg that is a Var of type
+         // RefVar(Text) (a `&mut String` work-buffer) rewrites the op to its
+-        // `Stack` variant for case selection.  `@FR-N-Shape`: a `&text?` link is the same
+-        // shape — peeled, or its raw-pointer append lands outside the `unsafe` block (loft#1836).
++        // `Stack` variant for case selection.
+         let refvar_text_first = matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if {
+             matches!(
+                 ctx.output.data.def(ctx.output.def_nr).variables().tp(*v),
+-                Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
++                Type::RefVar(inner) if matches!(**inner, Type::Text(_))
+             )
+         });
+         let dispatch: &str = if refvar_text_first {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index eb8ba0114..b68ef3ff5 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3353,15 +3353,13 @@ use a separate collection or add after the loop"
+ 
+     /// Does `x = …` on `v` write THROUGH a link rather than rebind `v` (`@FR-B-Ref-Write`)?  A
+     /// `&` parameter or annotated `&` local is a `RefVar`; a vector local linked by `c = &n`
+-    /// is a plain vector registered in `amp_vector_locals`; a keyed collection linked the same
+-    /// way carries `amp_container_link` (loft#1836 — without it `c = &h; c = [..]` was
+-    /// reported dead and never-read); a link to a text field or element is a store text link.
++    /// is a plain vector registered in `amp_vector_locals`; a link to a text field or element
++    /// is a store text link.
+     fn assign_writes_through(&self, v: u16) -> bool {
+         // Through `base()` (`@FR-N-Shape`): a link to a `vector<T>?` is a link all the same.
+         let tp = self.vars.tp(v).base();
+         matches!(tp, Type::RefVar(_))
+             || self.vars.is_store_text_link(v)
+-            || (crate::parser::vectors::is_keyed(tp) && self.vars.is_amp_container_link(v))
+             || (matches!(tp, Type::Vector(..)) && {
+                 // A scan rather than a keyed lookup: the key is an owned `String`, and building
+                 // one per assignment is an allocation the front end does not otherwise make.
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 16c4bd6aa..1689d50d1 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -4671,7 +4671,7 @@ impl State {
+             // the native backend's `OpAppendStackText` arm (dispatch.rs:582)
+             // already emits the required `*` deref.
+             let stack_variant = if let Some(Value::Var(v)) = parameters.first()
+-                && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
++                && matches!(stack.function.tp(*v), Type::RefVar(inner) if matches!(**inner, Type::Text(_)))
+             {
+                 crate::generation::ops::refvar_text_stack_variant(name.as_str())
+             } else {

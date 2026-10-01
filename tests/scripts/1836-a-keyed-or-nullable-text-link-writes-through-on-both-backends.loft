@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1836 (parts C and D) — `(B-Ref-Write)`: writing a `&τ` local writes its SOURCE, and
+// `--native` broke it for two τ the interpreter already got right.
+//
+// D, a keyed collection: `c = &n; c = [..]` lowers to `Set(c, Null)` and then inserts.  The
+//   interpreter's `gen_keyed_null` clears the store the slot already names; native gated that
+//   clear on the local OWNING its store, which a link does not, so it reset `c` to a NULL
+//   DbRef and the first insert panicked (plain hash).  On a `hash?` source the inserts went
+//   to a fresh store, the source read stale, and that store leaked.
+// C, a `&text?` local: native's `&text` predicate did not peel `?` (`@FR-N-Shape`), so the
+//   append through the link's raw pointer was emitted outside its `unsafe` block, and rustc
+//   refused the program (E0133).
+//
+// Every cell asserts the value its hand-computed twin gives on the variable itself; the copy
+// and owner cells are the controls (a copy must NOT write the source).
+//
+// @falsified-at: ac8478561 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).
+// @falsified-by: tests/falsified/1836-a-keyed-or-nullable-text-link-writes-through-on-both-backends.patch
+//   CHANNEL: native COMPILE (E0133 at the two `&text?` appends), then — run cell by cell on the
+//   control's binary with those removed — PANIC and the asserted VALUES, and a LEAK.
+//   ARMED: LOFT_NATIVE_LEAK_CHECK=1 for the leak cells (kn_lit, kn_null); the exit and value
+//   channels need no instrument.
+//   WITNESS: k_lit, k_keys, k_sorted and k_loop panic on the NULL DbRef, k_index in the
+//   allocator; kn_lit answers 1 and kn_null 0, each leaking one `hash<Ek[k]>` store.
+//   HOLDS: k_var and k_empty (a variable or `[]` source), k_copy, k_own, and every cell on
+//   --interpret answer the same on both trees; no leak on either backend here.
+struct Ek { k: integer }
+
+fn k_lit() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }]; c = &n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n) * 100 + len(c) }
+fn k_var() -> integer {
+  a: hash<Ek[k]> = [Ek { k: 1 }, Ek { k: 4 }, Ek { k: 5 }];
+  n: hash<Ek[k]> = [Ek { k: 7 }];
+  c = &n;
+  c = a;
+  len(n) * 100 + len(a)
+}
+fn k_empty() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }, Ek { k: 8 }]; c = &n; c = []; len(n) }
+fn k_keys() -> integer {
+  n: hash<Ek[k]> = [Ek { k: 7 }];
+  c = &n;
+  c = [Ek { k: 2 }, Ek { k: 3 }];
+  r = 0;
+  if n[2] != null { r += 1; }
+  if n[7] == null { r += 10; }
+  r
+}
+fn kn_lit() -> integer { n: hash<Ek[k]>? = [Ek { k: 7 }]; c = &n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n ?? []) }
+fn kn_null() -> integer { n: hash<Ek[k]>? = null; c = &n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n ?? []) }
+fn k_sorted() -> integer {
+  n: sorted<Ek[-k]> = [Ek { k: 7 }];
+  c = &n;
+  c = [Ek { k: 2 }, Ek { k: 3 }, Ek { k: 9 }];
+  r = 0;
+  for e in n { r = r * 10 + e.k; }
+  r
+}
+fn k_index() -> integer {
+  n: index<Ek[k]> = [Ek { k: 7 }];
+  c = &n;
+  c = [Ek { k: 2 }, Ek { k: 3 }];
+  r = 0;
+  for e in n { r = r * 10 + e.k; }
+  r
+}
+fn k_loop() -> integer {
+  n: hash<Ek[k]> = [Ek { k: 7 }];
+  c = &n;
+  t = 0;
+  for i in 0..3 {
+    c = [Ek { k: i }, Ek { k: i + 10 }];
+    t += len(n);
+  }
+  t * 100 + len(n)
+}
+// Controls: a copy is its own store, and an owner's rebuild is its own.
+// Each control's first write is never read, which the lint rightly says; a LINK's is (loft#1836).
+// #warn Dead assignment — 'c' is overwritten before being read
+// #warn Dead assignment — 'n' is overwritten before being read
+fn k_copy() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }]; c = n; c = [Ek { k: 2 }, Ek { k: 3 }]; len(n) * 100 + len(c) }
+fn k_own() -> integer { n: hash<Ek[k]> = [Ek { k: 7 }]; n = [Ek { k: 2 }, Ek { k: 3 }]; len(n) }
+
+fn t_app() -> text { n: text? = "pq"; c = &n; c += "!"; n ?? "<null>" }
+fn t_app_null() -> text { n: text? = null; c = &n; c += "!"; n ?? "<null>" }
+fn t_annot_app() -> text { n: text? = "pq"; c: &text? = n; c += "!"; n ?? "<null>" }
+fn t_set() -> text { n: text? = "pq"; a: text = "a"; c = &n; c = a; n ?? "<null>" }
+fn t_set_null() -> text { n: text? = "pq"; c = &n; c = null; n ?? "<null>" }
+
+fn main() {
+  assert(k_lit() == 202, "k_lit {k_lit()}");
+  assert(k_var() == 303, "k_var {k_var()}");
+  assert(k_empty() == 0, "k_empty {k_empty()}");
+  assert(k_keys() == 11, "k_keys {k_keys()}");
+  assert(kn_lit() == 2, "kn_lit {kn_lit()}");
+  assert(kn_null() == 2, "kn_null {kn_null()}");
+  assert(k_sorted() == 932, "k_sorted {k_sorted()}");
+  assert(k_index() == 23, "k_index {k_index()}");
+  assert(k_loop() == 602, "k_loop {k_loop()}");
+  assert(k_copy() == 102, "k_copy {k_copy()}");
+  assert(k_own() == 2, "k_own {k_own()}");
+  assert(t_app() == "pq!", "t_app {t_app()}");
+  assert(t_app_null() == "<null>", "t_app_null {t_app_null()}");
+  assert(t_annot_app() == "pq!", "t_annot_app {t_annot_app()}");
+  assert(t_set() == "a", "t_set {t_set()}");
+  assert(t_set_null() == "<null>", "t_set_null {t_set_null()}");
+}

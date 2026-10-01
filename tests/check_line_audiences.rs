@@ -101,3 +101,59 @@ fn the_live_host_still_gets_the_source_and_artifact_it_parses() {
         "the artifact path must be absolute; got {artifact:?}"
     );
 }
+
+/// `--check` with warnings denied fails on a warning, as `--tests` does (loft#1835).
+///
+/// A library's CI compiles its `examples/` and `docs/` programs this way.  Only the test
+/// runner used to read the deny, so `LOFT_DENY_WARNINGS=1 loft --check` answered `ok` over
+/// a warning and every such program passed with its warnings standing.  Advice never gates.
+#[test]
+fn check_with_warnings_denied_fails_on_a_warning() {
+    let dir = std::env::temp_dir().join("loft_check_line_deny");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("case dir");
+    // `a` is never read: a warning.
+    std::fs::write(
+        dir.join("warn.loft"),
+        "fn f(a: integer) -> integer { 3 }\nfn main() { println(\"{f(1)}\"); }\n",
+    )
+    .expect("source");
+    // Nine required parameters: advice only.
+    std::fs::write(
+        dir.join("advice.loft"),
+        "fn g(a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, \
+         h: integer, i: integer, j: integer) -> integer { a + b + c + d + e + f + h + i + j }\n\
+         fn main() { println(\"{g(1, 2, 3, 4, 5, 6, 7, 8, 9)}\"); }\n",
+    )
+    .expect("source");
+    let cases: [(&[&str], Option<&str>, &str, i32); 6] = [
+        (&["--interpret", "--check"], None, "warn.loft", 0),
+        (&["--interpret", "--check"], Some("1"), "warn.loft", 1),
+        (&["--interpret", "--check"], Some("0"), "warn.loft", 0),
+        (
+            &["--interpret", "--deny-warnings", "--check"],
+            None,
+            "warn.loft",
+            1,
+        ),
+        (&["check"], Some("1"), "warn.loft", 1),
+        (&["--interpret", "--check"], Some("1"), "advice.loft", 0),
+    ];
+    for (args, deny, file, want) in cases {
+        let mut cmd = Command::new(loft_bin());
+        cmd.args(args).arg(file).current_dir(&dir);
+        match deny {
+            Some(v) => cmd.env("LOFT_DENY_WARNINGS", v),
+            None => cmd.env_remove("LOFT_DENY_WARNINGS"),
+        };
+        let out = cmd.output().expect("loft --check");
+        assert_eq!(
+            out.status.code(),
+            Some(want),
+            "`LOFT_DENY_WARNINGS={deny:?} loft {} {file}` exited {:?}, wanted {want}; stderr: {}",
+            args.join(" "),
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
