@@ -1209,7 +1209,11 @@ impl State {
                         (name, file, self.call_line(f.call_pos))
                     } else {
                         // Worker frame without Data context — use placeholder.
-                        ("<worker>".to_string(), String::new(), self.call_line(f.call_pos))
+                        (
+                            "<worker>".to_string(),
+                            String::new(),
+                            self.call_line(f.call_pos),
+                        )
                     }
                 })
                 .collect();
