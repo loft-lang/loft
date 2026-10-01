@@ -439,6 +439,17 @@ impl Parser {
     /// that are 4-byte handles.  It agreed with the storage side only while the
     /// storage side made the same mistake; reading both from one derivation is
     /// what keeps reader and writer in step (loft#624 nested).
+    /// How a monomorph reads an element of `vector<T>` once `T` is bound to `vtp`: the stride,
+    /// and whether the vector holds record ids (`Stores::is_linked`), in which case the read
+    /// dereferences (`OpVectorRef`) as the concrete path's does.
+    pub(crate) fn vector_elem_read(&mut self, vtp: &Type) -> crate::parser::ElemRead {
+        let db_tp = self.data.def(self.data.type_def_nr(vtp)).known_type();
+        crate::parser::ElemRead {
+            stride: i32::from(self.vector_elem_iter_stride(vtp)),
+            linked: self.database.is_linked(db_tp),
+        }
+    }
+
     pub(crate) fn vector_elem_iter_stride(&mut self, vtp: &Type) -> u16 {
         let vec_tp = self.data.type_def_nr(vtp);
         let db_tp = self.data.def(vec_tp).known_type();

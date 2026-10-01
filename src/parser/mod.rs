@@ -209,6 +209,15 @@ pub(crate) struct AmpIdentity {
     pub(crate) place: bool,
 }
 
+/// How a monomorph reads an element of `vector<T>` with `T` bound (`vector_elem_read`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ElemRead {
+    /// The element stride the read's baked type-variable marker is replaced with.
+    pub(crate) stride: i32,
+    /// The vector holds record ids (`Stores::is_linked`), so the read dereferences.
+    pub(crate) linked: bool,
+}
+
 /// Which binding position a leading `&` may occupy at the point the operand parser
 /// reaches it, and therefore which token ENDS the operand the `&` annotates.
 ///
@@ -8961,7 +8970,7 @@ impl Parser {
         // type variable is.
         let mut new_code = tmpl_code;
         for (holder, bound_to) in &bindings {
-            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            let iter_stride = self.vector_elem_read(bound_to);
             new_code = Self::substitute_type_in_value(
                 new_code,
                 *holder,
@@ -9261,7 +9270,7 @@ impl Parser {
         let tmpl_vars = self.data.definitions[d as usize].variables.clone();
         let mut code = tmpl_code;
         for (holder, bound_to) in &bindings {
-            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            let iter_stride = self.vector_elem_read(bound_to);
             code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
         }
         self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
@@ -9877,7 +9886,7 @@ impl Parser {
                 let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
                 let mut code = tmpl_code;
                 for (holder, bound_to) in &bindings {
-                    let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+                    let iter_stride = self.vector_elem_read(bound_to);
                     code = Self::substitute_type_in_value(
                         code,
                         *holder,
@@ -11591,7 +11600,7 @@ impl Parser {
         val: Value,
         tv_nr: u32,
         concrete: &Type,
-        iter_stride: i32,
+        iter_stride: ElemRead,
         data: &Data,
     ) -> Value {
         match val {
@@ -11662,7 +11671,23 @@ impl Parser {
                     // The stride comes from `vector_elem_iter_stride` (the one
                     // home, computed by the caller) — NOT a re-derived byte-sum;
                     // see that helper for why the two drifted.
-                    let elm_size = iter_stride;
+                    // A linked element is a record id in the slot: the read dereferences it,
+                    // as the concrete path's `OpVectorRef` does.  Reading the slot's address
+                    // instead handed the body the id's bytes as the record.
+                    if iter_stride.linked {
+                        let deref = if data.def(new_d).name() == "OpGetVector" {
+                            "OpVectorRef"
+                        } else {
+                            "OpVectorRefNullable"
+                        };
+                        let mut it = new_args.into_iter();
+                        let (vec, _, idx) = (it.next(), it.next(), it.next());
+                        return Value::Call(
+                            data.def_nr(deref),
+                            vec![vec.unwrap_or(Value::Null), idx.unwrap_or(Value::Null)],
+                        );
+                    }
+                    let elm_size = iter_stride.stride;
                     if elm_size != cur_size {
                         let mut fixed = new_args;
                         fixed[1] = Value::Int(elm_size);

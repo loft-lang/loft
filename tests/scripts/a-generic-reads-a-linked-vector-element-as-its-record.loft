@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic body reads an element of `vector<T>` as the RECORD when `T` is bound to a struct
+// with a keyed collection over it somewhere in the program.  Such a vector holds 4-byte record
+// ids (the linked layout, `Stores::is_linked`), and the concrete path reads one through
+// `OpVectorRef`, which dereferences.  The monomorph only replaced the template's stride
+// marker, so it kept `OpGetVector` and handed the body the address of the id as the record:
+// `fn at<T>(v: vector<T>, i: integer) -> T { v[i] }` answered `.id` as 85899345935, on both
+// backends, with no diagnostic.  Cells: `Lk` (linked) beside `Pl` (inline) through the same
+// generics — an index read, a read through a second generic, a `for` walk and an index walk
+// handing each element to a function reference, an index walk building backwards, an element write,
+// an append, a slice, an insert and a removal — twice, so a second instance reuses the first.
+//
+// @falsified-by: tests/falsified/a-generic-reads-a-linked-vector-element-as-its-record.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: asserts on both backends — the first linked read (`L at`) fails on the control.
+//   ARMED: nothing.
+//   WITNESS: `at(l, 1).id` read the id's address as the record (85899345935 where 1 is due).
+//   HOLDS: every `Pl` (inline) cell on both trees; no leak on either backend.
+struct Lk { id: integer, s: text }
+struct Pl { id: integer, s: text }
+struct Holder { idx: hash<Lk[id]> }
+
+fn at < T > (v: vector<T>, i: integer) -> T? { v[i] }
+fn second < T > (v: vector<T>) -> T? { at(v, 1) }
+fn ids_lk(v: vector<Lk>) -> text { r = ""; for x in v { r += "{x.id}{x.s}"; } r }
+fn ids_pl(v: vector<Pl>) -> text { r = ""; for x in v { r += "{x.id}{x.s}"; } r }
+fn walk < T > (v: vector<T>, key: fn(T) -> text) -> text { r = ""; for x in v { r += key(x); } r }
+fn walk_idx < T > (v: vector<T>, key: fn(T) -> text) -> text { r = ""; for i in 0..len(v) { r += key(v[i]); } r }
+fn walk_rev < T > (v: vector<T>, key: fn(T) -> text) -> text { r = ""; for i in 0..len(v) { r = key(v[i]) + r; } r }
+// `a = v[0]` is a VIEW (B-View): `v[1] = a` copies the record v[0] already holds.
+fn swap01 < T > (v: vector<T>) { a = v[0]; b = v[1]; v[0] = b; v[1] = a; }
+fn app_last < T > (v: vector<T>) { x = v[len(v) - 1]; v += [x]; }
+fn slice_mid < T > (v: vector<T>) -> vector<T> { r: vector<T> = []; r += v[1..3]; r }
+fn ins_front < T > (v: vector<T>) { x = v[2]; v.insert(0, x); }
+fn rm1 < T > (v: vector<T>) { v.remove(1); }
+
+fn main() {
+  h = Holder{};
+  h.idx += [Lk{id: 9, s: "z"}];
+  kl = fn(x: Lk) -> text { x.s };
+  kp = fn(x: Pl) -> text { x.s };
+  for _round in 0..2 {
+    l = [Lk{id: 3, s: "c"}, Lk{id: 1, s: "a"}, Lk{id: 2, s: "b"}];
+    p = [Pl{id: 3, s: "c"}, Pl{id: 1, s: "a"}, Pl{id: 2, s: "b"}];
+    assert(at(l, 1).id == 1, "L at");                assert(at(p, 1).id == 1, "P at");
+    assert(at(l, 2).s == "b", "L at text");          assert(at(p, 2).s == "b", "P at text");
+    assert(second(l).s == "a", "L second");          assert(second(p).s == "a", "P second");
+    assert(walk(l, kl) == "cab", "L walk {walk(l, kl)}");     assert(walk(p, kp) == "cab", "P walk");
+    assert(walk_idx(l, kl) == "cab", "L walk_idx");  assert(walk_idx(p, kp) == "cab", "P walk_idx");
+    assert(walk_rev(l, kl) == "bac", "L walk_rev {walk_rev(l, kl)}");  assert(walk_rev(p, kp) == "bac", "P walk_rev");
+    swap01(l); swap01(p);
+    assert(ids_lk(l) == "1a1a2b", "L swap {ids_lk(l)}");   assert(ids_pl(p) == "1a1a2b", "P swap {ids_pl(p)}");
+    app_last(l); app_last(p);
+    assert(ids_lk(l) == "1a1a2b2b", "L app {ids_lk(l)}");  assert(ids_pl(p) == "1a1a2b2b", "P app {ids_pl(p)}");
+    assert(ids_lk(slice_mid(l)) == "1a2b", "L slice");     assert(ids_pl(slice_mid(p)) == "1a2b", "P slice");
+    ins_front(l); ins_front(p);
+    assert(ids_lk(l) == "2b1a1a2b2b", "L ins {ids_lk(l)}");  assert(ids_pl(p) == "2b1a1a2b2b", "P ins {ids_pl(p)}");
+    rm1(l); rm1(p);
+    assert(ids_lk(l) == "2b1a2b2b", "L rm {ids_lk(l)}");   assert(ids_pl(p) == "2b1a2b2b", "P rm {ids_pl(p)}");
+  }
+  // the keyed collection itself is untouched
+  assert(len(h.idx) == 1 && h.idx[9].s == "z", "hash intact");
+  println("ok");
+}
